@@ -284,6 +284,7 @@ export function mapResourceVersion(revision: WireResourceRevision): ResourceVers
     version: revision.version,
     capturedAt: revision.createdAt,
     author: revision.author,
+    authorName: revision.authorName ?? null,
     cause: revision.cause,
     contentAvailable: revision.contentAvailable,
     // The version's own title and type, not the resource's. A rename or a

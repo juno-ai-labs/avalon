@@ -495,9 +495,8 @@ export function TitlePillHeader({ actions, align = 'center', ancestors = [], cla
   const headerRef = useRef<HTMLElement>(null);
   const currentRef = useRef<HTMLDivElement>(null);
   const trailingRef = useRef<HTMLDivElement>(null);
-  const measured = useTrailingCrowded(headerRef, currentRef, trailingRef, shownActions?.filter((action) => !action.alwaysVisible).length ?? 0);
   // A start-aligned pill has its own column, which already keeps it clear of the trailing row.
-  const { crowded, shift } = align === 'start' ? { crowded: false, shift: 0 } : measured;
+  const { crowded, shift } = useTrailingCrowded(headerRef, currentRef, trailingRef, shownActions?.filter((action) => !action.alwaysVisible).length ?? 0, align === 'center');
   return <header
     className={clsx('title-pill-header window-drag', crowded && 'is-crowded', align === 'start' && 'is-start', className)}
     ref={headerRef}
@@ -533,9 +532,14 @@ function useTrailingCrowded(
   currentRef: RefObject<HTMLElement | null>,
   trailingRef: RefObject<HTMLElement | null>,
   actionCount: number,
+  enabled = true,
 ): { crowded: boolean; shift: number } {
   const [state, setState] = useState({ crowded: false, shift: 0 });
   useLayoutEffect(() => {
+    if (!enabled) {
+      setState((was) => was.crowded || was.shift ? { crowded: false, shift: 0 } : was);
+      return undefined;
+    }
     const header = headerRef.current;
     const current = currentRef.current;
     const trailing = trailingRef.current;
@@ -572,7 +576,7 @@ function useTrailingCrowded(
     observer.observe(current);
     observer.observe(trailing);
     return () => observer.disconnect();
-  }, [actionCount, currentRef, headerRef, trailingRef]);
+  }, [actionCount, currentRef, enabled, headerRef, trailingRef]);
   return state;
 }
 

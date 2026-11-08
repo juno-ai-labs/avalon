@@ -73,6 +73,18 @@ describe('CanvasesHomeScreen', () => {
     expect(within(recent).getByText('2 Canvases')).toBeInTheDocument();
   });
 
+  it('chips a card Live, with the faces of the others in it, only where someone else is', async () => {
+    renderHome(clientWith([
+      canvas('00000000-0000-7000-8000-0000000000c1', 'Q4 revenue review', { presentUserIds: [MAYA, THEO] }),
+      canvas('00000000-0000-7000-8000-0000000000c3', 'Hiring pipeline', { presentUserIds: [ME] }),
+    ]));
+    const card = (title: string): HTMLElement => screen.getByRole('link', { name: title }).closest('li')!;
+    await waitFor(() => expect(card('Q4 revenue review').querySelector('.canvas-card-live')).toHaveTextContent('Live'));
+    // The chip's faces are the people other than the viewer, two of them here.
+    expect(card('Q4 revenue review').querySelectorAll('.canvas-card-live .avatar')).toHaveLength(2);
+    expect(card('Hiring pipeline').querySelector('.canvas-card-live')).toBeNull();
+  });
+
   it('filters by who made a Canvas and by search', () => {
     renderHome(clientWith([
       canvas('00000000-0000-7000-8000-0000000000c1', 'Mine'),

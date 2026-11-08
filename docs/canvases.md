@@ -354,17 +354,20 @@ the rail's first section and `/canvases` the landing route
   `createdByUserId`, Shared with me `sharedWithMe`, From Sidekicks
   `writerSidekickId`. A row's second line names who is there now, else its
   last editor, else who made it.
-- **The mark** (`CanvasMark`) is a sheet tinted by the row's `artifactKind`,
-  in the project palette's pastel pair through `markColors`, the mechanism a
-  Sidekick's hexagon uses: a file violet, a site blue, an archive amber, and a
-  Canvas that is only its Chat cyan. design.html §1, §2 and §5 draw these
-  tinted marks in light and dark.
-- **The home page** is design.html §1's grid of cards, three to a row where
-  the pane is wide enough: each card is a 150px shot of the Canvas (the mark
-  on its paper, since a row carries no picture of its artifact), a "Live" chip
-  with the faces of the people in it now, its title, and who and when. At
-  phone width the sheet's bar is the page's header, so the page draws no
-  second title or New Canvas. The sidebar's "All canvases" heading carries a
+- **The mark** (`CanvasMark`) is a sheet holding the row's `artifactKind`
+  glyph, in a pastel pair through `markColors`, the mechanism a Sidekick's
+  hexagon uses. The hue is the Canvas's own, stable for its id
+  (`canvasHue`, as a person's accent is chosen), since design.html §1, §2 and
+  §5 colour each Canvas individually and a Canvas stores no colour.
+- **The home page** is design.html §1's grid of cards, three to a row once the
+  pane is the design's 1024px main pane, two below it, one at phone width: each
+  card is a 150px shot of the Canvas, a "Live" chip with the faces of the
+  people in it now, its title, and who and when. A row carries no picture of
+  its artifact, so the shot is a sketch of its `artifactKind` (a file as a
+  document's lines, a site as a page in a frame, an archive as a board's
+  columns, a Canvas that is only its Chat as its mark on the paper). At phone
+  width the sheet's bar is the page's header, so the page draws no second
+  title or New Canvas. The sidebar's "All canvases" heading carries a
   Recent/Name sort (the server's recent-activity order, or by title), which is
   not remembered across launches.
 - **Making one** is `POST /canvases`, with the "Start from a prompt" card's
@@ -557,22 +560,32 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 ### 2026-11-08 — The Canvas screens follow design.html
 
-**What changed:** A Canvas's mark is tinted by the kind of its newest
-artifact. The home page draws the design's card grid with a Live chip, its
-copy is the design's, and the sidebar's list is "All canvases" with a sort.
-The header puts the pill at the left with a separate "⋯" button.
+**What changed:** A Canvas's mark is tinted, in a hue stable for its id. The
+home page draws the design's card grid, each card's shot sketching what the
+Canvas holds, with a Live chip; its copy is the design's, and the sidebar's
+list is "All canvases" with a sort. The header puts the pill at the left with
+a separate "⋯" button.
 
 **Why:** The PRD makes design.html the authority for every screen. The mark
 was a grey tile on purpose ("a Canvas has no hue of its own, as a pinned
 artifact's tile has none"), carried over from the pinned-artifact tile; the
-design draws every Canvas sheet in a pastel pair and switches it to the dark
-pair in dark, and a column of identical grey squares could not be scanned
-(v1-F2, v4-F3, v3-G4). The hue follows the kind, not the Canvas, because a
-Canvas has no colour of its own to store; the design wins over the earlier
-reasoning.
+design draws every Canvas sheet in its own pastel pair and switches it to the
+dark pair in dark, and a column of identical grey squares could not be
+scanned (v1-F2, v4-F3, v3-G4). The home page was a two-column list of icon
+rows where the design draws cards with a thumbnail and a Live chip (v1-F3,
+v4-F2), and the header centred the pill, hung its menu off the chevron only,
+and moved Share when the artifact panel opened (v1-F8).
+
+Two choices the design does not settle, made in review and open to the
+owner's reversal: the hue is per Canvas from its id rather than per kind,
+because the design colours Canvases individually and the hue then needs no
+storage; and the shot is a sketch per `artifactKind` with no contract change.
+A sketch per MIME type (an `artifactMime` on the row) is a follow-up for the
+owner.
 
 **What a future change must respect:** a mark's colours come from
-`markColors`, so both appearances stay themed by `themes.css`.
+`markColors`, so both appearances stay themed by `themes.css`; a stored
+Canvas colour would replace `canvasHue`, not sit beside it.
 
 ### 2026-11-08 — A Canvas made with no title is titled from its first message, and a refused retitle names its field
 
