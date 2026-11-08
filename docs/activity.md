@@ -81,7 +81,7 @@ and comparing the two would clear it the moment it was written. Such a row
 clears only by Mark all seen. A run notice keeps the `"0"` ordinal: the run's
 row is in the shared conversation.
 
-At list time a row is seen when either:
+At list time a row is seen when any of these holds:
 
 - the recipient's `sidekick_viewer_reads` row for that parent — the read cursor
   the Canvas and Sidekick rows read unread from — has `seen_attention_ordinal`
@@ -89,6 +89,13 @@ At list time a row is seen when either:
   was accepted after the row was written (`updated_at >= created_at`); or
 - their `workspace_activity_seen.seen_through`, which Mark all seen moves, is
   at or after the row's `created_at`.
+- it is a Needs input row and its run (`sidekick_runs`, by the row's
+  `run_id`) is no longer in `needs_input`: the question was answered, or the
+  run was stopped. The run's own view, where the question is answered, reads
+  the run's conversation, not `"0"`, so no read report clears it; without this
+  rule the row stayed unseen after the person answered until they read the
+  shared conversation or chose Mark all seen. A run that asks again writes a
+  new row, and while it waits the earlier row reads unseen again too.
 
 The second condition on a read exists because an add's or a run's ordinal is
 what already existed: a requester who had read their own request has a cursor
@@ -113,7 +120,9 @@ path) then calls `publishActivityList`, which reads each remembered person's
 page once and sends `workspace_activity_list` `{occurredAt, waterline,
 unseenCount, items}` to that person's subscribed sockets and nobody else's.
 
-A list moves when a row is written, when Mark all seen is chosen, and when a
+A list moves when a row is written, when Mark all seen is chosen, when a run
+with Needs input rows stops waiting (`onChildCommonProjection`, and
+`stopOpenRuns` for a pause, through `waitingRunActivityRecipients`), and when a
 read report for the person on a Canvas or a Sidekick is accepted:
 `HostedConversation.acceptViewerRead` calls the host's
 `noteActivityReadMoved` on every report it accepts, whether or not the cursor
