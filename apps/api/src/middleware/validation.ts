@@ -1,8 +1,7 @@
 import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from "@rally/contracts";
-import { describeZodIssues, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { zValidator as honoZValidator } from "@hono/zod-validator";
 import type { MiddlewareHandler } from "hono";
-import type { ZodError } from "zod";
 
 import { ApiError } from "../lib/api-error";
 
@@ -60,7 +59,7 @@ export class RequestValidationError extends ApiError {
   }
 }
 
-function validator(label: string | null): typeof honoZValidator {
+function validator(named: { label: string; message: string } | null): typeof honoZValidator {
   return ((
     target: Parameters<typeof honoZValidator>[0],
     schema: Parameters<typeof honoZValidator>[1],
@@ -75,10 +74,9 @@ function validator(label: string | null): typeof honoZValidator {
           if (result.error.issues.some((issue) => issue.code === 'custom' && issue.message === 'annotations_too_large')) {
             throw new ApiError(422, 'annotations_too_large', 'These pins are too large to send together');
           }
-          const code = label === null ? null : zodDiagnosticCode(result.error, label);
-          throw new RequestValidationError(target, result.error.issues, result.data, code === null ? undefined : {
-            code, message: `The request is invalid: ${describeZodIssues(result.error as ZodError)}`,
-          });
+          const code = named === null ? null : zodDiagnosticCode(result.error, named.label);
+          throw new RequestValidationError(target, result.error.issues, result.data,
+            code === null || named === null ? undefined : { code, message: named.message });
         }
         return hook?.(result, c);
       },
@@ -101,12 +99,12 @@ export const zValidator: typeof honoZValidator = validator(null);
  * `zValidator` for a route whose refusal names what it refused: the code is
  * `<label>_invalid:<path>:<issue>` (`zodDiagnosticCode`, so declared field
  * names and issue codes only, never a value or a caller's unknown key), and
- * the message carries the same issues. For a route a person's input reaches,
- * where "The request is invalid" leaves them nothing to fix
- * (`docs/naming-a-schema-failure.md`).
+ * the message is the route's own sentence, which a client may show the person.
+ * For a route a person's input reaches, where "The request is invalid" leaves
+ * them nothing to fix (`docs/naming-a-schema-failure.md`).
  */
-export function namedZValidator(label: string): typeof honoZValidator {
-  return validator(label);
+export function namedZValidator(label: string, message: string): typeof honoZValidator {
+  return validator({ label, message });
 }
 
 /**

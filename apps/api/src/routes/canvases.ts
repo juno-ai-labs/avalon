@@ -18,7 +18,7 @@ import { CanvasService } from "../services/canvas-service";
 
 const idParam = z.object({ id: IdSchema });
 /** A malformed Canvas id is refused by name (`canvas_id_invalid:id:…`), a well-formed missing one is `canvas_not_found`. */
-const canvasIdParam = namedZValidator("canvas_id")("param", idParam);
+const canvasIdParam = namedZValidator("canvas_id", "This is not a Canvas id")("param", idParam);
 
 /**
  * A Canvas: create one (with no artifacts, and optionally its first prompt),
@@ -34,7 +34,8 @@ canvasRoutes.get("/:id", canvasIdParam, async (c) => {
   c.header("Cache-Control", "no-store");
   return c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).detail(c.req.valid("param").id)));
 });
-canvasRoutes.patch("/:id", canvasIdParam, namedZValidator("canvas_rename")("json", CanvasRenameRequestSchema), async (c) =>
+canvasRoutes.patch("/:id", canvasIdParam, namedZValidator("canvas_rename",
+  "A Canvas title needs 1 to 300 characters other than spaces at either end")("json", CanvasRenameRequestSchema), async (c) =>
   c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c))
     .rename(c.req.valid("param").id, c.req.valid("json").title))));
 canvasRoutes.post("/:id/audience", canvasIdParam, zValidator("json", CanvasAudienceUpdateSchema), async (c) =>
