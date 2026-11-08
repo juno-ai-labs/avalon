@@ -5269,6 +5269,10 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .form-field > input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); outline: 0; padding: 9px 10px; width: 100%; }
 .form-field > input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
 .form-field textarea { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); line-height: 1.5; outline: 0; padding: 10px; resize: vertical; width: 100%; }
+/* A field's placeholder is the people search's muted ink, not preflight's
+   fixed grey, which is no theme's and read 2.3:1 on the light well (e1-N1). */
+.form-field > input::placeholder,
+.form-field textarea::placeholder { color: var(--av-sys-color-text-muted); }
 /* A value shown to be copied: the caption spans the row, and the field shares
    it with the copy control beside it rather than carrying a sentence under it.
    The control is `.icon-button`'s 30px against the field's taller box, so the
