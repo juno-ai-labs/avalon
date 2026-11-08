@@ -154,6 +154,7 @@ its own is a boundary that drifts.
 | `packages/contracts/src/platform-diagnostics.ts` | `platformErrorCode` names a Workers runtime, D1 or SQLite failure (`d1_overloaded`, `sqlite_unique_constraint`) from its fixed sentence or its `cause`, never copying the table, column or value the sentence quotes; `diagnosticErrorCode` and the engineering MCP read it |
 | `packages/connectors/src/observability.ts` | `connectorDiagnosticCode` is `connectorObservationErrorCode` plus the provider's HTTP status, its rate limit, or the platform failure behind a request that never completed (`provider_error:http_403:rate_limited`) |
 | `apps/api/src/lib/api-error.ts` | `ApiError.diagnosticCode` carries what a log may say beyond the public `code`, across an RPC hop and through every regional bridge envelope (`diagnosticCodeField`), and never into the response body; `request_failed` and `diagnosticErrorCode` log it |
+| `apps/api/src/middleware/validation.ts`, `apps/api/src/routes/canvases.ts` | `namedZValidator(label)` answers a route's schema rejection to its caller as `<label>_invalid:<path>:<issue>` with the same issues in the message, where `zValidator` says `invalid_request`; the Canvas routes use it for a malformed Canvas id (`canvas_id_invalid:id:invalid_format`) and a retitle's `title` (`canvas_rename_invalid:title:too_small`) |
 | `apps/api/src/queues/access-revocation-consumer.ts` | `access_revocation_message_invalid` names each failing field of a queue message it cannot read, where it formatted the issues by hand and spelled the whole-value case `(root)` |
 
 The label a Durable Object entry point passes to `parseRpcInput` is the RPC
@@ -207,6 +208,26 @@ published, so the product asserts health while the tail never landed. Naming the
 error made that diagnosable in minutes; it did not make it visible.
 
 ## Changelog
+
+### 2026-11-08 — A route can name its rejection to the caller
+
+**What changed:** `namedZValidator(label)` in `middleware/validation.ts` is
+`zValidator` with a public code built by `zodDiagnosticCode`: declared field
+names and issue codes, never a value and never a caller's unknown key. The
+Canvas routes use it for the id parameter and the retitle's body.
+
+**Why:** The end-to-end pass found `PATCH /canvases/:id` refusing an empty,
+blank or 301-character title, and a malformed id, as `invalid_request` "The
+request is invalid", which tells the person retitling nothing to fix, while a
+well-formed missing id already said `canvas_not_found`.
+
+**Considered and rejected:** Naming every route's rejection by changing
+`zValidator` itself: the generic envelope is a deliberate public contract
+and every client and test that reads `invalid_request` would move with it in
+one change nobody asked for. A route opts in where a person's input reaches it.
+
+**Consequences:** A route that adopts it answers a schema refusal with a code
+that is no longer a closed set; a client branches on its prefix.
 
 ### 2026-10-19 — A conversation object's refusal is named by its code
 
