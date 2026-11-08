@@ -1254,9 +1254,14 @@ function ConversationSurfaceContent({
   useEffect(() => {
     if (!resourcePanel) return;
     if (!routedDetail || routedDetail.resources.some((resource) => resource.id === resourcePanel.resourceId)) return;
+    // The device cache's copy of the conversation is not the room's word on
+    // what it holds; it can predate the artifact, or hold none at all, and
+    // closing on it shut the panel a Canvas had just opened onto its newest
+    // artifact on a first visit.
+    if (feedFromLocalCache) return;
     setPanel(null);
     closeOwnRail();
-  }, [resourcePanel, closeOwnRail, routedDetail]);
+  }, [resourcePanel, closeOwnRail, feedFromLocalCache, routedDetail]);
   // Popped-out windows follow new versions from the app shell
   // (`App.tsx`), which reads every version this conversation's socket carries
   // through `followResourceHeads`.

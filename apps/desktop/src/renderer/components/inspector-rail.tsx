@@ -24,6 +24,7 @@ import { ResourceIcon } from './markdown-citations';
 import { CopyButton, CopyStatus, copyStateLabel } from './copy-button';
 import { useCopy } from '../lib/use-copy';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, ErrorNotice, Modal } from './primitives';
+import { ApiError } from '../lib/api';
 import { SiteResourceDetail, type SiteResourceDetailProps } from './site-resource-detail';
 import { RailSurface } from './rail-surface';
 import { RelativeTime } from './relative-time';
@@ -361,11 +362,23 @@ function hasGeneratedArtifactPreview(resource: WorkstreamResource): boolean {
  * reader, and a stored document is a file. Rewriting its bytes would show
  * somebody something their document does not say.
  */
+/**
+ * An artifact with no stored content: the server says so up front
+ * (`contentAvailable: false`) or answers its read `resource_content_unavailable`.
+ * Said, rather than left as a pane holding only its last-updated line.
+ */
+function UnstoredContent(): React.JSX.Element {
+  return <EmptyState
+    description="Its content was never stored, so there is nothing to show. A new version from Rally or an upload will appear here."
+    title="Nothing to show yet"
+  />;
+}
+
 function ResourceContentPreview({ loadResourceContent, resource }: {
   loadResourceContent: NonNullable<InspectorRailProps['loadResourceContent']>;
   resource: WorkstreamResource;
 }): React.JSX.Element | null {
-  const [state, setState] = useState<{ text?: string; src?: string; media?: 'audio' | 'image'; failed?: boolean }>({});
+  const [state, setState] = useState<{ text?: string; src?: string; media?: 'audio' | 'image'; failed?: boolean; unavailable?: boolean }>({});
   const attachmentKind = classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType });
   const media = resource.contentAvailable && (attachmentKind === 'image' || attachmentKind === 'audio')
     ? attachmentKind
@@ -389,13 +402,15 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
         .then((text) => {
           if (!controller.signal.aborted) setState({ text });
         });
-    void load.catch(() => {
+    void load.catch((cause: unknown) => {
       // A resource whose content was never hydrated, whose object has since
       // gone, or whose format the server will not convert is not an error the
       // reader can act on — last-updated above is still true, and saying so
       // beats an empty panel. A preview still being prepared is not one of
       // these, and no longer arrives here until the retries are spent.
-      if (!controller.signal.aborted) setState({ failed: true });
+      if (controller.signal.aborted) return;
+      // Never stored: the server has no bytes to show, and says so by name.
+      setState(cause instanceof ApiError && cause.code === 'resource_content_unavailable' ? { failed: true, unavailable: true } : { failed: true });
     });
     return () => {
       controller.abort();
@@ -407,6 +422,7 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
     // a citation substantiating a claim with the wrong revision.
   }, [loadResourceContent, media, resource.currentVersion, resource.id]);
 
+  if (state.unavailable) return <UnstoredContent />;
   if (state.failed && attachmentKind === 'other') return <AnnotationSurface resourceId={resource.id} version={resource.currentVersion} name={resource.title} mimeType={resource.mimeType} sizeBytes={resource.sizeBytes} />;
   if (state.failed) {
     return <p className="inspector-detail-preview-status">This preview is not available.</p>;
@@ -672,6 +688,7 @@ function InspectorDetail({
         {showDocument && loadResourceContent && (
           <ResourceContentPreview loadResourceContent={loadResourceContent} resource={resource} />
         )}
+        {!resource.contentAvailable && !sourceActions && <UnstoredContent />}
       </div>
     );
   }

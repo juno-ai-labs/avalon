@@ -68,8 +68,10 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   useEffect(() => {
     if (linkedArtifact) void navigate(location.pathname, { replace: true, state: openResourceState(id, linkedArtifact) });
   }, [id, linkedArtifact, location.pathname, navigate]);
+  // Beside the Chat, not over it: nobody asked for this artifact, so the
+  // conversation they opened stays in view.
   useOpenNewestArtifact(id, canvas.data, session?.workspace?.id, session?.user.id, linkedArtifact ? openResourceState(id, linkedArtifact) : location.state, (resourceId) => {
-    void navigate(`${location.pathname}${location.search}`, { replace: true, state: openResourceState(id, resourceId) });
+    void navigate(`${location.pathname}${location.search}`, { replace: true, state: openResourceState(id, resourceId, { expanded: false }) });
   });
   const workspace = session?.workspace;
   const copyCanvasLink = (): void => {
