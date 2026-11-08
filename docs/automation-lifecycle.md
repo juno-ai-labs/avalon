@@ -1081,8 +1081,8 @@ loaded into someone else's conversation, not a read of its own.
   read as Active. The run term is a probe of `sidekick_runs` under its primary
   key's `sidekick_id` prefix, not a stored column, so no writer can leave it
   stale; a run's projection that moves it into or out of `needs_input`
-  republishes the Sidekick list to every socket (`onChildCommonProjection`). A run that needs input, or
-  finishes, is pushed to the people
+  republishes the Sidekick list to every socket (`onChildCommonProjection`).
+  A run that needs input, or finishes, is pushed to the people
   [above](#runs) name, and its row in `"0"` shows the state.
 
 ### Who a run acts as
