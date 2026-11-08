@@ -1,6 +1,5 @@
 import { ArrowDownUp } from 'lucide-react';
 import { useMemo, useState, type RefObject } from 'react';
-import { ArrowDownUp } from 'lucide-react';
 import { matchPath, useLocation } from 'react-router-dom';
 
 import { useCollaborationSession } from '../lib/collaboration-session';
