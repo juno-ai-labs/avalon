@@ -20,6 +20,15 @@ export function canvasRoute(canvasId: string): string {
   return `${CANVASES_ROUTE}/${encodeURIComponent(canvasId)}`;
 }
 
+/**
+ * A Canvas opened onto one of its artifacts. Every host and every link lands
+ * here the same way (`?artifact=`); the Canvas screen turns it into the route
+ * state the artifact rail opens from.
+ */
+export function canvasArtifactRoute(canvasId: string, artifactId: string): string {
+  return `${canvasRoute(canvasId)}?${new URLSearchParams({ artifact: artifactId })}`;
+}
+
 /** A Canvas opened on one turn of its Chat, as a search result for a message opens it. */
 export function canvasTurnRoute(canvasId: string, turnId: string, transcriptSequence: number): string {
   return `${canvasRoute(canvasId)}?turn=${encodeURIComponent(turnId)}&sequence=${transcriptSequence}`;

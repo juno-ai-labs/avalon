@@ -4,7 +4,7 @@ import clsx from 'clsx';
 import { Fragment, type ReactNode, type RefObject } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
-import { canvasRoute, canvasTurnRoute, useCanvasNameSources } from '../lib/canvases';
+import { canvasArtifactRoute, canvasRoute, canvasTurnRoute, useCanvasNameSources } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList, type ActivityList } from '../lib/sidebar-list-store';
@@ -89,7 +89,7 @@ export function activityRoute(item: ActivityItem): string {
       return canvasTurnRoute(item.parentId, item.messageId, item.messageSequence);
     }
     if (item.kind === 'artifact_updated' && item.artifact) {
-      return `${canvasRoute(item.parentId)}?artifact=${encodeURIComponent(item.artifact.resourceId)}`;
+      return canvasArtifactRoute(item.parentId, item.artifact.resourceId);
     }
     return canvasRoute(item.parentId);
   }

@@ -177,6 +177,15 @@ function DeepLinkHistoryProbe(): React.JSX.Element {
   </>;
 }
 
+/** Where a link put the router, and the route state it carried. */
+function ArtifactLinkProbe(): React.JSX.Element {
+  const location = useLocation();
+  return <>
+    <output data-testid="artifact-link-route">{`${location.pathname}${location.search}`}</output>
+    <output data-testid="artifact-link-state">{location.state === null ? 'none' : JSON.stringify(location.state)}</output>
+  </>;
+}
+
 function renderProvider(route?: ReactNode): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -1537,7 +1546,7 @@ describe('single-platform desktop identity routing', () => {
     expect(window.location.hash).not.toContain(secondWorkstreamId);
     mainActiveSession = activated;
     activations[0]!.resolve(activated);
-    await waitFor(() => expect(window.location.hash).toBe(`#/canvases/${secondWorkstreamId}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/canvases/${secondWorkstreamId}?artifact=${childId}`));
     // By the time the second link ran, its workspace was the active one, so
     // main answered the claim and it opened without a second activation. Had
     // the second link run before the first resolved, the claim would have
@@ -1970,6 +1979,29 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink(canvasDeepLink({ region: 'global', workspaceId: activeWorkspaceId, canvasId: '00000000-0000-7000-8000-000000000043' }));
     await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/canvases/00000000-0000-7000-8000-000000000043'));
     expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled();
+  });
+
+  it('lands a link onto an artifact as `?artifact=`, the route the browser shell writes', async () => {
+    const workspaceId = '00000000-0000-7000-8000-000000000040';
+    const canvasId = '00000000-0000-7000-8000-000000000042';
+    const artifactId = '00000000-0000-7000-8000-000000000047';
+    const activeSession: DesktopSession = {
+      ...globalIdentitySession,
+      workspace: { id: workspaceId, name: 'Juno Labs', region: 'global', role: 'member' },
+    };
+    bridge.getSession.mockResolvedValueOnce(activeSession);
+    bridge.reselectActiveWorkspace.mockResolvedValue(activeSession);
+    renderProvider(<HashRouter><AppRouteNavigation /><ArtifactLinkProbe /></HashRouter>);
+    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+
+    await dispatchDeepLink(canvasDeepLink({ region: 'global', workspaceId, canvasId, artifactId }));
+
+    // The Canvas screen opens the artifact from this query on both hosts
+    // (`screens/canvas.test.tsx`), so the link hands it nothing else.
+    await waitFor(() => expect(screen.getByTestId('artifact-link-route'))
+      .toHaveTextContent(`/canvases/${canvasId}?artifact=${artifactId}`));
+    expect(screen.getByTestId('artifact-link-state')).toHaveTextContent('none');
+    expect(lastDeepLinkFailure()).toBeNull();
   });
 
   it('activates an organization that is not the active one, even when its credential is stored', async () => {
