@@ -6748,6 +6748,13 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .automation-header-details { display: flex; flex-direction: column; gap: 24px; }
 .sidekick-profile-section { border-top: 1px solid var(--av-sys-color-border-subtle); padding-top: 20px; min-width: 0; }
 .sidekick-profile-section h2 { margin: 0 0 12px; font-size: 13px; font-weight: 500; color: var(--av-sys-color-text-muted); }
+/* Design §4's details blocks: a muted heading with an optional count at its end, then rows each led by a mark. */
+.sidekick-profile-heading { display: flex; justify-content: space-between; gap: 12px; }
+.sidekick-profile-rows { display: flex; flex-direction: column; gap: 10px; font-size: 14px; line-height: 1.4; list-style: none; margin: 0; padding: 0; }
+.sidekick-profile-rows li { align-items: flex-start; display: flex; gap: 10px; min-width: 0; }
+.sidekick-profile-rows svg { color: var(--av-sys-color-text-muted); flex: none; margin-top: 2px; }
+.sidekick-profile-rows span { min-width: 0; overflow-wrap: anywhere; }
+.sidekick-profile-empty { color: var(--av-sys-color-text-muted); font-size: 14px; margin: 0; }
 .automation-header-email { display: flex; align-items: flex-start; gap: 8px; color: var(--av-sys-color-text-subtle); font-size: 13px; line-height: 1.5; }
 .automation-header-email svg { flex-shrink: 0; margin-top: 3px; }
 .automation-header-email span { min-width: 0; overflow-wrap: anywhere; }
