@@ -7,7 +7,7 @@ onboarding. Sign-in, which also claims anything shared with the person's
 address, and canonical conversation links activate the workspace and mount the shell. Local API and
 Chrome journeys cover guest entry, feed, upload/reload, multiple conversations,
 promotion and membership removal. Production mail delivery and deployed stateful
-artifact serving remain release checks; see the guest-sharing completion audit.
+artifact serving remain release checks.
 
 ## Where the code lives
 
@@ -37,15 +37,11 @@ shows a loading state before offering sign-in.
 
 ## How it works
 
-Conversation archive state is part of the shared-navigation response.
-The selected feed opens immediately while navigation loads; it has no separate
-lifecycle preflight. Archive and restore refresh that same directory query.
-
 Vite builds the client and content-addressed assets. The Worker reads the built
 HTML through the assets binding unchanged; React mounts the collaboration SPA in
 the browser. Initial HTML contains no user or scope data. Rendering a generic
 sign-in form on every server request added a second rendering path without
-providing authenticated content, so the lite client uses a static shell. The content policy allows same-origin
+providing authenticated content, so the client uses a static shell. The content policy allows same-origin
 requests and local image/media blobs so authenticated attachment bytes can render;
 this does not allow blob scripts or frames. Styles permit inline CSS because
 shared dialogs inject scroll-lock rules and components use dynamic styles, as
@@ -216,7 +212,7 @@ The shell reuses the desktop renderer rather than forking it. It builds an
 `AppSessionValue` over the cookie session and installs it with
 `AppSessionValueProvider`, then mounts the desktop's `AccountOnboardingGate`
 and `WorkspaceApp`: the workspace socket provider, the sidebar, the Canvases and Sidekicks
-screens, the details rail and the Settings route. The value carries
+screens, the right panel and the Settings route. The value carries
 `host: "browser"`. Account onboarding is identity-scoped, so it goes through the
 `_` workspace of the cookie adapter. Anything only the Mac app can do (accepting
 a workspace invitation from the desktop flow, desktop sign-in) rejects with
@@ -360,9 +356,7 @@ capability is required.
 The conversation header also opens the selected conversation's participant controls and
 lists its attached resources. Resource selection uses the shared preview/lightbox
 and authenticated byte endpoint. The header's resource opener is bound to the
-selected conversation; the desktop parent sidebar retains a separately bound
-parent-resource opener. A child-only browser view therefore does not require
-Main's participant list or resource inventory to expose these controls.
+selected conversation.
 
 ### Shared site resources
 
@@ -421,7 +415,7 @@ cookie session. Legacy unaddressed links restore the root workspace picker.
 
 The entry scrolls independently of the shared application's fixed viewport.
 Its screens draw the desktop's sign-in card and the shared `RallyMark`,
-`Button`, `ConnectorMark` and `InlineError`. A sign-in or picker change belongs
+`Button` and `ConnectorMark`; failures use the shared error popup. A sign-in or picker change belongs
 in `@rally/ui`'s `app.css` so both hosts move together; the browser's
 `styles.css` keeps only what a web page adds.
 Every wait from page load to the shell draws `BrowserBoot`. A signed-in link
@@ -625,9 +619,7 @@ directory answer a guest while the rest of `/workspace` stays refused.
 
 The browser shell draws the desktop's Canvas and Sidekick screens, so a
 Canvas's rename, Share dialog and title menu are the desktop's
-([`canvases.md`](canvases.md#in-the-client)); the Thread header's rename,
-archive and restore, and the Thread and Breakout right-click sharing menus,
-went with Threads.
+([`canvases.md`](canvases.md#in-the-client)).
 
 Equivalent session refreshes update the stable RallyApi with `setSession`; they
 must not close a healthy socket or reject pending command receipts. Identity,
