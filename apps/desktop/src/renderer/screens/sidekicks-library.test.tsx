@@ -65,7 +65,7 @@ describe('the Sidekicks home', () => {
     socket.mounted = true;
     const client = new QueryClient();
     applyVersionedSidebarList(client, 'automations', 1, [
-      { id: 'triage', name: 'Incident triage', description: 'Watches alerts.', scope: 'you', audience: 'people', status: 'active', needsInput: true, updatedAt: '2026-11-07T09:00:00.000Z' },
+      { id: 'triage', name: 'Incident triage', description: 'Watches alerts.', scope: 'you', audience: 'people', status: 'active', needsInput: true, triggerKinds: ['manual', 'external_event'], updatedAt: '2026-11-07T09:00:00.000Z' },
       { id: 'changelog', name: 'Weekly changelog', description: 'Every Friday.', scope: 'workspace', audience: 'workspace', status: 'active', runState: 'working', nextRunAt: '2099-11-13T22:00:00.000Z', updatedAt: '2026-11-07T09:00:00.000Z' },
       { id: 'revenue', name: 'Revenue analyst', description: 'Keeps revenue current.', scope: 'you', audience: 'personal', status: 'paused', updatedAt: '2026-11-07T09:00:00.000Z' },
     ] satisfies AutomationSummary[]);
@@ -74,6 +74,8 @@ describe('the Sidekicks home', () => {
     const triage = (await screen.findByRole('link', { name: 'Incident triage' })).closest('li')!;
     expect(within(triage).getByText('Needs input')).toBeInTheDocument();
     expect(within(triage).getByText('Named people')).toBeInTheDocument();
+    // What wakes it, the alert ahead of a request.
+    expect(within(triage).getByText('Next').nextElementSibling).toHaveTextContent('On alert');
     const changelog = screen.getByRole('link', { name: 'Weekly changelog' }).closest('li')!;
     expect(within(changelog).getByText('Organization')).toBeInTheDocument();
     expect(within(changelog).getByText('Working')).toBeInTheDocument();

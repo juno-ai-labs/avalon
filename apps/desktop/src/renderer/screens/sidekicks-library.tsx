@@ -10,7 +10,7 @@ import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
-import { formatNextRun, sidekickStatus, type SidekickStatus } from '../lib/sidekick-status';
+import { sidekickNext, sidekickStatus, type SidekickStatus } from '../lib/sidekick-status';
 import type { AutomationSummary } from '../lib/types';
 
 type SidekickFilter = 'all' | 'you' | 'workspace' | 'paused';
@@ -102,7 +102,7 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
         <dl className="sidekick-list-facts">
           <div><dt>Status</dt><dd><StatusPill item={item} /></dd></div>
           <div><dt>Shared with</dt><dd>{sharedWithLabel(item)}</dd></div>
-          <div><dt>Next</dt><dd>{item.status === 'active' && item.nextRunAt ? formatNextRun(item.nextRunAt) : '—'}</dd></div>
+          <div><dt>Next</dt><dd>{sidekickNext(item)}</dd></div>
         </dl>
         <ChevronRight className="sidekick-list-chevron" aria-hidden="true" size={18} />
       </li>)}</ul>}
