@@ -70,8 +70,7 @@ each one's Activity is sent again and the row reads as settled and seen. An
 approval also adds the requester to `canvas_participants` with source
 `request`, moves a Canvas open to its creator alone to `participants`, and
 writes the requester's `access_granted` intent and Activity row naming the
-decider, linking to the Canvas. A denial tells the requester nothing (the
-Thread-era rule); a new request after a denial is a new row.
+decider, linking to the Canvas. A denial tells the requester nothing; a new request after a denial is a new row.
 
 ### Let in another way
 
@@ -123,7 +122,7 @@ from the same write.
 ## Failure modes and limits
 
 - **No cap on requests.** A member may ask again after each denial, and each
-  new request tells every decider. The Thread-era access-request limits
+  new request tells every decider. The earlier access-request limits
   (`git show 3df4150^:apps/api/src/services/access-request-limits.ts`) bounded
   anonymous email sign-ups by IP and mail budget, which this is not; a cap on
   requests per person would be a number for the team to set

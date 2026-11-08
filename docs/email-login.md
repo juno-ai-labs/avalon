@@ -26,7 +26,7 @@ it; POST `/auth/email/redeem` takes the proof and a caller-generated redemption 
 
 A start may carry `returnPath`, the `/app/` path the browser was on. The link
 then opens that path instead of `/login/email`, with the same fragment, so a
-person who signs in from a shared Channel, Breakout, Space or Sidekick link
+person who signs in from a shared Canvas or Sidekick link
 lands back on it after signing in. `browserReturnUrl` keeps the path on the
 browser origin and drops any query or fragment; any other path falls back to
 `/login/email`. The browser client reads the proof on either path and takes the
@@ -57,7 +57,7 @@ member-only discovery and setup routes remain unavailable to guests; shared
 conversation mutations use the existing exact-scope authority.
 Registering the browser session claims any [scoped invitation](scope-invitations.md#claiming)
 waiting for the verified address; the share and its grant receipts live in the
-Channel's owner, independently of email sign-in challenge consumption.
+Canvas's parent in WorkspaceDO, independently of email sign-in challenge consumption.
 
 Local setup copies `EMAIL_LOGIN_POLICY_JSON` and `BROWSER_APP_ORIGIN` from
 `.env.local` to the configured deployment's Worker variables through
