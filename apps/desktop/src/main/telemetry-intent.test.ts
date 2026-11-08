@@ -22,6 +22,15 @@ describe('parseTelemetryProductIntent', () => {
     expect(parseTelemetryProductIntent({ ...socketIntent })).toEqual(socketIntent);
   });
 
+  it("admits a copied assistant reply, which a turn id names rather than a UUID", () => {
+    const intent = {
+      kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
+      resourceId: 'workstream:018f22f2-4c22-7abc-8def-0123456789ab:substream:0:loop:turn:3',
+      workstreamId: '018f22f2-4c22-7abc-8def-0123456789ab',
+    };
+    expect(parseTelemetryProductIntent(intent)).toEqual(intent);
+  });
+
   it('admits desktop action phases with only correlation and timing fields', () => {
     const intent = {
       kind: 'desktop_action_phase', actionId: '018f22f2-4c22-7abc-8def-0123456789ab',

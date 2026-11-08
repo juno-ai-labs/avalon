@@ -433,6 +433,25 @@ describe("telemetry registry", () => {
     }).success).toBe(false);
   });
 
+  it("names a copied assistant reply by its turn id, and nothing else by a non-UUID", () => {
+    const copied = (resourceType: string, resourceId: string) => TelemetryEnvelopeSchema.safeParse({
+      ...envelope("content_copied", {
+        contentType: "message_response",
+        resourceType,
+        resourceId,
+        workstreamId: "00000000-0000-4000-8000-000000000101",
+      }),
+      source: "desktop-renderer",
+      identityScope: "workspace-user",
+    }).success;
+    const turn = "workstream:00000000-0000-4000-8000-000000000101:substream:0:loop:turn:7";
+    expect(copied("message", turn)).toBe(true);
+    expect(copied("message", "workstream:00000000-0000-4000-8000-000000000101:substream:00000000-0000-4000-8000-000000000105:loop:turn:12")).toBe(true);
+    expect(copied("workstream", turn)).toBe(false);
+    expect(copied("message", "workstream:00000000-0000-4000-8000-000000000101:substream:0:loop:turn:7 the reply text")).toBe(false);
+    expect(copied("message", "the reply text")).toBe(false);
+  });
+
   it("rejects copied content and tool arguments while retaining opaque resource correlations", () => {
     expect(TelemetryEnvelopeSchema.safeParse({
       ...envelope("content_copied", {

@@ -721,6 +721,29 @@ describe('MessageBlock markdown', () => {
     });
   });
 
+  it("names a copied assistant reply by its turn, not by its rendered block", async () => {
+    copyText.mockReset().mockResolvedValue(undefined);
+    reportTelemetryProductIntent.mockReset().mockResolvedValue(undefined);
+    const turn = 'workstream:00000000-0000-4000-8000-000000000302:substream:0:loop:turn:4';
+    const message: Message = {
+      ...baseMessage,
+      id: `${turn}:text:0`,
+      transcriptTurnId: turn,
+      workstreamId: '00000000-0000-4000-8000-000000000302',
+      authorType: 'agent',
+      author: undefined,
+      text: 'The bounded response.',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy response' }));
+
+    await waitFor(() => expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
+      resourceId: turn, workstreamId: message.workstreamId,
+    }));
+  });
+
   it('renders person links as non-navigating chips resolved from mention metadata', () => {
     const personId = '00000000-0000-7000-8000-000000000042';
     const message: Message = {
