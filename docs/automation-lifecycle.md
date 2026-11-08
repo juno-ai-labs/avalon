@@ -1066,7 +1066,9 @@ A Sidekick's row says where it stands from `AutomationSummary`
 newest waiting run's `pendingQuestion` as the sidebar row's second line), **Working** while its
 newest run is live (`runState`), **Paused** in amber, **Draft**, or when it
 next runs ("Runs Friday 2:00 PM", the weekday within the coming week and the
-date beyond it), else when it last ran. On the home the state is the design's
+date beyond it, in the summary's `scheduleTimeZone` when the server names it,
+so the row, the home's Next and the details' "Every Friday at 2:00 PM" agree
+on any machine; in the machine's zone otherwise), else when it last ran. On the home the state is the design's
 pill (green Active and Working, amber Paused, dashed Draft) with a red **Needs
 input** badge beside the name, **Next** is what wakes it (`triggerKinds`), in
 the precedence "On alert", "On email", a schedule's next run, "On request" (the
@@ -1938,7 +1940,10 @@ reply, typed in the shared composer, starts a new run; the chosen answer was
 a slightly darker grey than the others (round 2, R2-14); the details' pills
 were 9 and 10.5px against the design's 13, a draft's ⋯ stood alone under 90px
 of empty space, "0 steps" read as noise, the same trigger was "Manual" in one
-place and "On request" in another (R2-9 to R2-12); and the run view's
+place and "On request" in another (R2-9 to R2-12); the sidebar and the home
+formatted `nextRunAt` in the machine's zone while the details' summary used the
+schedule's, so a Mac in UTC read "Fri 10:00 PM" beside "Every Friday at 2:00
+PM" (R2-7); and the run view's
 "Run" pill floated mid-header away from its Sidekick's (R2-15); a Sidekick that uses
 nothing could not be told from one whose block was hidden; and the plan's
 section 9 had recorded that "A 'Working' state on the Sidekicks home needs a

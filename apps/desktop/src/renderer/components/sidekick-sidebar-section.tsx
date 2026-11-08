@@ -39,7 +39,7 @@ function sidekickRowState(row: AutomationSummary): React.ReactNode {
     case 'paused': return <span className="sidekick-row-paused">Paused</span>;
     case 'draft': return 'Draft';
     case 'active':
-      if (row.nextRunAt) return `Runs ${formatNextRun(row.nextRunAt, 'long')}`;
+      if (row.nextRunAt) return `Runs ${formatNextRun(row.nextRunAt, 'long', undefined, row.scheduleTimeZone)}`;
       if (row.lastRunAt) return <>Last run <RelativeTime value={row.lastRunAt} /></>;
       return 'Active';
   }
