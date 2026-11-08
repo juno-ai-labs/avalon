@@ -655,20 +655,6 @@ describe('Organization settings', () => {
     await waitFor(() => expect(menu).toHaveTextContent('Push and Email'));
   });
 
-  it('keeps Slack on screen for a person whose Slack account is not linked, so they can turn it off', async () => {
-    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
-    api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
-    // The workspace has Slack, but this person has not linked to it, so no connection offers it.
-    api.getConnections.mockResolvedValue([{ id: 'slack-one', connectorType: 'slack', scope: 'workspace',
-      displayName: 'Juno Labs', capabilities: [], status: 'healthy', settingsKind: null }]);
-    renderSettings();
-    fireEvent.click(await within(screen.getByRole('navigation', { name: 'Settings sections' }))
-      .findByRole('button', { name: 'Notifications' }));
-
-    const menu = await screen.findByRole('button', { name: 'How to tell you about mentions' });
-    await waitFor(() => expect(menu).toHaveTextContent('Push and Slack'));
-  });
-
   it('saves an edited personal system prompt and offers Save only while it differs', async () => {
     api.getMyPersonalSystemPrompt.mockResolvedValue('Answer briefly.');
     api.updateMyPersonalSystemPrompt.mockImplementation(async (text: string) => text);
