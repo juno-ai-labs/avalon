@@ -1837,7 +1837,7 @@ in `agent-loop-do.ts`; `desktopAction` in `runtime/local-authorities.ts`; the
 browser tools in `services/desktop-actions/browser-plugin.ts`; and the desktop
 executor, page-script wrapper, store and outline in
 `apps/desktop/src/common/desktop-actions/`, which the equally unreached browser
-script runtime drives ([browser script runtime](browser-script-runtime.md)).
+script runtime drives ([its retirement record](embedded-browser.md#2026-11-08--retirement-record-browser-script-runtime)).
 A feature that revives it inherits four decisions from its changelog: only the
 conversation's creator answers unless the feature states whose desktop may act;
 an action is recorded before it is published and answered at most once, its
