@@ -30,13 +30,18 @@ vi.mock('../lib/workspace-socket', async (importOriginal) => ({
 }));
 // The conversation beside the profile is its own surface with its own sockets,
 // and none of it is what this file is about.
-vi.mock('./conversation-surface', () => ({ ConversationSurface: ({ messageIntent, composerMenuActions }: {
+const surfaceCancels = vi.hoisted(() => [] as (((() => void) | undefined))[]);
+vi.mock('./conversation-surface', () => ({ ConversationSurface: ({ messageIntent, composerMenuActions, composerNotice, onComposerCancel }: {
   messageIntent?: string;
   composerMenuActions?: ReadonlyArray<{ label: string; checked?: boolean; onSelect: () => void }>;
+  composerNotice?: React.ReactNode;
+  onComposerCancel?: () => void;
 }) => {
   surfaceIntents.push(messageIntent);
   surfaceMenus.push(composerMenuActions);
-  return <div />;
+  surfaceCancels.push(onComposerCancel);
+  // The notice is the host's own markup, drawn where the composer would be.
+  return <div>{composerNotice}</div>;
 } }));
 
 const SIDEKICK_ID = 'sidekick-1';
@@ -98,6 +103,7 @@ beforeEach(() => {
   viewer.session = undefined;
   surfaceIntents.length = 0;
   surfaceMenus.length = 0;
+  surfaceCancels.length = 0;
   window.location.hash = '';
   socket.mounted = false;
 });
@@ -135,6 +141,22 @@ describe("The Sidekick's conversation composer", () => {
     expect(screen.getByText('Run')).toBeInTheDocument();
     fireEvent.click(back);
     expect(await screen.findByRole('button', { name: 'Sidekick menu: Weekly changelog' })).toBeInTheDocument();
+  });
+
+  it('leaves Edit Sidekick from the chip at the composer, and on Escape', async () => {
+    await open('user-1', 'member');
+    act(() => editAction()!.onSelect());
+    await waitFor(() => expect(surfaceIntents.at(-1)).toBe('edit_sidekick'));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop editing this Sidekick' }));
+    await waitFor(() => expect(surfaceIntents.at(-1)).toBeUndefined());
+    expect(screen.queryByText('Editing this Sidekick')).toBeNull();
+
+    act(() => editAction()!.onSelect());
+    await waitFor(() => expect(surfaceIntents.at(-1)).toBe('edit_sidekick'));
+    act(() => surfaceCancels.at(-1)!());
+    await waitFor(() => expect(surfaceIntents.at(-1)).toBeUndefined());
+    // Off, the composer has no mode to leave.
+    expect(surfaceCancels.at(-1)).toBeUndefined();
   });
 
   it('names the window after the open Sidekick', async () => {
