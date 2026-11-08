@@ -558,7 +558,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   // ---------------------------------------------------------------------------
 
   private accessSubject(row: CanvasRow): CanvasAccessSubject {
+    const sidekick = row.writer_sidekick_id ? writerSidekick(this.sql, row.writer_sidekick_id) : null;
     return { canvasId: this.canvasId, workspaceId: row.workspace_id, title: row.title, creatorUserId: row.created_by_user_id,
+      writerManagerUserIds: sidekick ? [sidekick.author_user_id, ...(sidekick.run_as_user_id ? [sidekick.run_as_user_id] : [])] : [],
       generation: row.authority_generation };
   }
 

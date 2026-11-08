@@ -40,21 +40,24 @@ again, so asking twice tells nobody twice. A new request is a row in
 `canvas_access_requests` with the requester's name taken now, and one
 `access_request` intent and Activity row for each **decider** who is told
 (`recordParentNotice`), whose pushes are enqueued. The message is trimmed and
-stored cut to the push's preview length (`PUSH_BODY_PREVIEW_CHARACTERS`), the
-one number the row needs and the one the push and the preview already use;
+bounded by the contract at the push's preview length
+(`PUSH_BODY_PREVIEW_CHARACTERS`), the one number the push and the preview
+already use, so a longer one is refused as `canvas_access_request:message:…`;
 an empty message is none.
 
 ### Who is told, and who decides
 
 The people told are those the 2026-11-07 decision lets manage a Canvas's
-participants: its creator and the Organization's active owners and
-administrators, never the requester. Each one's relationship is read into the
-object as they are chosen, because their Activity lists a Canvas they open by
-role from the relationship the object keeps. Anyone `canvasManages` admits may
-decide, which also includes a writer Sidekick's managers; they are not told.
+participants: its creator, the Organization's active owners and
+administrators, and, for a Canvas a Sidekick writes, that Sidekick's managers
+(its author and the person it runs as), never the requester. Each one's
+relationship is read into the object as they are chosen, because their
+Activity lists a Canvas they open by role from the relationship the object
+keeps. Anyone `canvasManages` admits may decide: the same people.
 Anyone else who may open the Canvas is refused
 `403 canvas_access_decision_not_manager`, and anyone who may not is told the
-Canvas does not exist.
+Canvas does not exist. A malformed person id in the decision route is refused
+under its own label, `canvas_access_requester:userId:<issue>`.
 
 ### Deciding
 
@@ -89,9 +92,14 @@ merge.]
 - **At most one waiting request per person per Canvas.** The partial unique
   index is the rule, so two asks racing each other leave one row, and deciders
   are told once. Guard: the first case's second ask; migration 151's proof.
-- **Every way in settles through `settleCanvasAccessRequest`.** A second path
-  that seated a requester without it would leave deciders' rows waiting on a
-  request already met. Guard: the Share and Organization-wide case.
+- **Every way in that this module or the audience writes settles through
+  `settleCanvasAccessRequest`**: an approval, Share naming the person, and the
+  Canvas opening to the Organization. A second such path that seated a
+  requester without it would leave deciders' rows waiting on a request
+  already met. Admission through a writer Sidekick's audience (the person
+  added to the Sidekick) does not settle a request: the request stays pending,
+  and a decision on it seats them as `request` anyway. Guard: the Share and
+  Organization-wide case.
 - **A settled request's rows read as seen for every decider.** The rows are
   the actions; leaving one unsettled would offer an Approve that is refused.
   Guard: the first case, proved to fail with the settled clause of
@@ -122,13 +130,14 @@ from the same write.
   ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)),
   and none is written.
 - **Names are snapshots.** The requester's and decider's names are taken when
-  each acts; a later rename does not change a row.
+  each acts, cut where a mention's author name is (300); a later rename does
+  not change a row.
 - **A decider removed from the Organization** keeps their row stored; it
   stops listing once they cannot open the Canvas.
 - **A requester removed before a decision** can still be approved and seated;
   they open nothing until they are a member again.
-- **A writer Sidekick's managers decide but are not told**; they see waiting
-  requests in the Share panel.
+- **Admission through a writer Sidekick's audience leaves a request
+  pending**; a decider still sees it and may settle it.
 
 ## Testing
 
@@ -165,7 +174,8 @@ proves migration 151 over populated participants.
 **What changed:** Access requests return for Canvases: the access read, the
 request and the decision routes; `canvas_access_requests` and the `request`
 participant source (WorkspaceDO migration 151); an `access_request` intent and
-Activity row per decider, settled for all of them by one decision; an
+Activity row per decider (the creator, the Organization's administrators and
+a writer Sidekick's managers), settled for all of them by one decision; an
 `access_granted` intent and row for the requester; and a request settling when
 Share adds the person or the Canvas opens to the Organization. [Client half:
 folded in at merge.]
