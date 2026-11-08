@@ -19,10 +19,11 @@ function subscribeAnswer(): Record<string, unknown> {
     type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000017', waterline: 4,
     occurredAt: '2026-11-07T09:00:00.000Z', topics: [], reason: 'initial',
     sidebar: {
-      workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
+      workstreams: { directoryWaterline: 0, nextCursor: null, stateVersions: [], items: [] },
       automations: { waterline: 3, items: [SIDEKICK] },
-      notes: { waterline: 1, items: [], nextCursor: null },
+      notes: { waterline: 0, items: [], nextCursor: null },
       canvases: { waterline: 5, items: [CANVAS] },
+      activity: { waterline: 0, unseenCount: 0, items: [] },
     },
   };
 }
