@@ -151,6 +151,16 @@ A mention's ordinal is its own message, which nobody can have read before it
 existed. `unseenCount` counts every row the same expression calls unseen, not
 only the page's.
 
+The same filter and seen rule answer `WorkspaceDO.attention()` (`activityCounts`
+over `listedSql`, the CTE `activityPage` reads): `readerAttentionCount` is the
+person's unseen Activity in that Organization, `waitingForYou` the unseen
+`needs_input` rows among it, `waitingReason` `needs_input` while one waits,
+else `unseen` while anything is unseen, and `hasUnreadActivity` whether
+anything is. That is the account menu's number for an Organization in the
+background ([`multiple-workspaces.md`](multiple-workspaces.md#the-account-menus-directory))
+and every push's badge ([`push-notifications.md`](push-notifications.md)),
+so the three agree with the rail.
+
 One read cursor per conversation already exists and drives unread everywhere.
 A second, per-item mark would let the feed and the Canvas row disagree — a
 Canvas read but its mention still unseen, or the reverse. The Thread-era feed
@@ -269,9 +279,10 @@ pick leaves it. Entering the section opens its top row in the pane, the row
 drawn open and its conversation reporting the read as a click would (pushed
 from the rail, replacing a Canvases-home landing at a launch with Activity stored;
 [`desktop-shell.md`](desktop-shell.md) has the navigation rule); an empty
-feed opens nothing, and nothing the feed does afterwards moves the pane. The rail badge is `unseenCount` ("3 unseen"). The dock
-badge and the menu bar stay Needs attention only
-([`menu-bar.md`](menu-bar.md)); Activity does not join them.
+feed opens nothing, and nothing the feed does afterwards moves the pane. The rail badge is `unseenCount` ("3 unseen"). A push
+sets the app icon's badge to the same count (`attention()` above); while Rally
+runs, the dock badge and the menu bar are the client's own count
+([`menu-bar.md`](menu-bar.md), [`push-notifications.md`](push-notifications.md)).
 
 ## Invariants
 
@@ -419,6 +430,18 @@ desktop parses Activity yet.
 
 **What a future change must respect:** the exemption is this kind alone, and
 its row must keep carrying nothing of the Canvas but its id.
+
+**Also this round — the Organization's attention is its unseen Activity.**
+`WorkspaceDO.attention()` answered zeros since the Thread directory it
+summarized was retired; it now counts the person's unseen Activity through
+`activityCounts`, the page's own filter and seen rule (`listedSql`, shared
+with `activityPage`), with the unseen `needs_input` rows as `waitingForYou`.
+Why: the owner's "fix this" for the account menu's other-Organization
+counts reading zero, and for a push clearing the dock badge (its `badge` was
+that zero). Rejected: a second count query beside the page's, which could
+drift from the rail. A future change to what lists or what is seen changes
+`listedSql` or `ACTIVITY_SEEN_SQL` once, for the page, the counts and the
+badge together.
 
 ### 2026-11-08 — A needs-input row opens the run that asked, clears when it is answered, rows take the shared layout, and replies return
 

@@ -143,14 +143,14 @@ revocation.
 
 A background row's trailing indicator is a count badge, the sidebar's unread
 red with white digits (`ActivityCountBadge` in `@rally/ui`), showing the
-attention read's `readerAttentionCount`: the conversations unread, unseen or
-mentioning the person. It is the same number as that Organization's attention
-menu and dock badge, it reads 99+ past two digits, and a zero shows nothing.
-An agent waiting on input (`needs_input`) with nothing unread counts zero, as in
-the attention menu.
-When some of those conversations are waiting on the person, the strongest
-reason, in the order WorkspaceDO ranks them, is the badge's tooltip and part of
-the row's accessible name. The browser's organization list shows the same
+attention read's `readerAttentionCount`: the person's unseen Activity in that
+Organization, by the rule the Activity rail's badge counts
+([`activity.md`](activity.md)). It is the number a push from that Organization
+sets on the app icon, it reads 99+ past two digits, and a zero shows nothing.
+A run waiting on the person is an unseen `needs_input` row, so it counts, and
+`waitingForYou` counts those alone. When one waits, the reason
+(`waitingReason: "needs_input"`, else `unseen`) is the badge's tooltip and part
+of the row's accessible name. The browser's organization list shows the same
 badge, read through `GET /browser/workspaces/attention` (below).
 
 ### Switching
@@ -234,8 +234,8 @@ The renderer mounts one WorkspaceDO socket for the active workspace. Background
 workspaces get no sockets and expose no items across the boundary. Their stored
 credential may call `GET /workspace/attention`, which returns an addressed
 count, its highest-priority reason, an unread-activity boolean, and
-`readerAttentionCount` (the sidebar attention menu's count; Apple push uses it
-as `aps.badge`). Focus and account-menu opening refresh the projection. The fixed periodic cadence and any
+`readerAttentionCount` (the unseen Activity count; a push uses it as its
+badge). Focus and account-menu opening refresh the projection. The fixed periodic cadence and any
 device workspace cap remain `LIMIT UNSET`; do not invent either number. There is
 currently no periodic refresh: focus and menu opening are the only refresh
 triggers until the team chooses a cadence.
@@ -475,6 +475,25 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-11-08 — The account menu counts each Organization's unseen Activity
+
+**What changed:** The attention read behind a background Organization's row
+(`GET /workspace/attention`, `/browser/workspaces/attention`) answers the
+person's unseen Activity there as `readerAttentionCount`, and the unseen runs
+waiting on them as `waitingForYou`, where it answered zeros.
+
+**Why:** The owner's answer of 2026-11-08 ("fix this") to the account menu's
+other-Organization counts reading zero: `attention()` summarized the Thread
+directory, which nothing writes since Threads were retired, and nothing
+replaced it.
+
+**Considered and rejected:** Summing each Canvas's and Sidekick's unread
+messages: a different number from the Activity rail the person sees on
+switching, and a second rule to keep in step.
+
+**What a future change must respect:** the count is `activityCounts`, the
+Activity page's own filter and seen rule.
 
 ### 2026-10-21 — Initial members through shared Organization creation
 

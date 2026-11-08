@@ -711,7 +711,7 @@ import {
 } from "./workspace-sidekick-conversation-storage";
 import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-batch";
 import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
-import { activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS, WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
+import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS, WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
 import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, CANVAS_TITLE_STATUS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
 import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
@@ -9567,24 +9567,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Member attention for the Organization badge and the push badge count.
-   *
-   * It summarized the Thread directory (`channels`, `channel_viewers`), which
-   * no writer has reached since the Thread retirement (plan step C-7): what it
-   * counted was frozen state from conversations nobody can open, so a retired
-   * Thread's unread would hold the badge up forever. A Canvas's and a
-   * Sidekick's unread state is read on their own sidebar rows and is not
-   * summarized here yet, so the answer is "nothing waiting".
+   * Member attention for the account menu's other Organizations and the push
+   * badge: this person's unseen Activity, by the page's own filter and seen
+   * rule (`activityCounts`), so the number is the one their Activity rail
+   * shows; `waitingForYou` is the unseen runs waiting on them.
    */
   async attention(input: WorkspaceAttentionRequest): Promise<WorkspaceAttentionResult> {
     await this.initialized;
     const request = WorkspaceAttentionRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
+    const member = request.accessClass === "member";
+    const counts = activityCounts(this.state.storage.sql, { userId: request.userId, workspaceId: request.workspaceId, member },
+      SIDEBAR_SIDEKICK_LISTED_SQL,
+      (sidekickId) => writerSidekickAdmits(this.state.storage.sql, sidekickId, { userId: request.userId, actorRole: member ? "member" : null }));
     return WorkspaceAttentionSchema.parse({
-      waitingForYou: 0,
-      waitingReason: null,
-      hasUnreadActivity: false,
-      readerAttentionCount: 0,
+      waitingForYou: counts.unseenNeedsInput,
+      waitingReason: counts.unseenNeedsInput > 0 ? "needs_input" : counts.unseen > 0 ? "unseen" : null,
+      hasUnreadActivity: counts.unseen > 0,
+      readerAttentionCount: counts.unseen,
     });
   }
 
