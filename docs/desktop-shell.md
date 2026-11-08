@@ -83,8 +83,10 @@ the default the sidebar had before. It holds two columns:
   first route that belongs to a section, so a launch's redirect from `/` to
   `/canvases` is the landing and not a navigation; landing on a section home
   keeps the stored choice, and only a later navigation to a home moves it.
-  Each section carries a red count (`RailBadge`; nothing at zero,
-  `99+` past two digits): **Canvases**, each Canvas holding something this
+  Each section carries a red count (`RailBadge`, 15px in the danger red
+  design.html draws; nothing at zero, `99+` past two digits), which the
+  button's accessible name reads after the section ("Canvases, 10 unread"),
+  the badge itself hidden from a screen reader: **Canvases**, each Canvas holding something this
   person has not read; **Sidekicks**, each Sidekick that needs input or holds
   something unread; **Activity**, every item this person has not seen
   (`unseenCount`, "3 unseen"). A section with a count is named section
@@ -94,7 +96,11 @@ the default the sidebar had before. It holds two columns:
   the first two only: Activity is not Needs attention
   ([`menu-bar.md`](menu-bar.md)). The desktop host renders a top spacer for
   macOS window controls and a window-drag region on Windows and Linux. The
-  browser host omits it.
+  browser host omits it and pads the rail by the same clearance, so the first
+  tile and its badge do not touch the tab's edge. Keyboard focus rings the
+  34px tile in its own radius, not the whole button, and the account tile's
+  avatar is the design's 28px. A section home names the window
+  ("Canvases · Rally"), as Settings does ("Settings · Rally").
 - **One list**, titled with the section's name. **Canvases** is a Pinned
   group, then every Canvas by recent activity; its action is **New Canvas**
   (`POST /canvases`, then the new Canvas's route). **Sidekicks** is **Needs
@@ -348,7 +354,13 @@ It does not own:
 sheet returns its bar to the open screen's section (v3-G5): the bar had kept
 naming the last list looked at, "Activity" over the Canvases home.
 `TitlePillHeader` takes `align="start"` for a Canvas's header (v1-F8), and a
-phone's headers drop Back and Forward (v3-G6).
+phone's headers drop Back and Forward (v3-G6). The rail's badge takes the
+design's danger red at 15px and an unread row's time stays muted (v1-F7,
+v4-F6), its buttons are named section first (v1-F14), the browser's rail
+keeps the desktop's top clearance (v4-F9), focus rings the tile (v4-F10,
+v3-G12), the account avatar is 28px (v1-F12), the account menu's Sidekicks
+item wears the rail's single hexagon (v3-G13), and the Canvases home and
+Settings name the window (v4-F24).
 
 **Why:** The PRD makes design.html the authority for every screen, and the
 design inspection (v1-F1, v4-F4) measured a 264px list that cut ordinary

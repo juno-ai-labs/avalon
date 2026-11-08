@@ -115,6 +115,7 @@ import { parseDesktopSettingsSection } from '../common/settings';
 import { WORKSPACE_SYNC_RELAY_IPC_CHANNELS } from '../common/workspace-sync-relay';
 import { parseRouteId } from '../common/route-id';
 import { fontScheme } from '../common/theme-assets';
+import { repaintWindowBackgrounds } from './window-background';
 import {
   defaultThemeChoice,
   parseThemeChoice,
@@ -3966,7 +3967,13 @@ function registerIpc(): void {
     for (const window of [...rallyWindows(),...poppedOutArtifacts.keys()]) {
       if (window.webContents !== event.sender) window.webContents.send('theme:changed', parsed);
     }
+    // The documents repaint themselves; the native backgrounds under them do not.
+    repaintWindowBackgrounds([...rallyWindows(), ...poppedOutArtifacts.keys()], windowThemeChoice, nativeTheme.shouldUseDarkColors);
     await updateStoredApplicationSettings(userDataDirectory(), { themeChoice: parsed });
+  });
+  // Under System the Mac's own change moves the appearance with no choice made here.
+  nativeTheme.on('updated', () => {
+    repaintWindowBackgrounds([...rallyWindows(), ...poppedOutArtifacts.keys()], windowThemeChoice, nativeTheme.shouldUseDarkColors);
   });
   ipcMain.handle('session:get', async (event) => {
     assertTrustedIpcSender(event);
