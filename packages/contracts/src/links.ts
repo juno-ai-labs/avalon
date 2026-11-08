@@ -84,9 +84,10 @@ function messageSearch(target: CanvasLinkTarget): string {
 /**
  * The message a Canvas link's query names: `turn` (a UUID) and `sequence` (a
  * positive integer), exactly those two keys, once each. `{}` for an empty
- * query; null for any other.
+ * query; null for any other. The desktop intent parser reads the same query
+ * through this.
  */
-function parseMessageSearch(search: URLSearchParams): { turnId?: string; sequence?: number } | null {
+export function parseMessageSearch(search: URLSearchParams): { turnId?: string; sequence?: number } | null {
   const keys = [...search.keys()];
   if (keys.length === 0) return {};
   const turnId = search.get("turn");
