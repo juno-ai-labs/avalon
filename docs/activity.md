@@ -217,11 +217,12 @@ them. The menu bar and the dock badge do not read it.
 - **An open that sends no read report** (no message that asks for attention
   is on screen) leaves an add or a run notice unseen; Mark all seen clears it.
   Preferred to the alternative, a row that arrives already seen. The client
-  otherwise reports once on every open, at an unchanged cursor too
-  (`conversation-surfaces.md`), but the conversation's effect outbox drops a
-  `directory_user` effect identical to its last one, so a report that changes
-  nothing in it does not reach `acceptViewerRead`, and a run's row that
-  arrived after the last report stays unseen until the cursor moves.
+  otherwise reports a read on every open, at an unchanged cursor too
+  (`conversation-surfaces.md`). That report reaches `acceptViewerRead`
+  because the `directory_user` effect carries the report's time
+  (`lastReadAt`, the server fix S10, 695611c); before it, the effect outbox
+  dropped an effect identical to its last one, and a run's row that arrived
+  after the last report stayed unseen until the cursor moved.
 - **A mention or an add in a Sidekick run's own conversation** clears only by
   Mark all seen: the shared conversation's cursor does not measure it.
 - **A run that fails at once can arrive already seen.** The requester's own

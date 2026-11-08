@@ -10,6 +10,7 @@ import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import { AvatarStack, Button, EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
 import { canvasDetailQueryKey, canvasRenameRefusal, canvasRenameRequested, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { copyLink } from '../lib/copy-link';
+import { sidebarListApplied } from '../lib/sidebar-list-store';
 import { useDocumentTitle } from '../lib/document-title';
 import { isNotFoundError, useRestoredRouteFallback } from '../lib/landing';
 import { useCollaborationSession } from '../lib/collaboration-session';
@@ -80,14 +81,15 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   // A rename from anywhere reaches this window as the list's push, which
   // carries the row's new title; the detail is not pushed, so the push writes
   // its title through rather than leaving the header on the old one until a
-  // refetch. Only a change does: the device cache's row at mount may be older
-  // than the detail the server just answered.
+  // refetch. Only a change, and only once the socket has applied the list:
+  // the device cache seeds the list too, asynchronously and without the
+  // ledger, and its row may be older than the detail the server just answered.
   const rowTitle = row?.title;
   const seenRowTitle = useRef(rowTitle);
   useEffect(() => {
     if (seenRowTitle.current === rowTitle) return;
     seenRowTitle.current = rowTitle;
-    if (rowTitle === undefined) return;
+    if (rowTitle === undefined || !sidebarListApplied(queryClient, 'canvases')) return;
     queryClient.setQueryData<CanvasDetail>(canvasDetailQueryKey(id), (cached) => cached && cached.title !== rowTitle ? { ...cached, title: rowTitle } : cached);
   }, [id, queryClient, rowTitle]);
   const title = canvas.data?.title ?? row?.title ?? '';
