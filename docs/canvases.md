@@ -400,10 +400,12 @@ the rail's first section and `/canvases` the landing route
   the pane's right edge the face pile of everyone else in it now
   (`workspace_presence`, through the surface's `presentUserIds`), Share, and a
   "⋯" button (`TitlePillMenuAction`). The "⋯" and the pill's menu offer the
-  same Pin, Rename…, Share… and Copy link, and, while the Canvas has an
-  artifact, **Open artifact**, which opens the panel on the newest one beside
-  the Chat, the way back to a panel the person closed; a phone keeps only the
-  pill's. The pill's title is the detail's, and a change to the list row's
+  same Pin, Rename…, Share…, Copy link and Copy Canvas ID (for support, and
+  kept in the offline and refused states, whose header this is), and, while
+  the Canvas has an artifact, **Open artifact**, which opens the panel on the
+  newest one beside the Chat, the way back to a panel the person closed; it
+  replaces the entry as arrival, Rename… and Share… do, so Back leaves the
+  Canvas. A phone keeps only the pill's menu. The pill's title is the detail's, and a change to the list row's
   title (the `workspace_canvas_list` push a rename from anywhere produces) is
   written into the detail's cache entry once the socket has applied the list,
   so the header follows a rename without a refetch. The window is named `<title> · Rally` while it is open
@@ -463,8 +465,10 @@ the rail's first section and `/canvases` the landing route
   addresses typed in the guest section are part of the form, and Save sends
   the audience and then invites them through the conversation share's
   `useScopeInvitations` with a `workstream` target naming the Canvas, without
-  its waiting-shares list, which has no server route. Addresses that do not
-  parse keep the dialog open with the reason beside the field.
+  its waiting-shares list, which has no server route. Only addresses typed
+  while the guest section is open are sent. Addresses that do not parse save
+  nothing: the app's error notice says why, over the dialog, which keeps what
+  was typed.
 - **Pinning** is `POST /canvases/:id/pin`, from the pill's menu, a row's
   context menu, or dragging a row into the section's Pinned group
   (`useRowPinDrop`). A pin lands at the end of the group: the order is
