@@ -29,6 +29,8 @@ import type { ApiError } from "../lib/api-error";
 import { parseRpcInput } from "../lib/rpc-input";
 import { logWarn } from "../observability/logger";
 import { ReceiveChildEffectsRequestSchema, type DirectoryCommonEffect } from "./conversation-parent-object";
+import { addToReplyBatch } from "./conversation-reply-batch";
+import type { ScheduledAlarmStore } from "./scheduled-alarms";
 import { recordPersonNotificationIntent, type PersonNotificationEnvelope } from "./workspace-notification-intent-storage";
 
 /** What one batch of a conversation's effects left for the consumer to do. */
@@ -69,6 +71,8 @@ export interface PriorChildProjection {
 export interface HostedConversationHost {
   env: Env;
   storage: DurableObjectStorage;
+  /** The Organization object's alarm entries; a reply joins its conversation's batch here. */
+  alarms: ScheduledAlarmStore;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /**
    * An Activity row was written for this person, inside the caller's
@@ -300,6 +304,11 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
       }
       if (envelope.effect.kind === "directory_user" && substreamId === "0") {
         this.acceptViewerRead(envelope.effect, envelope.sourceVersion, now);
+      }
+      // A person's reply in the shared conversation joins its batch, which
+      // tells everyone else in it (docs/push-notifications.md).
+      if (envelope.effect.kind === "new_message_notification" && substreamId === "0") {
+        addToReplyBatch(this.host.alarms, { kind: this.parentKind, id: this.parentId }, envelope.effect, now);
       }
       // The Thread host recorded these from a `parent_effect`; a hosted
       // parent records them here, beside the receipt that fences a replay.

@@ -5,7 +5,7 @@ import { PushDeliveryMessageSchema, SidekickRunNotificationSchema, type PushDeli
 import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
-import { WorkspaceNotificationIntentDeliverySchema, type WorkspaceNotificationIntentDelivery } from "../durable-objects/workspace-notification-intent-protocol";
+import { ParentNoticeSchema, WorkspaceNotificationIntentDeliverySchema, type ParentNotice, type WorkspaceNotificationIntentDelivery } from "../durable-objects/workspace-notification-intent-protocol";
 import { WorkspaceDirectoryNotificationStateSchema } from "../durable-objects/workspace-directory-protocol";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { ApiError } from "../lib/api-error";
@@ -62,6 +62,9 @@ async function intentContent(env: Env, workspace: WorkspaceStub, message: PushDe
   if (row.notificationKind === "needs_input" || row.notificationKind === "run_finished") {
     return await runNoticeContent(env, workspace, row);
   }
+  if (row.notificationKind !== "mention" && row.notificationKind !== "participant_added") {
+    return await parentNoticeContent(env, workspace, row);
+  }
   const context = await notificationDeliveryContext(env, row);
   if (context.outcome !== "ready") return context.outcome === "pending" ? { outcome: "pending" } : { outcome: "skipped", reason: context.reason };
   const { effect, childId } = context;
@@ -93,6 +96,25 @@ const RUN_STATE_WORDS: Record<SidekickRunNotification["state"], string> = {
  */
 async function runNoticeContent(env: Env, workspace: WorkspaceStub, row: WorkspaceNotificationIntentDelivery): Promise<PushContent> {
   const notice = SidekickRunNotificationSchema.parse(JSON.parse(row.payloadJson));
+  const refused = await recipientRefused(env, workspace, row);
+  if (refused) return refused;
+  return {
+    outcome: "ready",
+    deliveryKey: row.intentId,
+    kind: row.notificationKind as PushNotificationData["kind"],
+    title: `${notice.sidekickName} ${RUN_STATE_WORDS[notice.state]}`,
+    body: rewriteMessageAsPlainText(notice.reply ?? "", { sources: "none" }),
+    workstreamId: row.workstreamId,
+    substreamId: notice.runId,
+  };
+}
+
+/**
+ * Why a notice about a Canvas or Sidekick is not sent to this person now:
+ * they are no longer an active member, its parent is gone, or it no longer
+ * admits them. Null when it may be sent.
+ */
+async function recipientRefused(env: Env, workspace: WorkspaceStub, row: WorkspaceNotificationIntentDelivery): Promise<PushContent | null> {
   const member = await workspaceRegionalDatabase(env).prepare(
     `SELECT 1 AS active FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
   ).bind(row.workspaceId, row.recipientUserId).first<{ active: number }>();
@@ -101,14 +123,38 @@ async function runNoticeContent(env: Env, workspace: WorkspaceStub, row: Workspa
   const viewer = raw ? WorkspaceDirectoryNotificationStateSchema.parse(raw) : null;
   if (!viewer) return { outcome: "skipped", reason: "notification_parent_missing" };
   if (!viewer.listable) return { outcome: "skipped", reason: "recipient_not_listable" };
+  return null;
+}
+
+/** What a hosted parent's own notice says: its title and body, from what was captured when it was recorded. */
+function parentNoticeWords(notice: ParentNotice): { title: string; body: string } {
+  switch (notice.kind) {
+    case "new_message": return { title: `${notice.authorName} in ${notice.parentTitle}`, body: notice.text };
+    case "artifact_updated": return { title: `${notice.authorName} updated ${notice.artifactTitle} in ${notice.parentTitle}`, body: "" };
+    case "access_request": return { title: `${notice.requesterName} asked to open ${notice.parentTitle}`, body: notice.message ?? "" };
+    case "access_granted": return { title: `${notice.deciderName} let you into ${notice.parentTitle}`, body: "" };
+  }
+}
+
+/**
+ * A reply, a pinned Canvas's new version, an access request or its grant:
+ * checked as a run notice is, and rendered from the notice its parent
+ * captured. A new version opens its Canvas onto that artifact.
+ */
+async function parentNoticeContent(env: Env, workspace: WorkspaceStub, row: WorkspaceNotificationIntentDelivery): Promise<PushContent> {
+  const notice = ParentNoticeSchema.parse(JSON.parse(row.payloadJson));
+  const refused = await recipientRefused(env, workspace, row);
+  if (refused) return refused;
+  const words = parentNoticeWords(notice);
   return {
     outcome: "ready",
     deliveryKey: row.intentId,
-    kind: row.notificationKind,
-    title: `${notice.sidekickName} ${RUN_STATE_WORDS[notice.state]}`,
-    body: rewriteMessageAsPlainText(notice.reply ?? "", { sources: "none" }),
+    kind: notice.kind,
+    title: words.title,
+    body: rewriteMessageAsPlainText(words.body, { sources: "none" }),
     workstreamId: row.workstreamId,
-    substreamId: notice.runId,
+    substreamId: notice.kind === "new_message" ? "0" : null,
+    ...(notice.kind === "artifact_updated" ? { artifactId: notice.resourceId } : {}),
   };
 }
 
@@ -167,7 +213,11 @@ export async function deliverPush(
     workspaceId: id, userId: message.recipientUserId, accessClass: member?.access_class ?? "member",
   }));
   const data = { v: 1 as const, kind: content.kind, region: env.AVALON_REGION, workspaceId: message.workspaceId, url };
-  const collapseId = await pushCollapseId(message.workspaceId, content.kind === "new_message" ? `conversation:${content.workstreamId}:${content.substreamId ?? "0"}` : content.deliveryKey);
+  // A reply replaces the alert before it about the same conversation, and a
+  // pinned Canvas's new version the one before it about that Canvas; every
+  // other kind keeps its own.
+  const collapseId = await pushCollapseId(message.workspaceId, content.kind === "new_message" ? `conversation:${content.workstreamId}:${content.substreamId ?? "0"}`
+    : content.kind === "artifact_updated" ? `artifacts:${content.workstreamId}` : content.deliveryKey);
   const { title, body } = content;
   const payload: PushPayloads = {
     apns: renderPushPayload({ title, body, threadKey: content.workstreamId, badge: attention.readerAttentionCount, data }),
