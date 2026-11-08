@@ -45,6 +45,26 @@ const REPORT_PATH = process.env.AVALON_E2E_REPORT ?? null;
 const OVERSIZE_MESSAGE_CHARACTERS = 100_001;
 
 /** Member-visible states that mean the conversation is no longer working. */
+/**
+ * An RFC 9562 UUIDv7, the API's `uuidV7` (`apps/api/src/lib/uuid-v7.ts`)
+ * for a script that cannot import TypeScript. The lane's ids are v7 because
+ * a command's `operationId` reaches run-outcome and product-usage telemetry,
+ * whose contract requires `UuidV7Schema`; a v4 failed that telemetry on every
+ * lane run, so the lane never exercised it.
+ */
+export function uuidV7(now = Date.now()) {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  let timestamp = BigInt(now);
+  for (let index = 5; index >= 0; index -= 1) {
+    bytes[index] = Number(timestamp & 0xffn);
+    timestamp >>= 8n;
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x70;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export const TERMINAL_STATES = ["completed", "failed", "needs_input", "stopped", "idle"];
 
 /**
@@ -181,7 +201,7 @@ async function main() {
     if (response.status >= 500) serverFailureSeen = true;
     return { status: response.status, body: await response.json().catch(() => null) };
   };
-  const uid = () => crypto.randomUUID();
+  const uid = () => uuidV7();
   const substreamCommand = async (canvasId, command) => {
     const ticket = await api("GET", `/conversations/${canvasId}/substreams/0/socket`);
     if (ticket.status !== 200) return ticket;
