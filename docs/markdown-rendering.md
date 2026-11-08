@@ -969,6 +969,22 @@ restoration are owned by [artifact annotations](artifact-annotations.md).
 
 ## Changelog
 
+### 2026-11-08 — A failed favicon lookup answers a named gateway failure
+
+**What changed:** When neither candidate host resolves, `GET /favicons/:host`
+answers 502 `favicon_unavailable:<reason>` (`faviconFailureReason`): the phase
+of a fetch that did not complete (`branding_fetch_failed`), or a Firecrawl
+failure's kind and status (`firecrawl_http_400`, `firecrawl_network`), never the
+provider's message. It answered 500 `internal_error`.
+
+**Why:** The end-to-end pass found every keystroke of a partial host
+(`en.wikipe`) logged as an unexpected error with no reason, while
+`FirecrawlError` held its kind and status (CLAUDE.md, "Naming a schema
+failure": a generic code on a path that had the reason is a defect).
+
+**Considered and rejected:** A 404 for a Firecrawl 4xx: a 401 or 402 is this
+deployment's key, not the host.
+
 ### 2026-11-07 — The email converter moves here from the retired digests document
 
 **What changed:** `email-markdown.ts` is listed and described here. It was
@@ -986,13 +1002,6 @@ line break in prose but tables stay preformatted, since this renderer has no
 table model (2026-08-30); and every email is drawn light only, because a mail
 client cannot report the reader's appearance and strips `<style>` blocks
 (2026-10-16).
-
-The favicon route answers a provider failure as 502
-`favicon_unavailable:<reason>` where it answered 500 `internal_error`: the
-end-to-end pass found every keystroke of a partial host (`en.wikipe`) logged
-as an unexpected error with no reason, while `FirecrawlError` held its kind
-and status. A 404 for a Firecrawl 4xx was rejected because a 401 or 402 is
-this deployment's key, not the host.
 
 ### 2026-11-02 — Sidekick mention chips
 
