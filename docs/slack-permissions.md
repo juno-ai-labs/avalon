@@ -184,7 +184,7 @@ Event subscriptions are not additional OAuth scopes. The manifest subscribes to:
 | --- | --- |
 | `app_context_changed` | Store the user's bounded active-view entity metadata so the next Agent prompt can understand the channel, thread, canvas, or list the user is viewing. |
 | `app_home_opened` | Publish the linked, unlinked, or administrator App Home view. |
-| `app_mention` | Start or continue a channel task when a user explicitly mentions Rally. |
+| `app_mention` | Continue a Sidekick run when the mention is in a thread its result started; any other mention is answered once that Slack starts no work. |
 | `app_uninstalled` | Mark the workspace installation disconnected and stop routing work to it. |
 | `channel_archive` | Suspend the archived room's binding (`provider_room_archived`); a re-invitation or a mention brings it back. |
 | `channel_created` | Offer bounded channel-creation activity to explicitly configured automations. Rally does not join the channel. |

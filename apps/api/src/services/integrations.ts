@@ -7841,10 +7841,14 @@ export async function reenterInterruptedWriteForRecovery(
     } else {
       const userId = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
       if (!userId) return { outcome: "unknown", reason: "sidekick_delegation_user_required" };
-      const room = input.parentKind !== "automation";
-      plugin = { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: room ? "rally_skill_recommendations" : "rally_sidekicks",
-        shortWireName: room ? "" : "sidekick", description: "Sidekick delegation recovery", preload: false,
-        tools: sidekickDelegationTools(env, input, userId, room) };
+      // The presentation the live loop offered, which is the same for every
+      // user principal whatever the parent (`rally_sidekicks`, unprefixed
+      // names): a Canvas chat's call was recorded under it, so its re-entry
+      // must find the tool by that name. The room presentation this once
+      // rebuilt (`rally_skill_recommendations`) went with Threads.
+      plugin = { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks",
+        shortWireName: "sidekick", description: "Sidekick delegation recovery", preload: false,
+        tools: sidekickDelegationTools(env, input, userId, false) };
     }
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "plugin_unavailable") };

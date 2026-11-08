@@ -896,7 +896,9 @@ failed receipt becomes the corresponding exact tool result; an admitted call is
 terminalized as `not_run`; an executing *read* is failed. An executing **write**
 is not classified from its status: the host re-enters the tool over that same
 receipt, through `reenterInterruptedWriteForRecovery`. Terminal and consent
-recovery build their owning plugin directly. Authored connector writes with
+recovery build their owning plugin directly; consent recovery builds the
+delegation tools as every live loop offers them (`rally_sidekicks`, unprefixed
+canonical names), whatever the conversation's parent. Authored connector writes with
 provider keys reuse ordinary inventory construction and invoke only the owning
 tool; unused plugin clients are disposed without activation. Remote MCP tools
 cannot opt themselves into this recovery contract. A tool that
@@ -1837,6 +1839,28 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-08 — A Canvas chat's interrupted delegation write re-enters under the name it was called by
+
+**What changed:** `reenterInterruptedWriteForRecovery` builds the Sidekick
+delegation plugin as `rally_sidekicks` with unprefixed tool names for every
+parent. It rebuilt a conversation that is not a Sidekick's as the retired
+`rally_skill_recommendations` presentation, whose canonical names carried the
+`sidekick_` prefix themselves.
+
+**Why:** The live loop (`loadHarnessTools`) offers the delegation tools as
+`rally_sidekicks`, unprefixed, to every user principal whatever the parent, so
+a Canvas chat's receipt records `set_delegation`. The re-entry looked for
+`sidekick_set_delegation`, `reenterInterruptedWrite` found no such tool, and an
+interrupted consent change in a Canvas ended `unknown` instead of being asked
+what it did. The room presentation went with Threads (see the body's skill
+recommendations paragraph); this branch was missed then. Found by the
+round-5 review of the Slack App Home change, 2026-11-08.
+
+**Consequences:** `sidekickDelegationTools`'s `room` argument has no
+production caller left; only its own presentation test passes `true`. The
+workers test that recovers a lost consent response in a Canvas now admits the
+receipt under the tool the live loop offers.
 
 ### 2026-11-07 — The prompts speak of Canvases and Sidekicks, a run's result is posted once, and a Sidekick's conversation goes to the wizard only on a manager's marked edit
 

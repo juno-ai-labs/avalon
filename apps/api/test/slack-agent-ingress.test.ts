@@ -364,6 +364,26 @@ describe("Slack Agent durable ingress", () => {
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ jobId: "command:command-body" }));
   });
 
+  it("answers /rally help with what Slack does now, and queues nothing", async () => {
+    const database = new IngressDatabase();
+    const send = vi.fn(async () => undefined);
+    const service = new SlackAgentService(environment(database, send));
+
+    await expect(service.processCommand({
+      team_id: "T1",
+      user_id: "U1",
+      command: "/rally",
+      text: "help",
+      channel_id: "C1",
+      channel_name: "general",
+      trigger_id: "trigger-1",
+    }, "help-body")).resolves.toEqual({
+      response_type: "ephemeral",
+      text: "Rally no longer starts work from Slack. Start a Canvas in Rally, or set up a Sidekick to work from Slack for you. Open Rally's App Home to connect your account, see your Sidekicks and what they are waiting on, and manage notifications.",
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("does not acknowledge an event until its regional queue publish succeeds", async () => {
     const database = new IngressDatabase();
     let releaseQueue!: () => void;

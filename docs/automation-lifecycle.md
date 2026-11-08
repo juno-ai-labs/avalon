@@ -496,7 +496,8 @@ tools are available only in that authoring conversation. The persisted drafting
 plugin id and canonical tool names stay; the model reads the plugin as
 `rally_sidekicks` and its tools under the `sidekick_` prefix in the authoring
 conversation. In any other conversation the same persisted plugin identity is presented as
-`rally_sidekick_delegation` and carries only the delegation tools; nothing
+`rally_sidekicks` too, with the same canonical names and `sidekick_` wire
+prefix, and carries only the delegation tools; nothing
 recommends or attaches a Sidekick to a conversation any more.
 
 `createAutomation` reserves the durable owner before bootstrapping its main
