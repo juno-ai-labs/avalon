@@ -27,7 +27,7 @@ embedded in the renderer or a source of product truth.
 | `apps/api/src/middleware/api-operation-telemetry.ts` | Content-free timing/outcome signals for an explicit API operation allowlist. |
 | `apps/api/src/telemetry/completion-verification.ts` | Committed completion-verification reprompts, bounded reasons and confidence, correlated to terminal run outcomes. |
 | `apps/api/src/telemetry/tool-usage.ts` | Content-free, durably admitted agent-tool usage for user-owned and personless workspace-owned runs. |
-| `apps/api/src/telemetry/workstream-creation.ts` | Server-authoritative, idempotent conversation creation state and connector attribution across user, Slack, suggestion, and automation paths. |
+| `apps/api/src/telemetry/workstream-creation.ts` | Server-authoritative, idempotent conversation creation state and connector attribution across user, Slack and automation paths (the `suggested_work` source survives in the enum with no producer). |
 | `apps/api/src/telemetry/message-sent.ts` | `message_sent` for a message or elicitation answer a person sent from any client, recorded where the conversation's `AgentLoopDO` admits it, including a composer-created Canvas's opening message in `initialize`. |
 | `apps/api/src/telemetry/product-usage.ts`, `apps/api/src/telemetry/run-outcome.ts` | Shared bounded dimensions, idempotent resource event IDs, and authoritative run/tool journey outcomes. |
 | `apps/site/src/telemetry.ts`, `apps/site/src/site-entry.ts` | Region-before-identity public-site page, action, acquisition, and browser-to-desktop handoff reporting. |
