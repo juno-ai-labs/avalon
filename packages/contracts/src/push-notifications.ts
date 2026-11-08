@@ -3,8 +3,7 @@ import { RegionSchema } from "./regions";
 import { z } from "zod";
 import { HttpsUrlSchema } from "./url-schemas";
 
-// Product decision in the Apple push PRD; byte fitting is separate.
-export const PUSH_BODY_PREVIEW_CHARACTERS = 1000;
+export { PUSH_BODY_PREVIEW_CHARACTERS } from "./notification-text";
 export const APNS_TOPICS = {
   macos: "ai.rallywith.desktop",
   ios: "ai.rallywith.ios",

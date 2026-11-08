@@ -220,7 +220,12 @@ seated: where it emits a message's mention effects it emits one
 ordinal and transcript sequence, and the recipients' ids. One effect per
 message rather than one per recipient keeps the Queue payload to the
 message's text once plus a list of ids; per-recipient effects would carry the
-text, up to 8,000 characters, once per person.
+text, up to 8,000 characters, once per person. The effect is bound by the
+Queue's per-message limit (`EFFECT_QUEUE_MESSAGE_MAX_BYTES`, 120,000 bytes):
+a conversation with more than roughly 2,700 people to tell (fewer with a long
+message) makes an effect over it, which the outbox logs
+`conversation_effect_oversized` (`outcome: dropped`) and drops, so that
+reply tells nobody.
 
 The hosted parent adds the effect, in the transaction that receipts it, to its
 conversation's open `reply_batch` alarm entry
