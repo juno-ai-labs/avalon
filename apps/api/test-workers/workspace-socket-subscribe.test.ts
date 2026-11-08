@@ -42,7 +42,7 @@ async function holdFlagship(): Promise<{ entered: () => Promise<void>; release: 
   // the I/O the test then does.
   const gate = { entered: false, released: false };
   await runInDurableObject(workspace(), (instance: WorkspaceDO) => {
-    (instance as unknown as { env: Env }).env.FLAGS = createTestEnv({ FLAGS: {
+    (instance as unknown as { env: { FLAGS: Env["FLAGS"] | undefined } }).env.FLAGS = createTestEnv({ FLAGS: {
       getBooleanDetails: async () => {
         gate.entered = true;
         while (!gate.released) await new Promise((resolve) => setTimeout(resolve, 5));
