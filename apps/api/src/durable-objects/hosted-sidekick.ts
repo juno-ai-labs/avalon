@@ -395,6 +395,8 @@ export interface HostedSidekickHost {
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** See `HostedConversationHost.noteActivityChanged`. */
   noteActivityChanged(userId: string): void;
+  /** See `HostedConversationHost.noteActivityReadMoved`. */
+  noteActivityReadMoved(userId: string, parentId: string): void;
   /** Hand a run to the activity Queue, whose consumer provisions it. */
   sendRunProvision(message: { workspaceId: string; automationId: string; runId: string }): Promise<void>;
   /** Hand a review to the activity Queue, whose consumer wakes the wizard with it. */

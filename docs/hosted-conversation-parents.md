@@ -101,7 +101,9 @@ one row; the same identity under another intent id or other bytes is refused
 as `notification_intent_identity_conflict`. Both kinds of parent record them,
 for any conversation under them. The same transaction writes the recipient's
 Activity row ([`activity.md`](activity.md)) and tells the host
-(`noteActivityChanged`), which sends that person their list after the write.
+(`noteActivityChanged`), which sends that person their list after the write;
+every accepted read report tells it too (`noteActivityReadMoved`), since a read
+is what clears a row.
 
 ### A Sidekick
 
