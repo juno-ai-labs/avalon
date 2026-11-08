@@ -673,6 +673,14 @@ describe("a Canvas's artifacts", () => {
     expect(await lastWrittenBy()).toBeNull();
     await canvasArtifactNoter(TEST_ENV, run)!(home, resourceId);
     expect(await lastWrittenBy()).toEqual({ sidekickId, runId: runIds[2], runNumber: 3, sidekickName: "Weekly digest" });
+    // A deleted Sidekick's run is no run to open.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE automation_directory SET lifecycle = 'deleted' WHERE automation_id = ?`, sidekickId);
+    });
+    expect(await lastWrittenBy()).toBeNull();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE automation_directory SET lifecycle = 'active' WHERE automation_id = ?`, sidekickId);
+    });
     // A later version from its Chat, which a person asks for, is no run's.
     await publish(canvasId, "digest.md", "# Digest, revised");
     expect(await lastWrittenBy()).toBeNull();

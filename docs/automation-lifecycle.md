@@ -1067,14 +1067,16 @@ as the caption "Started by a message in the conversation."
 
 A Sidekick's row says where it stands from `AutomationSummary`
 (`lib/sidekick-status.ts`): waiting on someone (`needsInput`, with the
-newest waiting run's `pendingQuestion` as the sidebar row's second line), **Working** while its
-newest run is live (`runState`), **Paused** in amber, **Draft**, or when it
+newest waiting run's `pendingQuestion` as the sidebar row's second line), **Working** while any
+of its runs is live (`running`, else the newest run's `runState` from an older
+Worker), **Paused** in amber, **Draft**, or when it
 next runs ("Runs Friday 2:00 PM", the weekday within the coming week and the
 date beyond it, in the summary's `scheduleTimeZone` when the server names it,
 so the row, the home's Next and the details' "Every Friday at 2:00 PM" agree
 on any machine; in the machine's zone otherwise), else when it last ran. On the home the state is the design's
 pill (green Active and Working, amber Paused, dashed Draft) with a red **Needs
-input** badge beside the name, **Next** is what wakes it (`triggerKinds`), in
+input** badge beside the name; a Sidekick both working and waiting shows
+Working on the pill beside the badge, so neither hides the other. **Next** is what wakes it (`triggerKinds`), in
 the precedence "On alert", "On email", a schedule's next run, "On request" (the
 design's Incident triage wakes on an alert and a schedule and reads "On
 alert"), and the count reads "1 Sidekick". In the
@@ -1149,7 +1151,12 @@ loaded into someone else's conversation, not a read of its own.
   `needs_input` while it waits, null once it finished or when there is no
   run (`AUTOMATION_RUN_STATE_SQL` over `AUTOMATION_RUN_STATE_JOINS`, one
   probe of `sidekick_runs_history_idx` for the newest run); a newest run that
-  finished while an older one works reads null. `pendingQuestion` is the
+  finished while an older one works reads null. `running` is whether *any*
+  run is queued or running (`AUTOMATION_RUNNING_SQL`, an EXISTS bounded by
+  the primary key's prefix), so that older run still reads Working; the
+  client draws Working from it and falls back to `runState` only when it is
+  absent. It moves on the same transitions as `runState`
+  (`sidekickRowRunState`), which already republish the list. `pendingQuestion` is the
   summary of the newest run that *waits*, whichever run is newest, and null
   when none waits. The two can describe different runs, deliberately: a
   Sidekick with an older run waiting and a newer one working reads
@@ -1957,6 +1964,24 @@ instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
 
+### 2026-11-08 — The Sidekick row says whether any run is working
+
+**What changed:** `AutomationSummary` gains optional `running`, true while
+any run of the Sidekick is pending or running (`AUTOMATION_RUNNING_SQL`) on
+the socket's Sidekick list. The sidebar row and the Sidekicks home draw
+Working from it, with the newest run's `runState` as the fallback.
+
+**Why:** The owner answered "add this" on 2026-11-08 to plan §9's "A
+'Working' state on the Sidekicks home needs a running flag on the directory
+row". `runState` reads the newest run alone, so a Sidekick whose newest run
+had finished while an older one still worked read as idle (a follow-up
+recorded after the visual passes). The flag is a probe rather than a stored
+column for the reason the Needs input probe is: no writer can leave it
+stale. It uses the states `sidekickRowRunState` calls working, so no new
+publish was needed. The coordinator settled the badge order as: running
+outranks the lifecycle and `runState` on the pill and the row, and the
+Needs input badge stays beside a working pill.
+
 ### 2026-11-08 — Retirement records: Work-stream appearance, Work-stream markers
 
 **What changed:** Nothing in the code. Two documents whose mechanism was
@@ -2058,7 +2083,8 @@ nothing could not be told from one whose block was hidden; and the plan's
 section 9 had recorded that "A 'Working' state on the Sidekicks home needs a
 running flag on the directory row". The flag is derived by a probe rather
 than stored, for the reason the Needs input probe is: no writer can leave it
-stale. The question was nowhere a list could read it: the run's summary was
+stale. (That probe was the newest run's `runState`; `running`, added in the
+entry above, is the same probe over all of the Sidekick's runs.) The question was nowhere a list could read it: the run's summary was
 its last text turn, and the asking is an elicitation turn (v2-F2, v2-F6,
 v2-F8, v2-F10, v2-F25). v2-F11's stale time was the socket list sending no
 `lastRunAt` at all. The requester seat answers v2-F12: the row you have open

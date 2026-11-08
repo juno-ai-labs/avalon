@@ -241,7 +241,14 @@ Terminal's resource bridge tells the Canvas (`canvasArtifactNoter`,
 `reconcilePublishedResource` recovers as `landed` (the attempt that wrote it
 may have died before its note), which records the resource in
 `canvas_artifacts`, moves the Canvas's `updated_at`, and names its last editor:
-Rally for the Chat, the Sidekick for a run. The resource versioning layer
+Rally for the Chat, the Sidekick for a run. A run's note also names the run
+(its substream id, which is the run id), stored as
+`canvas_directory.last_writer_run_id` (migration 155); any note that is not a
+run's clears it, so it always names the run whose publish made the newest
+version or nothing. It is not `writer_run_id`, the run that created the
+Canvas: a Sidekick writing one Canvas across runs moves this and not that.
+Nothing was backfilled: a Canvas a run wrote before migration 155 reads as
+written by no run until its next publish. The resource versioning layer
 records every version with its run, as it does everywhere; `canvas_artifacts`
 records only which resources the Canvas holds. A version somebody else made
 since a viewer last read the Chat makes the Canvas's row unread to them, by
@@ -326,7 +333,15 @@ state as `sidekick_viewer_reads` projects it against the Chat's latest
 attention ordinal (a Canvas never opened is unread to anyone but its creator);
 `presentUserIds`, the people whose foreground socket has the Canvas open now;
 `pinnedPosition`; `sharedWithMe`, set for a participant who did not make it;
-and `artifactKind`, the newest artifact's kind. The home page's groups are
+`artifactKind`, the newest artifact's kind; and `lastWrittenBy`, the run
+whose publish made the newest version (`sidekickId`, `runId`, its
+`runNumber` counted as the run's own row counts it, oldest first, and the
+Sidekick's `sidekickName`), null when the newest version is no run's or its
+Sidekick was deleted, and absent from an older Worker. Deleting a Sidekick
+moves only the Sidekick list's waterline, so a connected client keeps
+"<Sidekick> · run #N" on the card until its next Canvas list frame. It is read by joining
+`sidekick_runs` on its primary key, so the list pays one probe per Canvas a
+run wrote last. The home page's groups are
 these fields: live now, from Sidekicks (`writerSidekickId`), shared with me,
 made by me. The list holds every Canvas the viewer may open as its creator, a
 participant, a member of an Organization-wide one or someone its writer
@@ -374,7 +389,11 @@ the rail's first section and `/canvases` the landing route
   someone other than the viewer in `presentUserIds`, Made by me is
   `createdByUserId`, Shared with me `sharedWithMe`, From Sidekicks
   `writerSidekickId`. A row's second line names who is there now, else its
-  last editor, else who made it.
+  last editor, else who made it. On a home card whose newest version a run
+  wrote, the last-editor line is that run instead, "<Sidekick> · run #N"
+  (`canvasWrittenByRun`), a link above the card's stretched title link that
+  opens the Sidekick's conversation at the run (`?run=`), in the live name
+  from the Sidekick list when the socket has it.
 - **The mark** (`CanvasMark`) is a sheet holding the row's `artifactKind`
   glyph, in a pastel pair through `markColors`, the mechanism a Sidekick's
   hexagon uses. The hue is the Canvas's own, stable for its id
@@ -643,7 +662,7 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 | Table | Keyed by | Holds |
 | --- | --- | --- |
-| `canvas_directory` | `canvas_id` | The row: title, creator, times, last editor, writer Sidekick and run, visibility, authority generation, title status (`naming` until a Canvas made with no title is titled from its first message, migration 149). Indexed by recency, by writer Sidekick, and uniquely by `(writer_sidekick_id, writer_run_id)`. |
+| `canvas_directory` | `canvas_id` | The row: title, creator, times, last editor, writer Sidekick and run, visibility, authority generation, title status (`naming` until a Canvas made with no title is titled from its first message, migration 149), and the run whose publish made the newest version (`last_writer_run_id`, migration 155). Its CHECK admits a run only beside a `sidekick` last editor, so a future writer that moves `last_editor_kind` without writing this column in the same statement fails its write. Indexed by recency, by writer Sidekick, and uniquely by `(writer_sidekick_id, writer_run_id)`. |
 | `canvas_participants` | `(canvas_id, user_id)` | Whom its managers added (`added`), a claimed share brought (`invitation`) or an approved access request let in (`request`, migration 151). Indexed by person for "shared with me". |
 | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts`, `sidekick_viewer_reads` | `(sidekick_id, …)`, the column holding the Canvas id | The hosted conversation's children, their projections and receipts, and each reader's read of the Chat. |
 | `workspace_sidebar_list_state` | `list` | Gains the `canvases` waterline; the table is rebuilt to widen its CHECK. |
@@ -652,6 +671,31 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 | `canvas_artifacts` | `(canvas_id, resource_id)` | Migration 142: the resources the Canvas's conversation generated, written by the publish that attached each (`noteArtifact`); ordered by the resource's own `updated_at`. Its own table because the Thread-era resource-link table's foreign key named a Thread's directory row, which a Canvas has none of. Indexed by resource. |
 
 ## Changelog
+
+### 2026-11-08 — A Canvas row names the run that wrote its newest version, and the home card opens it
+
+**What changed:** A publish note from a Sidekick run carries the run id.
+WorkspaceDO migration 155 stores it on the Canvas's row
+(`last_writer_run_id`), and any other publish clears it. The Canvas list row
+gains optional `lastWrittenBy` (Sidekick, run, run number, name), and the
+home card reads "<Sidekick> · run #N" and opens that run.
+
+**Why:** The owner answered "add this to the row" on 2026-11-08 to plan
+§9's follow-up that "a Canvas card cannot sit at the run that made it until
+the summary carries `writerRunId`". `writer_run_id` was not that: it names
+the run that *created* the Canvas, and a Sidekick that writes one Canvas
+across runs never moves it. We rejected deriving the run at read time from
+the newest version's `author_run_id`. That column holds the harness run,
+mapping it back to a Sidekick run costs every list read a join across every
+artifact version, and the publish note already knew the run. The run number
+is computed at read time rather than stored, because a run's ordinal never
+changes and the run row already defines it.
+
+**What a future change must respect:** the column follows the publish note,
+not the resource versioning layer. A version made outside a publish (a
+person's rename, a connector refetch) does not move it, just as it does not
+move the last editor. Only a `sidekick` editor's note may name a run; the
+column's CHECK and the note's schema both refuse anything else.
 
 ### 2026-11-08 — Retirement records: Naming a work stream, Work-stream descriptions
 
