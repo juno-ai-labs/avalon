@@ -28,6 +28,9 @@ import { canvasArtifactNoter, resolveTerminalPublicationHome } from "../src/serv
 import { createTerminalPortFactory } from "../src/services/terminal/object-port";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
+import { bootstrapWorkstreamRuntimeEnvironment } from "../src/services/workstream-runtime-database";
+import { createTranscriptObjectPort } from "../src/runtime/transcript-port";
+import { CANVAS_NAMING_ALARM_KIND } from "../src/durable-objects/canvas-schema";
 import { ConversationService } from "../src/services/conversation-service";
 import { verifySocketTicket } from "../src/services/socket-service";
 import { deliverChildEffects } from "./helpers/conversation-effects";
@@ -437,6 +440,61 @@ describe("a Canvas's title and pin order", () => {
     expect(naming).toHaveLength(1);
     expect(JSON.stringify(naming[0]!.messages)).toContain("Plan the December pricing launch");
     creator.socket.close(1000, "done");
+  }));
+
+  it("waits on an opening of attachments alone, then titles from a person's text and never from Rally's reply", () => withNamingModel(async () => {
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    const { canvasId } = await service.create({});
+    const routed = await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, canvasId, "canvas");
+    const transcript = createTranscriptObjectPort(routed, WORKSPACE_ID, canvasId);
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    const say = async (actor: "human" | "assistant", text: string) => {
+      const sequence = await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ next: number }>(
+        `SELECT next_transcript_sequence AS next FROM transcript_counters WHERE id = 1`).one().next);
+      // The seed operation is the one way to write a turn exactly as stored
+      // (an empty text, a reply with no run) and answers only in development.
+      const mutable = env as { APP_ENV?: string };
+      const appEnv = mutable.APP_ENV;
+      mutable.APP_ENV = "development";
+      try {
+        await transcript.seedDevelopmentConversationTurn({
+          turnId: crypto.randomUUID(), clientMessageId: actor === "human" ? crypto.randomUUID() : null, actor,
+          authorUserId: actor === "human" ? CREATOR : null,
+          authorSnapshot: actor === "human" ? { displayName: "Creator", avatarUrl: null } : null,
+          externalActorJson: null, messageType: "text", text, structuredContentJson: null, producedByRunId: null,
+          expectedTranscriptSequence: sequence, createdAtUtc: new Date().toISOString(),
+        });
+      } finally {
+        if (appEnv === undefined) delete mutable.APP_ENV;
+        else mutable.APP_ENV = appEnv;
+      }
+    };
+    /** Run the naming entry, as the Chat's next message would arm it, and wait for it to be done. */
+    const name = async () => {
+      await runInDurableObject(workspace(), async (_instance, state) => {
+        const now = Date.now();
+        state.storage.sql.exec(`INSERT OR REPLACE INTO _internal_durable_alarms (kind, alarm_key, due_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?)`, CANVAS_NAMING_ALARM_KIND, canvasId, now, now, now);
+        await state.storage.setAlarm(now);
+      });
+      await expect.poll(() => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+        `SELECT 1 FROM _internal_durable_alarms WHERE kind = ? AND alarm_key = ?`, CANVAS_NAMING_ALARM_KIND, canvasId)
+        .toArray().length), { timeout: 15_000 }).toBe(0);
+    };
+    // The person's opening carried attachments and no text; Rally answered it.
+    await say("human", "");
+    await say("assistant", "Here is the plan.");
+    await name();
+    expect(await service.detail(canvasId)).toMatchObject({ title: "Untitled Canvas", titleStatus: "naming" });
+    expect(provider.calls.filter(namingCall)).toEqual([]);
+
+    await say("human", "Plan the December pricing launch.");
+    await name();
+    expect(await service.detail(canvasId)).toMatchObject({ title: "December pricing launch", titleStatus: "settled" });
+    const naming = provider.calls.filter(namingCall);
+    expect(naming).toHaveLength(1);
+    expect(JSON.stringify(naming[0]!.messages)).toContain("Plan the December pricing launch.");
+    expect(JSON.stringify(naming[0]!.messages)).not.toContain("Here is the plan.");
   }));
 
   it("keeps a person's title over the one its opening message would give it", () => withNamingModel(async () => {
