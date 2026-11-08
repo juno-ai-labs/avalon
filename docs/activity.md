@@ -164,9 +164,9 @@ glyph (an at sign, a person added, a question, a check); on the first line who
 (a person's name from the member directory, or the Sidekick's), what
 (mentioned you in, added you to, needs your input, finished a run) and the
 title, cut to one line, with the time at its end; on the second the preview,
-cut to one line, with the unseen dot. A seen row recedes through text colours
-that keep the title at 4.5:1 and the second line at 3:1 or better, never
-through opacity. The rows the route has open (the same conversation, and the
+cut to one line, with the unseen dot. A seen row recedes through one text
+colour for both lines (`text-muted`, 5.12:1 in light and 7.49:1 in dark) and a
+lighter title weight, never through opacity, so every line of it clears 4.5:1. The rows the route has open (the same conversation, and the
 same run when one is open) are drawn open at full contrast; keyboard focus is
 a ring, never the open fill. A finished run's row is never drawn open: it opens
 the shared conversation, which every finished row of that Sidekick shares, so
@@ -325,6 +325,9 @@ conversation (round-2 review); it is now never marked open. A finished row
 stayed unseen while its requester watched the run finish with the
 conversation open: the row is updated in place, so the cursor did not move and
 the one report an open owes had already been made (round-2 review).
+A seen row's preview and time were dimmed a step further than its title, to
+3.02:1 in light and 4.22:1 in dark, under 4.5:1 at their 12-12.5px; they now
+share the title's token.
 
 **Considered and rejected:** Opening a finished run's row at its run
 (`?run=`), as a Needs input row opens: the highlight would then be one row,
