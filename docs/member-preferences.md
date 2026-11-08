@@ -9,6 +9,12 @@ follow the member across devices. Two kinds today:
   decide how each kind of Activity row reaches this person: push, email, or a
   connector surface such as Slack. How they are enforced is
   [`push-notifications.md`](push-notifications.md#what-each-person-chooses).
+  The kinds offered are exactly those a producer records
+  (`OFFERED_NOTIFICATION_KINDS`): **Mentions** (`mentions`), **New messages**
+  (`newMessages`), **Being added** (`added`, which also covers being let into
+  a Canvas you asked for), **Sidekick runs** (`runFinished`, both run
+  notices), **Pinned Canvas updates** (`artifactUpdates`) and **Access
+  requests** (`accessRequests`, for whoever decides on a Canvas's people).
 
 ## Where the code lives
 
@@ -27,7 +33,11 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
    record is derived from the channels, for clients older than them. A kind
    newer than the push switches (`merges`) has no switch: it reads from its
    default until set, and `NotificationChannelsSchema` defaults it so a client
-   reading an older server's record still parses.
+   reading an older server's record still parses. The Thread-era kinds
+   `newThreads`, `newBreakouts` and `merges` have no producer: they are still
+   accepted where a person stored them, and a save naming them still lands,
+   but they have no default, are not offered and are not consulted, so the
+   record carries one only when it was stored.
 2. **First paint.** The WorkspaceDO's answer to a workspace socket `subscribe`
    carries `viewerPreferences` beside `featureFlags`. The renderer writes it to
    `['member-preferences', workspaceId]`, so the first frame already honours it
@@ -78,16 +88,54 @@ independently of explicit mentions and Rally completions.
 The desktop and browser renderers honour the preference. A new
 display preference is a column in `member_preferences`, a field in
 `MemberPreferencesSchema` with a default, and a setting definition. A new kind
-is a value in `NotificationKindSchema` with a default in
-`DEFAULT_NOTIFICATION_CHANNELS` and an entry in `NOTIFICATION_KIND_FOR_PUSH`;
-it needs no migration. A new channel needs no change here at all.
+is a value in `NotificationKindSchema` and `OFFERED_NOTIFICATION_KINDS`
+with a default in `DEFAULT_NOTIFICATION_CHANNELS` and the push kinds that
+read it in `NOTIFICATION_KIND_FOR_PUSH`; it needs no migration. A push kind
+with no entry there is allowed on no channel. A new channel needs no change here at all.
 
 ## Failure modes and limits
 
 Before the socket answers or REST returns, the defaults render. A server that
 predates the field sends no `viewerPreferences`, which also reads as defaults.
 
+## Testing
+
+`apps/api/test/member-preferences-kinds.test.ts` covers the record's kinds
+(the offered six defaulted, a stored Thread-era kind kept and never read) and
+which choice each pushed kind reads.
+`apps/api/test-workers/member-push-preferences-migration.test.ts` covers
+migrations 106 and 107 over populated rows.
+
 ## Changelog
+
+### 2026-11-08 — Settings offers only kinds a producer records, and Access requests joins them
+
+**What changed:** `NotificationKindSchema` gains `accessRequests` (default
+push); `OFFERED_NOTIFICATION_KINDS` names the six Settings offers. `newThreads`,
+`newBreakouts` and `merges` are optional in `NotificationChannelsSchema`,
+absent from `DEFAULT_NOTIFICATION_CHANNELS`, and present in the record only
+when stored. `NOTIFICATION_KIND_FOR_PUSH` drops `thread_started`,
+`breakout_started` and `merged`, and maps `access_request` to
+`accessRequests` and `access_granted` to `added`. [Client half: the Settings
+rows, folded in at merge.]
+
+**Why:** The owner asked on 2026-11-08 that Settings offer only kinds real
+producers create, and that every offered one create Activity and push.
+**New messages** and **Pinned artifact updates** were offered with no
+producer; now each has one, and access requests are a new kind a decider may
+want to route on its own. Being let into a Canvas is being added, so it reads
+that choice rather than a seventh row.
+
+**Considered and rejected:** Deleting the three Thread-era kinds from the
+schema: a stored record naming them, and an older client's save of them,
+would then be refused or stripped mid-release; one release of accepting them
+costs nothing. Defaulting them still: a default is an offer, and nothing
+produces them.
+
+**Consequences:** A desktop older than this reads a record without
+`newThreads` or `newBreakouts`, which its schema required, as failing to
+parse; this release's clients read it. A later release can drop the three
+kinds once no stored record matters.
 
 ### 2026-10-15 — Channels per kind replace the push switches
 
