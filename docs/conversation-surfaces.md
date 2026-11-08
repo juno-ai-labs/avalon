@@ -2295,7 +2295,7 @@ the launcher's placeholder ink, its hint ink, and its toolbar padding were each
 stated once and read nowhere else.
 
 **Consequences:** Project-owned creation loses the toolbar layout the
-2026-09-04 entry in [`workstream-creation.md`](workstream-creation.md) gave it —
+2026-09-04 entry in `workstream-creation.md` (retired; its record is in [`workstream-durable-object.md`](workstream-durable-object.md)) gave it —
 that entry's reasoning (the launcher should not look different from the
 conversation entry point) is the same reasoning applied to the surface it had
 left out. Its developer-only model override moves from the toolbar pill into the
