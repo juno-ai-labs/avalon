@@ -211,6 +211,15 @@ describe('CanvasScreen', () => {
     expect(await screen.findByRole('alertdialog', { name: 'The Canvas could not be renamed' })).toHaveTextContent('You no longer have access to this Canvas');
   });
 
+  it.each([
+    ['a well-formed id that names nothing', new ApiError('This Canvas does not exist', 404, 'canvas_not_found')],
+    ['a malformed id', new ApiError('The request is invalid: id:invalid_format', 400, 'canvas_id_invalid:id:invalid_format')],
+  ])('says the Canvas does not exist for %s', async (_case, error) => {
+    getCanvas.mockRejectedValue(error);
+    renderCanvas('/canvases/not-a-canvas');
+    expect(await screen.findByRole('alertdialog', { name: 'Canvas could not be opened' })).toHaveTextContent('This Canvas does not exist.');
+  });
+
   it('opens already renaming when the sidebar row asked for it', async () => {
     renderCanvas({ pathname: `/canvases/${CANVAS}`, state: RENAME_CANVAS_STATE });
     expect(await screen.findByRole('textbox', { name: 'Canvas title' })).toHaveValue('Q4 revenue review');

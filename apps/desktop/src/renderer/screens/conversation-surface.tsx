@@ -2522,6 +2522,7 @@ function ConversationSurfaceContent({
               ?? (attachResource.error ? 'The resource couldn’t be added.' : undefined)
               ?? (stop.error ? 'The run couldn’t be stopped.' : undefined)
               ?? (retry.error ? 'The run couldn’t be retried.' : undefined)}
+            errorTitle={sendError === MESSAGE_TOO_LONG_MESSAGE ? 'Message too long' : undefined}
             fileInputRef={fileInputRef}
             members={visibleMembers}
             /* Locked, because a pin is written once when the conversation is

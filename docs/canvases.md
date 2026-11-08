@@ -352,6 +352,11 @@ the rail's first section and `/canvases` the landing route
   written into the detail's cache entry, so the header follows a rename
   without a refetch. The window is named `<title> · Rally` while it is open
   (`useDocumentTitle`, `lib/document-title.ts`).
+- **A link to no Canvas** — a well-formed id that names nothing
+  (`canvas_not_found`, 404) or a malformed one (`canvas_id_invalid:id:<issue>`,
+  400) — draws the same "This Canvas does not exist." state
+  (`isNotFoundError` in `lib/landing.ts`), and a restored route that answers
+  either goes to the Canvases home.
 - **Renaming** is `PATCH /canvases/:id`, edited in the pill itself
   (`TitlePillTitleInput`): Rename… in the pill's menu, or in a sidebar row's
   context menu, which opens the Canvas with route state
@@ -517,7 +522,9 @@ costs a fetch per rename for every window that has the Canvas open.
 a Canvas's title; the detail only mirrors it. Only a change of the row's
 title is written through, because the device cache's row at mount may be
 older than a detail the server just answered. The client does not validate
-a title; the server's refusal is what the person reads.
+a title; the server's refusal is what the person reads. A malformed Canvas id
+in a link reads as a missing one: it names nothing that could exist, and
+"The request is invalid" told the person less than the not-found state does.
 
 ### 2026-11-08 — A Thread that has artifacts can become a Canvas in place
 
