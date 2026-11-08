@@ -104,6 +104,7 @@ import type { AttachmentPreview } from '../components/attachments';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import { HumanMessageBody } from '../components/workstream-blocks';
 import { Button, EmptyState, IconButton, ErrorNotice, LoadingState, Modal } from '../components/primitives';
+import { OFFLINE_TITLE, OfflineRetry } from '../components/pushed-list-pending';
 import { PaneState } from '../components/pane-state';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
@@ -707,12 +708,15 @@ export function AddResourceDialog({
 
 export function WorkstreamErrorState({
   description,
+  header,
   onRetry,
   parentNoun = 'Canvas',
   workstreamId,
 }: {
   /** What the server said when it refused, if it said anything. */
   description: string | undefined;
+  /** The conversation's own header, kept over the state (`stateHeader`). */
+  header?: React.ReactNode;
   onRetry: () => void;
   /** What could not be opened, for the title. */
   parentNoun?: 'Sidekick' | 'Canvas';
@@ -726,7 +730,7 @@ export function WorkstreamErrorState({
       .catch(() => undefined);
   };
   const menu = <DropdownMenu.Root>
-    <DropdownMenu.Trigger asChild><IconButton label={`More ${parentNoun} actions`}><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
+    <DropdownMenu.Trigger asChild><IconButton className="title-pill-action" label={`More ${parentNoun} actions`}><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
     <DropdownMenu.Portal>
       <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
         <DropdownMenu.Item className="menu-item" onSelect={copyWorkstreamId}><Info size={14} /> Copy {parentNoun} ID</DropdownMenu.Item>
@@ -744,13 +748,15 @@ export function WorkstreamErrorState({
         <Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>
       </div>}
       description="Try opening it again."
+      header={header}
       title={`This ${parentNoun} could not be opened.`}
       trailing={menu}
     />
     : <PaneState
-      action={<Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>}
+      action={<OfflineRetry onRetry={onRetry} />}
       description="Live edits resume when Rally reconnects."
-      title="Rally can’t reach the server right now."
+      header={header}
+      title={OFFLINE_TITLE}
       trailing={menu}
     />;
 }
@@ -947,6 +953,11 @@ export interface ConversationSurfaceProps {
   parentId: string;
   substreamId: string;
   renderHeader?: (context: ConversationHeaderContext) => React.ReactNode;
+  /**
+   * The header a state with no conversation to show (offline, refused) keeps
+   * over it, which `renderHeader` cannot draw without the conversation's detail.
+   */
+  stateHeader?: React.ReactNode;
   scrollToTurn?: ScrollToTurnRequest | null;
   /**
    * What every message sent from this surface is for, when the host says:
@@ -996,6 +1007,7 @@ function ConversationSurfaceContent({
   parentId: id,
   substreamId,
   renderHeader,
+  stateHeader,
   scrollToTurn = null,
   messageIntent,
   composerMenuActions: hostMenuActions,
@@ -2264,6 +2276,7 @@ function ConversationSurfaceContent({
       const errorState = (
         <WorkstreamErrorState
           description={socketConnection.openingError}
+          header={stateHeader}
           onRetry={socketConnection.retryOpening}
           parentNoun={parentNoun}
           workstreamId={id}

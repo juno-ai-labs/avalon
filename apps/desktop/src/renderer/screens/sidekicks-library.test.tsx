@@ -59,6 +59,14 @@ describe('SidekicksLibraryScreen', () => {
 });
 
 describe('the Sidekicks home', () => {
+  it('names the window after the section, and gives the name back on leaving', () => {
+    document.title = 'Rally';
+    const view = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SidekicksLibraryRoute /></MemoryRouter></QueryClientProvider>);
+    expect(document.title).toBe('Sidekicks · Rally');
+    view.unmount();
+    expect(document.title).toBe('Rally');
+  });
+
   it('lists each Sidekick the workspace socket keeps as a row with its status, who it is shared with and when it next wakes', async () => {
     // The rows as the socket's sidebar read carries them: only it says
     // `needsInput`, which `GET /sidekicks` never does.

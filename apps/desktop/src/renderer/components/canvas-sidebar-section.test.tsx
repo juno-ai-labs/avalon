@@ -85,13 +85,13 @@ describe('CanvasesSection', () => {
   it('says the list waits on a connection that could not open, rather than drawing placeholders for ever', () => {
     socket.current = { state: 'unavailable', retry: vi.fn() };
     renderSection(null);
-    expect(screen.getByRole('status')).toHaveTextContent('Rally can’t connect. Your Canvases appear once it does.');
+    expect(screen.getByRole('status')).toHaveTextContent('Rally can’t reach the server right now. Your Canvases appear when Rally reconnects.');
     expect(screen.getByRole('region', { name: 'Pinned Canvases' })).not.toHaveAttribute('aria-busy');
 
     socket.current = { state: 'connecting', retry: vi.fn() };
     cleanup();
     renderSection(null);
-    expect(screen.queryByText(/Rally can’t connect/)).toBeNull();
+    expect(screen.queryByText(/Rally can’t reach/)).toBeNull();
   });
 
   it('pins a Canvas dragged into Pinned', async () => {

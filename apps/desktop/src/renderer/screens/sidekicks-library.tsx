@@ -12,6 +12,7 @@ import { EmptyState, ErrorNotice, OpeningState } from '../components/primitives'
 import { PushedListPending } from '../components/pushed-list-pending';
 import { sidekickNext, sidekickStatus, type SidekickStatus } from '../lib/sidekick-status';
 import type { AutomationSummary } from '../lib/types';
+import { useDocumentTitle } from '../lib/document-title';
 
 type SidekickFilter = 'all' | 'you' | 'workspace' | 'paused';
 
@@ -120,5 +121,6 @@ function GuestSidekicksLibrary(): React.JSX.Element {
 /** The main window's `/sidekicks`, on both hosts. */
 export function SidekicksLibraryRoute(): React.JSX.Element {
   const { guest } = useShellCapabilities();
+  useDocumentTitle('Sidekicks');
   return guest ? <GuestSidekicksLibrary /> : <SidekicksLibraryScreen />;
 }

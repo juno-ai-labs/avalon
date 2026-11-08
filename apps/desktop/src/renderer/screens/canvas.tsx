@@ -115,7 +115,8 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   }, [id, queryClient, rowTitle, rowTitleStatus]);
   const title = canvas.data?.title ?? row?.title ?? '';
   const naming = canvasNaming(canvas.data ?? row);
-  useDocumentTitle(naming ? undefined : title || undefined);
+  const missing = Boolean(canvas.error && !row && isNotFoundError(canvas.error));
+  useDocumentTitle(missing ? 'Canvas not found' : naming ? undefined : title || undefined);
   const saveTitle = (next: string): void => {
     if (!api) return;
     setRenamePending(true);
@@ -197,6 +198,23 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     label: naming ? 'Canvas menu: Rally is choosing a name' : `Canvas menu: ${title}`,
     menu: menuItems,
   };
+  const header = (presentUserIds: readonly string[]): React.JSX.Element => {
+    const present = presentUserIds.filter((userId) => userId !== session?.user.id).flatMap((userId) => {
+      const member = membersById.get(userId);
+      return member ? [member] : [];
+    });
+    return <TitlePillHeader
+      align="start"
+      current={level()}
+      trailing={<span className="canvas-header-trailing">
+        {present.length > 0 && <span aria-label={`${present.length} ${present.length === 1 ? 'person' : 'people'} here`} className="canvas-header-present" role="group">
+          <AvatarStack currentUserId={session?.user.id ?? null} members={present} presentUserIds={presentUserIds} />
+        </span>}
+        <Button className="canvas-share-button" disabled={!canvas.data} onClick={() => setSharing(true)}>Share</Button>
+        <span className="canvas-header-more"><TitlePillMenuAction label="Canvas actions">{menuItems}</TitlePillMenuAction></span>
+      </span>}
+    />;
+  };
   return <>
     {pinError && <ErrorNotice occurrence={pinError}>The Canvas could not be pinned. Try again.</ErrorNotice>}
     {linkError && <ErrorNotice occurrence={linkError}>The link couldn’t be copied.</ErrorNotice>}
@@ -204,23 +222,10 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     <ConversationSurface
       parentId={id}
       parentKind="canvas"
-      renderHeader={(context) => {
-        const present = context.presentUserIds.filter((userId) => userId !== session?.user.id).flatMap((userId) => {
-          const member = membersById.get(userId);
-          return member ? [member] : [];
-        });
-        return <TitlePillHeader
-          align="start"
-          current={level()}
-          trailing={<span className="canvas-header-trailing">
-            {present.length > 0 && <span aria-label={`${present.length} ${present.length === 1 ? 'person' : 'people'} here`} className="canvas-header-present" role="group">
-              <AvatarStack currentUserId={session?.user.id ?? null} members={present} presentUserIds={context.presentUserIds} />
-            </span>}
-            <Button className="canvas-share-button" disabled={!canvas.data} onClick={() => setSharing(true)}>Share</Button>
-            <span className="canvas-header-more"><TitlePillMenuAction label="Canvas actions">{menuItems}</TitlePillMenuAction></span>
-          </span>}
-        />;
-      }}
+      renderHeader={(context) => header(context.presentUserIds)}
+      // Offline, the Canvas is still named in the list: the pane keeps its
+      // pill, Share and "⋯" over the state rather than a bare Back and Forward.
+      stateHeader={header([])}
       substreamId="0"
     />
     {canvas.data && <CanvasShareDialog canvas={canvas.data} onOpenChange={(open) => {
