@@ -20,7 +20,7 @@ import {
   IconWorldSearch,
   type TablerIcon,
 } from '@tabler/icons-react';
-import { personalColorKey, type AutomationPluginActivity } from '@rally/contracts';
+import { CONNECTION_QUESTION_CONTINUE_ANSWER, personalColorKey, type AutomationPluginActivity } from '@rally/contracts';
 import { markColors } from '@rally/ui/lib/project-palette';
 import {
   Check,
@@ -2666,6 +2666,19 @@ export function ElicitationPanel({
           </button>
         </div>
       </header>
+      {elicitation.connection && (
+        // A question a connection answers: connecting here answers it for the
+        // person, so the run resumes without a second step. Choosing Continue
+        // below is the same answer for a connection made elsewhere.
+        <ConnectorConnectionCard
+          request={elicitation.connection}
+          {...(options.some((option) => option.value === CONNECTION_QUESTION_CONTINUE_ANSWER)
+            ? { onNewlyConnected: () => { void onAnswer(CONNECTION_QUESTION_CONTINUE_ANSWER).catch(() => {
+              setError('Your response couldn’t be saved. Try again.');
+            }); } }
+            : {})}
+        />
+      )}
       {isText ? (
         <textarea
           aria-label="Response"

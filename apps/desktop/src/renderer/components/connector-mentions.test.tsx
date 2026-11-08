@@ -387,6 +387,45 @@ describe('connector connection resolution', () => {
     expect(screen.getByRole('button', { name: 'Reconnect' })).toBeEnabled();
   });
 
+  it('reports a connection made while the card is open, once, and never one connected when it opened', async () => {
+    const request = { connectorId: 'slack', scope: 'personal' } as const;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onNewlyConnected = vi.fn();
+    const Harness = ({ status }: { status?: 'healthy' }) => (
+      <QueryClientProvider client={queryClient}>
+        <ConnectorConnectionsProvider connections={status ? [{
+          id: 'connection-one', modelPluginId: 'plugin_slack', connectorType: 'slack', displayName: 'Slack',
+          scope: 'you', status, capabilities: ['slack.personal.mcp'],
+        }] : []}>
+          <ConnectorConnectionCard onNewlyConnected={onNewlyConnected} request={request} />
+        </ConnectorConnectionsProvider>
+      </QueryClientProvider>
+    );
+    const view = render(<Harness />);
+    expect(await screen.findByRole('button', { name: 'Connect Slack' })).toBeInTheDocument();
+    view.rerender(<Harness status="healthy" />);
+    await waitFor(() => expect(onNewlyConnected).toHaveBeenCalledTimes(1));
+    view.rerender(<Harness status="healthy" />);
+    expect(onNewlyConnected).toHaveBeenCalledTimes(1);
+    view.unmount();
+
+    // Already connected for this viewer when it opened: nothing to report, so
+    // a question the card answers does not answer itself.
+    const already = vi.fn();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConnectorConnectionsProvider connections={[{
+          id: 'connection-one', modelPluginId: 'plugin_slack', connectorType: 'slack', displayName: 'Slack',
+          scope: 'you', status: 'healthy', capabilities: ['slack.personal.mcp'],
+        }]}>
+          <ConnectorConnectionCard onNewlyConnected={already} request={request} />
+        </ConnectorConnectionsProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('Connected')).toBeInTheDocument();
+    expect(already).not.toHaveBeenCalled();
+  });
+
   it('uses a feed-owned Connected latch only while live connections are loading', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const request = { connectorId: 'slack', scope: 'personal' } as const;

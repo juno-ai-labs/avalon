@@ -169,7 +169,7 @@ function context(providerIdempotencyKey?: string) {
 }
 
 describe("Avalon connector connection tools", () => {
-  it("offers a trusted connector card only to interactive user runs", async () => {
+  it("offers a trusted connector card only to user runs, and to a Sidekick run as a question", async () => {
     const { env } = fixture();
     const userTool = __integrationTesting.createAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "show_connector_connection");
@@ -206,9 +206,15 @@ describe("Avalon connector connection tools", () => {
       runId: "00000000-0000-4000-8000-000000000007",
       trigger: { kind: "manual", requestedByUserId: USER_ID },
     };
-    expect(__integrationTesting.createAvalonTools(env, automationInput)
-      .some((candidate) => candidate.definition.capability.startsWith("connector.connection.")))
-      .toBe(false);
+    // A Sidekick run holds both, and its card is a question: a write keyed on
+    // its receipt, as `request_elicitation` is, because it pauses the run.
+    const runTools = __integrationTesting.createAvalonTools(env, automationInput)
+      .filter((candidate) => candidate.definition.capability.startsWith("connector.connection."));
+    expect(runTools.map((candidate) => [candidate.definition.name, candidate.definition.mode, candidate.definition.idempotency]))
+      .toEqual([
+        ["get_connector_connection_state", "read", "safe"],
+        ["show_connector_connection", "write", "provider_key"],
+      ]);
   });
 
   it("reads the current authorized connector catalog state", async () => {

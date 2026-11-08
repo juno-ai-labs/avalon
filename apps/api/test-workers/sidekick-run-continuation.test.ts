@@ -43,6 +43,7 @@ import {
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { conversationObjectName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
+import { encryptString } from "../src/lib/crypto";
 import { createAutomation } from "../src/services/automation-service";
 import { AgentCommunicationService } from "../src/services/agent-communication-service";
 import { __integrationTesting } from "../src/services/integrations";
@@ -986,5 +987,96 @@ describe("Sidekick run continuation", () => {
       { actor: "assistant", id: elicitationId, prompt: "Which founder first?", status: "open", answer: null },
       { actor: "human", id: elicitationId, prompt: "Which founder first?", status: "answered", answer: "kb" },
     ]);
+  });
+});
+
+describe("A Sidekick run a missing connection blocks", () => {
+  const CONNECTION_ID = "00000000-0000-7000-8000-00000000c7b0";
+  const ASKED = "Connect Notion so this run can continue.";
+  const checkNotion = { callTool: { name: "get_connector_connection_state", arguments: { connectorId: "notion" } } };
+  const askForNotion = { callTool: { name: "show_connector_connection", arguments: { connectorId: "notion", scope: "personal" } } };
+
+  /** The run, started and waiting on its connection question, with the Sidekick told. */
+  async function blockedRun(): Promise<{ runId: string; elicitationId: string }> {
+    script = [checkNotion, askForNotion];
+    await activeSidekick();
+    const { runId, status } = await startedRun();
+    expect(status).toBe("needs_input");
+    expect(provider.calls[0]?.toolNames).toContain("show_connector_connection");
+    const question = await runInDurableObject(childStub(runId), (_instance, state) => {
+      const row = state.storage.sql.exec<{ elicitation_id: string; prompt: string }>(
+        `SELECT elicitation_id, prompt FROM elicitation_requests WHERE status = 'pending'`,
+      ).one();
+      const block = state.storage.sql.exec<{ structured_content_json: string }>(
+        `SELECT structured_content_json FROM canonical_conversation_turn_details
+          WHERE structured_content_json LIKE '%"kind":"elicitation"%' ORDER BY sequence_number LIMIT 1`,
+      ).one();
+      return { ...row, connection: (JSON.parse(block.structured_content_json) as { elicitation: { connection?: unknown } }).elicitation.connection };
+    });
+    // The question names the connection and carries the card that makes it.
+    expect(question).toMatchObject({ prompt: ASKED, connection: { connectorId: "notion", scope: "personal" } });
+    await deliverChildEffects(TEST_ENV, childStub(runId));
+    expect(await runState(runId)).toBe("needs_input");
+    const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+      .items.find((candidate) => candidate.id === AUTOMATION_ID);
+    expect({ runState: item?.runState, needsInput: item?.needsInput, pendingQuestion: item?.pendingQuestion })
+      .toEqual({ runState: "needs_input", needsInput: true, pendingQuestion: ASKED });
+    return { runId, elicitationId: question.elicitation_id };
+  }
+
+  async function answer(runId: string, elicitationId: string, value: string): Promise<void> {
+    const answered = await product(childStub(runId), {
+      operation: "answer_elicitation", parentKind: "automation", auth: AUTH, elicitationId, input: { answer: value },
+    });
+    expect(answered.status, JSON.stringify(answered.body)).toBe(200);
+    await expect.poll(async () => {
+      const all = await receipts(runId);
+      return all.length >= 2 && all.every((receipt) => receipt.terminalized_at != null) ? "settled" : "working";
+    }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe("settled");
+    expect((await receipts(runId))[1]!.status).toBe("completed");
+  }
+
+  /** The tool results the model read on one call, as text. */
+  function toolResults(call: { messages: readonly { role: string; content: unknown }[] } | undefined): string {
+    return (call?.messages ?? []).filter((message) => message.role === "tool").map((message) => text(message.content)).join("\n");
+  }
+
+  it("asks for the connection and waits, and resumes once it is connected", async () => {
+    const { runId, elicitationId } = await blockedRun();
+    // The person connects Notion (the card's OAuth lands this row) and the
+    // card answers the question for them.
+    const credentials = await encryptString(JSON.stringify({ accessToken: "fixture-access" }),
+      TEST_ENV.CONNECTOR_CREDENTIALS_KEY, CONNECTION_ID);
+    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(
+      `INSERT INTO connector_connections (id, workspace_id, connector_type, scope, owner_user_id,
+         provider_account_id, display_name, granted_scopes_json, status, cursor_json, config_json,
+         created_at, updated_at, model_plugin_id, encrypted_credentials, credential_iv, credential_key_version)
+       VALUES (?, ?, 'notion', 'personal', ?, 'notion-account', 'Notion', '[]', 'healthy', '{}', '{}', ?, ?,
+         'plugin_notion', ?, ?, 1)`,
+      CONNECTION_ID, WORKSPACE_ID, AUTHOR_ID, NOW, NOW, credentials.ciphertext, credentials.iv,
+    ));
+    const callsBefore = provider.calls.length;
+    script = [checkNotion, { say: "Filed the page in Notion." }];
+    await answer(runId, elicitationId, "continue");
+    // The resumed run read the answer, checked again, and found the connection.
+    expect(toolResults(provider.calls[callsBefore])).toContain("continue");
+    expect(toolResults(provider.calls[callsBefore + 1])).toContain('"state":"connected"');
+    await deliverChildEffects(TEST_ENV, childStub(runId));
+    expect(await runState(runId)).toBe("completed");
+  });
+
+  it("ends the run completed with its reason when the person declines", async () => {
+    const { runId, elicitationId } = await blockedRun();
+    const callsBefore = provider.calls.length;
+    const reason = "Notion is not connected, so no page was filed. Connect Notion and run this again.";
+    script = [{ say: reason }];
+    await answer(runId, elicitationId, "declined");
+    expect(toolResults(provider.calls[callsBefore])).toContain("declined");
+    await deliverChildEffects(TEST_ENV, childStub(runId));
+    const run = await workspaceStub().sidekickReadRunState({ ...addressed(), runId });
+    expect(run?.state).toBe("completed");
+    const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+      .items.find((candidate) => candidate.id === AUTOMATION_ID);
+    expect({ runState: item?.runState, needsInput: item?.needsInput }).toEqual({ runState: null, needsInput: false });
   });
 });

@@ -842,6 +842,8 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 
 The canonical `request_elicitation` tool belongs to `rally:core`, which carries no wire prefix, so the model reads it as `request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. The request row retains the stable original tool slot. When a person answers, the loop atomically accepts one tool result containing that answer (`answer: null` with `skipped: true` when they skipped, `cancelled: true` when a newer message cancelled the question; the tool's description tells the model not to ask a skipped question again) and promotes the visible participant response before any later provider call. The participant turn is canonical UI history, not a second Bind user message; the model therefore receives the answer exactly once through the suspended tool protocol. Original tool-call position and dense result-acceptance order are separate identities, so another result accepted while the elicitation waits does not renumber either fact. In a conversation, the conversation becomes `needs_input`; a valid answer clears attention when no blockers remain and activates the same `AgentLoopDO` loop. When drafting an automation, the agent first saves its best partial state with `automation_submit_draft` (a revision that is not `ready`), then calls the same core elicitation tool; the next turn resumes from the saved draft and the answered conversation.
 
+A Sidekick run asks for a missing connection the same way. Its `show_connector_connection` is `AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION` (the same name and input as the card a Canvas shows, a write with a provider key, and a description that says the run pauses and what to do on each answer), and its executor opens an elicitation owned by that tool call through the executor `request_elicitation` uses (`openToolQuestion`), with Continue and Decline options and the card's selection as `Elicitation.connection`. The answer is that call's tool result. Where answers route to an agent, neither question tool is offered. The activation prompt's permission rule tells the model to ask for a connection this way and for a grant with `request_elicitation`, and to report what is blocked only once declined or when it cannot ask; [`automation-lifecycle.md`](automation-lifecycle.md#a-run-a-missing-connection-or-grant-blocks) owns the run's side.
+
 ### Seeded runs
 
 A run a demo seed started is an ordinary run with one substitution: the source
@@ -1861,6 +1863,28 @@ round-5 review of the Slack App Home change, 2026-11-08.
 production caller left; only its own presentation test passes `true`. The
 workers test that recovers a lost consent response in a Canvas now admits the
 receipt under the tool the live loop offers.
+
+### 2026-11-08 — A Sidekick run asks for a missing connection instead of finishing past it
+
+**What changed:** `get_connector_connection_state` and
+`show_connector_connection` reach a Sidekick run; in a run the card tool is a
+question (`AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION`) that opens an
+elicitation through the executor `request_elicitation` now shares
+(`openToolQuestion`) and halts with `needs_input`. The activation prompt's
+permission rule changes from "Say what is blocked in this activation's final
+message" to ask and wait, reporting only once declined or unaskable.
+
+**Why:** The owner: "fix this to show needs input". A run's only recourse was
+its final message, so a missing connection ended the run `completed`.
+
+**Considered and rejected:** a new tool name for the run's question, which
+would teach the model two names for one card; keeping the read-only `safe`
+card and deriving the question's id from the tool call id, where a provider
+key is what every other durable question's identity is derived from.
+
+**Consequences:** The question's identity is derived from the call's receipt
+key, so a replay converges on one question. The golden hash of the
+`automationWorkstream` prompt moved.
 
 ### 2026-11-07 — The prompts speak of Canvases and Sidekicks, a run's result is posted once, and a Sidekick's conversation goes to the wizard only on a manager's marked edit
 

@@ -3799,6 +3799,35 @@ export const AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION = {
 } as const satisfies ToolDefinition;
 
 /**
+ * The same card, asked as a question in a Sidekick run.
+ *
+ * A run has nobody reading along as it works, so a card it showed and then
+ * finished past was a run that ended `completed` with the work undone. In a run
+ * the card is the question: it opens an elicitation that carries the
+ * selection, the run waits in `needs_input`, and the answer (made by
+ * connecting, by choosing Continue, or by declining) resumes it. The model
+ * reads the same name and input as everywhere else; only the promise differs,
+ * and a write with a provider key because the question's identity is derived
+ * from that key, as `request_elicitation`'s is.
+ */
+export const AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION = {
+  ...AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
+  description: [
+    "Ask for a connection this run needs, and pause the run until a person answers.",
+    "Call only after get_connector_connection_state returns reconnect_required or not_connected and the missing connection blocks the task.",
+    "Use the same connectorId, and the scope the task needs. Briefly explain what is blocked before this call.",
+    "The person sees a question with a card that connects it. The answer is continue once they connected it, or declined.",
+    "On continue, call get_connector_connection_state again and retry the work. On declined, end the run with one final message saying what is blocked and how to recover.",
+    "Never create an authorization URL or ask for credentials.",
+  ].join(" "),
+  mode: "write",
+  idempotency: "provider_key",
+  get inputSchema() {
+    return connectorConnectionCardInputJsonSchema();
+  },
+} as const satisfies ToolDefinition;
+
+/**
  * The automation architect's own tools, as data.
  *
  * Split out of `compileAutomation` so the schema guard can reach them: they are
