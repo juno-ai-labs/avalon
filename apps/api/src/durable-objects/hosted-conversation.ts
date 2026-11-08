@@ -28,7 +28,7 @@ import type { Env } from "../env";
 import type { ApiError } from "../lib/api-error";
 import { parseRpcInput } from "../lib/rpc-input";
 import { logWarn } from "../observability/logger";
-import { ReceiveChildEffectsRequestSchema, type DirectoryCommonEffect, type ReceiveChildEffectsRequest } from "./conversation-parent-object";
+import { ReceiveChildEffectsRequestSchema, type DirectoryCommonEffect } from "./conversation-parent-object";
 import { recordPersonNotificationIntent, type PersonNotificationEnvelope } from "./workspace-notification-intent-storage";
 
 /** What one batch of a conversation's effects left for the consumer to do. */
@@ -232,7 +232,7 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
    * envelope is its own transaction; nothing leaves this object, and a
    * redelivery is answered by its receipt.
    */
-  receiveChildEffects(input: ReceiveChildEffectsRequest): ReceivedChildEffects {
+  receiveChildEffects(input: unknown): ReceivedChildEffects {
     const request = parseRpcInput(ReceiveChildEffectsRequestSchema, input, "receive_child_effects");
     // The parent's identity does not change inside a batch, so it is read
     // once; each envelope is still its own transaction.

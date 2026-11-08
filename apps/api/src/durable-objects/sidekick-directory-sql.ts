@@ -133,8 +133,10 @@ export const AUTOMATION_VIEWER_SQL = `CASE
  * older run still waits while a later one works reads Working with the old
  * question as its second line, because the question is still open and is
  * what a person needs to see; reading it from the newest run only lost it
- * after a later run started (vis2-v2 R2-1). The probe is bounded to this
- * Sidekick's rows by `sidekick_runs_history_idx`'s prefix.
+ * after a later run started (vis2-v2 R2-1). The probe reads this Sidekick's
+ * runs through `sidekick_runs_history_idx`'s prefix, newest first, and stops
+ * at the first waiting one; when none waits it reads all of them, as the
+ * Needs input probe beside it already does.
  */
 export const AUTOMATION_RUN_STATE_SQL = `CASE WHEN latest_run.state IN ('pending', 'running') THEN 'working'
           WHEN latest_run.state = 'needs_input' THEN 'needs_input' END AS run_state,

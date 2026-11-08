@@ -975,8 +975,11 @@ describe("Sidekick run continuation", () => {
         .flatMap((turn) => turn.blocks.flatMap((block) => {
           if (block.type !== "text" || block.messageType !== "elicitation" || !block.structuredContent) return [];
           const content = block.structuredContent;
-          const elicitation = ("elicitation" in content ? content.elicitation : content) as { id: string; prompt: string; status: string; answer: unknown };
-          return [{ actor: turn.actor, id: elicitation.id, prompt: elicitation.prompt, status: elicitation.status, answer: elicitation.answer }];
+          const elicitation = ("elicitation" in content ? content.elicitation : content) as {
+            id: string; prompt: string; status: string; answer: unknown;
+          };
+          const { id, prompt, status, answer } = elicitation;
+          return [{ actor: turn.actor, id, prompt, status, answer }];
         }));
     });
     expect(elicitationTurns).toEqual([

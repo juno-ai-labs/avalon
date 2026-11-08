@@ -127,7 +127,7 @@ import {
   type SidekickRunContinuation,
   type SidekickSkillReadRequest,
 } from "./automation-do-protocol";
-import { ReceiveChildEffectsRequestSchema, type DirectoryCommonEffect } from "./conversation-parent-object";
+import { RECEIVE_CHILD_EFFECTS_MAX_ENVELOPES, type DirectoryCommonEffect } from "./conversation-parent-object";
 import { sidekickAudienceAllows } from "./sidekick-audience";
 import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
 import { conversationIdOf } from "./workspace-sidekick-conversation-storage";
@@ -1893,8 +1893,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     }>(
       `SELECT directory.workspace_id, directory.region, directory.title, run.trigger_json, run.state, run.summary,
               run.step_count, run.created_at, run.updated_at,
-              -- The run's ordinal, oldest first, in the order the history
-              -- index keeps; a run is never deleted, so it never changes.
+              -- The run's ordinal, oldest first by start, a tie counted by
+              -- run id (a UUIDv7, so by when it was minted); a run is never
+              -- deleted, so the number never changes.
               (SELECT COUNT(*) FROM sidekick_runs earlier
                 WHERE earlier.sidekick_id = run.sidekick_id
                   AND (earlier.created_at < run.created_at
@@ -1937,21 +1938,20 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     // were two sidebar frames, the first of which lit the requester's own
     // row unread for a moment (vis2-v2 R2-6). The receipts make the Queue's
     // copies no-ops; an effect for another region is left to the Queue.
+    // A conversation with many readers writes one `directory_user` each, so
+    // the envelopes go in chunks of what one call takes; the list is still
+    // sent once, after the alarm that called this.
     const envelopes = (written.envelopesJson ? JSON.parse(written.envelopesJson) as { region?: unknown }[] : [])
       .filter((envelope) => envelope.region === this.env.AVALON_REGION);
-    if (envelopes.length > 0) {
-      const request = ReceiveChildEffectsRequestSchema.safeParse({ substreamId: "0", envelopes });
-      if (!request.success) {
-        logWarn(this.env, "sidekick_run_row_effects_deferred", { ...this.logFields(), run_id: runId,
-          code: zodDiagnosticCode(request.error, "sidekick_run_row_effects") ?? "sidekick_run_row_effects_invalid" });
-        return;
+    try {
+      const size = RECEIVE_CHILD_EFFECTS_MAX_ENVELOPES;
+      for (let start = 0; start < envelopes.length; start += size) {
+        // Parsed there, as a delivery's are; a refusal names the field.
+        this.receiveChildEffects({ substreamId: "0", envelopes: envelopes.slice(start, start + size) });
       }
-      try {
-        this.receiveChildEffects(request.data);
-      } catch (error) {
-        logWarn(this.env, "sidekick_run_row_effects_deferred", { ...this.logFields(), run_id: runId,
-          code: diagnosticErrorCode(error, "sidekick_run_row_effects_failed") });
-      }
+    } catch (error) {
+      logWarn(this.env, "sidekick_run_row_effects_deferred", { ...this.logFields(), run_id: runId,
+        code: diagnosticErrorCode(error, "sidekick_run_row_effects_failed") });
     }
   }
 
