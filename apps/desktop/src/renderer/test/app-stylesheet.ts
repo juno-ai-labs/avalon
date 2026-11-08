@@ -76,5 +76,63 @@ export function mountAppStylesheet(viewport: StylesheetViewport): () => void {
       rule.media.mediaText = queryMatches(rule.media.mediaText, viewport) ? 'all' : 'not all';
     }
   }
-  return () => style.remove();
+  mounted = sheet;
+  return () => {
+    style.remove();
+    if (mounted === sheet) mounted = null;
+  };
+}
+
+let mounted: CSSStyleSheet | null = null;
+
+/**
+ * A selector's specificity as [ids, classes, types], counted the way the
+ * stylesheet's own selectors are written: `#id`; `.class`, `[attribute]` and
+ * a pseudo-class; an element name. Enough to order this stylesheet's
+ * `::placeholder` rules, which use nothing else.
+ */
+function specificity(selector: string): [number, number, number] {
+  const ids = selector.match(/#[\w-]+/gu)?.length ?? 0;
+  const classes = selector.match(/\.[\w-]+|\[[^\]]+\]|(?<!:):[\w-]+/gu)?.length ?? 0;
+  const types = selector.replace(/\[[^\]]+\]|::?[\w-]+(?:\([^)]*\))?|[#.][\w-]+/gu, ' ').match(/[a-z][\w-]*/giu)?.length ?? 0;
+  return [ids, classes, types];
+}
+
+function outranks(a: [number, number, number], b: [number, number, number]): boolean {
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index]! !== b[index]!) return a[index]! > b[index]!;
+  }
+  return true;
+}
+
+/**
+ * The value the mounted stylesheet gives `property` on `element`'s
+ * placeholder, which `getComputedStyle` cannot read: jsdom computes no
+ * pseudo-element. Each `::placeholder` selector is matched against its
+ * element, and the winner is the most specific, then the latest, of the
+ * media blocks that apply. `undefined` when no rule sets it.
+ */
+export function placeholderDeclaration(element: Element, property: string): string | undefined {
+  if (!mounted) throw new Error('app-stylesheet: mount the stylesheet first');
+  let winner: { value: string; rank: [number, number, number] } | undefined;
+  const visit = (rules: CSSRuleList): void => {
+    for (const rule of Array.from(rules)) {
+      if (rule instanceof CSSMediaRule) {
+        if (rule.media.mediaText === 'all') visit(rule.cssRules);
+      } else if (rule instanceof CSSStyleRule && rule.selectorText.includes('::placeholder')) {
+        const value = rule.style.getPropertyValue(property);
+        if (!value) continue;
+        for (const selector of rule.selectorText.split(',')) {
+          const subject = selector.trim();
+          if (!subject.endsWith('::placeholder')) continue;
+          const rank = specificity(subject);
+          if (element.matches(subject.slice(0, -'::placeholder'.length)) && (!winner || outranks(rank, winner.rank))) {
+            winner = { value, rank };
+          }
+        }
+      }
+    }
+  };
+  visit(mounted.cssRules);
+  return winner?.value;
 }
