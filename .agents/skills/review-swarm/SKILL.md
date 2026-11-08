@@ -168,9 +168,8 @@ actually pays for itself, accessibility of custom controls) plus the following.
   each production constructor. A new constructor that needs a disable comment is a
   finding, not a formatting choice.
 - **Drafts, offline, and reconnect are product surface**, not edge cases: check the
-  composer draft cache rules in `docs/composer-drafts.md`, the optimistic new-work-
-  stream transition in `docs/workstream-creation.md`, and that reconnect/backoff state
-  cannot strand a spinner.
+  composer draft cache rules in `docs/composer-drafts.md`, and that reconnect/backoff
+  state cannot strand a spinner.
 - **Every visible change is verified in a real window.** Per `CLAUDE.md`, a passing
   DOM test says nothing about whether an element is visible, positioned, legible, or
   covered — flag a user-visible change whose PR shows no screenshot from the Xvfb +
@@ -245,8 +244,8 @@ Avalon is intuitive and cohesive — a macOS desktop application, not a web page
   where nothing has a nearer claim on the keystroke, and a menu bar surface that must
   work with no window open (`docs/menu-bar.md`).
 - Check the states a demo skips — empty, first-run, loading, partial, offline,
-  reconnecting, permission-denied, and the optimistic create transition in
-  `docs/workstream-creation.md` — and whether an agent's in-flight work reads
+  reconnecting, permission-denied, and the moment between creating a Canvas or a
+  Sidekick and its first answer — and whether an agent's in-flight work reads
   honestly.
 - Brand primary is `#CEDC00`, secondary `#47C7FC`; shared primitives live in
   `apps/desktop/src/renderer/components/primitives.tsx`. Flag one-off styling that
