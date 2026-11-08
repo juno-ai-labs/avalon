@@ -54,7 +54,7 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
   // carry the viewer's `needsInput` and `unread`, which `GET /sidekicks` never
   // does. REST remains only for a tree with no workspace socket mounted.
   const socket = useOptionalWorkspaceSocket();
-  const pushed = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations);
+  const pushed = useSocketOwnedList<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations);
   const fetched = useQuery({ queryKey: ['sidekicks-library'], queryFn: ({ signal }) => api!.getSidekicks(signal), enabled: Boolean(api) && !socket });
   const query = socket
     ? { data: pushed.data, isLoading: pushed.data === undefined, isSuccess: pushed.data !== undefined, error: null }

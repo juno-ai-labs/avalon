@@ -102,7 +102,8 @@ export function sidebarListApplied(queryClient: QueryClient, list: SidebarList):
 }
 
 /**
- * Read a list the workspace socket owns and nothing here fetches.
+ * Read a list the workspace socket owns and nothing here fetches: an array of
+ * rows, or Activity's page with its count.
  *
  * `useWorkstreamsQuery`'s opening batch seeds it and WorkspaceDO re-sends it
  * whole on every change, so there is no fetch to make and no staleness for
@@ -116,8 +117,8 @@ export function sidebarListApplied(queryClient: QueryClient, list: SidebarList):
  * same rows and never re-renders when the socket replaces them, so the caller
  * paints whatever it happened to hold until something unrelated re-renders it.
  */
-export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryResult<T[]> {
-  return useQuery<T[]>({
+export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryResult<T> {
+  return useQuery<T>({
     queryKey,
     queryFn: () => {
       throw new Error(`${String(queryKey[0])} is pushed by the organization socket, never fetched`);

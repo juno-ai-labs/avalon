@@ -327,6 +327,10 @@ feed of what happened to the person in Canvases and Sidekicks
 ([`activity.md`](activity.md)). The browser mounts the same renderer, so both
 platforms get it.
 
+Opening one of its rows keeps Activity open, unlike every other route, which
+moves the rail to the section the route belongs to: Activity is a list of
+things to go to, and switching away on each click would hide the next one.
+
 **Considered and rejected:** Adding Activity to the dock badge. The dock badge
 and the menu bar count Needs attention, by the menu bar's 2026-11-07 decision;
 an unseen mention whose Canvas is already unread would be counted twice.

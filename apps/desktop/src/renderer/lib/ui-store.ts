@@ -3,8 +3,8 @@ import { create } from 'zustand';
 export type RailVariant = 'context' | 'browser';
 /**
  * Which list the sidebar's rail shows. A section stored before the 2026-11
- * cutover (`channels`, `threads`, `pinned`, `artifacts`, `activity`) reads as
- * the default, Canvases.
+ * cutover (`channels`, `threads`, `pinned`, `artifacts`) reads as the default,
+ * Canvases; `activity` opens Activity again.
  */
 export type SidebarSection = 'canvases' | 'sidekicks' | 'activity';
 /** The panel occupying the right sidebar slot. */

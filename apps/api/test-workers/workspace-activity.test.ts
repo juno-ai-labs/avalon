@@ -193,15 +193,17 @@ describe("a person's Activity", () => {
     expect(subscribedActivity(recipient.frames)).toMatchObject({ unseenCount: 0, items: [] });
     await mention("canvas", canvasId, "activity-mention-1");
     const delivered = await deliverChildEffects(TEST_ENV, conversation(canvasId));
-    const messageId = delivered.find((envelope) => envelope.effect.kind === "mention_notification")?.effect;
-    expect(messageId?.kind).toBe("mention_notification");
-    const turnId = (messageId as { messageId: string }).messageId;
+    const mentioned = delivered.find((envelope) => envelope.effect.kind === "mention_notification")?.effect;
+    expect(mentioned?.kind).toBe("mention_notification");
+    const { messageId: turnId, transcriptSequence } = mentioned as { messageId: string; transcriptSequence?: number };
+    // The conversation names the turn's place in its transcript, which opening the Chat at it needs.
+    expect(transcriptSequence).toBeGreaterThan(0);
 
     await expect.poll(() => activityPushes(recipient.frames).at(-1)).toMatchObject({
       unseenCount: 1,
       items: [{
         id: `mention:${turnId}:${RECIPIENT}`, kind: "mention", parentKind: "canvas", parentId: canvasId,
-        parentTitle: "Launch plan", substreamId: "0", messageId: turnId, runId: null,
+        parentTitle: "Launch plan", substreamId: "0", messageId: turnId, messageSequence: transcriptSequence, runId: null,
         actor: { kind: "person", id: AUTHOR }, preview: "@Robin please review the plan",
         createdAt: expect.any(String), seen: false,
       }],
@@ -246,7 +248,7 @@ describe("a person's Activity", () => {
       unseenCount: 1,
       items: [{
         id: effect.intentId, kind: "participant_added", parentKind: "canvas", parentId: canvasId, parentTitle: "Launch plan",
-        substreamId: "0", messageId: null, runId: null, actor: { kind: "person", id: AUTHOR }, preview: null, seen: false,
+        substreamId: "0", messageId: null, messageSequence: null, runId: null, actor: { kind: "person", id: AUTHOR }, preview: null, seen: false,
       }],
     });
 
@@ -374,7 +376,7 @@ async function openedActivity(userId: string): Promise<ActivityFrame | undefined
 function runItem(automationId: string, kind: string, runId: string) {
   return {
     kind, parentKind: "automation", parentId: automationId, parentTitle: "Release notes", substreamId: runId,
-    messageId: null, runId, actor: { kind: "sidekick", id: automationId }, preview: `Run ${runId} says hello`, seen: false,
+    messageId: null, messageSequence: null, runId, actor: { kind: "sidekick", id: automationId }, preview: `Run ${runId} says hello`, seen: false,
   };
 }
 

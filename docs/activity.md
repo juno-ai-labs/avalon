@@ -133,12 +133,17 @@ clears it.
 
 ### In the client
 
-The section lists the page newest first: the actor's avatar (a person) or the
-Sidekick's hexagon, who, what (mentioned you in, added you to, needs your
-input, finished a run), the title, the preview, a relative time and an unseen
-dot. A mention or an add opens the Canvas, or the Sidekick's conversation; a
-run notice opens the Sidekick's conversation, where its run row is and where
-an answer to it goes. The rail badge is `unseenCount` ("3 unseen"). The dock
+The section lists the page newest first: a glyph for the kind (an at sign, a
+person added, a question, a check), who (a person's name from the member
+directory, or the Sidekick's), what (mentioned you in, added you to, needs
+your input, finished a run), the title, the preview, a relative time and an
+unseen dot. A Canvas Chat mention opens the Chat at its message
+(`canvasTurnRoute`, from the row's `messageId` and `messageSequence`, the
+mentioning turn's transcript sequence the effect carries); a mention recorded
+before the effect carried it, and an add, open the Canvas. A row about a
+Sidekick opens its conversation, where a run's row is and an answer to it
+goes; a mention in one of its runs opens that run. Opening a row keeps the
+Activity section open. The rail badge is `unseenCount` ("3 unseen"). The dock
 badge and the menu bar stay Needs attention only
 ([`menu-bar.md`](menu-bar.md)); Activity does not join them.
 
@@ -201,8 +206,11 @@ them. The menu bar and the dock badge do not read it.
   that arrives already seen.
 - **A mention or an add in a Sidekick run's own conversation** clears only by
   Mark all seen: the shared conversation's cursor does not measure it.
-- **A read report delayed past a later row** can clear a non-mention row the
-  person had not looked at. The window is the Queue's delivery delay.
+- **A run that fails at once can arrive already seen.** The requester's own
+  read report of the message that asked for it is delivered through the Queue
+  and can land after the run's `run_finished` row is written — seen locally
+  4 ms later, with no model configured — and that report then clears the row.
+  A run that takes longer than the Queue's delivery delay is not affected.
 - **Mark all seen while the socket is down** is not sent; the button does
   nothing until it reconnects.
 - **An older desktop** ignores `workspace_activity_list` by type and strips
@@ -232,7 +240,7 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 
 | Table | Key | Columns |
 | --- | --- | --- |
-| `workspace_activity_items` | `item_id` (the intent's id) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
+| `workspace_activity_items` | `item_id` (the intent's id) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `message_sequence` (the mention's transcript sequence), `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
 | `workspace_activity_seen` | `user_id` | `seen_through` (ms): Mark all seen. |
 | `workspace_sidebar_list_state` | `list` | Row `activity`: the list's waterline. |
 
@@ -246,7 +254,8 @@ adds and Sidekick run notices. WorkspaceDO migration 148 adds
 sidebar-list waterline's CHECK to `activity` by copying the table. The workspace
 socket carries the page on subscribe and pushes `workspace_activity_list`;
 `activity_mark_all_seen` is its one command. The `mention_notification` effect
-carries the message's `attentionOrdinal`.
+carries the message's `attentionOrdinal` and `transcriptSequence`, so a
+mention's row clears on the read cursor and opens the Chat at its message.
 
 **Why:** The user asked on 2026-11-08 to bring the Activity section back. The
 Thread-era feed (the Activity tab of `digests.md`, retired with the Thread
