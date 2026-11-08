@@ -55,7 +55,7 @@ describe("migration 107", () => {
       });
       state.storage.sql.exec(
         `INSERT INTO member_preferences (user_id, show_agent_work, push_json, updated_at) VALUES (?, 1, ?, 42)`,
-        MEMBER, JSON.stringify({ newThreads: false, runFinishedOthers: false }),
+        MEMBER, JSON.stringify({ mentions: false, runFinishedOthers: false }),
       );
     });
 
@@ -67,7 +67,7 @@ describe("migration 107", () => {
       const row = state.storage.sql.exec<{ show_agent_work: number; push_json: string; notify_json: string }>(
         `SELECT show_agent_work, push_json, notify_json FROM member_preferences WHERE user_id = ?`, MEMBER,
       ).one();
-      expect(storedMemberPreferences(row).notify).toEqual({ ...DEFAULT_NOTIFICATION_CHANNELS, newThreads: [] });
+      expect(storedMemberPreferences(row).notify).toEqual({ ...DEFAULT_NOTIFICATION_CHANNELS, mentions: ["slack_agent_dm"] });
     });
   });
 });

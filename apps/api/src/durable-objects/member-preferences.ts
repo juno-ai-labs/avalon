@@ -7,6 +7,7 @@ import {
   NotificationChannelSchema,
   NotificationChannelsChoiceSchema,
   NotificationKindSchema,
+  OFFERED_NOTIFICATION_KINDS,
   PushPreferencesSchema,
   WorkspaceIdSchema,
   type MemberPreferences,
@@ -14,6 +15,7 @@ import {
   type NotificationChannel,
   type NotificationChannels,
   type NotificationKind,
+  type OfferedNotificationKind,
   type PushPreferences,
 } from "@rally/contracts";
 import { PushNotificationDataSchema, type PushNotificationData } from "@rally/contracts/push-notifications";
@@ -65,20 +67,26 @@ const PUSH_SWITCH: Partial<Record<NotificationKind, keyof PushPreferences>> = {
   runFinished: "runFinished",
 };
 const KINDS = NotificationKindSchema.options;
+const OFFERED: ReadonlySet<NotificationKind> = new Set(OFFERED_NOTIFICATION_KINDS);
 
-/** The kind of channel list a pushed notification of this kind reads. */
-export const NOTIFICATION_KIND_FOR_PUSH: Record<PushNotificationData["kind"], NotificationKind> = {
+/**
+ * The kind of channel list a pushed notification of this kind reads. Only
+ * the kinds a producer records are here: `thread_started`,
+ * `breakout_started` and `merged` had their producers deleted with Threads,
+ * so a notification of those kinds is allowed nowhere.
+ */
+export const NOTIFICATION_KIND_FOR_PUSH: Partial<Record<PushNotificationData["kind"], OfferedNotificationKind>> = {
   mention: "mentions",
   new_message: "newMessages",
   participant_added: "added",
-  thread_started: "newThreads",
-  breakout_started: "newBreakouts",
   run_finished: "runFinished",
-  merged: "merges",
   artifact_updated: "artifactUpdates",
   // A run waiting on input is the other half of "Sidekick runs" in Settings:
   // one choice covers both, rather than a second row for one notice.
   needs_input: "runFinished",
+  access_request: "accessRequests",
+  // Being let into a Canvas you asked for is being added to it.
+  access_granted: "added",
 };
 
 /** `changes` over `base`, switch by switch; a switch `changes` does not name keeps its value. */
@@ -132,20 +140,25 @@ export function storedMemberPreferences(row: {
   if (!row) return { ...DEFAULT_MEMBER_PREFERENCES };
   const legacy = storedPushPreferences(row.push_json);
   const chosen = storedNotify(row.notify_json);
-  const notify = Object.fromEntries(KINDS.map((kind) => {
+  // An offered kind reads as chosen, else its default; a stored-only kind
+  // (`newThreads`, `newBreakouts`, `merges`) is in the record only as stored.
+  const notify = Object.fromEntries(KINDS.flatMap((kind) => {
+    if (!OFFERED.has(kind)) return chosen[kind] === undefined ? [] : [[kind, chosen[kind]]];
+    const defaults = DEFAULT_NOTIFICATION_CHANNELS[kind] ?? [];
     const legacySwitch = PUSH_SWITCH[kind];
-    return [kind, chosen[kind] ?? (legacySwitch === undefined ? [...DEFAULT_NOTIFICATION_CHANNELS[kind]]
-      : withPush(DEFAULT_NOTIFICATION_CHANNELS[kind], DEFAULT_NOTIFICATION_CHANNELS[kind].includes("push") && legacy[legacySwitch]))];
+    return [[kind, chosen[kind] ?? (legacySwitch === undefined ? [...defaults]
+      : withPush(defaults, defaults.includes("push") && legacy[legacySwitch]))]];
   })) as NotificationChannels;
   return { showAgentWork: row.show_agent_work === 1, push: mirroredPush(legacy, notify), notify };
 }
 
-/** The push switches an older client reads: each kind's from its channels. */
+/** The push switches an older client reads: each kind's from its channels, where the record has them. */
 function mirroredPush(legacy: PushPreferences, notify: NotificationChannels): PushPreferences {
   const push = { ...legacy };
   for (const kind of KINDS) {
     const legacySwitch = PUSH_SWITCH[kind];
-    if (legacySwitch !== undefined) push[legacySwitch] = notify[kind].includes("push");
+    const channels = notify[kind];
+    if (legacySwitch !== undefined && channels !== undefined) push[legacySwitch] = channels.includes("push");
   }
   return push;
 }
@@ -165,7 +178,7 @@ export function savedNotify(
   for (const kind of KINDS) {
     const legacySwitch = PUSH_SWITCH[kind];
     const switched = legacySwitch === undefined ? undefined : update.push?.[legacySwitch];
-    if (switched !== undefined) next[kind] = withPush(next[kind] ?? current[kind], switched);
+    if (switched !== undefined) next[kind] = withPush(next[kind] ?? current[kind] ?? [], switched);
     const channels = update.notify?.[kind];
     if (channels !== undefined) next[kind] = channels;
   }
@@ -178,7 +191,8 @@ export function notificationAllows(
   kind: PushNotificationData["kind"],
   channel: NotificationChannel,
 ): boolean {
-  return notify[NOTIFICATION_KIND_FOR_PUSH[kind]].includes(channel);
+  const chosen = NOTIFICATION_KIND_FOR_PUSH[kind];
+  return chosen !== undefined && notify[chosen].includes(channel);
 }
 
 export const MemberPreferencesReadRequestSchema = z.strictObject({
