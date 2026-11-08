@@ -130,8 +130,9 @@ The model may call an already-asynchronous tool directly, and a background
 agent may execute it without delegating again. Image generation and editing
 are the initial annotated tools.
 
-`get_connector_connection_state` and `show_connector_connection` are
-the user-run-only recovery pair. Both accept only a trusted connector catalog
+`get_connector_connection_state` and `show_connector_connection` are the
+recovery pair for a run with a user principal: a Canvas's Chat, a Sidekick's
+conversation, and a Sidekick run. Both accept only a trusted connector catalog
 id and a `personal`/`workspace` scope. The read always checks every scope the
 connector offers in one query; a `scope` it is sent is accepted and ignored, so
 older calls still validate. It returns each scope's state, `connected`, `reconnect_required`, or `not_connected`,
@@ -144,7 +145,11 @@ connector is unavailable or presenting a card when the answer is not already
 known. The presentation call does not establish a connection and must not be
 described as one. Its validated id and scope are also the completed tool fact's
 participant-safe result, so the card remains reconstructible from durable
-history rather than depending on a transient started event.
+history rather than depending on a transient started event. In a Sidekick
+run the presentation tool is a question instead: it opens an elicitation
+carrying the card's selection and pauses the run in `needs_input` until a person
+connects it, chooses Continue, or declines
+([`automation-lifecycle.md`](automation-lifecycle.md#a-run-a-missing-connection-or-grant-blocks)).
 
 `check_resource_access` takes a connector and a resource link or id and asks
 every connection of that connector in the run how far it reaches the resource,
@@ -167,8 +172,10 @@ The model-facing flow is deliberately literal:
 3. If none can and `reconnect_required` or `not_connected` blocks the task,
    explain the blocker briefly.
 4. Call `show_connector_connection` with the same `connectorId` and the scope
-   the task needs, then stop the connector-dependent work for that run. Do not
-   claim the connection worked.
+   the task needs. In a Canvas or a Sidekick's conversation, then stop the
+   connector-dependent work for that run. In a Sidekick run the call pauses the
+   run: on `continue`, check the state again and retry; on `declined`, end with
+   one final message saying what is blocked. Do not claim the connection worked.
 5. Never tell a person to complete a connection prompt unless the card was
    shown in that same reply, and never tell another agent a connection blocks
    it unless a tool refused for that reason. A state check is not a refusal.

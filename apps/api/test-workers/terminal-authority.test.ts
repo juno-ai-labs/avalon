@@ -2750,4 +2750,64 @@ describe("provider observations", () => {
     expect(republished).toEqual(published);
   });
 
+  /** This object's `terminal_observation` entries, and the deadline they should match. */
+  const observationAlarm = (stub: DurableObjectStub) => runInDurableObject(stub, (_instance, state) => ({
+    entries: state.storage.sql.exec<{ alarm_key: string; due_at: number }>(
+      `SELECT alarm_key, due_at FROM _internal_durable_alarms WHERE kind = 'terminal_observation'`,
+    ).toArray(),
+    observation: state.storage.sql.exec<{ requested_at: number; next_observe_at: number; error_code: string | null }>(
+      "SELECT requested_at, next_observe_at, error_code FROM terminal_provider_observation WHERE id = 1",
+    ).toArray()[0] ?? null,
+  }));
+
+  /**
+   * Make the seeded check due, let the object's own alarm run it, and read
+   * what it left. The read is polled, not forced: the alarm is overdue, so
+   * `runDurableObjectAlarm` can find the slot already cleared by the automatic
+   * firing and run nothing (see "Writing a workerd test" in docs/testing.md).
+   * This suite's region has no Terminal provider configured, so the read is
+   * recorded as unavailable — which is proof the check ran here.
+   */
+  async function observedByAlarm(stub: DurableObjectStub) {
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`UPDATE terminal_provider_observation SET next_observe_at = 0, error_code = NULL`);
+    });
+    // Any Terminal call re-derives the entry from the row it just moved.
+    await terminal(stub, "sandbox");
+    await expect.poll(async () => (await observationAlarm(stub)).observation?.error_code ?? null)
+      .toBe("provider_unavailable");
+    return observationAlarm(stub);
+  }
+
+  it("observes an idle sandbox on its alarm entry when due, and re-arms it ten minutes out", async () => {
+    const stub = await setup();
+    const { entries, observation } = await observedByAlarm(stub);
+    // The interval is read off the two instants the object wrote together,
+    // never against this test's clock.
+    expect(observation!.next_observe_at - observation!.requested_at).toBe(10 * 60_000);
+    expect(entries).toEqual([{ alarm_key: "sandbox", due_at: observation!.next_observe_at }]);
+  });
+
+  it("observes a working sandbox every minute", async () => {
+    const stub = await setup();
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`UPDATE terminal_workspace SET lifecycle_state = 'running' WHERE id = 1`);
+    });
+    const { entries, observation } = await observedByAlarm(stub);
+    expect(observation!.next_observe_at - observation!.requested_at).toBe(60_000);
+    expect(entries).toEqual([{ alarm_key: "sandbox", due_at: observation!.next_observe_at }]);
+  });
+
+  it("arms no observation while no sandbox is open", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      seedRunRow(state, RUN_A, "running");
+    });
+    await reserve(stub, RUN_A);
+    await terminal(stub, "sandbox");
+    expect(await observationAlarm(stub)).toEqual({ entries: [], observation: null });
+  });
+
 });

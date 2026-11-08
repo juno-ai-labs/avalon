@@ -47,7 +47,7 @@ selection and the event cutoffs that unchanged rows preserve.
 | `apps/api/src/durable-objects/workspace-do.ts` | Adopts it for a workspace: due schedules, resource watches, maintenance passes, Terminal deadlines, the opportunity/ranking product pass, and the three Space phases. Owns `refreshSchedule`. |
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
-| `apps/api/src/durable-objects/agent-loop-do.ts` | Adopts it for a conversation's agent: `agent_timer` entries index `workstream_wakeups`; the retired `merge_suggestion` kind is named only so a leftover entry can be recognised. Execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | Adopts it for a conversation's agent: `agent_timer` entries index `workstream_wakeups`; one `terminal_observation` entry indexes its Terminal sandbox's `next_observe_at`; the retired `merge_suggestion` kind is named only so a leftover entry can be recognised. Execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | A hosted Sidekick's entries in `WorkspaceDO`'s store, each keyed `<sidekickId>:<key>`: `automation_schedule`, `automation_run`, `sidekick_review` (one per Sidekick, armed by run finishes; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), `sidekick_run_row` (`<sidekickId>:<runId>`, armed by migration 135's triggers on `sidekick_runs`, handled by `projectRunRow`), `sidekick_memory_tables`, and the delegation kinds. |
 
 ### Two kinds of wake reason
@@ -69,9 +69,10 @@ takes the earliest of both:
   ([`realtime-sockets.md`](realtime-sockets.md) owns it). `AgentLoopDO` includes both
   regional-effect delivery and semantic-realtime publication outboxes
   independently, plus separate candidates
-  for executable loop work, the oldest externally unsettled terminal run, and
-  its own Terminal sandbox's next provider observation
-  ([`terminal-workspaces.md`](terminal-workspaces.md) owns it).
+  for executable loop work and the oldest externally unsettled terminal run.
+  Its Terminal sandbox's next provider observation is a stored
+  `terminal_observation` entry instead, so a failing check backs off behind
+  its own gate ([`terminal-workspaces.md`](terminal-workspaces.md) owns it).
   Every independent lane is returned so an overdue one cannot
   hide a real future deadline during the pre-work recovery arm.
 
@@ -624,6 +625,22 @@ row to its own grant directory right after the write, and the outbox lane of the
 alarm retries a failed apply. See [scope grant directory](scope-grant-directory.md).
 
 ## Changelog
+
+### 2026-11-08 — A conversation's Terminal provider check is a stored kind
+
+**What changed:** `AgentLoopDO` stores a `terminal_observation` entry (key
+`sandbox`) reconciled from `terminal_provider_observation.next_observe_at` in
+every Terminal write's transaction and on each alarm pass; its handler observes
+the sandbox and re-arms the entry.
+
+**Why:** The owner asked for the periodic check removed with the Thread host to
+come back "as it was"; the brief put it on the store `reply_batch` and
+`sidekick_run_notice` use rather than on the deleted derived candidate, so a
+provider that keeps failing is held behind the entry's own backoff instead of
+being retried on every wake.
+
+**Consequences:** The entry's handler must re-derive the entry after the check
+(the base settles it guarded on the instant that ran, so the re-arm survives).
 
 ### 2026-11-07 — A Sidekick's run rows are a stored kind armed by triggers
 

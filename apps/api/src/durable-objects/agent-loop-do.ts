@@ -145,7 +145,10 @@ import {
   withLocalWorkstreamAuthorities,
   type LocalAuthorityExecutor,
 } from "../runtime/local-authorities";
-import { TerminalObjectPortError } from "../services/terminal/object-port";
+import { createTerminalObjectPort, TerminalObjectPortError } from "../services/terminal/object-port";
+import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
+import { refreshTerminalProviderObservation } from "../services/terminal/observation";
+import { createTerminalProviderRpcClient } from "../services/terminal/provider-rpc-client";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import { loadWorkstreamWakeup } from "../services/workstream-wakeup-service";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
@@ -678,6 +681,14 @@ const KEEP_ALIVE_INTERVAL_MS = 30_000;
 const SEMANTIC_REALTIME_RETRY_MS = 5_000;
 /** `_internal_durable_alarms.kind` for a wake-up an agent run scheduled for itself. */
 const AGENT_TIMER_ALARM_KIND = "agent_timer";
+/**
+ * The one entry that asks Daytona what this conversation's Terminal sandbox
+ * is, at its `next_observe_at`. Keyed by the constant below: a conversation
+ * owns at most one sandbox, and the entry's due time is re-derived from the
+ * observation row after every Terminal write and every check.
+ */
+const TERMINAL_OBSERVATION_ALARM_KIND = "terminal_observation";
+const TERMINAL_OBSERVATION_ALARM_KEY = "sandbox";
 const RETIRED_MERGE_SUGGESTION_ALARM_KIND = "merge_suggestion";
 /**
  * Bound on the entries one sync writes.
@@ -2949,7 +2960,13 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       // effect is its only writer. Calling the storage method on its own
       // committed the row and told nobody.
       value = await this.product.commitRuntimeMutation(
-        () => method.apply(this.terminal, input.args),
+        () => {
+          const result = method.apply(this.terminal, input.args);
+          // The observation deadline this write may have moved is this
+          // object's own alarm entry, committed with the row.
+          this.syncTerminalObservationAlarm();
+          return result;
+        },
         terminalOperationAffectsDirectory(operation),
       );
     } catch (error) {
@@ -7236,6 +7253,13 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     // Suggestions are retired; a merge-result judgement a Thread armed before
     // then has nothing left to judge.
     if (alarm.kind === RETIRED_MERGE_SUGGESTION_ALARM_KIND) return;
+    if (alarm.kind === TERMINAL_OBSERVATION_ALARM_KIND) {
+      await this.observeDueTerminalSandbox();
+      // The check moved `next_observe_at` before it crossed the provider
+      // boundary, whatever the provider answered; this re-arms the entry there.
+      this.state.storage.transactionSync(() => this.syncTerminalObservationAlarm());
+      return;
+    }
     if (alarm.kind !== AGENT_TIMER_ALARM_KIND) {
       throw new Error(`substream_unknown_alarm_kind:${alarm.kind}`);
     }
@@ -7280,6 +7304,83 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     if (!fired && this.agentTimerStillPending(alarm.key)) throw new Error("agent_timer_claim_lost");
   }
 
+  /**
+   * When this conversation's own Terminal sandbox is next due a provider
+   * observation, or `null` when this object has none to observe.
+   *
+   * A Canvas's Chat and a Sidekick's conversation each own their sandbox (a
+   * run reuses its Sidekick's), so the object holding the sandbox row is the
+   * one that checks it. An archived conversation is not observed: its sandbox
+   * is retired by the provider's own auto-delete.
+   */
+  private nextTerminalObservationAt(): number | null {
+    if (!this.objectStore.identity()) return null;
+    const root = this.state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM workstream WHERE id = 1`,
+    ).toArray()[0];
+    if (root && root.archived_at !== null) return null;
+    return this.terminal.nextProviderObservationAt();
+  }
+
+  /**
+   * Make the `terminal_observation` entry match the sandbox's observation
+   * deadline: one entry at `next_observe_at` while a sandbox is open, none
+   * otherwise. Called inside the transaction of every Terminal write (which is
+   * also what the check's own `beginProviderObservation` is) and after each
+   * check, so the deadline the storage wrote is the alarm the object arms.
+   */
+  private syncTerminalObservationAlarm(): void {
+    const dueAt = this.nextTerminalObservationAt();
+    this.scheduledAlarms.reconcile(
+      TERMINAL_OBSERVATION_ALARM_KIND,
+      dueAt === null ? [] : [{ key: TERMINAL_OBSERVATION_ALARM_KEY, dueAt }],
+    );
+  }
+
+  /**
+   * Ask Daytona what this conversation's sandbox is, and record the answer.
+   *
+   * The read reserves its request before the provider call, which is also what
+   * moves the deadline out, so a failing provider waits a full interval rather
+   * than turning this alarm into a hot loop. Nothing here publishes: the
+   * observation feeds the state API and nothing the directory carries.
+   */
+  private async observeDueTerminalSandbox(): Promise<void> {
+    const identity = this.objectStore.identity();
+    const sandbox = this.terminal.sandbox();
+    if (!identity || !sandbox?.sandboxId) return;
+    // One client per check, disposed when the check ends. This object never
+    // ends the context that would release the provider session for it, and a
+    // session left open every interval is what ran the provider Worker out of
+    // memory.
+    let client: ReturnType<typeof createTerminalProviderRpcClient> | undefined;
+    const provider = {
+      getSandbox: (id: string) => {
+        const configuration = parseTerminalRegionConfiguration(this.env);
+        if (configuration.capability !== "supported") throw new Error("terminal_provider_unavailable");
+        client ??= createTerminalProviderRpcClient(this.env.TERMINAL_PROVIDER, configuration);
+        return client.getSandbox(id);
+      },
+    };
+    try {
+      await refreshTerminalProviderObservation(
+        createTerminalObjectPort(this.env, identity.workspaceId, identity.parentId, this.terminal,
+          this.externalSubstreamId()),
+        provider,
+        { sandboxId: sandbox.sandboxId, generation: sandbox.generation },
+      );
+    } catch (error) {
+      logWarn(this.env, "terminal_provider_observation_failed", {
+        workspace_id: identity.workspaceId,
+        workstream_id: identity.parentId,
+        substream_id: this.externalSubstreamId(),
+        code: diagnosticErrorCode(error, "terminal_provider_observation_failed"),
+      });
+    } finally {
+      client?.[Symbol.dispose]();
+    }
+  }
+
   private agentTimerStillPending(wakeupId: string): boolean {
     return this.state.storage.sql.exec(
       `SELECT 1 FROM workstream_wakeups WHERE wakeup_id = ? AND status = 'pending'`,
@@ -7322,6 +7423,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     const nextExternalSettlementAt = this.nextExternalSettlementAt();
     // A timer that fired above may have left the index behind the table.
     this.syncAgentTimerAlarms();
+    // A sandbox opened before its writes armed this entry gets it here.
+    this.state.storage.transactionSync(() => this.syncTerminalObservationAlarm());
     // Started here and joined below: the attempt is two reads and at most one
     // Queue send, and must not wait behind the run lane.
     const memorySweep = this.memorySweepDue(now) ? this.attemptDueMemorySweep() : null;

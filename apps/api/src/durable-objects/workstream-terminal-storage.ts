@@ -59,7 +59,8 @@ export const TERMINAL_OPERATION_LEASE_MS = 16 * 60_000;
  *
  * Applies to every lifecycle state except `stopped` and `archived`: a sandbox
  * that is running, or on its way somewhere, is the one whose provider state can
- * move without Rally having asked it to.
+ * move without Rally having asked it to. The number is the team's, carried
+ * unchanged from the Thread host's check (docs/terminal-workspaces.md).
  */
 export const TERMINAL_PROVIDER_OBSERVATION_INTERVAL_MS = 60_000;
 
@@ -420,6 +421,26 @@ export class WorkstreamTerminalStorage {
         next_observe_at = excluded.next_observe_at`,
       input.sandboxId, input.generation, requestId, now, now + interval);
     return requestId;
+  }
+
+  /**
+   * When this conversation's sandbox is next due a provider observation;
+   * `null` when it has none to observe.
+   *
+   * This is the owning object's own alarm input (its `terminal_observation`
+   * entry), and deliberately not the directory's: the observation deadline
+   * moves on every check, and projecting it made every check a directory
+   * write. A sandbox never observed is due now.
+   */
+  nextProviderObservationAt(): number | null {
+    const row = first<{ next_observe_at: number | null }>(this.sql.exec<{ next_observe_at: number | null }>(
+      `SELECT o.next_observe_at
+         FROM terminal_workspace w
+         LEFT JOIN terminal_provider_observation o
+           ON o.id = w.id AND o.sandbox_id = w.sandbox_id AND o.generation = w.generation
+        WHERE w.id = 1 AND w.sandbox_id IS NOT NULL AND w.lifecycle_state <> 'expired'`,
+    ));
+    return row ? row.next_observe_at ?? 0 : null;
   }
 
   /**
