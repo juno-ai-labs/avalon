@@ -177,6 +177,60 @@ export function parseLinkTarget(raw: string, options: { webBaseUrl: string | rea
   return parseLinkPathTarget(url.pathname);
 }
 
+/** What the web app's Organization URL names: its landing, or a Canvas or Sidekick inside it. */
+export type OrganizationShellTarget = LinkTarget | ({ kind: "organization" } & WorkspaceTarget);
+
+const ORGANIZATION_SHELL_PATH = /^\/app\/workspaces\/([a-z][a-z0-9-]*)\/([^/]+)\/?$/u;
+const SHELL_HASH = /^#\/(?:(canvases|sidekicks)\/([^/?]+)(?:\?(.*))?)?$/u;
+
+/**
+ * Read the web app's own Organization URL,
+ * `/app/workspaces/<region>/<organization>`, on one of the origins the caller
+ * names, with no hash or `#/` (its landing), `#/canvases/<canvas>` (with
+ * `?artifact=<artifact>` and nothing else) or `#/sidekicks/<sidekick>`. Ids
+ * are UUIDs here, as the web app writes them. Any other hash route, query or
+ * credential reads as null. `parseLinkTarget` refuses a hash, which is why this
+ * reader is separate; it takes no canonical or deep link.
+ */
+export function parseOrganizationShellTarget(raw: string, options: { webBaseUrl: string | readonly string[] }): OrganizationShellTarget | null {
+  let url: URL;
+  let origins: string[];
+  try {
+    url = new URL(raw);
+    const bases = typeof options.webBaseUrl === "string" ? [options.webBaseUrl] : options.webBaseUrl;
+    origins = bases.map((base) => new URL(base).origin);
+  } catch {
+    return null;
+  }
+  if (!origins.includes(url.origin) || url.search || url.username || url.password) return null;
+  const path = ORGANIZATION_SHELL_PATH.exec(url.pathname);
+  const organization = path ? { region: path[1]!, workspaceId: path[2]! } : null;
+  if (!organization || !isWorkspaceTarget(organization)) return null;
+  if (!url.hash) return { kind: "organization", ...organization };
+  const route = SHELL_HASH.exec(url.hash);
+  if (!route) return null;
+  const [, family, id, query] = route;
+  if (family === undefined) return query === undefined ? { kind: "organization", ...organization } : null;
+  if (!isId(id!)) return null;
+  if (family === "sidekicks") return query === undefined ? { kind: "sidekick", ...organization, sidekickId: id! } : null;
+  if (query === undefined) return { kind: "canvas", ...organization, canvasId: id! };
+  const search = new URLSearchParams(query);
+  const artifactId = search.get("artifact");
+  return [...search.keys()].length === 1 && artifactId !== null && isId(artifactId)
+    ? { kind: "canvas", ...organization, canvasId: id!, artifactId }
+    : null;
+}
+
+/**
+ * The addressed desktop destination for an Organization shell target: its
+ * Canvas or Sidekick, or, for the landing, the Organization's `home`, which
+ * opens `#/` as the web app does.
+ */
+export function organizationShellDeepLink(target: OrganizationShellTarget): string {
+  if (target.kind !== "organization") return linkDeepLink(target);
+  return addWorkspaceTarget(new URL(`${DESKTOP_DEEP_LINK_PROTOCOL}//home`), { region: target.region, workspaceId: target.workspaceId }, { base58: true }).toString();
+}
+
 /**
  * What Rally says, on every host, when it is handed a link to something deleted
  * with Threads: the web app's entry card and the desktop's deep-link error

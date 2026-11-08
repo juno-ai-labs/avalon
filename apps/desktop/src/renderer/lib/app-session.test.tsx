@@ -1412,6 +1412,13 @@ describe('single-platform desktop identity routing', () => {
       assertDestination: async () => expect(window.location.hash).toBe('#/'),
     },
     {
+      name: 'Organization home',
+      url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/home',
+      // `#/`, as the web app's Organization URL lands: the landing route then
+      // restores what this device last had open.
+      assertDestination: async () => waitFor(() => expect(window.location.hash).toBe('#/')),
+    },
+    {
       name: 'Activity',
       url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/activity',
       // Opens the section on the landing a launch has, never left parked on

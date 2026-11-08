@@ -72,6 +72,14 @@ describe('desktop deep-link intent grammar', () => {
     expect(parseDesktopDeepLinkIntent('rallywithai://activity?filter=mentions')).toBeNull();
   });
 
+  it("opens an organization's landing only when the link addresses it", () => {
+    expect(parseDesktopDeepLinkIntent(`rallywithai://workspace/enterprise/${WORKSPACE_ID}/home`))
+      .toEqual({ kind: 'home', target: { region: 'enterprise', workspaceId: WORKSPACE_ID } });
+    expect(parseDesktopDeepLinkIntent('rallywithai://home')).toBeNull();
+    expect(parseDesktopDeepLinkIntent(`rallywithai://workspace/enterprise/${WORKSPACE_ID}/home/${RESOURCE_ID}`)).toBeNull();
+    expect(parseDesktopDeepLinkIntent(`rallywithai://workspace/enterprise/${WORKSPACE_ID}/home?section=canvases`)).toBeNull();
+  });
+
   it('keeps legacy unaddressed identity and connector callbacks during rollout', () => {
     expect(parseDesktopDeepLinkIntent(
       `avalon://auth/complete?ticket=${ATTEMPT_ID}&region=global&attempt=${ATTEMPT_ID}`,

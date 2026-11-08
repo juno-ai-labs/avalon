@@ -1,4 +1,4 @@
-import { linkDeepLink, parseLinkTarget } from "@rally/contracts/links";
+import { linkDeepLink, organizationShellDeepLink, parseLinkTarget, parseOrganizationShellTarget } from "@rally/contracts/links";
 import { isDesktopDeepLinkProtocol } from '@rally/contracts/desktop-deep-link';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 import { parseWorkspaceAddressedDeepLink } from '@rally/contracts/workspace-target';
@@ -31,16 +31,23 @@ export function shouldDeliverConnectorResultToSettings(rawUrl: string): boolean 
   return intent?.kind === 'connector-result' && intent.target === null;
 }
 
+const ASSOCIATED_ORIGINS = ['https://rallywith.ai', 'https://www.rallywith.ai'];
+
 /**
- * Only the two associated Rally hosts and the Canvas and Sidekick path
- * families enter here. Anything else, a retired Space, Channel, Breakout or
- * Thread link included, stays in the browser, where the site's handoff page
- * says what it named is gone.
+ * Only the two associated Rally hosts enter here, and on them only the Canvas
+ * and Sidekick path families and the web app's Organization URL
+ * (`/app/workspaces/<region>/<organization>`, with its landing, Canvas or
+ * Sidekick hash route), which open the same screen the web app would.
+ * Anything else, a retired Space, Channel, Breakout or Thread link and any
+ * other hash route included, stays in the browser, where the site's handoff
+ * page or the web app answers it.
  */
 export function httpsLinkDeepLink(rawUrl: string): string | null {
   if (!rawUrl.startsWith('https://')) return null;
-  const target = parseLinkTarget(rawUrl, { webBaseUrl: ['https://rallywith.ai', 'https://www.rallywith.ai'] });
-  return target ? linkDeepLink(target) : null;
+  const target = parseLinkTarget(rawUrl, { webBaseUrl: ASSOCIATED_ORIGINS });
+  if (target) return linkDeepLink(target);
+  const shell = parseOrganizationShellTarget(rawUrl, { webBaseUrl: ASSOCIATED_ORIGINS });
+  return shell ? organizationShellDeepLink(shell) : null;
 }
 
 /**
