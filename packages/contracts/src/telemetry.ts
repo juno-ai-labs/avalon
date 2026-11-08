@@ -183,6 +183,17 @@ const screen = z.enum([
 ]);
 const applicationIcon = z.enum(TELEMETRY_APPLICATION_ICON_IDS);
 const resourceId = z.string().uuid();
+/**
+ * A transcript message: a participant's turn is a UUID, an assistant's is its
+ * loop's identity and ordinal (`workstream:<parent>:substream:<0|id>:loop:turn:<n>`,
+ * `substreamLoopId` in the API). Matched exactly rather than taken as the
+ * transcript's opaque key, so no free text can ride in a telemetry value.
+ */
+const UUID_SOURCE = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+const messageResourceId = z.union([
+  resourceId,
+  z.string().regex(new RegExp(`^workstream:${UUID_SOURCE}:substream:(?:0|${UUID_SOURCE}):loop:turn:[0-9]{1,12}$`, "u")),
+]);
 const uuidV7Id = z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7");
 const visibility = z.enum(["private", "public"]);
 const resourceCount = z.number().int().min(0).max(100);
@@ -1475,8 +1486,11 @@ export const TELEMETRY_EVENTS = {
         "note_summary", "note_transcript", "note_id", "automation_email", "automation_id",
       ]),
       resourceType: z.enum(["workstream", "message", "note", "automation"]),
-      resourceId,
+      // A message's id may be an assistant turn's; every other resource's is a UUID.
+      resourceId: messageResourceId,
       workstreamId: resourceId.optional(),
+    }).refine((value) => value.resourceType === "message" || resourceId.safeParse(value.resourceId).success, {
+      path: ["resourceId"], message: "must be a UUID",
     })),
     propertyClassifications: {
       contentType: "product", resourceType: "product", resourceId: "product", workstreamId: "product",

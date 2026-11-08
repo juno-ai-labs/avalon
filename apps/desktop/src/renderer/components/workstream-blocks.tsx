@@ -244,9 +244,17 @@ function codeLanguageLabel(normalizedLanguage: string, requestedLanguage: string
 }
 
 interface MessageCopyTelemetry {
-  turnId?: string;
+  turnId?: string | undefined;
   messageId: string;
   workstreamId: string;
+}
+
+/**
+ * The message a copy names: its transcript turn, which is what `content_copied`
+ * admits, rather than the rendered block (`<turn>:text:0`), which it does not.
+ */
+export function copiedMessageId(telemetry: { messageId: string; turnId?: string | undefined }): string {
+  return telemetry.turnId ?? telemetry.messageId;
 }
 
 function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry, annotationRange }: {
@@ -277,7 +285,7 @@ function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry, 
     onCopied: () => {
       if (telemetry) reportTelemetryProductIntent({
         kind: 'content_copied', contentType: 'code_block', resourceType: 'message',
-        resourceId: telemetry.messageId, workstreamId: telemetry.workstreamId,
+        resourceId: copiedMessageId(telemetry), workstreamId: telemetry.workstreamId,
       });
     },
   });
@@ -1331,6 +1339,7 @@ export function MarkdownBody({
   const linked = withAuthoritativeMentionLinks(children, stableMentions, token);
   const markdown = verbatim ? linked : normalizeModelMarkdown(linked);
   const messageId = telemetry?.messageId;
+  const turnId = telemetry?.turnId;
   const workstreamId = telemetry?.workstreamId;
   // Footnote ids are namespaced per mounted body. GFM writes the same
   // `fn-1`/`fnref-1` into every message otherwise, and a transcript is dozens
@@ -1374,7 +1383,7 @@ export function MarkdownBody({
       // asynchronous parse cannot be cancelled. Render once the turn is
       // complete; glances and saved stills deliberately keep source code.
       renderDiagrams={!glance && !still && !streaming}
-      telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId } : undefined}
+      telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId, turnId } : undefined}
     />
   ); }, [glance, messageId, still, streaming, workstreamId,sourcePositions,annotationSource]);
   // Stable across commits that change nothing they depend on, for two reasons:
@@ -1787,7 +1796,7 @@ export function MessageActions({
     await desktopBridge().copyText(text);
     if (telemetry) reportTelemetryProductIntent({
       kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
-      resourceId: telemetry.messageId,
+      resourceId: copiedMessageId(telemetry),
       ...(telemetry.workstreamId ? { workstreamId: telemetry.workstreamId } : {}),
     });
   };
