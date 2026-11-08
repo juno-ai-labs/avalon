@@ -8,6 +8,7 @@ import { useCollaborationSession } from '../lib/collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
 import { answerConversationElicitation } from '../lib/conversation-elicitation';
 import { composeTranscript, orderedTranscriptMessages, transcriptOverlaysQueryKey, type TranscriptOverlay } from '../lib/transcript';
+import { sidekickRunSearch } from '../lib/sidekick-status';
 import type { AutomationSummary, Message } from '../lib/types';
 import { orderedTranscriptQueryKey, useWorkstreamSocket } from '../lib/use-workstream-socket';
 import { RelativeTime } from './relative-time';
@@ -61,11 +62,6 @@ export function useSidekickRunNumber(sidekickId: string, runId: string | null): 
     staleTime: Number.POSITIVE_INFINITY,
     select,
   }).data ?? null;
-}
-
-/** The search a Sidekick screen reads to show one run's own conversation in place of the shared one. */
-export function sidekickRunSearch(runId: string): string {
-  return `?run=${encodeURIComponent(runId)}`;
 }
 
 /**

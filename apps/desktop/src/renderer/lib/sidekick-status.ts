@@ -23,6 +23,11 @@ export function sidekickStatus(row: Pick<AutomationSummary, 'needsInput' | 'runn
   return 'active';
 }
 
+/** The search a Sidekick screen reads to show one run's own conversation in place of the shared one. */
+export function sidekickRunSearch(runId: string): string {
+  return `?run=${encodeURIComponent(runId)}`;
+}
+
 const SIX_DAYS_MS = 6 * 86_400_000;
 
 /**
