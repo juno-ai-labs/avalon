@@ -609,6 +609,19 @@ describe('the Activity section', () => {
       expect(screen.queryByRole('button', { name: /^(Approve|Deny) / })).toBeNull();
     });
 
+    it('names who declined the request, never the Canvas, behind a lock, and opens its requestable pane', async () => {
+      const rows = await rowsOf([item({
+        id: 'd1', kind: 'access_denied', parentTitle: null, actor: { kind: 'person', id: MAYA },
+        accessRequest: { state: 'denied', decidedByName: 'Maya Chen', decidedByUserId: MAYA },
+      })]);
+      expect(rows[0]!.querySelector('.activity-row-text')).toHaveTextContent('Maya Chen declined your request to open a Canvas');
+      expect(rows[0]).toHaveAttribute('title', 'Maya Chen declined your request to open a Canvas');
+      expect(rows[0]).not.toHaveTextContent('Q4 revenue review');
+      expect(rows[0]!.querySelector('.activity-row-glyph.is-access_denied svg')).toHaveClass('tabler-icon-lock');
+      expect(rows[0]).toHaveAttribute('href', `/canvases/${CANVAS}`);
+      expect(within(rows[0]!.parentElement!).queryByRole('button', { name: /^(Approve|Deny) / })).toBeNull();
+    });
+
     it('names who let the person in and opens the Canvas', async () => {
       const rows = await rowsOf([item({ id: 'g1', kind: 'access_granted', actor: { kind: 'person', id: MAYA } })]);
       expect(rows[0]!.querySelector('.activity-row-text')).toHaveTextContent('Maya let you into Q4 revenue review');

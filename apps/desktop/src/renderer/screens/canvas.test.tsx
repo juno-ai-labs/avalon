@@ -344,10 +344,29 @@ describe('CanvasScreen', () => {
       expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
       cleanup();
 
-      getCanvasAccess.mockResolvedValue({ access: 'requestable', title: null, request: { state: 'denied', requestedAt: '2026-11-08T09:00:00.000Z' } });
+      getCanvasAccess.mockResolvedValue({ access: 'requestable', title: null, request: { state: 'denied', requestedAt: '2026-11-08T09:00:00.000Z', decidedAt: new Date().toISOString() } });
       renderCanvas();
       expect(await screen.findByRole('button', { name: 'Request access' })).toBeEnabled();
-      expect(screen.queryByRole('status')).toBeNull();
+      expect(screen.getByRole('status')).toHaveTextContent('Request declined · just now');
+      expect(screen.getByText('Someone who manages it declined. You can ask again.')).toBeInTheDocument();
+    });
+
+    it('says declined, with Request access again, when its access_denied row arrives', async () => {
+      getCanvasAccess.mockResolvedValue({ access: 'requestable', title: null, request: { state: 'pending', requestedAt: '2026-11-08T09:00:00.000Z', decidedAt: null } });
+      const client = renderCanvas();
+      expect(await screen.findByRole('status')).toHaveTextContent(/^Request sent · /u);
+      getCanvasAccess.mockResolvedValue({ access: 'requestable', title: null, request: { state: 'denied', requestedAt: '2026-11-08T09:00:00.000Z', decidedAt: new Date().toISOString() } });
+      act(() => {
+        applyVersionedSidebarList(client, 'activity', 1, { unseenCount: 1, items: [{
+          id: 'denied-1', kind: 'access_denied', parentKind: 'canvas', parentId: CANVAS, parentTitle: null,
+          substreamId: null, messageId: null, messageSequence: null, runId: null, actor: { kind: 'person', id: MAYA },
+          preview: null, createdAt: '2026-11-08T09:05:00.000Z', seen: false,
+          accessRequest: { state: 'denied', decidedByName: 'Maya', decidedByUserId: MAYA },
+        }] });
+      });
+      expect(await screen.findByRole('button', { name: 'Request access' })).toBeEnabled();
+      expect(screen.getByRole('status')).toHaveTextContent('Request declined · just now');
+      expect(getCanvas).toHaveBeenCalledTimes(1);
     });
 
     it('shows the refusal in the dialog', async () => {

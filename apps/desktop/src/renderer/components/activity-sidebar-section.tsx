@@ -42,6 +42,8 @@ function rowParts(item: ActivityItem, who: string, where: string): RowPart[] {
     case 'artifact_updated': return [actor, ' updated ', { strong: item.artifact?.title || 'an artifact' }, ' in ', place];
     case 'access_request': return [actor, ' asked to open ', place];
     case 'access_granted': return [actor, ' let you into ', place];
+    // Never the title: the requester was refused the Canvas.
+    case 'access_denied': return [actor, ' declined your request to open a Canvas'];
   }
 }
 
@@ -62,6 +64,7 @@ const GLYPHS: Record<ActivityItem['kind'], ReactNode> = {
   artifact_updated: <IconFilePencil aria-hidden="true" size={18} stroke={1.8} />,
   access_request: <IconLock aria-hidden="true" size={18} stroke={1.8} />,
   access_granted: <IconLockOpen aria-hidden="true" size={18} stroke={1.8} />,
+  access_denied: <IconLock aria-hidden="true" size={18} stroke={1.8} />,
 };
 
 /**
@@ -77,7 +80,7 @@ function settledText(request: NonNullable<ActivityItem['accessRequest']>, viewer
  * Where a row opens: a Canvas Chat mention or reply at its message, a pinned
  * Canvas's new version at the Canvas with that artifact open (`?artifact=`),
  * any other Canvas row at the Canvas (an access request's Share panel lists
- * it too), and a Sidekick row at its conversation, where a run's row is. A
+ * it too; a declined request's requester lands on its requestable pane), and a Sidekick row at its conversation, where a run's row is. A
  * run that needs input, and a mention or reply in one of a Sidekick's runs,
  * open that run, where its question is. A mention recorded before it carried
  * its message's sequence opens the Canvas.
@@ -127,6 +130,7 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
     return pathname === location.pathname && new URLSearchParams(search).get('run') === openRun;
   };
   const who = (item: ActivityItem): string => {
+    if (item.kind === 'access_denied' && item.accessRequest?.decidedByName) return item.accessRequest.decidedByName;
     if (item.actor.kind === 'rally') return 'Rally';
     if (item.actor.kind === 'sidekick') {
       return item.parentTitle ?? (item.actor.id ? sidekicksById.get(item.actor.id)?.name : undefined) ?? 'A Sidekick';
