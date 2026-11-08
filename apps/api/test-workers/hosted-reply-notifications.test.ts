@@ -113,10 +113,16 @@ async function latestTurnBy(canvasId: string, userId: string): Promise<string> {
 
 /** The alert the push consumer sends for this intent. */
 async function alertFor(intentId: string): Promise<{ title: string; body: string }[]> {
+  return (await pushesFor(intentId)).map((payload) => payload.aps.alert);
+}
+
+/** The APNs payloads the push consumer sends for this intent, with where each opens. */
+async function pushesFor(intentId: string): Promise<{ aps: { alert: { title: string; body: string } }; rally: { url: string; turnId?: string; sequence?: number } }[]> {
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
   expect(await deliverPush(pushEnv(), { region: "global", workspaceId: WORKSPACE_ID, recipientUserId: RECIPIENT, intentId }, send)).toBe(true);
-  return send.mock.calls.map((call) => JSON.parse(((call as unknown[])[2] as PushPayloads).apns) as { aps: { alert: { title: string; body: string } } })
-    .map((payload) => payload.aps.alert);
+  return send.mock.calls.map((call) => JSON.parse(((call as unknown[])[2] as PushPayloads).apns) as {
+    aps: { alert: { title: string; body: string } }; rally: { url: string; turnId?: string; sequence?: number };
+  });
 }
 
 /** The Activity this person's workspace socket is opened with. */
@@ -222,7 +228,11 @@ describe("a person's reply in a Canvas's Chat", () => {
       kind: "new_message", parentKind: "canvas", parentId: canvasId, parentTitle: "Launch plan", substreamId: "0",
       messageId: newest, messageSequence: expect.any(Number), actor: { kind: "person", id: AUTHOR }, seen: false,
     }] });
-    expect(await alertFor(`new_message:${newest}:${RECIPIENT}`)).toEqual([{ title: "Avery in Launch plan", body: "@Sam second pass is in, have a look" }]);
+    const [push] = await pushesFor(`new_message:${newest}:${RECIPIENT}`);
+    const sequence = (await openedActivity(RECIPIENT)).items[0]!.messageSequence as number;
+    // It opens the Canvas at the newest reply, in the link and beside it.
+    expect(push).toMatchObject({ aps: { alert: { title: "Avery in Launch plan", body: "@Sam second pass is in, have a look" } },
+      rally: { turnId: newest, sequence, url: expect.stringMatching(new RegExp(`/cv/[1-9A-Za-z]+/\\?turn=${newest}&sequence=${sequence}$`, "u")) } });
   });
 
   it("makes nothing of Rally's reply", async () => {

@@ -136,7 +136,7 @@ export async function sendReplyBatch(host: ReplyBatchHost, alarm: ScheduledAlarm
     const message = batch.messages[messageId]!;
     const notice: ParentNotice = {
       kind: "new_message", parentId: batch.parentId, parentTitle: parent.title, messageId,
-      authorName: message.authorName, text: message.text,
+      messageSequence: message.transcriptSequence, authorName: message.authorName, text: message.text,
     };
     const payloadJson = JSON.stringify(notice);
     return { recipientUserId, messageId, message, payloadJson, payloadHash: await sha256(payloadJson) };

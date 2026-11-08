@@ -94,7 +94,7 @@ async function sendPushNotice(env: Env, workspace: DurableObjectStub<WorkspaceDO
   // The badge is the person's unseen Activity now, this notice's row included:
   // it was recorded before this message was queued.
   const data = { v: 1 as const, kind: notice.kind, region: env.AVALON_REGION, workspaceId: notice.workspaceId, url: notice.url,
-    badge: attention.readerAttentionCount };
+    badge: attention.readerAttentionCount, ...(notice.message ? { turnId: notice.message.turnId, sequence: notice.message.sequence } : {}) };
   // A reply replaces the alert before it about the same conversation, and a
   // pinned Canvas's new version the one before it about that Canvas; every
   // other kind keeps its own.
