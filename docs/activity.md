@@ -168,11 +168,15 @@ cut to one line, with the unseen dot. A seen row recedes through text colours
 that keep the title at 4.5:1 and the second line at 3:1 or better, never
 through opacity. The rows the route has open (the same conversation, and the
 same run when one is open) are drawn open at full contrast; keyboard focus is
-a ring, never the open fill. A Canvas Chat mention opens the Chat at its message
+a ring, never the open fill. A finished run's row is never drawn open: it opens
+the shared conversation, which every finished row of that Sidekick shares, so
+marking it would mark them all. A Canvas Chat mention opens the Chat at its message
 (`canvasTurnRoute`, from the row's `messageId` and `messageSequence`, the
 mentioning turn's transcript sequence the effect carries); a mention recorded
 before the effect carried it, and an add, open the Canvas. A row about a
-Sidekick opens its conversation, where a run's row is; a run that needs input
+Sidekick opens its conversation, where a run's row is; a finished run's row
+opens it too, because a read of `"0"` is what clears that row and the run's own
+view reads the run. A run that needs input
 (`runId`) and a mention in one of its runs open that run (`?run=`), where the
 question and its answer form are. Opening the run does not read the shared
 conversation, so a needs-input row stays unseen until the shared conversation
@@ -297,7 +301,29 @@ its `runId`) rather than the Sidekick's shared conversation.
 
 **Why:** The run is where the question and its answer form are; the shared
 conversation's composer starts a new run, so a person sent there answered
-nothing. The design is silent on Activity, so this document is the authority.
+nothing. The design is silent on Activity, so this document is the
+authority. The run view reads the run's conversation, never `"0"`, so the
+read-cursor rule could not clear the row: it stayed unseen after the person
+answered (design-conformance review, item 7). The run's own state is what the
+row asked about, and it is already in the same object, so the rule is one
+probe rather than a per-row mark. The 45% opacity left a seen preview at
+1.9:1 in light and 2.45:1 in dark, and opening a Sidekick marked every row
+about it, which read as a multi-selection. A finished run's row still marked
+every finished row of its Sidekick open, because they all open the same shared
+conversation (round-2 review); it is now never marked open.
+
+**Considered and rejected:** Opening a finished run's row at its run
+(`?run=`), as a Needs input row opens: the highlight would then be one row,
+but the run view reads the run's conversation, and only a read of `"0"` clears
+a finished row, so opening it would leave it unseen. Opening the shared conversation at the run's
+row, which now carries the question too: it reads `"0"` and clears the row,
+but a row could not be scrolled to a run's row without a sequence the item
+does not carry.
+
+**What a future change must respect:** a Needs input row is cleared by the
+run being answered, by `"0"` being read, or by Mark all seen; a seen row's
+colours are tokens chosen for contrast, and dimming a row by opacity is how
+this failed before.
 
 ### 2026-11-08 — A row lists only while its person may open the parent, and every read report is heard
 

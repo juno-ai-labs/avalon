@@ -349,6 +349,29 @@ describe('the Activity section', () => {
     expect(shared.map((row) => row.getAttribute('aria-current'))).toEqual([null, null, null]);
   });
 
+  it('opens a finished run in the shared conversation, which clears it, and marks none of a Sidekick\'s finished rows open', () => {
+    const OTHER_RUN = '00000000-0000-7000-8000-0000000000d3';
+    const finished = (id: string, runId: string): ActivityList['items'][number] => ({
+      id, kind: 'run_finished', parentKind: 'automation', parentId: SIDEKICK, parentTitle: 'Release notes', substreamId: runId as never,
+      messageId: null, messageSequence: null, runId, actor: { kind: 'sidekick', id: SIDEKICK }, preview: 'Shipped.', createdAt: '2026-11-08T09:59:00.000Z', seen: true,
+    });
+    const runs: ActivityList = { unseenCount: 1, items: [page.items[0]!, finished('f1', RUN), finished('f2', OTHER_RUN)] };
+    useUiStore.getState().setSidebarSection('activity');
+    renderSidebar(workspace, `/sidekicks/${SIDEKICK}`, runs);
+    const rows = within(screen.getByRole('region', { name: 'Activity' })).getAllByRole('link');
+    expect(rows.map((row) => row.getAttribute('href'))).toEqual([
+      `/sidekicks/${SIDEKICK}?run=${RUN}`,
+      `/sidekicks/${SIDEKICK}`,
+      `/sidekicks/${SIDEKICK}`,
+    ]);
+    expect(rows.map((row) => row.getAttribute('aria-current'))).toEqual([null, null, null]);
+    cleanup();
+    // On the run that asked, only its Needs input row is open.
+    renderSidebar(workspace, `/sidekicks/${SIDEKICK}?run=${RUN}`, runs);
+    const onRun = within(screen.getByRole('region', { name: 'Activity' })).getAllByRole('link');
+    expect(onRun.map((row) => row.getAttribute('aria-current'))).toEqual(['page', null, null]);
+  });
+
   it('says how it fills when there is nothing yet, and offers Mark all seen only with something unseen', () => {
     useUiStore.getState().setSidebarSection('activity');
     renderSidebar(workspace, '/', { unseenCount: 0, items: [] });
