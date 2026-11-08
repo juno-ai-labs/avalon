@@ -1796,9 +1796,17 @@ export const DEFAULT_PUSH_PREFERENCES: PushPreferences = {
  */
 export const NotificationChannelSchema = z.union([z.literal("push"), AutomationDeliveryTargetTypeSchema]);
 export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
-/** The kinds of Activity row a person chooses channels for, one per row in Settings. */
-export const NotificationKindSchema = z.enum(["mentions", "newMessages", "added", "newThreads", "newBreakouts", "runFinished", "merges", "artifactUpdates"]);
+/**
+ * The kinds of Activity row a person chooses channels for. `newThreads`,
+ * `newBreakouts` and `merges` named Thread-era kinds that nothing produces
+ * now: they stay accepted where a person stored them, for one release, but
+ * are not offered, not defaulted and not consulted.
+ */
+export const NotificationKindSchema = z.enum(["mentions", "newMessages", "added", "newThreads", "newBreakouts", "runFinished", "merges", "artifactUpdates", "accessRequests"]);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;
+/** The kinds Settings offers, in its order: each one a real producer records. */
+export const OFFERED_NOTIFICATION_KINDS = ["mentions", "newMessages", "added", "runFinished", "artifactUpdates", "accessRequests"] as const satisfies readonly NotificationKind[];
+export type OfferedNotificationKind = (typeof OFFERED_NOTIFICATION_KINDS)[number];
 /**
  * Lenient on read: a channel this build does not know (a newer server's, or
  * one a rollback left stored) is dropped rather than failing the whole record.
@@ -1809,19 +1817,23 @@ const NotificationChannelListSchema = z.array(z.string()).transform((channels) =
 }))]);
 /**
  * How each kind reaches this person. An empty list means it is only in
- * Activity and the daily digest.
+ * Activity.
  */
 export const NotificationChannelsSchema = z.object({
   mentions: NotificationChannelListSchema,
   newMessages: NotificationChannelListSchema.default(["push"]),
   added: NotificationChannelListSchema,
-  newThreads: NotificationChannelListSchema,
-  newBreakouts: NotificationChannelListSchema,
+  /** Stored only: no producer, never defaulted. */
+  newThreads: NotificationChannelListSchema.optional(),
+  /** Stored only: no producer, never defaulted. */
+  newBreakouts: NotificationChannelListSchema.optional(),
   runFinished: NotificationChannelListSchema,
-  /** Defaulted: a server older than merges does not send it. */
-  merges: NotificationChannelListSchema.default(["push"]),
+  /** Stored only: no producer, never defaulted. */
+  merges: NotificationChannelListSchema.optional(),
   /** Defaulted: a server older than artifact pins does not send it. */
   artifactUpdates: NotificationChannelListSchema.default(["push"]),
+  /** Defaulted: a server older than Canvas access requests does not send it. */
+  accessRequests: NotificationChannelListSchema.default(["push"]),
 });
 export type NotificationChannels = z.infer<typeof NotificationChannelsSchema>;
 /**
@@ -1832,19 +1844,17 @@ export type NotificationChannels = z.infer<typeof NotificationChannelsSchema>;
 export const NotificationChannelsChoiceSchema = NotificationChannelsSchema
   .extend({
     newMessages: NotificationChannelsSchema.shape.newMessages.unwrap(),
-    merges: NotificationChannelsSchema.shape.merges.unwrap(),
     artifactUpdates: NotificationChannelsSchema.shape.artifactUpdates.unwrap(),
+    accessRequests: NotificationChannelsSchema.shape.accessRequests.unwrap(),
   })
   .partial();
 export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
   mentions: ["push", "slack_agent_dm"],
   newMessages: ["push"],
   added: ["push", "slack_agent_dm"],
-  newThreads: ["push"],
-  newBreakouts: ["push"],
   runFinished: ["push"],
-  merges: ["push"],
   artifactUpdates: ["push"],
+  accessRequests: ["push"],
 };
 export const MemberPreferencesSchema = z.object({
   /** Whether the transcript shows the agent's work: its thinking and its tool and plugin calls. */

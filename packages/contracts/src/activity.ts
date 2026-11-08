@@ -4,13 +4,18 @@ import { IdSchema, SubstreamIdSchema } from "./identifiers";
 
 /**
  * Activity: one person's feed of what happened to them in Canvases and
- * Sidekicks. Each item is one of the four events that also produce a push
- * intent, written in that intent's own transaction, so the feed and the push
- * cannot disagree. `docs/activity.md` owns the model.
+ * Sidekicks. Each item is one of the events that also produce a push intent,
+ * written in that intent's own transaction, so the feed and the push cannot
+ * disagree. `docs/activity.md` owns the model.
  */
 
-/** What happened: a mention of me, me being added, a run that needs my input, a run I asked for finished. */
-export const ActivityKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished"]);
+/**
+ * What happened: a mention of me, me being added, a run that needs my input,
+ * a run I asked for finished, a person's reply in a conversation I am in, a
+ * new version in a Canvas I pinned, somebody asking to open a Canvas I
+ * decide on, and my own request being let in.
+ */
+export const ActivityKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished", "new_message", "artifact_updated", "access_request", "access_granted"]);
 export type ActivityKind = z.infer<typeof ActivityKindSchema>;
 
 /** Where it happened: a Canvas, or a Sidekick (`automation`, its storage name). */
@@ -51,8 +56,15 @@ export const ActivityItemSchema = z.object({
   /** The run, for `needs_input` and `run_finished`. */
   runId: IdSchema.nullable(),
   actor: ActivityActorSchema,
-  /** The push body's own text: the message, or what the run said. */
+  /** The push body's own text: the message, what the run said, or the request's message. */
   preview: z.string().nullable(),
+  /**
+   * For `access_request`: where the request stands now, and who decided it.
+   * A settled request reads as seen. Absent from a server older than it.
+   */
+  accessRequest: z.object({ state: z.enum(["pending", "approved", "denied"]), decidedByName: z.string().nullable() }).nullable().optional(),
+  /** For `artifact_updated`: the artifact the newest version is of, which the row opens the Canvas onto. */
+  artifact: z.object({ resourceId: IdSchema, title: z.string() }).nullable().optional(),
   createdAt: TimestampSchema,
   /**
    * Derived, never written per item: the recipient has read the conversation
