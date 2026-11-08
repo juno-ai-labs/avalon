@@ -1316,6 +1316,67 @@ describe('WorkspaceSocketProvider', () => {
       .toEqual([expect.objectContaining({ name: 'Newer still' })]);
   });
 
+  it('applies the subscribe answer\'s Activity page, then only a newer push, and sends Mark all seen', async () => {
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    let markAllSeen: (() => void) | undefined;
+    function Probe(): null {
+      markAllSeen = useWorkspaceSocket().markAllActivitySeen;
+      return null;
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider region="global"
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <Probe />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const item = (seen: boolean) => ({
+      id: 'mention:00000000-0000-7000-8000-0000000000a1:00000000-0000-7000-8000-0000000000a2',
+      kind: 'mention', parentKind: 'canvas', parentId: '00000000-0000-7000-8000-0000000000a3', parentTitle: 'Launch plan',
+      substreamId: '0', messageId: '00000000-0000-7000-8000-0000000000a1', runId: null,
+      actor: { kind: 'person', id: '00000000-0000-7000-8000-0000000000a4' }, preview: 'Please review the plan',
+      createdAt: '2026-11-08T10:00:00.000Z', seen,
+    });
+    act(() => socket.message({
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000017',
+      waterline: 4,
+      occurredAt: '2026-11-08T10:00:00.000Z',
+      topics: [],
+      reason: 'initial',
+      sidebar: {
+        automations: { waterline: 3, items: [] },
+        activity: { waterline: 5, unseenCount: 1, items: [item(false)] },
+      },
+    }));
+    expect(queryClient.getQueryData(['activity'])).toEqual({ unseenCount: 1, items: [item(false)] });
+
+    const push = (waterline: number, seen: boolean) => socket.message({
+      type: 'workspace_activity_list', occurredAt: '2026-11-08T10:01:00.000Z', waterline,
+      unseenCount: seen ? 0 : 1, items: [item(seen)],
+    });
+    // Not newer than the subscribe answer's version: dropped.
+    act(() => push(5, true));
+    expect(queryClient.getQueryData(['activity'])).toEqual({ unseenCount: 1, items: [item(false)] });
+    act(() => push(6, true));
+    expect(queryClient.getQueryData(['activity'])).toEqual({ unseenCount: 0, items: [item(true)] });
+
+    act(() => markAllSeen?.());
+    const sent = socket.send.mock.calls.map(([frame]) => JSON.parse(String(frame)) as { type: string });
+    expect(sent.at(-1)).toEqual({ type: 'activity_mark_all_seen' });
+  });
+
   it('names the field when a pushed event this build knows the type of does not parse', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const queryClient = new QueryClient();
