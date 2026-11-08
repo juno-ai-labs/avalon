@@ -115,7 +115,7 @@ it('counts each organization\'s activity after the list, and shows nothing for o
   }));
   const view = render(<BrowserEntry />);
   try {
-    const busyRow = await screen.findByRole('link', { name: 'Busy team, 4 conversations with new activity' });
+    const busyRow = await screen.findByRole('link', { name: 'Busy team, 4 new in Activity' });
     expect(busyRow).toHaveTextContent(/^BBusy team4$/u);
     expect(screen.getByRole('link', { name: 'Quiet team' })).toHaveTextContent(/^QQuiet team$/u);
   } finally { view.unmount(); }

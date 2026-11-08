@@ -12,7 +12,7 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
+import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceAttention, WorkspaceDepartureOutcome } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 import {
@@ -126,6 +126,12 @@ export interface AppSessionValue {
   setPendingConnectorOAuth: (attempt: PendingConnectorOAuth | null) => void;
   clearPendingInvitation: () => void;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
+  /**
+   * Another Organization's attention, for its account-menu count: on the Mac
+   * with that Organization's stored credential, in the browser through the
+   * identity cookie (`GET /browser/workspaces/attention`).
+   */
+  getWorkspaceAttention: (input: { region: Region; workspaceId: string }) => Promise<WorkspaceAttention>;
   activateWorkspace: (
     region: Region,
     workspaceId: string,
@@ -185,6 +191,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'declineInvitation'
   | 'exchangeDesktopTicket'
   | 'getOnboardingState'
+  | 'getWorkspaceAttention'
   | 'getAccountOnboarding'
   | 'updateAccountOnboarding'
   | 'getOrganizationNameSuggestion'
@@ -462,6 +469,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
 
   const getOnboardingState = useCallback(
     () => bridge.getOnboardingState(),
+    [bridge],
+  );
+  const getWorkspaceAttention = useCallback(
+    (input: { region: Region; workspaceId: string }) => bridge.getWorkspaceAttention(input),
     [bridge],
   );
 
@@ -1392,6 +1403,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         }
       },
       getOnboardingState,
+      getWorkspaceAttention,
       activateWorkspace,
       acceptInvitation,
       declineInvitation,
@@ -1429,6 +1441,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       exchangingTicket,
       finishWorkspaceSetup,
       getOnboardingState,
+      getWorkspaceAttention,
       pendingInvitation,
       pendingAccessRequestId,
       pendingConnectorOAuth,

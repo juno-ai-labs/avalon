@@ -98,6 +98,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     declineInvitation,
     finishWorkspaceSetup,
     getOnboardingState,
+    getWorkspaceAttention,
     invitationApi,
     pendingInvitation,
     abandonAccountSignIn,
@@ -228,8 +229,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const backgroundWorkspaces = knownWorkspaces.filter((candidate) => (
     candidate.id !== workspace.id || candidate.region !== workspace.region
   ));
-  // Attention is read with each workspace's own stored credential, so only the
-  // rows this device holds one for can answer. A row discovery listed that was
+  // Attention is read with each workspace's own stored credential on the Mac
+  // (the browser's identity cookie stands in for one), so only the rows this
+  // device holds one for can answer. A row discovery listed that was
   // never opened here has none, and asking would fail the whole batch. A guest
   // relationship is refused the attention route, so its row shows no count.
   const attentionWorkspaces = backgroundWorkspaces.filter((candidate) => (
@@ -243,7 +245,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     queryFn: async () => Object.fromEntries(await Promise.all(attentionWorkspaces.map(async (candidate) => (
       [
         desktopWorkspaceIdentityKey(candidate.region, candidate.id),
-        await desktopBridge().getWorkspaceAttention({ region: candidate.region, workspaceId: candidate.id }),
+        await getWorkspaceAttention({ region: candidate.region, workspaceId: candidate.id }),
       ] as const
     )))),
     enabled: multipleWorkspacesEnabled && attentionWorkspaces.length > 0,
