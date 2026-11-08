@@ -1,5 +1,5 @@
 import type { ImportedMessageProvenance } from "@rally/contracts";
-import type { WorkstreamAppearance } from '@rally/contracts';
+import type { ConnectorConnectionCardInput, WorkstreamAppearance } from '@rally/contracts';
 import type {
   AgentModelOverride,
   AutomationDraft as ContractAutomationDraft,
@@ -441,6 +441,8 @@ export interface ElicitationData {
   answer?: unknown;
   answeredByName?: string;
   createdAt?: string;
+  /** A question a connection answers: the panel shows the card that makes it. */
+  connection?: ConnectorConnectionCardInput;
 }
 
 /** A thread's opening message before the room has it; see `pendingOpening`. */

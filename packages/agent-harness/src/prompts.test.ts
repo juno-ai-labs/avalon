@@ -197,7 +197,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "fd8db14479b1a21b96d4547d8c80c53386806581ff4a0e3625fd8dcc4771bc91",
+        hash: "71aa87e017902e38dadb8c40c6056d29661832e2ac94e551b6ef5ed1fe6d7ea2",
       },
     };
 
@@ -285,13 +285,17 @@ describe("prompt renderers", () => {
     expect(prompt).toContain("Do not create a replacement Sidekick or schedule its next regular activation just to keep it running.");
     expect(prompt).not.toContain("post_result");
     expect(prompt).not.toMatch(/conversation_[a-z_]+/u);
-    expect(prompt).toContain("Say what is blocked in this activation's final message.");
+    // A run a missing connection or grant blocks asks and waits (Needs input)
+    // rather than finishing; only a declined or unaskable one reports instead.
+    expect(prompt).toContain("ask for it and wait rather than finishing with the work undone");
+    expect(prompt).toContain("call get_connector_connection_state, then show_connector_connection, which asks the person and pauses this run");
+    expect(prompt).toContain("ask with request_elicitation, saying exactly what to grant");
     expect(prompt).toContain("Successful fallback needs no permission-error message");
     // Platform policy outranks the saved instructions, so no saved rule can turn a data report into a blocker,
     // and a run with no data reports that rather than inventing numbers.
     expect(prompt).toContain("A data report is always delivered, and this rule outranks the saved instructions.");
     expect(prompt).toContain("never fill the gap with estimates or remembered numbers");
-    expect(prompt).toContain("report the unresolved problem once for this run");
+    expect(prompt).toContain("When the person declines, or neither tool is available, report the unresolved problem once in this activation's final message");
     expect(prompt).toContain("do not claim delivery");
     expect(prompt).not.toContain("# Result delivery");
   });

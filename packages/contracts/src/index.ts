@@ -12,6 +12,7 @@ import { AutomationLifecycleStateSchema,
   AutomationRunReferenceV1Schema,
   AutomationRunTriggerV1Schema,
   AutomationScopeSchema, SidekickAudienceSchema, StoredAutomationScopeSchema } from "./automation-agent";
+import { ConnectorConnectionCardInputSchema } from "./connector-connection-card";
 import { ConnectorInstallationSchema } from "./connector-installation";
 export * from "./conversation-attention";
 export * from "./conversation-source";
@@ -1062,7 +1063,14 @@ export const ElicitationSchema = z.object({
   answer: z.union([z.string(), z.array(z.string())]).nullable(),
   answeredByUserId: IdSchema.nullable(),
   createdAt: TimestampSchema,
-  answeredAt: TimestampSchema.nullable()
+  answeredAt: TimestampSchema.nullable(),
+  /**
+   * A question a connection answers: a Sidekick run that a missing connection
+   * blocks asks for it this way, and the question shows the card that makes
+   * it. Optional so a desktop that predates it reads the question as a plain
+   * one (it strips the key) and a stored question without it still parses.
+   */
+  connection: ConnectorConnectionCardInputSchema.optional(),
 });
 
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({

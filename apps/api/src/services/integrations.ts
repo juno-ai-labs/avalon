@@ -36,6 +36,7 @@ import {
   AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
   AVALON_MEMORY_PLUGIN_ID,
   AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
+  AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
   AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILL_TOOL_DEFINITIONS,
@@ -49,6 +50,7 @@ import {
   BUILT_IN_SKILLS,
   READING_GOOGLE_MEETING_NOTES_SKILL,
   RequestElicitationInputSchema,
+  type RequestElicitationInput,
   classifyMessageAdmission,
   canonicalToolInputHash,
   createTextDeltaBatcher,
@@ -121,8 +123,10 @@ import {
   type ToolDefinition,
   type WorkstreamWorkflowInput,
   AutomationRunDefinitionV1Schema,
+  CONNECTION_QUESTION_CONTINUE_ANSWER,
   ConnectorConnectionCardCatalog,
   ConnectorConnectionCardInputSchema,
+  type ConnectorConnectionCardInput,
   ConnectorConnectionStateInputSchema,
   ConnectorConnectionStateResultSchema,
   bestConnectorConnectionState,
@@ -5822,7 +5826,10 @@ async function loadHarnessTools(
     const tableTool = tool.definition.capability.startsWith("table.");
     return expandPages(tool, tableTool ? "table" : "workstream", null, tableTool ? "table" : "");
   }).filter((tool) =>
-    !routesAnswersToAgent || tool.definition.name !== AVALON_REQUEST_ELICITATION_TOOL_DEFINITION.name);
+    // Both pause on a question a person answers; where answers go to an agent
+    // instead, neither may ask one.
+    !routesAnswersToAgent || (tool.definition.name !== AVALON_REQUEST_ELICITATION_TOOL_DEFINITION.name
+      && tool.definition !== AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION));
   const corePlugins = createWorkstreamCorePlugins(coreTools);
   const workstreamPlugin = createAvalonWorkstreamPlugin(coreTools);
   const webPlugin = createAvalonWebPlugin(coreTools);
@@ -8535,7 +8542,10 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         return { output: text, summary: text };
       },
     },
-    ...(input.executionPrincipal.type === "user" && !input.automationRun ? [
+    // A Sidekick run holds these too, since 2026-11-08: a run a missing
+    // connection blocks asks for it and waits (`needs_input`) rather than
+    // finishing with the work undone. Its card is the question.
+    ...(input.executionPrincipal.type === "user" ? [
       {
         definition: AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
         validateInput: (raw: unknown) => {
@@ -8547,7 +8557,27 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
           return { output: state, summary: connectorConnectionStateSummary(state) };
         },
       } satisfies HarnessTool,
-      {
+      input.automationRun ? {
+        definition: AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
+        validateInput: (raw: unknown) => {
+          const parsed = ConnectorConnectionCardInputSchema.safeParse(raw);
+          return parsed.success ? null : parsed.error;
+        },
+        execute: async (raw: unknown, context: HarnessToolContext) => {
+          const card = ConnectorConnectionCardInputSchema.parse(raw);
+          const label = ConnectorConnectionCardCatalog[card.connectorId].label;
+          return openToolQuestion(env, input, context, "show_connector_connection", {
+            prompt: card.scope === "workspace"
+              ? `Connect ${label} for the Organization so this run can continue.`
+              : `Connect ${label} so this run can continue.`,
+            responseType: "radio",
+            options: [...RUN_CONNECTION_QUESTION_OPTIONS],
+            minimumSelections: 1,
+            maximumSelections: 1,
+            connection: card,
+          });
+        },
+      } satisfies HarnessTool : {
         definition: AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
         validateInput: (raw: unknown) => {
           const parsed = ConnectorConnectionCardInputSchema.safeParse(raw);
@@ -8801,83 +8831,101 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         const result = RequestElicitationInputSchema.safeParse(raw);
         return result.success ? null : result.error;
       },
-      execute: async (raw, context) => {
-        const args = RequestElicitationInputSchema.parse(raw);
-        const providerIdempotencyKey = requireProviderIdempotencyKey(
-          "request_elicitation",
-          context.providerIdempotencyKey,
-        );
-        const id = await coreWriteEntityId("elicitation", input, providerIdempotencyKey);
-        const at = nowIso();
-        const elicitation = {
-          id, workstreamId: input.parentId, harnessRunId: input.harnessRunId,
-          prompt: args.prompt, responseType: args.responseType, options: args.options,
-          minimumSelections: args.minimumSelections, maximumSelections: args.maximumSelections,
-          targetUserId: null, status: "open" as const, answer: null,
-          answeredByUserId: null, createdAt: at, answeredAt: null,
-        };
-        // The replay check used to be a read of its own in front of the batch,
-        // because the batch could not both ask and act. It is the operation's
-        // first statement now, so a retried receipt is answered by the write
-        // that would have collided rather than by a read that might have raced
-        // it. The question is durable either way; only the event and the
-        // telemetry are skipped, because the first attempt already sent them.
-        const opened = await createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
-          .openElicitation({
-            elicitationId: id,
-            runId: input.harnessRunId,
-            toolCallId: context.toolCallId,
-            prompt: args.prompt,
-            responseType: args.responseType,
-            optionsJson: JSON.stringify(args.options),
-            minimumSelections: args.minimumSelections,
-            maximumSelections: args.maximumSelections,
-            targetUserId: null,
-            messageId: id,
-            structuredContentJson: JSON.stringify({ kind: "elicitation", elicitation }),
-            now: Date.parse(at),
-          });
-        if (opened.outcome === "exists") {
-          return {
-            output: { elicitationId: id },
-            summary: "Requested human input",
-            providerOperationId: id,
-            halt: "needs_input" as const,
-          };
-        }
-        // Announced in the room of the conversation that asked, not Main's.
-        await publishWorkstreamEvent(
-          env,
-          input.workspaceId,
-          input.parentId,
-          { type: "elicitation_created", elicitation },
-          input.substreamId ?? "0",
-        );
-        emitProductUsageTelemetry(env, {
-          workspaceId: input.workspaceId,
-          ...(input.executionPrincipal.type === 'user'
-            ? { userId: input.executionPrincipal.userId }
-            : {}),
-          name: 'elicitation_presented',
-          properties: {
-            elicitationId: id,
-            runId: input.harnessRunId,
-            workstreamId: input.parentId,
-            responseType: args.responseType,
-            optionCount: telemetryCountBucket(args.options.length),
-            surface: 'workstream',
-          },
-          operationId: input.harnessRunId,
-          eventId: id,
-        });
-        return { output: { elicitationId: id }, summary: "Requested human input", providerOperationId: id, halt: "needs_input" as const };
-      },
+      execute: async (raw, context) => openToolQuestion(env, input, context, "request_elicitation",
+        RequestElicitationInputSchema.parse(raw)),
     },
   ];
   tools.splice(2, 0, ...createFirecrawlWebTools(env));
   tools.push(...createMemoryTools(env, input));
   tools.push(...createMemoryTableTools(env, input));
   return tools;
+}
+
+/**
+ * The answers a run's connection question offers. The card connects it and
+ * answers `continue` for the person; choosing Continue is the same answer for
+ * a connection made somewhere else. The values are what the model reads.
+ */
+const RUN_CONNECTION_QUESTION_OPTIONS = [
+  { value: CONNECTION_QUESTION_CONTINUE_ANSWER, label: "Continue", description: "The connection is made; carry on with the run." },
+  { value: "declined", label: "Decline", description: "End the run, saying what is blocked." },
+] as const;
+
+/**
+ * Open one blocking question for the tool call that asked it, and pause the
+ * loop on it (`halt: "needs_input"`). `request_elicitation` asks the model's
+ * own question; a Sidekick run's `show_connector_connection` asks for a
+ * connection, the question carrying the card's selection. Both derive the
+ * question's id from the call's receipt key, so a replay converges on the one
+ * durable question instead of asking a second.
+ */
+async function openToolQuestion(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  context: HarnessToolContext,
+  toolName: "request_elicitation" | "show_connector_connection",
+  question: RequestElicitationInput & { connection?: ConnectorConnectionCardInput },
+): Promise<HarnessToolResult> {
+  const providerIdempotencyKey = requireProviderIdempotencyKey(toolName, context.providerIdempotencyKey);
+  const id = await coreWriteEntityId("elicitation", input, providerIdempotencyKey);
+  const at = nowIso();
+  const elicitation = {
+    id, workstreamId: input.parentId, harnessRunId: input.harnessRunId,
+    prompt: question.prompt, responseType: question.responseType, options: question.options,
+    minimumSelections: question.minimumSelections, maximumSelections: question.maximumSelections,
+    targetUserId: null, status: "open" as const, answer: null,
+    answeredByUserId: null, createdAt: at, answeredAt: null,
+    ...(question.connection ? { connection: question.connection } : {}),
+  };
+  const halted = { output: { elicitationId: id }, summary: "Requested human input", providerOperationId: id, halt: "needs_input" as const };
+  // The replay check used to be a read of its own in front of the batch,
+  // because the batch could not both ask and act. It is the operation's
+  // first statement now, so a retried receipt is answered by the write
+  // that would have collided rather than by a read that might have raced
+  // it. The question is durable either way; only the event and the
+  // telemetry are skipped, because the first attempt already sent them.
+  const opened = await createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
+    .openElicitation({
+      elicitationId: id,
+      runId: input.harnessRunId,
+      toolCallId: context.toolCallId,
+      prompt: question.prompt,
+      responseType: question.responseType,
+      optionsJson: JSON.stringify(question.options),
+      minimumSelections: question.minimumSelections,
+      maximumSelections: question.maximumSelections,
+      targetUserId: null,
+      messageId: id,
+      structuredContentJson: JSON.stringify({ kind: "elicitation", elicitation }),
+      now: Date.parse(at),
+    });
+  if (opened.outcome === "exists") return halted;
+  // Announced in the room of the conversation that asked, not Main's.
+  await publishWorkstreamEvent(
+    env,
+    input.workspaceId,
+    input.parentId,
+    { type: "elicitation_created", elicitation },
+    input.substreamId ?? "0",
+  );
+  emitProductUsageTelemetry(env, {
+    workspaceId: input.workspaceId,
+    ...(input.executionPrincipal.type === 'user'
+      ? { userId: input.executionPrincipal.userId }
+      : {}),
+    name: 'elicitation_presented',
+    properties: {
+      elicitationId: id,
+      runId: input.harnessRunId,
+      workstreamId: input.parentId,
+      responseType: question.responseType,
+      optionCount: telemetryCountBucket(question.options.length),
+      surface: 'workstream',
+    },
+    operationId: input.harnessRunId,
+    eventId: id,
+  });
+  return halted;
 }
 
 const WEB_RECENCY_TO_TBS = {
