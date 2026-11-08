@@ -19,6 +19,8 @@ import {
   ConversationEffectEnvelopeSchema,
   conversationEffectHash,
   WorkstreamDirectoryCommonEffectSchema,
+  WorkstreamDirectoryUserEffectSchema,
+  WorkstreamMentionNotificationEffectSchema,
   WorkstreamParticipantNotificationEffectSchema,
   type ConversationEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
@@ -255,55 +257,126 @@ describe("a person's Activity", () => {
   });
 
   it("tells the requester and the Sidekick's manager a run needs input, and only the requester that one finished", async () => {
-    const automationId = asAutomationId(crypto.randomUUID());
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR, scope: "workspace", automationId });
-    await workspace().sidekickSubmitDefinition({ workspaceId: WORKSPACE_ID, automationId, draft: DEFINITION,
-      evaluatorRules: null, submittedByRunId: null });
-    await runInDurableObject(workspace(), (instance: WorkspaceDO) => instance.sidekickApply({
-      workspaceId: WORKSPACE_ID, automationId, actor: { userId: AUTHOR, actorRole: "member", participantOfOwningWorkstream: false } }));
+    const automationId = await activeSidekick();
     const asking = "00000000-0000-7000-8000-0000000ac101";
     const finishing = "00000000-0000-7000-8000-0000000ac102";
-    await runInDurableObject(workspace(), (_instance, state) => {
-      for (const runId of [asking, finishing]) {
-        state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
-            harness_run_id, state, summary, opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at,
-            completed_at, updated_at)
-          VALUES (?, ?, ?, ?, 1, ?, 'running', NULL, NULL, NULL, ?, ?, 1, 1, NULL, 1)`,
-          automationId, runId, `activity:${runId}`, JSON.stringify({ kind: "manual", requestedByUserId: RECIPIENT }),
-          `${runId}-harness`, AUTHOR, AUTHOR);
-      }
-    });
-    for (const [runId, state] of [[asking, "needs_input"], [finishing, "completed"]] as const) {
-      const effect = WorkstreamDirectoryCommonEffectSchema.parse({
-        kind: "directory_common", title: "Release notes", description: "", preview: `Run ${runId} says hello`,
-        scope: "workspace", state, systemKind: null, lastActivityAt: NOW, completedAt: NOW, archivedAt: null,
-      });
-      await workspace().receiveChildEffects({ substreamId: asSubstreamId(runId), envelopes: [ConversationEffectEnvelopeSchema.parse({
-        kind: "conversation_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
-        parentKind: "automation", parentId: automationId, substreamId: runId, generation: 1,
-        messageId: `finish:${runId}:${state}`, partitionKey: `${automationId}:${runId}`, sourceVersion: 2,
-        requiredProjectionVersion: null, payloadHash: conversationEffectHash(effect), effect,
-      })] });
-    }
-    const item = (kind: string, runId: string) => ({
-      kind, parentKind: "automation", parentId: automationId, parentTitle: "Release notes", substreamId: runId,
-      messageId: null, runId, actor: { kind: "sidekick", id: automationId }, preview: `Run ${runId} says hello`, seen: false,
-    });
+    await requestedRuns(automationId, [asking, finishing]);
+    await finishRun(automationId, asking, "needs_input");
+    await finishRun(automationId, finishing, "completed");
     // The notices are recorded by the Sidekick's own alarm; a socket opened after reads them in its subscribe answer.
     await expect.poll(async () => {
-      const recipient = await connect(RECIPIENT);
-      recipient.socket.close(1000, "done");
-      const activity = subscribedActivity(recipient.frames);
+      const activity = await openedActivity(RECIPIENT);
       // The two alarm entries run in either order; the page is newest first.
       return activity && { ...activity, items: [...activity.items].sort((a, b) => String(a.kind).localeCompare(String(b.kind))) };
     }, { timeout: RUN_SETTLE_TIMEOUT_MS }).toMatchObject({
-      unseenCount: 2, items: [item("needs_input", asking), item("run_finished", finishing)],
+      unseenCount: 2, items: [runItem(automationId, "needs_input", asking), runItem(automationId, "run_finished", finishing)],
     });
-    const manager = await connect(AUTHOR);
-    expect(subscribedActivity(manager.frames)).toMatchObject({ unseenCount: 1, items: [item("needs_input", asking)] });
-    manager.socket.close(1000, "done");
+    expect(await openedActivity(AUTHOR)).toMatchObject({ unseenCount: 1, items: [runItem(automationId, "needs_input", asking)] });
+  });
+
+  it("clears a finished run on a read report at the same cursor, and sends the list again", async () => {
+    const automationId = await activeSidekick();
+    // The requester has read the shared conversation as far as it goes before the run finishes.
+    await readSidekick(automationId, 1, 0);
+    const finishing = "00000000-0000-7000-8000-0000000ac103";
+    await requestedRuns(automationId, [finishing]);
+    await finishRun(automationId, finishing, "completed");
+    await expect.poll(() => openedActivity(RECIPIENT), { timeout: RUN_SETTLE_TIMEOUT_MS })
+      .toMatchObject({ unseenCount: 1, items: [runItem(automationId, "run_finished", finishing)] });
+    const recipient = await connect(RECIPIENT);
+    // They open the Sidekick: its read report names the same cursor as before.
+    await readSidekick(automationId, 2, 0);
+    await expect.poll(() => activityPushes(recipient.frames).at(-1))
+      .toMatchObject({ unseenCount: 0, items: [{ kind: "run_finished", seen: true }] });
+    recipient.socket.close(1000, "done");
+  });
+
+  it("keeps a mention in a run's conversation unseen however far the shared conversation is read", async () => {
+    const automationId = await activeSidekick();
+    const runId = "00000000-0000-7000-8000-0000000ac104";
+    const effect = WorkstreamMentionNotificationEffectSchema.parse({
+      kind: "mention_notification", substreamId: runId, intentId: `mention:run-turn:${RECIPIENT}`,
+      messageId: "00000000-0000-7000-8000-0000000ac1e1", recipientUserId: RECIPIENT, authorUserId: AUTHOR,
+      authorNameSnapshot: "Avery", workstreamTitleSnapshot: "Release notes", messageText: "@Robin look at this run",
+      attentionOrdinal: 3, occurredAt: NOW,
+    });
+    await workspace().receiveChildEffects({ substreamId: asSubstreamId(runId), envelopes: [envelope(
+      "automation", automationId, runId, `notification:${effect.intentId}`, effect, 1, 1)] });
+    await readSidekick(automationId, 1, 40);
+    expect(await openedActivity(RECIPIENT)).toMatchObject({
+      unseenCount: 1, items: [{ kind: "mention", substreamId: runId, seen: false }],
+    });
   });
 });
+
+/** One child's or the shared conversation's effect, as the consumer hands it to the parent. */
+function envelope(parentKind: "canvas" | "automation", parentId: string, substreamId: string, messageId: string,
+  effect: ConversationEffectEnvelope["effect"], sourceVersion: number, requiredProjectionVersion: number | null): ConversationEffectEnvelope {
+  return ConversationEffectEnvelopeSchema.parse({
+    kind: "conversation_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
+    parentKind, parentId, substreamId, generation: 1, messageId, partitionKey: `${parentId}:${substreamId}:${messageId}`,
+    sourceVersion, requiredProjectionVersion, payloadHash: conversationEffectHash(effect), effect,
+  });
+}
+
+/** An Organization-wide Sidekick, applied by its author. */
+async function activeSidekick(): Promise<string> {
+  const automationId = asAutomationId(crypto.randomUUID());
+  await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR, scope: "workspace", automationId });
+  await workspace().sidekickSubmitDefinition({ workspaceId: WORKSPACE_ID, automationId, draft: DEFINITION,
+    evaluatorRules: null, submittedByRunId: null });
+  await runInDurableObject(workspace(), (instance: WorkspaceDO) => instance.sidekickApply({
+    workspaceId: WORKSPACE_ID, automationId, actor: { userId: AUTHOR, actorRole: "member", participantOfOwningWorkstream: false } }));
+  return automationId;
+}
+
+/** Runs the recipient asked for, as the projection finds them working. */
+async function requestedRuns(automationId: string, runIds: readonly string[]): Promise<void> {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    for (const runId of runIds) {
+      state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
+          harness_run_id, state, summary, opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at,
+          completed_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, ?, 'running', NULL, NULL, NULL, ?, ?, 1, 1, NULL, 1)`,
+        automationId, runId, `activity:${runId}`, JSON.stringify({ kind: "manual", requestedByUserId: RECIPIENT }),
+        `${runId}-harness`, AUTHOR, AUTHOR);
+    }
+  });
+}
+
+/** The run's conversation reports the state it reached, through the parent's receipt path. */
+async function finishRun(automationId: string, runId: string, state: string): Promise<void> {
+  const effect = WorkstreamDirectoryCommonEffectSchema.parse({
+    kind: "directory_common", title: "Release notes", description: "", preview: `Run ${runId} says hello`,
+    scope: "workspace", state, systemKind: null, lastActivityAt: NOW, completedAt: NOW, archivedAt: null,
+  });
+  await workspace().receiveChildEffects({ substreamId: asSubstreamId(runId), envelopes: [
+    envelope("automation", automationId, runId, `finish:${runId}:${state}`, effect, 2, null)] });
+}
+
+/** The recipient's read report on the Sidekick's shared conversation, as its conversation sends it. */
+async function readSidekick(automationId: string, sourceVersion: number, seenAttentionOrdinal: number): Promise<void> {
+  const effect = WorkstreamDirectoryUserEffectSchema.parse({
+    kind: "directory_user", userId: RECIPIENT, isParticipant: true, unreadCount: 0, youAreMentioned: false, listable: true,
+    seenAttentionOrdinal,
+  });
+  await workspace().receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [
+    envelope("automation", automationId, "0", `read:${RECIPIENT}:${sourceVersion}`, effect, sourceVersion, null)] });
+}
+
+/** The Activity a fresh socket for this person is opened with. */
+async function openedActivity(userId: string): Promise<ActivityFrame | undefined> {
+  const socket = await connect(userId);
+  socket.socket.close(1000, "done");
+  return subscribedActivity(socket.frames);
+}
+
+function runItem(automationId: string, kind: string, runId: string) {
+  return {
+    kind, parentKind: "automation", parentId: automationId, parentTitle: "Release notes", substreamId: runId,
+    messageId: null, runId, actor: { kind: "sidekick", id: automationId }, preview: `Run ${runId} says hello`, seen: false,
+  };
+}
 
 const DEFINITION: AutomationDraft = {
   name: "Release notes",

@@ -164,7 +164,7 @@ function writerSidekick(sql: SqlStorage, sidekickId: string) {
   ).toArray()[0] ?? null;
 }
 
-function writerSidekickAdmits(sql: SqlStorage, sidekickId: string, actor: { userId: string; actorRole: CanvasActor["actorRole"] }): boolean {
+export function writerSidekickAdmits(sql: SqlStorage, sidekickId: string, actor: { userId: string; actorRole: CanvasActor["actorRole"] }): boolean {
   const sidekick = writerSidekick(sql, sidekickId);
   return sidekick !== null && sidekickReaderAllows(sidekick, actor, sql);
 }

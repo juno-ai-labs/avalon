@@ -43,6 +43,10 @@ export const WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS: readonly string[] = [
   ) STRICT`,
   `CREATE INDEX workspace_activity_items_recipient_idx
     ON workspace_activity_items(recipient_user_id, created_at DESC)`,
+  // Every accepted read report asks whether its reader has Activity about
+  // that parent (`hasActivityFor`), so the question is a seek.
+  `CREATE INDEX workspace_activity_items_parent_idx
+    ON workspace_activity_items(recipient_user_id, parent_id)`,
   `CREATE TABLE workspace_activity_seen (
     user_id TEXT PRIMARY KEY,
     seen_through INTEGER NOT NULL CHECK (seen_through >= 0)
@@ -140,56 +144,74 @@ const ACTIVITY_SEEN_SQL = `(
       AND (item.kind = 'mention' OR reads.updated_at >= item.created_at))
 )`;
 
-const ACTIVITY_JOINS = `
-  LEFT JOIN sidekick_viewer_reads reads ON reads.sidekick_id = item.parent_id AND reads.user_id = item.recipient_user_id
-  LEFT JOIN workspace_activity_seen marked ON marked.user_id = item.recipient_user_id`;
-
 interface ActivityRow extends Record<string, SqlStorageValue> {
   item_id: string; kind: ActivityKind; parent_kind: ActivityParentKind; parent_id: string;
   substream_id: string | null; message_id: string | null; run_id: string | null;
   actor_kind: "person" | "rally" | "sidekick"; actor_id: string | null; preview: string | null;
-  created_at: number; seen: number; parent_title: string | null;
+  created_at: number; seen: number; unseen_count: number;
+  parent_title: string | null; title_named: number; writer_sidekick_id: string | null;
+}
+
+/** Who a page is read for: their id, their Organization, and whether they are a member rather than a guest. */
+export interface ActivityViewer {
+  userId: string;
+  workspaceId: string;
+  member: boolean;
 }
 
 /**
  * One person's newest `limit` items and how many of all of theirs are
- * unseen. `mayOpen` decides whether a parent's current title is named: a
- * Canvas or Sidekick they can no longer open is listed without one.
+ * unseen, in one statement: the count is a window over every row before the
+ * page's `LIMIT`. A parent's current title is named only while the viewer may
+ * open it, decided in the same statement by the rules `canvasSidebarRows`
+ * and the Sidekick list read (`sidekickListedSql`, which binds `?1` the user
+ * and `?2` the Organization). The one rule SQL does not express, a Canvas
+ * a Sidekick writes admitting that Sidekick's audience, is `writerAdmits`,
+ * asked once per such writer and only for a title not already named.
  */
 export function activityPage(
   sql: SqlStorage,
-  recipientUserId: string,
+  viewer: ActivityViewer,
   limit: number,
-  mayOpen: (parentKind: ActivityParentKind, parentId: string) => boolean,
+  sidekickListedSql: string,
+  writerAdmits: (sidekickId: string) => boolean,
 ): { unseenCount: number; items: ActivityItem[] } {
   const rows = sql.exec<ActivityRow>(
-    `SELECT item.item_id, item.kind, item.parent_kind, item.parent_id, item.substream_id, item.message_id, item.run_id,
-            item.actor_kind, item.actor_id, item.preview, item.created_at, ${ACTIVITY_SEEN_SQL} AS seen,
-            CASE item.parent_kind WHEN 'canvas' THEN canvas.title ELSE sidekick.title END AS parent_title
-       FROM workspace_activity_items item
-       ${ACTIVITY_JOINS}
-       LEFT JOIN canvas_directory canvas ON item.parent_kind = 'canvas' AND canvas.canvas_id = item.parent_id
-       LEFT JOIN automation_directory sidekick ON item.parent_kind = 'automation' AND sidekick.automation_id = item.parent_id
-                                              AND sidekick.lifecycle <> 'deleted'
-      WHERE item.recipient_user_id = ?
-      ORDER BY item.created_at DESC, item.item_id DESC
-      LIMIT ?`,
-    recipientUserId, limit,
+    `WITH mine AS (
+       SELECT item.*, ${ACTIVITY_SEEN_SQL} AS seen
+         FROM workspace_activity_items item
+         LEFT JOIN sidekick_viewer_reads reads ON reads.sidekick_id = item.parent_id AND reads.user_id = item.recipient_user_id
+         LEFT JOIN workspace_activity_seen marked ON marked.user_id = item.recipient_user_id
+        WHERE item.recipient_user_id = ?1
+     )
+     SELECT mine.item_id, mine.kind, mine.parent_kind, mine.parent_id, mine.substream_id, mine.message_id, mine.run_id,
+            mine.actor_kind, mine.actor_id, mine.preview, mine.created_at, mine.seen,
+            SUM(1 - mine.seen) OVER () AS unseen_count,
+            COALESCE(canvas.title, directory.title) AS parent_title,
+            CASE
+              WHEN canvas.canvas_id IS NOT NULL THEN (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
+                OR (?3 = 1 AND canvas.visibility = 'workspace'))
+              WHEN directory.automation_id IS NOT NULL THEN ?3 = 1 AND ${sidekickListedSql}
+              ELSE 0 END AS title_named,
+            canvas.writer_sidekick_id
+       FROM mine
+       LEFT JOIN canvas_directory canvas ON mine.parent_kind = 'canvas' AND canvas.canvas_id = mine.parent_id
+       LEFT JOIN canvas_participants participant ON participant.canvas_id = canvas.canvas_id AND participant.user_id = ?1
+       LEFT JOIN automation_directory directory ON mine.parent_kind = 'automation' AND directory.automation_id = mine.parent_id
+      ORDER BY mine.created_at DESC, mine.item_id DESC
+      LIMIT ?4`,
+    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit,
   ).toArray();
-  const unseenCount = sql.exec<{ unseen: number }>(
-    `SELECT COUNT(*) AS unseen FROM workspace_activity_items item ${ACTIVITY_JOINS}
-      WHERE item.recipient_user_id = ? AND NOT ${ACTIVITY_SEEN_SQL}`,
-    recipientUserId,
-  ).one().unseen;
-  const opens = new Map<string, boolean>();
+  const writers = new Map<string, boolean>();
   const named = (row: ActivityRow): string | null => {
     if (row.parent_title === null) return null;
-    const key = `${row.parent_kind}:${row.parent_id}`;
-    if (!opens.has(key)) opens.set(key, mayOpen(row.parent_kind, row.parent_id));
-    return opens.get(key) ? row.parent_title : null;
+    if (row.title_named === 1) return row.parent_title;
+    if (row.writer_sidekick_id === null) return null;
+    if (!writers.has(row.writer_sidekick_id)) writers.set(row.writer_sidekick_id, writerAdmits(row.writer_sidekick_id));
+    return writers.get(row.writer_sidekick_id) ? row.parent_title : null;
   };
   return {
-    unseenCount,
+    unseenCount: rows[0]?.unseen_count ?? 0,
     items: rows.map((row) => ({
       id: row.item_id,
       kind: row.kind,
@@ -207,10 +229,12 @@ export function activityPage(
   };
 }
 
-/** Whether this person has any Activity, so a read that moved can skip republishing a feed with nothing to clear. */
-export function hasActivity(sql: SqlStorage, recipientUserId: string): boolean {
-  return sql.exec(`SELECT 1 FROM workspace_activity_items WHERE recipient_user_id = ? LIMIT 1`, recipientUserId)
-    .toArray().length > 0;
+/** Whether this person has Activity about this parent, so a read of a parent with none republishes nothing. */
+export function hasActivityFor(sql: SqlStorage, recipientUserId: string, parentId: string): boolean {
+  return sql.exec(
+    `SELECT 1 FROM workspace_activity_items WHERE recipient_user_id = ? AND parent_id = ? LIMIT 1`,
+    recipientUserId, parentId,
+  ).toArray().length > 0;
 }
 
 /** Mark all seen: everything recorded until `now` is seen. Never moves back. */
