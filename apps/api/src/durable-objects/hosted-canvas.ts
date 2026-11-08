@@ -35,6 +35,7 @@ import { assertAudienceInOrganization, HostedConversation, type HostedConversati
 import { sidekickManagerAllows, sidekickReaderAllows } from "./hosted-sidekick";
 import { ScopeInvitationService } from "./scope-invitation-service";
 import { artifactNewsSql } from "./workspace-pin-storage";
+import { tellCanvasPinners } from "./canvas-artifact-notices";
 import { CANVAS_NAMING_ALARM_KIND, UNTITLED_CANVAS } from "./canvas-schema";
 import type { ScheduledAlarmStore } from "./scheduled-alarms";
 import { createMessageObjectPort } from "../runtime/message-port";
@@ -484,9 +485,10 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
    * publish of a path is the artifact's version 1, a later one a new version
    * of it, and a publish of another path another artifact; the resource
    * versioning layer records each version, this records only which resources
-   * the Canvas holds. Answers `false` for an id that is no Canvas.
+   * the Canvas holds. A new version tells everyone who pinned the Canvas
+   * (`tellCanvasPinners`). Answers `false` for an id that is no Canvas.
    */
-  noteArtifact(input: z.input<typeof CanvasNoteArtifactRequestSchema>): { noted: boolean } {
+  async noteArtifact(input: z.input<typeof CanvasNoteArtifactRequestSchema>): Promise<{ noted: boolean }> {
     const request = parseRpcInput(CanvasNoteArtifactRequestSchema, input, "canvas_note_artifact");
     const row = this.row();
     if (!row || row.workspace_id !== request.workspaceId) return { noted: false };
@@ -501,6 +503,10 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         now, request.editor.kind, request.editor.id, this.canvasId,
       );
       this.host.noteCanvasDirectoryChanged(this.canvasId);
+    });
+    await tellCanvasPinners({ env: this.env, storage: this.storage, noteActivityChanged: (userId) => this.host.noteActivityChanged(userId) }, {
+      workspaceId: row.workspace_id, canvasId: this.canvasId, canvasTitle: row.title, generation: row.authority_generation,
+      resourceId: request.resourceId, editor: request.editor,
     });
     return { noted: true };
   }
