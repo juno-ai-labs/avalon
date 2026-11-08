@@ -525,6 +525,25 @@ describe("a Canvas's title and pin order", () => {
     expect(provider.calls.filter(namingCall)).toEqual([]);
   }));
 
+  it("never starts naming a Canvas a Sidekick run writes, even untitled", () => withNamingModel(async () => {
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    const { canvasId } = await service.create({});
+    // As a run's Canvas is: its writer named on the row.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE canvas_directory SET writer_sidekick_id = ?, writer_run_id = ? WHERE canvas_id = ?`,
+        crypto.randomUUID(), crypto.randomUUID(), canvasId);
+    });
+    const client = await new ConversationService(TEST_ENV, auth(CREATOR)).writableClient(canvasId, "0");
+    await client.createMessage({ text: "Plan the December pricing launch.", clientMessageId: "canvas-name-3",
+      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] });
+    await deliverChildEffects(TEST_ENV, env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, canvasId))));
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ title: string; title_status: string }>(
+      `SELECT title, title_status FROM canvas_directory WHERE canvas_id = ?`, canvasId).one()))
+      .toEqual({ title: "Untitled Canvas", title_status: "settled" });
+    expect(provider.calls.filter(namingCall)).toEqual([]);
+  }));
+
   it("orders one viewer's pinned Canvases as asked, keeping the ones left out after them", async () => {
     const canvases = [];
     for (const title of ["First", "Second", "Third"]) {
