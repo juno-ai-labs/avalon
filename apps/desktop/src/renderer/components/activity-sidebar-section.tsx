@@ -19,7 +19,7 @@ export function useActivityList(): ActivityList | undefined {
   return useSocketOwnedList<ActivityList>(SIDEBAR_LIST_QUERY_KEYS.activity).data;
 }
 
-export const ACTIVITY_EMPTY = 'Nothing yet. Mentions, new messages, Canvases you are added to, Sidekick runs that need you or finish, updates to Canvases you pinned and requests to open a Canvas show up here.';
+export const ACTIVITY_EMPTY = 'Nothing yet. Mentions, new messages, Canvases you are added to, Sidekick runs that need you or finish, updates to Canvases you pinned, requests to open a Canvas and answers to yours show up here.';
 
 /** A run of the row's sentence: plain words, or a name drawn bold. */
 type RowPart = string | { strong: string };

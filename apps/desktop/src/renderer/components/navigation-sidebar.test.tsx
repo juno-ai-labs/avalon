@@ -632,7 +632,7 @@ describe('the Activity section', () => {
   it('says how it fills when there is nothing yet, and offers Mark all seen only with something unseen', () => {
     useUiStore.getState().setSidebarSection('activity');
     renderSidebar(workspace, '/', { unseenCount: 0, items: [] });
-    expect(screen.getByText('Nothing yet. Mentions, new messages, Canvases you are added to, Sidekick runs that need you or finish, updates to Canvases you pinned and requests to open a Canvas show up here.')).toBeInTheDocument();
+    expect(screen.getByText('Nothing yet. Mentions, new messages, Canvases you are added to, Sidekick runs that need you or finish, updates to Canvases you pinned, requests to open a Canvas and answers to yours show up here.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Mark all seen' })).toBeDisabled();
   });
 
