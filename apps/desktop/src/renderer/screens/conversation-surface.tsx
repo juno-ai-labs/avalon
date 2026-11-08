@@ -2172,7 +2172,12 @@ function ConversationSurfaceContent({
         return;
       }
       const anchorIndex = initialTranscriptAnchorIndex(transcript, anchorSequence);
-      if (anchorIndex !== null) {
+      const element = transcriptRef.current;
+      // A transcript that fits its viewport shows the first unread message
+      // and the end at once: there is nowhere to hold the reader, and a
+      // released follow would offer Jump to latest with nothing to jump to.
+      const fits = element !== null && element.scrollHeight - element.clientHeight < TRANSCRIPT_END_SLACK;
+      if (anchorIndex !== null && !fits) {
         // Opened at the first unread message rather than at the end, so the
         // transcript is not following: a run already streaming into this work
         // stream must not pull the reader off the message they came back for.
