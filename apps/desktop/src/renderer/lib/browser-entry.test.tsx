@@ -302,6 +302,41 @@ it('leads with Google and opens the email form only when asked', async () => {
   expect(screen.queryByRole('textbox', { name: 'Email' })).toBeNull();
 });
 
+it('offers the development account where the API does, and opens the organization list with it', async () => {
+  const expiresAt = new Date(Date.now() + 100_000).toISOString();
+  const calls: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const route = input.split('/browser')[1]!;
+    calls.push(`${init?.method ?? 'GET'} ${route}`);
+    if (route === '/dev/session' && (init?.method ?? 'GET') === 'GET') return new Response(null, { status: 204 });
+    if (route === '/dev/session') return Response.json({ user, workspace: null, expiresAt }, { status: 201 });
+    if (route === '/workspaces') return Response.json({ workspaces: [workspace] });
+    if (route === '/workspaces/attention') return Response.json({ attention: [] });
+    return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+  }));
+  render(<BrowserEntry />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Use local development account' }));
+  expect(await screen.findByText('Shared team')).toBeInTheDocument();
+  expect(calls).toContain('POST /dev/session');
+});
+
+it('offers no development account where the API does not', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => input.endsWith('/dev/session')
+    ? new Response(null, { status: 404 })
+    : Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 })));
+  render(<BrowserEntry />);
+  await screen.findByRole('button', { name: 'Continue with Google' });
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.queryByRole('button', { name: 'Use local development account' })).toBeNull();
+});
+
+it('names a Sidekick link on the sign-in page', async () => {
+  history.replaceState(null, '', `/app/global/${uuidToBase58(workspace.id)}/sk/${uuidToBase58('dddddddd-dddd-4ddd-8ddd-dddddddddddd')}/`);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 })));
+  render(<BrowserEntry />);
+  expect(await screen.findByText('Sign in to open this Sidekick.')).toBeInTheDocument();
+});
+
 it('preserves renewal requested while a focus restore is in flight', async () => {
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
   const now = Date.parse('2026-09-17T00:00:00.000Z'); vi.setSystemTime(now);
@@ -368,7 +403,7 @@ it('opens a shared Canvas straight from sign-in, with nothing to accept', async 
     throw new Error(`Unexpected browser request: ${input}`);
   }));
   render(<BrowserEntry renderCollaboration={() => <p>Shared conversation</p>} />);
-  expect(await screen.findByText('Sign in with the email address the link was sent to.')).toBeInTheDocument();
+  expect(await screen.findByText('Sign in to open this Canvas.')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Continue with email' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: 'guest@example.test' } });
   fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
@@ -420,8 +455,9 @@ it('treats an old token invitation link as a plain sign-in page', async () => {
   // in with the invited address is what claims the share.
   expect(location.pathname).toBe('/');
   expect(location.hash).toBe('');
-  // The sign-in page reports its view from an effect, after it has rendered.
-  await waitFor(() => expect(requests).toEqual(['/session', '/signup/view']));
+  // The sign-in page reports its view, and asks whether a development account
+  // is offered, from effects after it has rendered; nothing names the token.
+  await waitFor(() => expect(requests).toEqual(['/session', '/signup/view', '/dev/session']));
 });
 
 it('waits for the organization list before saying nothing has been shared', async () => {

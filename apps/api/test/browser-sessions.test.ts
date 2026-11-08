@@ -72,6 +72,24 @@ it("redeems email into a recoverable HttpOnly cookie without exposing session to
   expect(db.prepare("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n:1 });
 });
 
+it("offers and opens the development account as a cookie session only where development sign-in is on",async () => {
+  const devBindings = () => ({ ...bindings(),RALLY_DEV_AUTH:"true" });
+  const devRequest = (method:"GET"|"POST") => createApp().request(`${apiOrigin}/browser/dev/session`,{ method,headers:{ origin } },devBindings());
+  expect((await devRequest("GET")).status).toBe(204);
+  const opened = await devRequest("POST");
+  expect(opened.status).toBe(201);
+  const session = BrowserSessionSchema.parse(await opened.json());
+  expect(session.user.email).toBe("dev@avalon.local");
+  expect(session.workspace).toBeNull();
+  const cookie = opened.headers.get("set-cookie")!.split(";")[0]!;
+  expect((await createApp().request(`${apiOrigin}/browser/session`,{ headers:{ origin,cookie } },devBindings())).status).toBe(200);
+  // The suite's own bindings have development sign-in off.
+  expect((await request("dev/session")).status).toBe(404);
+  const refused = await request("dev/session",undefined,{});
+  expect(refused.status).toBe(404);
+  expect(refused.headers.get("set-cookie")).toBeNull();
+});
+
 it("rejects missing and foreign mutation origins before consuming a login proof or cookie",async () => {
   const entry = await login();
   for (const candidate of [undefined,"https://evil.example.test"]) {
