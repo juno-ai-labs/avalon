@@ -5548,7 +5548,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async canvasesWrittenBySidekick(input: { workspaceId: string; sidekickId: string; actor: { userId: string; actorRole: "owner" | "admin" | "member" | null } }) {
     await this.initialized;
     this.assertWorkspace(input.workspaceId);
-    return canvasesWrittenBy(this.state.storage.sql, input.sidekickId, input.actor);
+    return canvasesWrittenBy(this.state.storage.sql, input.sidekickId, input.actor, canvasAppearanceReporter(this.env));
   }
 
   /**
@@ -5699,7 +5699,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** One socket's Canvas list; see `canvasSidebarRows`. */
   private canvasList(attachment: WorkspaceSocketAttachment, present = this.presentByCanvas()) {
     return canvasSidebarRows(this.state.storage.sql,
-      { userId: attachment.userId, member: viewerOf(attachment).accessClass === "member" }, present, SIDEBAR_LIST_LIMIT);
+      { userId: attachment.userId, member: viewerOf(attachment).accessClass === "member" }, present, SIDEBAR_LIST_LIMIT,
+      canvasAppearanceReporter(this.env));
   }
 
   // ---------------------------------------------------------------------------
@@ -6159,7 +6160,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const detail = await this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readDetail(input));
     // "The Canvases it writes to": a query on the Canvas directory, in the same call.
     return { ...detail, canvases: canvasesWrittenBy(this.state.storage.sql, input.automationId,
-      { userId: input.actor.userId, actorRole: input.actor.actorRole ?? null }) };
+      { userId: input.actor.userId, actorRole: input.actor.actorRole ?? null }, canvasAppearanceReporter(this.env)) };
   }
 
   async sidekickSetAppearance(input: Parameters<HostedSidekick["setAppearance"]>[0]) {
