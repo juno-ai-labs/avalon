@@ -160,7 +160,7 @@ never opened Settings). `NOTIFICATION_KIND_FOR_PUSH` drops `thread_started`,
 `accessRequests` and `access_granted` to `added`. [Client half: the Settings
 rows, folded in at merge.]
 
-[Client half] Settings → Notifications offers Push and Email for every kind
+**Client:** Settings → Notifications offers Push and Email for every kind
 and nothing else: the connector-surface options, the unlinked Slack row and
 the "connected messaging apps" footnote are gone, and a stored Slack choice is
 neither drawn nor saved back. The owner's instruction of 2026-11-08: "Remove

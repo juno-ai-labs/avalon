@@ -220,7 +220,7 @@ a writer Sidekick's managers), settled for all of them by one decision; an
 `access_granted` intent and row for the requester; and a request settling when
 Share adds the person or the Canvas opens to the Organization. Client: the Share panel lists `pendingAccessRequests` for deciders with the same Approve and Deny the Activity row has (`AccessDecisionActions`, held once answered), which drop under the message at narrow widths; an approval made while the panel is open joins its choice of people, and the visibility the approval moved the Canvas to replaces the panel's, so Save keeps it (a creator-only Canvas left at "Only you" would have sent `creator` and removed the person just let in). On the Activity row the buttons are named for the Canvas too, and a settled row says "You approved" to the decider (`decidedByUserId`) in the buttons' place.
 
-[Client half] The requestable pane reads a declined request as "Request
+**Client:** The requestable pane reads a declined request as "Request
 declined · <when>" with Request access offered again, and the requester's
 `access_denied` row opens it; an open pane re-reads its access when that row
 arrives after its access read. The owner's instruction of 2026-11-08: "inform
