@@ -1,6 +1,7 @@
 import { asUserId } from '@rally/contracts';
 import type { CanvasDetail, CanvasSidebarRow } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -28,9 +29,10 @@ const setCanvasPinned = vi.hoisted(() => vi.fn());
 const setCanvasAudience = vi.hoisted(() => vi.fn());
 const renameCanvas = vi.hoisted(() => vi.fn());
 const getWorkspaceMembers = vi.hoisted(() => vi.fn());
+const createScopeInvitations = vi.hoisted(() => vi.fn());
 vi.mock('../lib/collaboration-session', () => ({
   useCollaborationSession: () => ({
-    api: { getCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas },
+    api: { getCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, createScopeInvitations },
     session: { user: { id: ME }, workspace: { id: WORKSPACE, region: 'global', role: 'member' } },
   }),
   useOptionalCollaborationSession: () => null,
@@ -70,11 +72,11 @@ function detail(overrides: Partial<CanvasDetail> = {}): CanvasDetail {
 
 function renderCanvas(entry: string | { pathname: string; state: unknown } = `/canvases/${CANVAS}`): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}>
+  render(<ErrorNoticeProvider><QueryClientProvider client={client}>
     <Tooltip.Provider><MemoryRouter initialEntries={[entry]}>
       <Routes><Route element={<CanvasScreen />} path="/canvases/:id" /></Routes>
     </MemoryRouter></Tooltip.Provider>
-  </QueryClientProvider>);
+  </QueryClientProvider></ErrorNoticeProvider>);
   return client;
 }
 
@@ -102,6 +104,7 @@ beforeEach(() => {
   setCanvasPinned.mockReset().mockResolvedValue(undefined);
   setCanvasAudience.mockReset();
   renameCanvas.mockReset();
+  createScopeInvitations.mockReset().mockResolvedValue({ status: 'created', invitations: [] });
   document.title = 'Rally';
   getWorkspaceMembers.mockReset().mockResolvedValue([
     { id: ME, name: 'Adam Jones', email: 'adam@example.test', timezone: 'UTC' },
@@ -386,6 +389,45 @@ describe('CanvasScreen', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     // Theo, a member, is in already; only the guest is sent.
     await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'workspace', userIds: [GUEST] }));
+  });
+
+  it('invites the guests typed in the form on Save, the dialog\'s one primary action', async () => {
+    setCanvasAudience.mockResolvedValue(detail({ visibility: 'workspace' }));
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    fireEvent.click(within(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
+    // No guest to pick yet, so no search over nothing until the guest section opens.
+    expect(within(dialog).queryByRole('searchbox', { name: 'Search people' }) ?? within(dialog).queryByLabelText('Search people')).toBeNull();
+    const guests = within(dialog).getByText('Invite a guest by email').closest('details')!;
+    guests.open = true;
+    fireEvent(guests, new Event('toggle'));
+    expect(await within(dialog).findByLabelText('Search people')).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText('Email addresses'), { target: { value: 'b@example.test, a@example.test' } });
+    expect(within(dialog).getAllByRole('button').filter((button) => /^(Share|Save)$/.test(button.textContent ?? '')).map((button) => button.textContent)).toEqual(['Save']);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(createScopeInvitations).toHaveBeenCalledWith(expect.objectContaining({
+      parentId: CANVAS, emails: ['a@example.test', 'b@example.test'],
+      targets: [{ kind: 'workstream', workspaceId: WORKSPACE, parentId: CANVAS }],
+    })));
+    expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'workspace', userIds: [] });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share Canvas' })).toBeNull());
+  });
+
+  it('saves nothing and says why when the typed addresses are not addresses', async () => {
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    fireEvent.change(within(dialog).getByLabelText('Email addresses'), { target: { value: 'not-an-address' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(setCanvasAudience).not.toHaveBeenCalled();
+    expect(createScopeInvitations).not.toHaveBeenCalled();
+    // The app's notice layer says why; nothing was saved or sent. (jsdom
+    // dismisses the panel under the notice's focus move, which a real window
+    // does not, so whether it stays open is checked there.)
+    expect(await screen.findByText(/Enter valid email addresses/)).toBeInTheDocument();
   });
 
   it('shows the audience read-only to someone who cannot change it', async () => {

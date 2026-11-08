@@ -34,7 +34,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/services/authorization-service.ts` | A Canvas conversation's and its artifacts' canonical read decision, from `hostedConversationAuthorizationFacts`. |
 | `apps/desktop/src/renderer/screens/canvases-home.tsx` | `/canvases`: the home page — New Canvas, search, the filter chips, Live now and Recent, and the first-run "Start from a prompt" card. |
 | `apps/desktop/src/renderer/screens/canvas.tsx` | `/canvases/:id`: the Chat as a `canvas` conversation in `ConversationSurface`, its header (pill, people present, Share, menu), and opening the newest artifact in the right rail. |
-| `apps/desktop/src/renderer/components/canvas-share-dialog.tsx` | Share: who can open it, for a manager; the same audience read-only for anyone else; a guest invited by email. |
+| `apps/desktop/src/renderer/components/canvas-share-dialog.tsx` | Share: who can open it, for a manager; the same audience read-only for anyone else; guests invited by email on Save. |
 | `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx` | The Canvases sidebar section: a Pinned group and every Canvas by recent activity. |
 | `apps/desktop/src/renderer/lib/canvases.ts` | The list as the socket keeps it (`useCanvasList`), the routes, a row's second line, and creating a Canvas. |
 
@@ -450,12 +450,16 @@ the rail's first section and `/canvases` the landing route
   `POST /canvases/:id/audience`; anyone else sees the same audience read-only.
   The picker never lists the viewer or the creator, and with "Everyone in the
   Organization" it lists guests only, since members are in already; only the
-  chosen guests are sent with that visibility. Its radios and checkboxes are
-  the shared `.choice-control`, the guest invite a disclosure with the title
-  menus' chevron, and Cancel and Save sit at the dialog's foot, below it.
-  A guest is invited by email through the conversation share panel
-  (`ScopeSharingPanel`) with a `workstream` target naming the Canvas, without
-  its waiting-shares list, which has no server route.
+  chosen guests are sent with that visibility, and its people search shows
+  only once there is a guest to find or the guest section is open. Its radios
+  and checkboxes are the shared `.choice-control`, the guest invite a
+  disclosure with the title menus' chevron, and Cancel and Save sit at the
+  dialog's foot, below it. Save is the dialog's one primary action: the
+  addresses typed in the guest section are part of the form, and Save sends
+  the audience and then invites them through the conversation share's
+  `useScopeInvitations` with a `workstream` target naming the Canvas, without
+  its waiting-shares list, which has no server route. Addresses that do not
+  parse keep the dialog open with the reason beside the field.
 - **Pinning** is `POST /canvases/:id/pin`, from the pill's menu, a row's
   context menu, or dragging a row into the section's Pinned group
   (`useRowPinDrop`). A pin lands at the end of the group: the order is
@@ -596,7 +600,8 @@ offers only guests to pick when the whole Organization can open the Canvas.
 A missing Canvas and an unreachable one are each one in-pane state. A row
 reads its age as "2m", "1h", "Tue", a Canvas just made slides into the list,
 and its menu matches the pill's. After the second inspection, both header
-menus offer **Open artifact** (v1-R2-4).
+menus offer **Open artifact** (v1-R2-4), and the Share panel's guest invite
+is sent by its Save.
 
 **Why:** The PRD makes design.html the authority for every screen. The mark
 was a grey tile on purpose ("a Canvas has no hue of its own, as a pinned
@@ -614,7 +619,9 @@ Canvas raised a dialog over a pane that said something else and offered Try
 again for what does not exist, and a blocked connection blamed the Canvas
 under endless placeholders (v1-F20, v4-F12, v4-F12b). Closing the artifact
 panel left nothing in the Canvas to reopen it, while design §2 always shows the
-artifact beside a Canvas that has one (v1-R2-4).
+artifact beside a Canvas that has one (v1-R2-4). The guest invite kept its own
+Share button above the dialog's Save, two primary actions in one panel, and
+Everyone mode showed a people search over nothing (v1-F18, v4-R2-10, v1-R2-7).
 
 Two choices the design does not settle, made in review and open to the
 owner's reversal: the hue is per Canvas from its id rather than per kind,
