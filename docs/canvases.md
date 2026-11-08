@@ -356,7 +356,10 @@ the rail's first section and `/canvases` the landing route
   (`canvas_not_found`, 404) or a malformed one (`canvas_id_invalid:id:<issue>`,
   400) — draws the same "This Canvas does not exist." state
   (`isNotFoundError` in `lib/landing.ts`), and a restored route that answers
-  either goes to the Canvases home.
+  either goes to the Canvases home. A Canvas missing from this window's list
+  mounts its Chat only once the detail answers, so a link to one that does not
+  exist raises no conversation socket failure over that state; one in the list
+  opens at once, beside the detail read.
 - **Renaming** is `PATCH /canvases/:id`, edited in the pill itself
   (`TitlePillTitleInput`): Rename… in the pill's menu, or in a sidebar row's
   context menu, which opens the Canvas with route state
