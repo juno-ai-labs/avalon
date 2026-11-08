@@ -105,6 +105,19 @@ Activity row ([`activity.md`](activity.md)) and tells the host
 every accepted read report tells it too (`noteActivityReadMoved`), since a read
 is what clears a row.
 
+### A reply
+
+A person's message in the shared conversation (`"0"`) arrives as one
+`new_message_notification` effect naming everyone else in the conversation
+to tell. `applyChildEnvelope` adds it, in the receipt's transaction, to the
+parent's open `reply_batch` alarm entry (`addToReplyBatch`); the parent's
+host needs its alarm store for that (`HostedConversationHost.alarms`). The
+entry is the Organization object's, not the parent's: `WorkspaceDO` runs it
+(`sendReplyBatch`), which records the intents and Activity rows and enqueues
+the pushes. A redelivered envelope is answered by its receipt and adds
+nothing, so a reply joins one batch once. The batching rule is
+[`push-notifications.md`](push-notifications.md#a-persons-reply)'s.
+
 ### A Sidekick
 
 `HostedSidekick` is constructed per call with the Organization's storage and
@@ -286,6 +299,25 @@ generation fences and the claim/send/accept publisher survive in the resource
 version ledger.
 
 ## Changelog
+
+### 2026-11-08 — A hosted parent batches its shared conversation's replies
+
+**What changed:** `applyChildEnvelope` adds a `new_message_notification`
+effect from `"0"` to the parent's `reply_batch` alarm entry, and
+`HostedConversationHost` carries the Organization object's alarm store. The
+entry's handler lives in `conversation-reply-batch.ts` and is dispatched by
+`WorkspaceDO`, beside the Canvas's own entries.
+
+**Why:** Replies notify again (the owner's 2026-11-08 request). The parent is
+where the effect lands with its receipt, so adding it to the batch there is
+what makes a redelivery add nothing; the batch has to outlive the request, so
+it is an alarm entry, as a Sidekick run's notice is.
+
+**Considered and rejected:** Recording the intents as the effect lands, as a
+mention is: a burst of replies would push once per message.
+
+**What a future change must respect:** the reply joins its batch in the
+receipt's transaction, never after it.
 
 ### 2026-11-07 — A hosted parent records its conversations' mentions and adds
 

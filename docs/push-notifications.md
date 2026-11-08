@@ -2,11 +2,12 @@
 
 Rally pushes to signed-in Macs through APNs, and to signed-in browser tabs
 through Web Push, whatever lands on the workspace notification intent: a
-mention or an add, and a Sidekick run that needs input or finished
-([below](#a-sidekick-run-that-needs-input-or-finished)). The run notices are
-recorded today; a mention or add in a Canvas's Chat is not, because the
-conversation's effect stops at its parent
-([known gap](workstream-durable-object.md#directory-effects-and-notifications)). Each device registers with one transport and
+mention or an add, a Sidekick run that needs input or finished
+([below](#a-sidekick-run-that-needs-input-or-finished)), and a person's reply
+([below](#a-persons-reply)). A mention or add in a
+Canvas's Chat or a Sidekick's conversation is recorded by its parent
+([A mention or an add](hosted-conversation-parents.md#a-mention-or-an-add)),
+and a run notice by the Sidekick. Each device registers with one transport and
 is sent only that transport's payload. Push is enabled for everyone from launch through
 `push-notifications-enabled`. A mention and an add also go by email or Slack
 when the person chose that for them
@@ -140,8 +141,9 @@ transaction ([`activity.md`](activity.md)), so the feed lists what was pushed.
 Push delivery reads notification intents only. A Queue message for a retired
 Activity row is logged `activity_item_retired` and acknowledged (its id logged
 as `activity_item_id`). The events are a mention or add (the intent above,
-which nothing records for a Canvas's Chat today) and a Sidekick run's two
-notices, below.
+recorded by the Canvas or Sidekick whose conversation carried it), a
+Sidekick run's two notices, and the notices a hosted parent records about
+itself, below.
 
 ### A Sidekick run that needs input or finished
 
@@ -192,18 +194,55 @@ so one row in Settings covers both.
 **Where a push links.** Every push and every mention email or Slack DM links
 through `conversationCanonicalUrl`: a mention or Needs input in a Canvas's
 Chat opens the Canvas, and a Sidekick's conversation or a finished run opens
-the Sidekick. A conversation with neither — a retired Thread or Breakout — has
+the Sidekick. A reply opens its Canvas or Sidekick, at the newest message (the
+canonical link has no message form; the Activity row carries the turn and its
+sequence for that). A conversation with neither — a retired Thread or Breakout — has
 no link, and its delivery is skipped with the reason
 `conversation_not_linkable` rather than sent to open nothing. A push
 resolves that link once per intent, through `conversationLink`, and only after
 `notificationAllows` has let the intent through; a skip logs
 `conversation_not_linkable` with the conversation's `parent_kind`.
 
-The other kinds the preference map still names — `new_message` (a human
-reply), `thread_started`, `breakout_started`, `merged` and `artifact_updated` —
-had their producers in the Activity sweep and the reply batch, which are
-deleted; nothing records an intent of those kinds now, and their 15-second
-reply batch and two-minute cooldown went with them.
+### A person's reply
+
+A person's message in a Canvas's Chat or a Sidekick's shared conversation
+(`"0"`) tells every active participant of that conversation who neither wrote
+it nor is mentioned in it (a mention already tells them) nor was seated by it
+(being added already tells them): `new_message`, the **New messages** choice
+(`newMessages`). Rally's own replies tell nobody; the conversation's unread is
+the signal, as it was for the Thread-era reply batch. A run's own
+conversation tells nobody either.
+
+The conversation object names the recipients, because only it knows who is
+seated: where it emits a message's mention effects it emits one
+`new_message_notification` per message, carrying the message, its attention
+ordinal and transcript sequence, and the recipients' ids. One effect per
+message rather than one per recipient keeps the Queue payload to the
+message's text once plus a list of ids; per-recipient effects would carry the
+text, up to 8,000 characters, once per person.
+
+The hosted parent adds the effect, in the transaction that receipts it, to its
+conversation's open `reply_batch` alarm entry
+(`conversation-reply-batch.ts`), or opens one due `REPLY_BATCH_SECONDS` (15)
+out. The entry holds, per recipient, the newest reply they are owed (by
+transcript sequence, since the Queue does not order effects); a reply drops
+its own author from what the batch owes them. The key carries its due time,
+so a reply after a batch has come due opens a new one rather than joining a
+batch being sent. When the entry runs, each recipient gets one `new_message`
+intent and one Activity row for their reply (`recordParentNotice`), recorded
+`delivered` and enqueued, unless the person was told about this conversation
+within `CONVERSATION_ALERT_COOLDOWN_MS` (two minutes) — read from their last
+`new_message` intent's `delivered_at` — in which case the intent is recorded
+`skipped` (`conversation_alert_cooldown`) and only the Activity row moves.
+Both numbers are the team's from the Thread-era batch
+(`git show 3df4150^:apps/api/src/durable-objects/workspace-activity-push.ts`,
+and the 2026-10-20 entry below), carried rather than set again.
+
+The push reads the notice back (`ParentNoticeSchema`), checks the recipient
+as a run notice's is (an active member the parent still admits), consults
+`notificationAllows`, and says "<author> in <Canvas or Sidekick>" with the
+message as plain text. Its collapse id is the conversation's, so a newer
+reply replaces the alert before it.
 
 ## What each person chooses
 
@@ -394,7 +433,14 @@ and `test/workspace-notification-intent-run-kinds-migration.test.ts` migration
 posted in a Canvas's Chat and in an Organization-wide Sidekick's conversation
 reaches the parent, records one `mention` intent for the recipient, enqueues
 one push and sends its literal alert, and a redelivery of every effect sends
-nothing again. `test/conversation-effect-service.test.ts` covers
+nothing again. `hosted-reply-notifications.test.ts` starts from a reply: two replies in one
+batch make one `new_message` intent and one Activity row carrying the newest,
+whose push says "Avery in Launch plan"; a person the replies mention and their
+author get nothing; a reply within the cooldown is recorded `skipped` and moves
+the row, and one after it pushes again; a reply after the row was read is a
+new row; and Rally's reply makes no batch at all.
+`test/workspace-parent-notices-migration.test.ts` covers migration 150 over
+populated rows. `test/conversation-effect-service.test.ts` covers
 a mention whose conversation has no link: Slack and email log
 `conversation_not_linkable` with `parent_kind`, and the intent settles. The provider itself and macOS alert
 presentation require a signed installed build.
@@ -409,13 +455,43 @@ signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
 
-### 2026-11-08 — Every intent of the four person-facing kinds writes an Activity row
+### 2026-11-08 — Every intent writes an Activity row, and replies notify again
 
 **What changed:** `recordPersonNotificationIntent` and
 `recordSidekickRunNotices` each write the recipient's
 `workspace_activity_items` row in the transaction that writes the intent,
 keyed by the intent's id. The `mention_notification` effect carries the
 mentioning message's `attentionOrdinal`.
+
+A person's reply in a Canvas's Chat or a Sidekick's shared conversation is
+pushed again, as `new_message` ([A person's reply](#a-persons-reply)): the
+conversation emits one `new_message_notification` per message naming its
+recipients, the hosted parent batches it in a `reply_batch` alarm entry, and
+the entry records a `delivered` (or, within the cooldown, `skipped`) intent
+and a collapsing Activity row per recipient through `recordParentNotice`.
+WorkspaceDO migration 150 widens the intents' `notification_kind` CHECK to
+the four kinds a hosted parent now records about itself (`new_message`,
+`artifact_updated`, `access_request`, `access_granted`) and adds a
+recipient-and-kind index the cooldown reads. The push consumer renders those
+four from `ParentNoticeSchema`. Settings offers only the kinds a producer
+records (`member-preferences.md`). [Client half: the push deep links, folded
+in at merge.]
+
+**Why (replies):** The owner asked on 2026-11-08 that human replies produce
+Activity and push again. The Thread-era reply batch went with Activity's
+sweep (plan step C-2), so Settings offered **New messages** and nothing ever
+sent one. The batch and cooldown keep the team's numbers (15 seconds, two
+minutes) from that implementation. The batch rides the existing alarm store,
+as a run notice does, and the cooldown reads the intent's own
+`delivered_at`, so no second table of alerts exists.
+
+**Considered and rejected (replies):** One `new_message_notification` per
+recipient, as mentions are: the message's text would cross the Queue once per
+person. Recording one intent per message and per recipient: a burst of ten
+replies would be ten pushes and ten rows. Delaying the Queue message, as the
+Thread-era batch did: the delayed message could not carry the newest reply,
+since it was enqueued with the first. Keying the batch by conversation alone:
+a reply arriving while the batch is being sent would be deleted with it.
 
 **Why:** Activity returns as a feed of exactly what push tells a person
 ([`activity.md`](activity.md), the user's 2026-11-08 decision). Writing the row
@@ -427,8 +503,12 @@ Its rows are delivery records with a 30-day retention and are reaped, and a
 mention's intent can be skipped at delivery; the feed is the person's.
 
 **Consequences:** The intents' reaper must keep leaving Activity alone. A new
-person-facing push kind should be recorded through one of these two functions,
-or write its Activity row in its own intent's transaction.
+person-facing push kind should be recorded through one of the three recorders
+(`recordParentNotice` for a notice a Canvas or Sidekick records about
+itself), or write its Activity row in its own intent's transaction. A reply
+notice goes by push only: an email or Slack channel chosen on **New messages**
+sends nothing for it today. A Rally reply is never pushed; the conversation's
+unread is its signal.
 
 ### 2026-11-07 — A mention in a Canvas's Chat or a Sidekick's conversation is delivered
 

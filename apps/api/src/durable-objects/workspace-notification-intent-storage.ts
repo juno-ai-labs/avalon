@@ -14,7 +14,7 @@ import {
   type WorkspaceNotificationIntentTransitionRequest,
   type WorkspaceNotificationIntentTransitionResult,
 } from "./workspace-notification-intent-protocol";
-import { recordActivityItem, type NoteActivity } from "./workspace-activity";
+import { recordActivityItem, recordCollapsedActivityItem, type ActivityItemInput, type NoteActivity } from "./workspace-activity";
 
 /**
  * WorkspaceDO migration 145: admit a Sidekick run's two notices,
@@ -77,6 +77,68 @@ export const NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION: readonly string[] = [
 ];
 
 /**
+ * WorkspaceDO migration 150: admit the four notices a hosted parent records
+ * for itself — a person's reply (`new_message`), a new version in a pinned
+ * Canvas (`artifact_updated`), a request to open a Canvas (`access_request`)
+ * and that request let in (`access_granted`) — on the same intent row and
+ * push pointer the other four ride (`docs/push-notifications.md`). Rebuilt
+ * as migration 145 rebuilt it; 145 stays as shipped.
+ */
+export const NOTIFICATION_INTENTS_PARENT_NOTICES_MIGRATION: readonly string[] = [
+  `CREATE TABLE workstream_notification_intents_v150 (
+    intent_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    workstream_id TEXT NOT NULL,
+    recipient_user_id TEXT NOT NULL,
+    source_message_id TEXT NOT NULL,
+    source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+    source_version INTEGER NOT NULL CHECK (source_version > 0),
+    required_directory_version INTEGER NOT NULL CHECK (required_directory_version > 0),
+    notification_kind TEXT NOT NULL CHECK (notification_kind IN ('mention', 'participant_added', 'needs_input', 'run_finished',
+      'new_message', 'artifact_updated', 'access_request', 'access_granted')),
+    payload_json TEXT CHECK (payload_json IS NULL OR json_valid(payload_json)),
+    payload_hash TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'processing', 'delivered', 'skipped', 'failed')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    lease_id TEXT,
+    lease_expires_at TEXT,
+    last_error_code TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    delivered_at TEXT,
+    UNIQUE (source_message_id, recipient_user_id, notification_kind)
+  ) STRICT`,
+  `INSERT INTO workstream_notification_intents_v150
+     (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id,
+      source_generation, source_version, required_directory_version, notification_kind,
+      payload_json, payload_hash, state, attempts, lease_id, lease_expires_at,
+      last_error_code, created_at, updated_at, delivered_at)
+   SELECT intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id,
+      source_generation, source_version, required_directory_version, notification_kind,
+      payload_json, payload_hash, state, attempts, lease_id, lease_expires_at,
+      last_error_code, created_at, updated_at, delivered_at
+     FROM workstream_notification_intents`,
+  `DROP TABLE workstream_notification_intents`,
+  `ALTER TABLE workstream_notification_intents_v150 RENAME TO workstream_notification_intents`,
+  `CREATE INDEX workstream_notification_intents_delivery_idx
+    ON workstream_notification_intents(state, lease_expires_at, created_at, intent_id)`,
+  `CREATE INDEX workstream_notification_intents_terminal_idx
+    ON workstream_notification_intents(workstream_id, state, created_at)`,
+  // A reply's cooldown asks for this person's last delivered reply notice in
+  // one conversation.
+  `CREATE INDEX workstream_notification_intents_recipient_kind_idx
+    ON workstream_notification_intents(recipient_user_id, notification_kind, workstream_id, delivered_at)`,
+  `CREATE TRIGGER workstream_notification_intents_workspace_identity_insert
+    BEFORE INSERT ON workstream_notification_intents
+    WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+    BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+  `CREATE TRIGGER workstream_notification_intents_workspace_identity_update
+    BEFORE UPDATE OF workspace_id ON workstream_notification_intents
+    WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+    BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+];
+
+/**
  * Record a Sidekick run's notice for each recipient, already `delivered`:
  * push is its only channel and the queue message is its delivery, so there is
  * no lease to take (a mention's lease covers its Slack and email sends). The
@@ -116,6 +178,67 @@ export function recordSidekickRunNotices(
     }, now, noteActivity);
     return { recipientUserId, intentId };
   }));
+}
+
+/** One notice a hosted parent records about itself for one person, and the Activity row it writes. */
+export interface ParentNoticeRecord {
+  workspaceId: string;
+  /** The Canvas or Sidekick: the intent's `workstream_id`, which delivery checks the person may still open. */
+  parentId: string;
+  generation: number;
+  kind: "new_message" | "artifact_updated" | "access_request" | "access_granted";
+  recipientUserId: string;
+  intentId: string;
+  /** With the recipient and the kind, what makes a repeat one intent. */
+  sourceId: string;
+  payloadJson: string;
+  payloadHash: string;
+  /**
+   * Recorded but not pushed, with this code as its reason: the intent is
+   * `skipped` and has no `delivered_at`. The Activity row is written all the
+   * same, since the feed is what happened, not what was pushed.
+   */
+  skipCode: string | null;
+  activity: Omit<ActivityItemInput, "itemId" | "workspaceId" | "recipientUserId" | "kind">;
+  /** Bring the person's unseen row about the same conversation up to this one, rather than add another. */
+  collapse: boolean;
+}
+
+/**
+ * Record a hosted parent's own notice for one person: a reply, a pinned
+ * Canvas's new version, an access request or its grant. Like a run notice it
+ * is written `delivered` (push is its only channel and the queue message is
+ * its delivery, so there is no lease), unless `skipCode` says why it is not
+ * pushed. The caller holds the transaction. The Activity row is written only
+ * by the call that wrote the intent, so a retried caller moves nothing; the
+ * answer says whether the intent is one to enqueue, on a retry too, which the
+ * push receipts make harmless.
+ */
+export function recordParentNotice(storage: DurableObjectStorage, input: ParentNoticeRecord, now: number, noteActivity: NoteActivity): { intentId: string; push: boolean } {
+  const at = new Date(now).toISOString();
+  const written = storage.sql.exec<{ intent_id: string }>(
+    `INSERT INTO workstream_notification_intents
+       (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id, source_generation,
+        source_version, required_directory_version, notification_kind, payload_json, payload_hash, state,
+        attempts, last_error_code, created_at, updated_at, delivered_at)
+     VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+     ON CONFLICT DO NOTHING
+     RETURNING intent_id`,
+    input.intentId, input.workspaceId, input.parentId, input.recipientUserId, input.sourceId, Math.max(1, input.generation),
+    input.kind, input.payloadJson, input.payloadHash, input.skipCode === null ? "delivered" : "skipped", input.skipCode,
+    at, at, input.skipCode === null ? at : null,
+  ).toArray().length === 1;
+  if (written) {
+    const item: ActivityItemInput = {
+      ...input.activity, itemId: input.intentId, workspaceId: input.workspaceId, recipientUserId: input.recipientUserId, kind: input.kind,
+    };
+    if (input.collapse) recordCollapsedActivityItem(storage.sql, item, now, noteActivity);
+    else recordActivityItem(storage.sql, item, now, noteActivity);
+  }
+  const state = storage.sql.exec<{ state: string }>(
+    `SELECT state FROM workstream_notification_intents WHERE intent_id = ?`, input.intentId,
+  ).toArray()[0]?.state;
+  return { intentId: input.intentId, push: state === "delivered" };
 }
 
 /**
@@ -208,7 +331,8 @@ type NotificationIntentRow = Record<string, SqlStorageValue> & {
   recipient_user_id: string;
   source_generation: number;
   required_directory_version: number;
-  notification_kind: "mention" | "participant_added" | "needs_input" | "run_finished";
+  notification_kind: "mention" | "participant_added" | "needs_input" | "run_finished"
+    | "new_message" | "artifact_updated" | "access_request" | "access_granted";
   payload_json: string | null;
   state: "pending" | "processing" | "delivered" | "skipped" | "failed";
 };

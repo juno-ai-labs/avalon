@@ -2190,6 +2190,40 @@ export class WorkstreamObjectProductService {
    * and the effect is refused as a conflict, then retried forever instead of
    * delivered. A mention avoids this for free by keying on a message id.
    */
+  /**
+   * A person's message in a Canvas's Chat or a Sidekick's shared conversation
+   * tells everyone else in it (`docs/push-notifications.md`): one effect for
+   * the message, naming every active participant but its author, the people
+   * it mentions and the people it seated, each of whom another notification
+   * already tells. Null anywhere else — a run's conversation, a retired
+   * Thread — and when nobody is left to tell.
+   */
+  private newMessageNotificationEffect(root: RootRow, input: {
+    messageId: string; authorUserId: string; authorName: string; text: string;
+    attentionOrdinal: number; transcriptSequence: number; occurredAt: string; toldOtherwise: Iterable<string>;
+  }): RegionalEffectCommand | null {
+    if ((root.parent_kind !== "canvas" && root.parent_kind !== "automation") || this.externalSubstreamId() !== "0") return null;
+    const toldOtherwise = new Set([input.authorUserId, ...input.toldOtherwise]);
+    const recipientUserIds = this.activeParticipantIds().filter((userId) => !toldOtherwise.has(userId));
+    if (recipientUserIds.length === 0) return null;
+    return {
+      partitionKey: `new_message:${input.messageId}`,
+      sourceVersion: 1,
+      dedupeKey: `new_message:${input.messageId}`,
+      effect: {
+        kind: "new_message_notification",
+        messageId: input.messageId,
+        authorUserId: input.authorUserId,
+        authorNameSnapshot: input.authorName,
+        messageText: notificationMessageExcerpt(input.text),
+        attentionOrdinal: input.attentionOrdinal,
+        transcriptSequence: input.transcriptSequence,
+        recipientUserIds,
+        occurredAt: input.occurredAt,
+      },
+    };
+  }
+
   private participantAddedEffects(input: {
     root: RootRow;
     userId: string;
@@ -3098,6 +3132,14 @@ export class WorkstreamObjectProductService {
           });
         }
         const mentioned = new Set(delivery.mentionedUserIds);
+        if (delivery.actor === "human") {
+          const reply = this.newMessageNotificationEffect(root, {
+            messageId: delivery.turnId, authorUserId: delivery.authorUserId, authorName: authorLabel, text: delivery.text,
+            attentionOrdinal: delivery.attentionOrdinal, transcriptSequence: delivery.transcriptSequence, occurredAt,
+            toldOtherwise: [...mentioned, ...delivery.activatedParticipants.map((participant) => participant.userId)],
+          });
+          if (reply) commands.push(reply);
+        }
         for (const participant of delivery.activatedParticipants) {
           // A confirmed mention already has the more specific notification;
           // never tell one person both that they were added and mentioned by
@@ -4455,7 +4497,12 @@ export class WorkstreamObjectProductService {
             occurredAt,
           },
         }));
-        return [common, ...userEffects, activity, ...notifications];
+        const reply = this.newMessageNotificationEffect(current, {
+          messageId, authorUserId: auth.userId, authorName: people.get(auth.userId)?.name ?? "Workspace member",
+          text: prepared.text, attentionOrdinal: write.attentionOrdinal, transcriptSequence: write.sequenceNumber, occurredAt,
+          toldOtherwise: personIds,
+        });
+        return [common, ...userEffects, activity, ...notifications, ...(reply ? [reply] : [])];
       },
     );
     return {

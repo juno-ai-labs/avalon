@@ -3,7 +3,54 @@ import { z } from "zod";
 
 const NotificationIntentIdSchema = z.string().min(1).max(300);
 
-export const WorkspaceNotificationIntentKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished"]);
+export const WorkspaceNotificationIntentKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished",
+  "new_message", "artifact_updated", "access_request", "access_granted"]);
+
+/**
+ * What a hosted parent's own notice stores on its intent: everything the push
+ * renders, captured when it was recorded, so a later rename or a newer reply
+ * does not rewrite a notice already queued. Each one is about a Canvas or a
+ * Sidekick (`parentId`), which the push links to and the consumer checks the
+ * recipient may still open. `docs/push-notifications.md` owns the kinds.
+ */
+export const ParentNoticeSchema = z.discriminatedUnion("kind", [
+  /** A person's message in a Canvas's Chat or a Sidekick's shared conversation, the newest of a batch. */
+  z.strictObject({
+    kind: z.literal("new_message"),
+    parentId: z.string().min(1),
+    parentTitle: z.string(),
+    messageId: z.string().min(1),
+    authorName: z.string(),
+    text: z.string(),
+  }),
+  /** A new version of an artifact in a Canvas the recipient pinned. */
+  z.strictObject({
+    kind: z.literal("artifact_updated"),
+    parentId: z.string().min(1),
+    parentTitle: z.string(),
+    resourceId: z.string().min(1),
+    artifactTitle: z.string(),
+    authorName: z.string(),
+  }),
+  /** Somebody asked to open a Canvas the recipient decides on. */
+  z.strictObject({
+    kind: z.literal("access_request"),
+    parentId: z.string().min(1),
+    parentTitle: z.string(),
+    requestId: z.string().min(1),
+    requesterName: z.string(),
+    message: z.string().nullable(),
+  }),
+  /** The recipient's request to open a Canvas was let in. */
+  z.strictObject({
+    kind: z.literal("access_granted"),
+    parentId: z.string().min(1),
+    parentTitle: z.string(),
+    requestId: z.string().min(1),
+    deciderName: z.string(),
+  }),
+]);
+export type ParentNotice = z.infer<typeof ParentNoticeSchema>;
 export const WorkspaceNotificationIntentStateSchema = z.enum([
   "pending",
   "processing",

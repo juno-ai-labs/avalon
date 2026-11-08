@@ -62,6 +62,49 @@ export const WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS: readonly string[] = [
   `INSERT INTO workspace_sidebar_list_state (list, waterline) VALUES ('activity', 0)`,
 ];
 
+/**
+ * WorkspaceDO migration 150, beside the intents' rebuild: a row may be a
+ * person's reply (`new_message`), a new version in a pinned Canvas
+ * (`artifact_updated`), a request to open a Canvas (`access_request`) or that
+ * request let in (`access_granted`), and names what it is about beyond its
+ * parent in `subject_id`: the artifact's resource id, or the access request's
+ * id. The kind CHECK cannot widen in place and nothing references the table,
+ * so it is copied, as 148 made it.
+ */
+export const WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS: readonly string[] = [
+  `CREATE TABLE workspace_activity_items_v150 (
+    item_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    recipient_user_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('mention', 'participant_added', 'needs_input', 'run_finished',
+      'new_message', 'artifact_updated', 'access_request', 'access_granted')),
+    parent_kind TEXT NOT NULL CHECK (parent_kind IN ('canvas', 'automation')),
+    parent_id TEXT NOT NULL,
+    substream_id TEXT,
+    message_id TEXT,
+    message_sequence INTEGER CHECK (message_sequence IS NULL OR message_sequence > 0),
+    run_id TEXT,
+    actor_kind TEXT NOT NULL CHECK (actor_kind IN ('person', 'rally', 'sidekick')),
+    actor_id TEXT,
+    preview TEXT,
+    attention_ordinal INTEGER CHECK (attention_ordinal IS NULL OR attention_ordinal >= 0),
+    created_at INTEGER NOT NULL CHECK (created_at >= 0),
+    subject_id TEXT
+  ) STRICT`,
+  `INSERT INTO workspace_activity_items_v150
+     (item_id, workspace_id, recipient_user_id, kind, parent_kind, parent_id, substream_id, message_id,
+      message_sequence, run_id, actor_kind, actor_id, preview, attention_ordinal, created_at)
+   SELECT item_id, workspace_id, recipient_user_id, kind, parent_kind, parent_id, substream_id, message_id,
+      message_sequence, run_id, actor_kind, actor_id, preview, attention_ordinal, created_at
+     FROM workspace_activity_items`,
+  `DROP TABLE workspace_activity_items`,
+  `ALTER TABLE workspace_activity_items_v150 RENAME TO workspace_activity_items`,
+  `CREATE INDEX workspace_activity_items_recipient_idx
+    ON workspace_activity_items(recipient_user_id, created_at DESC)`,
+  `CREATE INDEX workspace_activity_items_parent_idx
+    ON workspace_activity_items(recipient_user_id, parent_id)`,
+];
+
 /** One event for one recipient, as its recorder knows it. */
 export interface ActivityItemInput {
   itemId: string;
@@ -85,6 +128,8 @@ export interface ActivityItemInput {
    * write time, for the kinds whose event names no message of its own.
    */
   attentionOrdinal?: number | null;
+  /** What the row is about beyond its parent: an artifact's resource id, an access request's id. */
+  subjectId?: string | null;
 }
 
 /** Called once per row actually written, inside the recorder's transaction. */
@@ -116,19 +161,68 @@ export function recordActivityItem(sql: SqlStorage, item: ActivityItemInput, now
   const written = sql.exec<{ item_id: string }>(
     `INSERT INTO workspace_activity_items
        (item_id, workspace_id, recipient_user_id, kind, parent_kind, parent_id, substream_id, message_id, run_id,
-        actor_kind, actor_id, preview, attention_ordinal, created_at, message_sequence)
+        actor_kind, actor_id, preview, attention_ordinal, created_at, message_sequence, subject_id)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-       CASE WHEN ?13 = 1 THEN ?14 ELSE COALESCE((
-         SELECT json_extract(chat.effect_json, '$.latestAttentionOrdinal') FROM sidekick_child_projections chat
-          WHERE chat.sidekick_id = ?6 AND chat.substream_id = '0'), 0) END,
-       ?15, ?16)
+       ${ORDINAL_SQL},
+       ?15, ?16, ?17)
      ON CONFLICT(item_id) DO NOTHING
      RETURNING item_id`,
+    ...itemBindings(item, now),
+  ).toArray();
+  if (written.length === 1) noteActivity(item.recipientUserId);
+}
+
+/**
+ * The ordinal a row stores: the one given (`?13 = 1`, `?14`), else its
+ * parent's shared conversation's latest now (`?6` the parent).
+ */
+const ORDINAL_SQL = `CASE WHEN ?13 = 1 THEN ?14 ELSE COALESCE((
+         SELECT json_extract(chat.effect_json, '$.latestAttentionOrdinal') FROM sidekick_child_projections chat
+          WHERE chat.sidekick_id = ?6 AND chat.substream_id = '0'), 0) END`;
+
+/** `?1` … `?17` for `recordActivityItem`'s and `recordCollapsedActivityItem`'s statements. */
+function itemBindings(item: ActivityItemInput, now: number): SqlStorageValue[] {
+  return [
     item.itemId, item.workspaceId, item.recipientUserId, item.kind, item.parentKind, item.parentId, item.substreamId,
     item.messageId, item.runId, item.actorKind, item.actorId, previewText(item.text),
     item.attentionOrdinal === undefined ? 0 : 1, item.attentionOrdinal ?? null, now, item.messageSequence ?? null,
-  ).toArray();
-  if (written.length === 1) noteActivity(item.recipientUserId);
+    item.subjectId ?? null,
+  ];
+}
+
+/**
+ * Write one row of a kind that collapses: while the recipient has an unseen
+ * row of the same kind about the same conversation (`parent_id` and
+ * `substream_id`), that row is brought up to this event — its message, who
+ * acted, its preview, its ordinal, what it is about and its time — and keeps
+ * its id; once it is seen, the next event is a new row. A reply in a
+ * conversation and a new version in a pinned Canvas collapse this way, so a
+ * busy Chat is one row, not one per message. Seen here is `ACTIVITY_SEEN_SQL`,
+ * the page's own expression. The caller holds the transaction, and calls this
+ * only for an intent it has just written, so a replay moves nothing.
+ */
+export function recordCollapsedActivityItem(sql: SqlStorage, item: ActivityItemInput, now: number, noteActivity: NoteActivity): void {
+  const unseen = sql.exec<{ item_id: string }>(
+    `SELECT item.item_id FROM workspace_activity_items item
+       LEFT JOIN sidekick_viewer_reads reads ON reads.sidekick_id = item.parent_id AND reads.user_id = item.recipient_user_id
+       LEFT JOIN workspace_activity_seen marked ON marked.user_id = item.recipient_user_id
+      WHERE item.recipient_user_id = ? AND item.kind = ? AND item.parent_id = ? AND item.substream_id IS ?
+        AND NOT ${ACTIVITY_SEEN_SQL}
+      ORDER BY item.created_at DESC LIMIT 1`,
+    item.recipientUserId, item.kind, item.parentId, item.substreamId,
+  ).toArray()[0];
+  if (!unseen) {
+    recordActivityItem(sql, item, now, noteActivity);
+    return;
+  }
+  sql.exec(
+    `UPDATE workspace_activity_items
+        SET message_id = ?8, message_sequence = ?16, actor_kind = ?10, actor_id = ?11, preview = ?12,
+            attention_ordinal = ${ORDINAL_SQL}, created_at = MAX(created_at, ?15), subject_id = ?17
+      WHERE item_id = ?18`,
+    ...itemBindings(item, now), unseen.item_id,
+  );
+  noteActivity(item.recipientUserId);
 }
 
 /**
@@ -139,7 +233,9 @@ export function recordActivityItem(sql: SqlStorage, item: ActivityItemInput, now
  * was written at and that read was reported after it was written. A Needs
  * input row also clears once its run has left `needs_input`: it asked for an
  * answer, the answer came, and the run's own view where it is answered reads
- * the run's conversation, not `"0"`, so no read report would clear it. Any
+ * the run's conversation, not `"0"`, so no read report would clear it. A
+ * reply (`new_message`) clears as a mention does: its ordinal is its own
+ * message's, which nobody read before it existed. Any
  * row clears when Mark all seen came after it. One expression for the page
  * and the count, so the two cannot disagree.
  */
@@ -150,7 +246,7 @@ const ACTIVITY_SEEN_SQL = `(
        WHERE run.sidekick_id = item.parent_id AND run.run_id = item.run_id AND run.state <> 'needs_input'))
   OR (item.attention_ordinal IS NOT NULL AND reads.user_id IS NOT NULL
       AND reads.seen_attention_ordinal >= item.attention_ordinal
-      AND (item.kind = 'mention' OR reads.updated_at >= item.created_at))
+      AND (item.kind IN ('mention', 'new_message') OR reads.updated_at >= item.created_at))
 )`;
 
 interface ActivityRow extends Record<string, SqlStorageValue> {

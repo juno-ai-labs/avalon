@@ -108,6 +108,7 @@ import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessage
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
 import {
   NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION,
+  NOTIFICATION_INTENTS_PARENT_NOTICES_MIGRATION,
   readNotificationIntentForDelivery as readStoredPushIntent,
 } from "./workspace-notification-intent-storage";
 
@@ -709,7 +710,8 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
-import { activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
+import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-batch";
+import { activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
 import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, CANVAS_TITLE_STATUS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
 import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
@@ -1032,6 +1034,7 @@ const RETIRED_ALARM_KINDS: ReadonlySet<string> = new Set([
 const WORKSPACE_DISPATCHED_ALARM_KINDS: ReadonlySet<string> = new Set([
   ...HOSTED_SIDEKICK_ALARM_KINDS, ...RETIRED_ALARM_KINDS, ...WORKSPACE_SCHEDULE_ALARM_KINDS,
   SCOPE_INVITATION_INDEX_ALARM, SCOPE_INVITATION_DELIVERY_ALARM, SCHEDULE_BOOTSTRAP_ALARM_KIND, CANVAS_NAMING_ALARM_KIND,
+  REPLY_BATCH_ALARM_KIND,
 ]);
 
 function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTargetKind {
@@ -4382,6 +4385,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "record whether a Canvas made with no title still waits for its opening message's title",
   // See CANVAS_TITLE_STATUS_STATEMENTS and docs/canvases.md.
   statements: CANVAS_TITLE_STATUS_STATEMENTS,
+}, {
+  version: 150,
+  description: "admit a reply, a pinned Canvas's new version, an access request and its grant as notices and Activity rows",
+  // See NOTIFICATION_INTENTS_PARENT_NOTICES_MIGRATION, WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS,
+  // docs/push-notifications.md and docs/activity.md.
+  statements: [...NOTIFICATION_INTENTS_PARENT_NOTICES_MIGRATION, ...WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS],
 }];
 
 function conversationToolEntry(conversation: {
@@ -7051,6 +7060,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // A Canvas made with no title, titled from its opening message.
         if (alarm.kind === CANVAS_NAMING_ALARM_KIND) {
           await this.canvasWrite(async () => (await this.canvasParent(alarm.key))?.nameFromOpening());
+          return;
+        }
+        // A Canvas's or Sidekick's batch of replies, told to everyone else in it.
+        if (alarm.kind === REPLY_BATCH_ALARM_KIND) {
+          try {
+            await sendReplyBatch({ env: this.env, storage: this.state.storage, noteActivityChanged: (userId) => this.noteActivityMoved(userId) }, alarm);
+          } finally {
+            this.publishActivityList();
+          }
           return;
         }
         if (alarm.kind === SCOPE_INVITATION_INDEX_ALARM) {

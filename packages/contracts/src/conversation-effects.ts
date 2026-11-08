@@ -231,6 +231,27 @@ export const WorkstreamParticipantNotificationEffectSchema = z.strictObject({
   occurredAt: TimestampSchema,
 });
 
+/**
+ * A person's message in a Canvas's Chat or a Sidekick's shared conversation,
+ * for everyone else in it to be told: one effect per message, naming its
+ * recipients, rather than one per recipient, so the message's text crosses
+ * the Queue once. The conversation names its active participants other than
+ * the author, anyone the message mentions (a mention already tells them) and
+ * anyone it seated (being added already tells them). The parent batches it
+ * (`docs/push-notifications.md`).
+ */
+export const WorkstreamNewMessageNotificationEffectSchema = z.strictObject({
+  kind: z.literal("new_message_notification"),
+  messageId: IdSchema,
+  authorUserId: IdSchema,
+  authorNameSnapshot: z.string().max(300),
+  messageText: z.string().max(8_000),
+  attentionOrdinal: z.number().int().nonnegative(),
+  transcriptSequence: z.number().int().positive(),
+  recipientUserIds: z.array(IdSchema).min(1),
+  occurredAt: TimestampSchema,
+});
+
 /** Effects a conversation (child) may produce. */
 export const ConversationEffectSchema = z.discriminatedUnion("kind", [
   WorkstreamDirectoryCommonEffectSchema,
@@ -238,6 +259,7 @@ export const ConversationEffectSchema = z.discriminatedUnion("kind", [
   WorkstreamActivityEffectSchema,
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamParticipantNotificationEffectSchema,
+  WorkstreamNewMessageNotificationEffectSchema,
 ]);
 export type ConversationEffect = z.infer<typeof ConversationEffectSchema>;
 
@@ -255,6 +277,7 @@ export const ParentEffectSchema = z.discriminatedUnion("kind", [
   WorkstreamActivityEffectSchema,
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamParticipantNotificationEffectSchema,
+  WorkstreamNewMessageNotificationEffectSchema,
 ]);
 export type ParentEffect = z.infer<typeof ParentEffectSchema>;
 
