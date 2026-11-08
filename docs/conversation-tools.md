@@ -192,7 +192,7 @@ attaching is the consent to publish there.
 The plugin owns the tools, their scope and their refusals. It depends on
 WorkspaceDO for the directories and admission
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), on each
-conversation's SubstreamAgent for messages
+conversation's AgentLoopDO for messages
 ([`workstream-durable-object.md`](workstream-durable-object.md)), and on the
 pagination wrapper ([`tool-pagination.md`](tool-pagination.md)). What a
 Sidekick's attached conversations are, and who may change them, belongs to

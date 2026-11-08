@@ -360,6 +360,8 @@ Only the reviewed version present in the deployed provider declaration is accept
 Unknown provider outcomes and not-yet-adopted Granola connections report customer
 action. An administrator's explicit Test adopts an existing Granola connection.
 
+## Changelog
+
 ### 2026-09-21 — The events console is Ashby's alone
 
 **What changed:** `ConnectorEventConsoleProviders` in `@rally/contracts`

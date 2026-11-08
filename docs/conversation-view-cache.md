@@ -23,7 +23,7 @@ The preview is read-only and the live snapshot replaces it unconditionally.
 Source triggers record changed turns in `conversation_view_changes`, under a
 monotonic conversation clock. Text, block, activity, interval, and header
 changes are covered, including attachment link renames/removals and mention
-edits. Header and block triggers ignore unrelated workstream fields and
+edits. Header and block triggers ignore unrelated conversation-header fields and
 tool-only block changes. Activity triggers walk upward to the assistant turn; they
 do not copy a tool's arguments or results. Repeated mutations coalesce into one
 pending reference per turn. A deletion keeps a small reference so its destination
@@ -34,12 +34,12 @@ using its existing 100-message batch size and five-second dispatch retry.
 Recent edits and the newest historical turns publish first, so opening does
 not wait for the oldest history. Only one page per conversation has an unexpired
 delivery claim. The consumer reloads current
-content from SubstreamAgent, applies it to WorkspaceDO, then confirms the
+content from AgentLoopDO, applies it to WorkspaceDO, then confirms the
 claimed revision at the source before acknowledging. That confirmation releases
 the next page; edits newer than the delivered snapshot remain pending. Queue
 acceptance alone does not release a page. A failed destination write retries through
 the Queue with exponential backoff. Claims also carry a durable retry gate using
-the existing scheduled-alarm backoff, as the thread backfill lane does. If a
+the existing scheduled-alarm backoff, as the retired thread backfill lane did. If a
 delivery or acknowledgement is lost, the source alarm reclaims and republishes
 pending rows without waiting for another conversation edit. Neither publication
 nor destination delivery gates the agent loop.
@@ -110,25 +110,14 @@ header. The WorkspaceDO lane that woke each historical conversation
 (`thread_backfill`, filled by migration 124) is retired: WorkspaceDO migration
 147 dropped it.
 
-A backfill delivery woke a listed conversation object and armed any pending
-projection work seeded by migration 78. It does not re-mark delivered history.
-The parent remains claimed and later children wait until the current source
-has confirmed delivery of its pending rows to WorkspaceDO; the next pass
-resumes at that child, and a pass covers only children registered before the
-backfill first reached the parent
-(`thread-backfill.md` (retired)).
-A registered child whose source object is absent, preparing, quarantined, or
-has no active authority generation reports `missing`, so it cannot hold later
-children behind an undeliverable migration header. Projection publication and
-queued reads use the same authority fence. Pending rows are retained; activating
-the source through runtime bootstrap arms the ordinary projection lane again.
-The source drains pages through the delivery-confirmed path above.
-A repeated backfill is harmless.
+Nothing wakes a historical conversation now. Its pending rows are retained,
+and activating the source through runtime bootstrap arms the ordinary
+projection lane, which drains them through the delivery-confirmed path above.
 
 After deploying, force the WorkspaceDO fleet through the
 [migration tracker](durable-object-migration-tracking.md), as for other
-workspace backfills. This wakes Organizations that have no current users;
-their work lists then wake their existing conversations. These code migrations
+workspace backfills. This wakes Organizations that have no current users; their
+conversations then wait for their own next activation. These code migrations
 do not themselves deploy a release or force a production fleet.
 
 ## Invariants
@@ -150,7 +139,7 @@ these boundaries.
 
 ## Boundary
 
-This is a disposable display projection. SubstreamAgent retains transcript and
+This is a disposable display projection. AgentLoopDO retains transcript and
 execution authority. WorkspaceDO retains relationship and viewer admission
 authority. The cache supplies an opening view; it does not supply tool details,
 editing, history paging, inherited-context hydration, or realtime resume.
