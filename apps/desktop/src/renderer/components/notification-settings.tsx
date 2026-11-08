@@ -1,7 +1,7 @@
 import {
-  NotificationKindSchema,
+  OFFERED_NOTIFICATION_KINDS,
   type NotificationChannel,
-  type NotificationKind,
+  type OfferedNotificationKind,
 } from '@rally/contracts';
 import { Bell, Mail, MessageCircle } from 'lucide-react';
 
@@ -35,16 +35,19 @@ function connectorOption(connection: WorkstreamConnection): ChannelOption {
 }
 
 /**
- * The kinds offered, each with its copy. `newThreads`, `newBreakouts` and
- * `merges` are still stored kinds, but nothing in the client can start or
- * open what they announce, so they are not offered.
+ * Each offered kind's copy. Which kinds, and their order, are the contract's
+ * (`OFFERED_NOTIFICATION_KINDS`): exactly the kinds a producer records
+ * (docs/member-preferences.md). `newThreads`, `newBreakouts` and `merges` are
+ * still accepted when stored, but nothing records them, so they are never
+ * offered.
  */
-const KIND_SETTINGS: Partial<Record<NotificationKind, SettingDefinition>> = {
+const KIND_SETTINGS: Record<OfferedNotificationKind, SettingDefinition> = {
   mentions: settings.notifyMentions,
   newMessages: settings.notifyNewMessages,
   added: settings.notifyAdded,
   runFinished: settings.notifyRunFinished,
   artifactUpdates: settings.notifyArtifactUpdates,
+  accessRequests: settings.notifyAccessRequests,
 };
 
 /**
@@ -87,7 +90,7 @@ export function NotificationChannelSettings({ api, workspaceId, connections, pus
   ];
   // A channel stored but not offered here, such as Slack once disconnected,
   // stays in the list: only the one toggled is added or removed.
-  const toggle = (kind: NotificationKind, channel: string) => save.mutate({
+  const toggle = (kind: OfferedNotificationKind, channel: string) => save.mutate({
     notify: {
       [kind]: notify[kind].includes(channel as NotificationChannel)
         ? notify[kind].filter((candidate) => candidate !== channel)
@@ -101,10 +104,7 @@ export function NotificationChannelSettings({ api, workspaceId, connections, pus
         <p>Pick how each kind reaches you. Applies on every device in this Organization.</p>
       </div>
       <div className="settings-list-card">
-        {NotificationKindSchema.options.flatMap((kind) => {
-          const setting = KIND_SETTINGS[kind];
-          return setting ? [{ kind, setting }] : [];
-        }).map(({ kind, setting }) => (
+        {OFFERED_NOTIFICATION_KINDS.map((kind) => ({ kind, setting: KIND_SETTINGS[kind] })).map(({ kind, setting }) => (
           <div className="settings-preference-row" key={kind}>
             <SettingCopy setting={setting} />
             <ChannelPicker
