@@ -660,14 +660,16 @@ access and no-egress symbolication.
 
 ## Changelog
 
-### 2026-11-08 — Retirement records: Spaces, Space access sources, Projects, the implementation plan, Meeting notes
+### 2026-11-08 — Retirement records: Spaces, Space access sources, Projects, the implementation plan, Meeting notes, Demo workspaces, the demo presenter guide
 
 **What changed:** Nothing in the code. Five documents that had been kept
 after their mechanism was deleted, only as records for their changelogs, were
 removed in the documentation audit; their retirement records are below. Each
 one's full text and changelog is in git as `git show e26aa66:docs/<name>.md`,
 except the meeting notes record's, removed in a later pass the same day, which
-is `git show 14d68b1:docs/meeting-notes.md`.
+is `git show 14d68b1:docs/meeting-notes.md`. The two demo documents went with
+their code, on the owner's instruction of 2026-11-08; their text is
+`git show a7a7cd0:docs/<name>.md`.
 
 **`spaces.md` — Spaces (retired 2026-11-07).** A Space, shown as a Channel
 after the navigation redesign, grouped an Organization's Threads (the stored
@@ -761,6 +763,51 @@ events are recorded in [`telemetry.md`](telemetry.md),
 [`analytics-lakehouse.md`](analytics-lakehouse.md) and
 [`inference-lakehouse.md`](inference-lakehouse.md). The real workerd proof is
 `apps/api/test-workers/meeting-notes-retirement.test.ts`.
+
+**`demo-workspaces.md` — Demo workspaces (removed 2026-11-08).** An operator
+prepared a presentation Organization from Ace's Demos tab: a durable
+operation (`DemoPreparationWorkflow`, the `/internal/demos` routes behind
+Ace's operator credential) created a new Organization owned by a presenter
+chosen from the `demo-template` Organization's members, seated a cast of
+colleagues on the company's email domain or *personas* (a `users` row with no
+platform identity and an `<operation>.<role>@persona.invalid` address, so it
+could never sign in), copied the template's Google connections with their
+credentials re-encrypted, wrote the complete **can impersonate** relationship
+set among the cast with `demo:<operation>` as its authority basis, and played
+a checked-in pack of Canvases, artifact versions, uploads and Sidekicks
+through the production write paths. A seeded run answered its one provider
+request from the pack through a scripted OpenRouter `fetch` (the
+`demo_seed` principal and the `seed` on a run's execution context), and the
+Organization stayed withheld from its members' discovery and activation until
+a readiness barrier had read every verified viewer's lists and found them
+matching the pack. The owner's instruction of 2026-11-08 was to "remove the
+demo functionality completely", so the seeder, pack, cast, readiness barrier,
+connection copy, register, discovery filter, Workflow, routes, contracts, Ace
+page and `/demo-scenario` skill were deleted rather than left unused. What
+survives: the D1 migrations that made and rebuilt the demo tables (0100,
+0102, 0103, 0106, 0108 and 0125, shipped history, never edited) and 0126,
+which drops `demo_seed_receipts`, `demo_operation_phases` and
+`demo_operations` in a deploy after the code's; WorkspaceDO migration 154,
+which drops `sidekick_runs.seed_json`; the persona `users` rows, which cannot
+sign in and which the retired demos' history references; the
+`demo_seed` reason and `seed` key inside stored conversation authorization
+and run context JSON, which the loose and non-strict schemas that read them
+ignore; the **can impersonate** relationship storage and RPCs, which now have
+no producer ([`impersonation.md`](impersonation.md)); and Ace's operator
+credential, which keeps its stored names `DEMO_OPERATORS_JSON` and role
+`demos` ([`rally-rebrand-inventory.md`](rally-rebrand-inventory.md)). An
+Organization a demo made is retired like any other, through
+[`workspace-retirement.md`](workspace-retirement.md)'s operator door; the
+deploy order — every live demo Organization and `demo-template` retired
+before the code ships, 0126 in a later deploy — is recorded there. The
+document's changelog is the record of why seeded history was written through
+the production paths rather than as rows made to look like it, and of the
+readiness barrier's projection-match rule.
+
+**`demo-presenter-guide.md` — the demo presenter guide (removed 2026-11-08).**
+Which of the placeholder pack's Canvases and Sidekicks to open for which
+prospect pain, and what each showed, for the presenter playing Maya beside
+Theo and Priya. It described a pack that no longer exists, so it went with it.
 
 **Historical records removed in the same audit.** Dated audit and QA records
 were deleted rather than kept as documents: a dated record describes a moment,

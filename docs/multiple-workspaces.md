@@ -394,10 +394,7 @@ Composer dictation remains tied to its composer lifecycle.
 - A stored workspace stays on the account menu whether or not discovery can be
   reached. Only a complete discovery that no longer lists it, a departure, a
   revocation of its credential, or sign-out removes it. A complete discovery
-  omits the demo template and an unpublished demo candidate on purpose, so a
-  device that opened either while it was reachable reconciles its stored
-  credential away on the next complete answer; that is the withholding working
-  as designed, not a lost membership.
+  lists every active membership; nothing is withheld.
 - The active workspace's row on the account menu takes its name from
   `GET /workspace`, not from discovery. Discovery is rerun by no sync topic,
   while the `workspace_profile` topic refreshes that read when an
@@ -453,14 +450,12 @@ workspace IDs and gain only the nullable `workspaces.abandoned_at` lifecycle
 column. `platform_workspace_operations` journals UUIDv7 create/accept operations;
 the desktop retains one operation ID until its request reaches a terminal
 answer, so a transport retry reaches the same journal row. The regional create
-path also serves demo preparation and Engineering MCP through
-`createWorkspaceForMember` — the same rows, journal, placement check and
-object initialization as `create`, with no session — journaled under the demo
-operation's own id (or the Engineering MCP creation UUID). An optional initial
+path also serves Engineering MCP through `createWorkspaceForMember` — the same
+rows, journal, placement check and object initialization as `create`, with no
+session — journaled under the Engineering MCP creation UUID. An optional initial
 member list is validated first and committed with the owner in the same batch;
 ordinary member seating runs after initialization and on replay. The journal keys on the
-id's identity, not its version
-([`demo-workspaces.md`](demo-workspaces.md#preparing-a-demo)).
+id's identity, not its version.
 
 The desktop's encrypted version-2 envelope stores one identity credential and a
 map of regional workspace credentials. Its presentation file stores only the
@@ -480,30 +475,21 @@ best-effort remote revocation.
 
 ## Changelog
 
-### 2026-11-08 — The account menu counts each Organization's unseen Activity, in the browser too
+### 2026-11-08 — Discovery withholds nothing, and activation has no preparing state
 
-**What changed:** The account menu's background rows read
-`readerAttentionCount` as that Organization's unseen Activity and say so ("3
-new in Activity", "2 Sidekick runs waiting for your input"). The app session
-gains `getWorkspaceAttention`: the Mac's bridge with the stored credential, as
-before, and in the browser the identity-cookie read
-`GET /browser/workspaces/attention`, shared by one refresh's asks, so the
-browser's account menu shows counts where it showed none (its bridge refused
-every Organization but the open one).
+**What changed:** Regional discovery no longer drops the demo template and
+unpublished demo candidates from a member's list, and activation no longer
+answers `demo_workspace_preparing`. `createWorkspaceForMember` is
+Engineering MCP's alone.
 
-**Why:** The owner said "fix this" on 2026-11-08 for the account menu's
-other-Organization counts: `attention()` returned zeros once Threads were
-retired, so every row read nothing. The server now counts unseen Activity;
-the client's words still said "conversations with new activity", which no
-longer names what is counted.
+**Why:** The owner's instruction of 2026-11-08: "remove the demo
+functionality completely". Both were the demo feature's only branches in
+discovery and activation, and the read behind them queried `demo_operations`
+on every sign-in.
 
-**Considered and rejected:** A browser read per Organization: the cookie
-route already answers every membership in one request.
-
-**Consequences:** The browser's onboarding rows count as holding a credential
-(`credentialStored: true`) for the attention gate, since the cookie reads
-them all. A membership whose attention the route leaves out (its read failed)
-keeps its last count under "Counts last updated".
+**What a future change must respect:** the template, `demo-template`, is
+retired before this ships, because without the filter its members would see
+it in their account menus ([`workspace-retirement.md`](workspace-retirement.md#operations)).
 
 ### 2026-10-21 — Initial members through shared Organization creation
 
@@ -764,7 +750,7 @@ unpublished demo whatever its status, so an abandoned one never appears.
 **Why:** A demo workspace is the presenter's own — owner membership, journal,
 placement and object exactly as if they had created it — but a session minted
 on their behalf by an operator is a credential nobody signed in for. Owned by
-[`demo-workspaces.md`](demo-workspaces.md).
+`demo-workspaces.md`.
 
 ### 2026-09-07 — Discovery withholds the demo template and an unpublished candidate
 
@@ -778,7 +764,7 @@ holds the cast's real connections — in their switcher. The filter is the
 regional API's, keyed by the demo operation rows, so the desktop changes
 nothing; but the invariant above that a complete discovery removes a stored
 workspace now has two deliberate cases. Owned by
-[`demo-workspaces.md`](demo-workspaces.md).
+`demo-workspaces.md`.
 
 **Consequences:** `endedStoredWorkspaces` treats an absence from a complete
 discovery as a lost membership; for these two workspaces that is the intended

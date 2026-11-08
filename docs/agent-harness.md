@@ -173,7 +173,7 @@ main model receives the verification prompt in its existing tool loop. It
 must finish remaining work, or briefly identify what it already delivered; it
 must inspect artifacts and receipts before repeating an action. The host does
 not replay tools. Existing attachment grounding runs first. A grounded terminal
-boundary, fixed-purpose profile, seeded demo, or nonpersistent host bypasses
+boundary, fixed-purpose profile, or nonpersistent host bypasses
 this check. There is no second classifier to admit only action requests: the
 four-way baseline also recognizes answers, plans and acknowledgements, as in
 the eval corpus. The classifier adds up to its one-second deadline to this
@@ -360,7 +360,7 @@ A message that invokes nothing is still a turn the model reads. The conversation
 
 In a Sidekick's own conversation (substream `"0"` under the Sidekick) the classifier's answer decides only whether an agent answers. Which agent is the Sidekick's to say when the loop takes the message: a message its sender marked as a wizard edit (`intent: "edit_sidekick"`), or an answer to what the wizard asked, is the wizard's when the sender manages the Sidekick and is refused otherwise; every other message addressed there starts a run under the Sidekick's definition with the message as its opening, from a manager as much as from anyone, and the run answers in its own conversation ([`automation-lifecycle.md`](automation-lifecycle.md#the-shared-conversation)). A marked edit needs no classifier: the mark addresses it. The conversation's own loop therefore runs only the wizard, only for a manager, and a message there always queues rather than steering.
 
-A record-only message from the engineering bridge ([`engineering-mcp.md`](engineering-mcp.md#messages-and-text-reads)) never reaches either classifier: it starts no run whatever the room's size. Apart from it, a demo seed action is the one message the classifier never sees. It carries a `seed` ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)) whose `assistant` turn says whether the line starts a run — present means yes, `null` means no — and the object takes that answer over the room's size and the message's attachments alike. The pack is the authority on which of its lines address Rally, and seeding a scripted conversation cannot wait on a live model's guess about each one. The field reaches the object only over its internal RPC; the message route has none.
+A record-only message from the engineering bridge ([`engineering-mcp.md`](engineering-mcp.md#messages-and-text-reads)) never reaches either classifier: it starts no run whatever the room's size.
 
 A separate continuation classifier handles information supplied for earlier work.
 `classifyMessageAdmission` composes it with ordinary addressing without changing
@@ -843,35 +843,6 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 The canonical `request_elicitation` tool belongs to `rally:core`, which carries no wire prefix, so the model reads it as `request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. The request row retains the stable original tool slot. When a person answers, the loop atomically accepts one tool result containing that answer (`answer: null` with `skipped: true` when they skipped, `cancelled: true` when a newer message cancelled the question; the tool's description tells the model not to ask a skipped question again) and promotes the visible participant response before any later provider call. The participant turn is canonical UI history, not a second Bind user message; the model therefore receives the answer exactly once through the suspended tool protocol. Original tool-call position and dense result-acceptance order are separate identities, so another result accepted while the elicitation waits does not renumber either fact. In a conversation, the conversation becomes `needs_input`; a valid answer clears attention when no blockers remain and activates the same `AgentLoopDO` loop. When drafting an automation, the agent first saves its best partial state with `automation_submit_draft` (a revision that is not `ready`), then calls the same core elicitation tool; the next turn resumes from the saved draft and the answered conversation.
 
 A Sidekick run asks for a missing connection the same way. Its `show_connector_connection` is `AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION` (the same name and input as the card a Canvas shows, a write with a provider key, and a description that says the run pauses and what to do on each answer), and its executor opens an elicitation owned by that tool call through the executor `request_elicitation` uses (`openToolQuestion`), with Continue and Decline options and the card's selection as `Elicitation.connection`. The answer is that call's tool result. Where answers route to an agent, neither question tool is offered. The activation prompt's permission rule tells the model to ask for a connection this way and for a grant with `request_elicitation`, and to report what is blocked only once declined or when it cannot ask; [`automation-lifecycle.md`](automation-lifecycle.md#a-run-a-missing-connection-or-grant-blocks) owns the run's side.
-
-### Seeded runs
-
-A run a demo seed started is an ordinary run with one substitution: the source
-of model output. Its execution context carries the seed, and
-`runWorkstreamHarness` sets `OpenRouterConfig.fetch` — an injection point the
-client already exposes for exactly this purpose — to a function that answers
-the run's one chat-completion request from the seed's turn, in the streamed
-form every run asks for, and answers everything else emptily so nothing
-leaves the machine. A second chat-completion request is refused with a 400 the
-client does not retry on the same endpoint, and a seeded run carries no
-fallback models, so that refusal is the run's failure rather than the first
-of several. The seam covers the OpenRouter client and nothing else, so the
-seeded run is routed where the seam is: `demoSeedModelRoute` keeps the
-resolved primary model when it is not Azure-bound, otherwise takes the first
-unbound fallback, otherwise a fixed unbound id, and the run's config omits the
-Azure transport. An Azure-bound model such as `x-ai/grok-4.3` is tried there
-first, and a seeded run left on it would be answered by a live model, never by the seed.
-The id is only what the run records about itself, since the seam answers
-whatever name the request carries. A seed has one turn because a
-seeded run makes no tool calls, and without tool calls the loop asks once. The
-seam covers the client it is handed to. Prose ends the loop as
-`completed`; a question is a call to the real `request_elicitation` tool
-with validated arguments, and the run parks on `needs_input` like any other.
-Tools, plugins, receipts, activity rows and settlement are the ordinary path,
-which is what makes the seeded turn history rather than a row written to look
-like it. The run an answer to that question resumes is built from the answer,
-not from the seeded context, so it is never seeded. Owned by
-[`demo-workspaces.md`](demo-workspaces.md).
 
 ### Durable receipts and terminal state
 
@@ -1863,7 +1834,6 @@ round-5 review of the Slack App Home change, 2026-11-08.
 production caller left; only its own presentation test passes `true`. The
 workers test that recovers a lost consent response in a Canvas now admits the
 receipt under the tool the live loop offers.
-
 ### 2026-11-08 — A Sidekick run asks for a missing connection instead of finishing past it
 
 **What changed:** `get_connector_connection_state` and
@@ -1885,6 +1855,23 @@ key is what every other durable question's identity is derived from.
 **Consequences:** The question's identity is derived from the call's receipt
 key, so a replay converges on one question. The golden hash of the
 `automationWorkstream` prompt moved.
+### 2026-11-08 — Seeded runs are removed
+
+**What changed:** A run no longer carries a demo `seed`: `runWorkstreamHarness`
+stops replacing the OpenRouter client's `fetch` with a seed's scripted answer,
+stops routing such a run past Azure (`demoSeedModelRoute`), and drops the
+completion-verification bypass for it; the conversation object no longer lets
+a seed decide a message's addressing. `isAzureBoundModel`, exported only for
+that routing, is deleted. `OpenRouterConfig.fetch` stays: tests and evals use
+it.
+
+**Why:** The owner's instruction of 2026-11-08: "remove the demo
+functionality completely". Demo preparation was the only producer of a seed.
+
+**What a future change must respect:** a stored run context or conversation
+authorization written by a seeded run may still carry a `seed` key; the
+schemas that read them are non-strict and loose, so it is ignored. Do not make
+either strict without accounting for those rows.
 
 ### 2026-11-07 — The prompts speak of Canvases and Sidekicks, a run's result is posted once, and a Sidekick's conversation goes to the wizard only on a manager's marked edit
 
@@ -3446,7 +3433,7 @@ the ordinary path and replace the bytes at the provider boundary — the
 injection point already existed for that. The classifier is skipped rather than
 answered through a double because the pack, not a model, is the authority on
 which of its lines address Rally. Owned by
-[`demo-workspaces.md`](demo-workspaces.md), which records the alternatives.
+`demo-workspaces.md`, which records the alternatives.
 
 **What a future change has to respect:** The seed replaces only the source of
 model output. Anything that moves receipts, activities or settlement out of the

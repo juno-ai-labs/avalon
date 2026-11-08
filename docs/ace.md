@@ -7,8 +7,8 @@ Electron and the operational control for Apple push delivery. Its Queues
 surface lists every actively configured Cloudflare dead-letter queue, its live
 backlog, and a non-consuming peek at its messages. Its Models surface manages
 the primary model and ordered fallback array for every model-using agent role.
-Its Demos and Workspaces pages prepare demo Organizations and set the plan of,
-or retire, any workspace, by relaying to the regional API.
+Its Workspaces page sets the plan of, or retires, any workspace, by relaying
+to the regional API.
 New internal tools extend the same Hono application and Ace-owned component
 library instead of creating another operator site or visual language.
 
@@ -20,7 +20,7 @@ membership. It sends no invitation email yet. [Private access](private-access.md
 owns that lifecycle and the remaining distribution work.
 
 Timed links use an operator-chosen local date/time and permit repeat downloads
-until that deadline. Both generation actions share the current lifetime choice, defaulting to timed mode. Requests and grant history are searched server-side and paged in groups of 50. Access-protected same-origin actions revoke grants and relay acknowledgement recovery to the Global operator API. The existing `demos` role also authorizes these acquisition recovery actions; it does not authorize telemetry administration. The same regional credential also authorizes the reviewed connector-maintenance command described in [connector installation lifecycle](connector-installation-lifecycle.md#operator-maintenance); telemetry and read-only engineering credentials cannot use it.
+until that deadline. Both generation actions share the current lifetime choice, defaulting to timed mode. Requests and grant history are searched server-side and paged in groups of 50. Access-protected same-origin actions revoke grants and relay acknowledgement recovery to the Global operator API. The existing Ace operator role (stored as `demos`) also authorizes these acquisition recovery actions; it does not authorize telemetry administration. The same regional credential also authorizes the reviewed connector-maintenance command described in [connector installation lifecycle](connector-installation-lifecycle.md#operator-maintenance); telemetry and read-only engineering credentials cannot use it.
 
 ## Where the code lives
 
@@ -34,8 +34,6 @@ until that deadline. Both generation actions share the current lifetime choice, 
 | `apps/ace/src/openrouter.ts` | Exact model-id and live-route validation against OpenRouter's public endpoints API. |
 | `apps/ace/src/directory.ts` | Read-only user and workspace search across both regional D1 databases. |
 | `apps/ace/src/regional-api.ts` | The client for the regional API's operator routes, over the operator credential; every answer parsed with the shared contract. |
-| `apps/ace/src/demos.ts` | The demo preparation routes on that client: list, template, start, read, retry, abandon. |
-| `apps/ace/src/client/demos.tsx` | The Demos page: every preparation and its phases from real receipts, **New demo**, retry and abandon. |
 | `apps/ace/src/client/workspaces.tsx` | The workspaces tab: find any workspace, set its plan, and retire it behind a typed-id confirmation. |
 | `apps/ace/src/flagship.ts` | Flagship reads and writes plus the post-write change notification. |
 | `apps/ace/src/flag-administration.ts` | The `FlagAdministration` RPC entrypoint the engineering MCP's flag tools call; the same catalogs and write functions as the pages. See [`engineering-mcp.md`](engineering-mcp.md#feature-and-model-flags). |
@@ -82,60 +80,6 @@ consumer RPCs to that workspace's `WorkspaceDO`. The object evaluates the
 complete client flag contract per connected user and privately sends the values
 to that user's sockets. A subscribe response performs the same evaluation, so
 reconnect is the reconciliation path.
-
-**Demos.** `GET /api/demos` and `GET /api/demos/template` relay the Global
-regional API's `/internal/demos` routes over the operator credential, and
-`POST /api/demos`, `/api/demos/:id/retry` and `/api/demos/:id/abandon` relay
-the writes, same-origin. Ace holds no demo state and reads no demo table: the
-page shows each operation's phase from the receipts the regional API returns —
-Checking template, Creating workspace, Copying connections, Seeding
-conversations with confirmed-of-total actions, Waiting for workspace with the readiness
-gaps by name — and a failed operation with its phase, reason and operation id
-beside **Retry** and **Abandon**. There is no estimated time and no percentage;
-a running phase shows when it started, and a wait that failed keeps the gaps
-its last round named. **Retry** is offered for a failed preparation and for a
-running one that has stopped moving — the regional API starts the next
-attempt either way — and a retried operation is read by its current attempt:
-an earlier attempt's phase rows are shown as that attempt's receipts, never
-as the new driver's state. What seeding plays is the pack's: the pack in
-service makes Canvases with their Chats and artifact versions and Sidekicks
-with their first run, and the Canvas a run wrote
-([`demo-workspaces.md`](demo-workspaces.md#the-placeholder-pack)); the page
-shows only the counts the receipts carry. **Abandon** retires the candidate
-workspace — its confirmation says every Canvas and Sidekick in it closes and
-nobody can open it — so it asks for the operation id to be typed, sends what was typed, and the regional
-API refuses without it; an abandoned operation says whether its candidate was
-closed, was never created, or was never allocated. Every gap the readiness
-check reports names the viewer it was read as. While anything is running, and
-for as long as the page is offline, it re-reads every five seconds; when a
-read fails, the last known state stays on screen dated by its last successful
-read until the next read succeeds, and **Refresh** asks now. There is no
-per-operation read: the list is the read, and selecting a row selects from
-it. The template is read before the page judges it: "reading" first, then
-either the form, the regional API's own reason it could not be read, or — when
-the template seats nobody to present, or the company has fewer people than the
-pack has parts — a sentence saying so rather than a form that cannot be
-submitted. **New demo** takes a company name, the presenter (chosen from the
-template's members, because they are handed its connections), and a colleague
-for every other pack role: one dropdown per part, labelled with what that part
-is — **Finance lead** and **Engineering lead** for the pack in service,
-whose presenter plays Maya — listing
-everyone with a `@rallywith.ai` account who has signed in, by name and address
-([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)). They open uncast: a
-default here would seat a real person because nobody looked, and the form says
-how many parts are still empty rather than leaving **Start preparation** dead
-with nothing to read. It refuses to start while a part is uncast, one person is
-in two parts, or two of them share a display name, and mints one operation id
-per form so a second click resolves to the same preparation.
-**Retry** is offered while a preparation is failed and disabled while it is
-running; a running one that has stopped moving is abandoned rather than raced. A Ready demo names the workspace and where
-the presenter finds it — the account menu at the foot of Rally's sidebar,
-which lists workspaces only while their `multiple-workspaces-enabled` flag is
-on, set from the Feature flags tab; the desktop's deep-link contract has no
-home-screen destination, so there is no link to fabricate
-([`demo-workspaces.md`](demo-workspaces.md#open-questions)). A regional refusal
-reaches the page as the API's own code and message, and a response the shared
-contract cannot parse is named as a contract mismatch rather than an outage.
 
 **Workspaces.** The tab searches configured deployments' directories and retires the
 selected workspace in the region that owns it, through
@@ -340,14 +284,12 @@ Flagship-and-Queue write contract, the safe attribute vocabulary, operators,
 nested targeting, regional fan-out, the ranked model-role catalog, live exact-match
 OpenRouter validation, invalid free-text rejection, ordered fallbacks, and
 preservation of staged model variations and rules. The operator pages have a
-Worker suite and a page suite each: `demos.test.ts` and `workspaces.test.ts`
-prove the relay — the operator credential presented, a regional refusal
-relayed by its own code, an outage answered as unavailable rather than as an
-empty page, the typed confirmation forwarded — and `demos-client.test.tsx` and
-`workspaces-client.test.tsx` prove the pages against a fetch double: phases
-from receipts, a retried operation read by its current attempt, the offline
-banner and the polling that keeps it honest, a template too small to cast,
-the typed-id ceremony, an incomplete retirement kept armed. `directory.test.ts`
+Worker suite and a page suite: `workspaces.test.ts` proves the relay — the
+operator credential presented, a regional refusal relayed by its own code, an
+outage answered as unavailable rather than as an empty page, the typed
+confirmation forwarded — and `workspaces-client.test.tsx` proves the page
+against a fetch double: the typed-id ceremony and an incomplete retirement
+kept armed. `directory.test.ts`
 proves the two-region search against real SQLite, one region down included.
 `pnpm --filter @rally/ace typecheck`
 checks both browser and Worker programs; `pnpm --filter @rally/ace build`
@@ -368,7 +310,6 @@ fixtures when visually exercising the component library.
 
 ## Regional impact
 
-Demos are prepared in Global, and the Demos page talks to the Global API only.
 The workspaces tab retires in the region that owns the workspace, through that
 region's API, so no retirement crosses a region; the directory search that
 finds the workspace is the existing cross-regional lookup described above.
@@ -428,6 +369,25 @@ contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only change
 do not publish a new Ace bundle.
 
 ## Changelog
+
+### 2026-11-08 — The Demos page is removed
+
+**What changed:** The Demos tab, its client (`client/demos.tsx`), the relay
+to the regional `/internal/demos` routes (`demos.ts`), Ace's `/api/demos*`
+routes, their two test files and the `.demo-*` styles are deleted. The
+Workspaces tab and the operator credential it uses stay.
+
+**Why:** The owner's instruction of 2026-11-08: "remove the demo
+functionality completely". The regional routes the page relayed to are
+deleted in the same change, so the page could only fail; the retirement
+record of the feature is in [`architecture.md`](architecture.md)'s 2026-11-08
+entry.
+
+**Consequences:** An Organization a demo made is retired from the Workspaces
+tab like any other. The credential keeps its stored names,
+`DEMO_OPERATORS_JSON` and role `demos`, because renaming them is a secret
+rotation in every region; the code calls them `requireAceOperator` and
+`ACE_OPERATOR_ROLE` ([`rally-rebrand-inventory.md`](rally-rebrand-inventory.md)).
 
 ### 2026-11-07 — The Thread-era, import and suggested-work model roles leave the catalog
 
@@ -535,7 +495,7 @@ carrying a copy of it. A template that reads fine but has nobody to cast is its
 own state rather than the "could not be read" one, because Refresh is not the
 remedy for it. What the page refuses, the regional API refuses again: the
 dropdown is a convenience, not the boundary
-([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)).
+(`demo-workspaces.md`).
 
 Shipped in #664.
 
@@ -571,7 +531,7 @@ while an operation is running.
 **Why:** Casting from the template's members put Rally's own staff, under
 their work addresses, in the demo shown to a customer, and capped the cast at
 the template's size; the regional API mints a persona per name now
-([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)). Retry on a
+(`demo-workspaces.md`). Retry on a
 running operation was offered for a driver that had died silently, which is
 rare, reads as "start again" to whoever is watching a preparation work, and
 costs a duplicated attempt when it is pressed; the API still allows it, so

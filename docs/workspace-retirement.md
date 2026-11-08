@@ -15,10 +15,10 @@ object classes, adding an effect receiver to one of them, or adding a Queue
 consumer, Workflow or cron pass that reaches one.
 
 The product decision behind it is in
-[the demo workspace PRD](PRDs/2026-09-04_demo-workspace/prd.md): a demo is a
-new workspace every time, and the old one is retired rather than cleared. The
-mechanism is not demo-specific — it takes any workspace — and the demo feature
-that first needed it ships separately, calling what is here.
+[the demo workspace PRD](PRDs/2026-09-04_demo-workspace/prd.md): a demo was a
+new workspace every time, and the old one was retired rather than cleared. The
+mechanism was never demo-specific — it takes any workspace — and it outlived
+the demo feature that first needed it, which was removed on 2026-11-08.
 
 ## Where the code lives
 
@@ -28,7 +28,7 @@ that first needed it ships separately, calling what is here.
 | `apps/api/src/durable-objects/scheduled-alarms.ts` | `retireObject` and `objectRetirementState` on the base every gated class extends, plus the alarm clearing retirement performs. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `beginWorkspaceRetirement`, `recordRetiredNode`, `recordRetiredChild`, `workspaceRetirementProgress`, and the `workspace_retirement_graph` and `workspace_retirement_children` tables behind them. |
 | `apps/api/src/services/workspace-retirement-service.ts` | The pass that walks the recorded graph, closing children before parents, and the operator door in front of it. |
-| `apps/api/src/routes/workspace-operations.ts` | `/internal/workspaces/:id/retire`, behind the operator credential in the `demos` role. |
+| `apps/api/src/routes/workspace-operations.ts` | `/internal/workspaces/:id/retire`, behind Ace's operator credential (`requireAceOperator`, role `ACE_OPERATOR_ROLE`, stored as `demos`). |
 | `apps/api/src/middleware/errors.ts` | Maps a refusal that reaches an HTTP route to `409 workspace_retired`. |
 | `apps/api/src/queues/access-revocation-consumer.ts`, `product-feature-flag-consumer.ts`, `activity-consumer.ts`, `apps/api/src/workflows/connector-event.ts` | The background callers that can meet a retired object; each acknowledges a refusal as terminal. |
 | `apps/api/src/telemetry/operator-auth.ts` | The operator credentials: `requireOperatorFrom` verifies a bearer token against one of two same-shaped secrets — `DEMO_OPERATORS_JSON` for the `demos` role Ace holds, `TELEMETRY_OPERATORS_JSON` for the telemetry roles — and `requireOperatorRole`, which every operator router narrows with. |
@@ -180,8 +180,9 @@ it, and the typed ceremony itself is the page's. The route also carries the
 operator's id from the credential into the pass, so the region's own log names
 who closed the workspace.
 
-The route sits behind the operator credential in a role of its own, `demos`,
-which Ace holds one token per region for, read from a secret of its own,
+The route sits behind the operator credential in a role of its own, stored as
+`demos` (`ACE_OPERATOR_ROLE`; the name is the retired demo feature's, kept
+because renaming it is a secret rotation), which Ace holds one token per region for, read from a secret of its own,
 `DEMO_OPERATORS_JSON` — the same map shape as the telemetry surface's
 `TELEMETRY_OPERATORS_JSON`, set and rotated independently of it, so adding or
 rotating Ace's token never touches the telemetry tokens. Every operator router
@@ -443,13 +444,6 @@ stops the D1 reads that never reach an object. The column is the one the
 last-member-leaves path writes ([`multiple-workspaces.md`](multiple-workspaces.md));
 this module writes it and does not own its other readers.
 
-The walk makes one write into another module's table. When the graph reports
-closed it calls `markDemoWorkspaceRetired`, which sets `retired_at` on the
-demo operation that made the workspace, so the Demos page can answer "is there
-a demo" without waking a retired object to ask. It is a shadow written after
-the fact, owned by [`demo-workspaces.md`](demo-workspaces.md); retirement never
-reads it, and a workspace no demo made has no row for it to touch.
-
 One workspace-scoped Durable Object class is **not** gated and not walked:
 `ArtifactHostDO`, which serves a work stream's published artifacts to viewer
 sessions admitted by the canonical authorization service, is never tombstoned,
@@ -570,6 +564,23 @@ closes, which is the case a construction-only fix does not reach.
   tombstone and its retained outbox count.
 - **Resuming.** Call the route again; the receipts survive, and a pass returns
   only to what is unreceipted.
+- **Retiring the demo Organizations (deploy order for the 2026-11-08 demo
+  removal).** Before the change that removes demo preparation ships, list
+  every live demo Organization in Global —
+  `SELECT operation_id, workspace_id, status FROM demo_operations WHERE workspace_id IS NOT NULL AND retired_at IS NULL`
+  — and add the template, `demo-template`
+  (`01a06d5d-4624-751e-8269-e7950b51a835`), which loses the discovery filter
+  that hid it from its own members. Confirm no preparation is running
+  (`status = 'running'`, or a running `avalon-global-demo-preparation`
+  Workflow instance). Retire each from Ace's Workspaces tab through this door,
+  while the old Worker still revokes the `demo:<operation>` impersonation
+  edges as it closes the Organization. Then deploy the Worker. D1 migration
+  0126, which drops `demo_operations`, `demo_operation_phases` and
+  `demo_seed_receipts`, ships in a later deploy: the deploy job applies
+  migrations before it deploys the Worker, and the old Worker's discovery
+  reads `demo_operations` on every sign-in. An Organization missed here can
+  still be retired the same way afterwards; it simply keeps its demo-written
+  impersonation edges, which nothing reads.
 - **Undoing.** There is no product path. `runInspectionSql` is the repair door
   on every object, the tombstone included, and `workspaces.abandoned_at` is a
   plain column; both are deliberate hand repairs, not a feature.
@@ -588,11 +599,7 @@ tables arrive through each of the two gated classes' own append-only migration
 ledger, from one shared constant, as `_internal_durable_alarms` does. There is
 no D1 table for a retirement; the door sets `workspaces.abandoned_at`, the
 column every D1 authority read already fences on, and a caller that needs more
-than "closed" asks the object. The one regional shadow of the receipt is the demo
-feature's: once the graph reports closed, the walk stamps `retired_at` on the
-`demo_operations` row that made the workspace — a no-op for a workspace no demo
-made — and nothing here reads it back
-([`demo-workspaces.md`](demo-workspaces.md#data-model)).
+than "closed" asks the object.
 
 ## Security and trust model
 
@@ -765,6 +772,26 @@ Channel and Space tables and this recorder's `channels` and `spaces` reads be
 dropped.
 
 ### 2026-11-07 — Retire an Organization's Threads, Breakouts and Channels, after dumping their transcripts
+
+### 2026-11-08 — The walk no longer writes the demo register
+
+**What changed:** `retireWorkspaceGraph` no longer reads `demo_operations` to
+revoke a demo's `demo:<operation>` impersonation edges, and no longer stamps
+`retired_at` on that table once the graph is closed
+(`markDemoWorkspaceRetired` is deleted). Operations gained the step that
+retires every live demo Organization and the template before the removal
+ships, and the deploy order around D1 migration 0126.
+
+**Why:** The owner's instruction of 2026-11-08: "remove the demo
+functionality completely". The walk was the demo feature's one write into
+another module and its one demo-specific read; with the feature gone both had
+no reader. Retiring the existing demo Organizations through this door, rather
+than a bulk delete, is the existing path and closes their objects the way
+every closed Organization is closed.
+
+**What a future change must respect:** the walk still takes an optional
+`impersonationRevocation`; a new producer of **can impersonate** edges passes
+its own authority basis there rather than teaching the walk to look it up.
 
 ### 2026-11-08 — Convert a Thread that has artifacts into a Canvas in place
 
