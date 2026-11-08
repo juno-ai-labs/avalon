@@ -55,6 +55,8 @@ export function automationSummary(
     /** `AUTOMATION_RUN_STATE_SQL`; absent from a read that did not ask. */
     run_state?: "working" | "needs_input" | null;
     pending_question?: string | null;
+    /** `AUTOMATION_TRIGGER_KINDS_SQL`, a JSON array; absent from a read that did not ask. */
+    trigger_kinds?: string | null;
   },
   report: InvalidAppearanceReport,
 ): AutomationSummary {
@@ -78,6 +80,7 @@ export function automationSummary(
     ...(row.needs_input === undefined ? {} : { needsInput: row.needs_input === 1 }),
     ...(row.run_state === undefined ? {} : { runState: row.run_state }),
     ...(row.pending_question === undefined ? {} : { pendingQuestion: row.pending_question }),
+    ...(row.trigger_kinds === undefined ? {} : { triggerKinds: JSON.parse(row.trigger_kinds ?? "[]") as AutomationSummary["triggerKinds"] }),
   };
 }
 
@@ -132,6 +135,32 @@ export const AUTOMATION_RUN_STATE_SQL = `(SELECT CASE WHEN latest.state IN ('pen
    (SELECT asked.summary FROM sidekick_runs asked
      WHERE asked.sidekick_id = directory.automation_id AND asked.state = 'needs_input'
      ORDER BY asked.created_at DESC, asked.run_id DESC LIMIT 1) AS pending_question`;
+
+/**
+ * `trigger_kinds` for `automationSummary`, over an `automation_directory`
+ * aliased `directory`: what wakes the Sidekick, as a JSON array in the run
+ * trigger vocabulary (`AutomationRunSchema.triggerType`), each kind once, in
+ * the order the definition first names it. A calendar or interval trigger is
+ * `schedule`; a connector, semantic, resource-watch or webhook trigger is
+ * `external_event`, the run kind each of them starts. Read from the accepted
+ * definition, or for a draft the newest one submitted, so the Sidekicks home
+ * can say "On alert", "On email" or "On request" where a schedule would say
+ * when. A trigger type this server does not map is left out.
+ */
+export const AUTOMATION_TRIGGER_KINDS_SQL = `(SELECT json_group_array(kind) FROM (
+     SELECT CASE json_extract(named.value, '$.type')
+              WHEN 'manual' THEN 'manual'
+              WHEN 'inbound_email' THEN 'inbound_email'
+              WHEN 'calendar' THEN 'schedule' WHEN 'interval' THEN 'schedule'
+              WHEN 'connector_activity' THEN 'external_event' WHEN 'semantic_activity' THEN 'external_event'
+              WHEN 'resource_watch' THEN 'external_event' WHEN 'webhook' THEN 'external_event'
+            END AS kind, MIN(CAST(named.key AS INTEGER)) AS first_named
+       FROM sidekick_revisions revision, json_each(revision.definition_json, '$.triggers') named
+      WHERE revision.sidekick_id = directory.automation_id
+        AND revision.definition_revision = COALESCE(directory.accepted_definition_revision,
+          (SELECT MAX(newest.definition_revision) FROM sidekick_revisions newest
+            WHERE newest.sidekick_id = directory.automation_id))
+      GROUP BY kind HAVING kind IS NOT NULL ORDER BY first_named)) AS trigger_kinds`;
 
 /** The live run state a run's own state contributes to its Sidekick's row (`AUTOMATION_RUN_STATE_SQL`). */
 export function sidekickRowRunState(state: string | null | undefined): "working" | "needs_input" | null {

@@ -1146,6 +1146,14 @@ loaded into someone else's conversation, not a read of its own.
   projection moves a run between working, waiting and finished, or brings a
   waiting run's question; a working run's steps and progress text do not
   move the row, and they change on every tool call, so they send nothing.
+- **What wakes it.** The sidebar row's optional `triggerKinds` lists the
+  definition's triggers in the run trigger vocabulary
+  (`AutomationRunSchema.triggerType`), each kind once in the order first
+  named (`AUTOMATION_TRIGGER_KINDS_SQL`): calendar and interval are
+  `schedule`, connector, semantic, resource-watch and webhook triggers are
+  `external_event`. It reads the accepted definition, or a draft's newest
+  submitted one, so the Sidekicks home can say "On alert", "On email" or "On
+  request" where a schedule says when (design §3).
 - **The requester's own run is not news to them.** A run's row write moves
   `"0"`'s latest attention ordinal, which read as unread to the person who
   had just pressed Run now and was looking at the Sidekick. While the run is
