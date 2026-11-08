@@ -200,8 +200,8 @@ export const NOTIFICATION_INTENTS_ACCESS_DENIED_MIGRATION: readonly string[] = [
 
 /**
  * Record a Sidekick run's notice for each recipient, already `delivered`:
- * push is its only channel and the queue message is its delivery, so there is
- * no lease to take (a mention's lease covers its Slack and email sends). The
+ * the queue messages, one per sink the person chose, are its delivery, so
+ * there is no lease to take (a mention's lease covers queueing its sinks). The
  * source and kind make a repeat for the same recipient one row, so a retried
  * alarm records nothing twice; the returned ids are every recipient's, to
  * enqueue again, which the push receipts make harmless.
@@ -267,8 +267,8 @@ export interface ParentNoticeRecord {
 /**
  * Record a hosted parent's own notice for one person: a reply, a pinned
  * Canvas's new version, an access request or its grant. Like a run notice it
- * is written `delivered` (push is its only channel and the queue message is
- * its delivery, so there is no lease), unless `skipCode` says why it is not
+ * is written `delivered` (the queue messages, one per chosen sink, are its
+ * delivery, so there is no lease), unless `skipCode` says why it is not
  * pushed. The caller holds the transaction. The Activity row is written only
  * by the call that wrote the intent, so a retried caller moves nothing; the
  * answer says whether the intent is one to enqueue, on a retry too, which the
