@@ -2,14 +2,19 @@ import { ErrorNotice } from '../components/primitives';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Pencil } from 'lucide-react';
+import { PanelRight, Pencil } from 'lucide-react';
+import { IconHistory, IconLink, IconPin, IconPinnedOff, IconPlayerPlay } from '@tabler/icons-react';
+import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { CanvasMark } from '../components/canvas-mark';
-import { canvasRoute } from '../lib/canvases';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import type { AutomationDetail } from '../lib/types';
-import { SidekickDetailLayout } from '../components/sidekick-detail-layout';
+import { SidekickDetailLayout, type SidekickDetailHeaderContext } from '../components/sidekick-detail-layout';
+import { useSidekickList } from '../components/sidekick-sidebar-section';
+import { AutomationGlyph } from '../components/workstream-glyph';
+import { canvasRoute, useCanvasNameSources } from '../lib/canvases';
+import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
-import { Button, EmptyState, OpeningState } from '../components/primitives';
+import { AvatarStack, Button, EmptyState, IconButton, OpeningState } from '../components/primitives';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { copyLink } from '../lib/copy-link';
 import { useDocumentTitle } from '../lib/document-title';
@@ -196,29 +201,108 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
   }
   if (!automation.data) return <OpeningState label="Opening Sidekick…" />;
   const detail = automation.data;
+  const copySidekickLink = async (): Promise<void> => {
+    if (!session?.workspace) throw new Error('No active organization');
+    await copyLink({ kind: 'sidekick', region: session.workspace.region, workspaceId: session.workspace.id, sidekickId: id });
+  };
   return (
-    <SidekickDetailLayout key={id} overview={<AutomationHeader
+    <SidekickDetailLayout key={id} details={<AutomationHeader
       automation={detail}
       delegateNames={new Map([...(delegates.data?.delegates ?? []), ...(delegates.data?.creator ? [delegates.data.creator] : [])].map((person) => [person.userId, person.displayName]))}
       delegation={<SidekickDelegation id={id} />}
       error={act.error?.message}
       onAppearanceChange={setAppearance}
       onArchive={() => act.mutateAsync('archive').then(() => undefined)}
-      onCopyLink={async () => {
-        if (!session?.workspace) throw new Error('No active organization');
-        await copyLink({ kind: 'sidekick', region: session.workspace.region, workspaceId: session.workspace.id, sidekickId: id });
-      }}
+      onCopyLink={copySidekickLink}
       onPause={() => act.mutate('pause')}
       onResume={() => act.mutate('resume')}
       onRunNow={() => act.mutate('run')}
       pending={act.isPending ? act.variables : null}
       runs={runs.data}
       runsError={runs.error?.message}
+    />} header={(context) => <SidekickHeader
+      context={context}
+      detail={detail}
+      onCopyLink={copySidekickLink}
+      onRunNow={detail.lifecycle === 'active' && !act.isPending ? () => act.mutate('run') : undefined}
     />}>
       <SidekickConversation detail={detail} manages={viewerManagesSidekick(detail, session)} />
     </SidekickDetailLayout>
   );
 }
+
+/**
+ * The Sidekick's one header, at every width: its pill (its glyph and name,
+ * opening the menu a Canvas's pill opens) after Back and Forward, and who is
+ * here. While a run is open the pill is the run's, with the Sidekick's as the
+ * crumb before it that leads back to the shared conversation. Where the
+ * details do not fit beside the conversation, a Details button switches to
+ * them under this same header.
+ */
+function SidekickHeader({ context, detail, onCopyLink, onRunNow }: {
+  context: SidekickDetailHeaderContext;
+  detail: AutomationDetail;
+  onCopyLink: () => Promise<void>;
+  /** Absent while the Sidekick cannot start a run; the details say why. */
+  onRunNow: (() => void) | undefined;
+}): React.JSX.Element {
+  const { api, session } = useCollaborationSession();
+  const [search, setSearch] = useSearchParams();
+  const runId = search.get('run');
+  const name = detail.currentDefinition?.name ?? detail.name;
+  const row = useSidekickList()?.find((candidate) => candidate.id === detail.id);
+  const pinned = row?.pinnedPosition != null;
+  const [menuError, setMenuError] = useState<string | null>(null);
+  const { membersById } = useCanvasNameSources(api);
+  const presentUserIds = useOptionalWorkspaceSocket()?.presenceUserIdsByWorkstream[detail.id] ?? NO_PRESENCE;
+  const present = presentUserIds.filter((userId) => userId !== session?.user.id).flatMap((userId) => {
+    const member = membersById.get(userId);
+    return member ? [member] : [];
+  });
+  const mark = <span className="sidekick-pill-mark"><AutomationGlyph {...(detail.appearance ? { appearance: detail.appearance } : {})} id={detail.id} /></span>;
+  const sidekickLevel: TitlePillLevel = {
+    key: `sidekick:${detail.id}`,
+    icon: mark,
+    title: name,
+    label: `Sidekick menu: ${name}`,
+    menu: <>
+      {api && row && <TitleMenuItem icon={pinned ? <IconPinnedOff aria-hidden="true" size={16} stroke={1.8} /> : <IconPin aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
+        setMenuError(null);
+        api.setSidekickPinned(detail.id, !pinned).catch(() => setMenuError('The Sidekick could not be pinned. Try again.'));
+      }}>{pinned ? 'Unpin' : 'Pin'}</TitleMenuItem>}
+      <TitleMenuItem disabled={!onRunNow} icon={<IconPlayerPlay aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => onRunNow?.()}>Run now</TitleMenuItem>
+      <TitleMenuItem icon={<IconLink aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
+        setMenuError(null);
+        void onCopyLink().catch(() => setMenuError('The Sidekick link could not be copied.'));
+      }}>Copy link</TitleMenuItem>
+    </>,
+  };
+  const current: TitlePillLevel = runId
+    ? { key: `run:${runId}`, icon: <IconHistory aria-hidden="true" size={16} stroke={1.8} />, title: 'Run', label: 'Run' }
+    : sidekickLevel;
+  // Back to the shared conversation replaces the history entry, so Back
+  // leaves the Sidekick rather than reopening the run.
+  const ancestors: TitlePillLevel[] = runId
+    ? [{ ...sidekickLevel, menu: undefined, label: `Back to ${name}`, onSelect: () => setSearch({}, { replace: true }) }]
+    : [];
+  return <>
+    {menuError && <ErrorNotice>{menuError}</ErrorNotice>}
+    <TitlePillHeader
+      ancestors={ancestors}
+      current={current}
+      trailing={<span className="canvas-header-trailing">
+        {present.length > 0 && <span aria-label={`${present.length} ${present.length === 1 ? 'person' : 'people'} here`} className="canvas-header-present" role="group">
+          <AvatarStack currentUserId={session?.user.id ?? null} members={present} presentUserIds={presentUserIds} />
+        </span>}
+        {context.compact && <IconButton aria-pressed={context.detailsOpen} className="title-pill-action" label="Sidekick details" onClick={context.toggleDetails}>
+          <PanelRight aria-hidden="true" size={16} />
+        </IconButton>}
+      </span>}
+    />
+  </>;
+}
+
+const NO_PRESENCE: readonly string[] = [];
 
 /**
  * The Sidekick's shared conversation (substream `"0"`), or one run's own
@@ -231,7 +315,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
  * yet, so a manager opens one already editing.
  */
 function SidekickConversation({ detail, manages }: { detail: AutomationDetail; manages: boolean }): React.JSX.Element {
-  const [search, setSearch] = useSearchParams();
+  const [search] = useSearchParams();
   const runId = search.get('run');
   const [editing, setEditing] = useState(detail.lifecycle === 'draft');
   const name = detail.currentDefinition?.name ?? detail.name;
@@ -244,10 +328,7 @@ function SidekickConversation({ detail, manages }: { detail: AutomationDetail; m
       // conversation, where it starts the next run. A question the run asked
       // keeps its answer form here, as it does on the run's row there.
       withoutComposer
-      renderHeader={() => <header className="sidekick-conversation-heading">
-        <button className="sidekick-run-back" onClick={() => setSearch({}, { replace: true })} type="button"><ChevronLeft aria-hidden="true" size={16} />Conversation</button>
-        <h2>Run</h2>
-      </header>}
+      renderHeader={() => <header className="sidekick-conversation-heading" />}
       substreamId={runId}
     />;
   }
@@ -265,8 +346,9 @@ function SidekickConversation({ detail, manages }: { detail: AutomationDetail; m
     messageIntent={edit ? 'edit_sidekick' : undefined}
     parentId={detail.id}
     parentKind="automation"
+    // Always an element: the surface's grid gives its first row to the header,
+    // and an empty one keeps the feed in the row that scrolls.
     renderHeader={() => <header className="sidekick-conversation-heading">
-      <h2>Conversation</h2>
       {edit && <span className="sidekick-editing-badge" role="status">Editing this Sidekick</span>}
       {canvases.length > 0 && <ul aria-label="Canvases it made" className="sidekick-canvas-cards">
         {canvases.map((canvas) => <li key={canvas.id}><Link className="sidekick-canvas-card" to={canvasRoute(canvas.id)}>
