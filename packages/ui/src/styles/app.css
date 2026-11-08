@@ -7039,6 +7039,11 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-share-people .member-action-list { max-height: 240px; overflow: auto; }
 .canvas-share-people .member-action-row input[type=checkbox] { margin-left: auto; }
 .canvas-share-actions { display: flex; gap: 8px; justify-content: flex-end; }
+/* Requests to open it, for its deciders: who, their message and when, with the
+   same Approve and Deny their Activity row has. */
+.canvas-share-requests { display: grid; gap: 4px; }
+.canvas-share-heading { color: var(--av-sys-color-text-subtle); font-size: 13px; font-weight: 600; margin: 0; padding: 0 10px; }
+.canvas-share-request .access-decision-actions { flex: none; margin-left: auto; }
 /* The guest invite is a disclosure drawn like the rest of the dialog: the
    chevron the title menus use, turned down while open, and no browser marker. */
 .canvas-share-guests summary { align-items: center; border-radius: 12px; cursor: pointer; display: flex; font-size: 14px; gap: 8px; list-style: none; padding: 8px 10px; }
