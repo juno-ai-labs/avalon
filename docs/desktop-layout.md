@@ -58,7 +58,14 @@ At phone width the panel is a full-width sheet.
 Switching items in a panel already open for the same conversation keeps the
 width the person dragged it to. The split itself is not saved: the width
 stored per conversation is the one last dragged to, and it is what a panel
-restored on arrival or relaunch comes back at (`restoreRail`). A conversation
+restored on arrival or relaunch comes back at (`restoreRail`). It is stored as
+the panel's share of the main pane at the time (`rally.rail-share:<scope>`),
+not as pixels, and restored as that share of the pane as it is now, held
+between `MIN_RAIL_WIDTH` and the width that leaves the conversation its
+minimum (the same bound `--rail-max-slot` draws). A panel dragged to half a
+narrow window's pane therefore comes back at half a wide one's. A pixel width
+saved before shares (`rally.rail-width:<scope>`) is still read, held inside
+the same bounds, until the next drag replaces it. A conversation
 with no stored width restores at the even split, the same width a click gives. Double-click or `Enter` on the panel's
 edge resets it to the even split it opened at; unlike the opening, the reset is
 the person's own act, so it is saved as the conversation's width like a drag.
@@ -127,11 +134,36 @@ the windows the person left open.
 `screens/landing.test.tsx` checks route restoration;
 `desktop-layout.test.tsx` checks the unused semantic row hook;
 `artifact-window-state.test.ts` checks the local registry and monitor clamp;
-`rail-split.test.ts` checks the width a panel opens at.
+`rail-split.test.ts` checks the width a panel opens and restores at, including
+a width saved in a narrow window restored in a wide one.
 The desktop acceptance check opens, moves, quits, and relaunches real Electron
 windows, and checks that rail positions and panels return visibly.
 
 ## Changelog
+
+### 2026-11-08 — A panel's width is saved as its share of the pane
+
+**What changed:** A dragged or reset panel width is saved per conversation as
+its share of the main pane (`rally.rail-share:<scope>`), and a restored panel
+takes that share of the pane it opens in, held between the minimum and the
+width that leaves the conversation its minimum. Pixel widths saved before are
+still read, inside the same bounds.
+
+**Why:** The owner's answer to the follow-up "a panel width stored from a
+narrow window comes back narrow on a wide one" was "do this". The panel opens
+at an even split, which is already a share of the pane, so a share keeps a
+drag and the documented default in one unit; a drag to half a narrow pane now
+means half of any pane.
+
+**Considered and rejected:** Clamping the stored pixels to the pane's current
+minimum and maximum on restore. A width stored narrow is already inside a
+wide window's bounds, so the clamp would leave exactly the reported panel
+narrow. The clamp is kept, as the bound on a share restored into a pane too
+small for it.
+
+**What a future change must respect:** anything that saves a panel width
+must save it through `setRailWidth`, which measures the pane; a pixel width
+written directly is read as the legacy format.
 
 ### 2026-11-08 — The panel takes a pane narrower than two conversation minimums, and a closed panel reopens from the Canvas's menus
 
