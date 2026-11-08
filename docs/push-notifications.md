@@ -134,6 +134,9 @@ when a native notification response arrives during asynchronous app startup.
 
 ## What is pushed
 
+Each of the intents below also writes its recipient's Activity row in the same
+transaction ([`activity.md`](activity.md)), so the feed lists what was pushed.
+
 Push delivery reads notification intents only. A Queue message for a retired
 Activity row is logged `activity_item_retired` and acknowledged (its id logged
 as `activity_item_id`). The events are a mention or add (the intent above,
@@ -389,6 +392,27 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-11-08 — Every intent of the four person-facing kinds writes an Activity row
+
+**What changed:** `recordPersonNotificationIntent` and
+`recordSidekickRunNotices` each write the recipient's
+`workspace_activity_items` row in the transaction that writes the intent,
+keyed by the intent's id. The `mention_notification` effect carries the
+mentioning message's `attentionOrdinal`.
+
+**Why:** Activity returns as a feed of exactly what push tells a person
+([`activity.md`](activity.md), the user's 2026-11-08 decision). Writing the row
+where the intent is written is what makes the two unable to disagree; the
+ordinal is what lets a mention's row clear when the recipient reads past it.
+
+**Considered and rejected:** Reading the feed from the intent table itself.
+Its rows are delivery records with a 30-day retention and are reaped, and a
+mention's intent can be skipped at delivery; the feed is the person's.
+
+**Consequences:** The intents' reaper must keep leaving Activity alone. A new
+person-facing push kind should be recorded through one of these two functions,
+or write its Activity row in its own intent's transaction.
 
 ### 2026-11-07 — A mention in a Canvas's Chat or a Sidekick's conversation is delivered
 

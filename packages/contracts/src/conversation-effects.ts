@@ -188,6 +188,13 @@ export const WorkstreamMentionNotificationEffectSchema = z.strictObject({
   authorNameSnapshot: z.string().max(300),
   workstreamTitleSnapshot: ShortTextSchema,
   messageText: z.string().max(8_000),
+  /**
+   * The mentioning message's attention ordinal in its conversation, so the
+   * recipient's Activity item clears once their read cursor passes it
+   * (`docs/activity.md`). Optional: an effect emitted before it existed has
+   * none, and its item clears only by Mark all seen.
+   */
+  attentionOrdinal: z.number().int().nonnegative().optional(),
   occurredAt: TimestampSchema,
 });
 

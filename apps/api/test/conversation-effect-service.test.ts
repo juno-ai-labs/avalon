@@ -326,7 +326,7 @@ function record(
   effect: Extract<ConversationEffect, { kind: "mention_notification" | "participant_notification" }>,
   parentId?: string,
 ): string {
-  return recordPersonNotificationIntent(workspace.storage, personNotification(effect, parentId), Date.now());
+  return recordPersonNotificationIntent(workspace.storage, personNotification(effect, parentId), Date.now(), () => undefined);
 }
 
 function regionalEnv(

@@ -1,3 +1,4 @@
+import type { ActivityParentKind } from "@rally/contracts";
 import type { ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
 
 import {
@@ -13,6 +14,7 @@ import {
   type WorkspaceNotificationIntentTransitionRequest,
   type WorkspaceNotificationIntentTransitionResult,
 } from "./workspace-notification-intent-protocol";
+import { recordActivityItem, type NoteActivity } from "./workspace-activity";
 
 /**
  * WorkspaceDO migration 145: admit a Sidekick run's two notices,
@@ -87,8 +89,10 @@ export function recordSidekickRunNotices(
   input: {
     workspaceId: string; sidekickId: string; sourceId: string; kind: "needs_input" | "run_finished";
     generation: number; payloadJson: string; payloadHash: string; recipientUserIds: readonly string[];
+    runId: string; reply: string | null;
   },
   now: number,
+  noteActivity: NoteActivity,
 ): { recipientUserId: string; intentId: string }[] {
   const at = new Date(now).toISOString();
   return storage.transactionSync(() => input.recipientUserIds.map((recipientUserId) => {
@@ -103,6 +107,13 @@ export function recordSidekickRunNotices(
       intentId, input.workspaceId, input.sidekickId, recipientUserId, input.sourceId, Math.max(1, input.generation),
       input.kind, input.payloadJson, input.payloadHash, at, at, at,
     );
+    // The recipient's Activity row, in the intent's transaction; the
+    // Sidekick is who acted, and the run is the conversation it acted in.
+    recordActivityItem(storage.sql, {
+      itemId: intentId, workspaceId: input.workspaceId, recipientUserId, kind: input.kind,
+      parentKind: "automation", parentId: input.sidekickId, substreamId: input.runId, messageId: null, runId: input.runId,
+      actorKind: "sidekick", actorId: input.sidekickId, text: input.reply,
+    }, now, noteActivity);
     return { recipientUserId, intentId };
   }));
 }
@@ -131,6 +142,7 @@ export function recordPersonNotificationIntent(
   storage: DurableObjectStorage,
   envelope: PersonNotificationEnvelope,
   now: number,
+  noteActivity: NoteActivity,
 ): string {
   const effect = envelope.effect;
   const notificationKind = effect.kind === "mention_notification" ? "mention" : "participant_added";
@@ -158,6 +170,21 @@ export function recordPersonNotificationIntent(
     envelope.generation, envelope.sourceVersion, envelope.requiredProjectionVersion ?? 1, notificationKind,
     JSON.stringify(effect), envelope.payloadHash, at, at,
   );
+  // The recipient's Activity row, in the same transaction, so the push and
+  // the feed cannot disagree (docs/activity.md). Only a hosted parent records
+  // an intent, so the parent is a Canvas or a Sidekick.
+  const mention = effect.kind === "mention_notification" ? effect : null;
+  recordActivityItem(storage.sql, {
+    itemId: effect.intentId, workspaceId: envelope.workspaceId, recipientUserId: effect.recipientUserId,
+    // The table's CHECK refuses any other kind by name, loudly.
+    kind: notificationKind, parentKind: envelope.parentKind as ActivityParentKind,
+    parentId: envelope.parentId, substreamId: effect.substreamId ?? envelope.substreamId,
+    messageId: mention?.messageId ?? null, runId: null, actorKind: "person",
+    actorId: mention ? mention.authorUserId : effect.kind === "participant_notification" ? effect.actorUserId : null,
+    // What the push's body says: the message, or the objective of what they were added to.
+    text: mention ? mention.messageText : effect.kind === "participant_notification" ? effect.workstreamObjectiveSnapshot ?? null : null,
+    ...(mention ? { attentionOrdinal: mention.attentionOrdinal ?? null } : {}),
+  }, now, noteActivity);
   return effect.intentId;
 }
 

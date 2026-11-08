@@ -70,6 +70,12 @@ export interface HostedConversationHost {
   env: Env;
   storage: DurableObjectStorage;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
+  /**
+   * An Activity row was written for this person, inside the caller's
+   * transaction: their Activity list's waterline moves and it is sent to them
+   * after the write (`docs/activity.md`).
+   */
+  noteActivityChanged(userId: string): void;
 }
 
 type DirectoryUserEffect = Extract<ConversationEffectEnvelope["effect"], { kind: "directory_user" }>;
@@ -291,7 +297,7 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
       }
       // The Thread host recorded these from a `parent_effect`; a hosted
       // parent records them here, beside the receipt that fences a replay.
-      return notification ? recordPersonNotificationIntent(this.storage, notification, now) : null;
+      return notification ? recordPersonNotificationIntent(this.storage, notification, now, (userId) => this.host.noteActivityChanged(userId)) : null;
     });
   }
 

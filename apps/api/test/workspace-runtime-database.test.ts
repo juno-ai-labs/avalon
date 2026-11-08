@@ -204,6 +204,10 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "canvas_directory",
   "canvas_participants",
   "canvas_artifacts",
+  // Each person's Activity (migration 148): written beside a notification
+  // intent and read for their workspace socket, both inside the object.
+  "workspace_activity_items",
+  "workspace_activity_seen",
   // The Space authority's ten tables. Every one of them is reached through
   // the typed Space RPCs in `workspace-space-protocol.ts` and nothing else — a
   // The breakout directory's two. Read by the Space conversation page and
