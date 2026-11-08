@@ -735,7 +735,7 @@ export const ResourceRevisionSchema = z.object({
    * surfaces say a version is unattributed rather than inventing an author.
    */
   author: ResourceVersionAuthorSchema.nullable(),
-  authorName: z.string().max(200).nullable().optional(),
+  authorName: z.string().max(180).nullable().optional(),
   /**
    * A cause this client does not know reads as none, so a later cause leaves
    * the history listable rather than failing the whole response, as

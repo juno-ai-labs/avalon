@@ -420,10 +420,14 @@ the rail's first section and `/canvases` the landing route
   it), the pill, the sidebar row and the home card draw the `TitleSkeleton`
   placeholder ("Rally is choosing a name" to a screen reader) and the window
   stays "Rally"; the title then arrives through the list push the pill
-  already follows. A missing `titleStatus` (an older server) is settled.
+  already follows. A Canvas made empty is `settled` as "Untitled Canvas" and
+  turns `naming` when its first person message lands, so the placeholder
+  never waits on a message nobody has sent (v1-F5, v4-F11); the server makes
+  that flip, and the client draws only what `titleStatus` says. A missing `titleStatus` (an older server) is settled.
 - **Renaming** is `PATCH /canvases/:id`, edited in the pill itself
   (`TitlePillTitleInput`): Rename… in the pill's menu, or in a sidebar row's
-  context menu, which opens the Canvas with route state
+  context menu (which offers the pill's Pin, Rename…, Share… and Copy link;
+  Share… opens the Canvas on its panel with `SHARE_CANVAS_STATE`), which opens the Canvas with route state
   (`RENAME_CANVAS_STATE`) that starts the edit. Enter saves, Escape cancels,
   leaving the field saves a changed title. The client neither trims nor
   measures the title: an empty or over-long one is the server's to refuse
@@ -579,7 +583,9 @@ Canvas holds, with a Live chip; its copy is the design's, and the sidebar's
 list is "All canvases" with a sort. The header puts the pill at the left with
 a separate "⋯" button. The Share panel draws its controls from the tokens and
 offers only guests to pick when the whole Organization can open the Canvas.
-A missing Canvas and an unreachable one are each one in-pane state.
+A missing Canvas and an unreachable one are each one in-pane state. A row
+reads its age as "2m", "1h", "Tue", a Canvas just made slides into the list,
+and its menu matches the pill's.
 
 **Why:** The PRD makes design.html the authority for every screen. The mark
 was a grey tile on purpose ("a Canvas has no hue of its own, as a pinned

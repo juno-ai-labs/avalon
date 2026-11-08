@@ -172,7 +172,7 @@ button of the same name. The entry asks `GET /browser/dev/session` once, the
 first time the signed-out screen shows; it answers 204 only there and 404
 everywhere else, so production never draws the button. Choosing it sends
 `POST /browser/dev/session`, which opens `createDevelopmentIdentitySession`'s
-account (`dev@avalon.local`, the seed's Adam) as an ordinary browser cookie
+account (`adam@avalon.local`, the seed's Adam) as an ordinary browser cookie
 session with no Organization, and the entry continues as after an email
 sign-in, to the Organization list.
 
@@ -227,9 +227,13 @@ surface the Mac app opens in one, Settings, is a route of the main window here
 the whole tab and hides the sidebar, which stays mounted so closing the surface
 returns to the workspace without reloading it. Sidekicks (`#/sidekicks`, the
 home, and `#/sidekicks/:id`, each Sidekick) are panes beside the sidebar on
-both hosts, like any other screen. In Settings, Application shows
-Appearance and names the Mac app for the rest, and Notifications offers
-"In this browser". The sidebar always shows **Download the Mac app** above the
+both hosts, like any other screen. In Settings a browser drops the Desktop
+app group, whose settings are all about the Mac app, and shows Appearance in
+Account; Notifications offers "In this browser" while the
+`pushNotificationsEnabled` flag is on, and only the email choices without it.
+At phone width Settings' header has one close: the sections sheet's toggle is
+hidden while the sheet is open. The tab is named for what it shows
+("Canvases · Rally", "Settings · Rally"). The sidebar always shows **Download the Mac app** above the
 account menu, as a footer item ([`desktop-shell.md`](desktop-shell.md#the-sidebar)).
 
 What a guest may do is asked in one place, `useShellCapabilities()`, which reads
@@ -630,6 +634,18 @@ must not close a healthy socket or reject pending command receipts. Identity,
 workspace, role or access-class changes replace the client and re-admit it.
 
 ## Changelog
+
+### 2026-11-08 — Settings and the tab say what the browser shows
+
+**What changed:** This document names the development account that actually
+signs in and the Settings sections a browser actually draws; Settings' copy
+says Organization and Sidekicks rather than "workspace" and "automations" and
+no longer calls the browser "this desktop app"; a phone's Settings header has
+one close.
+
+**Why:** The design inspection found the copy and this page out of step with
+the app (v4-F18, v4-F21, v4-F22, v4-F23, v3-G10). The PRD's names win over
+the storage names the copy had leaked.
 
 ### 2026-11-08 — A local browser can use the development account
 

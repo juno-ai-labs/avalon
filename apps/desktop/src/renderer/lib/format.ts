@@ -1,4 +1,3 @@
-import { formatDayLabel } from '@rally/ui/lib/format';
 
 const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -84,13 +83,23 @@ export function formatSparseRelativeDate(value: string, now = new Date()): Spars
   return `${month} ${date.getFullYear()}`;
 }
 
+const shortWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
+const shortMonthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
 /**
- * A sidebar row's activity time: the time today, then the day as
- * `formatDayLabel` names it. The attention menu uses it too.
+ * A list row's age, in design.html §1's words: "now", "2m", "1h", then the
+ * weekday ("Tue") within the week and the date beyond it. Short because it
+ * sits beside a title in a 340px column, where a clock time cut the title.
  */
 export function formatSidebarActivityTime(value: string, now = new Date()): string {
-  const label = formatDayLabel(value, now);
-  return label === 'Today' ? formatTime(value) : label;
+  const date = new Date(value);
+  const elapsed = now.getTime() - date.getTime();
+  if (!Number.isFinite(elapsed)) return 'Unknown time';
+  if (elapsed < 60_000) return 'now';
+  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)}m`;
+  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)}h`;
+  if (elapsed < 7 * 86_400_000) return shortWeekday.format(date);
+  return shortMonthDay.format(date);
 }
 
 export function formatDuration(milliseconds?: number): string | undefined {

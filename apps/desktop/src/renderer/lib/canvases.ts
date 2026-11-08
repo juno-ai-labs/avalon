@@ -38,6 +38,13 @@ export function openCanvasId(pathname: string): string | null {
  */
 export const RENAME_CANVAS_STATE = { renameCanvas: true } as const;
 
+/** Route state a sidebar row's Share… opens a Canvas with, so its Share panel opens there. */
+export const SHARE_CANVAS_STATE = { shareCanvas: true } as const;
+
+export function canvasShareRequested(state: unknown): boolean {
+  return typeof state === 'object' && state !== null && (state as { shareCanvas?: unknown }).shareCanvas === true;
+}
+
 export function canvasRenameRequested(state: unknown): boolean {
   return typeof state === 'object' && state !== null && (state as { renameCanvas?: unknown }).renameCanvas === true;
 }

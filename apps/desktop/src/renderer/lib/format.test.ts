@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatSidebarActivityTime,
   formatDayLabel,
   formatDuration,
   formatSparseRelativeDate,
@@ -71,6 +72,18 @@ describe('presentation rules', () => {
     expect(formatSparseRelativeDate(localDate(2026, 6, 30, 9), now)).toBe('last week');
     expect(formatSparseRelativeDate(localDate(2026, 7, 1, 9), now)).toBe('last week');
     expect(formatSparseRelativeDate(localDate(2026, 6, 15, 9), now)).toBe('last month');
+  });
+});
+
+describe('formatSidebarActivityTime', () => {
+  const now = new Date('2026-11-10T15:00:00.000Z');
+  it('reads a row\'s age as design.html §1 does: now, minutes, hours, then the weekday', () => {
+    expect(formatSidebarActivityTime('2026-11-10T14:59:30.000Z', now)).toBe('now');
+    expect(formatSidebarActivityTime('2026-11-10T14:58:00.000Z', now)).toBe('2m');
+    expect(formatSidebarActivityTime('2026-11-10T13:59:00.000Z', now)).toBe('1h');
+    expect(formatSidebarActivityTime('2026-11-09T16:00:00.000Z', now)).toBe('23h');
+    expect(formatSidebarActivityTime('2026-11-08T12:00:00.000Z', now)).toBe('Sun');
+    expect(formatSidebarActivityTime('2026-10-01T12:00:00.000Z', now)).toBe('Oct 1');
   });
 });
 
