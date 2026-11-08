@@ -2,12 +2,20 @@ import { z } from "zod";
 
 import { IdSchema, UserIdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import {
+  CanvasAccessDecisionRequestSchema,
+  CanvasAccessDecisionSchema,
+  CanvasAccessRequestResultSchema,
+  CanvasAccessRequestSchema,
+  CanvasAccessSchema,
   CanvasAudienceUpdateSchema,
   CanvasDetailSchema,
   CanvasEditorSchema,
   CanvasSidebarRowSchema,
   CanvasSummarySchema,
   type CanvasSidebarRow,
+  type CanvasAccess,
+  type CanvasAccessDecision,
+  type CanvasAccessRequestResult,
   type CanvasArtifact,
   type CanvasArtifactKind,
   type CanvasDetail,
@@ -36,6 +44,15 @@ import { sidekickManagerAllows, sidekickReaderAllows } from "./hosted-sidekick";
 import { ScopeInvitationService } from "./scope-invitation-service";
 import { artifactNewsSql } from "./workspace-pin-storage";
 import { tellCanvasPinners } from "./canvas-artifact-notices";
+import {
+  accessRefusals,
+  latestAccessRequest,
+  pendingAccessRequests,
+  requestCanvasAccess,
+  settleAdmittedAccessRequests,
+  settleCanvasAccessRequest,
+  type CanvasAccessSubject,
+} from "./canvas-access-requests";
 import { CANVAS_NAMING_ALARM_KIND, UNTITLED_CANVAS } from "./canvas-schema";
 import type { ScheduledAlarmStore } from "./scheduled-alarms";
 import { createMessageObjectPort } from "../runtime/message-port";
@@ -89,6 +106,14 @@ export const CanvasFromThreadRequestSchema = z.strictObject({
 });
 
 export const CanvasActorRequestSchema = z.strictObject({ ...Addressed, actor: CanvasActorSchema });
+
+export const CanvasRequestAccessRequestSchema = CanvasActorRequestSchema.extend({ request: CanvasAccessRequestSchema });
+export type CanvasRequestAccessRequest = z.input<typeof CanvasRequestAccessRequestSchema>;
+export const CanvasDecideAccessRequestSchema = CanvasActorRequestSchema.extend({
+  requesterUserId: UserIdSchema,
+  decision: CanvasAccessDecisionRequestSchema.shape.decision,
+});
+export type CanvasDecideAccessRequest = z.input<typeof CanvasDecideAccessRequestSchema>;
 
 export const CanvasNoteArtifactRequestSchema = z.strictObject({
   ...Addressed,
@@ -516,12 +541,66 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     const request = parseRpcInput(CanvasActorRequestSchema, input, "canvas_detail");
     const row = this.assertCanvas(request.workspaceId, request.canvasId);
     if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
+    const canManage = this.manages(row, request.actor);
     return CanvasDetailSchema.parse({
       ...canvasSummary(row),
       participantUserIds: this.participantUserIds(),
       artifacts: this.artifacts(),
-      canManage: this.manages(row, request.actor),
+      canManage,
+      // Whoever decides on the people sees the requests waiting on them.
+      ...(canManage ? { pendingAccessRequests: pendingAccessRequests(this.sql, this.canvasId) } : {}),
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Access requests: a member who cannot open the Canvas asks, its deciders
+  // approve or deny. `docs/canvas-access-requests.md`.
+  // ---------------------------------------------------------------------------
+
+  private accessSubject(row: CanvasRow): CanvasAccessSubject {
+    return { canvasId: this.canvasId, workspaceId: row.workspace_id, title: row.title, creatorUserId: row.created_by_user_id,
+      generation: row.authority_generation };
+  }
+
+  /**
+   * Whether a member who cannot open the Canvas may ask to: it exists in
+   * their Organization, so the answer is `requestable` with their latest
+   * request, and never its title. A guest is refused as a non-member before
+   * the id is looked at, so a guest learns nothing about which ids exist.
+   */
+  access(input: CanvasActorRequest): CanvasAccess {
+    const request = parseRpcInput(CanvasActorRequestSchema, input, "canvas_access");
+    if (request.actor.actorRole === null) throw accessRefusals.notMember();
+    const row = this.assertCanvas(request.workspaceId, request.canvasId);
+    if (canvasReaderAllows(row, request.actor, this.sql)) throw accessRefusals.open();
+    return CanvasAccessSchema.parse({ access: "requestable", title: null, request: latestAccessRequest(this.sql, this.canvasId, request.actor.userId) });
+  }
+
+  /** Ask to open the Canvas; a request already waiting is the answer, and one who may open it is told so. */
+  async requestAccess(input: CanvasRequestAccessRequest): Promise<CanvasAccessRequestResult> {
+    const request = parseRpcInput(CanvasRequestAccessRequestSchema, input, "canvas_request_access");
+    if (request.actor.actorRole === null) throw accessRefusals.notMember();
+    const row = this.assertCanvas(request.workspaceId, request.canvasId);
+    if (canvasReaderAllows(row, request.actor, this.sql)) return CanvasAccessRequestResultSchema.parse({ status: "already_participant" });
+    await requestCanvasAccess(this.host, this.accessSubject(row), request.actor.userId, request.request.message);
+    return CanvasAccessRequestResultSchema.parse({ status: "pending" });
+  }
+
+  /**
+   * Approve or deny a waiting request, by someone who manages the Canvas's
+   * people (`canvasManages`). Approving seats the requester (source
+   * `request`) and tells them; denying tells nobody.
+   */
+  async decideAccess(input: CanvasDecideAccessRequest): Promise<CanvasAccessDecision> {
+    const request = parseRpcInput(CanvasDecideAccessRequestSchema, input, "canvas_decide_access");
+    const row = this.assertCanvas(request.workspaceId, request.canvasId);
+    if (!this.manages(row, request.actor)) throw canvasReaderAllows(row, request.actor, this.sql) ? accessRefusals.notManager() : notFound();
+    const state = await settleCanvasAccessRequest(this.host, this.accessSubject(row), {
+      requesterUserId: request.requesterUserId, deciderUserId: request.actor.userId,
+      state: request.decision === "approve" ? "approved" : "denied", seat: request.decision === "approve",
+    });
+    if (state === null) throw accessRefusals.settled();
+    return CanvasAccessDecisionSchema.parse({ state });
   }
 
   /**
@@ -576,6 +655,12 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         request.update.visibility, now, this.canvasId);
       this.host.noteCanvasDirectoryChanged(this.canvasId);
     });
+    // A request from someone this audience now admits is settled: whoever
+    // changed the audience let them in. Only a member asks, and an
+    // Organization-wide Canvas admits every member.
+    const named = new Set<string>(userIds);
+    await settleAdmittedAccessRequests(this.host, this.accessSubject({ ...row, visibility: request.update.visibility }), request.actor.userId,
+      (userId) => request.update.visibility === "workspace" || named.has(userId));
     return this.detail({ workspaceId: request.workspaceId, canvasId: request.canvasId, actor: request.actor });
   }
 
