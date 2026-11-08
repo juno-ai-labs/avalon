@@ -1081,7 +1081,7 @@ waterline and read position, capped at `threadCount`. A placement moved out
 keeps its number, and `threadCount` leaves out private threads a member sees
 as locked rows, so the derivation both overcounted and could draw a Channel
 with new private threads as read. The server counts `newThreadCount` instead
-([`spaces.md`](spaces.md#changelog)).
+(`spaces.md` (retired; its record is in [`architecture.md`](architecture.md))).
 
 **Consequences:** There is no way left in the app to restore an archived
 Channel; `restoreSpace` and the inactive Space directory stay in the API and
@@ -1227,7 +1227,7 @@ light, so the badge inverts the pastel pair instead.
 
 **Consequences:** A new list row uses `RowLayout` and `IdentityTile` rather
 than its own grid. A thread's run state is no longer visible in the sidebar
-([`workstream-markers.md`](workstream-markers.md)). The Activity query key
+(`workstream-markers.md` (retired; its record is in [`workstream-durable-object.md`](workstream-durable-object.md))). The Activity query key
 carries its filter (`['activity', 'all' | 'mentions']`), so invalidating
 `['activity']` still reaches every chip.
 
