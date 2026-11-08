@@ -665,7 +665,7 @@ Thread-era batch did: the delayed message could not carry the newest reply,
 since it was enqueued with the first. Keying the batch by conversation alone:
 a reply arriving while the batch is being sent would be deleted with it.
 
-[Client half] A mention's or a reply's push opens at its message on both
+**Client:** A mention's or a reply's push opens at its message on both
 hosts (the canonical link's `?turn=&sequence=`, routed by `shellLocation` and
 `inPlaceHash` in the browser and by `canvasLinkRoute` on the Mac). While
 Rally is open the dock badge and the installed browser app's badge are the

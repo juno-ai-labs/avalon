@@ -8,7 +8,8 @@ import { workspaceRegionalDatabase } from "./workspace-runtime-database";
 /**
  * The quoted excerpt's length, carried from the mention and participant
  * emails this template replaced (`MAX_MESSAGE_EXCERPT_LENGTH` and
- * `MAX_OBJECTIVE_EXCERPT_LENGTH` in `git show 44a9d6b96:apps/api/src/services/mention-email-service.ts`),
+ * `MAX_OBJECTIVE_EXCERPT_LENGTH` in the deleted `apps/api/src/services/mention-email-service.ts`;
+ * `git log --diff-filter=D -- <that path>` finds the last revision that held it),
  * not set again here.
  */
 const EXCERPT_CHARACTERS = 320;

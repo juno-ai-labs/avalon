@@ -494,7 +494,7 @@ colour tokens rather than 45% opacity, and only the rows whose conversation
 and run the route has open are marked open. An open conversation reports a
 read again for each settled change of its turns.
 
-[Client half] The `access_denied` row reads "<decider> declined your request
+**Client:** The `access_denied` row reads "<decider> declined your request
 to open a Canvas" behind the lock glyph, never naming the Canvas, and opens
 its requestable pane; the dock badge and the installed browser app's badge
 are the live `unseenCount` while Rally is open (`dockBadgeCount`), so they
