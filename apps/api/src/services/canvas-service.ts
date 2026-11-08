@@ -1,5 +1,5 @@
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasSidebarRow, CanvasUpdateRequest, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
+import type { CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasUpdateRequest, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
