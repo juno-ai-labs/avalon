@@ -158,6 +158,29 @@ describe('CanvasScreen', () => {
     await waitFor(() => expect(copyText).toHaveBeenCalledWith('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7Xe/cv/1111117Hxt1fAWDjN7Wp/'));
   });
 
+  it('reopens a closed panel onto the newest artifact, from either menu', async () => {
+    renderCanvas();
+    await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
+    surfaces.length = 0;
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open artifact' }));
+    await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
+    expect(lastSurface().expanded).toBe(false);
+    surfaces.length = 0;
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Canvas actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open artifact' }));
+    await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
+  });
+
+  it('offers no artifact to open on a Canvas that has none', async () => {
+    getCanvas.mockResolvedValue(detail({ artifacts: [] }));
+    renderCanvas();
+    await waitFor(() => expect(getCanvas).toHaveBeenCalled());
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Copy link' });
+    expect(screen.queryByRole('menuitem', { name: 'Open artifact' })).toBeNull();
+  });
+
   it('pins the Canvas from its menu', async () => {
     renderCanvas();
     const trigger = await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });

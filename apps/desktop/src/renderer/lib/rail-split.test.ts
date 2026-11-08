@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { openRailAtEvenSplit, railFillsPane, restoreRail, useRailFillsPane } from './rail-split';
+import { mainPaneWidth, openRailAtEvenSplit, railFillsPane, restoreRail, useRailFillsPane } from './rail-split';
 import { useUiStore } from './ui-store';
 
 // Layout is the browser's, which jsdom does not do: the main pane starts 200px
@@ -73,17 +73,24 @@ describe('the width a panel opens at', () => {
 });
 
 describe('whether the panel takes the whole pane', () => {
-  // The conversation keeps 424px beside a panel no narrower than 280px.
-  it('sits beside the conversation while the pane holds both minimums', () => {
-    expect(railFillsPane(1_044, 340)).toBe(false);
+  // The panel opens at half the pane, and each half keeps the conversation's 424px.
+  it('sits beside the conversation while half the pane holds its minimum', () => {
+    expect(railFillsPane(1_264, 416)).toBe(false);
   });
 
-  it('takes the pane once the conversation would drop under its minimum', () => {
-    expect(railFillsPane(1_043, 340)).toBe(true);
+  it('takes the pane once the even split would drop the conversation under its minimum', () => {
+    expect(railFillsPane(1_263, 416)).toBe(true);
+    expect(railFillsPane(1_180, 416)).toBe(true);
+  });
+
+  it('measures the pane after a sidebar that gave way in a narrow tab', () => {
+    // 700 - 424 = 276px of sidebar, not the 416 stored.
+    expect(mainPaneWidth(700, 416)).toBe(424);
+    expect(mainPaneWidth(1_440, 416)).toBe(1_024);
   });
 
   it('re-renders a reader only when a resize changes the answer', () => {
-    let width = 1_400;
+    let width = 1_500;
     vi.spyOn(window, 'innerWidth', 'get').mockImplementation(() => width);
     const resize = (to: number): void => act(() => {
       width = to;
@@ -92,12 +99,12 @@ describe('whether the panel takes the whole pane', () => {
     let renders = 0;
     const { result } = renderHook(() => {
       renders += 1;
-      return useRailFillsPane(340);
+      return useRailFillsPane(416);
     });
     const before = renders;
 
+    resize(1_400);
     resize(1_300);
-    resize(1_200);
     expect(renders).toBe(before);
     expect(result.current).toBe(false);
 

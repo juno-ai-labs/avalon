@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-import { MIN_RAIL_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, savedRailWidth, useUiStore } from './ui-store';
+import { SIDEBAR_CONTENT_MIN_WIDTH, savedRailWidth, useUiStore } from './ui-store';
 
 /**
  * Open the right panel for `scope`, at an even split with the conversation
@@ -52,13 +52,23 @@ export function evenSplitWidth(): number | null {
 }
 
 /**
- * Whether the main pane is too narrow to hold the conversation at its minimum
- * beside the narrowest panel. There the panel takes the whole pane instead of
- * squeezing the conversation to a sliver. It never floats over a dimmed
- * conversation: closing the panel is the way back.
+ * The main pane's width: the window less the sidebar, which gives way above
+ * phone width before the pane drops under the conversation's minimum (the
+ * shell's `--av-cmp-sidebar-width`).
+ */
+export function mainPaneWidth(windowWidth: number, sidebarWidth: number): number {
+  return windowWidth - Math.min(sidebarWidth, windowWidth - SIDEBAR_CONTENT_MIN_WIDTH);
+}
+
+/**
+ * Whether the main pane is too narrow for the split a panel opens at. The
+ * panel opens at half the pane, so a pane under two conversation minimums
+ * gives a cramped Chat beside a cramped panel. There the panel takes the
+ * whole pane instead. It never floats over a dimmed conversation: closing
+ * the panel is the way back.
  */
 export function railFillsPane(windowWidth: number, sidebarWidth: number): boolean {
-  return windowWidth - sidebarWidth < SIDEBAR_CONTENT_MIN_WIDTH + MIN_RAIL_WIDTH;
+  return mainPaneWidth(windowWidth, sidebarWidth) < 2 * SIDEBAR_CONTENT_MIN_WIDTH;
 }
 
 function subscribeResize(onChange: () => void): () => void {

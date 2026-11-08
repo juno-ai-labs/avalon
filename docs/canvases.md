@@ -400,7 +400,10 @@ the rail's first section and `/canvases` the landing route
   the pane's right edge the face pile of everyone else in it now
   (`workspace_presence`, through the surface's `presentUserIds`), Share, and a
   "⋯" button (`TitlePillMenuAction`). The "⋯" and the pill's menu offer the
-  same Pin, Rename…, Share… and Copy link; a phone keeps only the pill's. The pill's title is the detail's, and a change to the list row's
+  same Pin, Rename…, Share… and Copy link, and, while the Canvas has an
+  artifact, **Open artifact**, which opens the panel on the newest one beside
+  the Chat, the way back to a panel the person closed; a phone keeps only the
+  pill's. The pill's title is the detail's, and a change to the list row's
   title (the `workspace_canvas_list` push a rename from anywhere produces) is
   written into the detail's cache entry once the socket has applied the list,
   so the header follows a rename without a refetch. The window is named `<title> · Rally` while it is open
@@ -592,7 +595,8 @@ a separate "⋯" button. The Share panel draws its controls from the tokens and
 offers only guests to pick when the whole Organization can open the Canvas.
 A missing Canvas and an unreachable one are each one in-pane state. A row
 reads its age as "2m", "1h", "Tue", a Canvas just made slides into the list,
-and its menu matches the pill's.
+and its menu matches the pill's. After the second inspection, both header
+menus offer **Open artifact** (v1-R2-4).
 
 **Why:** The PRD makes design.html the authority for every screen. The mark
 was a grey tile on purpose ("a Canvas has no hue of its own, as a pinned
@@ -608,7 +612,9 @@ the guest invite, and listed members, the viewer among them, to pick when
 every member was already in (v1-F18, v1-F19, v4-F14, v3-G9). A missing
 Canvas raised a dialog over a pane that said something else and offered Try
 again for what does not exist, and a blocked connection blamed the Canvas
-under endless placeholders (v1-F20, v4-F12, v4-F12b).
+under endless placeholders (v1-F20, v4-F12, v4-F12b). Closing the artifact
+panel left nothing in the Canvas to reopen it, while design §2 always shows the
+artifact beside a Canvas that has one (v1-R2-4).
 
 Two choices the design does not settle, made in review and open to the
 owner's reversal: the hue is per Canvas from its id rather than per kind,
