@@ -28,6 +28,7 @@ import {
   AUTOMATION_AUDIENCE_SQL,
   AUTOMATION_VIEWER_JOINS,
   SIDEBAR_SIDEKICK_LISTED_SQL,
+  AUTOMATION_RUN_STATE_JOINS,
   AUTOMATION_RUN_STATE_SQL,
   AUTOMATION_TRIGGER_KINDS_SQL,
   AUTOMATION_VIEWER_SQL,
@@ -11457,6 +11458,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               pin.position AS pinned_position
          FROM automation_directory directory
          ${AUTOMATION_VIEWER_JOINS}
+         ${AUTOMATION_RUN_STATE_JOINS}
          LEFT JOIN workspace_pins pin ON pin.user_id = ?1 AND pin.item_kind = 'sidekick' AND pin.item_id = directory.automation_id
         WHERE ${SIDEBAR_SIDEKICK_LISTED_SQL}
         ORDER BY directory.title COLLATE NOCASE, directory.automation_id

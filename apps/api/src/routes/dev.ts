@@ -149,7 +149,7 @@ export async function seedPayloads(
  * mismatch once vanished silently instead of failing this route loudly.
  * A resource goes through `seedResource`, which owns its versions.
  */
-export async function seedWorkspaceTables(
+async function seedWorkspaceTables(
   env: Env,
   workspaceId: string,
   body: Pick<z.infer<typeof SeedProductBodySchema>, "payloads" | "workspaceTables">,
@@ -183,15 +183,18 @@ export async function seedWorkspaceTables(
  * `sizeBytes`), and its first version names who made it through the
  * `revision_author_*` staging columns the capture trigger reads.
  *
- * A re-run repairs what an older seed wrote. Its row takes the fixture's
- * type, body and size where they differ — an update the capture trigger
- * records as a version, so the update runs only when something differs:
- * an unconditional one would add a version on every re-run, which is how
- * the local Launch plan grew five identical ones. Then the resource's
- * history is repaired in place, since every version of a seeded resource is
- * the seed's own: a stack seeded before the fixture said `text/markdown`
- * otherwise keeps listing `text/plain`, size 0 and no author for each old
- * version, and the client draws those as raw source.
+ * A re-run repairs what an older seed wrote, and only that: a version whose
+ * body is the seed's own (the fixture's `content_ref`, under the `seed/`
+ * prefix `seedPayloads` keeps to) or none. Its row takes the fixture's type,
+ * body and size where they differ and the row still holds the seed's body —
+ * an update the capture trigger records as a version, so it runs only when
+ * something differs: an unconditional one would add a version on every
+ * re-run, which is how the local Launch plan grew five identical ones. Then
+ * the seed's own versions are repaired in place: a stack seeded before the
+ * fixture said `text/markdown` otherwise keeps listing `text/plain`, size 0
+ * and no author for each, and the client draws those as raw source. A
+ * version a person or a run made since, with its own body, is left alone,
+ * and so is a row that holds one.
  */
 async function seedResource(
   database: D1Database,
@@ -214,15 +217,16 @@ async function seedResource(
        metadata_json = excluded.metadata_json,
        revision_author_kind = excluded.revision_author_kind,
        revision_cause = 'replaced'
-     WHERE resources.mime_type IS NOT excluded.mime_type
-        OR (resources.content_ref IS NULL AND excluded.content_ref IS NOT NULL)
-        OR resources.metadata_json IS NOT excluded.metadata_json`,
+     WHERE (resources.content_ref IS NULL OR resources.content_ref = excluded.content_ref)
+       AND (resources.mime_type IS NOT excluded.mime_type
+         OR (resources.content_ref IS NULL AND excluded.content_ref IS NOT NULL)
+         OR resources.metadata_json IS NOT excluded.metadata_json)`,
   ).bind(...columns.map((column) => record[column])).run();
   await database.prepare(
     `UPDATE resource_versions
         SET mime_type = ?2, metadata_json = ?3, content_ref = COALESCE(content_ref, ?4),
             author_kind = COALESCE(author_kind, ?5)
-      WHERE resource_id = ?1
+      WHERE resource_id = ?1 AND (content_ref IS NULL OR content_ref = ?4)
         AND (mime_type IS NOT ?2 OR metadata_json IS NOT ?3
           OR (content_ref IS NULL AND ?4 IS NOT NULL)
           OR (author_kind IS NULL AND ?5 IS NOT NULL))`,

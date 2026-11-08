@@ -52,3 +52,32 @@ export function startReadCursorAtLatest(
     now,
   );
 }
+
+/**
+ * Mark one turn read for a person who had read everything before it: their
+ * cursor moves from `ordinal - 1` to `ordinal`, and from nowhere else, so a
+ * message somebody else wrote before or after it stays unread to them. A
+ * person with no cursor here is seated at the turn, as
+ * `startReadCursorAtLatest` seats a participant. A manual unread mark is
+ * never touched. For a write the person caused and is looking at, such as
+ * the row of a Sidekick run they started; call it in that write.
+ */
+export function seatReadAtOwnTurn(sql: SqlStorage, userId: string, ordinal: number, now: number): void {
+  // `WHERE id = 1` also settles SQLite's parse of an upsert on INSERT … SELECT.
+  sql.exec(
+    `INSERT INTO member_attention
+       (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
+        manual_unread_from_ordinal, latest_mention_attention_ordinal,
+        last_seen_at, version, updated_at)
+     SELECT ?1, unread_tracking_start_ordinal, ?2, NULL, 0, ?3, 0, ?3
+       FROM workstream WHERE id = 1
+     ON CONFLICT(user_id) DO UPDATE SET
+       seen_attention_ordinal = excluded.seen_attention_ordinal,
+       version = member_attention.version + 1,
+       updated_at = excluded.updated_at
+     WHERE member_attention.seen_attention_ordinal = ?2 - 1`,
+    userId,
+    ordinal,
+    now,
+  );
+}
