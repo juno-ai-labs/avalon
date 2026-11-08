@@ -404,15 +404,19 @@ migration 149 (`docs/canvases.md`).
 row's target in the pane, the way a mail client opens the first message of the
 folder it opens. Entering is the rail's Activity button (a push, so Back
 returns to what was open), a launch with Activity stored (a replace of the
-landing, so Back does not return to the Canvases home; a link the window was
-opened onto keeps its Canvas), and a link that names Activity. The first list
+Canvases-home landing, so Back does not return to it; a Canvas or Sidekick
+the window lands on, restored from this device or opened by a link, is kept),
+and a link that names Activity. The first list
 after entering decides: an empty feed opens nothing, and rows arriving, Mark
 all seen or a click on another row never move the pane until Activity is left
 and entered again. Once in Activity, the rail and the list stay there whatever
 the pane opens, a row, an in-pane link, a push or a deep link; the person
 leaves only by picking another section. The product owner, 2026-11-08: "When
 opening the first activity on top should be auto selected and that should be
-shown in the panels." and "Stay in activity sidebar."
+shown in the panels." and "Stay in activity sidebar." That a launch keeps
+a restored Canvas rather than opening the top row is the implementer's
+reading, so a person who quit with a Canvas open relaunches where they were;
+it is open to the owner's reversal.
 
 **Why:** The owner's call. Before, entering Activity left the pane on the
 route it had, so the person saw a list beside whatever was open before and

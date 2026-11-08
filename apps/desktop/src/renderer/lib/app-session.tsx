@@ -1,4 +1,5 @@
 import { navigateAppRoute } from './app-navigation';
+import { LANDING_ROUTE } from './landing';
 import {
   createContext,
   type PropsWithChildren,
@@ -948,7 +949,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     };
     const runInDeepLinkWorkspace = async (
       target: WorkspaceTarget,
-      action: (targetApi: RallyApi) => void | Promise<void>,
+      action: (targetApi: RallyApi, workspaceChanged: boolean) => void | Promise<void>,
     ): Promise<void> => {
       const open = async (): Promise<void> => {
         const entered = await enterDeepLinkWorkspace(target);
@@ -959,7 +960,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         if (entered.workspaceChanged) {
           navigateAppRoute('/opening');
         }
-        await action(entered.api);
+        await action(entered.api, entered.workspaceChanged);
       };
       try {
         await open();
@@ -1075,11 +1076,15 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (intent.kind === 'activity') {
         // A link that names Activity opens the section; entering it opens its
         // top row in the pane (`navigation-sidebar.tsx`), and one already in
-        // Activity leaves the pane where it is.
-        const openActivity = (): void => {
+        // Activity leaves the pane where it is. After an Organization change
+        // the pane is parked on `/opening` and the shell remounts with
+        // Activity stored, so the pane is given the landing a launch has,
+        // which the top row then replaces.
+        const openActivity = (_api?: RallyApi, workspaceChanged = false): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
           useUiStore.getState().setSidebarSection('activity');
+          if (workspaceChanged) navigateAppRoute(LANDING_ROUTE);
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openActivity);
         else if (requireActiveWorkspace('Sign in before opening Rally.')) openActivity();
