@@ -71,8 +71,8 @@ that always returns 404. `workers_dev` and preview URLs remain disabled and no
 route points at the services; the handler satisfies deployment validation but
 does not create a product or operator HTTP surface.
 
-The completed Channel authority cutover no longer puts a D1 phase lookup in
-front of every HTTP request or ordinary Channel route. Channel creation still
+The completed conversation authority cutover no longer puts a D1 phase lookup in
+front of every HTTP request or ordinary conversation route. Conversation creation still
 reads D1 because it needs the authority generation for its durable creation
 receipt. Socket ticket admission, object bootstrap, and background work retain
 the reads that use the current generation or phase.
@@ -121,7 +121,7 @@ logic consumes.
 
 - The Global metadata Worker is the only OpenRouter pricing and model-window
   cache writer. API inference reads the shared public-metadata KV and never
-  refreshes either catalog inline. Each resident Channel agent retains its
+  refreshes either catalog inline. Each resident `AgentLoopDO` retains its
   model-window snapshot in memory after one KV read.
 
 - Every successful version is tagged with the immutable Git SHA that passed the

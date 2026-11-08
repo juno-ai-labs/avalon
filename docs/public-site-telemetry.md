@@ -66,7 +66,7 @@ whether it was merely presented, actually attempted, or declined for the web
 app (`browser`, from a shared link's **Continue in browser**), and whether the local
 target parser considered it valid. Handoff query strings, URL fragments,
 single-use tickets, invitation tokens, Slack state, Canvas, Sidekick and
-work-stream IDs, and settings values never enter an event. A shared link's
+conversation IDs, and settings values never enter an event. A shared link's
 path is normalized to `/app/:region/:organization/cv/:canvas` (with
 `/a/:artifact`), `/app/:region/:organization/sk/:sidekick`, `/app/:retired` for
 every retired form, or `/app/:unrecognized`; the page stays

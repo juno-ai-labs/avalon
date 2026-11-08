@@ -179,7 +179,7 @@ modals provably exist before either click retires anything; a sleep would have
 asserted the same thing only on a machine that was fast enough.
 
 Loop-storage tests that admit another input while settling a step must read a
-fresh loop fence before the next assistant reservation, just as `SubstreamAgent`
+fresh loop fence before the next assistant reservation, just as `AgentLoopDO`
 does. The settlement result is a snapshot, not a live revision: a late admission
 can commit after it. `workstream-transcript-storage.test.ts` exercises both a
 concurrent arrival and an arrival explicitly sequenced after settlement so the
@@ -419,7 +419,7 @@ beforeEach(async () => {
   object initializing itself, and calling it re-entrantly from inside
   `runInDurableObject` holds the very input gate `reset()` needs in order to
   clear storage between tests. It was tried here: the guarded test passed, and
-  the *next* test in the file started finding a work stream the previous one had
+  the *next* test in the file started finding a conversation the previous one had
   left behind, failing with `workstream_create_replay_incomplete` — in CI only,
   where the object is under enough load for it to matter.
 
@@ -736,7 +736,7 @@ before restoring globals that its components need during unmount.
 one of three shapes: `migratedSqliteDatabase()` for the current schema,
 `legacyProductSqliteDatabase()` for the product tables as they stood before
 `0090` dropped them, and `preRetirementProductSqliteDatabase()` for that same
-shape with the work-stream foreign keys the object import has to detach. Use one
+shape with the conversation foreign keys the object import has to detach. Use one
 of them rather than replaying the migration directory in your own file — sixteen
 tests used to, and that is where most of the suite's runtime sat.
 
@@ -1058,7 +1058,7 @@ has. Assert the property that replaced it, and put the reason in the test.
 
 ## What the objects' RPC surface has, and has not
 
-Every public `async` method on `WorkspaceDO` and `SubstreamAgent` is an interface some Worker calls across a stub. Coverage counts are mechanical,
+Every public `async` method on `WorkspaceDO` and `AgentLoopDO` is an interface some Worker calls across a stub. Coverage counts are mechanical,
 so re-derive them rather than trusting a checked-in number after a change:
 
 ```bash
@@ -1076,7 +1076,7 @@ The remaining methods without a workerd RPC exercise are:
 | Object | Unexercised |
 | --- | --- |
 | `WorkspaceDO` | `activityEventSource`, `dueWorkstreamDirectory`, `existingOpportunities`, `getOpportunity`, `notificationDirectoryState`, `opportunityWindow`, `resourceAccess`, `workstreamScheduleTargets` |
-| `SubstreamAgent` | `publishEvent` |
+| `AgentLoopDO` | `publishEvent` |
 
 **Uncovered here does not mean untested** — several have Node suites over their
 storage class, which is the right rung for what the SQL decides. It means

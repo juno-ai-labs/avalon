@@ -27,7 +27,7 @@ be narrowed, the hosts Rally actually reaches are:
 | `openrouter.ai` | Agent harness inference |
 | `api.firecrawl.dev` | Agent web search and page reading |
 | `*.openai.azure.com` | Realtime dictation |
-| `api.resend.com` | Invitations and inbound work-stream email |
+| `api.resend.com` | Invitations and inbound conversation email |
 | `api.linear.app`, `slack.com`, `api.github.com`, `api.notion.com`, `www.googleapis.com`, `oauth2.googleapis.com` | Connectors |
 
 A local-only session — the common case — needs only the first two rows.

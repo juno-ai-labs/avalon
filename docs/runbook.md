@@ -14,7 +14,7 @@ pnpm db:seed
 pnpm dev
 ```
 
-After the API is running, use `pnpm smoke:local` for the repeatable authentication, work-stream, sidebar-data, idempotency, URL-safety, and realtime acceptance check. The complete desktop acceptance flow is documented in `docs/e2e.md`.
+After the API is running, use `pnpm smoke:local` for the repeatable authentication, conversation, sidebar-data, idempotency, URL-safety, and realtime acceptance check. The complete desktop acceptance flow is documented in `docs/e2e.md`.
 
 Local authentication is available only when all of these are true:
 
@@ -48,7 +48,7 @@ One account-wide Flagship app, `avalon-api`, holds the agent model-routing and
 client product flags and is bound by configured regional Workers; it is not a
 per-region resource because a flag holds configuration rather than workspace
 data. Configured deployments do send it an evaluation context carrying workspace,
-work-stream, and user *attributes* — slugs, counts, ages, roles, origins, email
+conversation, and user *attributes* — slugs, counts, ages, roles, origins, email
 domains — bounded by the rules in
 [`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
 
@@ -333,7 +333,7 @@ credentials as the incident requires, reconcile retained provider sandboxes
 against each owning object's `terminal_workspace`, and run the full real-provider probe before
 clearing the emergency switch. Do not bulk-delete provider sandboxes by label
 without matching the exact regional route and object-local
-workspace/work-stream/generation rows;
+workspace/conversation/generation rows;
 final diffs and ambiguous publication state may still require preservation.
 
 Dictation admission lives in the owning WorkspaceDO's
@@ -357,7 +357,7 @@ Global Worker. `RESEND_API_KEY` is required in configured deployments with Resen
 **Full access** permission because each owning region retrieves its own full
 message after the Global ingress has routed only signed metadata. An optional
 `RESEND_RECEIVING_API_KEY` can override it later if Rally returns to separate
-sending and receiving credentials. All non-Global work-stream and automation
+sending and receiving credentials. All non-Global conversation and automation
 email-name reservations use
 the Global `WorkstreamEmailRoutingBridge`; there is no regional allocator key or
 regional fallback registry.
@@ -373,7 +373,7 @@ Sharing validates origin/keys before participant-authority handoff.
 
 `RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. There are two checked-in senders, both `vars` in each region's Wrangler config: `RESEND_FROM_EMAIL` (`Rally <invites@rallywith.ai>`) for transactional mail, and `RESEND_NOTIFICATION_FROM_EMAIL` (`Rally <notifications@rallywith.ai>`) for mail Rally generates — digests, automation results, mention notifications. Resend verifies the domain rather than the address, so the second rides the same verification; keep both `rallywith.ai` and `with-avalon.com` verified with their own DKIM/SPF records — Resend verifies the sending domain, so the Rally senders do not inherit the Rally verification and mail from them is rejected until the Rally records are live. An unset notification sender does not fail: `sendResendEmail` falls back to the transactional one silently, which is why `GET /health` reports `resendNotificationSender` separately — check it after a deploy that touches either var. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
 
-Inbound work-stream and automation mail uses the dedicated catch-all subdomain `automation.rallywith.ai`. Create it with Resend Receiving enabled, install the exact MX record returned by Resend in Cloudflare DNS, and create one `email.received` webhook pointing to `https://api.rallywith.ai/ingest/resend`. **Keep `automation.with-avalon.com` receiving, with its own MX record and webhook, for as long as any address on it exists.** Addresses are stored per work stream rather than derived, so every address issued before the rename still carries that domain, is printed in the sender's mail client, and is what mail rules forward to; the Worker accepts either domain and resolves the full recipient address in the Global registry. See [`domain-migration.md`](domain-migration.md). Store its `whsec_...` value as the Global `RESEND_WEBHOOK_SIGNING_SECRET`. Ensure the reused `RESEND_API_KEY` has Full access in configured deployments because the regional Worker retrieves the full received message after routing. Store one stable 32+ byte `WORKSTREAM_EMAIL_ADDRESS_KEY` in the Global Worker. Do not log any of these values. Existing deployments using `RESEND_WEBHOOK_SECRET` remain compatible during migration.
+Inbound conversation and automation mail uses the dedicated catch-all subdomain `automation.rallywith.ai`. Create it with Resend Receiving enabled, install the exact MX record returned by Resend in Cloudflare DNS, and create one `email.received` webhook pointing to `https://api.rallywith.ai/ingest/resend`. **Keep `automation.with-avalon.com` receiving, with its own MX record and webhook, for as long as any address on it exists.** Addresses are stored per conversation rather than derived, so every address issued before the rename still carries that domain, is printed in the sender's mail client, and is what mail rules forward to; the Worker accepts either domain and resolves the full recipient address in the Global registry. See [`domain-migration.md`](domain-migration.md). Store its `whsec_...` value as the Global `RESEND_WEBHOOK_SIGNING_SECRET`. Ensure the reused `RESEND_API_KEY` has Full access in configured deployments because the regional Worker retrieves the full received message after routing. Store one stable 32+ byte `WORKSTREAM_EMAIL_ADDRESS_KEY` in the Global Worker. Do not log any of these values. Existing deployments using `RESEND_WEBHOOK_SECRET` remain compatible during migration.
 
 For non-interactive Wrangler commands, prefer `CLOUDFLARE_API_TOKEN`. The older global-key method requires both `CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` in `.env.local`; an API key by itself cannot authenticate a deployment.
 
@@ -875,101 +875,6 @@ change the update channel. Change `latest-mac.yml` or `Rally.dmg` only as a
 separate, explicitly approved release rollback using the normal publisher's
 ordering and cache-purge safeguards.
 
-### Running the Spaces cutover
-
-One-time, per region, and it is driven from the migration tracker rather than
-from a script. [`spaces.md`](spaces.md) owns the mechanism; this is the
-sequence.
-
-**What is being moved.** WorkspaceDO migration 63 seeds a `space_bootstrap` row
-`pending` in every Organization, and migration 64 settles every undelivered
-Project effect and then deletes the Project tables — there is no barrier in
-front of the drops, for the reason step 4 gives. Waking a WorkspaceDO applies
-both and arms its alarm, which
-claims the first page of cutover work; from there the activity Queue carries
-each page to a consumer that places one page of Channels in General. Nobody has
-to be signed in.
-
-1. **Deploy, then force `WorkspaceDO`.** On `/migrations`, pick `WorkspaceDO`,
-   optionally one region at a time. That is the whole start: the constructor
-   applies 61 and 62 and the alarm does the rest.
-
-2. **Watch the cutover row, not the page count.** Through the engineering MCP:
-
-   ```text
-   run_workspace_sql: SELECT phase, general_space_id, cursor, attempts,
-                             blocked_json, completed_at
-                        FROM space_bootstrap WHERE id = 1
-   ```
-
-   The phases run `pending` → `general` → `preflight` → `memberships` →
-   `finalize` → `complete`. An Organization sitting in `preflight` or
-   `memberships` with a moving `cursor` is working: `preflight` walks the whole
-   directory asking whether each Channel has somebody to act as and writes
-   nothing, and `memberships` is only entered when it found nothing. One
-   sitting in `finalize` is refusing to close, and `blocked_json` says why. A
-   blocker recorded in `preflight` means **no** Channel in that Organization was
-   placed.
-
-3. **Remediate blockers.** Placing a Channel in General changes nobody's access
-   ([a Space grants no reader](spaces.md#a-space-starts-organization-wide-and-grants-no-reader)), so
-   the one blocker is `space_bootstrap_no_active_actor`: every participant of a
-   private Channel has left the Organization. Re-activating one member, or
-   deleting the Channel, are the two that move it; leaving it as it is keeps the
-   Organization open. A `space_membership_content_fence` left on the row by an
-   earlier Worker needs nothing: the next `preflight` pass finds that Channel
-   clear and takes it off.
-
-   A `finalize` that refuses sends the Organization back to `preflight` on the
-   alarm's ordinary retry interval, so a remediated Organization re-walks and
-   closes itself with no further command, and one nobody remediates re-walks
-   about once a minute until somebody does.
-
-   **An Organization can also leave `complete` on its own, and that is not a
-   regression.** Three things reopen the walk: a `finalize` that refused, a
-   connector or seed placement that was refused, and a directory row committing
-   for a Channel the Organization was already holding that is in no Space. The
-   last is the backstop for a creation path that forgot to place what it made —
-   the Organization notices, takes `spacesReady` away while it re-walks, and
-   closes again once the Channel has a home. It is deliberately the Channel's
-   *second* row that trips it rather than its first: a Channel's first row is a
-   creation still in flight, so reopening on one would blank every member's
-   sidebar on ordinary creations. A Channel a forgetful path made is therefore
-   caught on its next projection, not the instant it appears. An Organization
-   that reopens
-   *repeatedly* is the signal worth chasing: something is creating Channels
-   without placing them, and the `workstream_id` will be in the membership rows
-   the next walk writes.
-
-4. **Project retirement needs no operator step.** Migration 62 settles every
-   undelivered Project default in the same transaction that drops the tables —
-   targets to `terminal` with `project_retired`, publications to `accepted` —
-   and the activity consumer acknowledges a message published before the
-   cutover with `reason: "projects_retired"`. Nothing is held back for it, and
-   nothing is owed: the PRD deletes Projects rather than converting them, so a
-   default that never reached a Channel is dropped on purpose. Do not wait for
-   the Queue to drain before forcing the class.
-
-5. **Confirm the finish.** `phase = 'complete'` with an empty `blocked_json` in
-   every Organization, and an empty regional activity dead-letter queue — a
-   dead-lettered `space_bootstrap` or `space_default` message is the terminal
-   failure signal for this work, as it is for every other Space delivery.
-
-**Old clients.** Once a region is serving the new payload, a desktop build from
-before the cutover is answered `426 client_update_required` on
-`GET /workstreams` and `GET /workspace/socket`. **That is a wire-level refusal,
-not an update prompt**: no shipped build knows the code, so a pre-cutover
-desktop renders it as whatever it shows for a transport failure. The prompt
-belongs to builds that ship after this, which declare a contract and can read
-the answer.
-
-The gate keys on the **absence of `x-rally-client-contract`**, or on a declared
-version below `MINIMUM_SERVED_CLIENT_CONTRACT`. `Origin` only separates a
-browser context from a native one: a request with no contract header and no
-`Origin` is admitted, because the desktop main process decodes with
-schemas that ignore unknown keys and refusing them would break working clients
-over a problem they do not have.
-
 ### Desktop icon release gate
 
 If desktop icon artwork, generated icon assets, or the icon-family configuration changed, follow [Desktop application icons](desktop-icons.md). Regenerate the assets, build the guarded local desktop package, and verify the running Dock icon in both light and dark macOS appearances before creating a release build. Also inspect Finder to confirm the static bundle icon remains correct.
@@ -1048,7 +953,7 @@ cannot establish production namespace preservation.
 An automation's rows are its Organization's: `automation_directory` and the
 `sidekick_*` tables in `WorkspaceDO`, filtered by `sidekick_id`.
 Its conversations are
-`SubstreamAgent`s named `<region>:<workspace>:<automationId>` (the chat) and
+`AgentLoopDO`s named `<region>:<workspace>:<automationId>` (the chat) and
 `<region>:<workspace>:<automationId>:<runId>` (each run).
 [`automation-lifecycle.md`](automation-lifecycle.md) owns the object; this is
 where to look when one misbehaves.
@@ -1359,12 +1264,12 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
 
 ## Realtime operations and cost controls
 
-- Use deterministic region/workspace IDs for `WorkspaceDO`, which also hosts every Channel and Space parent, and region/workspace/work-stream plus the external substream ID for each independently provisioned `SubstreamAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
+- Use deterministic region/workspace IDs for `WorkspaceDO`, which also hosts every Channel and Space parent, and region/workspace/conversation plus the external substream ID for each independently provisioned `AgentLoopDO`. Never allocate an object per socket, user, turn, tool call, or retry.
 
-- Respect the authority boundary. REST reads the selected `SubstreamAgent`, its
+- Respect the authority boundary. REST reads the selected `AgentLoopDO`, its
   parent holds aggregate metadata/outbox, and D1 contains only authority
   routing plus unrelated relational workspace data;
-  work-stream directory state is in WorkspaceDO. The child's bounded replay
+  conversation directory state is in WorkspaceDO. The child's bounded replay
   buffer remains an in-memory
   optimization. The active checkpoint lives in `active_output_turns` and
   60-KiB `active_output_chunks`, is updated per batched delta, and is removed at
@@ -1375,7 +1280,7 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
 
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The
-  SubstreamAgent feed jitters its heartbeat across 45–55 seconds; the WorkspaceDO
+  `AgentLoopDO` feed jitters its heartbeat across 45–55 seconds; the WorkspaceDO
   socket uses a fixed 50-second
   heartbeat. Every role waits 15 seconds for `pong` and reconnects with
   equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not
@@ -1383,7 +1288,7 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
 
 - Expect one native Chromium WorkspaceDO socket per signed-in Electron
   renderer/workspace, plus one main-process Node substream `0` feed for the
-  active work stream, every pin, the five most recent unpinned rows, every
+  active conversation, every pin, the five most recent unpinned rows, every
   visible live-state row, and recently viewed feeds still inside retention, and
   no Channel control socket (`/socket/workstreams/:id`). Navigation must not reopen the WorkspaceDO socket. An
   idle row outside those roles should retain neither child socket. Proactive
@@ -1428,18 +1333,18 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
 
 Cloudflare can terminate long-lived connections during network deployments, so recovery—not socket immortality—is the contract. Verify that a forced disconnect reconnects with a cursor, replays only newer events when available, and refreshes REST state when the room replies `resync_required` without dropping the active checkpoint that frame carries.
 
-### Work-stream authority steady-state operations
+### Conversation authority steady-state operations
 
 Configured deployments completed the one-time maintenance cutover and are permanently at
 `durable_object_open` in `workstream_authority_control`. The campaign machinery
 (the cron importer, the per-object import RPCs, and the deploy workflow's
 cutover steps) has been retired; the control row, the route directory, and the
-minimal three-column work-stream identity anchor deliberately remain. Migration
+minimal three-column conversation identity anchor deliberately remain. Migration
 0090 removes the product tables, their fences, and the completed route-population
 triggers. The control row is read on every
 request and fails closed — do not delete it, and never edit
 `serving_contract_version` manually. `workstream_authority_routes` is now the
-live work-stream-to-object directory: creation writes it, and regional effect
+live conversation-to-object directory: creation writes it, and regional effect
 delivery fences on its `state`/`generation`.
 
 For a missing or stale product fact, inspect the source child's `durable_outbox`
@@ -1579,7 +1484,7 @@ common, which nothing yet says they are.
 ([`ops-alerting.md`](ops-alerting.md)) posts to the `OPS_SLACK_CHANNEL_ID`
 channel when a Durable Object alarm entry reaches its third consecutive attempt
 without progress — `*_scheduled_alarm_failed` or `*_scheduled_alarm_stalled`
-for the workspace, work-stream, and agent objects, each also at `level = error`
+for the workspace, conversation, and agent objects, each also at `level = error`
 from that attempt on, so the Failures view carries them — and when a Slack
 ingress job is given up on (`slack_ingress_job_exhausted`). Its own outcomes
 are `ops_notification_sent` (info) and `ops_notification_failed` (warn, with
@@ -1588,9 +1493,9 @@ operator Slack app needs attention, not a quiet one — `invalid_auth` is the
 token, `channel_not_found` or `not_in_channel` is the channel or the missing
 invite. Outside `production` and `staging` the notifier posts nothing.
 
-**Work-stream flow latency** has no saved view yet, deliberately: the thresholds
+**Conversation flow latency** has no saved view yet, deliberately: the thresholds
 would be guesses until there are production rows to pick them from. Starting,
-opening, and sending a message to a work stream each emit one `perf_flow` row per
+opening, and sending a message to a conversation each emit one `perf_flow` row per
 participant, carrying `flow`, `component`, `duration_ms`, `slowest_step`, and a
 `steps` object, alongside the custom spans the same flows open on Workers Traces.
 Filter `event = perf_flow` with a `flow` and a `duration_ms` threshold, group by
@@ -1641,11 +1546,11 @@ are never fields in these events.
 ### Root-run analytics
 
 Both API Workers bind `RUN_ANALYTICS` to the account-level Workers Analytics
-Engine dataset `avalon_agent_runs`. A root ordinary work-stream
+Engine dataset `avalon_agent_runs`. A root ordinary conversation
 execution writes exactly one datapoint after the harness has produced its final
 result, the Workflow has rechecked durable cancellation, and D1 has committed
 the effective terminal status. It also emits the correlated
-`harness_run_finished` Workers Log carrying workspace, work-stream, and run IDs.
+`harness_run_finished` Workers Log carrying workspace, conversation, and run IDs.
 
 The Analytics Engine point is deliberately a **terminal summary**, not one row
 per model turn or loop event. Bind has already computed duration, routed
@@ -1685,7 +1590,7 @@ the schema grows:
 | `double10` | output tokens per second, or zero when unavailable |
 | `double11` | detailed timing availability: 1 means `double2`, `double4`, `double5`, and `double10` are measured; 0 means their zeros are placeholders |
 
-No Analytics Engine point contains workspace, work-stream, run, user, prompt,
+No Analytics Engine point contains workspace, conversation, run, user, prompt,
 transcript, tool-argument, tool-result, connector-content, or credential data.
 The sampling index follows the primary operator query—caller source by
 region—and stays far below the 96-byte index limit. One point uses eight of the
@@ -1765,9 +1670,9 @@ The fixed `terminal_platform_v1` positions are:
 | `double5` | full capability-manifest verification milliseconds |
 | `double6` | number of compatibility capabilities installed |
 
-No point contains a workspace, work stream, run, user, sandbox, repository,
+No point contains a workspace, conversation, run, user, sandbox, repository,
 resource, command, path, output, or credential identifier. The dataset therefore
-answers fleet/image questions, not exact-work-stream diagnosis. Exact state
+answers fleet/image questions, not exact-conversation diagnosis. Exact state
 continues to come from regional D1 and structured Workers Logs.
 
 The report intentionally refuses to recommend an owned image before 100
@@ -1808,7 +1713,7 @@ That deadline must be a **cancellable** one — `createDeadline`/`withDeadline` 
 
 The deadlines long enough to matter have been converted: the connector poll (20s) and the two inside the bind loop's Workflow step — per-tool-call (`TOOL_DEFAULT_TIMEOUT_MS`, 30s) and plugin reauthorization (30s). Not yet converted are the fixed 5–10 second `slackApi` calls in `slack-agent-service.ts`, which hold a queue invocation open for at most ten seconds each; they are the same class and are tracked as follow-up work rather than fixed here. Any new deadline in one of these contexts uses the cancellable form.
 
-Background agents run independent work-stream Bind loops and inherit the source
+Background agents run independent conversation Bind loops and inherit the source
 conversation's model override and execution principal. They use normal tool
 capabilities and execution protections. The retired inline-child
 `HARNESS_CHILD_MAX_*` settings do not control this surface. See
@@ -1821,11 +1726,11 @@ Structured logs are redacted by design, so they say what a run did and never wha
 the model was actually asked. When the question is *why did the agent do that* —
 a fabricated value, a tool the model never called, a question it should not have
 needed to ask — the answer is the recorded request body, and this section turns a
-work-stream URL into it. Nothing here mutates production; every step is a read.
+conversation URL into it. Nothing here mutates production; every step is a read.
 
 #### Before querying
 
-1. Copy the work-stream and workspace UUIDs from the canonical
+1. Copy the conversation and workspace UUIDs from the canonical
    `https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>`
    URL. The current main
    substream ID is `0`. When Rally exposes additional product substreams, copy
@@ -2093,7 +1998,7 @@ of tickets, commits, and agent responses as everywhere else in this runbook.
   state committed and not that the row is already visible to R2 SQL.
 
 Keep this distinction during incident reconstruction: the owning
-`SubstreamAgent` `inference_attempts` ledger is operational
+`AgentLoopDO` `inference_attempts` ledger is operational
 authority for attempt recovery, while the lakehouse is best-effort analytical
 evidence. Never repair product state from an analytical row.
 
@@ -2336,12 +2241,12 @@ procedures.
 ### OpenRouter unavailable
 
 The harness tries configured fallback models within its per-request and stream
-watchdogs plus the caller's run policy. Root ordinary work-stream runs allow
+watchdogs plus the caller's run policy. Root ordinary conversation runs allow
 1,000 routed model attempts; durable child dispatch and attempt
 leases recover long runs across eviction. Inline children and bounded one-shot
 callers retain their smaller wall-time and iteration ceilings. If all models fail, the run becomes `failed`
-and the work stream retains its persisted context. Check redacted structured
-logs by request, workspace, work-stream, and harness-run IDs; never add prompt
+and the conversation retains its persisted context. Check redacted structured
+logs by request, workspace, conversation, and harness-run IDs; never add prompt
 bodies or credentials to logs.
 
 When every candidate answers with a transport fault the provider owns, the
@@ -2349,7 +2254,7 @@ harness re-executes the **whole route plan** up to `HARNESS_TRANSPORT_RETRIES`
 times (declared as `1` in both regional Wrangler configs) after a backoff that
 honours `Retry-After` up to 30 seconds. So during an outage elevated latency may
 be Rally waiting rather than a run hanging. **Set `HARNESS_TRANSPORT_RETRIES` to
-`0` and redeploy to stop it everywhere: work streams, automation runs, inline
+`0` and redeploy to stop it everywhere: conversations, automation runs, inline
 children, and the final meeting-notes pass all read it**, worth doing when a provider is failing broadly,
 because each re-execution charges another failure to the per-workspace circuit
 breaker whose threshold is 3.
@@ -2463,17 +2368,17 @@ Retain the previous regional key during rotation. Decrypt with the stored key ve
 
 ## Recovery and data handling
 
-- Before the authority phase opens, D1 is canonical for work streams, messages,
+- Before the authority phase opens, D1 is canonical for conversations, messages,
   runs, schedules, connector metadata, and audit events. After it opens, each
-  `SubstreamAgent` is canonical for its substream product tables,
+  `AgentLoopDO` is canonical for its substream product tables,
   `WorkspaceDO` is canonical for each Channel and Space parent's aggregate
-  metadata/outbox and for cross-work-stream directory/viewer/pin/resource/feedback
+  metadata/outbox and for cross-conversation directory/viewer/pin/resource/feedback
   indexes and every workspace-scoped product module, and D1 stays canonical for
   identity/membership, routing, migration/control, and operational
   audit/telemetry only.
 - R2 stores large payloads, uploads, and snapshots referenced by their owning
   regional database.
-- Use D1 PITR before the work-stream authority open. After open, use object
+- Use D1 PITR before the conversation authority open. After open, use object
   PITR/repair for product and directory state and D1 recovery for its remaining
   control/relational modules.
 - Production never loads `packages/db/seed.sql`.

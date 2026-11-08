@@ -197,7 +197,7 @@ PRD is `in progress`.
 
 3. **Goals** — What the change must achieve, as a numbered list of outcomes, not
    tasks. Each one should be specific enough that you could later say plainly
-   whether it happened. "Participants can silence a work stream for a fixed
+   whether it happened. "Participants can silence a conversation for a fixed
    period without leaving it" is a goal; "add a mute table" is a task.
 
 4. **Non-goals** — What this change explicitly does *not* cover, numbered the
@@ -211,7 +211,7 @@ PRD is `in progress`.
    against: what the user does, what the surface shows, and how it behaves in
    each state — empty, loading, populated, error, and offline. Name the real
    surfaces (the sidebar, the transcript, the composer, the contextual right
-   rail) and the real vocabulary (work stream, participant, automation,
+   rail) and the real vocabulary (conversation, participant, automation,
    subscription, activity, elicitation), so the PRD and the product use the same
    words. Where behavior is conditional, give the condition. Where a mock or a
    screenshot settles it faster than prose, link the image.
@@ -220,7 +220,7 @@ PRD is `in progress`.
    implementation brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md).
    Most PRDs write "none — this refines behavior within the existing contract",
    and that one line is the point: it forces the author to check. If the change
-   *does* alter the contract — what a work stream is, whether viewing implies
+   *does* alter the contract — what a conversation is, whether viewing implies
    participation, what the agent is allowed to do, the absence of channels, a
    global inbox, or global search — say exactly which clause moves and why. That
    is a bigger conversation than the feature, and it belongs at the top of it.
@@ -419,7 +419,7 @@ document per [`module-documents.md`](module-documents.md) and register it in
 - Markdown `##` per section; `###` beneath only when a section genuinely has
   parts. Numbered lists for goals, non-goals, and decisions, so a reviewer can
   cite "non-goal 3" and be understood.
-- Present tense for proposed behavior ("a participant mutes a work stream…"),
+- Present tense for proposed behavior ("a participant mutes a conversation…"),
   not future or conditional. A PRD describes the product it is asking for as
   though it exists.
 - Refer to surfaces, tables, tools, and flags by their real names so a reader
