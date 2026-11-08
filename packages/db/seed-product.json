@@ -44,7 +44,9 @@
         "created_at": "2026-07-31T19:15:00.000Z",
         "updated_at": "2026-07-31T19:39:00.000Z",
         "uploaded_by_user_id": null,
-        "attachment_status": null
+        "attachment_status": null,
+        "revision_author_kind": "system",
+        "revision_cause": "created"
       }
     ]
   },

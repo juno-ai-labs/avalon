@@ -177,6 +177,11 @@ changelog** Sidekick through `createAutomation` and its definition. `seed.sql`
 anchors no conversation: the creation paths anchor and route what they make,
 as in production. The Workers must be running for the product import. The command is
 idempotent and repairs partial imports; rerun it after starting a missing Worker.
+A re-run adds no version to the fixture resource unless its type, body or size
+changed, and it rewrites that resource's whole version history to the fixture's
+type, body, size and author (**Rally**): a stack seeded before the fixture said
+`text/markdown` otherwise lists every old version as `text/plain`, size 0 and
+**Unattributed**, and the artifact draws as raw Markdown source.
 For a custom local port, set `PUBLIC_API_BASE_URL_GLOBAL` and run the command
 through `pnpm exec dotenv -e .env.local -- pnpm db:open-authority`.
 
