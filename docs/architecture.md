@@ -785,9 +785,10 @@ demo functionality completely", so the seeder, pack, cast, readiness barrier,
 connection copy, register, discovery filter, Workflow, routes, contracts, Ace
 page and `/demo-scenario` skill were deleted rather than left unused. What
 survives: the D1 migrations that made and rebuilt the demo tables (0100,
-0102, 0103, 0106, 0108 and 0125, shipped history, never edited) and 0126,
-which drops `demo_seed_receipts`, `demo_operation_phases` and
-`demo_operations` in a deploy after the code's; WorkspaceDO migration 154,
+0102, 0103, 0106, 0108 and 0125, shipped history, never edited) and the
+three tables themselves, until 0126 drops them from a follow-up pull request
+as a Worker-first migration (it must be the sole pending one, after 0125 has
+shipped); WorkspaceDO migration 154,
 which drops `sidekick_runs.seed_json`; the persona `users` rows, which cannot
 sign in and which the retired demos' history references; the
 `demo_seed` reason and `seed` key inside stored conversation authorization
@@ -799,7 +800,8 @@ credential, which keeps its stored names `DEMO_OPERATORS_JSON` and role
 Organization a demo made is retired like any other, through
 [`workspace-retirement.md`](workspace-retirement.md)'s operator door; the
 deploy order — every live demo Organization and `demo-template` retired
-before the code ships, 0126 in a later deploy — is recorded there. The
+before the code ships, 0126 after it through the Worker-first list — is
+recorded there. The
 document's changelog is the record of why seeded history was written through
 the production paths rather than as rows made to look like it, and of the
 readiness barrier's projection-match rule.
