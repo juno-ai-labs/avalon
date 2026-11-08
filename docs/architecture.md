@@ -759,7 +759,7 @@ would be a second product pipeline for the same API.
 **Consequences:** Architecture changes that assume "the client" is Electron
 (preload, CSP, `safeStorage`, IPC) do not apply to iOS. New client-visible
 contracts still land in `packages/contracts` and must be implementable from
-Swift without a Node process. Details live in [`ios-client.md`](ios-client.md).
+Swift without a Node process. Details lived in `ios-client.md` (retired; `git log -- docs/ios-client.md`).
 
 Shipped in #725.
 

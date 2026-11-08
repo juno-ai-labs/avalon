@@ -260,7 +260,7 @@ unlinked room uses, including the 50-member promotion. The
 `room_narrower_than_space` refusal is gone.
 
 **Why:** Every Space is Organization-wide and grants no reader
-([`spaces.md`](spaces.md)), so a private room could no longer be private
+(`spaces.md` (retired)), so a private room could no longer be private
 through its Space. Its Channels carry the privacy instead.
 
 **Considered and rejected:** Keeping private Spaces for private rooms as the
