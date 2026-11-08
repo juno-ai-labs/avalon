@@ -1,4 +1,4 @@
-import { asWorkspaceId } from "@rally/contracts";
+import { asWorkspaceId, IdSchema } from "@rally/contracts";
 import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import { SidekickRunNotificationSchema, type PushNotificationData, type SidekickRunNotification } from "@rally/contracts/push-notifications";
 
@@ -40,6 +40,8 @@ export interface Notice {
   substreamId: string | null;
   /** The conversation's own email address, where a reply to the email continues it (a mention or an add). */
   replyTo: string | null;
+  /** The message the link opens at: a mention's or a reply's in a Canvas's Chat. */
+  message?: { turnId: string; sequence: number };
 }
 
 export type NoticeRendering =
@@ -50,7 +52,11 @@ export type NoticeRendering =
 type WorkspaceStub = DurableObjectStub<WorkspaceDO>;
 
 /** What a notice says, before it is linked. */
-type NoticeWords = Omit<Notice, "url" | "workspaceId" | "recipientUserId"> & { artifactId?: string };
+type NoticeWords = Omit<Notice, "url" | "workspaceId" | "recipientUserId" | "message"> & {
+  artifactId?: string;
+  /** The message to open at, where the event names one; kept only if the link takes it. */
+  message?: { turnId: string; sequence: number };
+};
 
 /**
  * Render one intent as its notice, checked as delivery checks it: the
@@ -70,16 +76,24 @@ export async function renderNotice(env: Env, workspace: WorkspaceStub, address: 
     : await parentNoticeWords(env, workspace, row);
   if ("outcome" in words) return words;
   const linked = await conversationLink(env, { region: env.AVALON_REGION, workspaceId: row.workspaceId, parentId: words.parentId,
-    ...(words.artifactId ? { artifactId: words.artifactId } : {}) });
+    ...(words.artifactId ? { artifactId: words.artifactId } : {}), ...(words.message ? { message: words.message } : {}) });
   // A Thread, Breakout or Channel, which no surface opens any more, or a
   // parent that is gone: nothing to open, so nothing is sent.
   if (!linked.url) return { outcome: "skipped", reason: `conversation_not_linkable:${linked.kind ?? "missing"}` };
   const notice: Notice = {
     intentId: words.intentId, kind: words.kind, title: words.title, body: words.body, actorName: words.actorName,
     url: linked.url, workspaceId: row.workspaceId, recipientUserId: row.recipientUserId, parentId: words.parentId,
-    substreamId: words.substreamId, replyTo: words.replyTo,
+    substreamId: words.substreamId, replyTo: words.replyTo, ...(linked.message ? { message: linked.message } : {}),
   };
   return { outcome: "ready", notice };
+}
+
+/**
+ * The message a link opens at, when the event names its turn and sequence;
+ * a turn id that is not a UUID (no link form takes it) opens the parent.
+ */
+function messagePosition(turnId: string, sequence: number | undefined): { message?: { turnId: string; sequence: number } } {
+  return sequence !== undefined && IdSchema.safeParse(turnId).success ? { message: { turnId, sequence } } : {};
 }
 
 /** A mention or an add: the conversation's own effect, checked as the processor checks it. */
@@ -99,6 +113,9 @@ async function personNoticeWords(env: Env, row: WorkspaceNotificationIntentDeliv
     parentId: row.workstreamId,
     substreamId: childId,
     replyTo: viewer.emailAddress?.trim() || null,
+    // A mention in the Chat opens at its message; one recorded before the
+    // effect carried its sequence, or in a run's conversation, opens the parent.
+    ...(effect.kind === "mention_notification" && !childId ? messagePosition(effect.messageId, effect.transcriptSequence) : {}),
   };
 }
 
@@ -175,5 +192,6 @@ async function parentNoticeWords(env: Env, workspace: WorkspaceStub, row: Worksp
     substreamId: notice.kind === "new_message" ? "0" : null,
     replyTo: null,
     ...(notice.kind === "artifact_updated" ? { artifactId: notice.resourceId } : {}),
+    ...(notice.kind === "new_message" ? messagePosition(notice.messageId, notice.messageSequence) : {}),
   };
 }

@@ -196,18 +196,20 @@ is not a text turn. A run admitted with no delegate carries the delegation
 notice instead. Both kinds read the person's **Sidekick runs** choice (`runFinished`),
 so one row in Settings covers both.
 
-**Where a push links.** Every push and every mention email or Slack DM links
-through `conversationCanonicalUrl`: a mention or Needs input in a Canvas's
-Chat opens the Canvas, and a Sidekick's conversation or a finished run opens
-the Sidekick. A reply opens its Canvas or Sidekick, at the newest message (the
-canonical link has no message form; the Activity row carries the turn and its
-sequence for that), and a pinned Canvas's new version opens the Canvas onto
-that artifact. A conversation with neither — a retired Thread or Breakout — has
-no link, and its delivery is skipped with the reason
-`conversation_not_linkable` rather than sent to open nothing. A push
-resolves that link once per intent, through `conversationLink`, and only after
-`notificationAllows` has let the intent through; a skip logs
-`conversation_not_linkable` with the conversation's `parent_kind`.
+**Where a push links.** Every notice, whichever sink takes it, links through
+`conversationLink` once, in `renderNotice`: a mention or a reply in a
+Canvas's Chat opens the Canvas at that message — the canonical link with
+`?turn=<turn>&sequence=<n>` ([`links.md`](links.md)), and the push data's
+`turnId` and `sequence` beside it — from the mention effect's
+`transcriptSequence` and the reply notice's `messageSequence`. A notice
+recorded before it carried the sequence, or a turn id that is not a UUID,
+opens the Canvas without a position. Needs input and a Sidekick's
+conversation or finished run open the Sidekick (its link has no message
+form), and a pinned Canvas's new version opens the Canvas onto that artifact.
+A conversation with neither — a retired Thread or Breakout — has no link, and
+the notice is skipped as `conversation_not_linkable:<parent kind>` rather
+than sent to open nothing. An older Mac refuses a link with a message query
+and opens the app without navigating.
 
 ### A person's reply
 
@@ -579,6 +581,12 @@ badge is `attention().readerAttentionCount`, now the person's unseen Activity
 in the Organization rather than the zero it answered since Threads were
 retired; the data carries it too, as `badge`. Why: the owner's "fix this" for
 the dock badge clearing when an alert arrives while Rally is closed.
+
+**Also this round — a mention's and a reply's push opens the message.** The
+notice carries the turn and its sequence, and the link is the canonical Canvas
+link with `?turn=&sequence=`; the push data repeats them as `turnId` and
+`sequence`. Why: the owner's "fix this" for a reply push opening at the
+newest message instead of at the message.
 
 **What a future change must respect:** a kind's words live in `renderNotice`
 only; a sink never branches on kind except for its own transport's needs

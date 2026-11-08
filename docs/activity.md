@@ -280,9 +280,9 @@ drawn open and its conversation reporting the read as a click would (pushed
 from the rail, replacing a Canvases-home landing at a launch with Activity stored;
 [`desktop-shell.md`](desktop-shell.md) has the navigation rule); an empty
 feed opens nothing, and nothing the feed does afterwards moves the pane. The rail badge is `unseenCount` ("3 unseen"). A push
-sets the app icon's badge to the same count (`attention()` above); while Rally
-runs, the dock badge and the menu bar are the client's own count
-([`menu-bar.md`](menu-bar.md), [`push-notifications.md`](push-notifications.md)).
+sets the app icon's badge to the same count (`attention()` above), and the
+running app's dock badge is the unseen Activity count, the same number a push
+carries ([`push-notifications.md`](push-notifications.md)).
 
 ## Invariants
 
