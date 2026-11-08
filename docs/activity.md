@@ -148,11 +148,17 @@ clears it.
 
 ### In the client
 
-The section lists the page newest first: a glyph for the kind (an at sign, a
-person added, a question, a check), who (a person's name from the member
-directory, or the Sidekick's), what (mentioned you in, added you to, needs
-your input, finished a run), the title, the preview, a relative time and an
-unseen dot. A Canvas Chat mention opens the Chat at its message
+The section lists the page newest first, each row in the shared sidebar row
+layout (`RowLayout`, as Canvas and Sidekick rows are): a tile with the kind's
+glyph (an at sign, a person added, a question, a check); on the first line who
+(a person's name from the member directory, or the Sidekick's), what
+(mentioned you in, added you to, needs your input, finished a run) and the
+title, cut to one line, with the time at its end; on the second the preview,
+cut to one line, with the unseen dot. A seen row recedes through text colours
+that keep the title at 4.5:1 and the second line at 3:1 or better, never
+through opacity. The rows the route has open (the same conversation, and the
+same run when one is open) are drawn open at full contrast; keyboard focus is
+a ring, never the open fill. A Canvas Chat mention opens the Chat at its message
 (`canvasTurnRoute`, from the row's `messageId` and `messageSequence`, the
 mentioning turn's transcript sequence the effect carries); a mention recorded
 before the effect carried it, and an add, open the Canvas. A row about a
@@ -274,7 +280,7 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 
 ## Changelog
 
-### 2026-11-08 — A needs-input row opens the run that asked
+### 2026-11-08 — A needs-input row opens the run that asked, and rows take the shared layout
 
 **What changed:** A `needs_input` row opens the run it is about (`?run=` from
 its `runId`) rather than the Sidekick's shared conversation.
@@ -288,9 +294,17 @@ row, which now carries the question too: it reads `"0"` and clears the row,
 but a row could not be scrolled to a run's row without a sequence the item
 does not carry.
 
+Rows take the shared row layout, seen rows recede through text colour tokens
+rather than 45% opacity (which left a seen preview at 1.9:1 in light and
+2.45:1 in dark), and only the rows whose conversation and run the route has
+open are marked open: opening a Sidekick marked every row about it, which read
+as a multi-selection.
+
 **What a future change must respect:** opening the run does not read `"0"`,
 so the row stays unseen until the shared conversation is read or Mark all
 seen; a fix belongs in what seen measures, not in the route.
+A seen row's colours are tokens chosen for contrast; dimming a row by
+opacity is how this failed before.
 
 ### 2026-11-08 — A row lists only while its person may open the parent, and every read report is heard
 
