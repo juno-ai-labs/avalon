@@ -101,7 +101,7 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
         <div className="sidekick-list-copy"><h3><Link className="sidekick-list-link" to={`/sidekicks/${item.id}`}>{item.name}</Link>{sidekickStatus(item) === 'needs_input' && <span className="sidekick-needs-input-badge">Needs input</span>}</h3><p>{item.description}</p></div>
         <dl className="sidekick-list-facts">
           <div><dt>Status</dt><dd><StatusPill item={item} /></dd></div>
-          <div><dt>Shared with</dt><dd>{sharedWithLabel(item)}</dd></div>
+          <div className="sidekick-list-shared"><dt>Shared with</dt><dd>{sharedWithLabel(item)}</dd></div>
           <div><dt>Next</dt><dd>{sidekickNext(item)}</dd></div>
         </dl>
         <ChevronRight className="sidekick-list-chevron" aria-hidden="true" size={18} />
