@@ -281,10 +281,16 @@ describe('the Activity section', () => {
     const rows = within(screen.getByRole('region', { name: 'Activity' })).getAllByRole('link');
     expect(rows.map((row) => row.getAttribute('aria-current'))).toEqual([null, 'page', 'page']);
     cleanup();
-    // Back to the Sidekick: the highlight moves with the route.
-    renderSidebar(workspace, `/sidekicks/${SIDEKICK}`, page);
+    // To the run that asked: the highlight moves with the route, to that
+    // run's row alone.
+    renderSidebar(workspace, `/sidekicks/${SIDEKICK}?run=${RUN}`, page);
     const back = within(screen.getByRole('region', { name: 'Activity' })).getAllByRole('link');
     expect(back.map((row) => row.getAttribute('aria-current'))).toEqual(['page', null, null]);
+    cleanup();
+    // The Sidekick's shared conversation is not that run.
+    renderSidebar(workspace, `/sidekicks/${SIDEKICK}`, page);
+    const shared = within(screen.getByRole('region', { name: 'Activity' })).getAllByRole('link');
+    expect(shared.map((row) => row.getAttribute('aria-current'))).toEqual([null, null, null]);
   });
 
   it('says how it fills when there is nothing yet, and offers Mark all seen only with something unseen', () => {

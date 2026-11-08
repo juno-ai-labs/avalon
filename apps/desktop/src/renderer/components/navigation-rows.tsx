@@ -110,13 +110,15 @@ export function PinnedMark({ howToPin = 'Drag a row here or right-click it to pi
  * One row of any of the three lists: a tile, a name with its time, and a
  * second line with an optional unread dot at its end.
  */
-export function RowLayout({ detail, tile, time, title, titleExtra, unread }: {
+export function RowLayout({ detail, tile, time, title, titleExtra, unread, unreadLabel = 'Unread' }: {
   detail: ReactNode;
   tile: ReactNode;
   time?: ReactNode;
   title: ReactNode;
   titleExtra?: ReactNode;
   unread: boolean;
+  /** What the dot is called; Activity's word for it is "Unseen". */
+  unreadLabel?: string;
 }): React.JSX.Element {
   return <>
     {tile}
@@ -128,7 +130,7 @@ export function RowLayout({ detail, tile, time, title, titleExtra, unread }: {
       </span>
       <span className="navigation-row-line">
         <span className="navigation-row-detail">{detail}</span>
-        {unread && <span aria-label="Unread" className="navigation-row-unread-dot" role="img" />}
+        {unread && <span aria-label={unreadLabel} className="navigation-row-unread-dot" role="img" />}
       </span>
     </span>
   </>;
