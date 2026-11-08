@@ -2,7 +2,7 @@ import type { ActivityItem } from '@rally/contracts';
 import { IconAt, IconCircleCheck, IconMessageQuestion, IconUserPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode, RefObject } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 import { canvasRoute, canvasTurnRoute, useCanvasNameSources } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
@@ -65,6 +65,10 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
   const activity = useActivityList();
   const { membersById, sidekicksById } = useCanvasNameSources(api);
   useSectionMotion(scroll, undefined);
+  // The highlight follows the route, Back and Forward included, never the row
+  // last clicked: the rows about the Canvas or Sidekick open now are marked.
+  const location = useLocation();
+  const openParentId = /^\/(?:canvases|sidekicks)\/([^/?]+)/u.exec(location.pathname)?.[1];
   const who = (item: ActivityItem): string => {
     if (item.actor.kind === 'rally') return 'Rally';
     if (item.actor.kind === 'sidekick') {
@@ -80,8 +84,10 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
     {activity !== undefined && activity.items.length === 0 && <p className="navigation-empty">{ACTIVITY_EMPTY}</p>}
     {activity?.items.map((item) => {
       const run = item.kind === 'needs_input' || item.kind === 'run_finished';
+      const active = openParentId !== undefined && decodeURIComponent(openParentId) === item.parentId;
       return <Link
-        className={clsx('activity-row', item.seen ? 'is-seen' : 'is-unseen')}
+        aria-current={active ? 'page' : undefined}
+        className={clsx('activity-row', item.seen ? 'is-seen' : 'is-unseen', active && 'is-active')}
         data-motion-key={`activity:${item.id}`}
         key={item.id}
         to={activityRoute(item)}
