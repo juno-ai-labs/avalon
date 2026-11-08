@@ -364,7 +364,8 @@ that product summary rather than reading a frozen D1 row.
   this with Rally** shortcuts, and `/rally [request]`: answered once with the
   retired-ingress copy above; none starts work. The two shortcuts and a bare
   `/rally` still open the task modal first, whose submission is what gets
-  that answer. A reply in a thread bound to a Sidekick run continues the run.
+  that answer, and `/rally help` says the same and points to App Home. A reply
+  in a thread bound to a Sidekick run continues the run.
 - **Connect Rally**: mint a link challenge and open it in a modal whose single
   button is the desktop handoff. Not refused on a stored status; a grant that is
   really gone fails on Slack's answer.

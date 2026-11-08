@@ -238,13 +238,6 @@ const SUPERSEDED_SLACK_INTERACTION_PREFIXES: readonly string[] = Object.freeze([
  * below compares against one form. Anything not carrying a known prefix is
  * returned unchanged and falls through as it did before.
  */
-/**
- * The block actions that do something. Every other one — a `url` button
- * (`rally_open_*`, **Create Sidekick**), which Slack follows itself, or a
- * button a superseded view still shows — is acknowledged and ignored.
- */
-const SLACK_HANDLED_BLOCK_ACTIONS: ReadonlySet<string> = new Set(["rally_connect", "rally_preferences", "rally_feedback"]);
-
 function canonicalSlackInteractionId(value: string): string {
   for (const prefix of SUPERSEDED_SLACK_INTERACTION_PREFIXES) {
     if (value.startsWith(prefix)) {
@@ -253,6 +246,13 @@ function canonicalSlackInteractionId(value: string): string {
   }
   return value;
 }
+
+/**
+ * The block actions that do something. Every other one — a `url` button
+ * (`rally_open_*`, **Create Sidekick**), which Slack follows itself, or a
+ * button a superseded view still shows — is acknowledged and ignored.
+ */
+const SLACK_HANDLED_BLOCK_ACTIONS: ReadonlySet<string> = new Set(["rally_connect", "rally_preferences", "rally_feedback"]);
 
 export class SlackAgentService {
   private env: Env;
@@ -651,7 +651,8 @@ export class SlackAgentService {
       return { response_type: "ephemeral", text: "Opening Rally…" };
     }
     if (/^help$/iu.test(commandForm.text.trim())) {
-      return { response_type: "ephemeral", text: "Ask Rally to investigate, summarize, coordinate, or create an automation. Run /rally without text to open the task modal, or open App Home to connect and manage notifications." };
+      // What the command does now: nothing it is asked starts work.
+      return { response_type: "ephemeral", text: "Rally no longer starts work from Slack. Start a Canvas in Rally, or set up a Sidekick to work from Slack for you. Open Rally's App Home to connect your account, see your Sidekicks and what they are waiting on, and manage notifications." };
     }
     await this.enqueueIngressJob({ id: `command:${bodyHash}`, teamId, bodyHash, kind: "command", payload: commandForm });
     return { response_type: "ephemeral", text: "Rally queued your request. I’ll continue in your Agent conversation." };
