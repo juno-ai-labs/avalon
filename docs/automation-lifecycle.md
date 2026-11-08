@@ -1051,8 +1051,8 @@ run reads (`conversation-message-opening.ts`, structured kind
 as the caption "Started by a message in the conversation."
 
 A Sidekick's row says where it stands from `AutomationSummary`
-(`lib/sidekick-status.ts`): waiting on someone (`needsInput`, with the run's
-`pendingQuestion` as the sidebar row's second line), **Working** while its
+(`lib/sidekick-status.ts`): waiting on someone (`needsInput`, with the
+newest waiting run's `pendingQuestion` as the sidebar row's second line), **Working** while its
 newest run is live (`runState`), **Paused** in amber, **Draft**, or when it
 next runs ("Runs Friday 2:00 PM", the weekday within the coming week and the
 date beyond it), else when it last ran. On the home the state is the design's
@@ -1130,11 +1130,16 @@ loaded into someone else's conversation, not a read of its own.
 - **Run state and the waiting question.** The sidebar row's `runState` is the
   newest run's live state: `working` while it is queued or running,
   `needs_input` while it waits, null once it finished or when there is no
-  run; `pendingQuestion` is that same run's summary while it waits, and null
-  otherwise (`AUTOMATION_RUN_STATE_SQL` over `AUTOMATION_RUN_STATE_JOINS`, one
-  probe of `sidekick_runs_history_idx` for the newest run), so the two never
-  describe different runs. An older run still waiting raises `needsInput`
-  alone; a newest run that finished while an older one works reads null. `nextRunAt` was already the next scheduled
+  run (`AUTOMATION_RUN_STATE_SQL` over `AUTOMATION_RUN_STATE_JOINS`, one
+  probe of `sidekick_runs_history_idx` for the newest run); a newest run that
+  finished while an older one works reads null. `pendingQuestion` is the
+  summary of the newest run that *waits*, whichever run is newest, and null
+  when none waits. The two can describe different runs, deliberately: a
+  Sidekick with an older run waiting and a newer one working reads
+  **Working** with the old question as its second line, because the question
+  is still open and is what a person needs; a row whose question depended on
+  the waiting run being the newest lost it after a reload, when a later run
+  started, and while one was starting. `nextRunAt` was already the next scheduled
   occurrence. Both are optional so a server that predates them still parses.
   The sidebar row's `lastRunAt` is when the newest run started, as the
   library read already said; the socket's list sent none, so a row waiting
@@ -1916,7 +1921,11 @@ and New Sidekick reopens an existing draft.
 
 **What a future change must respect:** the inline form answers through the
 run's conversation, never through `"0"`; it opens a socket only while its row
-says Needs input. An empty details block says so; it is never hidden.
+says Needs input. An empty details block says so; it is never hidden. The
+requester seat moves a cursor only from the row's own ordinal minus one to
+its ordinal and never touches a manual unread mark. `pendingQuestion` and `runState` are read from
+different runs on purpose; do not re-pair them.
+
 
 ### 2026-11-07 — The shared conversation starts runs and shows them, no Thread owns a Sidekick, and Sidekicks open in the main window
 

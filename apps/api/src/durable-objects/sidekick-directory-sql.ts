@@ -122,20 +122,27 @@ export const AUTOMATION_VIEWER_SQL = `CASE
  *
  * The run state is the newest run's live state: `working` while it is queued
  * or running, `needs_input` while it waits, and null once it has finished or
- * when there is no run. The pending question is what that same run waits on,
- * only while it waits: its summary, which for a run that asked is the
- * question it asked (`commonEffect` sends the open elicitation's prompt as a
- * waiting run's reply), and for a run admitted with no delegate is that
- * notice. An older run still waiting raises `needs_input` alone.
+ * when there is no run. The pending question is what the newest *waiting* run
+ * waits on, whichever run is newest: its summary, which for a run that asked
+ * is the question it asked (`commonEffect` sends the open elicitation's prompt
+ * as a waiting run's reply), and for a run admitted with no delegate is that
+ * notice. The two are read from different runs on purpose: a Sidekick whose
+ * older run still waits while a later one works reads Working with the old
+ * question as its second line, because the question is still open and is
+ * what a person needs to see; reading it from the newest run only lost it
+ * after a later run started (vis2-v2 R2-1). The probe is bounded to this
+ * Sidekick's rows by `sidekick_runs_history_idx`'s prefix.
  */
 export const AUTOMATION_RUN_STATE_SQL = `CASE WHEN latest_run.state IN ('pending', 'running') THEN 'working'
           WHEN latest_run.state = 'needs_input' THEN 'needs_input' END AS run_state,
-   CASE WHEN latest_run.state = 'needs_input' THEN latest_run.summary END AS pending_question`;
+   (SELECT waiting.summary FROM sidekick_runs waiting
+     WHERE waiting.sidekick_id = directory.automation_id AND waiting.state = 'needs_input'
+     ORDER BY waiting.created_at DESC, waiting.run_id DESC LIMIT 1) AS pending_question`;
 
 /**
- * The join `AUTOMATION_RUN_STATE_SQL` reads: the newest run, found by one
- * probe of `sidekick_runs_history_idx` and read by its primary key, so the
- * state and the question always describe the same run.
+ * The join `AUTOMATION_RUN_STATE_SQL` reads for the run state: the newest
+ * run, found by one probe of `sidekick_runs_history_idx` and read by its
+ * primary key.
  */
 export const AUTOMATION_RUN_STATE_JOINS = `LEFT JOIN sidekick_runs latest_run
      ON latest_run.sidekick_id = directory.automation_id
