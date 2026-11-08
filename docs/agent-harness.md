@@ -68,7 +68,7 @@ question so a criterion cannot ship without its include and exclude boundaries.
 Addressing supplies the state, the questions, the threshold and the mapping, and
 nothing else. The second caller is the semantic trigger gate in
 [`semantic-activity-triggers.md`](semantic-activity-triggers.md);
-[`jev-classifier-opportunities.md`](jev-classifier-opportunities.md) lists the
+[`jev-best-practices.md`](jev-best-practices.md) lists the
 decisions that may want a third. A classifier's provider diagnostics go to
 `apps/api/src/services/classifier-diagnostics.ts`, which writes both the
 `structured_inference` log row and the archived inference record for all of them.
@@ -2426,7 +2426,7 @@ charter, what it has produced so far, the newest three messages and the judged
 turn. Every provider call is recorded through the classifier diagnostic sink
 under `turn_disposition_classifier`. The step never fails settlement. The
 harness also gained the `suggestion_draft` prompts, golden-hashed. The
-mechanism is owned by [its retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments) (retired);
+mechanism is owned by [`conversation-suggestions.md`](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments);
 the question, its 0.6 threshold and its three recent messages are pinned to the
 corpus evaluation and the GEPA ablation in
 `docs/PRDs/2026-10-17_merge-and-breakout-suggestions/design.md`.

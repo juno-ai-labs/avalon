@@ -23,7 +23,7 @@ import {
  * start somebody's automation has to be applied to a confidence that the
  * provider computed, not to a number the model wrote about its own answer.
  * The Suggested context retirement record in `docs/connectors.md` records
- * what the second kind cost the retired router; `docs/jev-classifier-opportunities.md` is why this one was first.
+ * what the second kind cost the retired router; `docs/jev-best-practices.md` is why this one was first.
  */
 export const SEMANTIC_TRIGGER_CHOICES = [
   "condition_met",
