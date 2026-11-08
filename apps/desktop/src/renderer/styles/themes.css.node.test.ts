@@ -205,7 +205,10 @@ describe('token references', () => {
     '--navigation-rail-width',
     // The ring behind a tile's badge, set by each sidebar row to its own
     // background so the badge reads as cut out of the tile.
-    '--tile-ring'];
+    '--tile-ring',
+    // A Sidekick's details column, which its header also keeps clear of:
+    // layout, the same in every theme.
+    '--sidekick-details-width'];
 
   // Set at runtime rather than in CSS: some by components as inline styles,
   // three by libraries on their own elements. They cannot be checked from this
