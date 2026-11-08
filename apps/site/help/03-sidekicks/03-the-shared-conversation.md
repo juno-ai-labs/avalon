@@ -47,20 +47,27 @@ yourself. [Tools and delegation](06-tools-and-delegation.md) explains the rule.
 
 ## Run rows
 
-Every run, whatever started it, appears in the conversation as one row. Folded,
-the row shows how the run started (a schedule, an event, an email, or a
-person's message), its state and, once it has finished, its reply. Click the
-row to unfold it and see each step the run took, with the same activity rows
-and receipts as a run in a Canvas (see
-[While Rally works](../02-canvases/04-while-rally-works.md#following-along)).
+Every run, whatever started it, appears in the conversation as one row under
+the Sidekick's hexagon, such as **Run 6 · Scheduled · Done · 4 steps**: the
+run's number, what started it (**On request**, **Scheduled**, **Event** or
+**Email**), where it stands, and how many steps it has taken. Under that is the
+start of its reply.
 
 | State | It means |
 | --- | --- |
-| **Running** | The run is working now. |
+| **Starting** | The run is about to begin. |
+| **Working** | The run is going now. |
 | **Needs input** | The run is waiting for something only a person can give it. |
-| **Latest run completed** | It finished. |
-| **Latest run stopped** | Someone stopped it. |
-| **Needs intervention** | It failed. The row has a **Retry** button and a Request ID. |
+| **Done** | It finished. |
+| **Stopped** | Someone stopped it. |
+| **Failed** | It could not finish. |
+
+Click the row to unfold it and read the whole reply. **Open run** opens the
+run's own conversation, with each step it took and the same activity rows and
+receipts as a run in a Canvas (see
+[While Rally works](../02-canvases/04-while-rally-works.md#following-along)).
+The pill at the top then reads the Sidekick's name and the run; click the
+Sidekick's name to go back to the shared conversation.
 
 A run can wake up again. If someone replies to something it posted, such as a
 Slack thread it started, the same run carries on and its row updates. It does
@@ -70,13 +77,18 @@ not start a second row.
 
 Sometimes a run is missing something only a person has: which status page gets
 the update, which of two spreadsheets is the real one, a sign-in that has
-expired. The run asks in the conversation and waits. The Sidekick moves to the
-**Needs input** group at the top of your Sidekicks sidebar, with its question
-under its name, and the **Sidekicks** button on the rail counts it.
+expired. The run asks, and waits. Its row reads **Needs input** and shows the
+question with its choices right there in the shared conversation. The
+Sidekick moves to the **Needs input** group at the top of your Sidekicks
+sidebar, with its question under its name, and the **Sidekicks** button on the
+rail counts it. Whoever asked for the run, and the Sidekick's managers, also
+get a **needs your input** row in Activity.
 
-Answer in the conversation, in plain words or with the question card's
-choices, and the run carries on. Anyone the Sidekick is shared with can answer,
-unless the Sidekick asked one person by name.
+Answer on the row, with the question's choices or in your own words under
+**Other**, and press **Submit**, or open the run and answer there. The run
+carries on, and the answer stays in the run's conversation, under the question.
+Anyone the Sidekick is shared with can answer, unless the Sidekick asked one
+person by name.
 
 "Needs input" never means a Sidekick is waiting for permission to use a tool.
 Sidekicks do their work without asking anyone to approve each step.
@@ -96,11 +108,12 @@ say so. The Canvases a Sidekick writes to are listed in its details column.
 ## Managers change the Sidekick here too
 
 The people who manage a Sidekick change it in this same conversation. To
-do it, choose **Edit Sidekick** in the message box, then write the change:
-"run it at 8 instead of 9", "leave out weekends". A message marked
-**Edit Sidekick** goes to the Sidekick's drafting assistant instead of starting
-a run. Without the mark, a manager's message is a request like anyone else's.
-Only managers see **Edit Sidekick**. Everyone in the conversation can see the
+do it, click **+** in the message box and choose **Edit Sidekick**, then write
+the change: "run it at 8 instead of 9", "leave out weekends". While the
+**Editing this Sidekick** chip shows above the box, each message goes to the
+Sidekick's drafting assistant instead of starting a run; click the chip's
+**×** to go back to ordinary messages. Without the mark, a manager's message is
+a request like anyone else's. Only managers see **Edit Sidekick**. Everyone in the conversation can see the
 change being made, and the assistant says when it has saved a new version. A run already going finishes
 with the version it started with.
 

@@ -12,13 +12,14 @@ You never pick triggers from a list. You say when you want the Sidekick to
 work, in an **Edit Sidekick** message in its conversation, and the drafting
 assistant sets it up.
 The triggers it chose then appear in plain words in the details column under
-**When to expect it**, along with **Next** and how long until the next run.
+**Wakes on**, with a clock for a schedule and a bolt for an event, along with
+**Next** and how long until the next run.
 
 ## The kinds of trigger
 
 | Trigger | You might say | Shows in Run history as |
 | --- | --- | --- |
-| By hand | (press **Run now**, or ask it in its conversation) | Manual |
+| By hand | (press **Run now**, or ask it in its conversation) | On request |
 | A schedule | "Every Monday at 9am" | Scheduled |
 | An interval | "Check my inbox every hour" | Scheduled |
 | An event in a connected tool | "Whenever a new Granola note lands" | Event |
@@ -54,9 +55,7 @@ A schedule is always read in a time zone. Rally picks it like this:
 
 You set your own default with the **Default timezone** setting in your
 account settings, and an owner or administrator sets the Organization's with
-the **Default timezone** setting in Organization settings. Both settings
-still describe themselves as being for "automations"; they mean Sidekicks.
-See [The Settings window](../09-settings-and-shortcuts/01-the-settings-window.md)
+the **Default timezone** setting in Organization settings. See [The Settings window](../09-settings-and-shortcuts/01-the-settings-window.md)
 and [Organization settings](../10-running-an-organization/03-organization-settings.md).
 
 > [!TIP]

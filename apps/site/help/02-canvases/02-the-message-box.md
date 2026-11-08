@@ -34,8 +34,8 @@ It is the same box underneath.
 ### How long can a message be?
 
 Up to 100,000 characters, which is roughly a novella. If you paste in more,
-Rally refuses to send and shows **This message is over 100,000 characters,
-please shorten it.** under the box. Your text stays in the box, so you can trim
+Rally refuses to send and shows **Message too long**: **This message is over
+100,000 characters, please shorten it.** Your text stays in the box, so you can trim
 it and try again, or attach the long material as a file instead (see
 [Attaching files](03-attaching-files.md)).
 
@@ -60,8 +60,9 @@ Some things to know about drafts:
 
 Type <kbd>@</kbd> at the start of a line or after a space, and a list pops up.
 **Rally** sits at the top. Below it, people are grouped under **Participants**,
-**Org members**, and **Guests**, with their email addresses. Guests already in
-the conversation appear under **Participants**.
+**Org members**, and **Guests**, with their email addresses, and then come
+**Sidekicks**. Guests already in the conversation appear under
+**Participants**.
 
 1. Keep typing to narrow the list by name or email. Scroll to see more matches.
 2. Use the arrow keys to move through it (it wraps round from the bottom to the
@@ -82,8 +83,11 @@ Things that catch people out:
   If you mention them, Rally asks
   whether to add them first. [People in a Canvas](07-people-in-a-canvas.md) has
   the details.
-- Only people and Rally can be mentioned here. Your connected tools and your
-  Sidekicks are not in the list. You talk to a Sidekick in its own conversation, covered in
+- Mentioning a Sidekick names it, so readers see a chip with its hexagon and
+  can tell which one you mean. It does not start the Sidekick or tell it
+  anything. The list offers the Organization's Sidekicks and any this
+  conversation already uses. To ask a Sidekick for work, talk to it in its
+  own conversation, covered in
   [Talking to a Sidekick](../03-sidekicks/03-the-shared-conversation.md).
 - If you edit the middle of an **@Name** after picking it, it turns back into
   plain text and no longer points at that person. Delete it and mention them
