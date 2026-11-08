@@ -510,7 +510,12 @@ those: it attaches to the conversation's composer host, not to the shared
 as a pending input like any message, but it is projected as the answered
 question — the same UI identity the canonical turn will carry — so the card
 closes the moment the room accepts it, and it neither draws a queue row nor
-takes part in a reorder. An automation's page keeps its lifecycle controls (apply,
+takes part in a reorder. Once answered, the question stays where it was asked,
+drawn as Rally's turn with the prompt, and the answer is the person's own row
+after it: `orderedTranscriptMessages` gives the answering turn its own row
+(`elicitation-<id>:answer`) and marks the question `elicitationAnswerFollows`
+with the answered state, and until that turn lands the question's row draws
+the answer under the prompt. An automation's page keeps its lifecycle controls (apply,
 pause, resume, delete, run now, the run-history dialog) outside the feed rather than
 inside it. Neither host may smuggle those controls through an optional common
 prop.

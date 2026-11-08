@@ -812,7 +812,7 @@ describe('ordered turn rendering', () => {
     expect(composeTranscript([], [overlay])).toEqual([{ ...live, sequenceNumber: 1 }]);
   });
 
-  it('orders and collapses an open elicitation with its durable answer', () => {
+  it('keeps a question and its durable answer as two rows, the question answered', () => {
     const elicitation = {
       id: '00000000-0000-7000-8000-000000000111',
       workstreamId: '00000000-0000-7000-8000-000000000112',
@@ -889,15 +889,25 @@ describe('ordered turn rendering', () => {
     const messages = orderedTranscriptMessages(snapshot, 'workstream-one', [{
       id: 'user-adam', name: 'Adam', email: 'adam@example.com', timezone: 'UTC',
     }]);
-    expect(messages).toHaveLength(3);
+    // Design §4 keeps both: the asker's question where it was asked, and the
+    // person's answer where they gave it.
+    expect(messages).toHaveLength(4);
     expect(messages[1]).toMatchObject({
       id: 'elicitation-00000000-0000-7000-8000-000000000111',
-      authorType: 'human',
+      authorType: 'agent',
       transcriptSequence: 2,
       transcriptTurnId: 'question-open',
-      elicitation: { id: '00000000-0000-7000-8000-000000000111', status: 'answered', answer: 'one' },
+      elicitationAnswerFollows: true,
+      elicitation: { id: '00000000-0000-7000-8000-000000000111', prompt: 'Choose', status: 'answered', answer: 'one' },
     });
     expect(messages[2]).toMatchObject({ transcriptSequence: 3, text: 'Work continued' });
+    expect(messages[3]).toMatchObject({
+      authorType: 'human',
+      transcriptSequence: 4,
+      transcriptTurnId: 'question-answer',
+      elicitation: { id: '00000000-0000-7000-8000-000000000111', status: 'answered', answer: 'one' },
+    });
+    expect(messages[3]?.elicitationAnswerFollows).toBeUndefined();
     expect(() => composeTranscript(messages, [])).not.toThrow();
   });
 

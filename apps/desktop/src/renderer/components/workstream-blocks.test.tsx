@@ -480,6 +480,29 @@ describe('MessageBlock human identity', () => {
     expect(screen.queryByText('Organization member')).not.toBeInTheDocument();
   });
 
+  it('keeps the question an answer replied to, as the asker\'s turn above it', () => {
+    const asked: Message = {
+      ...baseMessage,
+      id: 'elicitation-question',
+      authorType: 'agent',
+      author: undefined,
+      messageType: 'elicitation',
+      text: '',
+      elicitation: { ...singleSelectElicitation, status: 'answered', answer: 'compare' },
+    };
+    // Before the answer's own turn lands: the question, then the answer.
+    const { unmount } = render(<MessageBlock {...actions} currentUserId="user-adam" currentUserName="Adam" message={asked} />);
+    const question = screen.getByRole('article', { name: 'Question from Rally' });
+    expect(question).toHaveTextContent(singleSelectElicitation.prompt);
+    expect(question.querySelector('.message-author')).toHaveTextContent('Rally');
+    expect(question.compareDocumentPosition(screen.getByLabelText('Your elicitation response')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    unmount();
+    // Once it has: the question alone, the answer being its own row.
+    render(<MessageBlock {...actions} currentUserId="user-adam" message={{ ...asked, elicitationAnswerFollows: true }} />);
+    expect(screen.getByRole('article', { name: 'Question from Rally' })).toHaveTextContent(singleSelectElicitation.prompt);
+    expect(screen.queryByLabelText('Your elicitation response')).toBeNull();
+  });
+
   it('keeps a coworker visible on their elicitation response', () => {
     const elicitationMessage: Message = {
       ...baseMessage,
