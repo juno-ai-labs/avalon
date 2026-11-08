@@ -17,6 +17,7 @@ import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
+import { createTestEnv } from "../test/helpers/cloudflare-test";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000c5000");
@@ -41,13 +42,13 @@ async function holdFlagship(): Promise<{ entered: () => Promise<void>; release: 
   // the I/O the test then does.
   const gate = { entered: false, released: false };
   await runInDurableObject(workspace(), (instance: WorkspaceDO) => {
-    (instance as unknown as { env: Env }).env.FLAGS = {
+    (instance as unknown as { env: Env }).env.FLAGS = createTestEnv({ FLAGS: {
       getBooleanDetails: async () => {
         gate.entered = true;
         while (!gate.released) await new Promise((resolve) => setTimeout(resolve, 5));
         return { value: false, reason: "DEFAULT" };
       },
-    } as unknown as Env["FLAGS"];
+    } }).FLAGS;
   });
   return {
     entered: async () => { await expect.poll(() => gate.entered).toBe(true); },

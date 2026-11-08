@@ -35,9 +35,9 @@ describe('the width a panel opens at', () => {
 
   it('keeps a dragged width when switching items in a panel already open', () => {
     openRail();
-    useUiStore.getState().setRailWidth(700);
+    useUiStore.getState().setRailWidth(360);
     openRailAtEvenSplit('conversation-a', openRail);
-    expect(useUiStore.getState().railWidth).toBe(700);
+    expect(useUiStore.getState().railWidth).toBe(360);
   });
 
   it('splits the whole pane when taking over the panel beside it', () => {
@@ -51,11 +51,11 @@ describe('the width a panel opens at', () => {
 
   it('leaves the dragged width saved for a restored panel', () => {
     openRail();
-    useUiStore.getState().setRailWidth(500);
+    useUiStore.getState().setRailWidth(380);
     useUiStore.setState({ railOpen: false });
     openRailAtEvenSplit('conversation-a', openRail);
     useUiStore.getState().setRailScope('conversation-a');
-    expect(useUiStore.getState().railWidth).toBe(500);
+    expect(useUiStore.getState().railWidth).toBe(380);
   });
 
   it('restores a panel nobody resized at the even split', () => {
@@ -65,10 +65,47 @@ describe('the width a panel opens at', () => {
 
   it('restores a resized panel at the width it was dragged to', () => {
     openRail();
-    useUiStore.getState().setRailWidth(500);
+    useUiStore.getState().setRailWidth(380);
     useUiStore.setState({ railOpen: false, railScope: null });
     restoreRail('conversation-a', openRail);
-    expect(useUiStore.getState().railWidth).toBe(500);
+    expect(useUiStore.getState().railWidth).toBe(380);
+  });
+
+  // The same drag, read back in a window of another width.
+  const resizeWindow = (width: number, paneLeft: number): void => {
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(width);
+    pane.getBoundingClientRect = () => DOMRect.fromRect({ x: paneLeft, width: width - paneLeft, height: 800 });
+  };
+
+  it('restores a panel dragged in a narrow window at the same share of a wide one', () => {
+    // A 1,000px window beside the 416px sidebar: a 584px pane, dragged to 292.
+    resizeWindow(1_000, 416);
+    openRail();
+    useUiStore.getState().setRailWidth(292);
+    useUiStore.setState({ railOpen: false, railScope: null });
+
+    // At 1,440 the pane is 1,024px: half of it, inside 280 to 1,024 - 424.
+    resizeWindow(1_440, 416);
+    restoreRail('conversation-a', openRail);
+    expect(useUiStore.getState().railWidth).toBe(512);
+  });
+
+  it('restores a width stored in a 390px window within the bounds of a 1,440px one', () => {
+    // A phone-width tab has no sidebar beside the pane.
+    resizeWindow(390, 0);
+    openRail();
+    useUiStore.getState().setRailWidth(390);
+    useUiStore.setState({ railOpen: false, railScope: null });
+
+    resizeWindow(1_440, 416);
+    restoreRail('conversation-a', openRail);
+    expect(useUiStore.getState().railWidth).toBe(600);
+  });
+
+  it('keeps a pixel width saved before shares, inside the pane it now opens in', () => {
+    window.localStorage.setItem('rally.rail-width:conversation-a', '900');
+    restoreRail('conversation-a', openRail);
+    expect(useUiStore.getState().railWidth).toBe(400);
   });
 });
 
