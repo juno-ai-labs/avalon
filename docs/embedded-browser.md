@@ -77,11 +77,11 @@ defines the browser shortcuts once — ⌘T, ⌘W, ⌘1–⌘9, ⌃Tab and ⌘�
 one pressed inside a page (main's `before-input-event`, which then hands the
 address field focus back to the renderer). In the rail they act only while
 focus is inside the browser, so they never take ⌘W or ⌘T from the rest of Rally.
-Import reads the foreground tab.
 
-Each host window gets its own `EmbeddedBrowser`: its own tabs and placement,
-over the one account partition. Signing in within the import window therefore
-signs the rail in too, and neither window can address the other's tabs.
+The main window is the one host: `apps/desktop/src/main/index.ts` constructs
+its `EmbeddedBrowser`, over the account's one partition. The class still takes
+a host window, so a second host would get its own tabs and placement over the
+same partition and could not address the first one's tabs.
 
 The browser session uses a persistent partition for the signed-in Rally user.
 Changing Rally users disposes the old tabs and selects another partition.
@@ -101,7 +101,8 @@ as Google Chrome.
 - Native page bounds follow the rail and are hidden behind dialogs and
   overlapping Rally menus.
   Otherwise a guest page can paint above a dialog or outside the browser rail.
-- In a browser an agent drives — the import window's, `agentDriven` — every
+- In a browser an agent drives (`agentDriven`, a constructor argument; the
+  import window was the only caller that set it, and nothing does now) every
   tab records its page's network responses from creation through DevTools, and
   copies Fetch and XHR bodies as each finishes, up to `NETWORK_BODY_BYTES_MAX`
   (open: the team's number to set); a new document clears the record. The
@@ -124,15 +125,15 @@ input. The Rally renderer owns the controls and layout; it cannot receive a
 through [desktop actions](desktop-actions.md): a typed request on the
 conversation's socket that the window's renderer executes through this same
 `command()` path, on one tab, never through another page controller. Tool
-receipts and retry policy stay with the harness.
+receipts and retry policy stay with the harness. Only an agent profile's run
+is given a desktop-action executor, and since the session-import profile was
+removed no profile exists, so no run reaches the rail browser today.
 
-What a conversation import reads, and how, is owned by [session
-import](session-import.md): its agent drives this browser through those actions.
 The browser supplies the signed-in page and its primitives — page script
 (`evaluate`), the accessibility tree (`snapshot`), a screenshot sized in DIPs so
 its pixels are input coordinates, input, and DevTools' network loader (`cdp`)
-for a file on an origin the page may not read. It does not decide what a
-conversation means.
+for a file on an origin the page may not read. It does not decide what a page
+means; that is the caller's.
 
 ## Failure modes and limits
 
@@ -153,10 +154,10 @@ for `PublicKeyCredential` still waits forever.
 
 The native view cannot be layered under renderer dialogs, so the renderer hides
 it for dialogs and overlapping menus, and CSS — a blur, a scrim — cannot
-reach it. A surface that wants the page visible behind an overlay draws a capture of it instead, as
-the import window's run does. In the import window a parked active tab renders
-at full speed, so a covered page costs what a visible one does; the rail's
-throttles as Chromium does for any hidden page.
+reach it. A surface that wants the page visible behind an overlay draws a capture of it instead.
+In an agent-driven browser a parked active tab renders at full speed, so a
+covered page costs what a visible one does; the rail's throttles as Chromium
+does for any hidden page.
 
 ## Testing
 

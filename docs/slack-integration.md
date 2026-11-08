@@ -38,7 +38,7 @@ Rally uses one public Slack Marketplace app for two related but separate connect
 1. A **workspace installation** gives Rally a bot identity and the Slack Agent surfaces. It receives Events API deliveries and powers Agent DMs, mentions, App Home, shortcuts, `/rally`, modals, unfurls, streaming replies, and proactive automation results.
 2. An optional **personal connection** gives Rally's MCP client a Slack user token. It preserves that user's broader private-channel, DM, MPIM, canvas, visibility, and user attribution.
 
-The workspace installation is required for the in-Slack Agent experience. Personal MCP authorization is not required to chat with Rally in Slack. Every Slack-originated run receives bounded source provenance (team, channel, thread, invocation and channel types, and any matched Rally member), plus up to eight nearby messages and attachment metadata when the bot can read them. Nearby Slack content is model-visible as explicitly labelled untrusted evidence rather than system instructions. The workspace installation also exposes bounded message search, channel/thread/message/file/user/member reads, and bot-authored message/reaction/conversation writes. Slack's Real-time Search API requires the short-lived `action_token` from a user-initiated message or app mention; Rally carries that token as hidden run authorization and never adds it to prompts or model tool arguments. Bot search covers public channels only. Other workspace reads cover conversations and files visible to the installed bot. The message shortcut can explicitly prefill a task with its selected message.
+The workspace installation is required for the in-Slack Agent experience. Personal MCP authorization is not required for it. A reply admitted into a Sidekick run's bound thread carries bounded source provenance (team, channel, thread, invocation and channel types, and any matched Rally member); its nearby-message and attachment lists are empty (`nearbyMessagesStatus: "not_applicable"`). The workspace installation also exposes bounded message search, channel/thread/message/file/user/member reads, and bot-authored message/reaction/conversation writes. Slack's Real-time Search API requires the short-lived `action_token` from a user-initiated message or app mention; the tool forwards one as hidden run authorization, never in prompts or model tool arguments, when the run carries it. No run carries one now: `slackEventSearchAuthorization`, which read it off the event, has no caller since Slack stopped starting work. Bot search covers public channels only. Other workspace reads cover conversations and files visible to the installed bot. The message shortcut can explicitly prefill a task with its selected message.
 
 This split follows Slack's July 2026 Agent model. New apps use `features.agent_view`, the normal Messages tab, and threaded replies. The older `assistant_view` is not configured.
 
@@ -88,15 +88,15 @@ before health checks and tool calls succeed.
 
 The canonical definition is in `docs/provider-apps.md`: zero-copy means Rally does not recreate Slack inside Rally. It is a product and architecture boundary, not a claim that no Slack data crosses the connector or is ever persisted. Rally must not become a parallel Slack inbox, channel browser, history store, or generally searchable Slack replica.
 
-Within that boundary, Rally may subscribe to Slack activity, retain bounded normalized trigger evidence and provenance for configured automations, fetch authorized task-specific context on demand, and preserve Slack-derived content in the Rally work that uses it. The workspace bot is in a conversation only because somebody invited it, or because a Sidekick's Slack source names that conversation and Rally joined it for that source. Rally does not join public channels on its own, and does not join a channel because Slack reports its creation. An invitation links the room to a Space; a Sidekick-source join links nothing. See [external conversation bindings](external-conversation-bindings.md). To support natural follow-ups, Slack delivers `message.channels`, `message.groups` and `message.mpim` events for conversations the bot has joined because Slack offers no thread-only event filter. The regional ingress accepts human replies in a bound thread, a recent denied Rally thread, or a message event matched by an explicitly configured Slack automation source; unrelated messages are discarded before durable queueing. Normalized automation activity retains bounded trigger evidence and identifiers, not a general-purpose copy of the source conversation or file content.
+Within that boundary, Rally may subscribe to Slack activity, retain bounded normalized trigger evidence and provenance for configured automations, fetch authorized task-specific context on demand, and preserve Slack-derived content in the Rally work that uses it. The workspace bot is in a conversation only because somebody invited it, or because a Sidekick's Slack source names that conversation and Rally joined it for that source. Rally does not join public channels on its own, and does not join a channel because Slack reports its creation. Neither an invitation nor a Sidekick-source join links the room to anything (`room_bindings_retired`). See [external conversation bindings](external-conversation-bindings.md). To support follow-ups in a Sidekick run's thread, Slack delivers `message.channels`, `message.groups` and `message.mpim` events for conversations the bot has joined because Slack offers no thread-only event filter. The regional ingress accepts human replies in a bound thread or a message event matched by an explicitly configured Slack automation source; unrelated messages are discarded before durable queueing. Normalized automation activity retains bounded trigger evidence and identifiers, not a general-purpose copy of the source conversation or file content.
 
-When a prompt is denied because the channel classification or Agent policy needs attention, Rally retains that prompt regionally for at most 24 hours. This lets the same Slack member reply `try again` after the problem is fixed without retyping the request. The prompt is deleted when a session starts and expired rows are removed by scheduled maintenance. A narrowly matched, explicitly mentioned retry of a denial created before this mechanism may read at most the first 15 messages in that single thread to recover the prompting mention; unmentioned messages in other threads are ignored.
+No prompt is retained now. `slack_agent_pending_prompts` held a denied prompt for 24 hours so a member could reply `try again`; nothing writes it since Slack stopped starting work (`rememberSlackPendingPrompt` has no caller), though the routability check still reads it and the maintenance sweep still expires its rows.
 
-Natural public- and private-channel follow-ups require the workspace bot's `channels:history` and `groups:history` scopes. Existing workspace installations must complete the Rally OAuth flow again after this feature is released. The scopes apply only to conversations the bot can access; Rally's routing and retention restrictions above remain narrower than the provider grant.
+Follow-ups in public and private channels require the workspace bot's `channels:history` and `groups:history` scopes. Existing workspace installations must complete the Rally OAuth flow again after this feature is released. The scopes apply only to conversations the bot can access; Rally's routing and retention restrictions above remain narrower than the provider grant.
 
-Real-time Search API responses are transient context for the active model turn. Rally stores only the generic tool-completion summary for replay, not the retrieved search payload, and suppresses the later raw inference-request capture after a Slack search result enters the model context. Terminal attempt metadata still reaches the lakehouse. The event `action_token` remains hidden runtime authorization and is not copied into the work-stream transcript, Slack session context, tool input, tool output, or inference record.
+Real-time Search API responses are transient context for the active model turn. Rally stores only the generic tool-completion summary for replay, not the retrieved search payload, and suppresses the later raw inference-request capture after a Slack search result enters the model context. Terminal attempt metadata still reaches the lakehouse. The event `action_token` remains hidden runtime authorization and is not copied into the conversation transcript, Slack session context, tool input, tool output, or inference record.
 
-Normal product use can persist information in the resources that use it. A user prompt, bounded trigger record, Slack context used for the task, model-authored summary, workstream message, tool receipt, or automation result may remain in Rally. That is purpose-bound Rally work, not a cloned Slack corpus. By default these task and automation resources do not expire automatically; they remain until an authorized user deletes the resource or the workspace is deleted. Workspace disconnect revokes the credentials Rally holds and disables routing; a Slack administrator separately removes the app from Slack App Management to uninstall it from the workspace. Personal disconnect revokes that user's credential. Disconnecting does not delete existing Rally resources.
+Normal product use can persist information in the resources that use it. A user prompt, bounded trigger record, Slack context used for the task, model-authored summary, conversation message, tool receipt, or automation result may remain in Rally. That is purpose-bound Rally work, not a cloned Slack corpus. By default these task and automation resources do not expire automatically; they remain until an authorized user deletes the resource or the workspace is deleted. Workspace disconnect revokes the credentials Rally holds and disables routing; a Slack administrator separately removes the app from Slack App Management to uninstall it from the workspace. Personal disconnect revokes that user's credential. Disconnecting does not delete existing Rally resources.
 
 ### Ingress and routing
 
@@ -108,9 +108,9 @@ The shared ingress is `https://slack.rallywith.ai`:
 
 Ingress verifies `v0:{timestamp}:{exact raw body}` using HMAC-SHA256, requires a timestamp inside five minutes, compares in constant time, checks `api_app_id`, and deduplicates Events API `event_id` values. URL verification is answered synchronously. Before acknowledging an event, text command, or valid modal submission, the owning regional service writes an ingress job and publishes its opaque job ID to the regional [interactive queue](interactive-queue.md), which carries only work a person is waiting on. Modal validation errors are returned synchronously to Slack. Shortcuts that need a trigger ID open their modal synchronously. The Global router looks up only the team route and invokes the owning regional service binding.
 
-Queue workers atomically lease jobs, retry failed or abandoned work, and clear the stored ingress payload after successful processing. A job that failed on authorization is classified non-retryable and pinned at the attempt ceiling, which is right while a grant is dead and wrong the moment it is not: `redriveReauthorizedIngress` re-queues such a job once its connection has been written again, which a reauthorization always does. It is self-limiting, because a re-driven job that fails again stamps itself newer than the connection. Without it, events that arrived during an outage stayed failed forever with their payload still on the row — and a `link_shared` Slack reports exactly once is never redelivered, so the message keeps its bare URL permanently. Retries with the same `event_id` and body are acknowledged once. Reuse of an event ID with different content is a conflict. Provider payloads are not written to Global object storage during routing. Ordinary channel messages that do not match an existing or retryable Rally thread are acknowledged without creating a regional ingress job.
+Queue workers atomically lease jobs, retry failed or abandoned work, and clear the stored ingress payload after successful processing. A job that failed on authorization is classified non-retryable and pinned at the attempt ceiling, which is right while a grant is dead and wrong the moment it is not: `redriveReauthorizedIngress` re-queues such a job once its connection has been written again, which a reauthorization always does. It is self-limiting, because a re-driven job that fails again stamps itself newer than the connection. Without it, events that arrived during an outage stayed failed forever with their payload still on the row — and a `link_shared` Slack reports exactly once is never redelivered, so the message keeps its bare URL permanently. Retries with the same `event_id` and body are acknowledged once. Reuse of an event ID with different content is a conflict. Provider payloads are not written to Global object storage during routing. Ordinary channel messages that no binding claims are acknowledged without creating a regional ingress job.
 
-After a queued DM or mention passes connection, policy, and actor checks, the worker adds the acknowledgement reaction to the exact triggering message before it gathers context, creates/resumes a workstream, or starts model/tool processing. Slack's `already_reacted` response is a successful idempotent retry. A Slack-side reaction failure is logged and, when appropriate, marks the installation for reconnect, but does not discard the already-admitted user request. Commands and modal submissions have no unambiguous source message and retain their existing ephemeral/modal acknowledgement instead.
+Once a reply is admitted into a bound Sidekick run's thread, the worker adds the acknowledgement reaction to that message (see [the status reaction](#the-status-reaction)). Slack's `already_reacted` response is a successful idempotent retry. A Slack-side reaction failure is logged as `external_binding_acknowledgement_failed` and does not undo the admitted reply. Commands and modal submissions have no unambiguous source message and answer ephemerally or in their modal instead.
 
 The acknowledgement command is built and executed as two explicit adapter steps rather than through `acknowledgeConnectorAgentActivation`. The shared hook takes only the invocation, so it cannot see the workspace's configured reaction set; both steps are still the adapter's own, so the acknowledgement goes through the same control plane the shared helper would have used.
 
@@ -328,9 +328,12 @@ Threads. App Home is a personalized control surface published per user. Rally pu
 
 #### Linked member
 
-- **Start a task**, **Create automation**, and **Notifications** actions
-- needs-attention and running tasks
-- recent personal automations and next-run state
+- **Start a task**, **Create automation**, and **Notifications** actions; **Start
+  a task** opens the modal whose submission is answered with the retired-ingress
+  copy
+- a **Needs attention & recent tasks** header that is always empty ("Nothing
+  needs your attention right now."), since `linkedHome` is passed no tasks now
+- recent personal Sidekicks (headed **Automations**) and next-run state
 - explanation of optional personal Slack tools
 - privacy and support links
 
@@ -354,7 +357,7 @@ that product summary rather than reading a frozen D1 row.
   button is the desktop handoff. Not refused on a stored status; a grant that is
   really gone fails on Slack's answer.
 
-- Rally person mention: notify the matched member in the Rally Agent DM, falling back to email.
+- Rally person mention: notify the matched member in the Rally Agent DM; email is a separate choice the person makes, never a fallback.
 - Rally links: a Canvas or Sidekick link unfurls to a card naming it, with an
   **Open in Rally** button; its contents need the viewer's normal Rally
   authorization. A retired Thread link gets no card.
@@ -401,7 +404,8 @@ teammate a bot-authored Slack DM when the workspace installation can resolve the
 Slack link is preferred; otherwise Rally uses an exact verified-email lookup without silently
 linking the accounts. The message identifies the author, workspace, Canvas, complete
 mention text, and a secure **Open in Rally** handoff. If Slack cannot resolve or deliver it,
-Rally sends the existing mention email instead.
+nothing is sent in its place; the mention email goes only to a person who chose email for
+mentions.
 
 #### Morning Gmail briefing
 
@@ -458,14 +462,12 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
 - **The acknowledgement reaction is added by the host control plane after
   admission and authorization but before context gathering**, and
   `already_reacted` is a successful retry.
-- **At most one Rally reaction sits on a source message**, and a transition
-  removes only the emoji Rally itself last placed — never whatever it finds
-  there, which would take a member's reaction with it.
-- **History: the outcome reaction was applied by the Thread delivery path,
-  not by the rotation.** That path is deleted; nothing writes an outcome
-  reaction now.
-- **Attribution is not authorization.** An unlinked author's task still runs with
-  the workspace principal, and the opening message keeps its external Slack actor.
+- **Rally's reaction writer never removes a reaction.** It places one emoji on
+  an admitted reply (`remove: null`); removing whatever it found there would
+  take a member's reaction with it.
+- **Attribution is not authorization.** An unlinked author's reply in a bound
+  thread is recorded under their external Slack actor and authorizes nothing;
+  the run keeps its coordinator.
 - **Only connector ingress sets `principal: "connector"`, and only after
   verifying the link and membership on the message being delivered.** The
   conversation object re-checks membership alone, so the ingress's
@@ -536,7 +538,7 @@ not own:
 | The unfurl card, its audience rules, and the refresh sweep | [`links.md`](links.md) |
 | Frozen automation delivery targets | [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) |
 | The configured deployment boundary the shared ingress sits on | [`regionalization.md`](regionalization.md) |
-| The run a Slack prompt starts | [`agent-harness.md`](agent-harness.md) |
+| The Sidekick run a bound-thread reply continues | [`automation-lifecycle.md`](automation-lifecycle.md), [`agent-harness.md`](agent-harness.md) |
 
 ## Failure modes and limits
 
@@ -569,12 +571,8 @@ not own:
   `connector_oauth_callback_failed`.
 - **Retries with the same `event_id` and body are acknowledged once; reuse of an
   event ID with different content is a conflict.**
-- **A denied prompt is retained regionally for at most 24 hours** so the same
-  member can reply `try again` after the problem is fixed. It is deleted when a
-  session starts, and expired rows are removed by scheduled maintenance. A narrowly
-  matched, explicitly mentioned retry of a denial created *before* this mechanism
-  may read at most the first 15 messages in that single thread to recover the
-  prompting mention; unmentioned messages in other threads are ignored.
+- **No denied prompt is retained.** The pending-prompt rows' 24-hour expiry and
+  their maintenance sweep remain, with nothing writing new rows.
 - **A spent link challenge is kept for a day, then reaped.** Expired or
   consumed, the row stays 24 hours so a late click is refused with its reason
   rather than as a link Rally has never seen, and the `slack_ingress`
@@ -606,9 +604,9 @@ not own:
 - **An identity-link insert is refused only when the Slack identity already belongs
   to a different Rally member.** The personal connection still stands in that case,
   because resolving the conflict is not that operation's business.
-- **Suspended members and revoked links cannot start or continue tasks.** A
+- **Suspended members and revoked links carry no member authority.** A
   revoked link does not lock somebody out of a thread, though — it drops them to
-  the workspace principal, the same as any unlinked member.
+  an unlinked Slack actor, the same as any unlinked member.
 - **`connector_member_revoked` on an ingress job is a race, not a state.** A
   member already removed never presents a connector principal — `linkedAccount`
   resolves them to no link and the message runs under the workspace principal —
@@ -621,13 +619,6 @@ not own:
   one member's refusal says nothing about the workspace's grant. The same
   retryable classification covers `invalid_product_request`, the one-deploy
   window where a new Worker names a principal an old object script refuses.
-- **A private conversation's roster is read once and best effort.**
-  `conversations.members` needs `groups:read`, which an installation that has not
-  reconnected does not have, and it is bounded at 200 members. Known identities
-  resolve in one D1 read; only unresolved members call `users.info`, six at a time
-  under one shared ten-second deadline. A failure or a larger channel costs a
-  smaller starting room, not the prompt: everybody else is seated when they first
-  reply.
 - **Existing workspace installations must reconnect after a scope expansion**
   before health checks and tool calls succeed. Until the identity scopes arrive,
   lookup-based mentions are not sent to Slack, and nothing is sent in their place.
@@ -636,14 +627,10 @@ not own:
   `chat.postMessage` chunks. A pending elicitation is rendered from its saved
   canonical elicitation turn, not from the live model or the request row alone.
 - **A reaction failure never touches the run.** A missing `reactions:write`
-  discovered mid-run leaves whatever is on the message; a rate-limited rotation
-  step keeps the current emoji and tries again on the next tick; a configured
-  emoji Slack rejects falls back to Rally's default for that state.
-- **The rotation parks after 50 steps.** A backstop for a ticker whose run
-  vanished without reaching delivery, not a policy — the liveness check ends the
-  rotation as soon as the run does.
-- **Message-context reads are bounded** — up to eight nearby messages on a prompt,
-  and the per-tool bounds in [`slack-permissions.md`](slack-permissions.md).
+  leaves the message as it is, and a configured emoji Slack rejects falls back
+  to Rally's default for that state.
+- **Message-context reads are bounded** by the per-tool bounds in
+  [`slack-permissions.md`](slack-permissions.md).
 - **SSE responses on Slack's Streamable HTTP MCP endpoint are parsed**, but
   Rally never falls back to a separate legacy SSE endpoint.
 - **Revoked Gmail or Slack authorization marks the run or destination
@@ -661,7 +648,7 @@ not own:
 | --- | --- |
 | `apps/api/test/slack-agent-ingress.test.ts` | Signature verification, the replay window, dedupe, the ingress job written before acknowledgement, and the manifest read from `config/provider-apps/slack.json`. |
 | `packages/connectors/src/slack.test.ts` | The two authorization flows kept apart, the personal identity resolved from `auth.test` when the OAuth body names nobody, that a body which does name one spends no extra call, and the stage each callback failure is attributed to. |
-| `packages/connectors/src/slack-reactions.test.ts` | Override resolution, partial inheritance, the malformed-override fallback, and the rotation's wrap. |
+| `packages/connectors/src/slack-reactions.test.ts` | Override resolution, partial inheritance, the malformed-override fallback, and an override saved with the retired working rotation. |
 | `packages/connectors/src/slack-markdown.test.ts` | Block rendering, the notification fallback, and every split rule including the reopened fence. |
 | `apps/api/test/slack-account-link.test.ts` | Both routes to a link, mint-on-click, retirement ordering and its mint-time bound, and each refusal reason. |
 | `apps/api/test/slack-connection-health.test.ts` | That a stored status diagnoses rather than gates. |
@@ -733,8 +720,8 @@ API is insufficient. A temporary tunnel URL also requires regenerating and
 resaving the test manifest after every URL change.
 
 Run the acceptance matrix in `docs/e2e.md`, beginning with App Home/linking,
-Agent DM and thread continuation, mention, both shortcuts, `/rally`, signature
-replay, workspace search/read/write tools, personal MCP authorization, multi-workspace routing, and the Gmail
+a reply in a Sidekick run's thread, the retired-ingress answer to a DM, mention,
+both shortcuts and `/rally`, signature replay, workspace search/read/write tools, personal MCP authorization, multi-workspace routing, and the Gmail
 briefing's three/one/zero-result cases.
 
 ### Deployment and Marketplace gates

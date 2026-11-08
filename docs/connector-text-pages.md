@@ -9,7 +9,7 @@ without refetching a mutable provider export or treating a prefix as the file.
 - `packages/connectors/src/text-pages.ts`: UTF-8 page boundaries and private snapshot positions.
 - `packages/connectors/src/types.ts`: the host-owned `ConnectorTextPages` capability.
 - `packages/connectors/src/index.ts`: Google's type-aware readers, export validation, and refusal reasons.
-- `apps/api/src/services/connector-text-pages.ts`: regional R2 snapshots scoped to Organization, conversation, Breakout, and connection.
+- `apps/api/src/services/connector-text-pages.ts`: regional R2 snapshots scoped to Organization, conversation (its `workstreamId` and `substreamId`), and connection.
 - `apps/api/src/services/integrations.ts`: authorized store injection and historical tool-receipt surface reconstruction.
 
 ## How it works
@@ -27,8 +27,8 @@ current `capabilities.canDownload`. It then reads an R2 byte range from
 the original snapshot. Editing the provider file does not mix revisions within
 one read. Starting a new first-page call selects fresh content.
 
-The Sidekick authoring catalog receives the owning conversation and Breakout
-scope from its host and supplies the same snapshot capability as ordinary
+The Sidekick authoring catalog receives the owning conversation's scope from
+its host and supplies the same snapshot capability as ordinary
 connector execution. Both paths use the same source allowance and reader.
 The store checks ownership before a snapshot write; result publication remains
 fenced by the executing host and receipt authority. R2 reads use cheap abort
@@ -79,7 +79,7 @@ fails; pagination does not make ingestion unbounded. Google's separate export
 ceiling can still refuse a source before Rally reads it.
 
 Snapshots are regional payload objects under the owning conversation's
-`connector-text` prefix, with its Breakout and connection in the key. They have
+`connector-text` prefix, with its substream and connection in the key. They have
 no independent expiry. Existing resource-object cleanup does not register these
 snapshots, and there is no current deletion sweep for this prefix. Future
 payload retirement must include it;
@@ -92,7 +92,7 @@ The store does not add a separate cleanup scheduler.
   checks routing, format refusals, CSV coverage, Unicode boundaries, snapshot
   continuation, current Google access, and redacted provider reasons.
 - `pnpm --filter @rally/api test:workers test-workers/connector-text-pages.test.ts`
-  checks persistence and byte ranges against real R2, connection/Breakout
+  checks persistence and byte ranges against real R2, connection and substream
   isolation, write authority loss, and actual Sidekick-creator reads through
   provider HTTP doubles and real R2. The persistence test must fail if the snapshot
   write is dropped.

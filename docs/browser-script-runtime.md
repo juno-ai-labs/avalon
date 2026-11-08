@@ -7,10 +7,16 @@ follows the browser runtime used by Codex; the supported contract belongs to
 Rally and does not depend on a particular model family or claim full Codex or
 Playwright compatibility.
 
+**No run is given these tools today.** `createBrowserPlugin` is reached only
+through an agent profile's `plugins`, and `AGENT_PROFILES` in
+`apps/api/src/services/agent-profiles.ts` has been empty since its one profile,
+`session_import`, was removed with the browser session import (2026-11). The
+desktop realm, driver and API plugin are intact and tested, so this document
+describes them as they would run for the next profile that names the plugin.
+
 This document owns the orchestration realm and handle API. The durable
-request/answer transport remains in [desktop actions](desktop-actions.md), the
-signed-in native tabs in [embedded browser](embedded-browser.md), and the
-conversation commit in [session import](session-import.md).
+request/answer transport remains in [desktop actions](desktop-actions.md) and
+the signed-in native tabs in [embedded browser](embedded-browser.md).
 
 ## Where the code lives
 
@@ -76,12 +82,12 @@ at the end of each script call; only references reach the API/model.
 
 `browser_js_reset` destroys the orchestration realm. The next call creates a
 fresh session. The pinned page, its globals and already transferred file handles
-survive. Completion, failure and cancellation of an import dispose the runtime;
-closing a tab or browser, reloading the owning renderer, or losing its process
+survive. Completion, failure and cancellation of the owning run dispose the
+runtime; closing a tab or browser, reloading the owning renderer, or losing its process
 also disposes associated runtimes. Disposal discards bytes not yet transferred
 and fails the pending script; it never returns a successful partial transfer. Locator waits stop
 when their runtime is disposed. A page operation already submitted to Chromium
-can finish after cancellation, but it cannot send a late import answer or issue
+can finish after cancellation, but it cannot send a late answer or issue
 new browser requests through the destroyed realm.
 
 ## Invariants
@@ -92,14 +98,14 @@ new browser requests through the destroyed realm.
   RPC binding is its browser access. Guard: real Electron smoke verification;
   no automated security isolation guard.
 - Native RPC parses the closed request union and pins every operation to the
-  owner's tab. It refuses recursive script actions and import actions. Guard:
+  owner's tab. It refuses recursive script actions. Guard:
   `browser-script-driver.test.ts`; bootstrap tests reject other tab references.
 - The runtime documentation describes the implemented subset. Changing model
   families does not change this contract. Guard: bootstrap mapping tests and
   API tool tests; semantic browser behavior also requires Electron verification.
 - Stored bytes stay on the desktop and reset preserves transferred handles.
-  Otherwise a successful extraction could leave `import_finish` unable to read
-  its messages. Guard: executor tests and real Electron store/reset smoke.
+  Otherwise a successful extraction could leave a later tool call unable to
+  read what it stored. Guard: executor tests and real Electron store/reset smoke.
 - Browser tools use write receipts and never require individual confirmation.
   A script can mix reads and writes, so treating all scripts as safely retryable
   reads could duplicate mutations. Guard: API tool tests.
@@ -111,8 +117,7 @@ indexed accessibility observations, screenshots, a documented locator subset,
 native input, navigation and Rally page/file extensions. It does not open or
 switch tabs, control other applications, expose raw CDP, offer frames or implement
 read-only Playwright evaluate. Browser and page scopes are deliberately separate.
-Provider-specific extraction instructions remain skills, and `import_finish` /
-`import_fail` remain separate durable tools.
+Provider-specific extraction instructions remain skills.
 
 ## Failure modes and limits
 
@@ -120,11 +125,6 @@ Invalid RPC names/fields fail with declared-field Zod diagnostics. Stale indexes
 ambiguous locators, non-visible targets, disabled targets and unsupported methods
 produce repairable script errors. A closed pinned tab fails the desktop action.
 A reset during execution closes the realm and stops subsequent native work.
-
-The API admits new and update import runs only from client contract 2 or newer,
-which implements script/reset actions. Older or undeclared clients receive an
-update-required response before a Channel or agent is reserved. Other routes
-continue serving client contract 1.
 
 No new timeout or size limit is introduced. The desktop action transport still
 owns its deadline. Locators accept caller-supplied `timeoutMs`; otherwise missing targets or
@@ -137,12 +137,12 @@ page/store; emitting it still consumes model context.
 
 Run the API `test/desktop-action-tools.test.ts`, desktop
 `src/common/browser-script-bootstrap.test.ts`,
-`src/main/browser-script-driver.test.ts`, `src/main/browser-script-runtime.test.ts`, existing desktop executor/page-script
-and session-import-run tests, and harness prompt tests. API worker tests
-`test-workers/desktop-action-storage.test.ts` and
-`test-workers/session-import-run.test.ts` exercise script receipts, durable replay
-and the new tool inventory through real objects and sockets. Their model and
-desktop endpoints are doubles; they do not execute the Chromium realm.
+`src/main/browser-script-driver.test.ts`, `src/main/browser-script-runtime.test.ts`, the desktop executor
+and page-script tests, and harness prompt tests. The API worker test
+`test-workers/desktop-action-storage.test.ts` exercises the durable
+request/answer storage through a real object; no worker test runs the plugin
+inside a run, since no run is given it. Its desktop endpoint is a double; it
+does not execute the Chromium realm.
 
 Bootstrap tests execute
 the installed API against a typed RPC double; driver tests stand in for native
