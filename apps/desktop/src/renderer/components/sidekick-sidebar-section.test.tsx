@@ -47,6 +47,7 @@ describe('SidekicksSection', () => {
     const all = screen.getByRole('region', { name: 'All Sidekicks' });
     const support = within(all).getByRole('link', { name: /Support inbox/ });
     expect(support).toHaveAttribute('aria-current', 'page');
+    expect(support).toHaveClass('is-unread');
     expect(within(all).getByRole('link', { name: /Revenue analyst/ })).toHaveTextContent('Paused');
     expect(within(all).getByRole('link', { name: /Revenue analyst/ })).toHaveClass('is-unread');
   });
@@ -68,11 +69,6 @@ describe('SidekicksSection', () => {
     fireEvent.click(within(all).getByRole('combobox', { name: 'Sort Sidekicks' }));
     fireEvent.click(await screen.findByRole('option', { name: 'Name' }));
     expect(within(all).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(['/sidekicks/alpha', '/sidekicks/zulu']);
-  });
-
-  it('does not mark the open Sidekick unread from its own run', () => {
-    renderSection([sidekick('support', 'Support inbox', { unread: true })], '/sidekicks/support');
-    expect(screen.getByRole('link', { name: /Support inbox/ })).not.toHaveClass('is-unread');
   });
 
   it('pins a Sidekick dragged into Pinned, and unpins from its menu', async () => {

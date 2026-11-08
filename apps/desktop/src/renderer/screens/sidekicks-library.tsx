@@ -36,8 +36,7 @@ function matchesFilter(item: AutomationSummary, filter: SidekickFilter): boolean
  * The Status column's pill, as design.html §3 colours it. Waiting on someone is
  * the badge beside the name, so that row's pill says what it is otherwise.
  */
-const STATUS_PILL: Record<SidekickStatus, string> = {
-  needs_input: 'Active',
+const STATUS_PILL: Record<Exclude<SidekickStatus, 'needs_input'>, string> = {
   working: 'Working',
   paused: 'Paused',
   draft: 'Draft',
@@ -45,11 +44,14 @@ const STATUS_PILL: Record<SidekickStatus, string> = {
 };
 
 function StatusPill({ item }: { item: AutomationSummary }): React.JSX.Element {
-  const status = sidekickStatus(item);
+  // Waiting on someone is the badge's to say; the pill keeps the run and the
+  // lifecycle, so a paused Sidekick whose delegation needs attention reads
+  // Paused beside the badge.
+  const status = sidekickStatus({ status: item.status, runState: item.runState === 'working' ? 'working' : null });
   const tone = status === 'needs_input' ? 'active' : status;
   return <span className={`sidekick-status-pill is-${tone}`}>
-    {status === 'working' && <span aria-hidden="true" className="sidekick-working-dot" />}
-    {STATUS_PILL[status]}
+    {tone === 'working' && <span aria-hidden="true" className="sidekick-working-dot" />}
+    {STATUS_PILL[tone]}
   </span>;
 }
 

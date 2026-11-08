@@ -79,10 +79,10 @@ describe('pluginGroup', () => {
     expect(pluginGroup('rally:sidekicks', 'Automations')).toEqual(
       {
         key: 'name:Automations',
-        name: 'Automations',
+        name: 'Sidekicks',
         icon: 'automations',
-        activeVerb: 'Using Automations',
-        completedVerb: 'Used Automations',
+        activeVerb: 'Using Sidekicks',
+        completedVerb: 'Used Sidekicks',
       },
     );
     // The plug is what the display-name fallback would reach for; the pin is

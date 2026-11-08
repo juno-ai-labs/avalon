@@ -327,6 +327,20 @@ It does not own:
 
 ## Changelog
 
+### 2026-11-08 — The Sidekicks list sorts by recent activity, with the design's Recent control
+
+**What changed:** The Sidekicks section lists every Sidekick by what it last
+did (its newest run or change), with a **Recent** / **Name** control in the
+heading, where it was in the server's alphabetical order with no control.
+
+**Why:** design.html §3, the PRD's authority for every screen, draws "All
+sidekicks" sorted by recency with a "Recent ⇵" control; alphabetical rows
+beside their times read as a broken sort. The heading keeps "All Sidekicks",
+the product noun's case.
+
+**What a future change must respect:** the order is the client's over the
+list the socket keeps, so a reorder costs no request.
+
 ### 2026-11-08 — A long title truncates inside the pill, and a pill title can be edited in place
 
 **What changed:** The header's grid gives its side columns their

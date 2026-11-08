@@ -31,7 +31,7 @@ export function formatNextRun(value: string, weekday: 'short' | 'long' = 'short'
     : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
 }
 
-/** The time a Sidekick last did something: its newest run, or its own last change while it has none. */
+/** The time a Sidekick last did something: its newest run's start, or its own last change while it has none. */
 export function sidekickActivityAt(row: Pick<AutomationSummary, 'lastRunAt' | 'updatedAt'>): string {
-  return row.lastRunAt && row.lastRunAt > row.updatedAt ? row.lastRunAt : row.updatedAt;
+  return row.lastRunAt ?? row.updatedAt;
 }
