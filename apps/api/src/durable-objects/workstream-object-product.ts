@@ -2856,10 +2856,17 @@ export class WorkstreamObjectProductService {
     // A run waiting on a question says the question: it is what the run's
     // row, its Sidekick's row and the Needs input notice show, and the asking
     // is not a text turn, so the last reply would be whatever came before it.
+    // Between an answer and the resume it lets in, the conversation still
+    // says needs_input with no question pending; it says the question it was
+    // answered on until then. Read as the last reply instead, a run that had
+    // said nothing yet projected an empty one, and its Sidekick's row read a
+    // bare "Needs input" for that one frame (vis3 e2-N1).
     const question = sidekickRun
       ? this.storage.sql.exec<{ prompt: string }>(
-        `SELECT prompt FROM elicitation_requests WHERE status = 'pending'
-          ORDER BY created_at DESC, elicitation_id DESC LIMIT 1`,
+        `SELECT prompt FROM elicitation_requests
+          WHERE status = 'pending' OR (?1 = 'needs_input' AND status = 'answered')
+          ORDER BY status = 'pending' DESC, created_at DESC, elicitation_id DESC LIMIT 1`,
+        root.exact_state,
       ).toArray()[0]?.prompt
       : undefined;
     const preview = sidekickRun
