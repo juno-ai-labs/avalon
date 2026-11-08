@@ -330,6 +330,13 @@ async function runSettled(runId: string): Promise<void> {
   }), { timeout: SETTLE_TIMEOUT_MS, interval: 100 }).toBe(1);
 }
 
+/** The run's second activation, the one an answer resumes, once it has ended. */
+async function runSettled2(runId: string): Promise<void> {
+  await expect.poll(() => runInDurableObject(conversationStub(runId), (_instance, state) => state.storage.sql.exec<{ terminal: number }>(
+    `SELECT COUNT(*) AS terminal FROM runs WHERE execution_context_json IS NOT NULL AND terminalized_at IS NOT NULL`,
+  ).one().terminal), { timeout: SETTLE_TIMEOUT_MS, interval: 100 }).toBe(2);
+}
+
 beforeEach(async () => {
   script = [];
   ordinal += 1;
@@ -943,6 +950,64 @@ describe("a Sidekick's shared conversation", () => {
       { recipient_user_id: AUTHOR_ID, kind: "needs_input", run_id: started.runId, preview: question },
       { recipient_user_id: ADMIN_ID, kind: "needs_input", run_id: started.runId, preview: question },
     ]);
+  });
+
+  it("never sends the Sidekick's list row waiting with no question while an answered run resumes", async () => {
+    await activeSidekick();
+    const question = "Which release should the notes cover?";
+    script = [{
+      callTool: {
+        name: "request_elicitation",
+        arguments: {
+          prompt: question, responseType: "radio",
+          options: [{ value: "4.2", label: "4.2", description: null }, { value: "4.3", label: "4.3", description: null }],
+          minimumSelections: 1, maximumSelections: 1,
+        },
+      },
+    }];
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "answered-run-0001" });
+    expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([started.runId]);
+    await runSettled(started.runId);
+    await deliverChildEffects(TEST_ENV, conversationStub(started.runId));
+    await rowReaches(started.runId, "needs_input");
+    const response = await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
+      .fetch("https://workspace.test/socket", { headers: {
+        Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": AUTHOR_ID, "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": crypto.randomUUID(),
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1000) + 60),
+      } });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    const frames: Array<Record<string, unknown>> = [];
+    socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); });
+    socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+    type Row = { id: string; needsInput?: boolean; pendingQuestion?: string | null; runState?: string | null };
+    const rows = () => frames.filter((frame) => frame.type === "workspace_sidebar_list" && frame.list === "automations")
+      .map((frame) => (frame.items as Row[]).find((item) => item.id === AUTOMATION_ID))
+      .map((row) => ({ needsInput: row?.needsInput, pendingQuestion: row?.pendingQuestion, runState: row?.runState }));
+    try {
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
+      const elicitationId = await runInDurableObject(conversationStub(started.runId), (_instance, state) => state.storage.sql.exec<{
+        elicitation_id: string;
+      }>(`SELECT elicitation_id FROM elicitation_requests WHERE status = 'pending'`).one().elicitation_id);
+      const answered = await conversationStub(started.runId).fetch("https://object.test/internal/product", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "answer_elicitation", parentKind: "automation", auth: auth(AUTHOR_ID), elicitationId,
+          input: { answer: "4.3" } }),
+      });
+      expect(answered.status, await answered.clone().text()).toBe(200);
+      await runSettled2(started.runId);
+      await deliverChildEffects(TEST_ENV, conversationStub(started.runId));
+      await rowReaches(started.runId, "completed");
+      await expect.poll(() => rows().at(-1), { timeout: 5_000 }).toMatchObject({ needsInput: false });
+      // Every frame from the answer to the run's end: while the row still
+      // waits it says the question, never a bare "Needs input" (vis3 e2-N1).
+      expect(rows().filter((row) => row.needsInput && row.pendingQuestion !== question)).toEqual([]);
+    } finally {
+      socket.close();
+    }
   });
 
   it("sends the Sidekick list with the saved name and state in the save that makes a draft active", async () => {

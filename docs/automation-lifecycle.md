@@ -1942,7 +1942,15 @@ facts each stay on one line at phone width, wrapping only between them, where
 "6 steps" and "7 hours ago" broke mid-phrase (vis3 b1-R2-8). The run view's
 pill names the run as the row it was opened from does ("Run 6", vis3 e2-N3),
 reading the number from that row in the cached shared conversation; a run
-opened by a link before that conversation has loaded reads "Run". The client
+opened by a link before that conversation has loaded reads "Run". Between an
+answer and the resume it lets in, a run's conversation still says needs_input
+with no question pending, and its projection now says the question it was
+answered on: read as the last reply, a run that had said nothing yet sent an
+empty summary, and the Sidekick's list was sent once waiting with no question,
+a bare "Needs input" for about a second (vis3 e2-N1). Holding the question in
+the Sidekick, or skipping a summaryless waiting run in the list's probe, was
+rejected: the projection is where the reply is chosen, and the run's own row
+read the same empty reply in that frame. The client
 reads its own starting or working run's row as read as it arrives, mirroring
 the requester seat.
 
