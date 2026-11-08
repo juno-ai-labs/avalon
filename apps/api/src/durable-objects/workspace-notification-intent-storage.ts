@@ -139,6 +139,66 @@ export const NOTIFICATION_INTENTS_PARENT_NOTICES_MIGRATION: readonly string[] = 
 ];
 
 /**
+ * WorkspaceDO migration 152: admit a declined request to open a Canvas
+ * (`access_denied`), the notice its requester is now sent
+ * (`docs/canvas-access-requests.md`). Rebuilt as migration 150 rebuilt it;
+ * 150 stays as shipped.
+ */
+export const NOTIFICATION_INTENTS_ACCESS_DENIED_MIGRATION: readonly string[] = [
+  `CREATE TABLE workstream_notification_intents_v152 (
+    intent_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    workstream_id TEXT NOT NULL,
+    recipient_user_id TEXT NOT NULL,
+    source_message_id TEXT NOT NULL,
+    source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+    source_version INTEGER NOT NULL CHECK (source_version > 0),
+    required_directory_version INTEGER NOT NULL CHECK (required_directory_version > 0),
+    notification_kind TEXT NOT NULL CHECK (notification_kind IN ('mention', 'participant_added', 'needs_input', 'run_finished',
+      'new_message', 'artifact_updated', 'access_request', 'access_granted', 'access_denied')),
+    payload_json TEXT CHECK (payload_json IS NULL OR json_valid(payload_json)),
+    payload_hash TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'processing', 'delivered', 'skipped', 'failed')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    lease_id TEXT,
+    lease_expires_at TEXT,
+    last_error_code TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    delivered_at TEXT,
+    UNIQUE (source_message_id, recipient_user_id, notification_kind)
+  ) STRICT`,
+  `INSERT INTO workstream_notification_intents_v152
+     (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id,
+      source_generation, source_version, required_directory_version, notification_kind,
+      payload_json, payload_hash, state, attempts, lease_id, lease_expires_at,
+      last_error_code, created_at, updated_at, delivered_at)
+   SELECT intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id,
+      source_generation, source_version, required_directory_version, notification_kind,
+      payload_json, payload_hash, state, attempts, lease_id, lease_expires_at,
+      last_error_code, created_at, updated_at, delivered_at
+     FROM workstream_notification_intents`,
+  `DROP TABLE workstream_notification_intents`,
+  `ALTER TABLE workstream_notification_intents_v152 RENAME TO workstream_notification_intents`,
+  `CREATE INDEX workstream_notification_intents_delivery_idx
+    ON workstream_notification_intents(state, lease_expires_at, created_at, intent_id)`,
+  `CREATE INDEX workstream_notification_intents_terminal_idx
+    ON workstream_notification_intents(workstream_id, state, created_at)`,
+  // A reply's cooldown asks for this person's last delivered reply notice in
+  // one conversation.
+  `CREATE INDEX workstream_notification_intents_recipient_kind_idx
+    ON workstream_notification_intents(recipient_user_id, notification_kind, workstream_id, delivered_at)`,
+  `CREATE TRIGGER workstream_notification_intents_workspace_identity_insert
+    BEFORE INSERT ON workstream_notification_intents
+    WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+    BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+  `CREATE TRIGGER workstream_notification_intents_workspace_identity_update
+    BEFORE UPDATE OF workspace_id ON workstream_notification_intents
+    WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+    BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+];
+
+/**
  * Record a Sidekick run's notice for each recipient, already `delivered`:
  * push is its only channel and the queue message is its delivery, so there is
  * no lease to take (a mention's lease covers its Slack and email sends). The
@@ -186,7 +246,7 @@ export interface ParentNoticeRecord {
   /** The Canvas or Sidekick: the intent's `workstream_id`, which delivery checks the person may still open. */
   parentId: string;
   generation: number;
-  kind: "new_message" | "artifact_updated" | "access_request" | "access_granted";
+  kind: "new_message" | "artifact_updated" | "access_request" | "access_granted" | "access_denied";
   recipientUserId: string;
   intentId: string;
   /** With the recipient and the kind, what makes a repeat one intent. */
@@ -332,7 +392,7 @@ type NotificationIntentRow = Record<string, SqlStorageValue> & {
   source_generation: number;
   required_directory_version: number;
   notification_kind: "mention" | "participant_added" | "needs_input" | "run_finished"
-    | "new_message" | "artifact_updated" | "access_request" | "access_granted";
+    | "new_message" | "artifact_updated" | "access_request" | "access_granted" | "access_denied";
   payload_json: string | null;
   state: "pending" | "processing" | "delivered" | "skipped" | "failed";
 };

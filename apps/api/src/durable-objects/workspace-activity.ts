@@ -105,6 +105,45 @@ export const WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS: readonly string[] = [
     ON workspace_activity_items(recipient_user_id, parent_id)`,
 ];
 
+/**
+ * WorkspaceDO migration 152, beside the intents' rebuild: a row may be a
+ * declined request to open a Canvas (`access_denied`), sent to its
+ * requester. Copied as 150 made it, `subject_id` included.
+ */
+export const WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS: readonly string[] = [
+  `CREATE TABLE workspace_activity_items_v152 (
+    item_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    recipient_user_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('mention', 'participant_added', 'needs_input', 'run_finished',
+      'new_message', 'artifact_updated', 'access_request', 'access_granted', 'access_denied')),
+    parent_kind TEXT NOT NULL CHECK (parent_kind IN ('canvas', 'automation')),
+    parent_id TEXT NOT NULL,
+    substream_id TEXT,
+    message_id TEXT,
+    message_sequence INTEGER CHECK (message_sequence IS NULL OR message_sequence > 0),
+    run_id TEXT,
+    actor_kind TEXT NOT NULL CHECK (actor_kind IN ('person', 'rally', 'sidekick')),
+    actor_id TEXT,
+    preview TEXT,
+    attention_ordinal INTEGER CHECK (attention_ordinal IS NULL OR attention_ordinal >= 0),
+    created_at INTEGER NOT NULL CHECK (created_at >= 0),
+    subject_id TEXT
+  ) STRICT`,
+  `INSERT INTO workspace_activity_items_v152
+     (item_id, workspace_id, recipient_user_id, kind, parent_kind, parent_id, substream_id, message_id,
+      message_sequence, run_id, actor_kind, actor_id, preview, attention_ordinal, created_at, subject_id)
+   SELECT item_id, workspace_id, recipient_user_id, kind, parent_kind, parent_id, substream_id, message_id,
+      message_sequence, run_id, actor_kind, actor_id, preview, attention_ordinal, created_at, subject_id
+     FROM workspace_activity_items`,
+  `DROP TABLE workspace_activity_items`,
+  `ALTER TABLE workspace_activity_items_v152 RENAME TO workspace_activity_items`,
+  `CREATE INDEX workspace_activity_items_recipient_idx
+    ON workspace_activity_items(recipient_user_id, created_at DESC)`,
+  `CREATE INDEX workspace_activity_items_parent_idx
+    ON workspace_activity_items(recipient_user_id, parent_id)`,
+];
+
 /** One event for one recipient, as its recorder knows it. */
 export interface ActivityItemInput {
   itemId: string;
@@ -239,8 +278,9 @@ export function recordCollapsedActivityItem(sql: SqlStorage, item: ActivityItemI
  * version (`artifact_updated`) clears on any read of the Chat after it, the
  * rule the Canvas row's own artifact news takes. A request to open a Canvas
  * (`access_request`) stores no ordinal, so no read clears it: it is seen once
- * it is settled, by anyone. Any
- * row clears when Mark all seen came after it. One expression for the page
+ * it is settled, by anyone. A declined request (`access_denied`) is seen
+ * once its requester asks again: they have read the answer and acted on it.
+ * Any row clears when Mark all seen came after it. One expression for the page
  * and the count, so the two cannot disagree.
  */
 const ACTIVITY_SEEN_SQL = `(
@@ -251,6 +291,9 @@ const ACTIVITY_SEEN_SQL = `(
   OR (item.kind = 'artifact_updated' AND reads.user_id IS NOT NULL AND reads.updated_at >= item.created_at)
   OR (item.kind = 'access_request' AND EXISTS (
       SELECT 1 FROM canvas_access_requests request WHERE request.request_id = item.subject_id AND request.state <> 'pending'))
+  OR (item.kind = 'access_denied' AND EXISTS (
+      SELECT 1 FROM canvas_access_requests later WHERE later.canvas_id = item.parent_id
+         AND later.user_id = item.recipient_user_id AND later.created_at > item.created_at))
   OR (item.attention_ordinal IS NOT NULL AND reads.user_id IS NOT NULL
       AND reads.seen_attention_ordinal >= item.attention_ordinal
       AND (item.kind IN ('mention', 'new_message') OR reads.updated_at >= item.created_at))
@@ -305,12 +348,15 @@ export function activityPage(
          LEFT JOIN workspace_activity_seen marked ON marked.user_id = item.recipient_user_id
         WHERE item.recipient_user_id = ?1
      ), listed AS (
-       SELECT mine.*, COALESCE(canvas.title, directory.title) AS parent_title
+       SELECT mine.*, CASE WHEN mine.kind = 'access_denied' THEN NULL ELSE COALESCE(canvas.title, directory.title) END AS parent_title
          FROM mine
          LEFT JOIN canvas_directory canvas ON mine.parent_kind = 'canvas' AND canvas.canvas_id = mine.parent_id
          LEFT JOIN canvas_participants participant ON participant.canvas_id = canvas.canvas_id AND participant.user_id = ?1
          LEFT JOIN automation_directory directory ON mine.parent_kind = 'automation' AND directory.automation_id = mine.parent_id
         WHERE CASE
+                -- A declined request is about a Canvas its recipient may not
+                -- open: it lists while the Canvas exists, naming it by id only.
+                WHEN mine.kind = 'access_denied' THEN canvas.canvas_id IS NOT NULL
                 WHEN canvas.canvas_id IS NOT NULL THEN (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
                   OR (?3 = 1 AND canvas.visibility = 'workspace')
                   -- An owner or administrator may open every Canvas, so a row
@@ -331,7 +377,7 @@ export function activityPage(
             request.decided_by_user_id AS request_decided_by_user_id
        FROM listed
        LEFT JOIN resources artifact ON listed.kind = 'artifact_updated' AND artifact.id = listed.subject_id
-       LEFT JOIN canvas_access_requests request ON listed.kind = 'access_request' AND request.request_id = listed.subject_id
+       LEFT JOIN canvas_access_requests request ON listed.kind IN ('access_request', 'access_denied') AND request.request_id = listed.subject_id
       ORDER BY listed.created_at DESC, listed.item_id DESC
       LIMIT ?4`,
     viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit, JSON.stringify(admittingWriters),
@@ -355,7 +401,7 @@ export function activityPage(
       ...(row.kind === "artifact_updated"
         ? { artifact: row.subject_id !== null && row.artifact_title !== null ? { resourceId: row.subject_id, title: row.artifact_title } : null }
         : {}),
-      ...(row.kind === "access_request"
+      ...(row.kind === "access_request" || row.kind === "access_denied"
         ? { accessRequest: row.request_state === null ? null : {
             state: row.request_state, decidedByName: row.request_decided_by_name, decidedByUserId: row.request_decided_by_user_id,
           } }

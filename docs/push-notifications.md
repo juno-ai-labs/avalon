@@ -276,7 +276,10 @@ A member who asks to open a Canvas they cannot gives each of its deciders an
 linking to the Canvas, where the Share panel lists it. An approval gives the
 requester an `access_granted` intent, read through **Being added** (`added`),
 since being let in is being added: "<decider> let you into <Canvas>". A
-denial sends nothing. Both are recorded with their Activity rows by
+denial gives the requester an `access_denied` intent under their **Access
+requests** choice: "<decider> declined your request to open a Canvas", with
+no title (they were refused it), linking to the Canvas, and sent although
+they cannot list it. All three are recorded with their Activity rows by
 [`canvas-access-requests.md`](canvas-access-requests.md)'s settlement.
 
 ## What each person chooses

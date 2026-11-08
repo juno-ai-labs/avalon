@@ -129,13 +129,19 @@ export function pendingAccessRequest(sql: SqlStorage, canvasId: string, userId: 
   ).toArray()[0] ?? null;
 }
 
-/** This person's latest request to open this Canvas, pending or denied, for the pane that offers to ask. */
-export function latestAccessRequest(sql: SqlStorage, canvasId: string, userId: string): { state: "pending" | "denied"; requestedAt: string } | null {
-  const row = sql.exec<{ state: string; created_at: number }>(
-    `SELECT state, created_at FROM canvas_access_requests WHERE canvas_id = ? AND user_id = ?
+/**
+ * This person's latest request to open this Canvas, pending or denied, for
+ * the pane that offers to ask: a denied one says when, so the pane can say
+ * "Request declined" and offer to ask again.
+ */
+export function latestAccessRequest(sql: SqlStorage, canvasId: string, userId: string): { state: "pending" | "denied"; requestedAt: string; decidedAt: string | null } | null {
+  const row = sql.exec<{ state: string; created_at: number; decided_at: number | null }>(
+    `SELECT state, created_at, decided_at FROM canvas_access_requests WHERE canvas_id = ? AND user_id = ?
       ORDER BY created_at DESC, request_id DESC LIMIT 1`, canvasId, userId,
   ).toArray()[0];
-  return row && (row.state === "pending" || row.state === "denied") ? { state: row.state, requestedAt: new Date(row.created_at).toISOString() } : null;
+  return row && (row.state === "pending" || row.state === "denied")
+    ? { state: row.state, requestedAt: new Date(row.created_at).toISOString(), decidedAt: row.decided_at === null ? null : new Date(row.decided_at).toISOString() }
+    : null;
 }
 
 /** Every request waiting on this Canvas, oldest first, as the Share panel lists them. */
@@ -211,9 +217,11 @@ export async function requestCanvasAccess(host: CanvasAccessHost, subject: Canva
  * Settle a waiting request, by a decision or because the person was let in
  * some other way. `seat` adds them to the participant list (an approval); a
  * Canvas they already open is not changed. Every decider's row about it now
- * reads as settled, and an approval tells the requester with an
- * `access_granted` intent and row naming who let them in. Answers the state
- * it settled in, or null when nothing was waiting.
+ * reads as settled, and the requester is told either way: an approval with
+ * an `access_granted` intent and row naming who let them in, a denial with
+ * an `access_denied` one naming who declined, never the Canvas's title (they
+ * may not open it). Answers the state it settled in, or null when nothing
+ * was waiting.
  */
 export async function settleCanvasAccessRequest(host: CanvasAccessHost, subject: CanvasAccessSubject, input: {
   requesterUserId: string; deciderUserId: string; state: "approved" | "denied"; seat: boolean;
@@ -221,9 +229,9 @@ export async function settleCanvasAccessRequest(host: CanvasAccessHost, subject:
   const request = pendingAccessRequest(host.storage.sql, subject.canvasId, input.requesterUserId);
   if (!request) return null;
   const deciderName = await personName(host.env, subject.workspaceId, input.deciderUserId);
-  const notice: ParentNotice = {
-    kind: "access_granted", parentId: subject.canvasId, parentTitle: subject.title, requestId: request.request_id, deciderName,
-  };
+  const notice: ParentNotice = input.state === "approved"
+    ? { kind: "access_granted", parentId: subject.canvasId, parentTitle: subject.title, requestId: request.request_id, deciderName }
+    : { kind: "access_denied", parentId: subject.canvasId, requestId: request.request_id, deciderName };
   const payloadJson = JSON.stringify(notice);
   const payloadHash = await sha256(payloadJson);
   const now = Date.now();
@@ -237,8 +245,7 @@ export async function settleCanvasAccessRequest(host: CanvasAccessHost, subject:
     for (const row of host.storage.sql.exec<{ recipient_user_id: string }>(
       `SELECT recipient_user_id FROM workspace_activity_items WHERE kind = 'access_request' AND subject_id = ?`, request.request_id,
     ).toArray()) host.noteActivityChanged(row.recipient_user_id);
-    if (input.state === "denied") return [];
-    if (input.seat) {
+    if (input.state === "approved" && input.seat) {
       host.storage.sql.exec(
         `INSERT INTO canvas_participants (canvas_id, user_id, source, added_by_user_id, added_at)
          VALUES (?, ?, 'request', ?, ?) ON CONFLICT(canvas_id, user_id) DO NOTHING`,
@@ -252,8 +259,8 @@ export async function settleCanvasAccessRequest(host: CanvasAccessHost, subject:
     return [{
       recipientUserId: input.requesterUserId,
       ...recordParentNotice(host.storage, {
-        workspaceId: subject.workspaceId, parentId: subject.canvasId, generation: subject.generation, kind: "access_granted",
-        recipientUserId: input.requesterUserId, intentId: `access_granted:${request.request_id}`, sourceId: `access_granted:${request.request_id}`,
+        workspaceId: subject.workspaceId, parentId: subject.canvasId, generation: subject.generation, kind: notice.kind,
+        recipientUserId: input.requesterUserId, intentId: `${notice.kind}:${request.request_id}`, sourceId: `${notice.kind}:${request.request_id}`,
         payloadJson, payloadHash, skipCode: null, collapse: false,
         activity: {
           parentKind: "canvas", parentId: subject.canvasId, substreamId: "0", messageId: null, runId: null,

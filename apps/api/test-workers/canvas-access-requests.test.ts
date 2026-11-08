@@ -5,7 +5,8 @@
  * cannot open it asks, its deciders (its creator and the Organization's
  * administrators) each get an `access_request` intent and an Activity row on
  * their sockets, a decider approves or denies, and an approval seats the
- * requester and tells them with an `access_granted` intent and row. Being
+ * requester and tells them with an `access_granted` intent and row, and a
+ * denial tells them with an `access_denied` one that never names the title. Being
  * added by Share, or the Canvas being made Organization-wide, settles a
  * waiting request. `docs/canvas-access-requests.md` owns the mechanism.
  */
@@ -166,7 +167,7 @@ describe("asking to open a Canvas", () => {
     expect(await requests()).toEqual([{ user_id: REQUESTER, state: "pending", decided_by_user_id: null, message: "I'm picking up the launch" }]);
     expect((await intents("access_request")).map((intent) => intent.recipient_user_id)).toEqual([ADMIN, CREATOR].sort());
     expect(await workspace().canvasAccess({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(REQUESTER) }))
-      .toEqual({ access: "requestable", title: null, request: { state: "pending", requestedAt: expect.any(String) } });
+      .toEqual({ access: "requestable", title: null, request: { state: "pending", requestedAt: expect.any(String), decidedAt: null } });
 
     const waiting = { kind: "access_request", parentKind: "canvas", parentId: CANVAS_ID, parentTitle: "Launch plan",
       actor: { kind: "person", id: REQUESTER }, preview: "I'm picking up the launch" };
@@ -199,16 +200,26 @@ describe("asking to open a Canvas", () => {
     creator.close();
   });
 
-  it("settles a denial without telling the requester, and lets them ask again", async () => {
+  it("tells the requester who declined, never the title, and lets them ask again", async () => {
     await ask();
+    const requester = await connect(REQUESTER);
     expect(await decide("deny", ADMIN)).toEqual({ state: "denied" });
     expect(await intents("access_granted")).toEqual([]);
-    expect((await openedActivity(REQUESTER)).items).toEqual([]);
+    const declined = { kind: "access_denied", parentKind: "canvas", parentId: CANVAS_ID, parentTitle: null,
+      actor: { kind: "person", id: ADMIN }, preview: null, accessRequest: { state: "denied", decidedByName: "Ada", decidedByUserId: ADMIN } };
+    await expect.poll(() => requester.pushes.at(-1)).toMatchObject({ unseenCount: 1, items: [{ ...declined, seen: false }] });
+    requester.close();
+    const [denied] = await intents("access_denied");
+    expect(denied).toMatchObject({ recipient_user_id: REQUESTER, state: "delivered" });
+    expect(await alertFor(REQUESTER, denied!.intent_id)).toEqual({ title: "Ada declined your request to open a Canvas", body: "",
+      url: expect.stringMatching(/\/cv\/[1-9A-Za-z]+\/$/u) });
     expect((await openedActivity(CREATOR)).items).toMatchObject([{ kind: "access_request", accessRequest: { state: "denied", decidedByName: "Ada", decidedByUserId: ADMIN }, seen: true }]);
     expect(await workspace().canvasAccess({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(REQUESTER) }))
-      .toMatchObject({ request: { state: "denied" } });
+      .toEqual({ access: "requestable", title: null, request: { state: "denied", requestedAt: expect.any(String), decidedAt: expect.any(String) } });
+    // Asking again is allowed, and reads the answer as seen.
     expect(await ask()).toEqual({ status: "pending" });
     expect((await requests()).map((request) => request.state)).toEqual(["denied", "pending"]);
+    expect(await openedActivity(REQUESTER)).toMatchObject({ unseenCount: 0, items: [{ ...declined, seen: true }] });
   });
 
   it("settles a waiting request when Share adds its person, and grants every one when the Canvas opens to the Organization", async () => {
