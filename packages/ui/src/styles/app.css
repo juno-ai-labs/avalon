@@ -5402,8 +5402,13 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 
 /* Work-stream conversation refinement: continuous transcript, compact human turns,
    quiet tool disclosures, and a low fixed composer. */
+/* One column for the transcript and the composer under it, as design.html §2
+   draws them (about 470px each): the column's content box is the composer's
+   width, so a reply starts where the field starts and the reader's own bubble
+   ends where it ends, with a panel open or not. A pane narrower than that
+   gives both its own width. */
 .workstream-screen .transcript-column {
-  max-width: var(--av-cmp-feed-width-wide);
+  max-width: calc(var(--composer-width) + 2 * var(--space-8));
   padding: var(--space-8) var(--space-8);
 }
 

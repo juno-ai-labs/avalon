@@ -454,7 +454,10 @@ field is centred on it, so the field and the bubbles it produces read as one
 column rather than as a full-width row under a narrow transcript. Two rules read
 that property: the composer stack under `.has-message-capsule` and the opening
 skeleton's composer, so the placeholder a conversation opens on is the width
-of the field that replaces it. The cap is declared once: the composer cannot read it off the turns, sitting as it
+of the field that replaces it. The transcript column takes the same width: its
+content box is `--composer-width`, so a reply starts where the field starts and
+the reader's own bubble ends where the field ends, with an artifact panel open
+or not (design.html §2's one column of about 470px). The cap is declared once: the composer cannot read it off the turns, sitting as it
 does outside the scroller, in a box the transcript column's percentages never
 reach.
 
@@ -873,13 +876,24 @@ of who is here) and the details in a right-hand column. The "‹ Sidekicks"
 crumb, the "Conversation" heading and the Conversation/Details switch row are
 gone; below 900px the header's **Sidekick details** button switches to the
 details under that same header. An open run is a "Run" pill after the
-Sidekick's, which leads back.
+Sidekick's, which leads back. In the transcript, a colleague's turn sits on
+the leading edge as plain text under their avatar, Rally's turn carries an "R"
+avatar, and the reader's own bubble is their colour's pastel pair rather than
+the saturated hue. The transcript column is the composer's width, where it
+was up to 940px (v4-R2-2, v1-R2-2).
 
-**Why:** Design §4, the PRD's authority for every screen, draws a Sidekick
-like a Canvas: conversation as the hero, details on the right. The inspection
-found it mirrored, its name in no header, and at phone width three stacked
-headers (the sheet's, the crumb row and "Conversation") that never named the
-Sidekick.
+**Why:** The PRD makes design.html the authority for every screen. Its §4
+draws a Sidekick like a Canvas: conversation as the hero, details on the
+right. The inspection found it mirrored, its name in no header, and at phone
+width three stacked headers (the sheet's, the crumb row and "Conversation")
+that never named the Sidekick. Its §2 right-aligns only the viewer's turn. The
+earlier rule put every person on the right so the transcript read the same
+for everyone; a reader then could not tell their own turn from a colleague's
+by place (v1-F9, v4-F8). The saturated bubble under white ink failed contrast
+on rose, 3.58:1, in both appearances (v3-G3), and the pastel pair is themed
+per appearance. With no panel open the transcript ran 876px under a 480px
+field, so a reply began 200px left of the field and the reader's question
+ended 200px right of it; the design draws both in one column.
 
 **Considered and rejected:** Rendering the header inside the conversation, as
 a Canvas does: it would vanish with the conversation when the details take its
