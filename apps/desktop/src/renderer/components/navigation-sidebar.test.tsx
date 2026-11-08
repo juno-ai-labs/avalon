@@ -6,7 +6,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CollaborationSessionProvider } from '../lib/collaboration-session';
-import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
+import { applyVersionedSidebarList, type ActivityList } from '../lib/sidebar-list-store';
 import type { AutomationSummary, Workspace } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { NavigationSidebar } from './navigation-sidebar';
@@ -46,8 +46,9 @@ function Location(): React.JSX.Element {
   return <div data-testid="location">{useLocation().pathname}</div>;
 }
 
-function renderSidebar(person: Workspace = workspace, route = '/'): void {
+function renderSidebar(person: Workspace = workspace, route = '/', activity?: ActivityList): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (activity) applyVersionedSidebarList(client, 'activity', 1, activity);
   applyVersionedSidebarList(client, 'canvases', 1, [
     canvas('00000000-0000-7000-8000-0000000000c1', 'Q4 revenue review', { unread: true }),
     canvas('00000000-0000-7000-8000-0000000000c2', 'Launch plan', { pinnedPosition: 0 }),
@@ -86,7 +87,7 @@ describe('the Canvases and Sidekicks sections', () => {
     renderSidebar();
     const rail = screen.getByRole('navigation', { name: 'Sections' });
     expect([...rail.querySelectorAll('.navigation-rail-label')].map((label) => label.textContent))
-      .toEqual(['Canvases', 'Sidekicks']);
+      .toEqual(['Canvases', 'Sidekicks', 'Activity']);
     const canvases = within(rail).getByRole('button', { name: /Canvases/ });
     expect(canvases).toHaveAttribute('aria-current', 'page');
     expect(within(canvases).getByRole('img', { name: '1 unread' })).toHaveTextContent('1');
@@ -186,5 +187,56 @@ describe('the Canvases and Sidekicks sections', () => {
     vi.resetModules();
     const relaunched = await import('../lib/ui-store');
     expect(relaunched.useUiStore.getState().sidebarSection).toBe('sidekicks');
+  });
+});
+
+describe('the Activity section', () => {
+  const AVERY = '00000000-0000-7000-8000-0000000000b1';
+  const CANVAS = '00000000-0000-7000-8000-0000000000c1';
+  const SIDEKICK = '00000000-0000-7000-8000-0000000000d1';
+  const RUN = '00000000-0000-7000-8000-0000000000d2';
+  const page: ActivityList = {
+    unseenCount: 2,
+    items: [
+      { id: 'a1', kind: 'needs_input', parentKind: 'automation', parentId: SIDEKICK, parentTitle: 'Release notes', substreamId: RUN as never,
+        messageId: null, runId: RUN, actor: { kind: 'sidekick', id: SIDEKICK }, preview: 'Which environment?', createdAt: '2026-11-08T09:59:00.000Z', seen: false },
+      { id: 'a2', kind: 'mention', parentKind: 'canvas', parentId: CANVAS, parentTitle: 'Q4 revenue review', substreamId: '0' as never,
+        messageId: '00000000-0000-7000-8000-0000000000e1', runId: null, actor: { kind: 'person', id: AVERY }, preview: 'Can you check the totals?',
+        createdAt: '2026-11-08T09:58:00.000Z', seen: false },
+      { id: 'a3', kind: 'participant_added', parentKind: 'canvas', parentId: CANVAS, parentTitle: null, substreamId: '0' as never,
+        messageId: null, runId: null, actor: { kind: 'person', id: AVERY }, preview: null, createdAt: '2026-11-08T09:00:00.000Z', seen: true },
+    ],
+  };
+
+  beforeEach(() => {
+    api.getWorkspaceMembers.mockResolvedValue([{ id: AVERY, name: 'Avery', email: 'avery@rally.test', timezone: 'UTC' }] as never);
+  });
+
+  it('badges the rail with the unseen count and lists who did what where, newest first, opening each where it happened', async () => {
+    renderSidebar(workspace, '/', page);
+    const rail = screen.getByRole('navigation', { name: 'Sections' });
+    const activity = within(rail).getByRole('button', { name: /Activity/ });
+    expect(within(activity).getByRole('img', { name: '2 unseen' })).toHaveTextContent('2');
+    fireEvent.click(activity);
+    expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
+
+    const rows = within(screen.getByRole('region', { name: 'Activity' })).getAllByRole('link');
+    await waitFor(() => expect(rows[1]).toHaveTextContent('Avery mentioned you in Q4 revenue review'));
+    expect(rows.map((row) => row.querySelector('.activity-row-text')?.textContent)).toEqual([
+      'Release notes needs your input',
+      'Avery mentioned you in Q4 revenue review',
+      // A Canvas the person may no longer open is not named.
+      'Avery added you to a Canvas',
+    ]);
+    expect(rows.map((row) => row.getAttribute('href'))).toEqual([`/sidekicks/${SIDEKICK}`, `/canvases/${CANVAS}`, `/canvases/${CANVAS}`]);
+    expect(rows.map((row) => within(row).queryByRole('img', { name: 'Unseen' }) !== null)).toEqual([true, true, false]);
+    expect(rows[0]).toHaveTextContent('Which environment?');
+  });
+
+  it('says how it fills when there is nothing yet, and offers Mark all seen only with something unseen', () => {
+    useUiStore.getState().setSidebarSection('activity');
+    renderSidebar(workspace, '/', { unseenCount: 0, items: [] });
+    expect(screen.getByText('Nothing yet. Mentions, Canvases you are added to and Sidekick runs that need you or finish show up here.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Mark all seen' })).toBeDisabled();
   });
 });

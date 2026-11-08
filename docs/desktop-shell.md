@@ -66,27 +66,35 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   window centers over it per macOS version (the width is
   `--navigation-rail-width`; change it and the light position together):
   **Canvases**, a page outline (the sheet every artifact tile draws), and
-  **Sidekicks**, the Tabler hexagon a Sidekick is drawn in, then the account
-  menu at the bottom, labelled Settings. Every entry, the account menu's
+  **Sidekicks**, the Tabler hexagon a Sidekick is drawn in, and **Activity**,
+  the triangle outline it wore before the pivot, then the account menu at the
+  bottom, labelled Settings. Every entry, the account menu's
   trigger included, is one `RailItem`: a 34px tile around a 22px shape, so they
   share size, hover and the active tint, which a menu's trigger also takes
   while its menu is open. The choice is a device preference
   (`rally.sidebar-section`, default `canvases`); a value stored before the
-  cutover (`channels`, `threads`, `pinned`, `artifacts`, `activity`) reads as
-  the default. Each section carries a red count (`RailBadge`; nothing at zero,
+  cutover (`channels`, `threads`, `pinned`, `artifacts`) reads as the default,
+  and `activity` opens Activity again. Each section carries a red count (`RailBadge`; nothing at zero,
   `99+` past two digits): **Canvases**, each Canvas holding something this
   person has not read; **Sidekicks**, each Sidekick that needs input or holds
-  something unread. Both are read from the lists the workspace socket keeps,
-  the same rows the lists draw. The desktop host renders a top spacer for
+  something unread; **Activity**, every item this person has not seen
+  (`unseenCount`, "3 unseen"). All three are read from the lists the
+  workspace socket keeps, the same rows the lists draw. The dock badge adds up
+  the first two only: Activity is not Needs attention
+  ([`menu-bar.md`](menu-bar.md)). The desktop host renders a top spacer for
   macOS window controls and a window-drag region on Windows and Linux. The
   browser host omits it.
 - **One list**, titled with the section's name. **Canvases** is a Pinned
   group, then every Canvas by recent activity; its action is **New Canvas**
   (`POST /canvases`, then the new Canvas's route). **Sidekicks** is **Needs
   input**, then Pinned, then every Sidekick; its action is **New Sidekick**
-  (`/sidekicks/new`). A guest gets neither New action. Each list has **Restart
-  to update** when one is downloaded, and **Search organization** last, so it
-  holds its place as the person moves between the two.
+  (`/sidekicks/new`). A guest gets neither New action. **Activity** lists the
+  person's mentions, adds and Sidekick run notices newest first, each a kind
+  glyph, who did what where, the preview, a time and an unseen dot, opening
+  the Canvas or the Sidekick's conversation; its action is **Mark all seen**
+  ([`activity.md`](activity.md)). Each list has **Restart to update** when one
+  is downloaded, and **Search organization** last, so it holds its place as
+  the person moves between the sections.
   [`canvases.md`](canvases.md#in-the-client) says what a Canvas row shows, and
   [`pinning.md`](pinning.md) owns the Pinned group.
 
@@ -305,6 +313,26 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-08 — Activity is the rail's third section
+
+**What changed:** The rail gains **Activity** after Sidekicks, with the
+triangle it wore before the pivot. Its list is the person's Activity
+(`ActivitySection`), its badge the unseen count, and its header action
+**Mark all seen**. A stored `rally.sidebar-section` of `activity` opens it
+again instead of reading as the default.
+
+**Why:** The user asked on 2026-11-08 to bring the Activity section back, as a
+feed of what happened to the person in Canvases and Sidekicks
+([`activity.md`](activity.md)). The browser mounts the same renderer, so both
+platforms get it.
+
+**Considered and rejected:** Adding Activity to the dock badge. The dock badge
+and the menu bar count Needs attention, by the menu bar's 2026-11-07 decision;
+an unseen mention whose Canvas is already unread would be counted twice.
+
+**Consequences:** `SidebarSection` has three values; a fourth section needs a
+`BADGE_NOUNS` entry and a decision on whether the dock counts it.
 
 ### 2026-11-07 — A restored route waits for onboarding and falls back silently
 

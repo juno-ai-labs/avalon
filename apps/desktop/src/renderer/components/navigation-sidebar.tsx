@@ -1,5 +1,5 @@
 import { ShapeOutline } from '@rally/ui/components/identity-tile';
-import { IconDeviceDesktopDown, IconHexagon, IconMenu2, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
+import { IconChecks, IconDeviceDesktopDown, IconHexagon, IconMenu2, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -12,6 +12,8 @@ import type { Workspace } from '../lib/types';
 import { useUiStore, type SidebarSection } from '../lib/ui-store';
 import { useCanvasList } from '../lib/canvases';
 import { useDockBadge } from '../lib/dock-badge';
+import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
+import { ActivitySection, useActivityList } from './activity-sidebar-section';
 import { CanvasesSection } from './canvas-sidebar-section';
 import { ErrorNotice, IconButton } from './primitives';
 import { RailItem } from './rail-item';
@@ -22,42 +24,48 @@ import { PHONE_LAYOUT_MAX_WIDTH } from '@rally/ui/lib/phone-layout';
 const NAVIGATION_SHEET_ID = 'rally-navigation-sheet';
 
 /**
- * The rail's two sections. Canvases takes the page every artifact tile draws;
- * Sidekicks the hexagon a Sidekick is drawn in. Settings sits at the bottom of
- * the rail, in the account menu.
+ * The rail's three sections. Canvases takes the page every artifact tile
+ * draws; Sidekicks the hexagon a Sidekick is drawn in; Activity the triangle
+ * it wore before the pivot. Settings sits at the bottom of the rail, in the
+ * account menu.
  */
 const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNode }> = [
   { id: 'canvases', label: 'Canvases', icon: <ShapeOutline shape="sheet" /> },
   { id: 'sidekicks', label: 'Sidekicks', icon: <IconHexagon aria-hidden="true" size={22} stroke={1.8} /> },
+  { id: 'activity', label: 'Activity', icon: <ShapeOutline shape="triangle" /> },
 ];
 
 /**
  * Each section's count, and whether both lists have arrived so the counts are
  * whole. Canvases counts each Canvas holding something this person has not
  * read; Sidekicks each Sidekick waiting on input or holding something unread
- * (`common/sidebar-attention.ts`, which the menu bar counts by too). The rail
- * draws these and the dock badge adds them up, so the two cannot disagree.
+ * (`common/sidebar-attention.ts`, which the menu bar counts by too); Activity
+ * each item this person has not seen (`docs/activity.md`). The rail draws
+ * these; the dock badge adds up the first two only, as the menu bar does
+ * (`docs/menu-bar.md`), so Activity never joins Needs attention.
  */
 export function useSectionCounts(): { counts: Record<SidebarSection, number>; complete: boolean } {
   const canvases = useCanvasList();
   const sidekicks = useSidekickList();
+  const activity = useActivityList();
   return {
     counts: {
       canvases: (canvases ?? []).filter((row) => canvasNeedsAttention(row)).length,
       sidekicks: (sidekicks ?? []).filter((row) => sidekickNeedsAttention(row)).length,
+      activity: activity?.unseenCount ?? 0,
     },
     complete: canvases !== undefined && sidekicks !== undefined,
   };
 }
 
-/** The dock badge, or an installed browser app's icon badge: the rail's two counts added up. */
+/** The dock badge, or an installed browser app's icon badge: the Canvases and Sidekicks counts added up, not Activity's. */
 export function useRailDockBadge(): void {
   const { counts, complete } = useSectionCounts();
   useDockBadge(counts.canvases + counts.sidekicks, complete);
 }
 
 /**
- * The sidebar: a rail of two sections (Canvases, Sidekicks) beside one list.
+ * The sidebar: a rail of three sections (Canvases, Sidekicks, Activity) beside one list.
  * One list column with a tab switcher, never stacked hierarchy rails
  * (`docs/desktop-shell.md`). Shared by the Mac app and the browser.
  */
@@ -134,6 +142,7 @@ export function NavigationSidebar({
   const createCanvas = useCreateCanvas();
   const [createCanvasError, setCreateCanvasError] = useState<Error | null>(null);
   const navigate = useNavigate();
+  const workspaceSocket = useOptionalWorkspaceSocket();
   return <ResizableSidebar
     aria-label="Rally navigation"
     className={clsx('sidebar single-sidebar navigation-sidebar', sidebarOpen && 'is-mobile-open')}
@@ -184,6 +193,9 @@ export function NavigationSidebar({
             {section === 'sidekicks' && !guest && <IconButton label="New Sidekick" onClick={() => void navigate('/sidekicks/new')}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
+            {section === 'activity' && <IconButton disabled={badges.activity === 0 || !workspaceSocket} label="Mark all seen" onClick={() => workspaceSocket?.markAllActivitySeen()}>
+              <IconChecks aria-hidden="true" size={18} stroke={1.8} />
+            </IconButton>}
             <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
               <IconSearch aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>
@@ -193,6 +205,7 @@ export function NavigationSidebar({
           {section === 'canvases' && createCanvasError && <ErrorNotice occurrence={createCanvasError}>The Canvas could not be made. Try again.</ErrorNotice>}
           {section === 'canvases' && <CanvasesSection scroll={scroll} />}
           {section === 'sidekicks' && <SidekicksSection scroll={scroll} />}
+          {section === 'activity' && <ActivitySection scroll={scroll} />}
         </SidebarScroll>
         {footerItems && <SidebarFooterItems>{footerItems}</SidebarFooterItems>}
       </div>
@@ -208,7 +221,7 @@ export function sectionForPath(pathname: string): SidebarSection | null {
 }
 
 /** What a section's count says it counts, for its accessible name. */
-const BADGE_NOUNS: Record<SidebarSection, string> = { canvases: 'unread', sidekicks: 'waiting' };
+const BADGE_NOUNS: Record<SidebarSection, string> = { canvases: 'unread', sidekicks: 'waiting', activity: 'unseen' };
 
 /** What a section's count says, for its accessible name: "3 waiting". */
 function badgeLabel(section: SidebarSection, count: number): string {
