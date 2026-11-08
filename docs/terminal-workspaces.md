@@ -222,7 +222,7 @@ earns it differently. `publish_branch_and_pr` reattaches to the publication its
 run recorded. `checkout_repository` converges: it never reads the effect
 identity, and re-entry re-selects the same repository at the same access, so an
 interrupted replacement is repaired by finishing it. `publish_resource` can do
-neither — it resolves a document by `(work stream, published path)`, which says
+neither — it resolves a document by `(conversation, published path)`, which says
 what is published there now rather than what this attempt published — so it
 carries a `reconcileEffect` that reads the `resource_versions` ledger, and the
 host runs the executor only when that ledger proves the attempt is absent. Every
@@ -927,9 +927,11 @@ these focused tests fail. On real workerd,
 `test-workers/terminal-authority.test.ts` proves the lease SQL for a holder
 that ran elsewhere, that a factory bound to the owner's conversation leaves
 the agent's object, and that a stop or archive claim and its failure leave the
-published deadline where it was; `test-workers/durable-object-runtime.test.ts`
-proves a conversation parent forwards the earliest conversation deadline and lists
-the conversations that own one. The per-call lease is `terminal-runtime.test.ts`:
+published deadline where it was; `test-workers/hosted-sidekick.test.ts` proves
+a conversation parent forwards the earliest conversation deadline and lists the
+conversations that own one (`childTerminalDeadlines`), and the Node suites
+`test/terminal-settings.test.ts` and `test/terminal-routes.test.ts` exercise the
+sweep and policy walk over it. The per-call lease is `terminal-runtime.test.ts`:
 one run's writes release between calls and re-run readiness when the row moved,
 and a read proceeds while another run's write holds the lease where a write
 waits; every recovery case there drives the successor through a write, since
