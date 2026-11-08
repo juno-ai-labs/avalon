@@ -426,6 +426,11 @@ the rail's first section and `/canvases` the landing route
 - **Share** offers the three visibilities and a people picker to someone the
   detail says may manage it (`canManage`), and saves with
   `POST /canvases/:id/audience`; anyone else sees the same audience read-only.
+  The picker never lists the viewer or the creator, and with "Everyone in the
+  Organization" it lists guests only, since members are in already; only the
+  chosen guests are sent with that visibility. Its radios and checkboxes are
+  the shared `.choice-control`, the guest invite a disclosure with the title
+  menus' chevron, and Cancel and Save sit at the dialog's foot, below it.
   A guest is invited by email through the conversation share panel
   (`ScopeSharingPanel`) with a `workstream` target naming the Canvas, without
   its waiting-shares list, which has no server route.
@@ -564,7 +569,8 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 home page draws the design's card grid, each card's shot sketching what the
 Canvas holds, with a Live chip; its copy is the design's, and the sidebar's
 list is "All canvases" with a sort. The header puts the pill at the left with
-a separate "⋯" button.
+a separate "⋯" button. The Share panel draws its controls from the tokens and
+offers only guests to pick when the whole Organization can open the Canvas.
 
 **Why:** The PRD makes design.html the authority for every screen. The mark
 was a grey tile on purpose ("a Canvas has no hue of its own, as a pinned
@@ -574,7 +580,10 @@ dark pair in dark, and a column of identical grey squares could not be
 scanned (v1-F2, v4-F3, v3-G4). The home page was a two-column list of icon
 rows where the design draws cards with a thumbnail and a Live chip (v1-F3,
 v4-F2), and the header centred the pill, hung its menu off the chevron only,
-and moved Share when the artifact panel opened (v1-F8).
+and moved Share when the artifact panel opened (v1-F8). The Share panel drew
+the browser's blue radios and a raw disclosure marker, set its actions above
+the guest invite, and listed members, the viewer among them, to pick when
+every member was already in (v1-F18, v1-F19, v4-F14, v3-G9).
 
 Two choices the design does not settle, made in review and open to the
 owner's reversal: the hue is per Canvas from its id rather than per kind,
