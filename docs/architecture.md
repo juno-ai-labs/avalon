@@ -660,9 +660,9 @@ access and no-egress symbolication.
 
 ## Changelog
 
-### 2026-11-08 — Retirement records: Spaces, Space access sources, Projects
+### 2026-11-08 — Retirement records: Spaces, Space access sources, Projects, the implementation plan
 
-**What changed:** Nothing in the code. Three documents that had been kept
+**What changed:** Nothing in the code. Four documents that had been kept
 after their mechanism was deleted, only as records for their changelogs, were
 removed in the documentation audit; their retirement records are below. Each
 one's full text and changelog is in git as `git show e26aa66:docs/<name>.md`.
@@ -713,6 +713,28 @@ vocabulary, not a module: the appearance constants in
 `WORKSPACE_SYNC_TOPICS`; it survives only as a read-drop tombstone in
 `RETIRED_SYNC_TOPICS` (`workspace-do.ts`), so a stored sync row that names it
 is filtered rather than refused.
+
+**`implementation-plan.md` — the implementation plan (retired 2026-11-08).**
+The prototype's phased build checklist: foundation, the secure desktop shell,
+regional auth and persistence, work streams and multiplayer, the OpenRouter
+harness, automations and the scheduler, connectors and activity routing, and
+hardening and delivery, closing with the prototype's release gates. Every
+phase was ticked against products that no longer exist (work streams,
+suggested context, a release gate that forbade channels and a terminal), and
+the three unticked items (Google restricted-scope verification, the Linear and
+Notion app registrations, the human acceptance pass) are operational work
+tracked elsewhere. What Rally is, is the implementation brief PRD
+(`docs/PRDs/2026-08-05_avalon-implementation-brief/`); how it is built, is
+this document.
+
+**Historical records removed in the same audit.** Dated audit and QA records
+that no living document cited were deleted rather than kept as orphans; each
+is in git at `git show e26aa66:docs/<name>.md`:
+
+- `harness-production-qa-2026-08-22.md` — the 2026-08-22 signed-in production
+  QA pass. It attempted every visible plugin and built-in skill, exercised the
+  Terminal, attachment, memory, elicitation, alarm and parallel-child surfaces,
+  and found five defects that were fixed in that change.
 
 ### 2026-11-07 — The product is Canvases and Sidekicks; the native iOS client is deleted
 

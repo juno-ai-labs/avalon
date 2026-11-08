@@ -2411,7 +2411,8 @@ processed again. Every known reader of a processed event reaches back well
 inside 90 days: opportunity batch windows, which are reaped 30 days after they
 finish; a Sidekick run's trigger context; and an opportunity's origin events.
 A new reader that needs an older event has to change this number first. The
-research datasets in [`jev-classifier-opportunities.md`](jev-classifier-opportunities.md)
+research datasets in `jev-classifier-opportunities.md` (retired; folded into
+[`jev-best-practices.md`](jev-best-practices.md#deciding-what-should-be-a-jev-request))
 and [`semantic-activity-triggers.md`](semantic-activity-triggers.md) now have
 90 days of history, not 396.
 
