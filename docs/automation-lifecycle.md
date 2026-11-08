@@ -1203,10 +1203,13 @@ loaded into someone else's conversation, not a read of its own.
   `receiveChildEffects` call and its own list frame, and the common one
   landing first lit the requester's own row unread for about 100 ms. The
   Queue's copies still arrive and their receipts make them no-ops; an effect
-  for another region is left to the Queue. The run view's **Unread
-  messages** divider is the client's own guess: a transcript frame carries
-  no read state, and the client treats only a turn the viewer authored as
-  read on arrival.
+  for another region is left to the Queue. A transcript frame carries no
+  read state, so the client mirrors the seat itself: the row's `run` facts
+  carry `requesterUserId` (`sidekick_run_rows.requester_user_id`, null for a
+  trigger's run), and the viewer it names does not advance their unread
+  marker for that row while it is pending or running, which every other
+  reader does. Without it the run view drew **Unread messages** above the
+  run the viewer had just started.
 
 ### Who a run acts as
 
@@ -1773,7 +1776,7 @@ late delivery from a superseded predicate is refused by the owner.
 Workspace migration 135 adds `sidekick_runs.step_count` and the two triggers
 that arm a run's row entry; AgentLoopDO migration 82 adds
 `sidekick_run_rows` (run, turn, state, steps, reply, `source_version`), empty
-everywhere but a Sidekick's `"0"`.
+everywhere but a Sidekick's `"0"`; migration 87 adds its `requester_user_id`.
 
 ## Regional impact
 
@@ -1938,7 +1941,8 @@ when the row is written (vis2-v2 R2-6): the Queue delivers one effect per
 message, so the row's ordinal and the requester's seat were two sidebar frames.
 Grouping a batch's effects per conversation in the Queue consumer was
 rejected: a batch is not guaranteed to hold both, and the consumer's
-per-message retry and notification handling would have to be rebuilt.
+per-message retry and notification handling would have to be rebuilt. The row's `run` facts name the requester so the run view's
+client can mirror the seat, since a transcript frame carries no read state.
 
 **Considered and rejected:** Answering from the shared composer: a message
 there is routed to a new run by design, and teaching admission to guess which
