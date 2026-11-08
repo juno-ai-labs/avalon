@@ -151,23 +151,10 @@ are canonical storage services, not authorization layers.
   OAuth opens in the system browser. The embedded browser's isolated web
   contents handle website links and redirects within their own session, with
   non-web destinations rejected.
-- The main window and the import window may drive their own browser tabs,
-  including page script and DevTools commands; no other window may. Those
-  commands act with the person's website sign-ins, so a script injected into
-  either renderer would reach every site signed in there. A conversation import
-  hands that capability to a model: its agent runs arbitrary page script in the
-  person's signed-in tab, reads the page's outline and screenshots, gives it
-  input, and lists and reads the network responses the tab received. Those
-  results — network bodies included — reach the model unredacted, by product
-  decision: the page already received them. The boundary is the tab: one tab,
-  with no other tab and no DevTools passthrough. Where that tab goes is not
-  restricted, by product decision: it may navigate to and load from any site
-  with the person's session, and there is no egress filter on the page. The
-  import window is the
-  one non-conversation window allowed to open a realtime socket, to the hidden
-  conversation its agent runs in, and it closes that socket when the window
-  navigates, crashes or closes. See [`desktop-actions.md`](desktop-actions.md)
-  and [`session-import.md`](session-import.md).
+- The main window may drive its own browser tabs, including page script and
+  DevTools commands; no other window may. Those commands act with the person's
+  website sign-ins, so a script injected into the renderer would reach every site
+  signed in there. See [`desktop-actions.md`](desktop-actions.md).
 - Browser orchestration scripts execute in a separate sandboxed, ephemeral
   WebContents with no Node/preload and a network/frame-denying CSP. Only closed,
   typed requests reach the pinned browser tab; browser/tab closure or run
@@ -247,7 +234,7 @@ are canonical storage services, not authorization layers.
   back from macOS on every read rather than from Rally's preference file. Its
   content requests reuse the stored access token and regional endpoint through the
   same coalescing refresh as the feature-flag poll, add no credential storage, and
-  reach only `/workstreams` and `/work-opportunities`. The work-stream titles they
+  reach only `/workstreams` and `/work-opportunities`. The conversation titles they
   return are workspace content held in main-process memory only, never written to
   disk, and dropped on sign-out. Because Rally registers itself to open at login
   and starts hidden there, this runs with no window and no renderer;
@@ -435,7 +422,7 @@ rather than authoring details. A recommended or locally loaded ID still has to
 pass the source's personal-audience or owning-workstream rule. New guest agent
 runs discover only recommendations, workstream-owned Sidekicks and local loads;
 existing execution snapshots keep ordinary source revalidation. Removing a local
-load rechecks participation and archival state in that SubstreamAgent, without
+load rechecks participation and archival state in that `AgentLoopDO`, without
 changing Main, siblings or workstream recommendations. Source history and parent
 management remain separate authorization paths.
 
@@ -444,7 +431,7 @@ that admitted them. Migration 0110 backfills existing sessions; insert and
 workspace-selection triggers bind newly selected memberships. Reassigning the
 same workspace ID does not rebind a session. Promotion preserves membership
 incarnation, while removal/rejoin creates a different one. HTTP authentication,
-refresh rotation, and the workspace, Channel control and SubstreamAgent socket
+refresh rotation, and the workspace, Channel control and `AgentLoopDO` socket
 session checks require the stored and current incarnations to match. Refresh performs
 that check in the token-rotation update, so rejected old credentials do not
 rotate the session. Identity-only sessions remain valid for workspace selection.
@@ -461,7 +448,7 @@ Every API resource query includes `workspace_id`. Mutations additionally resolve
 membership role. A connector ingress may assert a member's own authority by
 marking its auth `principal: "connector"` — set only after verifying the account
 link on the delivered message, re-checked against current membership by the
-work-stream object, and refused by every socket-ticket issuer (see
+conversation object, and refused by every socket-ticket issuer (see
 [`workstream-durable-object.md`](workstream-durable-object.md#invariants)). The
 demo seeder asserts a cast member's authority the same way under
 `principal: "demo_seed"`, verified and refused identically; only server code
@@ -472,15 +459,15 @@ authority, and current membership; ordinary participants cannot supply its
 reserved continuation-message ID.
 Every connector tool checks its execution principal, connection
 scope, granted capability, and resource visibility. Workspace-scoped connector
-capabilities roll down to every work stream in that workspace and execute as the
+capabilities roll down to every conversation in that workspace and execute as the
 workspace principal; participants do not implicitly share their personal
 connectors.
 
 WebSocket upgrades require an exact match against `ALLOWED_ORIGINS`; missing
 origins and suffix lookalikes are rejected before the short-lived socket ticket is
-forwarded to a room. Tickets bind user, workspace, work stream, region, and
+forwarded to a room. Tickets bind user, workspace, conversation, region, and
 one-time ID, and the room atomically rejects reuse. A feed ticket also binds the
-authenticated role and regional work-stream authority generation. SubstreamAgent
+authenticated role and regional conversation authority generation. `AgentLoopDO`
 may reuse those values only when they exactly match request-scoped in-memory
 preparation revalidated against D1 during ticket transit and its local
 generation. Every upgrade still reads current regional maintenance authority;
@@ -499,7 +486,7 @@ admission path.
 
 Native renderer WebSockets may be constructed only from a URL returned by an
 authenticated ticket endpoint; ESLint enforces that provenance at each
-production constructor. Electron's Channel control and SubstreamAgent connections
+production constructor. Electron's Channel control and `AgentLoopDO` connections
 instead cross a typed preload bridge to the main-process broker. Main accepts
 that capability only from the primary application window, validates the URL
 against configured regional `ws`/`wss` origins and the declared control/feed
@@ -510,7 +497,7 @@ renderer chooses only the validated ticket subprotocol offer that becomes
 `Sec-WebSocket-Protocol`; it cannot choose arbitrary headers or turn the broker
 into an arbitrary network client. Main tries only the ordered proxy directives
 Electron resolved, including `DIRECT` only when policy supplied it, and Node
-accepts no work-stream control/feed frame over the shared 1 MB application
+accepts no conversation control/feed frame over the shared 1 MB application
 limit. Runtime URL schemas likewise name their
 accepted scheme contract explicitly — HTTP(S), HTTPS-only, `avalon:`, or the
 intentional HTTP(S)/Rally handoff union. Bare Zod URL validation is forbidden
@@ -547,7 +534,7 @@ telemetry properties.
 Tool arguments are runtime-validated and canonically hashed. The system records a
 write as started before provider execution and reuses completed results on
 workflow retry. If a process stops after a provider write but before confirmation
-is stored, the invocation becomes `ambiguous`, the work stream becomes
+is stored, the invocation becomes `ambiguous`, the conversation becomes
 `needs_input`, and the write is not automatically repeated.
 
 This is retry safety, not a broad approval gate.
@@ -684,7 +671,7 @@ on the revision still being current so revocation cannot win the last race.
 Historical protocol reconstruction does not trust a completed tool invocation
 merely because its JSON receipt still exists. Attachment read, search,
 summarize, and view results are identified from their persisted execution plan,
-then reauthorized against the current principal, current work-stream
+then reauthorized against the current principal, current conversation
 relationship, and current derivative dependency before any result is placed in
 the next model request. Missing authority omits that assistant/tool pair rather
 than replaying stale content.
@@ -758,12 +745,12 @@ backup ambiguity leaves the old sandbox in place.
 
 Daytona receives no R2 credential. Resource originals and generated files cross
 through the regional Worker under current-principal visibility and normal cleanup
-ownership. The work-stream sandbox receives a one-hour, single-repository GitHub
+ownership. The conversation sandbox receives a one-hour, single-repository GitHub
 App credential through host-scoped Daytona secret placeholders. Connector
 `read_only` maps to read permissions and technically rejects remote mutation;
 `full_access` maps to contents-write and pull-request-write so the model can use
 standard `git` and `gh`. Rally prepares and switches to a persisted word-based
-work-stream branch before each model-facing operation. GitHub cannot scope an
+conversation branch before each model-facing operation. GitHub cannot scope an
 installation token to one branch, so branch discipline is explicit model
 guidance rather than a custom proxy or claimed technical boundary. Policy
 changes invalidate the cached expiry and force credential rotation before the
@@ -815,14 +802,14 @@ or Resend tag. Resend uses a send-only API key and a stable per-invitation
 idempotency key; an outbound provider failure revokes the new invitation before
 the API returns an error.
 
-Work-stream inbound addresses are routing identifiers, never authenticators.
+Conversation inbound addresses are routing identifiers, never authenticators.
 Resend webhooks are verified against their untouched raw body before parsing and
 deduplicated by delivery ID. Received HTML, headers, attachments, sender
 identities, and quoted content are untrusted. Incoming mail is attached as a
 regional resource and system message; it never launches a write-capable agent run
 merely because the From address resembles a workspace member. Friendly addresses
 are immutable and permanently reserved so a stale sender can never reach a
-different work stream.
+different conversation.
 
 Daytona lifecycle webhooks use the same shared Svix raw-body verifier, then
 check `DAYTONA_ORGANIZATION_ID`. Signed payloads are refresh hints: current
@@ -967,9 +954,9 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   receipt remains the one-use decision.
 
 - **A native WebSocket in the renderer is constructed only from a URL an
-  authenticated ticket endpoint returned; Electron's work-stream broker is
+  authenticated ticket endpoint returned; Electron's conversation broker is
   narrower still.** Its typed IPC accepts only configured regional
-  Channel-control/SubstreamAgent paths from the main or import window, and main supplies the
+  Channel-control/`AgentLoopDO` paths from the main or import window, and main supplies the
   application Origin.
 
 - **A URL schema names its accepted scheme contract explicitly.** Bare Zod URL
@@ -1051,7 +1038,7 @@ does not own the subsystems on either side of them:
 
 - **An ambiguous external write is never automatically repeated.** If a process
   stops after a provider write but before confirmation is stored, the invocation
-  becomes `ambiguous`, the work stream becomes `needs_input`, and a person decides.
+  becomes `ambiguous`, the conversation becomes `needs_input`, and a person decides.
   This is retry safety, not a broad approval gate — a tool that has not been made
   idempotent has no protection here.
 - **A lost custom-protocol notification is recoverable.** The durable connector
@@ -1151,7 +1138,7 @@ incident response that may prompt it.
 Apple device registrations reuse authenticated workspace sessions and the regional
 D1 control plane. The existing notification access decision runs again when the
 queue consumer sends. The native bridge handles permission state and explicit
-notification responses; main validates the work-stream link through the shared
+notification responses; main validates the conversation link through the shared
 parser before navigation. Only the main app gains Push Notifications and
 Associated Domains entitlements; helpers retain their existing entitlement set.
 [Apple push](push-notifications.md) owns provisioning and release verification.

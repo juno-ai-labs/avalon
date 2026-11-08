@@ -87,7 +87,7 @@ content:
   content — but it is the full statement, and a future inlined literal would
   appear here with no code review flagging it as a logging change.
 - **`cloudflare.durable_object.query.bindings`** on `durable_object_storage_exec`
-  — **the bound parameter values**. WorkspaceDO and SubstreamAgent write
+  — **the bound parameter values**. WorkspaceDO and `AgentLoopDO` write
   message text, titles, objectives, and tool payloads into embedded SQLite
   through exactly this API, so message content is in these spans.
 
@@ -275,7 +275,7 @@ pipeline's. "PostHog" alone is no longer enough to say which path is meant.
   $0.60 per additional million, 200,000 a day on Free. A custom span is
   therefore exactly as expensive as a log row, which is worth knowing before
   reaching for either. Rally runs at `head_sampling_rate: 1` for both in both
-  regions and adds roughly a dozen custom spans to a work-stream create on top
+  regions and adds roughly a dozen custom spans to a conversation create on top
   of the platform's own, so lowering the sampling rate — separately for logs and
   traces, which the config allows — is the lever if the bill becomes the
   constraint, not deleting spans.
@@ -305,7 +305,7 @@ depending on real nesting or export belongs in `apps/api/test-workers/` — see
 constructor runs, at near-zero CPU, and that an RPC session opened during that
 wait is logged with `rpcCallCount: 0`.
 
-**Why:** Three slow work-stream opens read as a slow room for as long as the
+**Why:** Three slow conversation opens read as a slow room for as long as the
 only numbers were the edge's step and the room's own phases; the invocation
 logs were what separated the platform's seconds from Rally's milliseconds, and
 nothing here said how to read them. The zero-call session in particular reads
@@ -353,7 +353,7 @@ here rather than left to be rediscovered.
 Rally flows and is edited whenever they change; this one is about a third
 party's platform and is edited when that platform changes, which is a different
 cadence and a different reason. Keeping them together would have meant a beta
-rename by Cloudflare editing a document about work-stream creation.
+rename by Cloudflare editing a document about conversation creation.
 
 **Consequences:** Every claim here carries the date it was read *and* the date
 Cloudflare last updated the page, because the platform is in open beta and

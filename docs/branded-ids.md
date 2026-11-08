@@ -1,7 +1,7 @@
 # Branded identifiers
 
 Rally's entity identifiers are UUID strings, so the type system on its own
-treats a workspace id, a work-stream id, a run id, and a user id as freely
+treats a workspace id, a conversation id, a run id, and a user id as freely
 interchangeable. Transcript turn IDs are the deliberate exception: participant
 turns currently use UUIDs, while assistant turns derive an opaque stable key
 from the durable loop and turn ordinal. `TranscriptTurnIdSchema` owns that
@@ -21,7 +21,7 @@ confusions, found one at a time in production.
 | Type | Cast | Meaning |
 | --- | --- | --- |
 | `WorkspaceId` | `asWorkspaceId` | A workspace's id |
-| `WorkstreamId` | `asWorkstreamId` | A work stream's id |
+| `WorkstreamId` | `asWorkstreamId` | A conversation's id |
 | `HarnessRunId` | `asHarnessRunId` | A harness run's id |
 | `UserId` | `asUserId` | A user's id |
 | `SubstreamId` | `asSubstreamId` | `"0"` or a child substream id |
@@ -141,7 +141,7 @@ API; test fixtures migrated to real UUIDs because the casts validate.
 **Why:** The 2026-08-20 incident chain was id-confusion shaped: statements
 routed by the wrong authority, coordinates crossing layers as bare strings.
 During this very refactor the type checker caught a workspace id being cast
-as a work-stream id in a test fixture — the mistake class, made by the tool
+as a conversation id in a test fixture — the mistake class, made by the tool
 performing the migration, caught by the migration.
 
 **Considered and rejected:** Branding every id-like schema field in one pass —

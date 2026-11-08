@@ -21,13 +21,13 @@ embedded in the renderer or a source of product truth.
 | `apps/desktop/src/main/index.ts` | Startup ordering, Crashpad start, process observers, IPC sender validation, upload scheduling, and product integration points. |
 | `apps/desktop/src/main/telemetry-intent.ts` | The renderer-intent allowlist and validator every `telemetry:product-intent` call passes through, kept out of the entry point so it can be tested by running it. |
 | `apps/desktop/src/renderer/lib/telemetry.ts` | Narrow renderer facade for registered screen, product-intent, and error-candidate calls. |
-| `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, Channel-control, and SubstreamAgent-feed hooks; it also reports every Channel-control and SubstreamAgent-feed connection start. |
+| `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, Channel-control, and `AgentLoopDO`-feed hooks; it also reports every Channel-control and `AgentLoopDO`-feed connection start. |
 | `apps/api/src/routes/telemetry.ts` | Bounded bootstrap, anonymous/authenticated event, identity-link, preference, and crash-ingest routes. |
 | `apps/api/src/telemetry-delivery-worker.ts` | Global-only private Worker that owns telemetry destination adapters; PostHog is the first adapter. |
 | `apps/api/src/middleware/api-operation-telemetry.ts` | Content-free timing/outcome signals for an explicit API operation allowlist. |
 | `apps/api/src/telemetry/completion-verification.ts` | Committed completion-verification reprompts, bounded reasons and confidence, correlated to terminal run outcomes. |
 | `apps/api/src/telemetry/tool-usage.ts` | Content-free, durably admitted agent-tool usage for user-owned and personless workspace-owned runs. |
-| `apps/api/src/telemetry/workstream-creation.ts` | Server-authoritative, idempotent work-stream creation state and connector attribution across user, Slack, suggestion, and automation paths. |
+| `apps/api/src/telemetry/workstream-creation.ts` | Server-authoritative, idempotent conversation creation state and connector attribution across user, Slack, suggestion, and automation paths. |
 | `apps/api/src/telemetry/message-sent.ts` | `message_sent` for a message or elicitation answer a person sent from any client, recorded where the Channel object admits it, including a composer-created Channel's opening message in `initialize`. |
 | `apps/api/src/telemetry/product-usage.ts`, `apps/api/src/telemetry/run-outcome.ts` | Shared bounded dimensions, idempotent resource event IDs, and authoritative run/tool journey outcomes. |
 | `apps/site/src/telemetry.ts`, `apps/site/src/site-entry.ts` | Region-before-identity public-site page, action, acquisition, and browser-to-desktop handoff reporting. |
@@ -195,7 +195,7 @@ for its offline handler to close: dialling anyway fails a moment later and would
 be counted as a transport error, which is the one reading this event exists to
 keep apart from losing the network. A close from the effect's own teardown is not a transition at all and
 is not reported; counting it would put every ordinary navigation in the drop
-rate. The event carries no work-stream ID, URL, close code, or ticket.
+rate. The event carries no conversation ID, URL, close code, or ticket.
 
 The singleton organization socket also emits `workspace_socket_handshake` for
 each connection attempt. Its UUIDv7 `attemptId` joins the content-free desktop
@@ -217,15 +217,15 @@ sequence and the pre-subscription `connection_id` join are described in
 [`websocket-architecture.md`](websocket-architecture.md).
 
 Resource telemetry uses successful semantic operations, not generic click
-autocapture. A loaded work stream records open/switch/reopen, visibility, origin,
-and pin state. The API records creation once the work-stream row commits; its
+autocapture. A loaded conversation records open/switch/reopen, visibility, origin,
+and pin state. The API records creation once the conversation row commits; its
 closed source distinguishes composer, suggested work, Slack Agent, manual,
 scheduled, activity-triggered, and inbound-email automations. It derives
 visibility, origin, participant count, opening-attachment count, and model
 override from stored rows. Connector attribution is the canonical connector type
 or a bounded unique list for a multi-source suggestion—never a connection or
 provider-account ID. Successful resource
-menus record work-stream pin/visibility/unread/rename/archive changes, note
+menus record conversation pin/visibility/unread/rename/archive changes, note
 visibility/archive changes, and automation run/archive/delete actions. Message
 creation is server-owned across desktop, Slack, and email channels and records
 counts but no text. Elicitation presentation and resolution carry a stable
@@ -233,11 +233,11 @@ question ID, bounded shape, resolution class, and latency but never the question
 or response. Copy buttons record a closed content class and
 the owning resource UUID only after the clipboard write succeeds. Notes record
 create/open/reopen plus transcription start/pause/resume/complete with their
-actual audio-source class. These events may carry opaque work-stream, message,
+actual audio-source class. These events may carry opaque conversation, message,
 note, automation, and run UUIDs for pathing and joins, but never titles, bodies,
 clipboard values, prompts, transcripts, or provider content.
 
-A primary sidebar work-stream click emits `workstream_open_started` with one
+A primary sidebar conversation click emits `workstream_open_started` with one
 opening-attempt operation ID. Its terminal `workstream_open_outcome` is
 `visible`, `superseded`, `abandoned`, or `load_failed`; a rapid A to B to A sequence therefore
 has three attempt IDs and two explicit superseded outcomes instead of silently
@@ -263,7 +263,7 @@ detail request keeps a unique
 as `x-rally-operation-id`; the Worker's `workstream.detail.read` span records both.
 The independently timed `workstream_send_ready` event reuses the opening-attempt
 operation ID and fires after the committed composer has crossed a paint with its
-work-stream-specific send handler installed. It records the addressed substream
+conversation-specific send handler installed. It records the addressed substream
 socket state at that point. `connecting` and `reconnecting` are ready states for
 this client milestone because that socket queues idempotent message commands;
 the event does not claim that transport delivery or server
@@ -290,7 +290,7 @@ upgrade durations; proxy attempts add one CONNECT/TLS/edge aggregate and a
 failed-route count. These are closed diagnostic properties, not new product
 outcomes.
 
-Work-stream collaboration records authoritative participant changes, resource
+Conversation collaboration records authoritative participant changes, resource
 attach/detach/watch/preview/open-source outcomes, stop/retry actions, and unread
 attention consumption. Terminal
 workspace lifecycle and policy events preserve only bounded result,
@@ -321,7 +321,7 @@ Dimensions stay closed and content-free.
 
 The regional agent runtime emits `agent_tool_started` only after the canonical
 execution plan has been durably admitted and replay/ambiguity checks have passed.
-It includes work-stream, run, optional automation, canonical tool/plugin/
+It includes conversation, run, optional automation, canonical tool/plugin/
 capability, read/write mode, run kind, and execution scope. Tool arguments,
 outputs, summaries, provider payloads, and errors never enter the telemetry
 envelope. User-owned runs use `workspace-user`; unattended workspace-owned runs
@@ -577,7 +577,7 @@ opaque flow correlation joins signup observations; only a new account's own
 signup flow is merged into its person. Product analytics are
 advisory and may be incomplete; regional product authority is canonical — D1
 for workspace/control data and, after its guarded cutover, the Channel's parent
-in `WorkspaceDO` and its conversations for work-stream product data.
+in `WorkspaceDO` and its conversations for conversation product data.
 
 - The authenticated Product analytics preference read times out after 15
   seconds. Existing same-account launches continue collecting into the durable
@@ -742,7 +742,7 @@ breadcrumbs, processor output, and destination responses are untrusted. Strict
 schemas and fixed allowlists run at every hop. Direct account, user, and
 workspace-identity database IDs never become destination identities or event
 properties. Closed semantic events
-may carry an opaque resource UUID for a work stream, message, note, automation,
+may carry an opaque resource UUID for a conversation, message, note, automation,
 run, or invocation when the registry requires it for analysis. Verified
 email/name and workspace name
 appear only in eligible Global profile/group jobs so approved staff can identify
@@ -1081,7 +1081,7 @@ reports `automation_detail` for every `/automations/:id` visit.
 
 **Why:** The automation was rebuilt as a conversation parent
 ([`automation-lifecycle.md`](automation-lifecycle.md)); drafting is a
-conversation the work-stream telemetry already covers, and there is no builder
+conversation the conversation telemetry already covers, and there is no builder
 screen to attribute.
 
 **Consequences:** `automation_builder` and `automation_builder_started` remain
@@ -1109,7 +1109,7 @@ Shipped in #541.
 ### 2026-09-02 — Send readiness follows the addressed substream command socket
 
 **What changed:** The send-ready description now names the addressed
-SubstreamAgent socket, which owns message admission and the other child-local
+`AgentLoopDO` socket, which owns message admission and the other child-local
 commands. The obsolete WorkspaceDO message relay and its REST alternatives are
 gone.
 
@@ -1124,7 +1124,7 @@ the renderer retains and replays the exact idempotent child command.
 ### 2026-09-01 — Renderer socket diagnostics describe clicks, not retained lifetime
 
 **What changed:** `renderer_perf_flow` accepts bounded native handshake phases
-and uploads socket-opening flows only when a pending work-stream opening attempt
+and uploads socket-opening flows only when a pending conversation opening attempt
 owns them. Background/speculative flows remain in local performance logging.
 
 **Why:** A 72-hour analysis found retained and background traces with hours-long
@@ -1197,14 +1197,14 @@ Historical events keep their stored value, but current code cannot emit
 `legacy_page`.
 
 Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
-the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
+the [ordered conversation transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
 
 ### 2026-08-26 — Renderer performance phases are governed diagnostic events, and cold launch no longer awaits preference reconciliation
 
 **What changed:** Added `renderer_perf_flow`, a workspace-user diagnostic event
 for the three latency-critical renderer flows. The renderer emits a closed
 projection with exact total, phase, blocked, and pre-request milliseconds;
-bounded structural counts; closed outcomes; and opaque work-stream/ticket
+bounded structural counts; closed outcomes; and opaque conversation/ticket
 correlation identifiers. It travels through typed renderer intent, strict main
 IPC validation, and the existing regional spool. Local `[perf]` output remains
 available, but console objects themselves are not collected. The strict parsed
@@ -1277,7 +1277,7 @@ telemetry.
 ### 2026-08-25 — Cold-open telemetry names the socket snapshot
 
 **What changed:** `workstream_feed_visible.feedSource` now accepts
-`socket_snapshot`, and a cold reader populated by its first SubstreamAgent frame
+`socket_snapshot`, and a cold reader populated by its first `AgentLoopDO` frame
 reports that source. The renderer records that lineage when each cache writer
 runs rather than inferring it from unlike payload shapes. `feed_cache` remains
 the already-present path, while `boot_payload` and `legacy_page` distinguish
@@ -1302,7 +1302,7 @@ contains no message content, URL, or authorization value.
 
 **What changed:** Added `workstream_send_ready` under the sidebar opening
 operation ID. It measures click-to-painted-composer time once the active
-work-stream handler can submit to the workspace command queue and records that
+conversation handler can submit to the workspace command queue and records that
 socket's connecting, connected, or reconnecting state.
 
 **Why:** A painted feed is the requested opening milestone but cannot prove a
@@ -1324,7 +1324,7 @@ message, URL, or server response.
 ### 2026-08-25 — Route abandonment and retries cannot corrupt opening latency
 
 **What changed:** A click attempt now terminates as `abandoned` when navigation
-leaves its work stream for another surface, its owning workspace is replaced by
+leaves its conversation for another surface, its owning workspace is replaced by
 a service-error screen, or its owning session ends. Painted
 feed reporting reschedules after an effect cleanup without re-latching data
 readiness, which preserves the terminal event under React StrictMode and any
@@ -1341,7 +1341,7 @@ request ID also collapsed multiple HTTP attempts in the exact slow tail this
 instrumentation needs to explain.
 
 **Considered and rejected:** Treating non-sidebar navigation as `superseded`
-would claim another work stream caused it; treating it as `load_failed` would
+would claim another conversation caused it; treating it as `load_failed` would
 claim a service failure. WorkstreamScreen unmount cleanup was also rejected
 because StrictMode deliberately simulates that cleanup without the reader
 leaving. Route, workspace-error, and session observation represent the actual
@@ -1349,13 +1349,13 @@ abandonment. A
 single repeated request ID was rejected because the tracing contract defines it
 per call; the operation header already carries the longer click lifetime.
 
-### 2026-08-25 — Sidebar-to-painted-feed latency, every work-stream socket start, and each opening attempt's socket lease are measurable
+### 2026-08-25 — Sidebar-to-painted-feed latency, every conversation socket start, and each opening attempt's socket lease are measurable
 
 **What changed:** Added `workstream_feed_visible`, emitted after a sidebar click
 has committed its initial transcript and crossed one browser paint, with exact
 total and data-ready milliseconds plus cache, pool, feed-source, sidebar, and
 message-count dimensions. The click-scoped operation ID is reused as the detail
-request ID. Added `workstream_socket_started` at the two work-stream socket
+request ID. Added `workstream_socket_started` at the two conversation socket
 loops before every ticket request; it records control/feed kind, initial or
 reconnect reason, retry bucket, and a matching operation/request ID.
 
@@ -1375,7 +1375,7 @@ hover-warmed control socket or retained pair, or count starts whose ticket or
 handshake never succeeded. The user explicitly required this production
 measurement and required pooled sockets and every start reason to be visible.
 
-Work-stream and launch IDs were too broad, while the earlier operation ID
+Conversation and launch IDs were too broad, while the earlier operation ID
 survived only on successful feed paint and the detail request. Replacing a
 pending A measurement with B prevented misattribution but erased A, and the
 separate socket request IDs could not connect a click to socket work. Pooled
@@ -1385,7 +1385,7 @@ retained connection can legitimately begin before the click that consumes it.
 **Considered and rejected:** Duration buckets cannot produce averages or P50,
 P75, P90, and P99. Joining `workstream_opened` to clicks by timestamp is
 ambiguous during rapid navigation. Treating a warmed control socket as a warm
-feed is false: hover opens no SubstreamAgent connection or presence. Reporting
+feed is false: hover opens no `AgentLoopDO` connection or presence. Reporting
 only successful socket connections omits ticket and handshake failures, while
 instrumenting each pool caller would miss reconnects and future admission paths.
 Direct renderer-to-PostHog capture was rejected because it bypasses consent,
@@ -1541,11 +1541,11 @@ not the room's.
 
 **What changed:** A `realtime_socket_state` contract, and one producer —
 `renderer/lib/socket-telemetry.ts` — instantiated per live socket loop by the
-workspace, WorkstreamDO-control, and SubstreamAgent-feed hooks. Each reports a
+workspace, WorkstreamDO-control, and `AgentLoopDO`-feed hooks. Each reports a
 connection, a drop with its bounded cause, and whether anything is scheduled to
 bring the socket back, with the retry depth as a count bucket.
 
-**Why:** Nothing measured whether a client stayed connected. A work stream's
+**Why:** Nothing measured whether a client stayed connected. A conversation's
 sidebar row went stale for a member who never opened it, and the first question —
 did the push miss that client, or was there no push — could not be answered from
 anything Rally collects: the perf trace covers one socket's open latency, and
@@ -1563,7 +1563,7 @@ four clients connecting once. Also rejected: registering it `essential` so it
 survives an opt-out, the way the lifecycle and crash signals do. Those are the
 signals needed to keep the application working at all; socket churn is a product
 reliability question that aggregates fine over people who opted in, and an event
-that fires whenever a work stream is opened is not something to place outside the
+that fires whenever a conversation is opened is not something to place outside the
 preference. The category can widen later; what was collected under an opt-out
 cannot be taken back.
 
@@ -1585,7 +1585,7 @@ analytics surrogates on each span are what join them.
 **The cost, stated plainly:** *PostHog now receives Customer Content.*
 Cloudflare's automatic Durable Object SQL spans carry
 `cloudflare.durable_object.query.bindings` — the bound parameter values — and
-`WorkstreamDO` binds work stream titles, descriptions, and previews into
+`WorkstreamDO` binds conversation titles, descriptions, and previews into
 `workstream_metadata`, and a serialized effect envelope into `durable_outbox`,
 through exactly that API.
 
@@ -1593,7 +1593,7 @@ Review narrowed this from the first draft, and the narrowing is worth keeping:
 message *text* rows are written to D1, not to embedded SQLite, and a D1 span
 carries `db.query.text` without its bindings. So the exposure runs through
 titles, descriptions, previews, and outbox payloads rather than through the
-`messages` table, and `SubstreamAgent` — named here originally — writes external
+`messages` table, and `AgentLoopDO` — named here originally — writes external
 ids, run state, and error codes rather than content. Narrower than it first
 read. Still Customer Content, and still the reason this entry exists. Cloudflare documents no attribute filtering or
 redaction, so this is not a gap to be closed later by configuration; it is a
@@ -1715,7 +1715,7 @@ continue to receive only the V1 outcome.
 Desktop quit is held once while graceful lifecycle and session events enter the
 spool and one bounded flush runs; a 750-ms deadline always resumes exit. Run
 and tool events attach automation metadata only when the harness run has an
-automation origin and the work stream points to that exact automation run.
+automation origin and the conversation points to that exact automation run.
 
 Redirect-only `/` no longer reports a duplicate home surface; reused running
 Terminal sandboxes no longer report starts; native navigation carries a proven
@@ -1727,7 +1727,7 @@ telemetry cannot interrupt settlement.
 one person journey, while emitting V2 only after success omitted the exact
 failures the funnel is meant to explain.
 
-Electron does not await promises started from `will-quit`, and a work stream
+Electron does not await promises started from `will-quit`, and a conversation
 can contain later person-initiated runs after automation created it. Without
 these boundaries, normal-exit events disappeared and manual activity was
 mislabeled as automation activity.
@@ -1746,7 +1746,7 @@ the query marker, whereas Chromium would block an unknown header at CORS
 preflight and prevent connector setup itself.
 
 For shutdown and automation: fire-and-forget shutdown writes, an unbounded quit
-delay, and inferring run ownership from any automation row on the work stream.
+delay, and inferring run ownership from any automation row on the conversation.
 Those respectively lose events, harm shutdown, or corrupt attribution.
 
 For the remaining paths: dashboard deduplication and downstream repair. Those
@@ -1778,9 +1778,9 @@ admission/terminal, and resource/outcome observations keep separate event names.
 Authenticated product surfaces no longer also emit the legacy screen event, so
 one navigation becomes one PostHog `$screen`.
 
-Work-stream creation: replaced the renderer-produced `workstream_created` event
+Conversation creation: replaced the renderer-produced `workstream_created` event
 with one idempotent API event emitted by every user-visible creation path. The
-event records a closed creation source and derives current work-stream state
+event records a closed creation source and derives current conversation state
 from D1. Slack and connector-activity paths supply their canonical connector
 type; suggested work resolves every distinct connector type from its retained
 provenance roots. User-owned creations retain the person and workspace group;
@@ -1788,7 +1788,7 @@ unmapped Slack and workspace-owned automations remain personless workspace
 events.
 
 Resource journeys and tool adoption: added typed successful-operation events
-for work-stream creation/open/switch/menu actions, automation creation/menu
+for conversation creation/open/switch/menu actions, automation creation/menu
 actions, message send, resource copy, note creation/open/actions, and
 transcription state. The regional harness now records every durably admitted
 canonical tool invocation with resource correlations and a personless workspace
@@ -1827,7 +1827,7 @@ made creation totals depend on which path fired and corrupted funnels.
 Screen and API-operation signals could show entry and outcome totals but could
 not reconstruct the core resource journey or tell which agent capabilities were
 actually used. Product analysis also needs stable joins from a copied output,
-note, or automation back to its work stream.
+note, or automation back to its conversation.
 
 Lifecycle data answered whether the process opened, but not whether a system
 login, ordinary user launch, Dock activation, deep link, menu action, or future
@@ -1850,7 +1850,7 @@ readers immediately. Those alternatives lose semantic authority, expose
 content, break rolling clients, or expand collection without a product
 question.
 
-For work-stream creation: client-supplied connector labels, provider account or
+For conversation creation: client-supplied connector labels, provider account or
 connection IDs, one event per connector, and parallel client/server creation
 events. Those alternatives trust the wrong boundary, create high-cardinality
 identity data, multiply a single creation, or double-count desktop paths.
@@ -1883,12 +1883,12 @@ journeys must declare their single authoritative producer and prove no parallel
 legacy/reserved destination event is emitted. Public-site regional and identity
 behavior is owned by [`public-site-telemetry.md`](public-site-telemetry.md).
 
-The work-stream UUID is the stable event identity; legacy UUIDv4 work streams
+The conversation UUID is the stable event identity; legacy UUIDv4 conversations
 receive a deterministic UUIDv7 insert-id projection without changing the
 resource ID. A suggested-work start uses its opportunity UUID as its idempotent
 event identity, so it cannot collide with the companion creation event. A new
 creation path must choose one closed source, resolve connector types from
-server-owned provenance, and emit only after the durable work-stream write.
+server-owned provenance, and emit only after the durable conversation write.
 API-authored events must use the internal emitter; the authenticated desktop
 batch route rejects them.
 
@@ -1965,7 +1965,7 @@ diagnostic. The API CORS policy and its production-shaped preflight test now adm
 the desktop's `X-Rally-Operation-Id` mutation header.
 
 **Why:** Production desktop requests carried that header, but the Worker omitted
-it from `Access-Control-Allow-Headers`. Chromium rejected new-work-stream and
+it from `Access-Control-Allow-Headers`. Chromium rejected new-conversation and
 message mutations before they reached the Worker. The UI converted and handled
 the rejected `fetch`, so neither global renderer error listener ran and PostHog
 contained no exception explaining the outage.

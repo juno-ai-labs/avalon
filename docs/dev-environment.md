@@ -138,7 +138,7 @@ with it: its stored session names an account in the old database
 held. A stack seeded before the seed made Canvases has the same
 drift under a new symptom: the seeded **Q4 revenue review** Canvas stays on
 **Connecting**, and the API answers `409 conversation_parent_kind_retired:workstream`,
-because id `…0020` was a seeded work stream then and its conversation object
+because id `…0020` was a seeded conversation then and its conversation object
 still holds that parent; bootstrapping the Canvas finds the object already
 rooted and keeps it. A fresh seed roots both Canvases as `canvas`. The client's
 stored route can likewise name a Sidekick the new database never made
@@ -193,7 +193,7 @@ seed before product fixtures reach the Durable Objects.
 `routes/dev.ts` seeds a Chat's turns through the canonical ordered-turn
 storage API. It does not recreate the retired message tables or their runtime
 views merely to import development fixtures. It seeds no Thread or Channel:
-until the 2026-11-07 change the seed held two work streams, and once the
+until the 2026-11-07 change the seed held two conversations, and once the
 Thread server code was removed the command failed with `workstream_not_found`.
 
 ## 3. Start the API Workers

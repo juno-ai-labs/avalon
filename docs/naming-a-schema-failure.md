@@ -169,7 +169,7 @@ how a diagnostic fix becomes a risk. What still parses its input with a bare
 `.parse(input)`, by object: the remaining `WorkspaceDO` methods (about 160,
 reached from routes and from the maintenance alarms), `HostedParent` (about 20,
 the Channel and Space parent methods `WorkspaceDO` dispatches to),
-`SubstreamAgent` (`applyPrivateChildLifecycle`, `applyPrivateChildMembership`,
+`AgentLoopDO` (`applyPrivateChildLifecycle`, `applyPrivateChildMembership`,
 the batch-update and search-projection entry points), the conversation
 parent's `listChildren` and `retirementChildren`, and
 `InternallyInspectableDurableObject.runInspectionSql`. A rejection at any of
