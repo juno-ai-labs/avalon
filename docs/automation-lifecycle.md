@@ -1204,12 +1204,21 @@ loaded into someone else's conversation, not a read of its own.
   landing first lit the requester's own row unread for about 100 ms. The
   Queue's copies still arrive and their receipts make them no-ops; an effect
   for another region is left to the Queue. A transcript frame carries no
-  read state, so the client mirrors the seat itself: the row's `run` facts
-  carry `requesterUserId` (`sidekick_run_rows.requester_user_id`, null for a
-  trigger's run), and the viewer it names does not advance their unread
-  marker for that row while it is pending or running, which every other
-  reader does. Without it the run view drew **Unread messages** above the
-  run the viewer had just started.
+  read state, so the client mirrors the seat itself: the row's text block
+  carries `sidekickRun.requesterUserId` (`sidekick_run_rows.requester_user_id`,
+  null for a trigger's run), and the viewer it names does not advance their
+  unread marker for that row while it is pending or running, which every
+  other reader does. Without it the run view drew **Unread messages** above
+  the run the viewer had just started. The same field carries `runNumber`,
+  the run's ordinal among its Sidekick's runs, oldest first (`projectRunRow`
+  counts them by the history index's order; a run is never deleted, so the
+  number never moves), for design §4's "Run 412". Both sit on the block,
+  beside `structuredContent.run`, not in it: `AutomationActivationV1Schema`
+  and its `run` are strict objects, and an older desktop would refuse the
+  whole row for a key it does not know, while the block is a plain object
+  that strips one. A trigger's own detail ("PagerDuty alert: checkout p95
+  over 2s") is not carried: the run holds only the event's id and type, and
+  its title is the connector event's, read elsewhere.
 
 ### Who a run acts as
 
@@ -1776,7 +1785,7 @@ late delivery from a superseded predicate is refused by the owner.
 Workspace migration 135 adds `sidekick_runs.step_count` and the two triggers
 that arm a run's row entry; AgentLoopDO migration 82 adds
 `sidekick_run_rows` (run, turn, state, steps, reply, `source_version`), empty
-everywhere but a Sidekick's `"0"`; migration 87 adds its `requester_user_id`.
+everywhere but a Sidekick's `"0"`; migration 87 adds its `requester_user_id` and `run_number`.
 
 ## Regional impact
 
@@ -1941,8 +1950,12 @@ when the row is written (vis2-v2 R2-6): the Queue delivers one effect per
 message, so the row's ordinal and the requester's seat were two sidebar frames.
 Grouping a batch's effects per conversation in the Queue consumer was
 rejected: a batch is not guaranteed to hold both, and the consumer's
-per-message retry and notification handling would have to be rebuilt. The row's `run` facts name the requester so the run view's
-client can mirror the seat, since a transcript frame carries no read state.
+per-message retry and notification handling would have to be rebuilt. The row's block names the requester (`sidekickRun`) so the run
+view's client can mirror the seat, since a transcript frame carries no read
+state, and numbers the run for design §4's "Run 412" (vis2-v2 R2-11). It sits
+on the block rather than in the strict `run` facts so a desktop from the
+previous release, which refuses unknown keys there, keeps the row; a test
+parses the new frame with that release's schemas.
 
 **Considered and rejected:** Answering from the shared composer: a message
 there is routed to a new run by design, and teaching admission to guess which

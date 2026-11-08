@@ -1889,9 +1889,16 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const row = first(this.sql.exec<{
       workspace_id: string; region: string | null; title: string; trigger_json: string; state: RunState;
       summary: string | null; step_count: number; created_at: number; updated_at: number; requester_user_id: string | null;
+      run_number: number;
     }>(
       `SELECT directory.workspace_id, directory.region, directory.title, run.trigger_json, run.state, run.summary,
               run.step_count, run.created_at, run.updated_at,
+              -- The run's ordinal, oldest first, in the order the history
+              -- index keeps; a run is never deleted, so it never changes.
+              (SELECT COUNT(*) FROM sidekick_runs earlier
+                WHERE earlier.sidekick_id = run.sidekick_id
+                  AND (earlier.created_at < run.created_at
+                    OR (earlier.created_at = run.created_at AND earlier.run_id <= run.run_id))) AS run_number,
               COALESCE(run.requester_user_id, json_extract(run.trigger_json, '$.requestedByUserId')) AS requester_user_id
          FROM sidekick_runs run JOIN automation_directory directory ON directory.automation_id = run.sidekick_id
         WHERE run.sidekick_id = ? AND run.run_id = ? AND directory.lifecycle <> 'deleted'`,
@@ -1914,6 +1921,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       reply: row.state === "pending" || row.state === "running" ? null : row.summary,
       version: row.updated_at,
       requesterUserId: row.requester_user_id,
+      runNumber: row.run_number,
       replay,
     };
     const conversation = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, workspaceId,

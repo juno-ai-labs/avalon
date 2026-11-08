@@ -3146,7 +3146,9 @@ export class WorkstreamTranscriptStorage {
       const hydrated = hydratedBlocks[index]!;
       const runRow = hydrated.type === "text" ? runRows.get(block.turn_id) : undefined;
       if (runRow && hydrated.type === "text" && hydrated.structuredContent) {
-        hydrated.structuredContent = { ...hydrated.structuredContent, run: runRow };
+        hydrated.structuredContent = { ...hydrated.structuredContent,
+          run: { state: runRow.state, stepCount: runRow.stepCount, reply: runRow.reply } };
+        hydrated.sidekickRun = { requesterUserId: runRow.requesterUserId, runNumber: runRow.runNumber };
         hydrated.text = sidekickRunRowText(runRow.state, runRow.reply);
       }
       if (hydrated.type === "text" && hydrated.messageType === "elicitation"

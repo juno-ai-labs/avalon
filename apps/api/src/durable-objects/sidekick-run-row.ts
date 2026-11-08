@@ -19,6 +19,7 @@ export interface SidekickRunRowFacts {
   stepCount: number;
   reply: string | null;
   requesterUserId: string | null;
+  runNumber: number | null;
 }
 
 /** The row's text: the run's reply once it has one, otherwise a line saying where the run is. */
@@ -39,11 +40,13 @@ export function sidekickRunRowFacts(sql: SqlStorage, turnIds: readonly string[])
   if (turnIds.length === 0) return new Map();
   return new Map(sql.exec<{
     turn_id: string; state: SidekickRunRowState; step_count: number; reply: string | null; requester_user_id: string | null;
+    run_number: number | null;
   } & Record<string, SqlStorageValue>>(
-    `SELECT turn_id, state, step_count, reply, requester_user_id FROM sidekick_run_rows
+    `SELECT turn_id, state, step_count, reply, requester_user_id, run_number FROM sidekick_run_rows
       WHERE turn_id IN (SELECT value FROM json_each(?))`,
     JSON.stringify(turnIds),
   ).toArray().map((row) => [row.turn_id, {
     state: row.state, stepCount: Number(row.step_count), reply: row.reply, requesterUserId: row.requester_user_id,
+    runNumber: row.run_number === null ? null : Number(row.run_number),
   }]));
 }

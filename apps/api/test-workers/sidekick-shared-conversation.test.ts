@@ -19,6 +19,7 @@
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   asAutomationId,
@@ -271,7 +272,8 @@ function callsThatSaw(marker: string) {
 interface RunRowView {
   turns: number;
   text: string;
-  run: { state: string; stepCount: number; reply: string | null; requesterUserId?: string | null } | undefined;
+  run: { state: string; stepCount: number; reply: string | null } | undefined;
+  sidekickRun: { requesterUserId: string | null; runNumber: number | null } | undefined;
   runId: string | undefined;
 }
 
@@ -282,7 +284,8 @@ async function runRow(runId: string): Promise<RunRowView> {
       `SELECT id FROM canonical_conversation_turn_details WHERE client_message_id = ?`, `sidekick-run:${runId}`,
     ).toArray();
     const transcript = (instance as unknown as { transcript: {
-      participantTurn(turnId: string): { blocks: { type: string; text?: string; structuredContent?: Record<string, unknown> }[] } | null;
+      participantTurn(turnId: string): { blocks: { type: string; text?: string; structuredContent?: Record<string, unknown>;
+        sidekickRun?: RunRowView["sidekickRun"] }[] } | null;
     } }).transcript;
     const block = ids[0] ? transcript.participantTurn(ids[0].id)?.blocks[0] : undefined;
     return {
@@ -290,6 +293,7 @@ async function runRow(runId: string): Promise<RunRowView> {
       text: block?.text ?? "",
       run: block?.structuredContent?.run as RunRowView["run"],
       runId: block?.structuredContent?.runId as string | undefined,
+      sidekickRun: block?.sidekickRun,
     };
   });
 }
@@ -506,7 +510,7 @@ describe("a Sidekick's shared conversation", () => {
     expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([started.runId]);
     const running = await rowReaches(started.runId, "running");
     expect(running).toMatchObject({ turns: 1, runId: started.runId, text: "Working on it.",
-      run: { stepCount: 0, reply: null, requesterUserId: AUTHOR_ID } });
+      run: { stepCount: 0, reply: null }, sidekickRun: { requesterUserId: AUTHOR_ID, runNumber: 1 } });
     await runSettled(started.runId);
     // The run's finish reaches the Sidekick through its effects; the row follows the run row.
     await deliverChildEffects(TEST_ENV, conversationStub(started.runId));
@@ -515,13 +519,70 @@ describe("a Sidekick's shared conversation", () => {
       turns: 1,
       runId: started.runId,
       text: "Version 4.2 shipped the new importer.",
-      // Who asked stays on the row once the run finishes.
-      run: { state: "completed", stepCount: 1, reply: "Version 4.2 shipped the new importer.", requesterUserId: AUTHOR_ID },
+      run: { state: "completed", stepCount: 1, reply: "Version 4.2 shipped the new importer." },
+      // Who asked, and which run it is, stay on the row once the run finishes.
+      sidekickRun: { requesterUserId: AUTHOR_ID, runNumber: 1 },
     });
     // The stored turn says the same, for every reader that reads it rather than the joined row.
     expect(await storedRowContent(started.runId)).toBe("Version 4.2 shipped the new importer.");
     // The wizard was not woken by the row.
     expect(await wizardExecutions()).toEqual([]);
+  });
+
+  it("numbers each run's row, and sends a frame the previous release still parses", async () => {
+    await activeSidekick();
+    script = [{ say: "First." }, { say: "Second." }];
+    const first = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "number-run-0001" });
+    expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([first.runId]);
+    await rowReaches(first.runId, "running");
+    const second = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "number-run-0002" });
+    expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([second.runId]);
+    await rowReaches(second.runId, "running");
+    expect((await runRow(first.runId)).sidekickRun).toEqual({ requesterUserId: AUTHOR_ID, runNumber: 1 });
+    expect((await runRow(second.runId)).sidekickRun).toEqual({ requesterUserId: AUTHOR_ID, runNumber: 2 });
+    // The previous release's schemas (76dc3f3), copied here unchanged but for
+    // the mention and attachment arrays, which this frame does not carry: its
+    // run facts are a strict object, so a new key there would cost an older
+    // desktop the whole row. The block is a plain object and strips one.
+    const previousRun = z.strictObject({
+      state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
+      stepCount: z.number().int().nonnegative(),
+      reply: z.string().max(100_000).nullable(),
+    });
+    const previousActivation = z.strictObject({
+      type: z.literal("automation_activation"),
+      schemaVersion: z.literal(1),
+      automationId: z.string().min(1),
+      automationName: z.string().min(1).max(300),
+      runId: z.string().min(1),
+      deliveryId: z.string().min(1).max(200),
+      trigger: z.strictObject({ kind: z.enum(["manual", "schedule", "external_event", "inbound_email"]) }).strict().optional(),
+      occurredAt: z.number().int().nonnegative(),
+      externalSource: z.strictObject({ provider: z.string().min(1).max(80), displayName: z.string().min(1).max(180) }).optional(),
+      run: previousRun.optional(),
+    });
+    const previousTextBlock = z.object({
+      type: z.literal("text"),
+      blockId: z.string().min(1),
+      blockIndex: z.number().int().nonnegative(),
+      text: z.string(),
+      streaming: z.boolean(),
+      mentions: z.array(z.unknown()).optional(),
+      attachments: z.array(z.unknown()).optional(),
+      messageType: z.enum(["text", "system", "elicitation", "suggestion", "automation_activation"]).optional(),
+      structuredContent: z.record(z.string(), z.unknown()).nullable().optional(),
+    });
+    const block = await runInDurableObject(conversationStub(), (instance, state) => {
+      const id = state.storage.sql.exec<{ id: string }>(
+        `SELECT id FROM canonical_conversation_turn_details WHERE client_message_id = ?`, `sidekick-run:${second.runId}`,
+      ).one().id;
+      return (instance as unknown as { transcript: { participantTurn(turnId: string): { blocks: unknown[] } | null } })
+        .transcript.participantTurn(id)!.blocks[0];
+    });
+    const parsedBlock = previousTextBlock.parse(block);
+    const activation = previousActivation.parse(parsedBlock.structuredContent);
+    expect(activation.runId).toBe(second.runId);
+    expect(activation.run).toBeDefined();
   });
 
   it("carries a reply longer than the directory preview whole onto the run's row", async () => {
