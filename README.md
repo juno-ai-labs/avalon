@@ -1,29 +1,34 @@
 # Rally
 
-Rally is a work-stream-first desktop workspace where people and an agent collaborate in the same durable context. It combines an Electron desktop client with a regional Hono API on Cloudflare Workers, D1, R2, Durable Objects, Queues, and Workflows.
+Rally is a desktop and browser workspace in which people and an agent work in
+the same durable context. It has two sections: **Canvases**, each a
+conversation (its Chat) and the artifacts it generates, and **Sidekicks**,
+natural-language automations that run on a schedule, on connector activity,
+on an inbound email, or on demand. Avalon is the internal code name and still
+appears throughout the tree.
 
-The product includes:
-
-- Ad-hoc and automation-created work streams with multiplayer presence, participants, resources, messages, structured questions, and activity suggestions.
-- A bounded Bind 10 adapter over OpenRouter with credential-scoped connector plugins, immutable run authority, streamed responses, durable tool receipts, and classified fallback routing.
-- Versioned natural-language automations with calendar, interval, connector-activity, semantic-activity, and manual triggers.
-- Google Mail + Calendar and Google Drive + Docs + Sheets presets backed by one incrementally scoped Google connector family; smart-routed public GitHub, Linear, and Slack apps; public Notion connection; and signed generic webhooks.
-- Firecrawl-backed public web search and clean-markdown page fetch tools, available only from the server-side agent harness.
-- Hibernating work-stream WebSockets with bounded room replay, turn/epoch stream resets, duplicate suppression, and REST resynchronization.
-- Electron organization signup, Resend-delivered regional invitations, and a native Settings window available with **Command-,**.
-- A contextual right sidebar for people and resources, run history, and focused item details.
+The clients are a macOS Electron app and a browser SPA. The backend is a
+regional Hono API on Cloudflare Workers, with D1, R2, Durable Objects, Queues
+and Workflows; agent inference goes through OpenRouter from the server only.
 
 ## Repository
 
 ```text
-apps/desktop           Electron main/preload and React renderer
-apps/api               Hono Cloudflare Worker and runtime components
-apps/release-retention Scheduled R2 desktop-release archival Worker
-packages/contracts     Shared Zod contracts
-packages/db            D1 migration, repositories, and explicit local seed
-packages/agent-harness Bind 10/OpenRouter adapter, prompts, classifiers, and tool execution
-packages/connectors    Google, GitHub, Linear, Notion, Slack, and webhook adapters
-docs                   Product, architecture, security, and operations
+apps/desktop            Electron main/preload and the React renderer both clients share
+apps/browser            Browser host for the shared renderer
+apps/api                Regional Hono Worker, its Durable Objects and runtime components
+apps/site               Public site: landing page, help centre, blog, compare and trust pages
+apps/ace                Internal administration Worker
+apps/engineering-mcp    Internal engineering MCP server
+apps/migration-tracker  Durable Object migration reporting site
+apps/release-retention  Scheduled R2 desktop-release archival Worker
+packages/contracts      Shared Zod contracts
+packages/db             D1 migrations, repositories, and the explicit local seed
+packages/agent-harness  OpenRouter adapter, prompts, classifiers, and tool execution
+packages/connectors     Connector adapters (Google, GitHub, Linear, Notion, Slack, and others)
+packages/electron-network  Chromium upload transport shared by the Electron apps
+packages/ui             Shared desktop/browser components and themes
+docs                    Product, architecture, security, and operations
 ```
 
 ## Local setup
@@ -34,21 +39,11 @@ Prerequisites are Node.js 22 or newer and pnpm 11.
 2. Install dependencies with `pnpm install`.
 3. Create the local database with `pnpm db:migrate`.
 4. Add the explicit development records with `pnpm db:seed`.
-5. Start the API and desktop together with `pnpm dev`.
+5. Start the API and desktop together with `pnpm dev` (`pnpm dev:browser` serves the browser client).
 
-`pnpm env:sync` copies only the server allowlist from `.env.local` into an ignored, owner-readable Worker file. Missing development signing and encryption values are generated once and then retained across restarts.
+`pnpm env:sync` copies only the server allowlist from `.env.local` into an ignored, owner-readable Worker file. Missing development signing and encryption values are generated once and then retained across restarts. The full procedure, including the sandbox and headless Electron, is in the development-environment document in the index below.
 
-The default primary model is `openai/gpt-5.6-terra` through OpenRouter, with `google/gemini-3.8-flash` as its fallback. Classifier and structured-output work remains on `google/gemini-2.5-flash-lite`. Override the three `OPENROUTER_*_MODEL` values in `.env.local` when testing other models; the API key remains server-only.
-
-## Desktop identity and settings
-
-Open **Rally → Settings…** or press **Command-,** on macOS. The native Settings window exposes account/session controls, application and regional diagnostics, the locked organization region, members, and role-gated invitation sending, copy, history, and revocation. Production invitations are sent through Resend from `invites@with-avalon.com`; the fragment-protected one-time link remains available as a copyable fallback.
-
-Settings also offers **Google Mail + Calendar** and **Google Drive + Docs + Sheets** as separate consent presets. They use one Google adapter and can be connected independently for personal or workspace use. The second preset provides native Google Docs and Sheets read/write tools; Docs and Sheets change activity is derived from Drive change-token polling. Google push webhooks are not implemented. The connector documentation carries the exact capabilities and tools.
-
-## Brand
-
-The canonical mark is a tennis-ball seam on a sphere, drawn as one line. `scripts/generate-rally-mark.py` generates every vector copy from the seam equation: `apps/site/public/brand/rally-mark.svg`, its thicker small cut, the ink cut, and `favicon.svg` (the thick mark on a black disc). It also supplies the centre line from which `scripts/generate-brand-assets.py` draws the menu bar templates and the PNG favicon. Every other raster asset comes from the alpha mask `assets/brand/rally-mark-source.png`, rendered from that vector: the mark PNGs, desktop and DMG icons, the touch icon, and the social card. The macOS app uses the native Icon Composer asset at `apps/desktop/resources/icon.icon`, allowing the system to own its enclosure, effects, and appearance treatment; a generated ICNS remains only for the DMG volume. Read the desktop application icon documentation before changing the artwork. Brand primary is `#CCFF00`; secondary is `#47C7FC`.
+The models are the four `OPENROUTER_*_MODEL` values (primary, fallback, classifier, structured output) in the Worker configuration; override them in `.env.local` to test others. The OpenRouter key is server-only.
 
 ## Quality commands
 
@@ -57,19 +52,23 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm docs:check
+```
+
+## Desktop builds and releases
+
+```text
 pnpm package:desktop
 pnpm start:desktop:packaged
 pnpm package:desktop:release
 pnpm publish:desktop:release -- --dry-run
 ```
 
-`pnpm package:desktop` builds a Developer ID-signed local QA app into `apps/desktop/release/local` and verifies its complete bundle before publishing it. `pnpm start:desktop:packaged` launches that app through macOS LaunchServices against the production Rally APIs. Do not invoke `Rally.app/Contents/MacOS/Rally` directly from a sandboxed terminal.
+`pnpm package:desktop` builds a Developer ID-signed local QA app into `apps/desktop/release/local`; `pnpm start:desktop:packaged` launches it through macOS LaunchServices against the production Rally APIs. Do not invoke `Rally.app/Contents/MacOS/Rally` directly from a sandboxed terminal. Distribution builds use `pnpm package:desktop:release`, and a live publish requires `--confirm <exact-version>`. Signing, notarization, the Stable and Faster update channels, the version policy and release retention are owned by the operations runbook. The database seed never runs in production, and packaged builds disable development authentication regardless of local environment values.
 
-Distribution builds use `pnpm package:desktop:release`. Local releases require an explicit `CSC_NAME` whose Developer ID identity is already on the user Keychain search list, plus one complete Apple notarization credential set in `.env.local`; the release packager deliberately rejects `CSC_LINK`. For a stable local notary profile, store it in an explicit Keychain (for example `xcrun notarytool store-credentials "Rally Notary Local" --apple-id <email> --team-id 7ZLT6A8W25 --keychain "$HOME/Library/Keychains/login.keychain-db"`) and configure both `APPLE_KEYCHAIN_PROFILE` and `APPLE_KEYCHAIN`. CI may receive a base64 PKCS#12 as `CSC_LINK`, but the workflow imports it into a temporary user-search-list Keychain before invoking the packager so electron-builder and the final DMG-signing hook see the same identity. The release pipeline notarizes the application and DMG, verifies Gatekeeper and both stapled tickets, exercises a clean-profile renderer launch, and only then publishes `apps/desktop/release/release`. The database seed is never run automatically by production startup. Packaged builds also disable development authentication regardless of local environment values.
+## Brand
 
-Desktop releases use the dedicated `avalon-desktop-releases` R2 bucket and `downloads.with-avalon.com` custom domain, never a regional workspace-data bucket. Run `pnpm publish:desktop:release -- --dry-run` to validate the complete local transaction without cloud credentials or mutations. A live publish requires `--confirm <exact-version>` and uploads versioned DMG, ZIP, blockmaps, and `SHA256SUMS` objects first; verifies their R2 hashes and public HEAD/Range behavior; promotes the purged `Rally.dmg` recovery alias; and uploads `latest-mac.yml` last. Only after that manifest verifies does it record `apps/site/release.config.json` as the desktop release watermark. The public site's fixed canonical `Rally.dmg` link follows the stable alias directly; site deploys neither discover nor validate desktop release metadata.
-
-Version policy: every new Rally release advances the minor version by exactly one and resets the patch to zero. The one stable-promotion exception permits a `0.x` release to advance to `1.0.0`; releases then continue by minor version (`1.0.0` → `1.1.0`). After publishing, set the root and desktop package versions to the next development release. Patch releases, prereleases, skipped minor versions, and other major-version jumps are rejected by the release tooling. Keep `apps/site/release.config.json` on the last verified, published version until the release publisher promotes the next build.
+The mark is a tennis-ball seam on a sphere, drawn as one line. `scripts/generate-rally-mark.py` generates every vector copy from the seam equation, and `scripts/generate-brand-assets.py` renders the rasters; the macOS app icon is the Icon Composer asset at `apps/desktop/resources/icon.icon`. The desktop-icons document owns the pipeline; read it before changing the artwork.
 
 ## Documentation
 
@@ -77,4 +76,4 @@ Version policy: every new Rally release advances the minor version by exactly on
 
 ## Hosted deployment
 
-Cloudflare deployment credentials remain local-only in `.env.local`; they are never uploaded as Worker variables. Google provider credentials are stored only as encrypted Worker secrets. Follow the operations runbook for regional secret management, migrations, health verification, deployment, and provider acceptance.
+Cloudflare deployment credentials remain local-only in `.env.local`; they are never uploaded as Worker variables. Provider credentials are stored only as encrypted Worker secrets. The operations runbook covers regional secret management, migrations, health verification, and deployment.
