@@ -117,6 +117,17 @@ export function NavigationSidebar({
       window.removeEventListener('resize', closeWhenWide);
     };
   }, [setSidebarOpen, sidebarOpen]);
+  // A shut sheet's bar is the top bar of a screen without a pane header, so it
+  // names that screen's section: closing the sheet on a list the person only
+  // looked at returns it to the section the route belongs to.
+  const sheetWasOpen = useRef(sidebarOpen);
+  useEffect(() => {
+    const closed = sheetWasOpen.current && !sidebarOpen;
+    sheetWasOpen.current = sidebarOpen;
+    if (!closed || window.innerWidth > PHONE_LAYOUT_MAX_WIDTH) return;
+    const owner = sectionForPath(pathname);
+    if (owner) setSection(owner);
+  }, [pathname, setSection, sidebarOpen]);
   // Opening anything closes the sheet, whoever navigated: a row, a search
   // result, a new Canvas. Switching sections does not navigate, so the sheet
   // stays open on the list just picked. A navigation that asked for the sheet

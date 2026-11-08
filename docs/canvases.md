@@ -359,6 +359,14 @@ the rail's first section and `/canvases` the landing route
   Sidekick's hexagon uses: a file violet, a site blue, an archive amber, and a
   Canvas that is only its Chat cyan. design.html §1, §2 and §5 draw these
   tinted marks in light and dark.
+- **The home page** is design.html §1's grid of cards, three to a row where
+  the pane is wide enough: each card is a 150px shot of the Canvas (the mark
+  on its paper, since a row carries no picture of its artifact), a "Live" chip
+  with the faces of the people in it now, its title, and who and when. At
+  phone width the sheet's bar is the page's header, so the page draws no
+  second title or New Canvas. The sidebar's "All canvases" heading carries a
+  Recent/Name sort (the server's recent-activity order, or by title), which is
+  not remembered across launches.
 - **Making one** is `POST /canvases`, with the "Start from a prompt" card's
   text as `prompt`; the client then opens the new Canvas, whose Chat already
   holds the prompt as the creator's message.
@@ -547,7 +555,9 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 ### 2026-11-08 — The Canvas screens follow design.html
 
-**What changed:** A Canvas's mark is tinted by the kind of its newest artifact.
+**What changed:** A Canvas's mark is tinted by the kind of its newest
+artifact. The home page draws the design's card grid with a Live chip, its
+copy is the design's, and the sidebar's list is "All canvases" with a sort.
 
 **Why:** The PRD makes design.html the authority for every screen. The mark
 was a grey tile on purpose ("a Canvas has no hue of its own, as a pinned

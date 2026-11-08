@@ -6879,9 +6879,24 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-needs-input-badge { background: var(--av-sys-color-danger-base); border-radius: 6px; color: var(--av-sys-color-danger-on); display: inline-block; font-size: 12px; font-weight: 600; margin-left: 10px; padding: 2px 7px; vertical-align: 2px; }
 /* Canvases home (screens/canvases-home.tsx): the Sidekicks library's layout, with Canvas marks and who is in each. */
 .canvases-home-group + .canvases-home-group { margin-top: 32px; }
-.canvas-list-mark { display: inline-flex; flex-shrink: 0; }
-.canvas-list-present { align-items: center; display: inline-flex; flex-shrink: 0; gap: 8px; }
-.canvas-live-badge { background: var(--av-sys-color-success-wash); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-success-strong); font-size: 12px; font-weight: 500; padding: 2px 8px; }
+/* At phone width the sheet's bar is this screen's header, holding its title,
+   New Canvas and Search, so the page does not draw them a second time. */
+@media (max-width: 640px) { .canvases-home > .sidekicks-library-heading { display: none; } }
+/* design.html §1's card: a 150px shot of the Canvas over its title and who and
+   when. The shot is the paper the design draws, holding the Canvas's mark: the
+   row carries no picture of its artifact. Three columns where the pane is wide
+   enough for 240px cards, fewer below. */
+.canvases-home-grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); list-style: none; margin: 0; padding: 0; }
+.canvas-card { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 14px; overflow: hidden; position: relative; }
+.canvas-card:hover { background-image: var(--hover-layer); }
+.canvas-card:has(.sidekick-list-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
+.canvas-card-shot { background: var(--av-sys-color-surface-sunken); border-bottom: 1px solid var(--av-sys-color-border-default); box-sizing: border-box; height: 150px; overflow: hidden; padding: 14px 18px 0; position: relative; }
+.canvas-card-paper { background: var(--av-sys-color-surface-raised); border-radius: 8px 8px 0 0; box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); display: grid; height: 100%; place-items: center; }
+.canvas-card-live { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 6px; padding: 3px 8px 3px 4px; position: absolute; right: 26px; top: 22px; }
+.canvas-card-body { padding: 12px 14px 14px; }
+.canvas-card-body h3 { font-size: 15px; font-weight: 600; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-card-body small { color: var(--av-sys-color-text-muted); display: flex; font-size: 12.5px; gap: 8px; justify-content: space-between; margin-top: 4px; min-width: 0; white-space: nowrap; }
+.canvas-card-body small > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .canvas-prompt-card { border: 1px solid var(--av-sys-color-border-default); border-radius: 16px; max-width: 560px; padding: 20px; }
 .canvas-prompt-card h2 { align-items: center; display: flex; font-size: 16px; font-weight: 500; gap: 8px; margin: 0 0 6px; }
 .canvas-prompt-card p { color: var(--av-sys-color-text-muted); font-size: 14px; margin: 0 0 14px; }

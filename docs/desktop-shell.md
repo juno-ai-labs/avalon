@@ -180,7 +180,9 @@ left, the section's title centred, its actions at the right. The rail is a row
 of tabs under it: Canvases, Sidekicks, then the account menu as a last tab
 labelled Settings. While a visible pane header carries the menu button
 (`PHONE_NAVIGATION_CONTROL`), the shut sheet keeps no bar and is hidden whole;
-a screen without one keeps the sheet's header as its top bar. Opening the sheet
+a screen without one keeps the sheet's header as its top bar, and closing the
+sheet returns that bar to the section the route belongs to, so a list the
+person only looked at does not title the screen behind it. Opening the sheet
 from a pane header moves focus to its close button; closing hands focus back
 to the opener, or to the visible menu button when the opener is gone
 (`useSheetOpener`). Opening anything from it closes it, as do Escape and
@@ -336,7 +338,9 @@ It does not own:
 ### 2026-11-08 — The shell follows design.html: the list column, the rail and the section titles
 
 **What changed:** The sidebar's default width is the rail plus the design's
-340px list column (416px), not 340px for both.
+340px list column (416px), not 340px for both. At phone width, closing the
+sheet returns its bar to the open screen's section (v3-G5): the bar had kept
+naming the last list looked at, "Activity" over the Canvases home.
 
 **Why:** The PRD makes design.html the authority for every screen, and the
 design inspection (v1-F1, v4-F4) measured a 264px list that cut ordinary
