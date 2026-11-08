@@ -53,6 +53,6 @@ The Mac app does not ask where in the world to keep your data. Every Organizatio
 
 ## Other ways in
 
-The Mac app is the place to begin, and it is the one this chapter describes. Once you are set up, you can also use Rally from [a web browser](../08-rally-everywhere/04-rally-in-a-browser.md), which is also how people you share a Canvas with join it.
+This chapter describes the Mac app. Rally also runs in [a web browser](../08-rally-everywhere/04-rally-in-a-browser.md): the **Sign up now** button beside the download on [rallywith.ai](https://rallywith.ai) opens it, it signs you in with Google or with a code sent to your email, and it is how people you share a Canvas with join it. Both doors lead to the same Organizations and the same work.
 
 Once you are signed in, [create or join an Organization](02-create-or-join-an-organization.md).

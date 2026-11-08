@@ -16,13 +16,14 @@ people: the Canvas's creator, or an owner or administrator of the Organization.
 For a Canvas a Sidekick made, the Sidekick's managers can invite guests too.
 
 1. Open the Canvas and click **Share** at the top right.
-2. Under the list of people is **Share by email**. Type one or more addresses in
-   **Email addresses**. Separate them with spaces, commas or semicolons.
-3. Click **Share**.
+2. Click **Invite a guest by email** to open it, and type one or more addresses
+   in **Email addresses**. Separate them with spaces, commas or semicolons.
+3. Click **Save**. The guests are invited as the Canvas's sharing is saved.
 
 If an address does not look right, Rally says **Enter valid email addresses,
-separated by spaces, commas, or semicolons.** If sharing fails, it says **The
-Canvas couldn't be shared. Try again.**
+separated by spaces, commas, or semicolons.** and saves nothing. If the
+sharing was saved but the invitations were not sent, it says **Who can open it
+was saved, but the guests couldn’t be invited. Try again.**
 
 ### What you are sharing
 
@@ -34,20 +35,21 @@ other Canvases, your Sidekicks, or anything else in your Organization.
 > [!IMPORTANT]
 > The invitation email quotes the Canvas you are sharing: its last five
 > messages, each cut to about a hundred words, plus a count of earlier ones.
-> Check the address before you click **Share**. A typo sends that text to
+> Check the address before you click **Save**. A typo sends that text to
 > whoever owns the wrong address, and taking the invitation back later cannot
 > unsend an email.
 
 > [!IMPORTANT]
 > If the address already belongs to someone who uses Rally, they get access the
-> moment you click **Share**, without being asked, and join your Organization as
+> moment you click **Save**, without being asked, and join your Organization as
 > a guest. Anyone else gets access the first time they sign in with that
 > address.
 
-Once someone is a guest, you can add them to other Canvases by name, the same
-way you add a teammate. The Organization-wide setting never includes guests, so
+Once someone is a guest, they appear in the **Share** window's list of people
+with a **Guest** badge, and you can tick them for other Canvases the same way
+you choose a teammate. The Organization-wide setting never includes guests, so
 a Canvas open to **Everyone in the Organization** is still closed to them until
-you add them to it.
+you tick them for it.
 
 ## What the guest sees
 
@@ -65,21 +67,19 @@ In the **Members** list in Settings, guests appear with a **Guest** badge.
 
 ## Taking access back
 
-People you invited who have not signed in yet are listed under the share form
-as **Guest**. Click the **×** beside one to withdraw their invitation. If they
-signed in a moment before, Rally says **They have already joined. Remove them
-from the participants instead.**
-
-To end access for a guest who has joined, remove them from the Canvas's
-participants, as described in
+To end access for a guest who has joined, untick them in the Canvas's
+**Share** window and click **Save**, as described in
 [People in a Canvas](07-people-in-a-canvas.md#adding-and-removing-people).
 
-However access ends, the same things happen:
+The **Share** window does not list invitations nobody has accepted yet, and
+there is no way to withdraw one from it today. An invitation only ever opens
+the Canvas to someone who signs in with that exact address, but it does mean
+that a typo cannot be taken back, so check addresses before you save.
+
+When access ends:
 
 - The guest stops seeing the Canvas within moments, even if they have it open,
   and cannot reopen it.
-- A withdrawn invitation opens nothing. The person following its link can sign
-  in, but the Canvas is not there for them.
 - Other Canvases shared with them separately are untouched.
 
 ## Turning a guest into a member

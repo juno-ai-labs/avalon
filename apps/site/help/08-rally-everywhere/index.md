@@ -21,9 +21,10 @@ not do any more is start a conversation of their own: mentioning Rally in Slack
 or emailing Rally does not create anything in Rally. The way to hand Rally work
 from Slack or email is a Sidekick with a trigger.
 
-Rally can also reach you. When someone mentions you in a Canvas or a Sidekick's
-conversation, when a Sidekick needs input from you, or when a run you care
-about finishes, Rally tells you, on your Mac, in your browser or in Slack.
+Rally can also reach you. Everything that happens to you, from a mention or a
+reply to a Sidekick run that needs your input or a request to open one of your
+Canvases, lands in your Activity list, and Rally can tell you about each kind
+on your Mac, in your browser, by email or in Slack.
 
 And Rally runs in a web browser, for the client who should see one Canvas, the
 teammate on a borrowed computer, and you on your phone. It shows the same
@@ -38,4 +39,4 @@ you pick the door.
 > means Rally's.
 
 The chapter starts with Slack, because that is where most teams already talk.
-Then come notifications, and it ends with the browser.
+Then come Activity and notifications, and it ends with the browser.

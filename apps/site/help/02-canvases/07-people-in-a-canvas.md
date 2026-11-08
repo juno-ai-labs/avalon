@@ -24,35 +24,45 @@ frozen in place.
 
 ## Who can open it
 
-The people who can open a Canvas are its **participants**. Click **Share** at
-the top right to see them. The window lists each person with their email and
-whether they are a **Member**, an **Admin** or a **Guest**, and at the top it
-says who can open the Canvas: only the people listed, or everyone in the
-Organization. [Who can see what](08-who-can-see-what.md) explains both.
+Click **Share** at the top right to see who can open the Canvas. The **Share
+Canvas** window says which of three settings applies (**Only you**, **Specific
+people** or **Everyone in the Organization**) and lists the people chosen,
+with their email addresses and a **Guest** badge for anyone from outside the
+Organization. [Who can see what](08-who-can-see-what.md) explains the three
+settings.
 
 ## Adding and removing people
 
-The Canvas's creator and the Organization's owners and administrators add and
-remove people; for a Canvas a Sidekick made, so do the Sidekick's managers.
-Anyone else in the Canvas sees the list but cannot change it, as
-[Who can see what](08-who-can-see-what.md#who-can-change-the-sharing) explains.
+The Canvas's creator and the Organization's owners and administrators choose
+who can open it; for a Canvas a Sidekick made, so do the Sidekick's managers.
+Anyone else sees the same window read-only, with a note saying who can change
+it, as [Who can see what](08-who-can-see-what.md#who-can-change-the-sharing)
+explains.
 
 1. Click **Share** at the top right of the Canvas.
-2. Type in **Add someone by name or email**, or pick from the people listed.
-3. Click **Add** beside the person.
+2. Choose **Specific people**.
+3. Tick the people who should be able to open it. **Search people** narrows
+   the list by name or email.
+4. Click **Save**.
 
-The person can open the Canvas straight away, and it appears in their
-Canvases list under **Shared with me**. To take someone out, click the **…**
-beside their name and choose **Remove**.
+The people you ticked can open the Canvas straight away, it appears in their
+Canvases list under **Shared with me**. To take someone out, untick them and click **Save**.
+**Specific people** needs at least one person ticked; with nobody, it says
+**Choose at least one person.** and **Save** stays greyed out.
 
 A few rules:
 
-- Opening a Canvas through an Organization-wide setting does not make you a
-  participant. Being added does.
-- You cannot remove the person who created the Canvas.
+- Opening a Canvas because it is open to everyone in the Organization does
+  not make you a participant. Being chosen does.
+- The person who created the Canvas can always open it, and is not in the
+  list to untick.
 - Only people whose membership in the Organization is active appear in the list.
   To bring in someone from outside your Organization, such as a client, see
   [Sharing with people outside your Organization](09-sharing-with-guests.md).
+- Someone who cannot open the Canvas can ask to. Their request appears at the
+  top of the **Share Canvas** window under **Requests**, with **Approve** and
+  **Deny**, and in your Activity. See
+  [Who can see what](08-who-can-see-what.md#requests-to-open-a-canvas).
 
 ## Mentioning someone who is not here yet
 

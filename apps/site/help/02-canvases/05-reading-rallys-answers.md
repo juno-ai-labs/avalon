@@ -101,6 +101,7 @@ it:
 
 | Action | What it does |
 | --- | --- |
+| **Oopsie** | Tells the Rally team something went wrong with this answer. A short form asks **What happened, and what did you expect?**, and **Send** sends it with a reference to the message. |
 | **Copy** | Copies the whole answer, exactly as Rally wrote it, in Markdown. |
 | **Speak** | Reads the answer aloud. The button changes to **Stop speaking**. |
 | **Image** | Saves the answer as a picture. |

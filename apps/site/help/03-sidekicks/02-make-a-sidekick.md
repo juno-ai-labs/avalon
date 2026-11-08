@@ -51,13 +51,13 @@ worked.
 The conversation does not end when the Sidekick is saved. It becomes the
 Sidekick's shared conversation, and the people who manage the Sidekick can
 come back any time and ask for changes: a new time, a shorter summary, a
-different name, a different icon. The details column suggests some under
-**Make it work for you**: "Keep it short" or "Use a more casual tone."
+different name, a different icon.
 
 Once the Sidekick is saved, a message you send in its conversation asks it
-to do its job and starts a run. To change the Sidekick instead, choose
-**Edit Sidekick** in the message box before you send, and the message goes to
-the drafting assistant. Rally does not guess which you meant; the mark decides.
+to do its job and starts a run. To change the Sidekick instead, click **+** in
+the message box and choose **Edit Sidekick**. An **Editing this Sidekick** chip
+appears above the box, which now says **Describe a change to this Sidekick…**,
+and your messages go to the drafting assistant until you close the chip. Rally does not guess which you meant; the mark decides.
 Once the Sidekick is shared, other people in the conversation see these
 changes being made. [Talking to a Sidekick](03-the-shared-conversation.md#managers-change-the-sidekick-here-too)
 has the details.
@@ -69,13 +69,13 @@ through a run will not confuse it mid-sentence.
 New Sidekicks start private to you. To share one, tell the drafting
 assistant who with ("share it with the support team", "make it an
 Organization Sidekick"), as an **Edit Sidekick** message once the Sidekick is
-saved, or use **Share** in the details column.
+saved.
 
 ## Change the icon and colour yourself
 
 The drafting assistant chooses an icon and colour, but the hexagon is yours
-to repaint. Click the hexagon in the Sidekick's details column to open the
-palette, then pick from the **Color** ring and the **Icon** grid. Each click
+to repaint. Click the hexagon at the top of the Sidekick's details column
+(**Change Sidekick icon and color**) to open the palette, then pick from the **Color** ring and the **Icon** grid. Each click
 saves at once, and the palette stays open while you try a few. Every window
 showing that Sidekick updates to match.
 

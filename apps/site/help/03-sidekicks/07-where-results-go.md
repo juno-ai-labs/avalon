@@ -30,8 +30,7 @@ Different runs can send to different places, too: "Update the Canvas on
 routine weeks, but DM me if anything is on fire."
 
 A Sidekick's post appears under the Sidekick's own name, so everyone can tell
-it apart from a person or from Rally answering a question. Now and then a post
-is labelled "Automation", the old name for a Sidekick.
+it apart from a person or from Rally answering a question.
 
 ## Canvases it writes to
 

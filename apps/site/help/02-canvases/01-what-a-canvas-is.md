@@ -51,14 +51,17 @@ next version, so every version has an author and a reason you can scroll up to.
 
 Click **Canvases** in the rail to see the list in the sidebar.
 
-- **Pinned** comes first. Drag a Canvas into it to pin it, drag it within the
-  group to reorder, or right-click a row and choose **Pin** or **Unpin**. Your
-  pins are yours: pinning a Canvas does not pin it for anyone else.
-- **All canvases** holds the rest, the most recently active first.
+- **Pinned** comes first. Drag a Canvas into it to pin it, or right-click a
+  row and choose **Pin** or **Unpin**. Pinned Canvases keep the order you
+  pinned them in. Your pins are yours: pinning a Canvas does not pin it for
+  anyone else, though it does mean you hear about its new versions (see
+  [Activity and notifications](../08-rally-everywhere/03-notifications.md)).
+- **All canvases** holds the rest, the most recently active first. The
+  **Recent** menu beside the heading sorts them by **Name** instead.
 - A row's second line says who is in the Canvas now, with a green dot, or else
-  what happened last: **Edited by Rally**, **Edited by Maya**, **2 new
-  comments**. A Canvas a Sidekick made says so, such as **Made by Weekly
-  changelog**.
+  who changed it last: **Edited by Rally**, **Edited by Maya**. One nobody has
+  changed yet says who made it, such as **Made by Weekly changelog** for a
+  Canvas a Sidekick made.
 - A bold name and a red dot mean something is new for you. [Status dots and
   badges](10-status-dots-and-badges.md) explains them all.
 
@@ -79,10 +82,12 @@ faces. **Recent** lists everything else, newest first.
 
 ## Naming a Canvas
 
-Rally names a new Canvas from your first request, in two to four words. To
-change the name, click it in the header pill at the top of the Canvas and type
-a new one. A name you choose is final: Rally never renames a Canvas a person
-named.
+Rally names a new Canvas from your first request, in a few words. To change
+the name, click the header pill at the top of the Canvas, or right-click the
+Canvas in the sidebar, and choose **Rename…**. Type the new name in the pill
+and press <kbd>Return</kbd>, or <kbd>Esc</kbd> to leave it as it was. A name
+can be up to 300 characters and cannot be blank. A name you choose is final:
+Rally never renames a Canvas a person named.
 
 ## Canvases from Sidekicks
 
@@ -95,15 +100,23 @@ Canvas you made yourself. Who can see a Sidekick's Canvas is covered in
 
 ## When a Canvas will not open
 
-If a Canvas has been deleted, or you no longer have access to it, Rally shows
-that it is unavailable rather than an empty page. The same message appears in
-both cases, on purpose, so it gives nothing away about a Canvas you are not
-allowed to see. If you think you should have access, ask whoever shared it with
-you.
+If a link names a Canvas that does not exist, or one in another
+Organization, Rally says **This Canvas does not exist.** rather than showing an
+empty page.
 
-When you are offline, a Canvas you have opened before shows its last saved
-version, read only, with a notice that it will catch up when you reconnect.
-Messages you write while offline wait in the message box and send when Rally
-connects again.
+If the Canvas exists in your Organization but has not been shared with you,
+Rally says **You don't have access to this Canvas**, without showing its name.
+Click **Request access**, add a message if you like (**Message (optional)**),
+and click **Send request**. The Canvas's creator and your Organization's owners
+and administrators are asked, in their Activity. The page then reads
+**Request sent** with when you asked, and the Canvas opens there by itself the
+moment someone lets you in. If they decline, nobody tells you, and you can ask
+again. Guests cannot ask: for a guest, a Canvas not shared with them reads as
+one that does not exist.
+
+When Rally cannot reach its server, a Canvas you have opened before still
+shows what it last loaded, with **Rally can't reach the server right now.** and
+a **Try again** button. A message you write meanwhile stays in the message box
+as a draft; send it once Rally is connected again.
 
 Next, the place every request starts: [The message box](02-the-message-box.md).
