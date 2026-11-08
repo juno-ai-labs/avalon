@@ -185,7 +185,7 @@ Recorded as the build went, from the reviews of each step. None blocks the merge
 
 **A later migration, after the operator's run everywhere.** Drop `channels`, `spaces`, `breakouts`, their viewer tables, `parent_*`, their memory-digest and search triggers, `digest_schedules` (remove the `schedules` foreign key first), `slack_agent_sessions`, `slack_agent_feedback`, `external_registration_generations`, `workspace_workstream_effect_receipts`, and the D1 Thread authority tables once Canvas and Sidekick creation no longer read them. `authorization_locations` Thread rows and Thread `conversation_view_*` rows stay (they cannot be told apart safely). Any cleanup that drops Thread rows from D1 `workstreams` must bump the Turbopuffer namespace first (text-search.md).
 
-**Product calls open to the owner.** Anyone a Canvas admits may retitle it (decision log). The Slack reply to a mention or DM: "Rally no longer starts work from Slack. Start a Canvas in Rally, or set up a Sidekick to work from Slack for you." A run blocked on permissions ends `completed` after saying what is blocked; routing it through the elicitation path would make the Sidekick row show Needs input. `conversation_search` does not find a Sidekick's run messages. The privacy policy's effective date and version, and its Customer Content row's "work streams", were left for the team.
+**Product calls open to the owner.** Anyone a Canvas admits may retitle it (decision log). The Slack reply to a mention or DM: "Rally no longer starts work from Slack. Start a Canvas in Rally, or set up a Sidekick to work from Slack for you." A run blocked on a missing connection or grant asks for it and waits in `needs_input` (built in round 5 of 2026-11-08; before, it finished `completed` after saying what was blocked) `conversation_search` does not find a Sidekick's run messages. The privacy policy's effective date and version, and its Customer Content row's "work streams", were left for the team.
 
 **Mechanisms.** `attention()` returns zeros: Canvas and Sidekick unread is not summarized into the Organization badge. The memory subject kinds stay `thread`/`channel`/`breakout` in storage (the `memory_facts` rebuild), and the memory tools' model-facing text still names them. A "Working" state on the Sidekicks home needs a running flag on the directory row; a Canvas card cannot sit at the run that made it until the summary carries `writerRunId`; pin reorder in the client is not wired (`PUT /workspace/pinned-order` exists). A Sidekick's mention push title can read "in New Sidekick" because the conversation snapshots its title before the definition names the Sidekick. A failed revocation publish on audience narrowing is logged only. The authorization projection has no Canvas or Sidekick audience trigger and no read-path consumer. A Sidekick child's Terminal deadline never reached the workspace schedule (workspace-retirement.md).
 
@@ -307,3 +307,62 @@ report for removal. (4) "Deprecate all stale PRDs in the prd folder": fifteen
 `state.md` files carry a supersession, partial or abandoned note (docs/prds.md
 now allows the partial kind), and the implementation brief's contract names
 Activity again as a per-person list.
+
+**Recorded after round 5 (the owner's answers of 2026-11-08).** Built, each
+reviewed before merge: a denial now tells the requester (`access_denied` row
+and push, "Request declined" in the pane, WorkspaceDO 152); one
+channel-neutral notice rendered once and handed to generic push and email
+sinks, email for every offered kind through one template keyed on the intent,
+Slack removed as a channel (a stored `slack_agent_dm` reads as absent for one
+release); `attention()` counts unseen Activity so the account menu shows other
+Organizations' counts, in the browser too, and every push's badge is that
+count; a mention's or reply's push opens at the message on both hosts
+(`?turn=&sequence=` on the canonical, deep-link and shell forms; client
+contract 13 gates `decidedAt`); a run blocked on a missing connection or
+grant asks through the elicitation path and waits in `needs_input`; the
+Terminal provider poll is back as a `terminal_observation` alarm entry on the
+hosted parent; Slack App Home rebuilt around Sidekicks with the dead Slack
+exports deleted and a Canvas chat's interrupted delegation re-entry fixed; a
+Canvas's icon and colour can be chosen from its pill with the Sidekick's own
+picker (WorkspaceDO 153); the Canvas list row names the run that wrote its
+newest version and the Sidekick row carries `running` (WorkspaceDO 155); the
+workspace socket's `subscribe` resolves flags before reading its answer (a
+write during that await reached neither the answer nor a push) and the answer
+is authoritative over the per-list and per-topic ledgers; the artifact panel
+width is stored as a share of the pane; the demo functionality is removed
+(Ace, API, contracts, docs, skills; WorkspaceDO 154 drops `seed_json`;
+stored names `DEMO_OPERATORS_JSON` and role `demos` kept); a dead-code PRD
+(2026-11-08_remove-dead-code-after-the-pivot) holds the removal inventory.
+
+Deploy order added by this round: retire every live demo Organization and
+the demo template (`01a06d5d-4624-751e-8269-e7950b51a835`) through the
+existing retire route while the old Worker still serves, with no preparation
+Workflow running; then deploy. D1 0126 (dropping `demo_operations`,
+`demo_operation_phases`, `demo_seed_receipts`) is **not** in this pull
+request: the deploy job applies pending D1 migrations before promoting the
+Worker unless the file is in the Worker-first list, which only works for a
+sole pending migration, and 0125 is pending here. It ships in a follow-up
+pull request that adds 0126 and its name to that list once 0125 has shipped
+(patch kept on branch `followup-d1-0126-demo-drop`). Older desktops: pushes
+of kinds they do not know are dropped, and a message-position link opens the
+app without navigating.
+
+Owner's calls recorded as the implementer's reading: email is opt-in for
+every kind (mentions and adds default to push only); anyone a Canvas admits
+may choose its appearance, as for renaming, and there is no "back to default"
+control; App Home lists the person's whole sidebar set of Sidekicks, six rows
+each (`SLACK_HOME_ROW_LIMIT`, carried over, the team's number); only the
+run's own principal's connection unblocks a waiting run, so a manager
+connecting their own account makes the run ask again; the `running` flag
+outranks `runState` on the pill and the Needs input badge stays beside it.
+Still open: the Notifications modal in Slack writes preferences nothing reads;
+the shortcuts and a bare `/rally` open a task modal only to refuse it
+(manifest change); the Workflow `avalon-global-demo-preparation` may linger
+on Cloudflare after the binding is removed.
+
+Intermittent failures seen under load and named, not fixed (each passed alone
+or in loops; none on a path the round changed): canvas-access-requests'
+`beforeEach reset()` at 30 s; three app-session cases at load average 61;
+core-tool-idempotency and custom-mcp-connection at 15 s; six hosted-sidekick
+timeouts; the Slack reaction-admission test; two canvas.test.tsx cases; the
+workers delegation-recovery test at 61 s.
