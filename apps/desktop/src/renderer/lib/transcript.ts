@@ -532,7 +532,13 @@ export function orderedTranscriptMessages(
               || block.messageType === 'automation_activation'
               ? block.messageType
               : 'text';
-          const messageId = elicitation.success ? elicitationMessageId(elicitation.data.id) : block.blockId;
+          // A question and the turn that answers it are two rows: the
+          // asker's, which keeps the question's id, and the person's answer
+          // (design §4 keeps both). One id for both folded the answer into
+          // the question's slot and the question was never seen again.
+          const messageId = elicitation.success
+            ? `${elicitationMessageId(elicitation.data.id)}${turn.actor === 'assistant' ? '' : ELICITATION_ANSWER_SUFFIX}`
+            : block.blockId;
           rememberOrder(messageId);
           return {
             ...base,
@@ -806,7 +812,20 @@ export function orderedTranscriptMessages(
       };
     }
   }
+  // A question whose answer has its own row is answered, whatever its own
+  // turn still says (the asker's turn may be stored open), and draws the
+  // question alone.
+  const answers = new Map(logicalMessages.flatMap((message) =>
+    message.elicitation && message.id.endsWith(ELICITATION_ANSWER_SUFFIX)
+      ? [[message.elicitation.id, message.elicitation] as const]
+      : []));
   return logicalMessages
+    .map((message) => {
+      const answer = message.elicitation && !message.id.endsWith(ELICITATION_ANSWER_SUFFIX)
+        ? answers.get(message.elicitation.id)
+        : undefined;
+      return answer ? { ...message, elicitation: answer, elicitationAnswerFollows: true } : message;
+    })
     .sort((left, right) => {
       const leftOrder = messageOrder.get(left.id)!;
       const rightOrder = messageOrder.get(right.id)!;
@@ -818,8 +837,12 @@ export function orderedTranscriptMessages(
     .map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
 }
 
+const ELICITATION_ANSWER_SUFFIX = ':answer';
+
 function canonicalLogicalMessageKey(message: Message): string {
-  if (message.elicitation) return `elicitation:${message.elicitation.id}`;
+  if (message.elicitation) {
+    return `elicitation:${message.elicitation.id}${message.id.endsWith(ELICITATION_ANSWER_SUFFIX) ? ELICITATION_ANSWER_SUFFIX : ''}`;
+  }
   if (message.toolEvent) {
     return `tool_call:${message.toolEvent.toolCallId ?? message.toolEvent.id}`;
   }

@@ -2887,14 +2887,36 @@ export function MessageBlock({
         : profile?.displayName ?? message.author?.name
           ?? (ownHumanResponse ? currentUserName : undefined)
           ?? 'Organization member';
-      return (
+      // The asker's own row keeps the question, as the asker's turn (design
+      // §4 draws the question and the answer beside it). Its answer is the
+      // next row once that turn lands; until then, and in a feed that never
+      // gets one (the builder's), the answer is drawn under it here.
+      const askerRow = message.authorType === 'agent';
+      const prompt = askerRow ? (
+        <article
+          aria-label="Question from Rally"
+          className="message-block agent-message elicitation-prompt-message"
+          id={`message-${message.id}`}
+        >
+          <MessageByline align="start" author="Rally" createdAt={message.createdAt} dot={false} initial="R" />
+          <AssistantMessageContent
+            showCopy={false}
+            text={message.elicitation.prompt}
+            telemetry={{ messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId }}
+          />
+          {/* The clearance every turn ends with, as on the answer below. */}
+          <footer className="message-actions" />
+        </article>
+      ) : null;
+      if (prompt && message.elicitationAnswerFollows) return prompt;
+      const response = (
         <article
           aria-label={ownHumanResponse ? 'Your elicitation response' : `Response from ${responseAuthor}`}
           className={clsx(
             'message-block human-message elicitation-response-message',
             ownHumanResponse ? 'own-human-message' : 'coworker-message',
           )}
-          id={`message-${message.id}`}
+          id={prompt ? undefined : `message-${message.id}`}
           data-profile-color={profile?.color}
           style={personStyle}
         >
@@ -2919,6 +2941,7 @@ export function MessageBlock({
           </div>
         </article>
       );
+      return prompt ? <>{prompt}{response}</> : response;
     }
     return <div className="transcript-event" id={`message-${message.id}`}><ElicitationPanel elicitation={message.elicitation} onAnswer={(answer, customResponse) => onAnswerElicitation(message.elicitation!.id, answer, customResponse)} /></div>;
   }
