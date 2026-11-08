@@ -660,6 +660,58 @@ access and no-egress symbolication.
 
 ## Changelog
 
+### 2026-11-08 — Retirement records: Spaces, Space access sources, Projects
+
+**What changed:** Nothing in the code. Three documents that had been kept
+after their mechanism was deleted, only as records for their changelogs, were
+removed in the documentation audit; their retirement records are below. Each
+one's full text and changelog is in git as `git show e26aa66:docs/<name>.md`.
+
+**`spaces.md` — Spaces (retired 2026-11-07).** A Space, shown as a Channel
+after the navigation redesign, grouped an Organization's Threads (the stored
+`channels`). The Canvases and Sidekicks pivot
+([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)) removed both; the
+client stopped reaching them in plan steps B-1 to B-6, and step C-2 deleted the
+server half (`space-service.ts`, `space-bootstrap-service.ts`,
+`workspace-space-storage.ts`, `workspace-space-protocol.ts`,
+`system-channels.ts`, `channel-rails.ts` and the WorkspaceDO Space, rail and
+directory RPCs), so onboarding seats a new member nowhere. What survives: the
+`spaces`, `space_viewers`, `channels`, `channel_viewers` and `parent_*` tables,
+kept by WorkspaceDO migration 147 until `retire_threads` has run in every
+Organization ([`workspace-retirement.md`](workspace-retirement.md)); the
+shipped migration statements, moved byte for byte to
+`retired-workspace-schema.ts`; the `space_default`, `space_bootstrap` and
+`space_intent_resume` Queue tombstones in `activity-consumer.ts`; and the
+Sidekick list SQL, moved unchanged to `sidekick-directory-sql.ts`. Its
+changelog is the record of why the claim/send/accept publisher, the generation
+fences and the directory waterline that the surviving code carries are shaped
+as they are.
+
+**`space-access-sources.md` — Space access sources (retired 2026-10-06).**
+From the Spaces cutover until PR #1119 a Space supplied readers to the Channels
+placed in it, as a widen-only *source* applied by plan, recorded with
+provenance and confirmed in three steps; once every Space was
+Organization-wide and granted no reader, every plan was empty, so the code was
+deleted and WorkspaceDO migration 94 dropped its tables. `parent_grants` rows
+with `source_kind = 'space'` written before 94 remain. The document's twelve
+numbered lessons (a source may only widen; seat before you narrow; a replayed
+receipt runs the old rules; a tri-state answer is not a yes; and the rest) are
+the record to read before building anything that lets one object grant access
+to another.
+
+**`projects.md` — Projects (retired 2026-09-19).** A Project grouped an
+Organization's work streams with defaults delivered to each; Spaces replaced
+it, and WorkspaceDO migration 64 (`PROJECT_RETIREMENT_STATEMENTS` in
+`workspace-do.ts`) dropped its eight tables and settled undelivered defaults
+in the same transaction. What survives under a Project name is a colour
+vocabulary, not a module: the appearance constants in
+`packages/contracts/src/projects.ts`, the frozen palette snapshots in
+`workspace-do.ts`, the `--av-sys-color-project-*` tokens and
+`lib/project-palette.ts`, all covered by
+[`rally-rebrand-inventory.md`](rally-rebrand-inventory.md). The
+`/projects/*` tombstone route and the `"projects"` sync topic it describes
+have since been deleted too.
+
 ### 2026-11-07 — The product is Canvases and Sidekicks; the native iOS client is deleted
 
 **What changed:** `apps/ios` and `ios-client.md` are gone; the deployment
