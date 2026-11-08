@@ -120,7 +120,7 @@ export function ChannelPicker({ label, options, selected, onToggle, none, disabl
   );
 }
 
-/** "Push", "Push and Email", "Push, Email and SMS". */
+/** "Push", "Push and Email": the labels of what is chosen, as a sentence lists them. */
 export function joinLabels(labels: readonly string[]): string {
   if (labels.length <= 1) return labels[0] ?? '';
   return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;

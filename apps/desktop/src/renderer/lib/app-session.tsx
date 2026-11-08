@@ -34,7 +34,7 @@ import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { workspaceFromSession } from './session-workspace';
 import { accountOnboardingQueryKey } from './account-onboarding-query';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
-import { canvasArtifactRoute, canvasRoute } from './canvases';
+import { canvasLinkRoute } from './canvases';
 import { clearAllLocalCache, clearWorkspaceLocalCache } from './local-cache';
 import {
   readDevicePreferences,
@@ -1060,11 +1060,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         await runInDeepLinkWorkspace(intent.target, () => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          // `?artifact=`, as the browser's shell writes it, so the Canvas
-          // screen opens the artifact one way whichever host the link reached.
-          navigateAppRoute(intent.artifactId
-            ? canvasArtifactRoute(intent.canvasId, intent.artifactId)
-            : canvasRoute(intent.canvasId));
+          // `?artifact=` or `?turn=&sequence=`, as the browser's shell writes
+          // them, so the Canvas screen opens the artifact, or scrolls to the
+          // message a push named, one way whichever host the link reached.
+          navigateAppRoute(canvasLinkRoute(intent));
         });
         return;
       }

@@ -77,9 +77,20 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   useEffect(() => {
     if (awaitingGrant && (listed || granted)) void refetchCanvas();
   }, [awaitingGrant, granted, listed, refetchCanvas]);
+  // Only a decline that arrives after the access read landed re-reads it: a
+  // row already listed when the pane opened is what that read answered.
   const refetchAccess = access.refetch;
+  const answeredDecline = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    if (awaitingGrant && declined) void refetchAccess();
+    if (!awaitingGrant) return;
+    if (answeredDecline.current === undefined) {
+      answeredDecline.current = declined ?? null;
+      return;
+    }
+    if (declined && declined !== answeredDecline.current) {
+      answeredDecline.current = declined;
+      void refetchAccess();
+    }
   }, [awaitingGrant, declined, refetchAccess]);
   // The access read says the viewer can open it after all: the detail's 404
   // was stale (a grant landing between the two reads), so read it again.

@@ -35,6 +35,18 @@ export function canvasTurnRoute(canvasId: string, turnId: string, transcriptSequ
   return `${canvasRoute(canvasId)}?turn=${encodeURIComponent(turnId)}&sequence=${transcriptSequence}`;
 }
 
+/**
+ * The route a link to a Canvas opens, on every host and from every entry (a
+ * deep link, a push, a canonical link): onto its artifact (`?artifact=`), at
+ * one message of its Chat (`?turn=&sequence=`, which the Canvas screen
+ * scrolls to, as for a search result), or the Canvas itself.
+ */
+export function canvasLinkRoute(target: { canvasId: string; artifactId?: string; turnId?: string; sequence?: number }): string {
+  if (target.artifactId) return canvasArtifactRoute(target.canvasId, target.artifactId);
+  if (target.turnId !== undefined && target.sequence !== undefined) return canvasTurnRoute(target.canvasId, target.turnId, target.sequence);
+  return canvasRoute(target.canvasId);
+}
+
 /** The Canvas a route has open, or null; a malformed segment is returned raw, as React Router decodes a param. */
 export function openCanvasId(pathname: string): string | null {
   const id = /^\/canvases\/([^/]+)$/.exec(pathname)?.[1];

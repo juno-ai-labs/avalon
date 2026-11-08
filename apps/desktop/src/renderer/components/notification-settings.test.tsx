@@ -74,6 +74,13 @@ describe('the Notifications settings pane', () => {
 
     const pickers = await screen.findAllByLabelText(/^How to tell you about /u);
     expect(pickers).toHaveLength(6);
+    for (const picker of pickers.slice(1)) {
+      fireEvent.pointerDown(picker, { button: 0, ctrlKey: false });
+      const choices = await screen.findAllByRole('menuitemcheckbox');
+      expect(choices.map((choice) => choice.textContent)).toEqual(['PushOn every device signed in', 'EmailTo you@example.test']);
+      fireEvent.keyDown(choices[0]!, { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('menuitemcheckbox')).toBeNull());
+    }
     fireEvent.pointerDown(pickers[0]!, { button: 0, ctrlKey: false });
     const choices = await screen.findAllByRole('menuitemcheckbox');
     expect(choices.map((choice) => choice.textContent)).toEqual(['PushOn every device signed in', 'EmailTo you@example.test']);
