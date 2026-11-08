@@ -469,7 +469,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(await screen.findByRole('heading', { name: 'Add participants?' })).toBeVisible();
     expect(screen.getByText('bob@example.com')).toBeVisible();
     expect(screen.getByText('cara@example.com')).toBeVisible();
-    expect(screen.getByText(/If you do not add them, they will not be able to see the mentions or this thread/u))
+    expect(screen.getByText(/If you do not add them, they will not be able to see the mentions or this Canvas/u))
       .toBeVisible();
     expect(onSend).not.toHaveBeenCalled();
 
@@ -497,7 +497,7 @@ describe('WorkstreamComposer mention confirmation', () => {
 
       expect(await screen.findByRole('heading', { name: 'Add participant?' })).toBeVisible();
       expect(screen.getByText(
-        /If you do not add them, they will not be able to see the mention or this thread/u,
+        /If you do not add them, they will not be able to see the mention or this Canvas/u,
       )).toBeVisible();
       expect(onSend).not.toHaveBeenCalled();
 
@@ -1067,7 +1067,7 @@ describe('WorkstreamComposer invitees', () => {
     fireEvent.change(composer, { target: { value: '@dana@example.com can you look' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
-    expect(await screen.findByText('dana@example.com is not currently a participant. Would you like to add them with this message? If you do not add them, they will not be able to see the mention or this thread.')).toBeInTheDocument();
+    expect(await screen.findByText('dana@example.com is not currently a participant. Would you like to add them with this message? If you do not add them, they will not be able to see the mention or this Canvas.')).toBeInTheDocument();
     expect(onSend).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Add and mention' }));
 

@@ -2550,7 +2550,6 @@ function ConversationSurfaceContent({
             key={conversationAddress}
             workstream={displayedDetail}
             draftKey={conversationDraftKey(workspaceRegion, workspaceId, parentKind, displayedDetail.id, substreamId)}
-            substreamId={substreamId}
             {...(hostMenuActions ? { menuActions: hostMenuActions } : {})}
           />}
         </div>
