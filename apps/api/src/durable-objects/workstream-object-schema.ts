@@ -61,7 +61,7 @@ const PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA = [
 ] as const;
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 86;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 87;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3837,6 +3837,17 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     // reader or writer has named this one since the Thread retirement (plan
     // step C-7). No trigger or foreign key references it.
     statements: [`DROP TABLE IF EXISTS sidekick_attachments`],
+  },
+  {
+    version: 87,
+    description: "name the person whose request started a Sidekick run on its row",
+    // The run's row carries who asked, so a reader can tell their own run's
+    // row from news: the conversation seats that person at the row's turn
+    // while the run works, and the client mirrors it rather than drawing an
+    // Unread divider above the run they just started. Null for a trigger's
+    // run and for rows written before the column; the next projection of the
+    // run fills it.
+    statements: [`ALTER TABLE sidekick_run_rows ADD COLUMN requester_user_id TEXT`],
   },
 ];
 
