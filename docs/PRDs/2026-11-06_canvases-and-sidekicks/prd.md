@@ -142,6 +142,25 @@ The brief needs its own update once this PRD is approved.
 The implementation plan written against these decisions is
 [plan.md](plan.md).
 
+### 2026-11-08 — A Canvas's icon and colour can be chosen
+
+**Decided:** Anyone a Canvas admits can choose its icon and colour, from the
+catalog and ring a Sidekick's appearance uses, through **Change appearance**
+in the Canvas pill's menu. A Canvas nobody dressed keeps its defaults: the
+sketch of its newest artifact's kind and the hue its id gives it. The
+Sidekick's picker stays as it is. The product owner, 2026-11-08: "keep the
+ability to manually choose a color and icon for a canvas (and sidekick)".
+That anyone the Canvas admits may choose, as anyone it admits may retitle it,
+is the implementer's reading and open to the owner's reversal.
+
+**Why:** The owner's call. Before, a Canvas took its hue from its id and its
+mark from its artifact's kind, with no choice, while a Sidekick kept its
+picker.
+
+**Changes:** Replaces "a Canvas stores no colour" (the 2026-11-08 design
+entry's per-Canvas hue). `PATCH /canvases/:id` takes `appearance`;
+docs/canvases.md, docs/automation-lifecycle.md, docs/activity.md.
+
 ### 2026-11-06 — Existing Threads, Breakouts and Channels are deleted
 
 **Decided:** At cutover, every Thread, Breakout and Channel is deleted through
