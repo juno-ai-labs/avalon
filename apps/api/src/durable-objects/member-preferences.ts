@@ -67,6 +67,17 @@ const PUSH_SWITCH: Partial<Record<NotificationKind, keyof PushPreferences>> = {
   runFinished: "runFinished",
 };
 const KINDS = NotificationKindSchema.options;
+/**
+ * The kinds a desktop of the previous release requires in the record, with
+ * the defaults it had. Not offered, not consulted; emitted for one release so
+ * that desktop still parses its preferences, and removed once every desktop
+ * has updated (`docs/member-preferences.md`). `merges` needs none: that
+ * desktop defaults it.
+ */
+const PREVIOUS_RELEASE_DEFAULTS: Partial<Record<NotificationKind, readonly NotificationChannel[]>> = {
+  newThreads: ["push"],
+  newBreakouts: ["push"],
+};
 const OFFERED: ReadonlySet<NotificationKind> = new Set(OFFERED_NOTIFICATION_KINDS);
 
 /**
@@ -140,11 +151,14 @@ export function storedMemberPreferences(row: {
   if (!row) return { ...DEFAULT_MEMBER_PREFERENCES };
   const legacy = storedPushPreferences(row.push_json);
   const chosen = storedNotify(row.notify_json);
-  // An offered kind reads as chosen, else its default; a stored-only kind
-  // (`newThreads`, `newBreakouts`, `merges`) is in the record only as stored.
+  // An offered kind reads as chosen, else its default; `merges` is in the
+  // record only as stored. `newThreads` and `newBreakouts` are offered and
+  // read nowhere, but a desktop of the previous release requires them, so
+  // for one release they read as they did then (`PREVIOUS_RELEASE_DEFAULTS`).
   const notify = Object.fromEntries(KINDS.flatMap((kind) => {
-    if (!OFFERED.has(kind)) return chosen[kind] === undefined ? [] : [[kind, chosen[kind]]];
-    const defaults = DEFAULT_NOTIFICATION_CHANNELS[kind] ?? [];
+    const previous = PREVIOUS_RELEASE_DEFAULTS[kind];
+    if (!OFFERED.has(kind) && previous === undefined) return chosen[kind] === undefined ? [] : [[kind, chosen[kind]]];
+    const defaults = DEFAULT_NOTIFICATION_CHANNELS[kind] ?? previous ?? [];
     const legacySwitch = PUSH_SWITCH[kind];
     return [[kind, chosen[kind] ?? (legacySwitch === undefined ? [...defaults]
       : withPush(defaults, defaults.includes("push") && legacy[legacySwitch]))]];

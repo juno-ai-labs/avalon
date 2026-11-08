@@ -36,8 +36,12 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
    reading an older server's record still parses. The Thread-era kinds
    `newThreads`, `newBreakouts` and `merges` have no producer: they are still
    accepted where a person stored them, and a save naming them still lands,
-   but they have no default, are not offered and are not consulted, so the
-   record carries one only when it was stored.
+   but they are not offered and never consulted. `merges` is in the record
+   only when stored. `newThreads` and `newBreakouts` are in it always, the
+   stored value or the previous release's default (`PREVIOUS_RELEASE_DEFAULTS`),
+   because a desktop of that release requires them to parse the record; this
+   window closes once every desktop has updated, as the socket's `workstreams`
+   page's did.
 2. **First paint.** The WorkspaceDO's answer to a workspace socket `subscribe`
    carries `viewerPreferences` beside `featureFlags`. The renderer writes it to
    `['member-preferences', workspaceId]`, so the first frame already honours it
@@ -102,7 +106,9 @@ predates the field sends no `viewerPreferences`, which also reads as defaults.
 
 `apps/api/test/member-preferences-kinds.test.ts` covers the record's kinds
 (the offered six defaulted, a stored Thread-era kind kept and never read) and
-which choice each pushed kind reads.
+which choice each pushed kind reads;
+`member-preferences-previous-release.test.ts` that the record parses under
+the previous release's schema.
 `apps/api/test-workers/member-push-preferences-migration.test.ts` covers
 migrations 106 and 107 over populated rows.
 
@@ -112,9 +118,10 @@ migrations 106 and 107 over populated rows.
 
 **What changed:** `NotificationKindSchema` gains `accessRequests` (default
 push); `OFFERED_NOTIFICATION_KINDS` names the six Settings offers. `newThreads`,
-`newBreakouts` and `merges` are optional in `NotificationChannelsSchema`,
-absent from `DEFAULT_NOTIFICATION_CHANNELS`, and present in the record only
-when stored. `NOTIFICATION_KIND_FOR_PUSH` drops `thread_started`,
+`newBreakouts` and `merges` are optional in `NotificationChannelsSchema` and
+absent from `DEFAULT_NOTIFICATION_CHANNELS`; the server still emits
+`newThreads` and `newBreakouts` in the record, stored or `["push"]`, for one
+release. `NOTIFICATION_KIND_FOR_PUSH` drops `thread_started`,
 `breakout_started` and `merged`, and maps `access_request` to
 `accessRequests` and `access_granted` to `added`. [Client half: the Settings
 rows, folded in at merge.]
@@ -129,13 +136,17 @@ that choice rather than a seventh row.
 **Considered and rejected:** Deleting the three Thread-era kinds from the
 schema: a stored record naming them, and an older client's save of them,
 would then be refused or stripped mid-release; one release of accepting them
-costs nothing. Defaulting them still: a default is an offer, and nothing
-produces them.
+costs nothing. Leaving `newThreads` and `newBreakouts` out of the record
+unless stored: the previous release's desktop requires both, so its whole
+preferences record would fail to parse (the one-release compatibility rule
+wins over "not defaulted").
 
-**Consequences:** A desktop older than this reads a record without
-`newThreads` or `newBreakouts`, which its schema required, as failing to
-parse; this release's clients read it. A later release can drop the three
-kinds once no stored record matters.
+**Consequences:** The two emitted kinds are a compatibility window: remove
+`PREVIOUS_RELEASE_DEFAULTS` once every desktop has updated; nothing reads
+them. Guard: `member-preferences-previous-release.test.ts` parses the
+emitted record with the previous release's schema, copied verbatim from
+d0cab03. A later release can drop the three kinds once no stored record
+matters.
 
 ### 2026-10-15 — Channels per kind replace the push switches
 

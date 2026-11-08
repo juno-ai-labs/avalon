@@ -1,8 +1,8 @@
 /**
  * Which kinds a person's notification record holds and which choice a push
- * reads: Settings offers only kinds a producer records, the Thread-era kinds
- * stay only where a person stored them, and every pushed kind reads one
- * offered kind.
+ * reads: Settings offers only kinds a producer records, `merges` stays only
+ * where a person stored it, the two kinds the previous release's desktop
+ * requires read as they did then, and no Thread-era kind is consulted.
  */
 import { describe, expect, it } from "vitest";
 
@@ -13,18 +13,18 @@ const row = (notify: Record<string, unknown>, push: Record<string, unknown> = {}
 });
 
 describe("member notification kinds", () => {
-  it("defaults the offered kinds, access requests among them, and leaves the Thread-era kinds out", () => {
+  it("defaults the offered kinds, access requests among them, and leaves merges out", () => {
     expect(storedMemberPreferences(row({})).notify).toEqual({
       mentions: ["push", "slack_agent_dm"], newMessages: ["push"], added: ["push", "slack_agent_dm"], runFinished: ["push"],
-      artifactUpdates: ["push"], accessRequests: ["push"],
+      artifactUpdates: ["push"], accessRequests: ["push"], newThreads: ["push"], newBreakouts: ["push"],
     });
   });
 
   it("keeps a Thread-era kind a person stored, without consulting it", () => {
-    const notify = storedMemberPreferences(row({ newThreads: ["email"], merges: [] })).notify;
-    expect(notify).toMatchObject({ newThreads: ["email"], merges: [] });
-    expect(notify.newBreakouts).toBeUndefined();
+    const notify = storedMemberPreferences(row({ newThreads: ["email"], merges: ["email"] })).notify;
+    expect(notify).toMatchObject({ newThreads: ["email"], merges: ["email"] });
     expect(notificationAllows(notify, "thread_started", "email")).toBe(false);
+    expect(notificationAllows(notify, "merged", "email")).toBe(false);
   });
 
   it("reads each pushed kind's own choice: a request its Access requests, a grant its Being added", () => {
