@@ -21,14 +21,14 @@ embedded in the renderer or a source of product truth.
 | `apps/desktop/src/main/index.ts` | Startup ordering, Crashpad start, process observers, IPC sender validation, upload scheduling, and product integration points. |
 | `apps/desktop/src/main/telemetry-intent.ts` | The renderer-intent allowlist and validator every `telemetry:product-intent` call passes through, kept out of the entry point so it can be tested by running it. |
 | `apps/desktop/src/renderer/lib/telemetry.ts` | Narrow renderer facade for registered screen, product-intent, and error-candidate calls. |
-| `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, Channel-control, and `AgentLoopDO`-feed hooks; it also reports every Channel-control and `AgentLoopDO`-feed connection start. |
+| `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace and `AgentLoopDO`-feed hooks; it also reports every `AgentLoopDO`-feed connection start. |
 | `apps/api/src/routes/telemetry.ts` | Bounded bootstrap, anonymous/authenticated event, identity-link, preference, and crash-ingest routes. |
 | `apps/api/src/telemetry-delivery-worker.ts` | Global-only private Worker that owns telemetry destination adapters; PostHog is the first adapter. |
 | `apps/api/src/middleware/api-operation-telemetry.ts` | Content-free timing/outcome signals for an explicit API operation allowlist. |
 | `apps/api/src/telemetry/completion-verification.ts` | Committed completion-verification reprompts, bounded reasons and confidence, correlated to terminal run outcomes. |
 | `apps/api/src/telemetry/tool-usage.ts` | Content-free, durably admitted agent-tool usage for user-owned and personless workspace-owned runs. |
 | `apps/api/src/telemetry/workstream-creation.ts` | Server-authoritative, idempotent conversation creation state and connector attribution across user, Slack, suggestion, and automation paths. |
-| `apps/api/src/telemetry/message-sent.ts` | `message_sent` for a message or elicitation answer a person sent from any client, recorded where the Channel object admits it, including a composer-created Channel's opening message in `initialize`. |
+| `apps/api/src/telemetry/message-sent.ts` | `message_sent` for a message or elicitation answer a person sent from any client, recorded where the conversation's `AgentLoopDO` admits it, including a composer-created Canvas's opening message in `initialize`. |
 | `apps/api/src/telemetry/product-usage.ts`, `apps/api/src/telemetry/run-outcome.ts` | Shared bounded dimensions, idempotent resource event IDs, and authoritative run/tool journey outcomes. |
 | `apps/site/src/telemetry.ts`, `apps/site/src/site-entry.ts` | Region-before-identity public-site page, action, acquisition, and browser-to-desktop handoff reporting. |
 | `apps/api/src/crash-symbolicator*.ts`, `apps/api/crash-symbolicator/` | Private Cloudflare Container boundary and pinned native stack-walking image. |
@@ -178,7 +178,7 @@ Every realtime socket reports its own connection transitions. The renderer is th
 authoritative source because it is the only party that can tell a first
 connection from a reconnection, and how many attempts one took: the room sees an
 admission either way. One `realtime_socket_state` names which socket
-(`workspace`, `workstream_control` from desktops released before the Channel
+(`workspace`, `workstream_control` from desktops released before the conversation
 control socket was retired, `substream_feed`), whether it is connected,
 retrying, or stopped, the bounded cause, and the retry depth as a count bucket.
 Dictation's audio socket is deliberately outside this contract: it is an Azure
@@ -296,9 +296,9 @@ attention consumption. Terminal
 workspace lifecycle and policy events preserve only bounded result,
 repository-present, connector-class, local-file-retention, policy-mode, and
 active-sandbox dimensions. Connector telemetry covers setup, user actions,
-health transitions, and admitted activity; digests cover schedule and delivery;
+health transitions, and admitted activity;
 invitations cover creation through terminal response. Provider payloads,
-connection/account IDs, invite email addresses, digest contents, and Terminal
+connection/account IDs, invite email addresses, and Terminal
 commands or paths remain prohibited. OAuth connector attempts persist their
 closed telemetry shape and the renderer's explicit event-contract version. A
 current client emits only `connector_setup_requested_v2`; a benign query marker
@@ -576,7 +576,7 @@ Public-site acquisition reporting is owned by `public-site-telemetry.md`; its
 opaque flow correlation joins signup observations; only a new account's own
 signup flow is merged into its person. Product analytics are
 advisory and may be incomplete; regional product authority is canonical — D1
-for workspace/control data and, after its guarded cutover, the Channel's parent
+for workspace/control data and, after its guarded cutover, the conversation's parent
 in `WorkspaceDO` and its conversations for conversation product data.
 
 - The authenticated Product analytics preference read times out after 15
@@ -826,6 +826,8 @@ when matching artifacts exist. Operational snapshots and packaged fixtures provi
 the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
+## Changelog
+
 ### 2026-11-03 — A new account's signup flow merges into its person
 
 **What changed:** Account creation queues an `epoch_transition` profile job
@@ -903,1275 +905,6 @@ drains at most three pages. At 500 rows a page that is 1,500 rows a tick,
 page size is the lever, within PostHog's 20 MB batch and D1's per-statement
 limits; the next lever is a drain in its own invocation. A held row no longer holds the rows behind it; it is read once per
 tick until its transition commits.
-
-### 2026-09-14 — Configurable deployment isolation
-
-Configured deployments use the existing Global delivery policy. Public-site and pre-login telemetry use the Global identity endpoint, and workspace events keep their deployment identifier. Geographical routing and the separate internal telemetry sink are removed because deployment IDs now describe isolation, not a product residency promise. Existing preferences, schemas, receipts, and destination adapters remain responsible for delivery.
-
-### 2026-09-11 — Menu-bar events follow the menu that shrank, and stop being refused
-
-**What changed:** `menu_bar_opened` no longer carries `suggestionCount` and its
-`recentCount` bound moved from 5 to 10. `menu_bar_action_selected` stops
-emitting `new_workstream`, `new_automation`, `suggested_work`, and
-`new_meeting_note`, and its enum
-moved into an exported `TELEMETRY_MENU_BAR_ACTIONS` that
-`TelemetryReporter.menuBarActionSelected` now types itself from —
-with `open_rally` and `quit_rally` added to the admitted set.
-[`menu-bar.md`](menu-bar.md) owns the product change behind it.
-
-**Why:** two separate things. The menu dropped its Suggestions section and every
-New row, so those properties and values describe a surface that no longer
-exists. The `menu_bar` value in `surfaceEntrypoint` stays: a meeting window can
-still be told it was opened from there, and older clients still say so. Separately, the producer's union and the registry's enum were hand-copied
-and had drifted: the desktop sent `open_rally`/`quit_rally` against an enum
-admitting only the `avalon` spelling, and every one of those envelopes was
-refused at ingestion with nothing failing loudly on the client.
-
-**Considered and rejected:** deleting `suggestionCount` and the three retired
-action values outright, and versioning the event. The registry schema is what
-admits an envelope, and a released client keeps sending what its build offers, so
-a removal refuses a current install's events; a new version would add a second
-shape without changing the measurement. Retiring a value here means it stops
-arriving, not that it stops being accepted — the same treatment the retired
-`command_shortcuts_revealed` and `command_shortcut_used` events got when the
-sidebar dropped Command-number navigation.
-
-**Consequences:** `suggestionCount` is optional and absent on new rows; its
-absence means "the surface no longer has a Suggestions section", not "nothing
-was suggested". `recentCount` is comparable across the cohort boundary because
-the bound only widened. `open_avalon`/`quit_avalon` counts stop at the rename and
-`open_rally`/`quit_rally` begin at this change: the gap between the two is
-refused events, not a drop in use.
-
-### 2026-09-10 — `settings_application` is reported when the window is shown
-
-**What changed:** The settings surface no longer reports `surface_viewed` when
-its renderer mounts. It waits for `settings:revealed`, which main sends the first
-time that window is put on screen.
-
-**Why:** The settings window is now built hidden ahead of being asked for, so its
-renderer mounts once per signed-in session whether or not anybody opens Settings.
-Mounting used to *be* opening it. Left alone, the prewarm would have fired the
-only `surface_viewed` that window ever produces — spending
-`consumeSurfaceEntrypoint()` on nobody and latching `lastSurfacePath`, so the
-open a person actually performed would report nothing at all. The metric would
-not merely have inflated; opens would have disappeared from it and been replaced
-by one mis-attributed event per session.
-
-**Considered and rejected:** Gating the report in the renderer on
-`document.visibilityState`, which is the obvious fix and needs no IPC. It is not
-reliable: a `show: false` window reported `visible` under Xvfb with no window
-manager while this change was being verified, so the renderer cannot use it to
-tell a hidden window from a shown one. Only main knows, so main says.
-
-**Consequences:** One `surface_viewed` per settings window that is actually
-revealed; raising a window already on screen does not report again, which matches
-what the pre-prewarm code did (it did not remount). Any future surface built
-before it is shown has the same problem and needs the same treatment — the
-renderer cannot detect this condition for itself.
-`settings-window.md` owns the reveal signal.
-
-Shipped in #673.
-
-### 2026-09-10 — Feed telemetry names a paint from the local cache
-
-**What changed:** `workstream_feed_visible.feedSource` accepts `local_cache`,
-reported when the transcript that painted came from the renderer's on-device
-cache rather than a socket frame. The send-ready milestone is not reported
-for that paint, since its composer cannot send until the live snapshot lands.
-
-**Why:** A cached paint is a painted feed, and it is the whole point of the
-cache that it happens before any socket work completes; reporting it as
-`feed_cache` would make the already-resident and the remembered cases
-indistinguishable, and reporting nothing would hide the wins the cache is
-meant to produce.
-
-**Consequences:** A `local_cache` open, like a `feed_cache` one, has no
-detail request to join by design. Percentiles of click-to-painted-feed now
-include paints the socket had no part in; read the source before comparing
-them with earlier weeks. `workstream_open_outcome` reports `visible` for a
-seeded paint as well, since the seed satisfies the route's payload check on
-its own, so an open whose socket later fails is `visible` followed by the
-feed's failure rather than a failed open; join on the feed source to tell
-the two apart.
-
-### 2026-09-10 — The desktop telemetry inspector is withdrawn
-
-**What changed:** The staff-only **Telemetry inspector** pane in
-**Settings → Application → Developer** is gone, and with it the
-`telemetry:inspector` IPC channel, its preload method, the `getTelemetryInspector`
-bridge call and the `DesktopTelemetryInspectorEntry` shape. `TelemetryReporter`
-keeps its in-process decision record, renamed from `inspector()` to
-`decisions()` returning `TelemetryDecision`.
-
-**Why:** The pane was a developer read-out whose only readers were the people
-who wrote it, and it was the sole reason a renderer could ask the main process
-for telemetry decisions at all. Removing the surface removes that reach; the
-regional operations HTTP surface remains the supported way to inspect what was
-actually collected.
-
-**Considered and rejected:** Deleting the reporter's record along with the pane.
-It is the only place that separates *suppressed* — the opt-out held — from
-*rejected* — the event failed its own schema — and the reporter's tests assert
-on that distinction; the spool cannot, because both outcomes leave it empty. The
-name moved instead, so nothing still points at a pane that is gone.
-
-**Consequences:** Renderer-visible telemetry state is now the **Product
-analytics** preference and its status lines, nothing else. A future debugging
-surface for decisions is a new decision, not a restoration.
-
-### 2026-09-08 — The `demos` credential leaves the telemetry map
-
-**What changed:** `requireTelemetryOperator` is one instance of
-`requireOperatorFrom(secret)`; the other, `requireDemoOperator`, reads
-`DEMO_OPERATORS_JSON`. `TELEMETRY_OPERATORS_JSON` holds telemetry roles only
-again. The context accessor is `getOperator`.
-
-**Why:** The entry below rejected a separate secret on rotation cost. The
-cost that actually arrived was the opposite one: a secret cannot be read back,
-the telemetry map had been set by someone else, and adding Ace's token meant
-overwriting tokens nobody could name. Owned by
-[`workspace-retirement.md`](workspace-retirement.md#changelog).
-
-**Consequences:** This surface's secret is touched only for this surface. The
-role narrowing stays, so a misfiled token is refused either way.
-
-### 2026-09-08 — The operator credential map carries a role this surface refuses
-
-**What changed:** `OperatorPrincipalSchema` in `telemetry/operator-auth.ts`
-gains the `demos` role, and `requireOperatorRole` narrows each router to the
-roles it admits; `telemetry-operations.ts` names `support` and `security`.
-
-**Why:** Workspace retirement ([`workspace-retirement.md`](workspace-retirement.md))
-needed an operator credential that can retire and nothing else. A second
-secret with the same shape is a second thing to rotate for no isolation gained;
-the role is what isolates, and only if every surface names the roles it admits.
-
-**Considered and rejected:** A separate `WORKSPACE_OPERATORS_JSON` — the
-rotation cost above.
-
-**Consequences:** Adding an operator router means naming its roles. A role added
-to the map reaches no surface until a router names it.
-
-### 2026-09-06 — Retain historical application icon identifiers
-
-**What changed:** Separated current selectable icons from the append-only
-telemetry icon enum, retaining both previous artwork generations in ingestion.
-
-**Why:** Removing old values rejects legitimate events from installed clients
-and queued events during an upgrade. A selection change must not shrink the
-released event contract.
-
-**Considered and rejected:** Versioning the same event solely for an artwork
-replacement would add a second event shape without changing its meaning.
-
-**Consequences:** Configured deployments and the desktop spool continue to accept retired
-IDs. New artwork receives a fresh ID so historical observations stay distinct.
-
-PR: #566.
-
-### 2026-09-03 — Automation telemetry follows the run reference and one detail surface
-
-**What changed:** The compiler-turn, create-ready revision, template creation,
-and overview-reopen measurements are gone with the automation builder and
-compiler. A run's outcome and tool events read `automation_id`,
-`automation_run_id`, and `automation_trigger_type` from the run's
-`automationRun` reference rather than a frozen run context, and the desktop
-reports `automation_detail` for every `/automations/:id` visit.
-
-**Why:** The automation was rebuilt as a conversation parent
-([`automation-lifecycle.md`](automation-lifecycle.md)); drafting is a
-conversation the conversation telemetry already covers, and there is no builder
-screen to attribute.
-
-**Consequences:** `automation_builder` and `automation_builder_started` remain
-in the closed unions for rows already recorded and have no current emitter.
-
-### 2026-09-03 — Every substream mutation keeps a named server span
-
-**What changed:** Answer, reorder, stop, and retry commands share the
-`workstream.room.substream_command` span with content-free command, operation,
-connection, transport, and object identity attributes. Failures set the span
-error and response status even when the private receipt cannot be delivered.
-
-**Why:** Moving these commands from HTTP to the substream socket removed their
-route spans and otherwise left successful command latency invisible.
-
-**Considered and rejected:** Logs only cover unexpected failures and cannot
-describe successful latency. One span name with a command dimension preserves
-the common operation without multiplying the registry.
-
-**Consequences:** The socket cutover keeps request-equivalent server timing and
-error evidence without recording command contents.
-
-Shipped in #541.
-
-### 2026-09-02 — Send readiness follows the addressed substream command socket
-
-**What changed:** The send-ready description now names the addressed
-`AgentLoopDO` socket, which owns message admission and the other child-local
-commands. The obsolete WorkspaceDO message relay and its REST alternatives are
-gone.
-
-**Why:** Readiness telemetry must describe the transport the composer will
-actually use; otherwise a healthy parent directory socket can make child input
-look sendable when the owning substream is unavailable.
-
-**Consequences:** `workstream_send_ready` still measures handler installation,
-not server acknowledgement. Connecting and reconnecting remain ready because
-the renderer retains and replays the exact idempotent child command.
-
-### 2026-09-01 — Renderer socket diagnostics describe clicks, not retained lifetime
-
-**What changed:** `renderer_perf_flow` accepts bounded native handshake phases
-and uploads socket-opening flows only when a pending conversation opening attempt
-owns them. Background/speculative flows remain in local performance logging.
-
-**Why:** A 72-hour analysis found retained and background traces with hours-long
-effect-to-request gaps in the same distribution used to investigate 5–15 second
-clicks. The event was valid transport logging but invalid evidence for the
-product-open question.
-
-**Considered and rejected:** Query-side duration cutoffs would silently choose a
-new product definition and retain plausible background rows. Exporting every
-local phase would recreate the open schema this registry forbids. Proxy
-subphases remain aggregate because their boundaries are not observable.
-
-**Consequences:** Pre-change and post-change socket-flow percentiles are
-different cohorts. `workstream_feed_visible` and `workstream_send_ready` remain
-the authoritative total; the click-scoped diagnostic event only locates its
-transport contributors. All new properties remain diagnostic and optional for
-rolling client versions.
-
-### 2026-09-01 — Telemetry destinations gain one Global service boundary
-
-**What changed:** Telemetry, JavaScript-exception, native-crash, and profile
-delivery now call four explicit methods on the private Global
-`TELEMETRY_DELIVERY` Worker. The regional API still admits and sanitizes rows,
-owns every D1 outbox and circuit, and records destination outcomes. The Worker
-statically owns the PostHog SDK and adapter, stores nothing, and returns an
-outcome keyed by destination so later fan-out can remain independently durable.
-
-**Considered and rejected:** Sending raw envelopes to a generic operation
-endpoint would weaken the typed contract. A PostHog-named Worker would encourage
-one service per later vendor rather than one reviewed destination boundary.
-Moving outboxes or retry policy would split regional authority. A second stored
-PostHog token was unnecessary because the existing Global secret can cross the
-private binding for one call during the first deployment.
-
-Shipped in #471.
-
-### 2026-08-28 — Automation telemetry follows the parent run envelope
-
-**What changed:** Compiler and generated-run signals carry content-free
-automation, occurrence, trigger, run, and region attribution through a shared
-run envelope. Tool usage and terminal outcomes use that envelope rather than
-reading removed WorkspaceDO subscription or run rows. On the client,
-`telemetrySurfaceForPath` now takes whether the automation at that path is still
-a draft, and reports `automation_builder` or `automation_detail` accordingly.
-
-**Why:** Telemetry must remain attributable after legacy tables are gone without
-becoming a shadow authority or copying evaluator and transcript content. The
-client half is a consequence of the same cutover: a draft and an accepted
-automation share one durable route now, so the pathname alone cannot say which
-screen is showing. Every draft after its first turn was reporting as
-`automation_detail`, which made authoring an automation indistinguishable from
-reading one — and authoring is the funnel this surface exists to measure.
-
-### 2026-08-27 — Feed telemetry drops the retired compatibility source
-
-**What changed:** `workstream_feed_visible.feedSource` now accepts only
-`feed_cache`, `socket_snapshot`, and `boot_payload`. The `legacy_page` source
-was removed with the message-page protocol.
-
-**Why:** Retaining an unreachable source in a strict analytics schema implied a
-runtime recovery path that no longer exists and allowed tests or dashboards to
-keep treating compatibility pages as a valid transcript authority.
-
-**Considered and rejected:** Keeping the enum for old Electron builds. Those
-builds are deliberately incompatible with the ordered-turn protocol, and no
-deployed user population requires a rollout window.
-
-**Consequences:** Every emitted feed source names a current cache writer.
-Historical events keep their stored value, but current code cannot emit
-`legacy_page`.
-
-Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
-the [ordered conversation transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
-
-### 2026-08-26 — Renderer performance phases are governed diagnostic events, and cold launch no longer awaits preference reconciliation
-
-**What changed:** Added `renderer_perf_flow`, a workspace-user diagnostic event
-for the three latency-critical renderer flows. The renderer emits a closed
-projection with exact total, phase, blocked, and pre-request milliseconds;
-bounded structural counts; closed outcomes; and opaque conversation/ticket
-correlation identifiers. It travels through typed renderer intent, strict main
-IPC validation, and the existing regional spool. Local `[perf]` output remains
-available, but console objects themselves are not collected. The strict parsed
-`renderer_perf_flow` record is also written device-locally to macOS Unified
-Logging before the upload gate; the regional event path itself is unchanged.
-
-An existing authenticated launch now initializes Product analytics admission
-from the durable device choice and starts the canonical regional read only
-after telemetry initialization, without awaiting it. Nonessential transmission
-remains closed until that read succeeds.
-
-**Why:** The approved feed-visible and send-ready product totals showed whether
-the two-second goal was missed, and backend traces located server work, but a
-packaged client's local phase line was unavailable after the fact. That left
-the observed delay between ticket completion and socket upgrade ambiguous
-between renderer scheduling, dial, handshake, and service wait.
-
-Version 1.171.0 reset remote verification on every authenticated cold launch.
-If its regional read exceeded or failed beyond the two-second launch barrier,
-every nonessential event in that process was suppressed before spool admission
-even when the durable account preference was enabled. That explains an
-observed window with no accepted open, feed-visible, send-ready, or renderer
-phase events and made the local console evidence disappear on quit.
-
-**Considered and rejected:** Direct renderer-to-PostHog capture bypasses
-preference, regional routing, validation, and the spool. Forwarding the console
-object would make every future annotation exportable by accident. Adding the
-phase list to the product feed-visible event would mix a diagnostic breakdown
-with the authoritative user-visible outcome and its longer retention.
-
-For the launch path: waiting longer spends more of the two-second product
-budget without making telemetry reliable. Treating a same-account cached
-enable as untrusted for the whole process preserves fail-closed behavior but
-recreates the loss. Session changes close both local spool admission and
-delivery until the new account is verified, and explicit enable still requires
-the canonical compare-and-set acknowledgement; only ordinary cold-launch
-reconciliation moved off the critical path.
-
-Early launch events can enter the durable regional spool immediately when the
-stored same-account preference is enabled. Successful verification releases
-them for upload; a canonical disable purges them before any nonessential
-transmission and turns collection off. Local Unified Log records never leave
-the Mac and therefore do not depend on telemetry consent. Historical
-console-only lines from 1.171.0 cannot be reconstructed after their renderer
-exits.
-
-### 2026-08-26 — Socket lineage survives an overlapping recovery retry
-
-**What changed:** A monotonic socket-snapshot generation now fences the
-renderer-only recovery cache. If a reconnect snapshot arrives while REST Retry
-is in flight, late HTTP detail or transcript results cannot replace the
-snapshot's `socket_snapshot` lineage or its canonical feed. Recovery windows
-are consumed by their paired transcript read and cleared whenever a snapshot
-becomes canonical.
-
-**Why:** The source label describes the cache writer whose data reached paint.
-Without a generation fence, request completion order could relabel and replace
-a newer socket feed as `boot_payload` or `legacy_page`, corrupting the cohorts
-used to judge the two-second cold-open goal.
-
-**Considered and rejected:** Request cancellation is transport-dependent and
-does not prove that no post-await side effect runs. Timestamp comparison can
-tie within a millisecond and does not directly name the authority transition.
-
-**Consequences:** Recovery code must check the captured snapshot generation
-after every network await and return the current socket caches when superseded.
-The generation is renderer-only coordination state and is never emitted as
-telemetry.
-
-### 2026-08-25 — Cold-open telemetry names the socket snapshot
-
-**What changed:** `workstream_feed_visible.feedSource` now accepts
-`socket_snapshot`, and a cold reader populated by its first `AgentLoopDO` frame
-reports that source. The renderer records that lineage when each cache writer
-runs rather than inferring it from unlike payload shapes. `feed_cache` remains
-the already-present path, while `boot_payload` and `legacy_page` distinguish
-embedded-window recovery from an older Worker's page fallback.
-
-**Why:** The normal reader no longer issues the detail request. Labeling a
-socket-populated feed as an HTTP boot or rollout fallback would make the new
-critical path indistinguishable from the recovery path when diagnosing its
-P90.
-
-**Considered and rejected:** Reusing `boot_payload` because both shapes contain
-canonical boot state. That name would preserve schema compatibility by hiding
-the transport distinction the performance question needs.
-
-**Consequences:** Existing analytics consumers must include the new enum value.
-Cold-open queries should select `socket_snapshot` and join through the opening
-operation and socket lease; `legacy_page` remains reachable during regional
-version skew and REST cohorts stay separately queryable. The event still
-contains no message content, URL, or authorization value.
-
-### 2026-08-25 — Send readiness is measured independently from feed visibility
-
-**What changed:** Added `workstream_send_ready` under the sidebar opening
-operation ID. It measures click-to-painted-composer time once the active
-conversation handler can submit to the workspace command queue and records that
-socket's connecting, connected, or reconnecting state.
-
-**Why:** A painted feed is the requested opening milestone but cannot prove a
-separately named ability to send. The composer usually commits beside the feed,
-and the command socket accepts sends while reconnecting, yet an analytics query
-should not have to infer that lifecycle boundary from two adjacent pieces of UI.
-
-**Considered and rejected:** Reinterpreting `workstream_feed_visible` as send
-readiness would turn a precise paint event into an undocumented proxy. Waiting
-for the workspace socket to connect would be equally false: client readiness is
-queue acceptance, while server acknowledgement belongs to the existing message
-send flow.
-
-**Consequences:** Feed paint and client send readiness can be compared under one
-attempt ID without timestamp joins. `workstream_send_ready` is success-only and
-does not replace the terminal opening outcome denominator; it contains no draft,
-message, URL, or server response.
-
-### 2026-08-25 — Route abandonment and retries cannot corrupt opening latency
-
-**What changed:** A click attempt now terminates as `abandoned` when navigation
-leaves its conversation for another surface, its owning workspace is replaced by
-a service-error screen, or its owning session ends. Painted
-feed reporting reschedules after an effect cleanup without re-latching data
-readiness, which preserves the terminal event under React StrictMode and any
-production dependency change inside the two-frame window. Detail retries now
-mint distinct request IDs while carrying the click ID as the existing Rally
-operation header. The event registry, rather than desktop IPC alone, enforces
-that data-ready time cannot exceed painted time.
-
-**Why:** An interrupted load could stay in the renderer singleton and make a
-later 60 ms return look minutes long. Separately, cancelling the first scheduled
-paint consumed a one-shot latch and left no second schedule, which lost both the
-success event and terminal outcome. Reusing the click ID as every retry's
-request ID also collapsed multiple HTTP attempts in the exact slow tail this
-instrumentation needs to explain.
-
-**Considered and rejected:** Treating non-sidebar navigation as `superseded`
-would claim another conversation caused it; treating it as `load_failed` would
-claim a service failure. WorkstreamScreen unmount cleanup was also rejected
-because StrictMode deliberately simulates that cleanup without the reader
-leaving. Route, workspace-error, and session observation represent the actual
-abandonment. A
-single repeated request ID was rejected because the tracing contract defines it
-per call; the operation header already carries the longer click lifetime.
-
-### 2026-08-25 — Sidebar-to-painted-feed latency, every conversation socket start, and each opening attempt's socket lease are measurable
-
-**What changed:** Added `workstream_feed_visible`, emitted after a sidebar click
-has committed its initial transcript and crossed one browser paint, with exact
-total and data-ready milliseconds plus cache, pool, feed-source, sidebar, and
-message-count dimensions. The click-scoped operation ID is reused as the detail
-request ID. Added `workstream_socket_started` at the two conversation socket
-loops before every ticket request; it records control/feed kind, initial or
-reconnect reason, retry bucket, and a matching operation/request ID.
-
-Added `workstream_open_started` and terminal `workstream_open_outcome` events
-under one click-scoped operation ID. Rapid switches emit `superseded`; query
-failures emit `load_failed`; painted feeds emit `visible`. Each retained socket
-owner now has one socket-lease ID shared by its control and feed starts.
-Socket-start events retain their per-attempt request ID and additionally carry
-the lease plus the pending opening ID when one exists; opening events record
-the lease that served them.
-
-**Why:** `workstream_opened` proved only that detail eventually loaded, local
-perf lines died with the renderer, and socket-connected events began after the
-initial feed gate. None could calculate average or percentile click-to-feed
-latency, split data wait from paint delay, distinguish a cold open from a
-hover-warmed control socket or retained pair, or count starts whose ticket or
-handshake never succeeded. The user explicitly required this production
-measurement and required pooled sockets and every start reason to be visible.
-
-Conversation and launch IDs were too broad, while the earlier operation ID
-survived only on successful feed paint and the detail request. Replacing a
-pending A measurement with B prevented misattribution but erased A, and the
-separate socket request IDs could not connect a click to socket work. Pooled
-sockets made parent-only correlation incomplete because a hover-warmed or
-retained connection can legitimately begin before the click that consumes it.
-
-**Considered and rejected:** Duration buckets cannot produce averages or P50,
-P75, P90, and P99. Joining `workstream_opened` to clicks by timestamp is
-ambiguous during rapid navigation. Treating a warmed control socket as a warm
-feed is false: hover opens no `AgentLoopDO` connection or presence. Reporting
-only successful socket connections omits ticket and handshake failures, while
-instrumenting each pool caller would miss reconnects and future admission paths.
-Direct renderer-to-PostHog capture was rejected because it bypasses consent,
-regional routing, validation, and the durable spool.
-
-Treating rapid switches as duplicate delivery would confuse user cancellation
-with ingestion retry; `eventId` already handles the latter. Reusing one
-operation ID for socket attempts and the click would collapse distinct ticket
-requests. Adding only the opening ID to socket starts would still strand
-pre-click warmups. The lease-plus-attempt model preserves both the pooled
-lifetime and each actual request.
-
-### 2026-08-25 — The envelope schema identifier is ai.rallywith.telemetry.event
-
-**What changed:** `TELEMETRY_ENVELOPE_SCHEMA` is `ai.rallywith.telemetry.event`.
-`SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS` now carries two entries —
-`com.rally.telemetry.event` and `com.avalon.telemetry.event` — and the envelope
-parser accepts all three.
-
-**Why:** `com.rally` matched no domain the company owns; `ai.rallywith` matches
-the desktop bundle id `ai.rallywith.desktop`, so the reverse-DNS identifier and
-the bundle it ships in agree. The entry below it stays as written: `com.rally`
-really was minted, a spool on disk can still hold it, and rewriting that entry
-to name the current spelling would erase the reason the superseded list has two
-entries rather than one.
-
-Also repaired a regression from the same day's span-attribute rename, which
-rewrote the superseded entry into a copy of the canonical one and would have
-made the reader reject every envelope from an installed build. The test that
-should have caught it looped over the constant, so it asserted only that the
-current identifier parses — always true, however the constant is spelled. It
-now names the superseded spellings as literals and asserts the canonical is
-*not* among them.
-
-### 2026-08-25 — The envelope schema identifier is com.rally.telemetry.event
-
-**What changed:** `TELEMETRY_ENVELOPE_SCHEMA` in
-`packages/contracts/src/telemetry.ts` is `com.rally.telemetry.event`, and every
-producer reads it rather than writing the literal. The envelope parser accepts
-`com.rally.telemetry.event` alongside it. The anonymous crash capability header
-became `x-rally-telemetry-capability`, read through `readRallyHeader` so the
-superseded spelling still resolves.
-
-**Why:** The identifier is validated with a literal, and the desktop spools
-envelopes to disk before sending. A spool written by the previous build and
-drained by the next one would have failed validation and been discarded — so a
-straight rename would have silently eaten every queued event across every update,
-which is indistinguishable from a quiet period. The same reasoning covers the
-capability header: it is minted by an installed build.
-
-**Considered and rejected:** Renaming the PostHog event and property names
-(`avalon_*`) in the same change. They are one edit away, but every dashboard,
-funnel, and saved insight keys on them, so the rename splits the history at its
-date. That is a product-analytics decision about whether to backfill or accept
-the seam, not an engineering one, and it is not blocking the rebrand.
-
-**Consequences:** Nothing writes the schema literal any more; a future version
-bump is one edit to the constant plus an entry in the superseded list. The
-superseded identifier is removed only when no spool old enough to hold one can
-still drain, which is a decision about shipped builds rather than about this
-repository.
-
-### 2026-08-24 — Accepted events feed a governed Global analytics lakehouse
-
-**Why:** Backend and client producers already share one typed, preference-aware,
-region-aware acceptance point. Projecting there preserves those controls and
-makes maximal admitted metadata durable without adding direct client-to-vendor
-authority.
-
-**Considered and rejected:** A second analytics ingestion endpoint, direct
-renderer Pipeline access, arbitrary autocapture, and reusing raw inference
-storage. Each weakens policy or mixes incompatible privacy contracts.
-
-Shipped in the pull request for this change. See
-[`analytics-lakehouse.md`](analytics-lakehouse.md).
-
-### 2026-08-24 — One drop is one event, whichever listener sees it first
-
-**What changed:** The substream feed's `resync_required` branch arms its cause
-only when a close is still coming, and reports nothing itself. Every `error`
-listener in the four loops now checks socket identity before arming a cause.
-
-**Why:** Review on #271. `readyState` reaches CLOSED before the `close` event is
-dispatched, so a resync frame delivered in the same task batch as an abrupt close
-reached a branch that reported the drop *and* left the close listener to report
-it again — one transition, two events, the second labelled `server_closed`
-because the cause had already been consumed. The `error` listeners were the
-mirror image: the pending cause belongs to the loop rather than to one socket, so
-an error for a superseded socket armed `transport_error` on the live one and
-mislabelled its next drop. Neither could be demonstrated from outside, and both
-corrupt a measurement rather than costing a reconnect, which is the failure mode
-worth paying a line to close.
-
-**Consequences:** The rule for the producer is now uniform: a cause is armed only
-by the site that is about to close a socket that will still report, and every
-listener that writes one first proves the socket is the live one.
-
-### 2026-08-24 — The intent allowlist is tested by running it, and offline is not a transport error
-
-**What changed:** `parseTelemetryProductIntent` and the UUID pattern beside it
-moved out of `main/index.ts` into `main/telemetry-intent.ts`, with a suite that
-runs the parser. Every socket loop now re-checks `navigator.onLine` after its
-ticket resolves and reports `offline` there.
-
-**Why:** Both came out of review on #271. The allowlist decides whether any
-renderer event reaches the reporter at all, and it was covered by a test that
-matched the source text of `index.ts` — which passes on a build whose dispatch is
-broken and fails on one that was merely reformatted. The entry point cannot be
-imported by a test because importing it starts Electron, so the function moved to
-where it can be called. Separately, a client that goes offline while its socket
-ticket is in flight leaves the offline handler nothing to close; three of the four
-loops then dialled anyway and recorded the failure as `transport_error`, which is
-precisely the distinction this event was added to make.
-
-**Considered and rejected:** Keeping the source assertion and noting the
-limitation in the pull request, which is what the first version did. The
-repository's own testing rule is that an assertion which survives breaking the
-code is not coverage, and this one would have.
-
-**Consequences:** `main/index.ts` no longer holds the validator, so a new
-renderer event is admitted in `telemetry-intent.ts` and gets a case in its suite
-rather than a string match. The offline re-check also changes product behaviour
-very slightly: those three loops no longer dial a socket they know will fail, and
-wait for the `online` event exactly as they already did when they started offline.
-
-### 2026-08-24 — HyperSight's per-block sockets join the same contract
-
-**What changed:** `block_dashboard` is a fourth value in
-`TELEMETRY_REALTIME_SOCKETS`, and `use-block-dashboard-sockets.ts` reports
-through the same producer, one instance per block connection.
-
-**Why:** It was left out of the first pass because it is shaped differently —
-one loop holds N sockets, one per configured block, rather than one per screen —
-and that difference needed a decision rather than a copy. The decision is that
-the socket kind is the unit, not the block: the event names no block, so a
-dashboard's six connections aggregate into the drop rate for this kind. Leaving
-it uninstrumented would have made the other three look like the whole picture
-while the noisiest, shortest-lived sockets in the client went unmeasured.
-
-**Considered and rejected:** Adding a block ID so a single flapping block could
-be found. It is an opaque UUID the registry would permit, but it answers a
-debugging question, not a product one, and every block on every dashboard would
-carry one into the destination for the life of the retention window.
-
-**Consequences:** Volume scales with configured blocks rather than with screens,
-which is the one place this event could grow faster than the surfaces around it;
-if that becomes a cost, the sample rate on this contract is the lever, not the
-call sites. Dictation remains outside the contract, and adding it would need a
-fifth registry value and a decision about an audio transport whose failures are
-not the room's.
-
-### 2026-08-24 — The three realtime sockets report their own connections
-
-**What changed:** A `realtime_socket_state` contract, and one producer —
-`renderer/lib/socket-telemetry.ts` — instantiated per live socket loop by the
-workspace, WorkstreamDO-control, and `AgentLoopDO`-feed hooks. Each reports a
-connection, a drop with its bounded cause, and whether anything is scheduled to
-bring the socket back, with the retry depth as a count bucket.
-
-**Why:** Nothing measured whether a client stayed connected. A conversation's
-sidebar row went stale for a member who never opened it, and the first question —
-did the push miss that client, or was there no push — could not be answered from
-anything Rally collects: the perf trace covers one socket's open latency, and
-the room's own admission logs cannot tell a first connection from the fourth
-attempt of a reconnect. The renderer is the authoritative source for the same
-reason: only it holds the retry counter, the heartbeat, and the offline
-transition. Bucketing the count keeps a reconnect storm from becoming
-high-cardinality, and rules out a client-supplied number entering the destination
-at all.
-
-**Considered and rejected:** Emitting it from the API at socket admission, which
-needs no new renderer path — but a Durable Object sees an upgrade, not an
-attempt, and cannot distinguish a client reconnecting for the fourth time from
-four clients connecting once. Also rejected: registering it `essential` so it
-survives an opt-out, the way the lifecycle and crash signals do. Those are the
-signals needed to keep the application working at all; socket churn is a product
-reliability question that aggregates fine over people who opted in, and an event
-that fires whenever a conversation is opened is not something to place outside the
-preference. The category can widen later; what was collected under an opt-out
-cannot be taken back.
-
-**Consequences:** Socket drop rates are visible per socket kind, and
-`resync_required` — the room telling a client its cursor is beyond replay — is
-now a first-class cause rather than an indistinguishable drop. Any further socket
-must add its own value to `TELEMETRY_REALTIME_SOCKETS` before reporting rather
-than borrowing one of these three — the entry above did exactly that for
-HyperSight — and any new close path has to name its cause through `willClose` or
-it will be counted as the server's.
-
-### 2026-08-20 — Global Worker telemetry is exported to PostHog, traces included
-
-**Why:** The traces shipped in #203 answer "which step was slow" only for
-whoever is looking at Workers Logs at the time. Putting them where the product
-events already are means one place to ask both halves of the question, and the
-analytics surrogates on each span are what join them.
-
-**The cost, stated plainly:** *PostHog now receives Customer Content.*
-Cloudflare's automatic Durable Object SQL spans carry
-`cloudflare.durable_object.query.bindings` — the bound parameter values — and
-`WorkstreamDO` binds conversation titles, descriptions, and previews into
-`workstream_metadata`, and a serialized effect envelope into `durable_outbox`,
-through exactly that API.
-
-Review narrowed this from the first draft, and the narrowing is worth keeping:
-message *text* rows are written to D1, not to embedded SQLite, and a D1 span
-carries `db.query.text` without its bindings. So the exposure runs through
-titles, descriptions, previews, and outbox payloads rather than through the
-`messages` table, and `AgentLoopDO` — named here originally — writes external
-ids, run state, and error codes rather than content. Narrower than it first
-read. Still Customer Content, and still the reason this entry exists. Cloudflare documents no attribute filtering or
-redaction, so this is not a gap to be closed later by configuration; it is a
-property of exporting these traces at all. PostHog is therefore a processor of
-message content, which is a subprocessor and DPA question rather than an
-observability one, and it is owed the treatment those get.
-
-**Identity was settled explicitly, not left to the destination.**
-[`performance-tracing.md`](performance-tracing.md) requires this to be decided
-before an export: map through the analytics ids at the exporter, or keep the
-attributes opaque and never promote them — but never let the destination's
-default decide. Spans now set `posthog.distinct_id` to
-`users.analytics_person_id`, which takes the first way out. Without it a
-destination that read `user.id` as its person key would key the same human
-differently from the product pipeline and split them into two people, which is
-the failure `performance-tracing.md` describes and the surrogates exist to
-prevent. The attribute is absent when the surrogate is.
-
-*The residual risk is documentation, not design:* PostHog does not document what
-its OTLP trace ingest does with `user.id` or `session.id`. Setting the key we
-want explicitly makes that moot for persons, but `session.id` on our spans is
-the **Rally auth session**, a different object from PostHog's `$session_id`,
-and nothing has verified that PostHog ignores it. Re-check if session-stitched
-figures ever look wrong.
-
-**The 15-day sub-processor notice was considered and does not gate this.**
-`apps/site/trust/subprocessors/index.html` promises customers 15 days' notice before a
-new sub-processor begins processing, and the DPA authorizes only the providers
-on that page — where PostHog was missing, despite already receiving product
-telemetry. That gap predates this change; what this change does is widen the
-category to Customer Content. It is not gated because Rally has no customers
-yet, so there is no party the notice period protects and no objection window to
-run. PostHog is listed on that page as of this change, before the position
-becomes load-bearing. **Once there are customers, this ordering stops being
-free** and a comparable escalation needs the notice period served first.
-
-**Considered and rejected:** *Lowering `head_sampling_rate` to reduce exposure.*
-Sampling changes how many traces carry content, not what a sampled trace
-carries, so it buys no privacy and costs diagnostic value; full sampling is kept
-for that reason rather than by default. *Exporting logs only.* The structured
-logger redacts, so logs alone would have been the conservative option, and the
-`perf_flow` rows would still have carried the whole step breakdown — but that
-gives up the span waterfall, which is the part a trace is for. *Redacting at the
-destination.* There is no hook: the attribute is attached by the platform before
-anything of ours runs.
-
-Shipped in #207.
-
-### 2026-08-20 — Account preference verification receives a cold-network deadline
-
-**What changed:** The desktop's authenticated Product analytics preference GET
-now uses the same 15-second bounded network budget as its preference mutation,
-instead of aborting after one second. The launch still fails closed until the
-canonical regional response is validated.
-
-**Why:** Every tested production launch aborted the verification at exactly one
-second. A signed-in cold request can include DNS, TLS, Worker activation, and a
-regional D1 lookup; one second was shorter than that normal path, so a healthy
-service looked unavailable and Product analytics remained unverified for the
-entire launch.
-
-**Considered and rejected:** Trusting the locally cached opt-in on timeout would
-weaken the account-scoped privacy boundary. Removing the timeout would let a
-hung connection remain live indefinitely. Fifteen seconds matches the
-already-shipped PATCH path and keeps the request bounded. Awaiting that entire
-budget before creating the first window was also rejected: launch gives the
-verification two seconds, then lets the same caught promise finish in the
-background while collection remains fail-closed.
-
-**Consequences:** A slow or unavailable preference service can delay the first
-window by at most two seconds. The network request still gets its full 15-second
-cold-start budget after the window opens, and its eventual validated result is
-broadcast normally. If it does not finish before telemetry initialization,
-native crash collection stays off until the next launch; product analytics can
-become effective when verification completes. New startup preference reads must
-budget for cold network activation without falling back to cached enablement or
-putting their entire request deadline in front of the first window.
-
-### 2026-08-20 — The analytics surrogates gain a second reader
-
-**What changed:** Nothing about how `users.analytics_person_id` and
-`workspaces.analytics_workspace_id` are minted, stored, or delivered. They are
-now also read on the session query that authenticates an HTTP request, and set
-on system traces as `rally.analytics.person_id` and
-`rally.analytics.workspace_id`. A Durable Object reads only the workspace
-surrogate, from a table it already joins — see
-[`performance-tracing.md`](performance-tracing.md#joining-a-system-span-to-a-product-event).
-
-**Why:** A slow trace and the product events for the same session could not be
-matched. The surrogates are random and their mapping to the product ids lives
-only in this region's D1, so answering "what was this person doing when it was
-slow" required a manual database join every time.
-
-**Considered and rejected:** Sending the raw `users.id` to PostHog as a person
-property and joining there instead. It is cheaper — one `$set` per person rather
-than two attributes per span — but it reverses this document's standing
-decision that product ids do not reach PostHog, in order to save work on a path
-that is not hot. The linkage is carried on the trace side, where raw ids already
-are.
-
-**Consequences:** These two columns now have a consumer outside this subsystem,
-so their lifecycle is no longer purely a telemetry concern: a change to how they
-are minted, rotated, or cleared has to consider traces as well. Nothing about
-their authority changed — nothing authorizes on them in either subsystem. Note
-that a trace now carries both a product id and its surrogate together, so the
-separation this document maintains holds only as far as the trace destination:
-exporting traces to a third party hands that party the mapping.
-
-Shipped in #203.
-
-### 2026-08-13 — Telemetry review closes overcount and misattribution paths across connectors, shutdown, automation, and surfaces
-
-**What changed:** Current desktop connector starts emit only the rich V2 intent,
-carry its operation ID plus an explicit query version marker, and persist a
-closed setup shape on the OAuth attempt. The terminal API event uses that same
-version and operation ID for success or failure. Marker-less released clients
-continue to receive only the V1 outcome.
-
-Desktop quit is held once while graceful lifecycle and session events enter the
-spool and one bounded flush runs; a 750-ms deadline always resumes exit. Run
-and tool events attach automation metadata only when the harness run has an
-automation origin and the conversation points to that exact automation run.
-
-Redirect-only `/` no longer reports a duplicate home surface; reused running
-Terminal sandboxes no longer report starts; native navigation carries a proven
-source; released suggestion clients retain a legacy home fallback; public
-dynamic paths and invalid handoffs use bounded truthful classes; and digest
-telemetry cannot interrupt settlement.
-
-**Why:** Emitting V1 and V2 for the same connector setup action double-counted
-one person journey, while emitting V2 only after success omitted the exact
-failures the funnel is meant to explain.
-
-Electron does not await promises started from `will-quit`, and a conversation
-can contain later person-initiated runs after automation created it. Without
-these boundaries, normal-exit events disappeared and manual activity was
-mislabeled as automation activity.
-
-Each of the remaining issues produced structurally plausible events, so schema
-validation could not detect the corrupted count or attribution. The
-authoritative producer already knew the missing transition, source,
-compatibility, or canonicalization fact.
-
-**Considered and rejected:** For connectors: emitting both versions during
-migration, inferring missing failure dimensions after OAuth returns, and
-dropping the legacy outcome immediately. Those corrupt counts, fabricate
-context, or strand released-client funnels. A new header was also rejected
-because API and desktop deployments can race: an older Worker safely ignores
-the query marker, whereas Chromium would block an unknown header at CORS
-preflight and prevent connector setup itself.
-
-For shutdown and automation: fire-and-forget shutdown writes, an unbounded quit
-delay, and inferring run ownership from any automation row on the conversation.
-Those respectively lose events, harm shutdown, or corrupt attribution.
-
-For the remaining paths: dashboard deduplication and downstream repair. Those
-approaches encode product behavior in provider queries and cannot recover the
-omitted source or distinguish a true later transition.
-
-**Consequences:** A connector attempt owns one immutable telemetry contract
-version. New connector versions must negotiate at request admission and persist
-every terminal property needed later; PostHog queries never union V1 and V2 for
-one attempt.
-
-New shutdown telemetry belongs inside the bounded barrier, and new automation
-dimensions must be proved from the specific run rather than the container that
-happens to hold it.
-
-Producers must emit only real transitions, redirect routes do not own
-observations, optional old-client context has an explicit fallback, and privacy
-canonicalization runs before the envelope is built.
-
-### 2026-08-13 — Product journeys are instrumented end to end with authoritative outcomes and no duplicate events
-
-**What changed:** Expanded the closed registry and producers across surfaces,
-suggested work, collaboration, resources, messages and elicitations, HyperSight,
-Terminal, automation authoring, recordings, root runs, tool outcomes, connectors,
-digests, invitations, and the public acquisition path. Where a richer contract
-replaces the same semantic observation, current producers choose it once and
-legacy contracts stay readable for released clients. Distinct request/outcome,
-admission/terminal, and resource/outcome observations keep separate event names.
-Authenticated product surfaces no longer also emit the legacy screen event, so
-one navigation becomes one PostHog `$screen`.
-
-Conversation creation: replaced the renderer-produced `workstream_created` event
-with one idempotent API event emitted by every user-visible creation path. The
-event records a closed creation source and derives current conversation state
-from D1. Slack and connector-activity paths supply their canonical connector
-type; suggested work resolves every distinct connector type from its retained
-provenance roots. User-owned creations retain the person and workspace group;
-unmapped Slack and workspace-owned automations remain personless workspace
-events.
-
-Resource journeys and tool adoption: added typed successful-operation events
-for conversation creation/open/switch/menu actions, automation creation/menu
-actions, message send, resource copy, note creation/open/actions, and
-transcription state. The regional harness now records every durably admitted
-canonical tool invocation with resource correlations and a personless workspace
-scope for unattended execution.
-
-Application opens: cold starts and explicit reopens now emit a closed
-`application_opened` signal with entrypoint and phase. A short main-owned
-coalescer lets an accepted deep link or menu action override Electron's generic
-activation callback. The Global adapter maps this event—not the separate
-reliability transition—to PostHog's canonical `Application Opened` with
-`application_open_source` and `from_background`.
-
-Applied desktop settings: the main process now emits one actual settings
-snapshot after launch initialization and after a newly authenticated account's
-preference is verified. Successful launch-at-login and Lockdown interactions
-preserve previous, requested, and applied booleans; successful icon selection
-preserves the closed previous and selected icon states. Identified Global
-captures update matching PostHog person properties with `$set`.
-
-Menu and keyboard adoption: registered menu opens, menu actions,
-Command-shortcut reveals, valid numbered navigation, and successful
-suggested-work starts. Client events describe the observed interaction with
-booleans, counts, and closed enums; the regional API owns the successful
-suggested-work event after creation commits.
-
-**Why:** Coarse screens and operation outcomes showed traffic but not the steps
-that explain whether people discover, configure, complete, reuse, or recover
-from the product's core workflows. Emitting both old and richer signals for one
-occurrence would make the new detail useful only by corrupting totals.
-
-The renderer could observe only composer and suggested-work responses. It
-missed Slack and background automations entirely and could not truthfully say
-which connector caused creation. Adding a second connector-only event would have
-made creation totals depend on which path fired and corrupted funnels.
-
-Screen and API-operation signals could show entry and outcome totals but could
-not reconstruct the core resource journey or tell which agent capabilities were
-actually used. Product analysis also needs stable joins from a copied output,
-note, or automation back to its conversation.
-
-Lifecycle data answered whether the process opened, but not whether a system
-login, ordinary user launch, Dock activation, deep link, menu action, or future
-native push brought the person in. Mapping both signals to PostHog's canonical
-name would double counts.
-
-Toggle clicks alone cannot answer the current-state question, and macOS can
-accept a login-item request without applying it while approval is pending. Icon
-and Lockdown operations can also fail or roll back before persistence is
-authoritative.
-
-Screen views and suggestion impressions could not form a truthful menu-open →
-selection → successful-work funnel, and navigation alone could not separate
-shortcut discovery from use.
-
-**Considered and rejected:** DOM/keyboard autocapture and generic click
-autocapture, provider-content capture, client-reported server success,
-event-per-connector multiplication, arbitrary properties, and deleting legacy
-readers immediately. Those alternatives lose semantic authority, expose
-content, break rolling clients, or expand collection without a product
-question.
-
-For conversation creation: client-supplied connector labels, provider account or
-connection IDs, one event per connector, and parallel client/server creation
-events. Those alternatives trust the wrong boundary, create high-cardinality
-identity data, multiply a single creation, or double-count desktop paths.
-
-For resource journeys: click-before-result events, treating tool availability
-as usage, inventing a user for workspace automations, and capturing messages,
-clipboard values, tool arguments, outputs, or summaries. Those alternatives
-respectively create ambiguous events, false completions, person-profile
-corruption, or content exposure.
-
-For application opens: labeling every cold manual launch as Dock, deriving
-notification source from an unmarked URL, and emitting parallel custom and
-canonical open events. Electron cannot prove the first two, and the third would
-corrupt open counts.
-
-For settings: renderer click capture, treating requested state as applied
-state, arbitrary setting names, and icon labels or paths. Those options
-respectively report before commit, corrupt login-item analysis, widen
-collection, or create mutable/high-cardinality values.
-
-For menu and keyboard adoption: raw labels/routes/IDs and client-only success
-reporting. They would respectively create content-bearing high-cardinality
-data or count a failed/interrupted request as adoption.
-
-**Consequences:** Resource UUIDs and closed taxonomy values enable joins while
-titles, messages, arguments, outputs, tokens, and provider account identifiers
-remain prohibited; approved opaque resource UUIDs are product properties, while
-account/user identity IDs and all resource content remain prohibited. New
-journeys must declare their single authoritative producer and prove no parallel
-legacy/reserved destination event is emitted. Public-site regional and identity
-behavior is owned by [`public-site-telemetry.md`](public-site-telemetry.md).
-
-The conversation UUID is the stable event identity; legacy UUIDv4 conversations
-receive a deterministic UUIDv7 insert-id projection without changing the
-resource ID. A suggested-work start uses its opportunity UUID as its idempotent
-event identity, so it cannot collide with the companion creation event. A new
-creation path must choose one closed source, resolve connector types from
-server-owned provenance, and emit only after the durable conversation write.
-API-authored events must use the internal emitter; the authenticated desktop
-batch route rejects them.
-
-Cold launches without a login-item flag or deep link are `user_launch`.
-`push_notification` remains dormant until a native notification callback
-exists. Product analytics opt-out suppresses attributed opens; bounded
-essential lifecycle events continue under their Rally name.
-
-### 2026-08-13 — PostHog receives native desktop context and app semantics without duplicate events
-
-**What changed:** Electron main now adds the random installation device ID,
-identified state, OS version, locale, timezone, display dimensions, and trusted
-per-window viewport/window IDs to the typed event context. The Global adapter
-uses PostHog's reserved native-app properties and emits canonical installation
-and update lifecycle events. A durable local marker retains a stable pending
-event ID until the spool enqueue succeeds, then acknowledges the current
-version; it also treats an existing installation's first upgraded launch as a
-baseline rather than a new install. Cold opens, installs, and updates include
-the current unprefixed `version`/`build` fields used by PostHog's Android
-lifecycle integration in addition to common `$app_*` context. Hidden login
-launches seed the focus observer as backgrounded so opening the first window
-emits the real foreground transition.
-
-The Global adapter also translates registered screen views and the matching
-desktop lifecycle transitions to PostHog's canonical `$screen`,
-`Application Opened`, and `Application Backgrounded` events. Desktop captures
-and exceptions carry standard app, desktop-device, and OS properties. A
-main-owned focus observer establishes the launch focus as its baseline, ignores
-window-to-window focus handoffs, and reports later application background and
-foreground transitions. Only API-originated captures are marked as server
-events. Every destination event retains its single Rally registry name in
-`rally_event_name`, and the live PostHog tool catalog is recorded with the
-exact products this contract can and cannot truthfully drive.
-
-**Why:** Navigation events alone made PostHog paths work, but built-in
-breakdowns and session/application views remained poorer than data captured by
-PostHog's first-party app SDKs. The adapter boundary can reproduce those
-truthful desktop signals while preserving regional delivery and without placing
-a provider SDK or token in the renderer.
-
-PostHog's built-in navigation and application views key off reserved event
-names and properties. Sending only Rally's internal spelling hid screen and
-lifecycle semantics, while treating every regional delivery as server-side
-would erase the originating desktop context. The provider mapping can supply
-the SDK's native semantics without weakening Rally's regional or typed
-boundary.
-
-**Considered and rejected:** Copying the browser SDK's URL, host, referrer,
-campaign, user-agent, and embedded-Chromium fields; exporting a hostname as a
-device model; guessing hardware manufacturers; and reporting every existing
-installation as newly installed. Those choices would respectively classify
-Electron as web acquisition traffic, create identifying high-cardinality data,
-invent device facts, or corrupt installation counts.
-
-Also rejected: emitting both the custom and reserved event for one occurrence,
-renaming the regional registry, embedding the provider SDK in the renderer, and
-fabricating pageviews, flag exposures, surveys, replay snapshots, traces, or AI
-generations. Duplication corrupts counts; the other options either move
-provider concerns into the regional contract or claim observations Rally did
-not make.
-
-Design: [regional telemetry PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
-
-### 2026-08-13 — Caught renderer transport failures reach exception telemetry
-
-**What changed:** The shared renderer HTTP boundary now sends caught, non-abort
-transport failures through the existing sanitized JavaScript-exception route as
-`network_error`, with classification-aware same-object suppression and five-minute
-same-signature coalescing. A later crash classification supersedes a handled
-network classification so essential process health is not lost. Handled network
-failures do not themselves emit essential process health transitions, and upload
-settlement prevents a late error event after abort from producing a false
-diagnostic. The API CORS policy and its production-shaped preflight test now admit
-the desktop's `X-Rally-Operation-Id` mutation header.
-
-**Why:** Production desktop requests carried that header, but the Worker omitted
-it from `Access-Control-Allow-Headers`. Chromium rejected new-conversation and
-message mutations before they reached the Worker. The UI converted and handled
-the rejected `fetch`, so neither global renderer error listener ran and PostHog
-contained no exception explaining the outage.
-
-**Considered and rejected:** Relying on `unhandledrejection`, embedding PostHog in
-the renderer, or reporting the request URL/message/body. The first misses handled
-failures, the second violates the main-owned telemetry boundary, and the third
-could copy workspace content or credentials into diagnostics.
-
-### 2026-08-13 — Artifact verification uses authoritative upload metadata
-
-**What changed:** Private artifact publication now verifies Cloudflare's
-single-PUT response against the submitted byte count and MD5 ETag, requires a
-new upload version and timestamp, then confirms that same key, size, ETag, and
-timestamp through the exact-prefix object inventory. It accepts only an
-inventory explicitly marked `DYNAMIC` and no longer verifies through the
-object-body GET.
-
-**Why:** The first release after moving off Wrangler proved that Cloudflare had
-stored a new native-symbol object at 19:09:29 with a new ETag, while the REST
-object GET still returned a 4,548-second-old `CF-Cache-Status: HIT` carrying the
-previous ETag. `Cache-Control: no-cache` did not bypass that response, so a
-correct upload failed the release checksum gate even though the authoritative
-inventory showed the new object.
-
-**Considered and rejected:** Removing integrity verification, accepting any
-successful PUT, or adding a query nonce to the object GET. Those would
-respectively lose the exact-byte check, fail to prove persistence, or change
-the R2 object key and return 404. The upload result plus dynamic inventory keeps
-both byte integrity and storage confirmation without trusting a cached body.
-
-**Consequences:** Release artifacts remain bounded before upload and requests
-remain timeout-limited. The publisher relies on R2's default MD5 checksum for a
-non-multipart object and the upload endpoint's returned version; any ETag,
-size, key, timestamp, non-dynamic cache status, or inventory mismatch fails
-closed. Inventory time may trail the upload response by at most one second to
-allow for provider timestamp-serialization precision.
-
-### 2026-08-13 — Release artifacts use the regional object API directly
-
-**Considered and rejected:** Disabling checksum verification, accepting the old
-archive, or rotating both buckets. Those would respectively remove the
-end-to-end integrity proof, risk publishing symbols for a different binary, or
-replace regional infrastructure to work around a client-path inconsistency.
-
-**Consequences:** The release token must retain `Workers R2 Storage Write` and
-the publisher holds one preflight-bounded artifact in memory at a time.
-Regional isolation is explicit in the request rather than inferred from CLI
-state, and retries remain fail-closed on upload, timeout, size, or integrity
-errors.
-
-### 2026-08-13 — Telemetry dependencies can be staged safely
-
-**What changed:** Production now accepts a healthy collector before PostHog
-delivery, a dedicated capability signer, or internal operator access is
-provisioned. The provider adapter remains idle without its token, onboarding
-capabilities use the existing Global session signer when no dedicated signer is
-present, and an absent operator map keeps only the restricted operator routes
-unavailable.
-
-**Why:** The first regional deployment had healthy D1, R2, RPC, queue, and
-workflow bindings but the environment contract made all API routes return 503
-because those three optional downstream controls had not been configured. This
-also contradicted the implementation's deliberate no-op, fallback, and fail-
-closed behavior and prevented collecting internal evidence before the PostHog
-project exists.
-
-**Considered and rejected:** Reusing a made-up PostHog token, granting an
-operator credential just to satisfy health, or rolling back a Worker after its
-migration. Those either corrupt provider data, create unnecessary access, or
-violate the forward-only deployment rule.
-
-**Consequences:** Health proves the regional collection plane, not that optional
-delivery or operator access is active. Operations must verify those surfaces
-separately when they are intentionally enabled.
-
-Shipped in the pull request for this change.
-
-### 2026-08-13 — Telemetry seams preserve policy and metric correctness
-
-**Considered and rejected:** Removing idempotency, treating capture time as send
-time, extending retention by offline delay, linking while rows merely have a
-future retry scheduled, and automatically overwriting the canonical preference
-after a conflict. Each would trade correctness or user control for a simpler
-happy path. Silently dropping corrupt profile work, counting joined rows, or
-assuming one source map per process were also rejected because they make healthy
-operations and dashboards depend on accidental input shape.
-
-Shipped in the pull request for this change. Design: [regional telemetry
-PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
-
-### 2026-08-13 — Parser limits do not depend on a shared host UID
-
-**What changed:** Removed the processor's `RLIMIT_NPROC` setting while retaining
-its address-space, CPU, output-size, file-descriptor, timeout, read-only
-filesystem, and no-network controls.
-
-**Why:** Linux accounts `RLIMIT_NPROC` across every process with the same host
-UID. A sibling container using the symbolicator's non-root UID could therefore
-consume the allowance and make a valid dump fail as malformed. The stack walker
-does not execute dump content or launch child processes, so the shared-UID limit
-added denial-of-service coupling without containing an available behavior.
-
-**Considered and rejected:** Raising the process limit. Any fixed per-UID value
-would preserve the same cross-container coupling and merely move the failure
-threshold.
-
-**Consequences:** Parser isolation continues to rely on the dedicated container,
-fixed executable, and the remaining explicit resource limits. Future parser
-changes that add child processes must introduce a container-scoped process bound
-instead of restoring a host-UID `RLIMIT_NPROC`.
-
-Shipped in the pull request for this change. Design: [regional telemetry
-PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
-
-### 2026-08-13 — Regional telemetry becomes an end-to-end production subsystem, from native dumps to operator surfaces
-
-Native dumps: added whole-directory inactive rotation, absolute 14-day local
-deadlines, durable generation invalidation, and corrupt/expired startup purge.
-
-Raw crash retention: added an R2-prefix deadline sweep that deletes expired raw
-crash objects independently of the D1 crash index and fails closed on missing
-or malformed deadline metadata.
-
-Native processor: added a CI gate that builds the symbolicator image and runs a
-checksum-pinned real minidump/symbol pair plus malformed input inside the same
-non-root, read-only, no-network boundary used by production. Its host fixture
-directory grants traversal and read access to the container UID while the
-mount itself remains read-only.
-
-Regional Container development: added the local-supervisor port declaration
-required by Wrangler and serialized configured Worker startups until
-Global reports ready.
-
-**Why:** Product analysis needs client intent joined to authoritative server
-outcomes, while Electron crashes require a deeper lifecycle than a browser SDK
-can provide. Centralizing policy in Rally keeps route, opt-out, identity, and
-internal retention enforceable without giving the renderer provider authority.
-
-Electron cannot stop Crashpad after it starts or attach authenticated headers
-to its uploader. Rotation after handler exit preserves its supported ownership
-boundary while fixed route/deadline metadata prevents later expansion.
-
-R2 can accept a minidump immediately before an isolate fails to commit its
-index row. A D1-only reaper could never discover that orphan, violating the
-absolute internal retention ceiling.
-
-Unit fakes and Wrangler configuration assertions proved orchestration but could
-not prove that the pinned stack walker, Python wrapper, symbol layout, and
-sanitizer interoperate in the shipped image. Native Linux preserves bind-mount
-permissions, so private host defaults made the valid fixture look absent to the
-non-root parser; Docker Desktop's file-sharing layer had hidden that boundary.
-
-Concurrent Wrangler builds of the shared symbolicator image race on transient
-Docker tags, while an exec-only image without an exposed port is rejected by
-the local Container supervisor. Together these made the documented dual-region
-development command fail after adding native processing.
-
-For native dumps: reading the live database, direct Crashpad upload, and a
-local stack-walking CLI as the production processor.
-
-For raw crash retention: relying on the ingest catch block or the D1 reaper.
-Neither runs after abrupt termination between the two durable writes.
-
-For the native processor: keeping only mocked executor tests, checking that
-the Dockerfile contains security-related strings, or running the integration
-container as root. The first two do not execute the parser or observe the
-report; the last one stops testing the production security boundary.
-
-For Container development: duplicating the processor image/classes per region.
-That would obscure the intentionally identical toolchain without removing the
-underlying concurrent Docker-build behavior.
-
-**Consequences:** configured deployments deployments need distinct telemetry R2
-resources, Container support, migrations, capability secrets, and five-minute
-maintenance. Release automation must publish private artifacts before
-distribution. Provider-side PostHog lifecycle remains an operational
-configuration outside this module.
-
-Main can only upload a native dump on a later launch, opt-out requires restart
-to stop dump generation fully, and every released target needs a real packaged
-Crashpad fixture plus matching private artifacts.
-
-Every raw crash write must keep the immutable `deleteAfter` metadata, and the
-scheduled processor must retain the dedicated regional prefix sweep.
-
-CI requires Docker and network access only to fetch two commit- and
-checksum-pinned rust-minidump fixtures before disabling container egress. Test
-fixture permissions must remain readable by UID 10001 without widening the
-production image or its mount. A parser, image, symbol-layout, or sanitizer
-change must keep this gate green.
-
-Operators need separate regional bearer tokens and must use the role-matched
-reason for raw access. Replay remains Global/security-only. Future cross-region
-telemetry control methods must preserve the payload-negative RPC contract and
-keep the signing key in Global.
-
-Cross-region provisional journeys remain aggregate until a same-region identity
-link exists. Operation IDs still correlate intent and outcome where both
-survive in the same regional analysis surface.
-
-Shipped in the pull request for this change. Design: [regional telemetry
-PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
-
-
-## Changelog
 
 ### 2026-10-21 — Count committed completion reprompts
 
@@ -2411,6 +1144,1272 @@ parented to a window that never painted), keep crashed renderer contents out of
 all shared broadcasts, and invalidate renderer readiness before queuing deep
 links.
 
+### 2026-09-14 — Configurable deployment isolation
+
+Configured deployments use the existing Global delivery policy. Public-site and pre-login telemetry use the Global identity endpoint, and workspace events keep their deployment identifier. Geographical routing and the separate internal telemetry sink are removed because deployment IDs now describe isolation, not a product residency promise. Existing preferences, schemas, receipts, and destination adapters remain responsible for delivery.
+
 ### 2026-09-14 — Fence retired meeting data before erasure
 
 Built-in meeting event producers are removed. The collector, destination delivery paths, and desktop spool discard their historical typed events, including recording lifecycle and note-summary events. Dictation capture and its microphone permissions remain independent. Keeping the historical registry shapes allows old queued envelopes to be identified and suppressed rather than replayed into analytics. See [meeting retirement](meeting-notes.md).
+
+### 2026-09-11 — Menu-bar events follow the menu that shrank, and stop being refused
+
+**What changed:** `menu_bar_opened` no longer carries `suggestionCount` and its
+`recentCount` bound moved from 5 to 10. `menu_bar_action_selected` stops
+emitting `new_workstream`, `new_automation`, `suggested_work`, and
+`new_meeting_note`, and its enum
+moved into an exported `TELEMETRY_MENU_BAR_ACTIONS` that
+`TelemetryReporter.menuBarActionSelected` now types itself from —
+with `open_rally` and `quit_rally` added to the admitted set.
+[`menu-bar.md`](menu-bar.md) owns the product change behind it.
+
+**Why:** two separate things. The menu dropped its Suggestions section and every
+New row, so those properties and values describe a surface that no longer
+exists. The `menu_bar` value in `surfaceEntrypoint` stays: a meeting window can
+still be told it was opened from there, and older clients still say so. Separately, the producer's union and the registry's enum were hand-copied
+and had drifted: the desktop sent `open_rally`/`quit_rally` against an enum
+admitting only the `avalon` spelling, and every one of those envelopes was
+refused at ingestion with nothing failing loudly on the client.
+
+**Considered and rejected:** deleting `suggestionCount` and the three retired
+action values outright, and versioning the event. The registry schema is what
+admits an envelope, and a released client keeps sending what its build offers, so
+a removal refuses a current install's events; a new version would add a second
+shape without changing the measurement. Retiring a value here means it stops
+arriving, not that it stops being accepted — the same treatment the retired
+`command_shortcuts_revealed` and `command_shortcut_used` events got when the
+sidebar dropped Command-number navigation.
+
+**Consequences:** `suggestionCount` is optional and absent on new rows; its
+absence means "the surface no longer has a Suggestions section", not "nothing
+was suggested". `recentCount` is comparable across the cohort boundary because
+the bound only widened. `open_avalon`/`quit_avalon` counts stop at the rename and
+`open_rally`/`quit_rally` begin at this change: the gap between the two is
+refused events, not a drop in use.
+
+### 2026-09-10 — `settings_application` is reported when the window is shown
+
+**What changed:** The settings surface no longer reports `surface_viewed` when
+its renderer mounts. It waits for `settings:revealed`, which main sends the first
+time that window is put on screen.
+
+**Why:** The settings window is now built hidden ahead of being asked for, so its
+renderer mounts once per signed-in session whether or not anybody opens Settings.
+Mounting used to *be* opening it. Left alone, the prewarm would have fired the
+only `surface_viewed` that window ever produces — spending
+`consumeSurfaceEntrypoint()` on nobody and latching `lastSurfacePath`, so the
+open a person actually performed would report nothing at all. The metric would
+not merely have inflated; opens would have disappeared from it and been replaced
+by one mis-attributed event per session.
+
+**Considered and rejected:** Gating the report in the renderer on
+`document.visibilityState`, which is the obvious fix and needs no IPC. It is not
+reliable: a `show: false` window reported `visible` under Xvfb with no window
+manager while this change was being verified, so the renderer cannot use it to
+tell a hidden window from a shown one. Only main knows, so main says.
+
+**Consequences:** One `surface_viewed` per settings window that is actually
+revealed; raising a window already on screen does not report again, which matches
+what the pre-prewarm code did (it did not remount). Any future surface built
+before it is shown has the same problem and needs the same treatment — the
+renderer cannot detect this condition for itself.
+`settings-window.md` owns the reveal signal.
+
+Shipped in #673.
+
+### 2026-09-10 — Feed telemetry names a paint from the local cache
+
+**What changed:** `workstream_feed_visible.feedSource` accepts `local_cache`,
+reported when the transcript that painted came from the renderer's on-device
+cache rather than a socket frame. The send-ready milestone is not reported
+for that paint, since its composer cannot send until the live snapshot lands.
+
+**Why:** A cached paint is a painted feed, and it is the whole point of the
+cache that it happens before any socket work completes; reporting it as
+`feed_cache` would make the already-resident and the remembered cases
+indistinguishable, and reporting nothing would hide the wins the cache is
+meant to produce.
+
+**Consequences:** A `local_cache` open, like a `feed_cache` one, has no
+detail request to join by design. Percentiles of click-to-painted-feed now
+include paints the socket had no part in; read the source before comparing
+them with earlier weeks. `workstream_open_outcome` reports `visible` for a
+seeded paint as well, since the seed satisfies the route's payload check on
+its own, so an open whose socket later fails is `visible` followed by the
+feed's failure rather than a failed open; join on the feed source to tell
+the two apart.
+
+### 2026-09-10 — The desktop telemetry inspector is withdrawn
+
+**What changed:** The staff-only **Telemetry inspector** pane in
+**Settings → Application → Developer** is gone, and with it the
+`telemetry:inspector` IPC channel, its preload method, the `getTelemetryInspector`
+bridge call and the `DesktopTelemetryInspectorEntry` shape. `TelemetryReporter`
+keeps its in-process decision record, renamed from `inspector()` to
+`decisions()` returning `TelemetryDecision`.
+
+**Why:** The pane was a developer read-out whose only readers were the people
+who wrote it, and it was the sole reason a renderer could ask the main process
+for telemetry decisions at all. Removing the surface removes that reach; the
+regional operations HTTP surface remains the supported way to inspect what was
+actually collected.
+
+**Considered and rejected:** Deleting the reporter's record along with the pane.
+It is the only place that separates *suppressed* — the opt-out held — from
+*rejected* — the event failed its own schema — and the reporter's tests assert
+on that distinction; the spool cannot, because both outcomes leave it empty. The
+name moved instead, so nothing still points at a pane that is gone.
+
+**Consequences:** Renderer-visible telemetry state is now the **Product
+analytics** preference and its status lines, nothing else. A future debugging
+surface for decisions is a new decision, not a restoration.
+
+### 2026-09-08 — The `demos` credential leaves the telemetry map
+
+**What changed:** `requireTelemetryOperator` is one instance of
+`requireOperatorFrom(secret)`; the other, `requireDemoOperator`, reads
+`DEMO_OPERATORS_JSON`. `TELEMETRY_OPERATORS_JSON` holds telemetry roles only
+again. The context accessor is `getOperator`.
+
+**Why:** The entry below rejected a separate secret on rotation cost. The
+cost that actually arrived was the opposite one: a secret cannot be read back,
+the telemetry map had been set by someone else, and adding Ace's token meant
+overwriting tokens nobody could name. Owned by
+[`workspace-retirement.md`](workspace-retirement.md#changelog).
+
+**Consequences:** This surface's secret is touched only for this surface. The
+role narrowing stays, so a misfiled token is refused either way.
+
+### 2026-09-08 — The operator credential map carries a role this surface refuses
+
+**What changed:** `OperatorPrincipalSchema` in `telemetry/operator-auth.ts`
+gains the `demos` role, and `requireOperatorRole` narrows each router to the
+roles it admits; `telemetry-operations.ts` names `support` and `security`.
+
+**Why:** Workspace retirement ([`workspace-retirement.md`](workspace-retirement.md))
+needed an operator credential that can retire and nothing else. A second
+secret with the same shape is a second thing to rotate for no isolation gained;
+the role is what isolates, and only if every surface names the roles it admits.
+
+**Considered and rejected:** A separate `WORKSPACE_OPERATORS_JSON` — the
+rotation cost above.
+
+**Consequences:** Adding an operator router means naming its roles. A role added
+to the map reaches no surface until a router names it.
+
+### 2026-09-06 — Retain historical application icon identifiers
+
+**What changed:** Separated current selectable icons from the append-only
+telemetry icon enum, retaining both previous artwork generations in ingestion.
+
+**Why:** Removing old values rejects legitimate events from installed clients
+and queued events during an upgrade. A selection change must not shrink the
+released event contract.
+
+**Considered and rejected:** Versioning the same event solely for an artwork
+replacement would add a second event shape without changing its meaning.
+
+**Consequences:** Configured deployments and the desktop spool continue to accept retired
+IDs. New artwork receives a fresh ID so historical observations stay distinct.
+
+PR: #566.
+
+### 2026-09-03 — Automation telemetry follows the run reference and one detail surface
+
+**What changed:** The compiler-turn, create-ready revision, template creation,
+and overview-reopen measurements are gone with the automation builder and
+compiler. A run's outcome and tool events read `automation_id`,
+`automation_run_id`, and `automation_trigger_type` from the run's
+`automationRun` reference rather than a frozen run context, and the desktop
+reports `automation_detail` for every `/automations/:id` visit.
+
+**Why:** The automation was rebuilt as a conversation parent
+([`automation-lifecycle.md`](automation-lifecycle.md)); drafting is a
+conversation the work-stream telemetry already covers, and there is no builder
+screen to attribute.
+
+**Consequences:** `automation_builder` and `automation_builder_started` remain
+in the closed unions for rows already recorded and have no current emitter.
+
+### 2026-09-03 — Every substream mutation keeps a named server span
+
+**What changed:** Answer, reorder, stop, and retry commands share the
+`workstream.room.substream_command` span with content-free command, operation,
+connection, transport, and object identity attributes. Failures set the span
+error and response status even when the private receipt cannot be delivered.
+
+**Why:** Moving these commands from HTTP to the substream socket removed their
+route spans and otherwise left successful command latency invisible.
+
+**Considered and rejected:** Logs only cover unexpected failures and cannot
+describe successful latency. One span name with a command dimension preserves
+the common operation without multiplying the registry.
+
+**Consequences:** The socket cutover keeps request-equivalent server timing and
+error evidence without recording command contents.
+
+Shipped in #541.
+
+### 2026-09-02 — Send readiness follows the addressed substream command socket
+
+**What changed:** The send-ready description now names the addressed
+SubstreamAgent socket, which owns message admission and the other child-local
+commands. The obsolete WorkspaceDO message relay and its REST alternatives are
+gone.
+
+**Why:** Readiness telemetry must describe the transport the composer will
+actually use; otherwise a healthy parent directory socket can make child input
+look sendable when the owning substream is unavailable.
+
+**Consequences:** `workstream_send_ready` still measures handler installation,
+not server acknowledgement. Connecting and reconnecting remain ready because
+the renderer retains and replays the exact idempotent child command.
+
+### 2026-09-01 — Renderer socket diagnostics describe clicks, not retained lifetime
+
+**What changed:** `renderer_perf_flow` accepts bounded native handshake phases
+and uploads socket-opening flows only when a pending work-stream opening attempt
+owns them. Background/speculative flows remain in local performance logging.
+
+**Why:** A 72-hour analysis found retained and background traces with hours-long
+effect-to-request gaps in the same distribution used to investigate 5–15 second
+clicks. The event was valid transport logging but invalid evidence for the
+product-open question.
+
+**Considered and rejected:** Query-side duration cutoffs would silently choose a
+new product definition and retain plausible background rows. Exporting every
+local phase would recreate the open schema this registry forbids. Proxy
+subphases remain aggregate because their boundaries are not observable.
+
+**Consequences:** Pre-change and post-change socket-flow percentiles are
+different cohorts. `workstream_feed_visible` and `workstream_send_ready` remain
+the authoritative total; the click-scoped diagnostic event only locates its
+transport contributors. All new properties remain diagnostic and optional for
+rolling client versions.
+
+### 2026-09-01 — Telemetry destinations gain one Global service boundary
+
+**What changed:** Telemetry, JavaScript-exception, native-crash, and profile
+delivery now call four explicit methods on the private Global
+`TELEMETRY_DELIVERY` Worker. The regional API still admits and sanitizes rows,
+owns every D1 outbox and circuit, and records destination outcomes. The Worker
+statically owns the PostHog SDK and adapter, stores nothing, and returns an
+outcome keyed by destination so later fan-out can remain independently durable.
+
+**Considered and rejected:** Sending raw envelopes to a generic operation
+endpoint would weaken the typed contract. A PostHog-named Worker would encourage
+one service per later vendor rather than one reviewed destination boundary.
+Moving outboxes or retry policy would split regional authority. A second stored
+PostHog token was unnecessary because the existing Global secret can cross the
+private binding for one call during the first deployment.
+
+Shipped in #471.
+
+### 2026-08-28 — Automation telemetry follows the parent run envelope
+
+**What changed:** Compiler and generated-run signals carry content-free
+automation, occurrence, trigger, run, and region attribution through a shared
+run envelope. Tool usage and terminal outcomes use that envelope rather than
+reading removed WorkspaceDO subscription or run rows. On the client,
+`telemetrySurfaceForPath` now takes whether the automation at that path is still
+a draft, and reports `automation_builder` or `automation_detail` accordingly.
+
+**Why:** Telemetry must remain attributable after legacy tables are gone without
+becoming a shadow authority or copying evaluator and transcript content. The
+client half is a consequence of the same cutover: a draft and an accepted
+automation share one durable route now, so the pathname alone cannot say which
+screen is showing. Every draft after its first turn was reporting as
+`automation_detail`, which made authoring an automation indistinguishable from
+reading one — and authoring is the funnel this surface exists to measure.
+
+### 2026-08-27 — Feed telemetry drops the retired compatibility source
+
+**What changed:** `workstream_feed_visible.feedSource` now accepts only
+`feed_cache`, `socket_snapshot`, and `boot_payload`. The `legacy_page` source
+was removed with the message-page protocol.
+
+**Why:** Retaining an unreachable source in a strict analytics schema implied a
+runtime recovery path that no longer exists and allowed tests or dashboards to
+keep treating compatibility pages as a valid transcript authority.
+
+**Considered and rejected:** Keeping the enum for old Electron builds. Those
+builds are deliberately incompatible with the ordered-turn protocol, and no
+deployed user population requires a rollout window.
+
+**Consequences:** Every emitted feed source names a current cache writer.
+Historical events keep their stored value, but current code cannot emit
+`legacy_page`.
+
+Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
+
+### 2026-08-26 — Renderer performance phases are governed diagnostic events, and cold launch no longer awaits preference reconciliation
+
+**What changed:** Added `renderer_perf_flow`, a workspace-user diagnostic event
+for the three latency-critical renderer flows. The renderer emits a closed
+projection with exact total, phase, blocked, and pre-request milliseconds;
+bounded structural counts; closed outcomes; and opaque work-stream/ticket
+correlation identifiers. It travels through typed renderer intent, strict main
+IPC validation, and the existing regional spool. Local `[perf]` output remains
+available, but console objects themselves are not collected. The strict parsed
+`renderer_perf_flow` record is also written device-locally to macOS Unified
+Logging before the upload gate; the regional event path itself is unchanged.
+
+An existing authenticated launch now initializes Product analytics admission
+from the durable device choice and starts the canonical regional read only
+after telemetry initialization, without awaiting it. Nonessential transmission
+remains closed until that read succeeds.
+
+**Why:** The approved feed-visible and send-ready product totals showed whether
+the two-second goal was missed, and backend traces located server work, but a
+packaged client's local phase line was unavailable after the fact. That left
+the observed delay between ticket completion and socket upgrade ambiguous
+between renderer scheduling, dial, handshake, and service wait.
+
+Version 1.171.0 reset remote verification on every authenticated cold launch.
+If its regional read exceeded or failed beyond the two-second launch barrier,
+every nonessential event in that process was suppressed before spool admission
+even when the durable account preference was enabled. That explains an
+observed window with no accepted open, feed-visible, send-ready, or renderer
+phase events and made the local console evidence disappear on quit.
+
+**Considered and rejected:** Direct renderer-to-PostHog capture bypasses
+preference, regional routing, validation, and the spool. Forwarding the console
+object would make every future annotation exportable by accident. Adding the
+phase list to the product feed-visible event would mix a diagnostic breakdown
+with the authoritative user-visible outcome and its longer retention.
+
+For the launch path: waiting longer spends more of the two-second product
+budget without making telemetry reliable. Treating a same-account cached
+enable as untrusted for the whole process preserves fail-closed behavior but
+recreates the loss. Session changes close both local spool admission and
+delivery until the new account is verified, and explicit enable still requires
+the canonical compare-and-set acknowledgement; only ordinary cold-launch
+reconciliation moved off the critical path.
+
+Early launch events can enter the durable regional spool immediately when the
+stored same-account preference is enabled. Successful verification releases
+them for upload; a canonical disable purges them before any nonessential
+transmission and turns collection off. Local Unified Log records never leave
+the Mac and therefore do not depend on telemetry consent. Historical
+console-only lines from 1.171.0 cannot be reconstructed after their renderer
+exits.
+
+### 2026-08-26 — Socket lineage survives an overlapping recovery retry
+
+**What changed:** A monotonic socket-snapshot generation now fences the
+renderer-only recovery cache. If a reconnect snapshot arrives while REST Retry
+is in flight, late HTTP detail or transcript results cannot replace the
+snapshot's `socket_snapshot` lineage or its canonical feed. Recovery windows
+are consumed by their paired transcript read and cleared whenever a snapshot
+becomes canonical.
+
+**Why:** The source label describes the cache writer whose data reached paint.
+Without a generation fence, request completion order could relabel and replace
+a newer socket feed as `boot_payload` or `legacy_page`, corrupting the cohorts
+used to judge the two-second cold-open goal.
+
+**Considered and rejected:** Request cancellation is transport-dependent and
+does not prove that no post-await side effect runs. Timestamp comparison can
+tie within a millisecond and does not directly name the authority transition.
+
+**Consequences:** Recovery code must check the captured snapshot generation
+after every network await and return the current socket caches when superseded.
+The generation is renderer-only coordination state and is never emitted as
+telemetry.
+
+### 2026-08-25 — Cold-open telemetry names the socket snapshot
+
+**What changed:** `workstream_feed_visible.feedSource` now accepts
+`socket_snapshot`, and a cold reader populated by its first SubstreamAgent frame
+reports that source. The renderer records that lineage when each cache writer
+runs rather than inferring it from unlike payload shapes. `feed_cache` remains
+the already-present path, while `boot_payload` and `legacy_page` distinguish
+embedded-window recovery from an older Worker's page fallback.
+
+**Why:** The normal reader no longer issues the detail request. Labeling a
+socket-populated feed as an HTTP boot or rollout fallback would make the new
+critical path indistinguishable from the recovery path when diagnosing its
+P90.
+
+**Considered and rejected:** Reusing `boot_payload` because both shapes contain
+canonical boot state. That name would preserve schema compatibility by hiding
+the transport distinction the performance question needs.
+
+**Consequences:** Existing analytics consumers must include the new enum value.
+Cold-open queries should select `socket_snapshot` and join through the opening
+operation and socket lease; `legacy_page` remains reachable during regional
+version skew and REST cohorts stay separately queryable. The event still
+contains no message content, URL, or authorization value.
+
+### 2026-08-25 — Send readiness is measured independently from feed visibility
+
+**What changed:** Added `workstream_send_ready` under the sidebar opening
+operation ID. It measures click-to-painted-composer time once the active
+work-stream handler can submit to the workspace command queue and records that
+socket's connecting, connected, or reconnecting state.
+
+**Why:** A painted feed is the requested opening milestone but cannot prove a
+separately named ability to send. The composer usually commits beside the feed,
+and the command socket accepts sends while reconnecting, yet an analytics query
+should not have to infer that lifecycle boundary from two adjacent pieces of UI.
+
+**Considered and rejected:** Reinterpreting `workstream_feed_visible` as send
+readiness would turn a precise paint event into an undocumented proxy. Waiting
+for the workspace socket to connect would be equally false: client readiness is
+queue acceptance, while server acknowledgement belongs to the existing message
+send flow.
+
+**Consequences:** Feed paint and client send readiness can be compared under one
+attempt ID without timestamp joins. `workstream_send_ready` is success-only and
+does not replace the terminal opening outcome denominator; it contains no draft,
+message, URL, or server response.
+
+### 2026-08-25 — Route abandonment and retries cannot corrupt opening latency
+
+**What changed:** A click attempt now terminates as `abandoned` when navigation
+leaves its work stream for another surface, its owning workspace is replaced by
+a service-error screen, or its owning session ends. Painted
+feed reporting reschedules after an effect cleanup without re-latching data
+readiness, which preserves the terminal event under React StrictMode and any
+production dependency change inside the two-frame window. Detail retries now
+mint distinct request IDs while carrying the click ID as the existing Rally
+operation header. The event registry, rather than desktop IPC alone, enforces
+that data-ready time cannot exceed painted time.
+
+**Why:** An interrupted load could stay in the renderer singleton and make a
+later 60 ms return look minutes long. Separately, cancelling the first scheduled
+paint consumed a one-shot latch and left no second schedule, which lost both the
+success event and terminal outcome. Reusing the click ID as every retry's
+request ID also collapsed multiple HTTP attempts in the exact slow tail this
+instrumentation needs to explain.
+
+**Considered and rejected:** Treating non-sidebar navigation as `superseded`
+would claim another work stream caused it; treating it as `load_failed` would
+claim a service failure. WorkstreamScreen unmount cleanup was also rejected
+because StrictMode deliberately simulates that cleanup without the reader
+leaving. Route, workspace-error, and session observation represent the actual
+abandonment. A
+single repeated request ID was rejected because the tracing contract defines it
+per call; the operation header already carries the longer click lifetime.
+
+### 2026-08-25 — Sidebar-to-painted-feed latency, every work-stream socket start, and each opening attempt's socket lease are measurable
+
+**What changed:** Added `workstream_feed_visible`, emitted after a sidebar click
+has committed its initial transcript and crossed one browser paint, with exact
+total and data-ready milliseconds plus cache, pool, feed-source, sidebar, and
+message-count dimensions. The click-scoped operation ID is reused as the detail
+request ID. Added `workstream_socket_started` at the two work-stream socket
+loops before every ticket request; it records control/feed kind, initial or
+reconnect reason, retry bucket, and a matching operation/request ID.
+
+Added `workstream_open_started` and terminal `workstream_open_outcome` events
+under one click-scoped operation ID. Rapid switches emit `superseded`; query
+failures emit `load_failed`; painted feeds emit `visible`. Each retained socket
+owner now has one socket-lease ID shared by its control and feed starts.
+Socket-start events retain their per-attempt request ID and additionally carry
+the lease plus the pending opening ID when one exists; opening events record
+the lease that served them.
+
+**Why:** `workstream_opened` proved only that detail eventually loaded, local
+perf lines died with the renderer, and socket-connected events began after the
+initial feed gate. None could calculate average or percentile click-to-feed
+latency, split data wait from paint delay, distinguish a cold open from a
+hover-warmed control socket or retained pair, or count starts whose ticket or
+handshake never succeeded. The user explicitly required this production
+measurement and required pooled sockets and every start reason to be visible.
+
+Work-stream and launch IDs were too broad, while the earlier operation ID
+survived only on successful feed paint and the detail request. Replacing a
+pending A measurement with B prevented misattribution but erased A, and the
+separate socket request IDs could not connect a click to socket work. Pooled
+sockets made parent-only correlation incomplete because a hover-warmed or
+retained connection can legitimately begin before the click that consumes it.
+
+**Considered and rejected:** Duration buckets cannot produce averages or P50,
+P75, P90, and P99. Joining `workstream_opened` to clicks by timestamp is
+ambiguous during rapid navigation. Treating a warmed control socket as a warm
+feed is false: hover opens no SubstreamAgent connection or presence. Reporting
+only successful socket connections omits ticket and handshake failures, while
+instrumenting each pool caller would miss reconnects and future admission paths.
+Direct renderer-to-PostHog capture was rejected because it bypasses consent,
+regional routing, validation, and the durable spool.
+
+Treating rapid switches as duplicate delivery would confuse user cancellation
+with ingestion retry; `eventId` already handles the latter. Reusing one
+operation ID for socket attempts and the click would collapse distinct ticket
+requests. Adding only the opening ID to socket starts would still strand
+pre-click warmups. The lease-plus-attempt model preserves both the pooled
+lifetime and each actual request.
+
+### 2026-08-25 — The envelope schema identifier is ai.rallywith.telemetry.event
+
+**What changed:** `TELEMETRY_ENVELOPE_SCHEMA` is `ai.rallywith.telemetry.event`.
+`SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS` now carries two entries —
+`com.rally.telemetry.event` and `com.avalon.telemetry.event` — and the envelope
+parser accepts all three.
+
+**Why:** `com.rally` matched no domain the company owns; `ai.rallywith` matches
+the desktop bundle id `ai.rallywith.desktop`, so the reverse-DNS identifier and
+the bundle it ships in agree. The entry below it stays as written: `com.rally`
+really was minted, a spool on disk can still hold it, and rewriting that entry
+to name the current spelling would erase the reason the superseded list has two
+entries rather than one.
+
+Also repaired a regression from the same day's span-attribute rename, which
+rewrote the superseded entry into a copy of the canonical one and would have
+made the reader reject every envelope from an installed build. The test that
+should have caught it looped over the constant, so it asserted only that the
+current identifier parses — always true, however the constant is spelled. It
+now names the superseded spellings as literals and asserts the canonical is
+*not* among them.
+
+### 2026-08-25 — The envelope schema identifier is com.rally.telemetry.event
+
+**What changed:** `TELEMETRY_ENVELOPE_SCHEMA` in
+`packages/contracts/src/telemetry.ts` is `com.rally.telemetry.event`, and every
+producer reads it rather than writing the literal. The envelope parser accepts
+`com.rally.telemetry.event` alongside it. The anonymous crash capability header
+became `x-rally-telemetry-capability`, read through `readRallyHeader` so the
+superseded spelling still resolves.
+
+**Why:** The identifier is validated with a literal, and the desktop spools
+envelopes to disk before sending. A spool written by the previous build and
+drained by the next one would have failed validation and been discarded — so a
+straight rename would have silently eaten every queued event across every update,
+which is indistinguishable from a quiet period. The same reasoning covers the
+capability header: it is minted by an installed build.
+
+**Considered and rejected:** Renaming the PostHog event and property names
+(`avalon_*`) in the same change. They are one edit away, but every dashboard,
+funnel, and saved insight keys on them, so the rename splits the history at its
+date. That is a product-analytics decision about whether to backfill or accept
+the seam, not an engineering one, and it is not blocking the rebrand.
+
+**Consequences:** Nothing writes the schema literal any more; a future version
+bump is one edit to the constant plus an entry in the superseded list. The
+superseded identifier is removed only when no spool old enough to hold one can
+still drain, which is a decision about shipped builds rather than about this
+repository.
+
+### 2026-08-24 — Accepted events feed a governed Global analytics lakehouse
+
+**Why:** Backend and client producers already share one typed, preference-aware,
+region-aware acceptance point. Projecting there preserves those controls and
+makes maximal admitted metadata durable without adding direct client-to-vendor
+authority.
+
+**Considered and rejected:** A second analytics ingestion endpoint, direct
+renderer Pipeline access, arbitrary autocapture, and reusing raw inference
+storage. Each weakens policy or mixes incompatible privacy contracts.
+
+Shipped in the pull request for this change. See
+[`analytics-lakehouse.md`](analytics-lakehouse.md).
+
+### 2026-08-24 — One drop is one event, whichever listener sees it first
+
+**What changed:** The substream feed's `resync_required` branch arms its cause
+only when a close is still coming, and reports nothing itself. Every `error`
+listener in the four loops now checks socket identity before arming a cause.
+
+**Why:** Review on #271. `readyState` reaches CLOSED before the `close` event is
+dispatched, so a resync frame delivered in the same task batch as an abrupt close
+reached a branch that reported the drop *and* left the close listener to report
+it again — one transition, two events, the second labelled `server_closed`
+because the cause had already been consumed. The `error` listeners were the
+mirror image: the pending cause belongs to the loop rather than to one socket, so
+an error for a superseded socket armed `transport_error` on the live one and
+mislabelled its next drop. Neither could be demonstrated from outside, and both
+corrupt a measurement rather than costing a reconnect, which is the failure mode
+worth paying a line to close.
+
+**Consequences:** The rule for the producer is now uniform: a cause is armed only
+by the site that is about to close a socket that will still report, and every
+listener that writes one first proves the socket is the live one.
+
+### 2026-08-24 — The intent allowlist is tested by running it, and offline is not a transport error
+
+**What changed:** `parseTelemetryProductIntent` and the UUID pattern beside it
+moved out of `main/index.ts` into `main/telemetry-intent.ts`, with a suite that
+runs the parser. Every socket loop now re-checks `navigator.onLine` after its
+ticket resolves and reports `offline` there.
+
+**Why:** Both came out of review on #271. The allowlist decides whether any
+renderer event reaches the reporter at all, and it was covered by a test that
+matched the source text of `index.ts` — which passes on a build whose dispatch is
+broken and fails on one that was merely reformatted. The entry point cannot be
+imported by a test because importing it starts Electron, so the function moved to
+where it can be called. Separately, a client that goes offline while its socket
+ticket is in flight leaves the offline handler nothing to close; three of the four
+loops then dialled anyway and recorded the failure as `transport_error`, which is
+precisely the distinction this event was added to make.
+
+**Considered and rejected:** Keeping the source assertion and noting the
+limitation in the pull request, which is what the first version did. The
+repository's own testing rule is that an assertion which survives breaking the
+code is not coverage, and this one would have.
+
+**Consequences:** `main/index.ts` no longer holds the validator, so a new
+renderer event is admitted in `telemetry-intent.ts` and gets a case in its suite
+rather than a string match. The offline re-check also changes product behaviour
+very slightly: those three loops no longer dial a socket they know will fail, and
+wait for the `online` event exactly as they already did when they started offline.
+
+### 2026-08-24 — HyperSight's per-block sockets join the same contract
+
+**What changed:** `block_dashboard` is a fourth value in
+`TELEMETRY_REALTIME_SOCKETS`, and `use-block-dashboard-sockets.ts` reports
+through the same producer, one instance per block connection.
+
+**Why:** It was left out of the first pass because it is shaped differently —
+one loop holds N sockets, one per configured block, rather than one per screen —
+and that difference needed a decision rather than a copy. The decision is that
+the socket kind is the unit, not the block: the event names no block, so a
+dashboard's six connections aggregate into the drop rate for this kind. Leaving
+it uninstrumented would have made the other three look like the whole picture
+while the noisiest, shortest-lived sockets in the client went unmeasured.
+
+**Considered and rejected:** Adding a block ID so a single flapping block could
+be found. It is an opaque UUID the registry would permit, but it answers a
+debugging question, not a product one, and every block on every dashboard would
+carry one into the destination for the life of the retention window.
+
+**Consequences:** Volume scales with configured blocks rather than with screens,
+which is the one place this event could grow faster than the surfaces around it;
+if that becomes a cost, the sample rate on this contract is the lever, not the
+call sites. Dictation remains outside the contract, and adding it would need a
+fifth registry value and a decision about an audio transport whose failures are
+not the room's.
+
+### 2026-08-24 — The three realtime sockets report their own connections
+
+**What changed:** A `realtime_socket_state` contract, and one producer —
+`renderer/lib/socket-telemetry.ts` — instantiated per live socket loop by the
+workspace, WorkstreamDO-control, and SubstreamAgent-feed hooks. Each reports a
+connection, a drop with its bounded cause, and whether anything is scheduled to
+bring the socket back, with the retry depth as a count bucket.
+
+**Why:** Nothing measured whether a client stayed connected. A work stream's
+sidebar row went stale for a member who never opened it, and the first question —
+did the push miss that client, or was there no push — could not be answered from
+anything Rally collects: the perf trace covers one socket's open latency, and
+the room's own admission logs cannot tell a first connection from the fourth
+attempt of a reconnect. The renderer is the authoritative source for the same
+reason: only it holds the retry counter, the heartbeat, and the offline
+transition. Bucketing the count keeps a reconnect storm from becoming
+high-cardinality, and rules out a client-supplied number entering the destination
+at all.
+
+**Considered and rejected:** Emitting it from the API at socket admission, which
+needs no new renderer path — but a Durable Object sees an upgrade, not an
+attempt, and cannot distinguish a client reconnecting for the fourth time from
+four clients connecting once. Also rejected: registering it `essential` so it
+survives an opt-out, the way the lifecycle and crash signals do. Those are the
+signals needed to keep the application working at all; socket churn is a product
+reliability question that aggregates fine over people who opted in, and an event
+that fires whenever a work stream is opened is not something to place outside the
+preference. The category can widen later; what was collected under an opt-out
+cannot be taken back.
+
+**Consequences:** Socket drop rates are visible per socket kind, and
+`resync_required` — the room telling a client its cursor is beyond replay — is
+now a first-class cause rather than an indistinguishable drop. Any further socket
+must add its own value to `TELEMETRY_REALTIME_SOCKETS` before reporting rather
+than borrowing one of these three — the entry above did exactly that for
+HyperSight — and any new close path has to name its cause through `willClose` or
+it will be counted as the server's.
+
+### 2026-08-20 — Global Worker telemetry is exported to PostHog, traces included
+
+**Why:** The traces shipped in #203 answer "which step was slow" only for
+whoever is looking at Workers Logs at the time. Putting them where the product
+events already are means one place to ask both halves of the question, and the
+analytics surrogates on each span are what join them.
+
+**The cost, stated plainly:** *PostHog now receives Customer Content.*
+Cloudflare's automatic Durable Object SQL spans carry
+`cloudflare.durable_object.query.bindings` — the bound parameter values — and
+`WorkstreamDO` binds work stream titles, descriptions, and previews into
+`workstream_metadata`, and a serialized effect envelope into `durable_outbox`,
+through exactly that API.
+
+Review narrowed this from the first draft, and the narrowing is worth keeping:
+message *text* rows are written to D1, not to embedded SQLite, and a D1 span
+carries `db.query.text` without its bindings. So the exposure runs through
+titles, descriptions, previews, and outbox payloads rather than through the
+`messages` table, and `SubstreamAgent` — named here originally — writes external
+ids, run state, and error codes rather than content. Narrower than it first
+read. Still Customer Content, and still the reason this entry exists. Cloudflare documents no attribute filtering or
+redaction, so this is not a gap to be closed later by configuration; it is a
+property of exporting these traces at all. PostHog is therefore a processor of
+message content, which is a subprocessor and DPA question rather than an
+observability one, and it is owed the treatment those get.
+
+**Identity was settled explicitly, not left to the destination.**
+[`performance-tracing.md`](performance-tracing.md) requires this to be decided
+before an export: map through the analytics ids at the exporter, or keep the
+attributes opaque and never promote them — but never let the destination's
+default decide. Spans now set `posthog.distinct_id` to
+`users.analytics_person_id`, which takes the first way out. Without it a
+destination that read `user.id` as its person key would key the same human
+differently from the product pipeline and split them into two people, which is
+the failure `performance-tracing.md` describes and the surrogates exist to
+prevent. The attribute is absent when the surrogate is.
+
+*The residual risk is documentation, not design:* PostHog does not document what
+its OTLP trace ingest does with `user.id` or `session.id`. Setting the key we
+want explicitly makes that moot for persons, but `session.id` on our spans is
+the **Rally auth session**, a different object from PostHog's `$session_id`,
+and nothing has verified that PostHog ignores it. Re-check if session-stitched
+figures ever look wrong.
+
+**The 15-day sub-processor notice was considered and does not gate this.**
+`apps/site/trust/subprocessors/index.html` promises customers 15 days' notice before a
+new sub-processor begins processing, and the DPA authorizes only the providers
+on that page — where PostHog was missing, despite already receiving product
+telemetry. That gap predates this change; what this change does is widen the
+category to Customer Content. It is not gated because Rally has no customers
+yet, so there is no party the notice period protects and no objection window to
+run. PostHog is listed on that page as of this change, before the position
+becomes load-bearing. **Once there are customers, this ordering stops being
+free** and a comparable escalation needs the notice period served first.
+
+**Considered and rejected:** *Lowering `head_sampling_rate` to reduce exposure.*
+Sampling changes how many traces carry content, not what a sampled trace
+carries, so it buys no privacy and costs diagnostic value; full sampling is kept
+for that reason rather than by default. *Exporting logs only.* The structured
+logger redacts, so logs alone would have been the conservative option, and the
+`perf_flow` rows would still have carried the whole step breakdown — but that
+gives up the span waterfall, which is the part a trace is for. *Redacting at the
+destination.* There is no hook: the attribute is attached by the platform before
+anything of ours runs.
+
+Shipped in #207.
+
+### 2026-08-20 — Account preference verification receives a cold-network deadline
+
+**What changed:** The desktop's authenticated Product analytics preference GET
+now uses the same 15-second bounded network budget as its preference mutation,
+instead of aborting after one second. The launch still fails closed until the
+canonical regional response is validated.
+
+**Why:** Every tested production launch aborted the verification at exactly one
+second. A signed-in cold request can include DNS, TLS, Worker activation, and a
+regional D1 lookup; one second was shorter than that normal path, so a healthy
+service looked unavailable and Product analytics remained unverified for the
+entire launch.
+
+**Considered and rejected:** Trusting the locally cached opt-in on timeout would
+weaken the account-scoped privacy boundary. Removing the timeout would let a
+hung connection remain live indefinitely. Fifteen seconds matches the
+already-shipped PATCH path and keeps the request bounded. Awaiting that entire
+budget before creating the first window was also rejected: launch gives the
+verification two seconds, then lets the same caught promise finish in the
+background while collection remains fail-closed.
+
+**Consequences:** A slow or unavailable preference service can delay the first
+window by at most two seconds. The network request still gets its full 15-second
+cold-start budget after the window opens, and its eventual validated result is
+broadcast normally. If it does not finish before telemetry initialization,
+native crash collection stays off until the next launch; product analytics can
+become effective when verification completes. New startup preference reads must
+budget for cold network activation without falling back to cached enablement or
+putting their entire request deadline in front of the first window.
+
+### 2026-08-20 — The analytics surrogates gain a second reader
+
+**What changed:** Nothing about how `users.analytics_person_id` and
+`workspaces.analytics_workspace_id` are minted, stored, or delivered. They are
+now also read on the session query that authenticates an HTTP request, and set
+on system traces as `rally.analytics.person_id` and
+`rally.analytics.workspace_id`. A Durable Object reads only the workspace
+surrogate, from a table it already joins — see
+[`performance-tracing.md`](performance-tracing.md#joining-a-system-span-to-a-product-event).
+
+**Why:** A slow trace and the product events for the same session could not be
+matched. The surrogates are random and their mapping to the product ids lives
+only in this region's D1, so answering "what was this person doing when it was
+slow" required a manual database join every time.
+
+**Considered and rejected:** Sending the raw `users.id` to PostHog as a person
+property and joining there instead. It is cheaper — one `$set` per person rather
+than two attributes per span — but it reverses this document's standing
+decision that product ids do not reach PostHog, in order to save work on a path
+that is not hot. The linkage is carried on the trace side, where raw ids already
+are.
+
+**Consequences:** These two columns now have a consumer outside this subsystem,
+so their lifecycle is no longer purely a telemetry concern: a change to how they
+are minted, rotated, or cleared has to consider traces as well. Nothing about
+their authority changed — nothing authorizes on them in either subsystem. Note
+that a trace now carries both a product id and its surrogate together, so the
+separation this document maintains holds only as far as the trace destination:
+exporting traces to a third party hands that party the mapping.
+
+Shipped in #203.
+
+### 2026-08-13 — Telemetry review closes overcount and misattribution paths across connectors, shutdown, automation, and surfaces
+
+**What changed:** Current desktop connector starts emit only the rich V2 intent,
+carry its operation ID plus an explicit query version marker, and persist a
+closed setup shape on the OAuth attempt. The terminal API event uses that same
+version and operation ID for success or failure. Marker-less released clients
+continue to receive only the V1 outcome.
+
+Desktop quit is held once while graceful lifecycle and session events enter the
+spool and one bounded flush runs; a 750-ms deadline always resumes exit. Run
+and tool events attach automation metadata only when the harness run has an
+automation origin and the work stream points to that exact automation run.
+
+Redirect-only `/` no longer reports a duplicate home surface; reused running
+Terminal sandboxes no longer report starts; native navigation carries a proven
+source; released suggestion clients retain a legacy home fallback; public
+dynamic paths and invalid handoffs use bounded truthful classes; and digest
+telemetry cannot interrupt settlement.
+
+**Why:** Emitting V1 and V2 for the same connector setup action double-counted
+one person journey, while emitting V2 only after success omitted the exact
+failures the funnel is meant to explain.
+
+Electron does not await promises started from `will-quit`, and a work stream
+can contain later person-initiated runs after automation created it. Without
+these boundaries, normal-exit events disappeared and manual activity was
+mislabeled as automation activity.
+
+Each of the remaining issues produced structurally plausible events, so schema
+validation could not detect the corrupted count or attribution. The
+authoritative producer already knew the missing transition, source,
+compatibility, or canonicalization fact.
+
+**Considered and rejected:** For connectors: emitting both versions during
+migration, inferring missing failure dimensions after OAuth returns, and
+dropping the legacy outcome immediately. Those corrupt counts, fabricate
+context, or strand released-client funnels. A new header was also rejected
+because API and desktop deployments can race: an older Worker safely ignores
+the query marker, whereas Chromium would block an unknown header at CORS
+preflight and prevent connector setup itself.
+
+For shutdown and automation: fire-and-forget shutdown writes, an unbounded quit
+delay, and inferring run ownership from any automation row on the work stream.
+Those respectively lose events, harm shutdown, or corrupt attribution.
+
+For the remaining paths: dashboard deduplication and downstream repair. Those
+approaches encode product behavior in provider queries and cannot recover the
+omitted source or distinguish a true later transition.
+
+**Consequences:** A connector attempt owns one immutable telemetry contract
+version. New connector versions must negotiate at request admission and persist
+every terminal property needed later; PostHog queries never union V1 and V2 for
+one attempt.
+
+New shutdown telemetry belongs inside the bounded barrier, and new automation
+dimensions must be proved from the specific run rather than the container that
+happens to hold it.
+
+Producers must emit only real transitions, redirect routes do not own
+observations, optional old-client context has an explicit fallback, and privacy
+canonicalization runs before the envelope is built.
+
+### 2026-08-13 — Product journeys are instrumented end to end with authoritative outcomes and no duplicate events
+
+**What changed:** Expanded the closed registry and producers across surfaces,
+suggested work, collaboration, resources, messages and elicitations, HyperSight,
+Terminal, automation authoring, recordings, root runs, tool outcomes, connectors,
+digests, invitations, and the public acquisition path. Where a richer contract
+replaces the same semantic observation, current producers choose it once and
+legacy contracts stay readable for released clients. Distinct request/outcome,
+admission/terminal, and resource/outcome observations keep separate event names.
+Authenticated product surfaces no longer also emit the legacy screen event, so
+one navigation becomes one PostHog `$screen`.
+
+Work-stream creation: replaced the renderer-produced `workstream_created` event
+with one idempotent API event emitted by every user-visible creation path. The
+event records a closed creation source and derives current work-stream state
+from D1. Slack and connector-activity paths supply their canonical connector
+type; suggested work resolves every distinct connector type from its retained
+provenance roots. User-owned creations retain the person and workspace group;
+unmapped Slack and workspace-owned automations remain personless workspace
+events.
+
+Resource journeys and tool adoption: added typed successful-operation events
+for work-stream creation/open/switch/menu actions, automation creation/menu
+actions, message send, resource copy, note creation/open/actions, and
+transcription state. The regional harness now records every durably admitted
+canonical tool invocation with resource correlations and a personless workspace
+scope for unattended execution.
+
+Application opens: cold starts and explicit reopens now emit a closed
+`application_opened` signal with entrypoint and phase. A short main-owned
+coalescer lets an accepted deep link or menu action override Electron's generic
+activation callback. The Global adapter maps this event—not the separate
+reliability transition—to PostHog's canonical `Application Opened` with
+`application_open_source` and `from_background`.
+
+Applied desktop settings: the main process now emits one actual settings
+snapshot after launch initialization and after a newly authenticated account's
+preference is verified. Successful launch-at-login and Lockdown interactions
+preserve previous, requested, and applied booleans; successful icon selection
+preserves the closed previous and selected icon states. Identified Global
+captures update matching PostHog person properties with `$set`.
+
+Menu and keyboard adoption: registered menu opens, menu actions,
+Command-shortcut reveals, valid numbered navigation, and successful
+suggested-work starts. Client events describe the observed interaction with
+booleans, counts, and closed enums; the regional API owns the successful
+suggested-work event after creation commits.
+
+**Why:** Coarse screens and operation outcomes showed traffic but not the steps
+that explain whether people discover, configure, complete, reuse, or recover
+from the product's core workflows. Emitting both old and richer signals for one
+occurrence would make the new detail useful only by corrupting totals.
+
+The renderer could observe only composer and suggested-work responses. It
+missed Slack and background automations entirely and could not truthfully say
+which connector caused creation. Adding a second connector-only event would have
+made creation totals depend on which path fired and corrupted funnels.
+
+Screen and API-operation signals could show entry and outcome totals but could
+not reconstruct the core resource journey or tell which agent capabilities were
+actually used. Product analysis also needs stable joins from a copied output,
+note, or automation back to its work stream.
+
+Lifecycle data answered whether the process opened, but not whether a system
+login, ordinary user launch, Dock activation, deep link, menu action, or future
+native push brought the person in. Mapping both signals to PostHog's canonical
+name would double counts.
+
+Toggle clicks alone cannot answer the current-state question, and macOS can
+accept a login-item request without applying it while approval is pending. Icon
+and Lockdown operations can also fail or roll back before persistence is
+authoritative.
+
+Screen views and suggestion impressions could not form a truthful menu-open →
+selection → successful-work funnel, and navigation alone could not separate
+shortcut discovery from use.
+
+**Considered and rejected:** DOM/keyboard autocapture and generic click
+autocapture, provider-content capture, client-reported server success,
+event-per-connector multiplication, arbitrary properties, and deleting legacy
+readers immediately. Those alternatives lose semantic authority, expose
+content, break rolling clients, or expand collection without a product
+question.
+
+For work-stream creation: client-supplied connector labels, provider account or
+connection IDs, one event per connector, and parallel client/server creation
+events. Those alternatives trust the wrong boundary, create high-cardinality
+identity data, multiply a single creation, or double-count desktop paths.
+
+For resource journeys: click-before-result events, treating tool availability
+as usage, inventing a user for workspace automations, and capturing messages,
+clipboard values, tool arguments, outputs, or summaries. Those alternatives
+respectively create ambiguous events, false completions, person-profile
+corruption, or content exposure.
+
+For application opens: labeling every cold manual launch as Dock, deriving
+notification source from an unmarked URL, and emitting parallel custom and
+canonical open events. Electron cannot prove the first two, and the third would
+corrupt open counts.
+
+For settings: renderer click capture, treating requested state as applied
+state, arbitrary setting names, and icon labels or paths. Those options
+respectively report before commit, corrupt login-item analysis, widen
+collection, or create mutable/high-cardinality values.
+
+For menu and keyboard adoption: raw labels/routes/IDs and client-only success
+reporting. They would respectively create content-bearing high-cardinality
+data or count a failed/interrupted request as adoption.
+
+**Consequences:** Resource UUIDs and closed taxonomy values enable joins while
+titles, messages, arguments, outputs, tokens, and provider account identifiers
+remain prohibited; approved opaque resource UUIDs are product properties, while
+account/user identity IDs and all resource content remain prohibited. New
+journeys must declare their single authoritative producer and prove no parallel
+legacy/reserved destination event is emitted. Public-site regional and identity
+behavior is owned by [`public-site-telemetry.md`](public-site-telemetry.md).
+
+The work-stream UUID is the stable event identity; legacy UUIDv4 work streams
+receive a deterministic UUIDv7 insert-id projection without changing the
+resource ID. A suggested-work start uses its opportunity UUID as its idempotent
+event identity, so it cannot collide with the companion creation event. A new
+creation path must choose one closed source, resolve connector types from
+server-owned provenance, and emit only after the durable work-stream write.
+API-authored events must use the internal emitter; the authenticated desktop
+batch route rejects them.
+
+Cold launches without a login-item flag or deep link are `user_launch`.
+`push_notification` remains dormant until a native notification callback
+exists. Product analytics opt-out suppresses attributed opens; bounded
+essential lifecycle events continue under their Rally name.
+
+### 2026-08-13 — PostHog receives native desktop context and app semantics without duplicate events
+
+**What changed:** Electron main now adds the random installation device ID,
+identified state, OS version, locale, timezone, display dimensions, and trusted
+per-window viewport/window IDs to the typed event context. The Global adapter
+uses PostHog's reserved native-app properties and emits canonical installation
+and update lifecycle events. A durable local marker retains a stable pending
+event ID until the spool enqueue succeeds, then acknowledges the current
+version; it also treats an existing installation's first upgraded launch as a
+baseline rather than a new install. Cold opens, installs, and updates include
+the current unprefixed `version`/`build` fields used by PostHog's Android
+lifecycle integration in addition to common `$app_*` context. Hidden login
+launches seed the focus observer as backgrounded so opening the first window
+emits the real foreground transition.
+
+The Global adapter also translates registered screen views and the matching
+desktop lifecycle transitions to PostHog's canonical `$screen`,
+`Application Opened`, and `Application Backgrounded` events. Desktop captures
+and exceptions carry standard app, desktop-device, and OS properties. A
+main-owned focus observer establishes the launch focus as its baseline, ignores
+window-to-window focus handoffs, and reports later application background and
+foreground transitions. Only API-originated captures are marked as server
+events. Every destination event retains its single Rally registry name in
+`rally_event_name`, and the live PostHog tool catalog is recorded with the
+exact products this contract can and cannot truthfully drive.
+
+**Why:** Navigation events alone made PostHog paths work, but built-in
+breakdowns and session/application views remained poorer than data captured by
+PostHog's first-party app SDKs. The adapter boundary can reproduce those
+truthful desktop signals while preserving regional delivery and without placing
+a provider SDK or token in the renderer.
+
+PostHog's built-in navigation and application views key off reserved event
+names and properties. Sending only Rally's internal spelling hid screen and
+lifecycle semantics, while treating every regional delivery as server-side
+would erase the originating desktop context. The provider mapping can supply
+the SDK's native semantics without weakening Rally's regional or typed
+boundary.
+
+**Considered and rejected:** Copying the browser SDK's URL, host, referrer,
+campaign, user-agent, and embedded-Chromium fields; exporting a hostname as a
+device model; guessing hardware manufacturers; and reporting every existing
+installation as newly installed. Those choices would respectively classify
+Electron as web acquisition traffic, create identifying high-cardinality data,
+invent device facts, or corrupt installation counts.
+
+Also rejected: emitting both the custom and reserved event for one occurrence,
+renaming the regional registry, embedding the provider SDK in the renderer, and
+fabricating pageviews, flag exposures, surveys, replay snapshots, traces, or AI
+generations. Duplication corrupts counts; the other options either move
+provider concerns into the regional contract or claim observations Rally did
+not make.
+
+Design: [regional telemetry PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-13 — Caught renderer transport failures reach exception telemetry
+
+**What changed:** The shared renderer HTTP boundary now sends caught, non-abort
+transport failures through the existing sanitized JavaScript-exception route as
+`network_error`, with classification-aware same-object suppression and five-minute
+same-signature coalescing. A later crash classification supersedes a handled
+network classification so essential process health is not lost. Handled network
+failures do not themselves emit essential process health transitions, and upload
+settlement prevents a late error event after abort from producing a false
+diagnostic. The API CORS policy and its production-shaped preflight test now admit
+the desktop's `X-Rally-Operation-Id` mutation header.
+
+**Why:** Production desktop requests carried that header, but the Worker omitted
+it from `Access-Control-Allow-Headers`. Chromium rejected new-work-stream and
+message mutations before they reached the Worker. The UI converted and handled
+the rejected `fetch`, so neither global renderer error listener ran and PostHog
+contained no exception explaining the outage.
+
+**Considered and rejected:** Relying on `unhandledrejection`, embedding PostHog in
+the renderer, or reporting the request URL/message/body. The first misses handled
+failures, the second violates the main-owned telemetry boundary, and the third
+could copy workspace content or credentials into diagnostics.
+
+### 2026-08-13 — Artifact verification uses authoritative upload metadata
+
+**What changed:** Private artifact publication now verifies Cloudflare's
+single-PUT response against the submitted byte count and MD5 ETag, requires a
+new upload version and timestamp, then confirms that same key, size, ETag, and
+timestamp through the exact-prefix object inventory. It accepts only an
+inventory explicitly marked `DYNAMIC` and no longer verifies through the
+object-body GET.
+
+**Why:** The first release after moving off Wrangler proved that Cloudflare had
+stored a new native-symbol object at 19:09:29 with a new ETag, while the REST
+object GET still returned a 4,548-second-old `CF-Cache-Status: HIT` carrying the
+previous ETag. `Cache-Control: no-cache` did not bypass that response, so a
+correct upload failed the release checksum gate even though the authoritative
+inventory showed the new object.
+
+**Considered and rejected:** Removing integrity verification, accepting any
+successful PUT, or adding a query nonce to the object GET. Those would
+respectively lose the exact-byte check, fail to prove persistence, or change
+the R2 object key and return 404. The upload result plus dynamic inventory keeps
+both byte integrity and storage confirmation without trusting a cached body.
+
+**Consequences:** Release artifacts remain bounded before upload and requests
+remain timeout-limited. The publisher relies on R2's default MD5 checksum for a
+non-multipart object and the upload endpoint's returned version; any ETag,
+size, key, timestamp, non-dynamic cache status, or inventory mismatch fails
+closed. Inventory time may trail the upload response by at most one second to
+allow for provider timestamp-serialization precision.
+
+### 2026-08-13 — Release artifacts use the regional object API directly
+
+**Considered and rejected:** Disabling checksum verification, accepting the old
+archive, or rotating both buckets. Those would respectively remove the
+end-to-end integrity proof, risk publishing symbols for a different binary, or
+replace regional infrastructure to work around a client-path inconsistency.
+
+**Consequences:** The release token must retain `Workers R2 Storage Write` and
+the publisher holds one preflight-bounded artifact in memory at a time.
+Regional isolation is explicit in the request rather than inferred from CLI
+state, and retries remain fail-closed on upload, timeout, size, or integrity
+errors.
+
+### 2026-08-13 — Telemetry dependencies can be staged safely
+
+**What changed:** Production now accepts a healthy collector before PostHog
+delivery, a dedicated capability signer, or internal operator access is
+provisioned. The provider adapter remains idle without its token, onboarding
+capabilities use the existing Global session signer when no dedicated signer is
+present, and an absent operator map keeps only the restricted operator routes
+unavailable.
+
+**Why:** The first regional deployment had healthy D1, R2, RPC, queue, and
+workflow bindings but the environment contract made all API routes return 503
+because those three optional downstream controls had not been configured. This
+also contradicted the implementation's deliberate no-op, fallback, and fail-
+closed behavior and prevented collecting internal evidence before the PostHog
+project exists.
+
+**Considered and rejected:** Reusing a made-up PostHog token, granting an
+operator credential just to satisfy health, or rolling back a Worker after its
+migration. Those either corrupt provider data, create unnecessary access, or
+violate the forward-only deployment rule.
+
+**Consequences:** Health proves the regional collection plane, not that optional
+delivery or operator access is active. Operations must verify those surfaces
+separately when they are intentionally enabled.
+
+Shipped in the pull request for this change.
+
+### 2026-08-13 — Telemetry seams preserve policy and metric correctness
+
+**Considered and rejected:** Removing idempotency, treating capture time as send
+time, extending retention by offline delay, linking while rows merely have a
+future retry scheduled, and automatically overwriting the canonical preference
+after a conflict. Each would trade correctness or user control for a simpler
+happy path. Silently dropping corrupt profile work, counting joined rows, or
+assuming one source map per process were also rejected because they make healthy
+operations and dashboards depend on accidental input shape.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-13 — Parser limits do not depend on a shared host UID
+
+**What changed:** Removed the processor's `RLIMIT_NPROC` setting while retaining
+its address-space, CPU, output-size, file-descriptor, timeout, read-only
+filesystem, and no-network controls.
+
+**Why:** Linux accounts `RLIMIT_NPROC` across every process with the same host
+UID. A sibling container using the symbolicator's non-root UID could therefore
+consume the allowance and make a valid dump fail as malformed. The stack walker
+does not execute dump content or launch child processes, so the shared-UID limit
+added denial-of-service coupling without containing an available behavior.
+
+**Considered and rejected:** Raising the process limit. Any fixed per-UID value
+would preserve the same cross-container coupling and merely move the failure
+threshold.
+
+**Consequences:** Parser isolation continues to rely on the dedicated container,
+fixed executable, and the remaining explicit resource limits. Future parser
+changes that add child processes must introduce a container-scoped process bound
+instead of restoring a host-UID `RLIMIT_NPROC`.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-13 — Regional telemetry becomes an end-to-end production subsystem, from native dumps to operator surfaces
+
+Native dumps: added whole-directory inactive rotation, absolute 14-day local
+deadlines, durable generation invalidation, and corrupt/expired startup purge.
+
+Raw crash retention: added an R2-prefix deadline sweep that deletes expired raw
+crash objects independently of the D1 crash index and fails closed on missing
+or malformed deadline metadata.
+
+Native processor: added a CI gate that builds the symbolicator image and runs a
+checksum-pinned real minidump/symbol pair plus malformed input inside the same
+non-root, read-only, no-network boundary used by production. Its host fixture
+directory grants traversal and read access to the container UID while the
+mount itself remains read-only.
+
+Regional Container development: added the local-supervisor port declaration
+required by Wrangler and serialized configured Worker startups until
+Global reports ready.
+
+**Why:** Product analysis needs client intent joined to authoritative server
+outcomes, while Electron crashes require a deeper lifecycle than a browser SDK
+can provide. Centralizing policy in Rally keeps route, opt-out, identity, and
+internal retention enforceable without giving the renderer provider authority.
+
+Electron cannot stop Crashpad after it starts or attach authenticated headers
+to its uploader. Rotation after handler exit preserves its supported ownership
+boundary while fixed route/deadline metadata prevents later expansion.
+
+R2 can accept a minidump immediately before an isolate fails to commit its
+index row. A D1-only reaper could never discover that orphan, violating the
+absolute internal retention ceiling.
+
+Unit fakes and Wrangler configuration assertions proved orchestration but could
+not prove that the pinned stack walker, Python wrapper, symbol layout, and
+sanitizer interoperate in the shipped image. Native Linux preserves bind-mount
+permissions, so private host defaults made the valid fixture look absent to the
+non-root parser; Docker Desktop's file-sharing layer had hidden that boundary.
+
+Concurrent Wrangler builds of the shared symbolicator image race on transient
+Docker tags, while an exec-only image without an exposed port is rejected by
+the local Container supervisor. Together these made the documented dual-region
+development command fail after adding native processing.
+
+For native dumps: reading the live database, direct Crashpad upload, and a
+local stack-walking CLI as the production processor.
+
+For raw crash retention: relying on the ingest catch block or the D1 reaper.
+Neither runs after abrupt termination between the two durable writes.
+
+For the native processor: keeping only mocked executor tests, checking that
+the Dockerfile contains security-related strings, or running the integration
+container as root. The first two do not execute the parser or observe the
+report; the last one stops testing the production security boundary.
+
+For Container development: duplicating the processor image/classes per region.
+That would obscure the intentionally identical toolchain without removing the
+underlying concurrent Docker-build behavior.
+
+**Consequences:** configured deployments deployments need distinct telemetry R2
+resources, Container support, migrations, capability secrets, and five-minute
+maintenance. Release automation must publish private artifacts before
+distribution. Provider-side PostHog lifecycle remains an operational
+configuration outside this module.
+
+Main can only upload a native dump on a later launch, opt-out requires restart
+to stop dump generation fully, and every released target needs a real packaged
+Crashpad fixture plus matching private artifacts.
+
+Every raw crash write must keep the immutable `deleteAfter` metadata, and the
+scheduled processor must retain the dedicated regional prefix sweep.
+
+CI requires Docker and network access only to fetch two commit- and
+checksum-pinned rust-minidump fixtures before disabling container egress. Test
+fixture permissions must remain readable by UID 10001 without widening the
+production image or its mount. A parser, image, symbol-layout, or sanitizer
+change must keep this gate green.
+
+Operators need separate regional bearer tokens and must use the role-matched
+reason for raw access. Replay remains Global/security-only. Future cross-region
+telemetry control methods must preserve the payload-negative RPC contract and
+keep the signing key in Global.
+
+Cross-region provisional journeys remain aggregate until a same-region identity
+link exists. Operation IDs still correlate intent and outcome where both
+survive in the same regional analysis surface.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).

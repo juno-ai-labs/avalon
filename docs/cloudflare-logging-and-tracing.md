@@ -298,6 +298,8 @@ call site depends on but nests nothing and exports nothing, so anything
 depending on real nesting or export belongs in `apps/api/test-workers/` — see
 [`testing.md`](testing.md).
 
+## Changelog
+
 ### 2026-09-08 — A Durable Object invocation's wall time includes its activation
 
 **What changed:** Recorded, dated, that a Durable Object invocation log's
@@ -305,7 +307,7 @@ depending on real nesting or export belongs in `apps/api/test-workers/` — see
 constructor runs, at near-zero CPU, and that an RPC session opened during that
 wait is logged with `rpcCallCount: 0`.
 
-**Why:** Three slow conversation opens read as a slow room for as long as the
+**Why:** Three slow work-stream opens read as a slow room for as long as the
 only numbers were the edge's step and the room's own phases; the invocation
 logs were what separated the platform's seconds from Rally's milliseconds, and
 nothing here said how to read them. The zero-call session in particular reads
@@ -353,7 +355,7 @@ here rather than left to be rediscovered.
 Rally flows and is edited whenever they change; this one is about a third
 party's platform and is edited when that platform changes, which is a different
 cadence and a different reason. Keeping them together would have meant a beta
-rename by Cloudflare editing a document about conversation creation.
+rename by Cloudflare editing a document about work-stream creation.
 
 **Consequences:** Every claim here carries the date it was read *and* the date
 Cloudflare last updated the page, because the platform is in open beta and

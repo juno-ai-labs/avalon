@@ -304,6 +304,8 @@ is missing or at least 24 hours old. Inference performs the pricing KV reads
 for Azure-bound models in its route plan; each
 resident Channel agent reads the window snapshot once.
 
+## Changelog
+
 ### 2026-10-06 — Retry the Pipeline binding form of error 10021 once
 
 **What changed:** The Global version upload retries once, after 60 seconds,

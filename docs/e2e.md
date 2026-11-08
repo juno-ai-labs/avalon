@@ -379,7 +379,7 @@ Configure the regional Worker with an Azure OpenAI realtime deployment backed by
 ## Desktop model-selector acceptance
 
 Nothing in the Canvases and Sidekicks client picks a model at creation: the
-pickers that lived on **New conversation** and **New substream** went with
+pickers that lived on the Thread and Breakout launchers went with
 them. What remains is the locked pill on a conversation that has run, and a
 Sidekick's own `model_override`.
 

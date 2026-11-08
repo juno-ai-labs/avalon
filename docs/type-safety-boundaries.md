@@ -103,12 +103,14 @@ builder example to `scripts/type-assertion-boundaries.test.mjs`. Do not silence
 the rule at a call site; extend the centralized helper only when the missing
 surface is genuinely a platform-runtime gap.
 
+## Changelog
+
 ### 2026-08-12 — Type escapes became explicit boundaries
 
 **What changed:** Production double assertions are lint errors, application
 test doubles use narrow capability ports with `satisfies`, and partial
 Cloudflare bindings are constructed through typed helpers. The existing
-conversation cache write lint is joined by repository-wide type-assertion rules,
+work-stream cache write lint is joined by repository-wide type-assertion rules,
 and stored wake-up rows plus harness SDK messages now cross explicit runtime or
 conversion boundaries.
 

@@ -302,8 +302,7 @@ date boundary.
 Use the structured events `terminal_plugin_activation_started`,
 `terminal_plugin_activation_finished`,
 `terminal_provider_request_finished`, `terminal_tool_finished`,
-`terminal_sandbox_lifecycle_transition`, and
-`terminal_sandbox_lifecycle_failed`. Commands and output are deliberately absent.
+and `terminal_sandbox_lifecycle_transition`. Commands and output are deliberately absent.
 Activation records acquisition/cache state, provider duration and request/poll
 counts, residual Rally time, a one-based `activation_attempt`, and whether
 repository preparation completed or was deferred to the visible repair tools.
@@ -371,7 +370,7 @@ encryption and transactional email credentials remain required. Both API and
 browser deployments must succeed before invitation recipients can sign in.
 Sharing validates origin/keys before participant-authority handoff.
 
-`RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. There are two checked-in senders, both `vars` in each region's Wrangler config: `RESEND_FROM_EMAIL` (`Rally <invites@rallywith.ai>`) for transactional mail, and `RESEND_NOTIFICATION_FROM_EMAIL` (`Rally <notifications@rallywith.ai>`) for mail Rally generates — digests, automation results, mention notifications. Resend verifies the domain rather than the address, so the second rides the same verification; keep both `rallywith.ai` and `with-avalon.com` verified with their own DKIM/SPF records — Resend verifies the sending domain, so the Rally senders do not inherit the Rally verification and mail from them is rejected until the Rally records are live. An unset notification sender does not fail: `sendResendEmail` falls back to the transactional one silently, which is why `GET /health` reports `resendNotificationSender` separately — check it after a deploy that touches either var. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
+`RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. There are two checked-in senders, both `vars` in each region's Wrangler config: `RESEND_FROM_EMAIL` (`Rally <invites@rallywith.ai>`) for transactional mail, and `RESEND_NOTIFICATION_FROM_EMAIL` (`Rally <notifications@rallywith.ai>`) for mail Rally generates — Sidekick results and notifications. Resend verifies the domain rather than the address, so the second rides the same verification; keep both `rallywith.ai` and `with-avalon.com` verified with their own DKIM/SPF records — Resend verifies the sending domain, so the Rally senders do not inherit the Rally verification and mail from them is rejected until the Rally records are live. An unset notification sender does not fail: `sendResendEmail` falls back to the transactional one silently, which is why `GET /health` reports `resendNotificationSender` separately — check it after a deploy that touches either var. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
 
 Inbound conversation and automation mail uses the dedicated catch-all subdomain `automation.rallywith.ai`. Create it with Resend Receiving enabled, install the exact MX record returned by Resend in Cloudflare DNS, and create one `email.received` webhook pointing to `https://api.rallywith.ai/ingest/resend`. **Keep `automation.with-avalon.com` receiving, with its own MX record and webhook, for as long as any address on it exists.** Addresses are stored per conversation rather than derived, so every address issued before the rename still carries that domain, is printed in the sender's mail client, and is what mail rules forward to; the Worker accepts either domain and resolves the full recipient address in the Global registry. See [`domain-migration.md`](domain-migration.md). Store its `whsec_...` value as the Global `RESEND_WEBHOOK_SIGNING_SECRET`. Ensure the reused `RESEND_API_KEY` has Full access in configured deployments because the regional Worker retrieves the full received message after routing. Store one stable 32+ byte `WORKSTREAM_EMAIL_ADDRESS_KEY` in the Global Worker. Do not log any of these values. Existing deployments using `RESEND_WEBHOOK_SECRET` remain compatible during migration.
 
@@ -990,8 +989,9 @@ where to look when one misbehaves.
 - **A scheduled run did not fire.** Inspect the object's `schedules`
   (`next_due_at` null means the rule has no future occurrence) and
   `_internal_durable_alarms` (an `automation_schedule` entry behind its retry
-  gate). `sidekick_scheduled_alarm_failed` and
-  `sidekick_scheduled_alarm_stalled` name the entry and the handler's code.
+  gate). Sidekicks are hosted in `WorkspaceDO`, so
+  `workspace_scheduled_alarm_failed` and `workspace_scheduled_alarm_stalled`
+  name the entry and the handler's code.
   A paused automation fires nothing and does not catch up on resume.
 - **An event did not start a run.** `external_event_delivery_terminal` records
   the admission outcome per registration: `sidekick_paused`,
@@ -1000,8 +1000,8 @@ where to look when one misbehaves.
   registered the rule), or `sidekick_occurrence_replayed` (a redelivery). No
   delivery at all means the matcher found no active registration, which
   `WorkspaceDO.workspace_external_event_registrations` will show.
-- **Mail did not start a run.** `inbound_email_receipts` on the object holds
-  one row per Resend email id with the refusal code
+- **Mail did not start a run.** `WorkspaceDO.sidekick_email_receipts` holds
+  one row per Sidekick and Resend email id with the refusal code
   (`sidekick_not_active`, `sidekick_email_route_mismatch`,
   `email_sender_not_authorized`) or the run it admitted.
 - **A run stopped early.** `runs.state` on the object is what its child
@@ -1264,7 +1264,7 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
 
 ## Realtime operations and cost controls
 
-- Use deterministic region/workspace IDs for `WorkspaceDO`, which also hosts every Channel and Space parent, and region/workspace/conversation plus the external substream ID for each independently provisioned `AgentLoopDO`. Never allocate an object per socket, user, turn, tool call, or retry.
+- Use deterministic region/workspace IDs for `WorkspaceDO`, which also hosts every Canvas and Sidekick parent, and region/workspace/conversation plus the external substream ID for each independently provisioned `AgentLoopDO`. Never allocate an object per socket, user, turn, tool call, or retry.
 
 - Respect the authority boundary. REST reads the selected `AgentLoopDO`, its
   parent holds aggregate metadata/outbox, and D1 contains only authority
@@ -1289,20 +1289,19 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
 - Expect one native Chromium WorkspaceDO socket per signed-in Electron
   renderer/workspace, plus one main-process Node substream `0` feed for the
   active conversation, every pin, the five most recent unpinned rows, every
-  visible live-state row, and recently viewed feeds still inside retention, and
-  no Channel control socket (`/socket/workstreams/:id`). Navigation must not reopen the WorkspaceDO socket. An
+  visible live-state row, and recently viewed feeds still inside retention.
+  Navigation must not reopen the WorkspaceDO socket. An
   idle row outside those roles should retain neither child socket. Proactive
   feeds send `publishPresence: false`; verify “Viewing now” against WorkspaceDO
   foreground presence rather than socket counts. Brokered frames are limited to
   1 MB, and a failed managed-network attempt must follow Electron's remaining
   PAC directives in order rather than inventing a direct fallback.
 
-- Verify foreground message ingress on the workspace socket: drop
-  the connection after `create_message` but before its private receipt, confirm
-  reconnect resends the same `clientMessageId`, and confirm exactly one
-  sequenced `transcript_turn_upserted` event and canonical turn exist. A socket attachment from before
-  the session-claim deployment should receive `socket_reconnect_required` and a
-  1012 close on its first attempted write.
+- Verify foreground message ingress on the conversation's `AgentLoopDO`
+  socket: drop the connection after `create_message` but before its private
+  receipt, confirm reconnect resends the same `clientMessageId`, and confirm
+  exactly one sequenced `transcript_turn_upserted` event and canonical turn
+  exist.
 
 - Verify workspace convergence by mutating timezone, Terminal policy,
   membership/invitations, and connector health from another client. The
@@ -1311,17 +1310,13 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
   event with the union of missed topics. Force a replay-window miss and confirm
   the desktop invalidates every workspace surface once rather than polling.
 
-- Verify aggregate convergence by changing title/description/state/read and
-  mention metadata, evicting `WorkspaceDO`, then subscribing again. Confirm each
-  transition created a `parent_state_changes` row with a UUIDv7 and increasing
-  common or viewer waterline. Every republish of a Channel row on the
-  workspace socket must carry the same identity for each matching common or
-  viewer row;
-  the shared Electron cache must clear nullable fields, ignore duplicate/lower
-  waterlines independently, reject an older directory page's pin position, and
-  remove the row on authorization revocation. Reconnect the WorkspaceDO socket
-  after missing a state push and confirm its resident directory reload repairs
-  the gap without a timer.
+- Verify sidebar convergence by renaming, pinning and archiving a Canvas and
+  pausing a Sidekick from another client, evicting `WorkspaceDO`, then
+  subscribing again. Each write must advance its list's waterline in
+  `workspace_sidebar_list_state` and push that list whole; the Electron receiver
+  must ignore a duplicate or lower waterline per list, and a reconnect after a
+  missed push must repair the lists from the sidebar the `subscribe` answer
+  carries, without a timer.
 
 - Batch model `stream_delta` broadcasts. The direct child loop may use its reference-counted 30-second keep-alive alarm only while active work exists; avoid per-connection alarms and periodic room health polling.
 
@@ -1349,7 +1344,7 @@ delivery fences on its `state`/`generation`.
 
 For a missing or stale product fact, inspect the source child's `durable_outbox`
 and the parent's outbox and receipts first: `parent_outbox` and
-`parent_child_receipts` in `WorkspaceDO` for a Channel or Space (see
+`parent_child_receipts` in `WorkspaceDO` for a Canvas (see
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md)), or
 `sidekick_child_receipts` in `WorkspaceDO` for a Sidekick.
 For a missing push, Slack mention, or email notification from a Canvas's
@@ -1363,11 +1358,7 @@ unwritten since 2026-11-07, dropped with the Thread-era tables. A receiver
 receipt with no sender outbox row is the normal end state: the sender deleted
 its row when the Queue accepted the message, and the receiver committed the
 effect with its receipt. A sender outbox row that persists means the Queue is
-refusing the send (`substream_outbox_batch_deferred`,
-`parent_effect_enqueue_failed`, or `parent_effect_delivery_deferred` for a hosted
-parent, whose `parent_outbox.last_error_code` holds the reason; a hosted row in
-state `failed` did not parse and is never retried, see
-`parent_outbox_row_unreadable`); no outbox row and no receipt means the Queue
+refusing the send (`substream_outbox_batch_deferred`); no outbox row and no receipt means the Queue
 holds the message or has dead-lettered it
 (`conversation_effect_processing_failed` names the throw). There is no
 acknowledgement RPC to retry. Never delete an object outbox row to clear an
@@ -2371,7 +2362,7 @@ Retain the previous regional key during rotation. Decrypt with the stored key ve
 - Before the authority phase opens, D1 is canonical for conversations, messages,
   runs, schedules, connector metadata, and audit events. After it opens, each
   `AgentLoopDO` is canonical for its substream product tables,
-  `WorkspaceDO` is canonical for each Channel and Space parent's aggregate
+  `WorkspaceDO` is canonical for each Canvas and Sidekick parent's aggregate
   metadata/outbox and for cross-conversation directory/viewer/pin/resource/feedback
   indexes and every workspace-scoped product module, and D1 stays canonical for
   identity/membership, routing, migration/control, and operational

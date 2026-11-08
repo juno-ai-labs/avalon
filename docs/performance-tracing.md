@@ -201,17 +201,13 @@ logger retains every entry; `plugin_id` inside each entry names the plugin.
 `authorization`). The catalog source is `provided` when the host's KV snapshot has windows,
 `fallback` when it is empty, and `skipped` without compaction. Bind no longer
 fetches the OpenRouter catalog on the inference path.
-`tool_surface_hash_ms` precedes scope persistence; `scope_ownership_ms`,
-`scope_hash_ms`, and `scope_write_ms` divide that persistence call.
-`activation_run_write_ms` and `activation_hint_write_ms` divide its two durable
-writes; for credential plugins, `activation_connection_context_ms`,
-`activation_provider_health_ms`, and `activation_health_verdict_ms` divide
-authorization. Initial authorization checks overlap across plugins; their
-summed durations may exceed `initial_activations_ms`. Bind's
-`bind_plugin_rehydration_ms` now excludes a second connector authorization
-for IDs this host just checked and persisted, but still includes eligibility
-and any dynamic tool loading. `before_model_principal_ms` and `before_model_identity_ms`
-separate the D1 membership and conversation identity reads; conversation and
+`tool_surface_hash_ms` precedes scope persistence, which is
+`scope_persist_ms`. Each activation detail divides its plugin's time into
+`activation_authorize_ms`, `activation_prepare_ms` and
+`activation_persist_ms`; initial authorization checks overlap across plugins,
+so their summed durations may exceed `initial_activations_ms`.
+`initial_identity_run_ms` and `initial_authority_ms` cover the identity and
+authority reads before the model; conversation and
 automation authority fields appear only when that path runs. The forced lease
 renewals expose their attempt and persistent-loop parts as
 `liveness_inference_start_*_ms` and `liveness_before_model_*_ms`.

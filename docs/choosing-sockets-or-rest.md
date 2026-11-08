@@ -812,6 +812,8 @@ surface. This is event-driven revalidation, not polling and not a second socket.
 - [`canvases.md`](canvases.md) — the Canvas create path, and what the caller is
   made to wait for.
 
+## Changelog
+
 ### 2026-09-11 — Connector recovery follows the existing workspace socket
 
 **What changed:** Conversation-feed connection cards now follow the active
@@ -839,7 +841,7 @@ acknowledgement names the conversation whose waterline it moves.
 `POST /workstreams/:id/read-state/mark-unread` did not move.
 
 **Why:** read state is per-conversation in the authority (a `member_attention`
-row per `AgentLoopDO`) and was per-conversation in the API, so a substream's
+row per `SubstreamAgent`) and was per-work-stream in the API, so a substream's
 read could not be recorded at all. The two operations now sit in different
 families on purpose, and the rule above is what splits them: a read is
 acknowledged by a reader who has that conversation open, so the conversation is
@@ -887,7 +889,7 @@ consolidation. Parent responses retain the default Main address.
 
 ### 2026-09-09 — Name the unversioned write and bound what it may carry
 
-The "one receiver" rule said neither socket hook writes the conversation caches
+The "one receiver" rule said neither socket hook writes the work-stream caches
 directly, while rename events, harness status, and REST responses already did.
 The rule now says what those writes are: unversioned facts, written through
 `patchCachedWorkstream`, carrying only the fields that are the fact's own news.
@@ -908,7 +910,7 @@ and the visible Retry action restarts the socket opening sequence only.
 **Why:** The REST recovery twin gave main and child conversations different
 failure semantics and let two independently ordered transports write the same
 detail and transcript caches. Child recovery already demonstrated the smaller
-authority-preserving path: reconnect to that exact `AgentLoopDO` and accept a
+authority-preserving path: reconnect to that exact SubstreamAgent and accept a
 new baseline under the existing connection-generation fence.
 
 **Consequences:** A broken or oversized socket snapshot is now exposed as a
@@ -920,7 +922,7 @@ parent-owned mutation wrappers still use it for read-after-write.
 ### 2026-09-02 — Substream-local commands move together onto the child socket
 
 **What changed:** elicitation answers, pending-input reorder, stop, and retry
-join message admission on the addressed `AgentLoopDO` socket. Their public REST
+join message admission on the addressed SubstreamAgent socket. Their public REST
 routes, desktop HTTP methods, and the unused WorkspaceDO message-command path
 are removed. One operation-ID receipt and
 reconnect queue serves all five commands; retry uses the operation ID as its
@@ -942,7 +944,7 @@ admission and addressing; it must not require a second child-mutation API.
 
 ### 2026-09-01 — Message admission moves to the socket that owns the room
 
-**What changed:** `create_message` now uses the admitted `AgentLoopDO` socket,
+**What changed:** `create_message` now uses the admitted SubstreamAgent socket,
 with a private correlated receipt and reconnect resend under the same client
 message identity. The workspace socket is no longer the current desktop's
 message route.
@@ -961,7 +963,7 @@ by every substream-local command.
 
 ### 2026-08-26 — Transcript history becomes range-addressed socket state
 
-**What changed:** Conversation opening and history use snapshot-fenced transcript
+**What changed:** Work-stream opening and history use snapshot-fenced transcript
 ranges with explicit coverage. The initial socket snapshot sends unread context
 and the latest tail together; REST retains the same shape only for recovery.
 
@@ -969,15 +971,15 @@ and the latest tail together; REST retains the same shape only for recovery.
 between quick unread paint and an instantly usable bottom.
 
 **Considered and rejected:** Fetching the middle eagerly and moving gap reads to
-REST. Both add round trips to data already owned by the open `AgentLoopDO`.
+REST. Both add round trips to data already owned by the open SubstreamAgent.
 
 **Consequences:** Range replies are state returned on request, not invalidation
 news. Realtime events above the snapshot fence extend only their own sequence;
 they do not imply middle coverage.
 
-### 2026-08-25 — A cold conversation open becomes socket-first
+### 2026-08-25 — A cold work-stream open becomes socket-first
 
-**What changed:** Selecting a conversation now admits its `AgentLoopDO` feed
+**What changed:** Selecting a work stream now admits its SubstreamAgent feed
 immediately and paints detail plus transcript from the first `snapshot`. The
 WorkstreamDO control socket starts alongside it, not ahead of it, and its
 viewer-specific HyperSight preference is optional metadata rather than an open
@@ -994,7 +996,7 @@ before the screen could become live.
 one Durable Object to assemble two equivalent boots and leaves their winner
 load-dependent. Awaiting the WorkstreamDO preference preserves a cross-object
 dependency for a panel that is closed safely while its metadata is unknown.
-Opening feeds on hover would publish presence for a conversation the person did
+Opening feeds on hover would publish presence for a work stream the person did
 not open; hover therefore remains control-only.
 
 **Consequences:** A normal open has one canonical payload and can send as soon

@@ -40,7 +40,7 @@ The rest:
 | `packages/contracts` — `AGENT_MODEL_OVERRIDES` | The closed set of pinnable models. |
 | `apps/desktop/src/main/developer-settings-flag.ts` | The main-process poll and its interval. |
 | `apps/desktop/src/renderer/lib/agent-models.ts` | How every model id reads on screen — the menu's names and groups, and the shortening the conversation's read-only pill applies to an id the closed set does not admit. |
-| `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the menu that pins a conversation or substream being started, and the locked pill inside one that already exists. |
+| `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the choosable menu that would pin a conversation being started (offered by no composer today), and the locked pill inside one that already exists. |
 | `packages/db/src/index.ts`, `apps/api/src/durable-objects/workstream-object-product.ts` | Where compatibility reads and authoritative object reads re-validate a stored model pin before it reaches routing. |
 
 ### Why a flag rather than a Worker variable
@@ -189,11 +189,11 @@ one producer. A field a run needs comes from `readRunDefinition`; a field added
 to the conversation row without going through the definition is a field an
 automation run does not get.
 
-Nothing else writes the column, and choosing nothing writes nothing, so an
-ordinary conversation is unpinned and reads exactly as this document describes
-above. The selector says so plainly: unpinned is its own menu entry, labelled
-**Default** and described as following this flag, rather than named after a
-model the renderer cannot know is being served.
+Nothing else writes the column, so an ordinary conversation is unpinned and
+reads exactly as this document describes above. The control's choosable shape,
+which no composer offers today, says so plainly: unpinned is its own menu entry,
+labelled **Default** and described as following this flag, rather than named
+after a model the renderer cannot know is being served.
 
 The pin carries **no fallbacks**. It is a request to observe one specific model,
 and routing onward would answer a question nobody asked. An explicit pin stays
@@ -235,7 +235,7 @@ migration.
 
 #### Reading it back inside the conversation
 
-The composer of a conversation that already exists — a conversation's, and a
+The composer of a conversation that already exists — Main's and a
 substream's — shows the same control in the same place, behind the same **Debug
 enabled** preference: the identical dropdown, trigger and pill and chevron, with
 the trigger `disabled`. That is what
@@ -263,7 +263,7 @@ the setting, not the model — an earlier draft of this control said a conversat
 keeps the model it started on, which is a stability guarantee the server does
 not make for the unpinned majority. The renderer therefore takes `pinned`
 alongside the id and picks the claim from it. It says "conversation" rather than
-"conversation" for the same reason the column is read per row: in a substream,
+"Canvas" or "Sidekick" for the same reason the column is read per row: in a substream,
 naming the parent's kind would describe a row this pill is not showing.
 
 The tooltip survives the disable — checked in a real window rather than assumed,
@@ -377,8 +377,8 @@ loader, not at the rule author's discretion:
 
 - **Yes** — ids, counts, ages, the enums the schema itself declares
   (`origin_type`, `scope`, `role`), and the **domain** half of an email address.
-- **No** — a person's name, a full email address or its local part, a work
-  stream's title or objective, a note, a message, a prompt, or anything else a
+- **No** — a person's name, a full email address or its local part, a
+  conversation's title or objective, a note, a message, a prompt, or anything else a
   person wrote.
 - **One carve-out: `workspaceSlug`.** It is user-authored text — the workspace
   name typed at onboarding, slugified, with eight characters of the workspace id
@@ -404,8 +404,8 @@ carve-out.
   would otherwise all miss and all read — and a single request now resolves
   several flags at once. The pending read is dropped as soon as it settles, so
   it de-duplicates rather than adding a second cache with its own staleness.
-- A **miss is not cached.** A scheduled-creation path resolves a model for a work
-  stream id whose product facts are not populated yet, so remembering "no such
+- A **miss is not cached.** A scheduled-creation path resolves a model for a
+  conversation id whose product facts are not populated yet, so remembering "no such
   conversation" would leave those conversations unattributed through their first
   runs. They are unattributed for that first evaluation either way — a fact the
   rows do not yet hold cannot be sent.
@@ -567,8 +567,8 @@ flag change takes to reach a running app. The poll lives in the **main
 process**, not a renderer, because that is where `application-settings.json` and
 the session are, and because both windows then read one answer instead of each
 deciding for itself. It is a poll rather than a socket: the only realtime
-channel Rally has is the per-conversation room, which a device without a work
-stream open is not connected to, and a flag change is not worth a second
+channel Rally has is the per-conversation room, which a device without a
+conversation open is not connected to, and a flag change is not worth a second
 channel. A sign-in re-asks immediately rather than waiting out the interval; a
 sign-out closes the section on the way past.
 

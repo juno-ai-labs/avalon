@@ -125,7 +125,7 @@ its own is a boundary that drifts.
 
 | Call site | Reports |
 | --- | --- |
-| `apps/api/src/durable-objects/substream-agent.ts` | Product RPC failures preserve schema field codes in the response and log, so demo preparation names a malformed participant field without including its rejected value |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | Product RPC failures preserve schema field codes in the response and log, so demo preparation names a malformed participant field without including its rejected value |
 | `apps/api/src/lib/rpc-input.ts` | `parseRpcInput` throws a message that survives an RPC hop |
 | `packages/connectors/src/observability.ts` | `connectorObservationErrorCode` names a provider-response mismatch |
 | `packages/connectors/src/observability.ts` | `healthCheck` logs a returned failure's own `reason_code`, never its `message` |
@@ -134,7 +134,6 @@ its own is a boundary that drifts.
 | `packages/connectors/src/granola.ts`, `packages/connectors/src/slack.ts` | the OAuth stage helpers attach `responseIssues` — the failing paths — to a `provider_error` whose body did not parse, beside `responseInvalid` |
 | `apps/api/src/lib/connector-oauth-error.ts` | `connector_oauth_callback_failed` carries `response_issues` from that detail, admitted only in code shape, and from a raw `ZodError` |
 | `apps/api/src/services/slack-agent-service.ts`, `slack-notification-service.ts`, `slack-workstream-card.ts` | the three Slack reason helpers answer a `ZodError` with `invalid_slack_data:<path>:<code>` — the reason persisted on an ingress job and written to the connection's `error_json` |
-| `apps/api/src/services/workstream-description-service.ts` (retired; deleted in plan step C-2) | a model whose answer failed the decision schema records `description_decision_invalid:<path>:<code>` as the rejection code, where it recorded `model_unavailable` |
 | `apps/api/src/routes/telemetry.ts` | the four catch sites rethrow a `ZodError` as itself, so `request_failed` logs the route and the failing paths behind the same `internal_error` |
 | `apps/api/src/services/connection-service.ts` | the managed repair on the Test path answers with its sentence only for an installation that stopped — `failed` or `action_required` — so one still in flight, whose health check passed, is not reported as needing attention |
 | `apps/api/src/services/connector-installation-service.ts`, `connector-maintenance-service.ts` | a step that failed logs `connector_installation_step_failed` with `diagnosticErrorCode`; a maintenance target that stopped logs `connector_maintenance_target_failed`, and its `reason` is the receipt's own sentence when the receipt has one |
@@ -146,9 +145,9 @@ its own is a boundary that drifts.
 | `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop through `isDiagnosticCode`; every other thrown message is admitted only in the bare constant class it always was, so an identifier interpolated after a colon still reduces to the fallback; a Workers runtime failure, which arrives as a sentence, is named behind the caller's code by matching the sentence or the runtime's `overloaded` flag (`parent_export_failed:durable_object_code_updated`), never by copying it; an `ObjectPortError` is named by the conversation object's refusal code (`workstream_runtime_authority_fenced`) when that code is a bare constant |
 | `apps/api/src/middleware/errors.ts` | `request_failed` carries what `diagnosticErrorCode` admits of a plain `Error`'s message, as `error_code` and in the row's summary, where the row said `internal_error` and `Error` |
 | `apps/api/src/services/workspace-schedule-execution.ts` | the `schedule.failed`, `resource_watch.failed` and `workspace_schedule_target_failed` records name a stored row's rejection behind each record's own constant; the schedule and watch rows are the two whose targets parse a stored row |
-| `apps/api/src/durable-objects/sidekick-do.ts` | every RPC entry point, through `parseRpcInput`, labelled by method (`admit_external_event_invalid:…`) |
-| `apps/api/src/durable-objects/workspace-do.ts` | the entry points on the Sidekick's publication tail and the connector-event pipeline: `ensureMemoryScope`, `createMemoryTable`, `memoryTableWithColumns`, `recordMemoryTableOpenReceipt`, `memoryTableMutationReceipt`, `ingestConnectorEvent`, `claimConnectorEvent`, `settleConnectorEvent`, `matchExternalEventDestinations` |
-| `apps/api/src/durable-objects/substream-agent.ts` | `appendWatchedResourceEvent`, the other destination an external event is delivered to |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | every RPC entry point, through `parseRpcInput`, labelled by method (`admit_external_event_invalid:…`) |
+| `apps/api/src/durable-objects/workspace-do.ts` | the entry points on the Sidekick's publication tail and the connector-event pipeline: `ensureMemoryScope`, `createMemoryTable`, `memoryTableWithColumns`, `memoryTableMutationReceipt`, `ingestConnectorEvent`, `claimConnectorEvent`, `settleConnectorEvent`, `matchExternalEventDestinations` |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | `appendWatchedResourceEvent`, the other destination an external event is delivered to |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | `receiveChildEffects`, which every conversation effect crosses |
 | `apps/api/src/queues/activity-consumer.ts` | an effect envelope the consumer's contract refuses logs `effect_queue_message_invalid` with its failing paths, including unknown key names (the Queue's producers are our own objects, so they are the diagnosis of a deploy skew), where it logged `legacy_message_after_cutover` under a connector-event code; it is still acked |
 | `packages/contracts/src/platform-diagnostics.ts` | `platformErrorCode` names a Workers runtime, D1 or SQLite failure (`d1_overloaded`, `sqlite_unique_constraint`) from its fixed sentence or its `cause`, never copying the table, column or value the sentence quotes; `diagnosticErrorCode` and the engineering MCP read it |
@@ -167,11 +166,10 @@ Adopt it at the next boundary you touch that would otherwise say
 `unexpected_error`. Converting every RPC entry point and every adapter blind is
 how a diagnostic fix becomes a risk. What still parses its input with a bare
 `.parse(input)`, by object: the remaining `WorkspaceDO` methods (about 160,
-reached from routes and from the maintenance alarms), `HostedParent` (about 20,
-the Channel and Space parent methods `WorkspaceDO` dispatches to),
-`AgentLoopDO` (`applyPrivateChildLifecycle`, `applyPrivateChildMembership`,
-the batch-update and search-projection entry points), the conversation
-parent's `listChildren` and `retirementChildren`, and
+reached from routes and from the maintenance alarms), the hosted
+Canvas parent methods `WorkspaceDO` dispatches to, `AgentLoopDO` (the
+batch-update and search-projection entry points), the conversation parent's
+`listChildren`, and
 `InternallyInspectableDurableObject.runInspectionSql`. A rejection at any of
 those still crosses the hop as a bare `Error`; the reporters above then carry
 its empty message as `""`, `handler_error:Error`, or the caller's fallback.
