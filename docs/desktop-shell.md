@@ -92,7 +92,8 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
 - **One list**, titled with the section's name. **Canvases** is a Pinned
   group, then every Canvas by recent activity; its action is **New Canvas**
   (`POST /canvases`, then the new Canvas's route). **Sidekicks** is **Needs
-  input**, then Pinned, then every Sidekick; its action is **New Sidekick**
+  input**, then Pinned, then every Sidekick by what it last did, or by name
+  from the heading's **Recent** control; its action is **New Sidekick**
   (`/sidekicks/new`). A guest gets neither New action. **Activity** lists the
   person's mentions, adds and Sidekick run notices newest first, each a kind
   glyph, who did what where, the preview, a time and an unseen dot, opening

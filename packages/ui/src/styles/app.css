@@ -6745,6 +6745,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .automation-header .workstream-header-actions > .button { flex: 1; justify-content: center; }
 .automation-lifecycle.is-draft { border-style: dashed; color: var(--av-sys-color-text-muted); }
 .automation-lifecycle.is-active { background: var(--av-sys-color-success-wash, transparent); color: var(--av-sys-color-success-base); }
+.automation-lifecycle.is-paused { background: var(--av-sys-color-warning-wash); color: var(--av-sys-color-warning-soft); }
 .automation-header-details { display: flex; flex-direction: column; gap: 24px; }
 .sidekick-profile-section { border-top: 1px solid var(--av-sys-color-border-subtle); padding-top: 20px; min-width: 0; }
 .sidekick-profile-section h2 { margin: 0 0 12px; font-size: 13px; font-weight: 500; color: var(--av-sys-color-text-muted); }
@@ -6845,6 +6846,10 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    Thread's button, which sits above the stretched area instead of inside an
    anchor. */
 .sidekicks-library-list li { position: relative; display: flex; align-items: center; gap: 16px; height: 100%; padding: 20px 12px; border-radius: 16px; }
+/* The home's one-column rows are separated by hairlines, as design §3 draws them. */
+.sidekicks-library-rows { gap: 0; }
+.sidekicks-library-rows li { border-bottom: 1px solid var(--av-sys-color-border-subtle); border-radius: 0; padding: 16px 12px; }
+.sidekicks-library-rows .sidekick-list-copy p { margin-bottom: 0; }
 .sidekicks-library-list li:hover { background-image: var(--hover-layer); }
 .sidekicks-library-list li:has(.sidekick-list-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .sidekick-list-link { color: inherit; text-decoration: none; }
@@ -6861,6 +6866,16 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-list-facts div { display: grid; gap: 2px; }
 .sidekick-list-facts dt { color: var(--av-sys-color-text-muted); font-size: 12px; }
 .sidekick-list-facts dd { font-size: 13px; margin: 0; white-space: nowrap; }
+/* design.html §3's status pills: green Active and Working (with its dot), amber
+   Paused, a dashed Draft; and the red Needs input badge beside the name. */
+.sidekick-status-pill { align-items: center; border-radius: var(--av-sys-size-radius-pill); display: inline-flex; font-size: 13px; gap: 6px; padding: 3px 10px; }
+.sidekick-status-pill.is-active, .sidekick-status-pill.is-working { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-base); }
+.sidekick-status-pill.is-paused { background: var(--av-sys-color-warning-wash); color: var(--av-sys-color-warning-soft); }
+.sidekick-status-pill.is-draft { border: 1px dashed var(--av-sys-color-border-default); color: var(--av-sys-color-text-muted); }
+.sidekick-working-dot { background: var(--av-sys-color-success-base); border-radius: 999px; display: inline-block; flex: none; height: 8px; margin-right: 5px; width: 8px; }
+.sidekick-status-pill .sidekick-working-dot { margin-right: 0; }
+.sidekick-row-paused { color: var(--av-sys-color-warning-soft); }
+.sidekick-needs-input-badge { background: var(--av-sys-color-danger-base); border-radius: 6px; color: var(--av-sys-color-danger-on); display: inline-block; font-size: 12px; font-weight: 600; margin-left: 10px; padding: 2px 7px; vertical-align: 2px; }
 /* Canvases home (screens/canvases-home.tsx): the Sidekicks library's layout, with Canvas marks and who is in each. */
 .canvases-home-group + .canvases-home-group { margin-top: 32px; }
 .canvas-list-mark { display: inline-flex; flex-shrink: 0; }
@@ -7855,6 +7870,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   padding: 0 8px 0 12px;
 }
 .navigation-section-trailing { align-items: center; display: inline-flex; font-weight: 400; gap: 2px; }
+.navigation-section-heading > span:first-child { white-space: nowrap; }
+/* A sort control in a heading ("Recent ⇵", design §1 and §3) reads as the heading's own muted text, not a form field. */
+.navigation-section-trailing .dropdown-select-trigger { color: var(--av-sys-color-text-muted); font-size: inherit; gap: 2px; min-width: 0; padding: 2px 4px; }
 .navigation-section-mark { display: inline-flex; padding: 2px 4px; }
 .navigation-sort {
   align-items: center;

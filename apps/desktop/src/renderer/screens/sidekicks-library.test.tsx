@@ -66,7 +66,7 @@ describe('the Sidekicks home', () => {
     const client = new QueryClient();
     applyVersionedSidebarList(client, 'automations', 1, [
       { id: 'triage', name: 'Incident triage', description: 'Watches alerts.', scope: 'you', audience: 'people', status: 'active', needsInput: true, updatedAt: '2026-11-07T09:00:00.000Z' },
-      { id: 'changelog', name: 'Weekly changelog', description: 'Every Friday.', scope: 'workspace', audience: 'workspace', status: 'active', nextRunAt: '2099-11-13T22:00:00.000Z', updatedAt: '2026-11-07T09:00:00.000Z' },
+      { id: 'changelog', name: 'Weekly changelog', description: 'Every Friday.', scope: 'workspace', audience: 'workspace', status: 'active', runState: 'working', nextRunAt: '2099-11-13T22:00:00.000Z', updatedAt: '2026-11-07T09:00:00.000Z' },
       { id: 'revenue', name: 'Revenue analyst', description: 'Keeps revenue current.', scope: 'you', audience: 'personal', status: 'paused', updatedAt: '2026-11-07T09:00:00.000Z' },
     ] satisfies AutomationSummary[]);
     render(<QueryClientProvider client={client}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
@@ -76,13 +76,14 @@ describe('the Sidekicks home', () => {
     expect(within(triage).getByText('Named people')).toBeInTheDocument();
     const changelog = screen.getByRole('link', { name: 'Weekly changelog' }).closest('li')!;
     expect(within(changelog).getByText('Organization')).toBeInTheDocument();
-    expect(within(changelog).getByText('Active')).toBeInTheDocument();
+    expect(within(changelog).getByText('Working')).toBeInTheDocument();
     expect(within(changelog).getByText('Next').nextElementSibling).not.toHaveTextContent('—');
     const revenue = screen.getByRole('link', { name: 'Revenue analyst' }).closest('li')!;
     expect(within(revenue).getByText('Paused')).toBeInTheDocument();
     expect(within(revenue).getByText('Next').nextElementSibling).toHaveTextContent('—');
     fireEvent.click(screen.getByRole('button', { name: 'Paused' }));
     expect(screen.getByRole('link', { name: 'Revenue analyst' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Sidekick count' })).toHaveTextContent(/^1 Sidekick$/);
     expect(screen.queryByRole('link', { name: 'Weekly changelog' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Only you' }));
     // Shared with named people is not only its author's.

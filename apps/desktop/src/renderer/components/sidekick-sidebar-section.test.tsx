@@ -36,25 +36,43 @@ describe('SidekicksSection', () => {
       sidekick('support', 'Support inbox', { unread: true }),
       sidekick('triage', 'Incident triage', { needsInput: true, pinnedPosition: 0 }),
       sidekick('changelog', 'Weekly changelog', { pinnedPosition: 1, nextRunAt: '2099-11-13T22:00:00.000Z' }),
-      sidekick('revenue', 'Revenue analyst', { status: 'paused' }),
+      sidekick('revenue', 'Revenue analyst', { status: 'paused', unread: true }),
     ], '/sidekicks/support');
     const waiting = screen.getByRole('region', { name: 'Needs input' });
     expect(within(waiting).getByRole('link', { name: /Incident triage/ })).toHaveTextContent('Needs input');
     const pinned = screen.getByRole('region', { name: 'Pinned Sidekicks' });
     // A Sidekick waiting on someone is drawn once, where it waits.
     expect(within(pinned).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(['/sidekicks/changelog']);
-    expect(within(pinned).getByText(/^Next run/)).toBeInTheDocument();
+    expect(within(pinned).getByText(/^Runs /)).toBeInTheDocument();
     const all = screen.getByRole('region', { name: 'All Sidekicks' });
     const support = within(all).getByRole('link', { name: /Support inbox/ });
     expect(support).toHaveAttribute('aria-current', 'page');
-    expect(support).toHaveClass('is-unread');
     expect(within(all).getByRole('link', { name: /Revenue analyst/ })).toHaveTextContent('Paused');
+    expect(within(all).getByRole('link', { name: /Revenue analyst/ })).toHaveClass('is-unread');
   });
 
   it("says what a waiting Sidekick asked, on its Needs input row", () => {
     renderSection([sidekick('triage', 'Incident triage', { needsInput: true, pendingQuestion: 'Which status page gets the update?' })]);
     const waiting = screen.getByRole('region', { name: 'Needs input' });
     expect(within(waiting).getByRole('link', { name: /Incident triage/ })).toHaveTextContent('Which status page gets the update?');
+  });
+
+  it('says a run is under way, and lists the rest by what they last did unless asked for names', async () => {
+    renderSection([
+      sidekick('alpha', 'Alpha', { lastRunAt: '2026-11-07T08:00:00.000Z' }),
+      sidekick('zulu', 'Zulu', { runState: 'working', lastRunAt: '2026-11-07T10:00:00.000Z' }),
+    ]);
+    const all = screen.getByRole('region', { name: 'All Sidekicks' });
+    expect(within(all).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(['/sidekicks/zulu', '/sidekicks/alpha']);
+    expect(within(all).getByRole('link', { name: /Zulu/ })).toHaveTextContent('Working');
+    fireEvent.click(within(all).getByRole('combobox', { name: 'Sort Sidekicks' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Name' }));
+    expect(within(all).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(['/sidekicks/alpha', '/sidekicks/zulu']);
+  });
+
+  it('does not mark the open Sidekick unread from its own run', () => {
+    renderSection([sidekick('support', 'Support inbox', { unread: true })], '/sidekicks/support');
+    expect(screen.getByRole('link', { name: /Support inbox/ })).not.toHaveClass('is-unread');
   });
 
   it('pins a Sidekick dragged into Pinned, and unpins from its menu', async () => {
