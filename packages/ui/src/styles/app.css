@@ -6935,7 +6935,16 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-run-row details[open] .disclosure-chevron { transform: rotate(90deg); }
 .sidekick-run-row-glyph { display: inline-flex; flex: none; height: 20px; width: 20px; }
 .sidekick-run-row-summary { font-size: 13px; font-weight: 500; }
+/* Each state reads as itself: a live run carries the working dot, a waiting
+   one and a failed one are in the attention colour, a stopped one recedes.
+   Done is the plain row. */
+.sidekick-run-row-state { align-items: center; display: inline-flex; }
 .sidekick-run-row[data-state=needs_input] .sidekick-run-row-summary { color: var(--av-sys-color-workstream-news); }
+.sidekick-run-row[data-state=pending] .sidekick-run-row-state, .sidekick-run-row[data-state=running] .sidekick-run-row-state { color: var(--av-sys-color-success-base); }
+.sidekick-run-row[data-state=failed] { border-color: var(--av-sys-color-danger-edge); }
+.sidekick-run-row[data-state=failed] .sidekick-run-row-state { color: var(--av-sys-color-danger-base); }
+.sidekick-run-row[data-state=stopped] .sidekick-run-row-summary { color: var(--av-sys-color-text-muted); }
+.sidekick-run-row[data-state=pending] .sidekick-working-dot { opacity: .5; }
 .sidekick-run-row-time { color: var(--av-sys-color-text-muted); font-size: 12px; margin-left: auto; }
 .sidekick-run-row-preview, .sidekick-run-row-reply { color: var(--av-sys-color-text-muted); font-size: 13px; line-height: 1.5; margin: 6px 0 0 49px; white-space: pre-wrap; }
 .sidekick-run-row-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 2; display: -webkit-box; overflow: hidden; }

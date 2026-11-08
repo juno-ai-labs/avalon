@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
 import type * as Transcript from '../lib/transcript';
 import type { Message } from '../lib/types';
 import type * as UseWorkstreamSocket from '../lib/use-workstream-socket';
@@ -29,7 +30,7 @@ vi.mock('../lib/transcript', async (importOriginal) => ({
   orderedTranscriptMessages: () => runTranscript.messages,
 }));
 
-function runRow(state: 'needs_input' | 'running'): Message {
+function runRow(state: 'needs_input' | 'running' | 'failed', reply = ''): Message {
   return {
     id: 'row-1',
     workstreamId: SIDEKICK,
@@ -42,13 +43,17 @@ function runRow(state: 'needs_input' | 'running'): Message {
       automationName: 'Incident triage',
       runId: RUN,
       trigger: 'manual',
-      run: { state, stepCount: 1, reply: '' },
+      run: { state, stepCount: 1, reply },
     },
   } as Message;
 }
 
 function renderRow(message: Message): void {
   const client = new QueryClient();
+  applyVersionedSidebarList(client, 'automations', 1, [{
+    id: SIDEKICK, name: 'Incident triage', description: '', scope: 'you', status: 'active', updatedAt: '2026-11-08T09:00:00.000Z',
+    appearance: { icon: 'bug', color: 'amber' },
+  }]);
   client.setQueryData(['substream-ordered-transcript', SIDEKICK, RUN], { ranges: [] });
   render(<QueryClientProvider client={client}><MemoryRouter><SidekickRunRow message={message} /></MemoryRouter></QueryClientProvider>);
 }
@@ -78,6 +83,14 @@ describe('SidekickRunRow', () => {
     fireEvent.click(within(row).getByRole('radio', { name: /Pear/ }));
     fireEvent.click(within(row).getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(answerElicitation).toHaveBeenCalledWith('elicitation-1', 'pear', undefined));
+  });
+
+  it('names a run started on request as such, and a failed run with its reason in its own colour', () => {
+    renderRow(runRow('failed', 'The Slack connection was revoked.'));
+    const row = screen.getByRole('article', { name: 'Incident triage run' });
+    expect(row).toHaveAttribute('data-state', 'failed');
+    expect(row.querySelector('.sidekick-run-row-summary')).toHaveTextContent('Run · On request · Failed · 1 step');
+    expect(row.querySelector('.sidekick-run-row-preview')).toHaveTextContent('The Slack connection was revoked.');
   });
 
   it('opens no run conversation for a run that is not waiting', () => {

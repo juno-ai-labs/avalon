@@ -2739,7 +2739,7 @@ describe('a Sidekick result in the room', () => {
   });
 
   it("draws a run's row in its Sidekick's conversation collapsed, opening into the run", () => {
-    render(<MemoryRouter initialEntries={['/sidekicks/00000000-0000-7000-8000-0000000000aa']}><MessageBlock {...actions} collapseHeadings message={{
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/sidekicks/00000000-0000-7000-8000-0000000000aa']}><MessageBlock {...actions} collapseHeadings message={{
       ...activation,
       automationActivation: {
         automationId: '00000000-0000-7000-8000-0000000000aa',
@@ -2748,10 +2748,10 @@ describe('a Sidekick result in the room', () => {
         trigger: 'external_event',
         run: { state: 'completed', stepCount: 4, reply: 'Should the update go to #status or the status page?' },
       },
-    }} /></MemoryRouter>);
+    }} /></MemoryRouter></QueryClientProvider>);
 
     const row = screen.getByRole('article', { name: 'Incident triage run' });
-    expect(within(row).getByText('Run · Event · Done · 4 steps')).toBeInTheDocument();
+    expect(row.querySelector('.sidekick-run-row-summary')).toHaveTextContent('Run · Event · Done · 4 steps');
     // Collapsed, the reply is a preview; the run's own work stays in its conversation.
     expect(row.querySelector('.sidekick-run-row-preview')).toHaveTextContent('Should the update go to #status or the status page?');
     expect(within(row).getByRole('link', { name: 'Open run', hidden: true }))
