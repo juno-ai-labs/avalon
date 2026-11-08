@@ -185,9 +185,9 @@ held instead. The account
 menu's create action does not refetch the directory afterwards: the landing
 remounts the shell, and the new one reads discovery itself.
 
-A switch that changed the workspace always lands on the new work-stream page.
-A work stream open in the previous workspace must never be looked up in the
-next one, which is what the route would otherwise do; only an addressed link
+A switch that changed the workspace always lands on the new workspace's
+landing route. A Canvas or Sidekick open in the previous workspace must never
+be looked up in the next one, which is what the route would otherwise do; only an addressed link
 opens a specific destination, and it resets the route itself.
 
 A switch or a creation that finds no identity credential on this device signs
@@ -259,13 +259,12 @@ carries `(region, workspace_id)`. It is a routing coordinate, not a capability.
 The native shape is
 `rallywithai://workspace/<region>/<workspace-id>/<destination-host>/<destination-path>`.
 Its distinct host makes a desktop build from before this contract reject the
-link; a query-addressed shape is forbidden because an older work-stream parser
-would ignore those coordinates and open relative to the active workspace.
-
-Work-stream destinations may append `/substreams/<child-id>` to select a private
-child. The canonical HTTPS link, website handoff and desktop intent preserve that
-suffix; after workspace activation the renderer opens the parent route with its
-`substream` selection. The normal child membership check still applies.
+link; a query-addressed shape is forbidden because an older parser would
+ignore those coordinates and open relative to the active workspace. The
+destinations a link can name today are a Canvas (optionally one of its
+artifacts) and a Sidekick (`DesktopDeepLinkIntent` in
+`packages/contracts/src/desktop-deep-link-intent.ts`); a Sidekick run is
+opened from the Sidekick, not addressed by a link of its own.
 
 When a person opens one, the desktop first asks main whether the target is the
 active workspace. If it is, main answers with the session already in use and
@@ -289,7 +288,7 @@ wording and does not tell a revoked member to check their connection.
 
 Settings opens in a separate window. When an addressed Settings, connector, or
 Slack handoff changes workspaces, the main window behind it moves to that
-workspace's new-work-stream landing page; closing Settings can therefore never
+workspace's landing route; closing Settings can therefore never
 reveal a resource route retained from the previous workspace. A handoff to the
 already-active workspace preserves the main window's route.
 

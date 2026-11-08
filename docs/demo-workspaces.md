@@ -642,8 +642,9 @@ written and again by the first phase. The new workspace is owned by the
 presenter and receives copies of the template's connections, so a presenter
 outside the template would be handed its credentials; a cast member is seated
 in that workspace and so reaches the same copies, which is what the domain
-bounds; a persona cannot sign in, so it reaches nothing. Digest delivery skips
-`.invalid` addresses, so a seated persona is never mailed. Plaintext credentials exist only inside the copying operation and
+bounds; a persona cannot sign in, so it reaches nothing. Nothing skips its
+`.invalid` address any more (the digest delivery that did was deleted), so a
+notification email addressed to a seated persona would be attempted. Plaintext credentials exist only inside the copying operation and
 never enter a response, a log, or a receipt. The template's row is not written
 during a copy, which is asserted rather than assumed. A copy shares the
 template's upstream grant, and the presenter owns the demo's Disconnect: only a

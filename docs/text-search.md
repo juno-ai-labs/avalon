@@ -557,8 +557,7 @@ design's rule table;
 and ask the WorkspaceDO for each scope once per isolate while deciding
 writability per call; `test-workers/workspace-memory-search-key-purge-migration.test.ts`
 proves WorkspaceDO migration 84 removes memory search's keys and nothing else.
-The executor's group is proved in `automation-directory.test.ts` and
-`automation-do.test.ts`. The old store's suites remain until phase 4 deletes it.
+The executor's group is proved in `automation-directory.test.ts`. The old store's suites remain until phase 4 deletes it.
 A disposable live namespace in gcp-us-west1 verified on 2026-09-28 that
 `ContainsAny` over a `[]uuid` attribute returns exactly the rows sharing a group,
 that a row with an empty or absent audience never matches, and that the clause
