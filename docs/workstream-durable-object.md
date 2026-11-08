@@ -1762,6 +1762,53 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-11-08 — Retirement records: Conversation suggestions, Session import, Work-stream origin attachments
+
+**What changed:** Nothing in the code. Three documents kept after their
+mechanism was deleted, only as records for their changelogs, were removed in
+the documentation audit; their retirement records are below, here because what
+each left behind is conversation-object state. Each one's full text and
+changelog is `git show e26aa66:docs/<name>.md`.
+
+**`conversation-suggestions.md` — Conversation suggestions (retired
+2026-11-07).** After a Thread's or a Breakout's run settled, a turn-disposition
+observer asked a classifier whether to carry the result up (`merge_up`), break a
+side question out (`start_breakout`) or mark the conversation resolved, and the
+`suggestion_draft` role wrote the words. Merges, Breakouts and resolution
+belonged to Threads, so plan step C-3 deleted the observer, the drafter, the
+backfill, `turn-disposition.ts` and the product operations; `AgentLoopDO`
+migration 84 dropped `conversation_suggestions` and
+`turn_disposition_judgements`, and a stored `merge_suggestion` alarm is
+acknowledged and dropped (`RETIRED_MERGE_SUGGESTION_ALARM_KIND`). The contracts
+went in step B-8. What survives is WorkspaceDO's `suggestion_backfill` lane
+statements in `retired-workspace-schema.ts`.
+
+**`session-import.md` — Prepared conversations and session import (retired
+2026-11-07).** An agent imported a person's ChatGPT or Claude conversation into a
+reserved Channel, and a prepared conversation (ordered content with resolved
+files and provenance) was materialized into a work stream. Plan step C-1
+deleted the run service and routes, step C-2 the import desktop action, the
+reservation reclaim and its WorkspaceDO alarm lane, and `AgentLoopDO`
+migration 84 dropped the `imported_session_*` tables. What survives:
+`prepared_conversation_receipts`, kept as a dead table because
+`pending_attachment_reservation_recovery`'s foreign key names it;
+`PreparedConversationSchema` and `ImportedMessageProvenanceSchema` in
+`packages/contracts/src/substream-content.ts`, which stored transcripts and
+harness evaluations still read; and WorkspaceDO migration 119's statements in
+`retired-workspace-schema.ts`.
+
+**`workstream-origin-attachments.md` — Work-stream origin attachments
+(retired 2026-11-07).** A work stream started from a place in a connected tool
+(the Slack thread Rally was mentioned in, the Linear issue a Sidekick fired on)
+carried that place as an `origin` resource, described by the connector and
+bound to a connection by the host. Plan step C-2 deleted the host half
+(`workstream-origin-resource.ts` and every create path that attached one) and
+step B-8 the connector half (`ConnectorOriginLocator`,
+`describeConnectorOrigin`, `ConnectorAdapter.origin`). Stored
+`workstream_resources` rows keep their `origin` label. Its changelog is the
+record of why the connector names the object and only the host names the
+connection.
+
 ### 2026-11-08 — Stop ends a streaming response at its next chunk
 
 **What changed:** The persistent loop's runtime exposes `stopRequested()`,
