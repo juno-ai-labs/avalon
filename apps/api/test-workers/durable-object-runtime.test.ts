@@ -665,7 +665,7 @@ describe("Durable Objects in the Workers runtime", () => {
           .filter((entry: Record<string, unknown>) => entry.event === "workspace_socket_handshake");
         const subscribed = phases.filter((entry) => entry.diagnostic_attempt_id === diagnosticAttemptId);
         expect(subscribed.map((entry) => entry.phase)).toEqual([
-          "subscribe_received", "subscribe_authorized", "sidebar_built", "flags_resolved", "sync_sent",
+          "subscribe_received", "subscribe_authorized", "flags_resolved", "sidebar_built", "sync_sent",
         ]);
         expect(phases).toContainEqual(expect.objectContaining({
           phase: "accepted", connection_id: subscribed[0]?.connection_id,

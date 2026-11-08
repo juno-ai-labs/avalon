@@ -309,6 +309,8 @@ export function WorkspaceSocketProvider({
     let lastWaterline = -1;
     let presenceRevision = 0;
     let subscribed = false;
+    /** Whether any socket of this provider has had its `subscribe` answered. */
+    let hadSubscribed = false;
     let conversationViewsAvailable = false;
     let applicationForegrounded = false;
     let applicationFocusObservation = 0;
@@ -404,22 +406,49 @@ export function WorkspaceSocketProvider({
       }, WORKSPACE_SOCKET_HEARTBEAT_MS);
     };
     /**
-     * The sidebar rides on the answer to `subscribe`: the Sidekicks list and
-     * the Canvases list, each applied through the versioned receiver so a
-     * later push and this payload are ordered against one ledger.
+     * The Sidekick list moved: the surfaces it feeds refetch. The change that
+     * matters most to an open automation page is one the page cannot see
+     * otherwise: its chat submitting a revision, or a run finishing. No HTTP
+     * request of the desktop's is in play then, so no sync topic follows; the
+     * list is the one signal, whether it came as a push or, for one missed
+     * while the socket was away, in the answer to the next `subscribe`.
+     */
+    const sidekickListMoved = (): void => {
+      void queryClient.invalidateQueries({ queryKey: ['automation'] });
+      void queryClient.invalidateQueries({ queryKey: ['automation-runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
+      // Relayed as the `automations` topic it amounts to, so a consuming
+      // window that reads these surfaces and not the list hears it without a
+      // socket of its own.
+      publishTopics(['automations'], Math.max(lastWaterline, 0));
+    };
+    /**
+     * The sidebar rides on the answer to `subscribe`: the Sidekicks list, the
+     * Canvases list and the Activity page, each applied through the versioned
+     * receiver so a later push and this payload are ordered against one
+     * ledger. The answer is authoritative over that ledger: it is what the
+     * object holds now, read after every push an earlier socket delivered.
      */
     const applyConnectedSidebar = (sidebar: WorkspaceSidebar): void => {
-      applyVersionedSidebarList(
+      const authoritative = { authoritative: true };
+      const sidekicksMoved = applyVersionedSidebarList(
         queryClient,
         'automations',
         sidebar.automations.waterline,
         sidebar.automations.items.map(mapAutomationSummary),
+        authoritative,
       );
-      if (sidebar.canvases) applyVersionedSidebarList(queryClient, 'canvases', sidebar.canvases.waterline, sidebar.canvases.items);
+      if (sidebar.canvases) {
+        applyVersionedSidebarList(queryClient, 'canvases', sidebar.canvases.waterline, sidebar.canvases.items, authoritative);
+      }
       if (sidebar.activity) {
         applyVersionedSidebarList(queryClient, 'activity', sidebar.activity.waterline,
-          { unseenCount: sidebar.activity.unseenCount, items: sidebar.activity.items });
+          { unseenCount: sidebar.activity.unseenCount, items: sidebar.activity.items }, authoritative);
       }
+      // A reconnect's answer that moved the list stands in for the pushes the
+      // socket missed while it was away. The first answer this window hears
+      // has nothing to stand in for: whatever it loaded, it loaded just now.
+      if (sidekicksMoved && hadSubscribed) sidekickListMoved();
       // The lists are the bound on the conversation cache: a conversation
       // stays on disk for as long as its Canvas or Sidekick is listed.
       if (localCacheScope !== null) {
@@ -573,6 +602,9 @@ export function WorkspaceSocketProvider({
           }
           const sync = safeParseSocketEvent(WorkspaceSocketSyncEventSchema, decoded);
           if (sync.success) {
+            // The first sync on a socket is the answer to its `subscribe`:
+            // the object sends nothing else to a socket until it has answered.
+            const answersSubscribe = !subscribed;
             if (sync.data.conversationViews) conversationViewsAvailable = true;
             if (!firstSyncObserved) {
               firstSyncObserved = true;
@@ -610,6 +642,7 @@ export function WorkspaceSocketProvider({
               void queryClient.invalidateQueries({ queryKey: organizationUsageQueryKey(localCacheScope) });
               publishTopics(['usage'], Math.max(lastWaterline, sync.data.waterline));
             }
+            if (answersSubscribe) hadSubscribed = true;
             if (sync.data.sidebar && !firstSidebarApplied) {
               firstSidebarApplied = true;
               if (syncTimer !== null) window.clearTimeout(syncTimer);
@@ -618,8 +651,15 @@ export function WorkspaceSocketProvider({
               reportHandshake(diagnosticAttemptId, 'sync_applied');
               api.confirmSocketTicket?.(ticket);
             }
-            if (sync.data.waterline <= lastWaterline) return;
+            // The answer, like its sidebar, is the object's position now. One
+            // below what this window holds means the object's log went back,
+            // and keeping the old cursor would drop every live event until
+            // the log climbed past it, and ask the next resume for history
+            // the object never had.
+            if (!answersSubscribe && sync.data.waterline <= lastWaterline) return;
+            const moved = sync.data.waterline !== lastWaterline;
             lastWaterline = sync.data.waterline;
+            if (!moved && sync.data.topics.length === 0) return;
             setTopicWaterlines((current) => withTopicWaterline(current, sync.data.topics, sync.data.waterline));
             // Every topic, `initial` and `history_unavailable` included: those
             // name everything because this socket cannot say what moved while
@@ -670,19 +710,8 @@ export function WorkspaceSocketProvider({
                 sidebarList.data.waterline,
                 sidebarList.data.items.map(mapAutomationSummary),
               );
-              // The list is pushed whenever an automation's own row changes,
-              // and the change that matters most to an open automation page
-              // is one the page cannot see otherwise: its chat submitting a
-              // revision. No HTTP request of the desktop's is in play then,
-              // so no sync topic follows; the list push is the one signal,
-              // and the detail surfaces it feeds refetch on it.
-              void queryClient.invalidateQueries({ queryKey: ['automation'] });
-              void queryClient.invalidateQueries({ queryKey: ['automation-runs'] });
-              void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
-              // Relayed as the `automations` topic it amounts to, so a
-              // consuming window that reads these surfaces and not the list
-              // hears it without a socket of its own.
-              publishTopics(['automations'], Math.max(lastWaterline, 0));
+              // Pushed whenever an automation's own row changes.
+              sidekickListMoved();
             }
             return;
           }
