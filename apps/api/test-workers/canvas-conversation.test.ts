@@ -427,7 +427,8 @@ describe("a Canvas's title and pin order", () => {
     });
     const service = new CanvasService(TEST_ENV, auth(CREATOR));
     expect((await service.detail(canvasId)).appearance).toEqual({ icon: null, color: null });
-    const rows = await service.list();
+    const rows = await runInDurableObject(workspace(), (_instance, state) =>
+      canvasSidebarRows(state.storage.sql, { userId: CREATOR, member: true }, new Map(), 50, () => undefined));
     expect(rows.find((row) => row.id === canvasId)?.appearance).toEqual({ icon: null, color: null });
     const repaired = await service.update(canvasId, { appearance: { color: "blue" } });
     expect(repaired.appearance).toEqual({ icon: null, color: "blue" });
@@ -705,7 +706,8 @@ describe("a Canvas's artifacts", () => {
       substreamId: asSubstreamId(runIds[2]!), executionPrincipal: { type: "user" as const, userId: CREATOR } };
     const home = (await resolveTerminalPublicationHome(TEST_ENV, run, { title: "Digest" }))!;
     const canvasId = home.parentId;
-    const lastWrittenBy = async () => (await workspace().canvasListFor({ workspaceId: WORKSPACE_ID, userId: CREATOR, member: true }))
+    const lastWrittenBy = async () => (await runInDurableObject(workspace(), (_instance, state) =>
+      canvasSidebarRows(state.storage.sql, { userId: CREATOR, member: true }, new Map(), 50, () => undefined)))
       .find((row) => row.id === canvasId)?.lastWrittenBy;
     // A version of its artifact, noted as run #3's publish notes it.
     const { resourceId } = await publish(canvasId, "digest.md", "# Digest");
