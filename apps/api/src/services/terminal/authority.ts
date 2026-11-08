@@ -182,7 +182,10 @@ export function canvasArtifactNoter(env: Env, input: Pick<WorkstreamWorkflowInpu
       workspaceDOName(env.AVALON_REGION, input.workspaceId));
     const { noted } = await workspace.canvasNoteArtifact({
       workspaceId: input.workspaceId, canvasId: target.parentId, resourceId,
-      editor: input.parentKind === "canvas" ? { kind: "rally", id: null } : { kind: "sidekick", id: input.parentId },
+      ...(input.parentKind === "canvas"
+        ? { editor: { kind: "rally", id: null } }
+        // `canvasArtifactNoter` admits only a run of a Sidekick, whose substream id is the run's id.
+        : { editor: { kind: "sidekick", id: input.parentId }, runId: input.substreamId ?? null }),
     });
     // This run's publications land in a Canvas, so one the Organization does
     // not hold is a defect to see, not a case to pass over.

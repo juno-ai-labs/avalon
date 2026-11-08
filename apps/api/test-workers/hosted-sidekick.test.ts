@@ -1584,6 +1584,30 @@ describe("a hosted Sidekick", () => {
     expect(finished.waterline).toBeGreaterThan(working.waterline);
   });
 
+  it("reads running while any run works, even behind a finished newer one, and sends the list again when the last stops", async () => {
+    await activeAutomation();
+    // `scheduled` is the newer of the two (same start, larger id).
+    const { requested, scheduled } = await workingRuns("f");
+    const row = async () => {
+      const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+        .items.find((candidate) => candidate.id === AUTOMATION_ID);
+      const waterline = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workspace_sidebar_list_state WHERE list = 'automations'`).one().waterline);
+      return { running: item?.running, runState: item?.runState, waterline };
+    };
+    expect(await row()).toMatchObject({ running: true, runState: "working" });
+    // The newer run finishes while the older one still works: the newest
+    // run's state is null, and the row still reads running.
+    await finishRuns([scheduled], "completed");
+    const older = await row();
+    expect(older).toMatchObject({ running: true, runState: null });
+    // The older one finishes too: nothing works, and the list is sent again.
+    await finishRuns([requested], "completed");
+    const idle = await row();
+    expect(idle).toMatchObject({ running: false, runState: null });
+    expect(idle.waterline).toBeGreaterThan(older.waterline);
+  });
+
   it("keeps an older waiting run's question on the row while a later run works, and after it finishes", async () => {
     await activeAutomation();
     // `scheduled` is the newer of the two (same start, larger id).

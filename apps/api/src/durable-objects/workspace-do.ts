@@ -30,6 +30,7 @@ import {
   SIDEBAR_SIDEKICK_LISTED_SQL,
   AUTOMATION_RUN_STATE_JOINS,
   AUTOMATION_RUN_STATE_SQL,
+  AUTOMATION_RUNNING_SQL,
   AUTOMATION_SCHEDULE_TIME_ZONE_SQL,
   AUTOMATION_TRIGGER_KINDS_SQL,
   AUTOMATION_VIEWER_SQL,
@@ -710,7 +711,7 @@ import {
 import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-batch";
 import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
 import { activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
-import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, CANVAS_TITLE_STATUS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
+import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, CANVAS_TITLE_STATUS_STATEMENTS, CANVAS_LAST_WRITER_RUN_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
 import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
@@ -4394,6 +4395,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "record members' requests to open a Canvas, and seat an approved one as a request participant",
   // See CANVAS_ACCESS_REQUESTS_STATEMENTS and docs/canvas-access-requests.md.
   statements: CANVAS_ACCESS_REQUESTS_STATEMENTS,
+}, {
+  version: 155,
+  description: "record the Sidekick run whose publish made a Canvas's newest version",
+  // See CANVAS_LAST_WRITER_RUN_STATEMENTS and docs/canvases.md.
+  statements: CANVAS_LAST_WRITER_RUN_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -11472,13 +11478,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // The viewer's own Sidekicks, the Organization's, and those shared with
     // them, each with what they have not read in its shared conversation.
     return this.state.storage.sql.exec<AutomationDirectoryRow & { shared_count: number; unread: number; needs_input: number;
-      run_state: "working" | "needs_input" | null; pending_question: string | null; last_run_at: number | null;
+      run_state: "working" | "needs_input" | null; pending_question: string | null; running: number; last_run_at: number | null;
       trigger_kinds: string | null; schedule_time_zone: string | null;
       pinned_position: number | null }>(
       `SELECT directory.automation_id, directory.loadable, directory.appearance_json, directory.lifecycle,
               directory.scope, directory.title, directory.description,
               directory.next_run_at, directory.projected_at, ${AUTOMATION_AUDIENCE_SQL}, ${AUTOMATION_VIEWER_SQL},
-              ${AUTOMATION_RUN_STATE_SQL}, ${AUTOMATION_TRIGGER_KINDS_SQL}, ${AUTOMATION_SCHEDULE_TIME_ZONE_SQL},
+              ${AUTOMATION_RUN_STATE_SQL}, ${AUTOMATION_RUNNING_SQL}, ${AUTOMATION_TRIGGER_KINDS_SQL}, ${AUTOMATION_SCHEDULE_TIME_ZONE_SQL},
               -- When the newest run started, as the library read says it: a
               -- run waiting on input dates its row by when it began, not by
               -- the last time the Sidekick's definition moved.
