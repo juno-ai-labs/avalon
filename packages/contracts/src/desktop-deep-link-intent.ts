@@ -27,6 +27,12 @@ export type DesktopDeepLinkIntent =
   /** The main window with the sidebar showing Activity: where the digest's button lands. */
   | ({ kind: "activity" } & Targeted)
   | ({ kind: "new-automation" } & Targeted)
+  /**
+   * An Organization's own landing, as its web app URL with no hash opens it:
+   * the main window at `#/`, where the last route this device had open is
+   * restored. Addressed only; it is what that URL names.
+   */
+  | { kind: "home"; target: WorkspaceTarget }
   | { kind: "sidekick"; sidekickId: string; target: WorkspaceTarget }
   | ({ kind: "slack-link"; token: string } & Targeted)
   | { kind: "invitation"; token: string; region: WorkspaceTargetRegion }
@@ -192,6 +198,9 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
   }
   if (url.hostname === "activity") {
     return (url.pathname === "" || url.pathname === "/") && !url.search ? { kind: "activity", target } : null;
+  }
+  if (url.hostname === "home") {
+    return target && (url.pathname === "" || url.pathname === "/") && !url.search ? { kind: "home", target } : null;
   }
   if (url.hostname === "automations" && url.pathname === "/new") {
     return !url.search ? { kind: "new-automation", target } : null;

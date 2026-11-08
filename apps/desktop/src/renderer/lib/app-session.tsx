@@ -1092,6 +1092,16 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         else if (requireActiveWorkspace('Sign in before opening Rally.')) openActivity();
         return;
       }
+      if (intent.kind === 'home') {
+        // The web app's Organization URL with no hash: `#/`, where the
+        // landing restores the route this device last had open.
+        await runInDeepLinkWorkspace(intent.target, () => {
+          setDeepLinkError(null);
+          markSurfaceEntrypoint(navigation.entrypoint);
+          navigateAppRoute('/');
+        });
+        return;
+      }
       if (intent.kind === 'new-automation') {
         const openAutomation = (): void => {
           setDeepLinkError(null);

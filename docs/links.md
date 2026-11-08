@@ -140,9 +140,19 @@ and main opens its deep-link error window with `RETIRED_LINK_MESSAGE`
 (`@rally/contracts/links`), the sentence the web app's entry card shows:
 **This link is to something that no longer exists. Rally replaced Channels,
 Threads and Breakouts with Canvases.** A retired HTTPS link handed over as a
-universal link is not claimed (`httpsLinkDeepLink` takes only Canvas and
-Sidekick links), so it never reaches `isRetiredDeepLink`:
+universal link is not claimed (`httpsLinkDeepLink` takes only Canvas,
+Sidekick and Organization links), so it never reaches `isRetiredDeepLink`:
 the browser opens it and the handoff page says the same.
+
+The web app's own Organization URL opens the app too, on `rallywith.ai` and
+`www`: `parseOrganizationShellTarget` reads
+`/app/workspaces/<region>/<organization>` with no hash or `#/`, `#/canvases/<canvas>`
+(with `?artifact=<artifact>` and nothing else) or `#/sidekicks/<sidekick>`,
+ids as UUIDs, and `organizationShellDeepLink` turns it into the addressed
+`home`, `canvases` or `sidekicks` deep link. `home` lands on `#/`, where the
+landing restores this device's last route, as the web app does for the same
+URL. Any other hash route, an outer query, or `app.rallywith.ai` is refused,
+so that link stays in the browser.
 
 A Canvas deep link that names an artifact navigates to
 `#/canvases/<canvas>?artifact=<artifact>` (`canvasArtifactRoute`), the hash
@@ -290,7 +300,7 @@ and the path is classified (`/app/:region/:organization/cv/:canvas`,
 | Suite | Covers |
 | --- | --- |
 | `packages/contracts/src/links.test.ts` | Minting and reading every form both ways against literal URLs, origin and query refusal, the retired forms read as nothing and recognized as retired. |
-| `packages/contracts/src/desktop-deep-link-intent.test.ts` | The `canvas` intent among the addressed forms. |
+| `packages/contracts/src/desktop-deep-link-intent.test.ts` | The `canvas` and `home` intents among the addressed forms. |
 | `apps/site/test/site.test.ts` | `handoffPlan` for Canvas, Sidekick, retired and invalid paths; the deep link per device; telemetry path classification. |
 | `apps/browser/test/session.test.ts` | Canvas and Sidekick links rewritten to hash routes; retired forms not routed. |
 | `apps/api/test-workers/canvas-conversation.test.ts` | `conversationCanonicalUrl` on the real Organization object (Canvas, Canvas onto an artifact, Sidekick, an unknown id) and `linkTitle` for a Canvas. |
@@ -298,7 +308,7 @@ and the path is classified (`/app/:region/:organization/cv/:canvas`,
 | `apps/api/test/link-title-route.test.ts` | The title route's path reading and refusals. |
 | `apps/api/test/slack-agent-ingress.test.ts` | Which shared links get a card, and the Canvas card's blocks. |
 | `apps/api/test/mention-email.test.ts`, `participant-email.test.ts`, `slack-notification-service.test.ts` | The Canvas link in each message, and a Thread mention sending nothing. |
-| `apps/desktop/src/main/push-links.test.ts`, `deep-links.test.ts` | Universal links, the main process's deep-link boundary, and `isRetiredDeepLink`. |
+| `apps/desktop/src/main/push-links.test.ts`, `deep-links.test.ts` | Universal links, the Organization URL's accepted and refused shapes, the main process's deep-link boundary, and `isRetiredDeepLink`. |
 | `apps/site/test/link-handoff.test.ts` | The handoff page's visible copy for a retired and a Canvas link. |
 | `apps/desktop/src/renderer/lib/browser-entry.test.tsx` | The web app's entry screen shows the retired copy on a Thread path and not on its own Organization shell path. |
 
@@ -314,12 +324,55 @@ Canvas or Sidekick card is recorded.
 
 Both Rally hosts serve `/.well-known/apple-app-site-association`, and the Mac
 app claims `/app/*`. The main process adapts a claimed HTTPS link with
-`httpsLinkDeepLink`, which takes a Canvas or Sidekick link on the two Rally
-hosts and nothing else; a retired link stays in the browser, where the handoff
-page answers it. Push clicks use the same adapter with notification
+`httpsLinkDeepLink`, which takes a Canvas or Sidekick link, or the web app's
+Organization URL, on the two Rally hosts and nothing else; a retired link stays
+in the browser, where the handoff page answers it. `app.rallywith.ai`, where the
+web app actually runs, is not an associated domain (the entitlement lists
+`rallywith.ai` and `www.rallywith.ai`, and only `apps/site` serves the
+association file), so an Organization URL copied from the web app's address bar
+does not open the Mac app. Push clicks use the same adapter with notification
 attribution. See [push](push-notifications.md).
 
 ## Changelog
+
+### 2026-11-08 — The Mac app routes links as the web app does
+
+**What changed:** Three divergences between the two hosts' routing closed. A
+Canvas deep link onto an artifact navigates to `#/canvases/<canvas>?artifact=<artifact>`
+(`canvasArtifactRoute`) instead of `#/canvases/<canvas>` with open-resource
+route state, so the Canvas screen opens the artifact from the one query
+`shellLocation` already wrote. The retired-link sentence is one constant,
+`RETIRED_LINK_MESSAGE` in `@rally/contracts/links`, which the web app's entry
+card and the desktop's deep-link error window both show; the desktop's had been
+the shorter "This link is to something that no longer exists.", and
+`isRetiredDeepLink` lost its HTTPS branch, which nothing could reach because
+`continue-activity` hands an unclaimed link back to the browser and every other
+path passes a scheme URL. And the web app's Organization URL,
+`/app/workspaces/<region>/<organization>` with an optional landing, Canvas or
+Sidekick hash, opens the Mac app on `rallywith.ai` and `www` through
+`parseOrganizationShellTarget` and a new addressed `home` intent that lands on
+`#/`.
+
+**Why:** The owner asked for the Electron app's routing to match the
+browser's. Both hosts mount the same router, so the differences were around
+it: what a link put in front of the Canvas screen, the copy for a retired link,
+and which inbound URLs the app would take.
+
+**Considered and rejected:** Reusing the `activity` intent for the
+Organization landing: it lands on the Canvases home and names the Activity
+section, while the web app lands on `#/` and restores the last route.
+Keeping the dead HTTPS branch with a comment. Letting `parseLinkTarget` read
+hashes: it reads shareable links, which never carry one, and widening it would
+widen every caller.
+
+**Consequences:** `httpsLinkDeepLink` claims the Organization URL only on the
+two associated hosts. `app.rallywith.ai`, where the web app runs and whose
+address bar a person would copy from, is neither an associated domain nor
+serving the association file, so its URLs still open in the browser; claiming
+them changes the Mac app's signing entitlements and the release, and is the
+owner's call. Only the main process mints a `home` deep link, from a claimed
+universal link, so no older build is ever handed one. A Canvas screen change must keep
+consuming `?artifact=`, which is now the only way any link opens an artifact.
 
 ### 2026-11-07 — Canvases get a link form; the Space, Channel, Breakout, Thread and iPhone forms go
 

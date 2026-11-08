@@ -22,7 +22,7 @@ routes the shell serves, or who owns the right panel.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp` and its routes: `/` (the landing), `/canvases`, `/canvases/:id`, `/sidekicks`, `/sidekicks/new`, `/sidekicks/:id`, `/automations/:id`, `/settings`, `/opening`, and the redirects of the removed routes. |
+| `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp` and its routes: `/` (the landing), `/canvases`, `/canvases/:id`, `/sidekicks`, `/sidekicks/new`, `/sidekicks/:id`, `/automations/:id`, `/settings` (reached only in the browser; on the desktop Settings renders in its own window), `/opening`, and the redirects of the removed routes. |
 | `apps/desktop/src/renderer/screens/landing.tsx`, `lib/landing.ts` | The root route: the restorable `last-route`, else `/canvases`, once onboarding is finished. `LANDING_ROUTE`, `restorableRoute`, `RESTORED_ROUTE`, `useRestoredRouteFallback`, `useOpenLanding`. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | The shell around the routes: the sidebar, the main pane, the right slot's width, search, the dock badge, and the `last-route` and presence writes. |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
