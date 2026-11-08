@@ -7015,7 +7015,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-card-paper.is-board > span i { background: var(--av-sys-color-surface-raised); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); height: 18px; margin-bottom: 5px; }
 .canvas-card-live { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 6px; padding: 3px 8px 3px 4px; position: absolute; right: 26px; top: 22px; }
 .canvas-card-body { padding: 12px 14px 14px; }
-.canvas-card-body h3 { font-size: 15px; font-weight: 600; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The title beside its mark, as design.html §1's .ttl lays it out. */
+.canvas-card-body h3 { align-items: center; display: flex; font-size: 15px; font-weight: 600; gap: 8px; margin: 0; min-width: 0; }
+.canvas-card-body h3 > a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-card-body small { color: var(--av-sys-color-text-muted); display: flex; font-size: 12.5px; gap: 8px; justify-content: space-between; margin-top: 4px; min-width: 0; white-space: nowrap; }
 .canvas-card-body small > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .canvas-card-run { color: inherit; position: relative; text-decoration: none; z-index: 1; }

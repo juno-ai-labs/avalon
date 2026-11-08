@@ -1,13 +1,14 @@
-import type { CanvasDetail } from '@rally/contracts';
+import type { CanvasDetail, WorkstreamAppearancePatch } from '@rally/contracts';
+import { AppearancePicker } from '@rally/ui/components/appearance-picker';
 import { TitleMenuItem, TitlePillHeader, TitlePillMenuAction, TitlePillTitleInput, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconId, IconLayoutSidebarRight, IconLink, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
+import { IconId, IconLayoutSidebarRight, IconLink, IconPalette, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { useActivityList } from '../components/activity-sidebar-section';
 import { CanvasAccessRequestPane } from '../components/canvas-access-request';
-import { CanvasMark } from '../components/canvas-mark';
+import { CanvasMark, canvasHue } from '../components/canvas-mark';
 import { PaneState } from '../components/pane-state';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import { AvatarStack, Button, EmptyState, ErrorNotice, OpeningState, TitleSkeleton } from '../components/primitives';
@@ -100,6 +101,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   }, [alreadyOpen, refetchCanvas]);
   const { membersById } = useCanvasNameSources(api);
   const [sharing, setSharing] = useState(false);
+  const [choosingAppearance, setChoosingAppearance] = useState(false);
   const [pinError, setPinError] = useState<Error | null>(null);
   const [linkError, setLinkError] = useState<Error | null>(null);
   const [renaming, setRenaming] = useState(() => canvasRenameRequested(location.state));
@@ -153,22 +155,28 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   // ledger, and its row may be older than the detail the server just answered.
   // The naming state moves the same way, and on its own: naming can settle
   // and leave the title as it was (no model, an empty answer).
+  // A chosen icon or colour travels the same way, as the row's appearance.
   const rowTitle = row?.title;
   const rowTitleStatus = row?.titleStatus;
-  const seenRow = useRef({ title: rowTitle, titleStatus: rowTitleStatus });
+  const rowIcon = row?.appearance?.icon;
+  const rowColor = row?.appearance?.color;
+  const seenRow = useRef({ title: rowTitle, titleStatus: rowTitleStatus, icon: rowIcon, color: rowColor });
   useEffect(() => {
     const seen = seenRow.current;
-    if (seen.title === rowTitle && seen.titleStatus === rowTitleStatus) return;
-    seenRow.current = { title: rowTitle, titleStatus: rowTitleStatus };
+    if (seen.title === rowTitle && seen.titleStatus === rowTitleStatus && seen.icon === rowIcon && seen.color === rowColor) return;
+    seenRow.current = { title: rowTitle, titleStatus: rowTitleStatus, icon: rowIcon, color: rowColor };
     if (rowTitle === undefined || !sidebarListApplied(queryClient, 'canvases')) return;
     queryClient.setQueryData<CanvasDetail>(canvasDetailQueryKey(id), (cached) => {
-      if (!cached || (cached.title === rowTitle && cached.titleStatus === rowTitleStatus)) return cached;
+      if (!cached) return cached;
+      const sameAppearance = rowIcon === undefined || (cached.appearance?.icon === rowIcon && cached.appearance.color === rowColor);
+      if (cached.title === rowTitle && cached.titleStatus === rowTitleStatus && sameAppearance) return cached;
       const next: CanvasDetail = { ...cached, title: rowTitle };
       if (rowTitleStatus) next.titleStatus = rowTitleStatus;
       else delete next.titleStatus;
+      if (rowIcon !== undefined && rowColor !== undefined) next.appearance = { icon: rowIcon, color: rowColor };
       return next;
     });
-  }, [id, queryClient, rowTitle, rowTitleStatus]);
+  }, [id, queryClient, rowColor, rowIcon, rowTitle, rowTitleStatus]);
   const title = canvas.data?.title ?? row?.title ?? '';
   const naming = canvasNaming(canvas.data ?? row);
   const missing = Boolean(canvas.error && !row && isNotFoundError(unreachable ? access.error : canvas.error));
@@ -188,6 +196,12 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   const cancelRename = (): void => {
     setRenaming(false);
     setRenameError(null);
+  };
+  // One choice saved; the answer is the detail, so the pill draws it at once.
+  // A refusal rejects, which the picker shows as its error.
+  const saveAppearance = async (patch: WorkstreamAppearancePatch): Promise<void> => {
+    if (!api) throw new Error('Not connected');
+    queryClient.setQueryData(canvasDetailQueryKey(id), await api.setCanvasAppearance(id, patch));
   };
   const pinned = row ? row.pinnedPosition !== null : false;
   const togglePin = (): void => {
@@ -219,7 +233,22 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   // at once, beside the detail read.
   if (!row && !canvas.data) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
   const newestArtifact = canvas.data?.artifacts[0];
-  const mark = <CanvasMark id={id} kind={canvas.data?.artifacts[0]?.kind ?? row?.artifactKind ?? null} size={24} />;
+  const appearance = canvas.data?.appearance ?? row?.appearance;
+  const kind = canvas.data?.artifacts[0]?.kind ?? row?.artifactKind ?? null;
+  const mark = <CanvasMark appearance={appearance} id={id} kind={kind} size={24} />;
+  // The mark is the palette's own button, as a Sidekick's hexagon is (the
+  // pill's icon action, beside its menu trigger); the menu's Change appearance
+  // opens the same palette from there.
+  const appearancePicker = <AppearancePicker
+    {...(appearance ? { appearance } : {})}
+    defaults={{ icon: null, color: canvasHue(id) }}
+    id={id}
+    label="Change appearance"
+    onChange={saveAppearance}
+    onOpenChange={setChoosingAppearance}
+    open={choosingAppearance}
+    renderGlyph={(chosen) => <CanvasMark appearance={chosen} id={id} kind={kind} size={24} />}
+  />;
   // The pill's menu, and the header's separate "⋯" button (design.html §2), offer the same.
   const menuItems = <>
     <TitleMenuItem icon={pinned ? <IconPinnedOff aria-hidden="true" size={16} stroke={1.8} /> : <IconPin aria-hidden="true" size={16} stroke={1.8} />} onSelect={togglePin}>
@@ -227,6 +256,12 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     </TitleMenuItem>
     <TitleMenuItem disabled={!api} icon={<IconPencil aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => { setRenameError(null); setRenaming(true); }}>
       Rename…
+    </TitleMenuItem>
+    {/* The palette the pill's mark opens, the Sidekick's own. */}
+    <TitleMenuItem disabled={!api} icon={<IconPalette aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
+      setChoosingAppearance(true);
+    }}>
+      Change appearance
     </TitleMenuItem>
     <TitleMenuItem disabled={!canvas.data} icon={<IconUsers aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => setSharing(true)}>
       Share…
@@ -270,6 +305,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
     label: naming ? 'Canvas menu: Rally is choosing a name' : `Canvas menu: ${title}`,
     menu: menuItems,
+    iconAction: appearancePicker,
   };
   const header = (presentUserIds: readonly string[]): React.JSX.Element => {
     const present = presentUserIds.filter((userId) => userId !== session?.user.id).flatMap((userId) => {
