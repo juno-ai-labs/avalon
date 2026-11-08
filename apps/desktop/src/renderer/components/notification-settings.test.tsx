@@ -40,8 +40,8 @@ describe('the Notifications settings pane', () => {
       'How to tell you about mentions',
       'How to tell you about new messages',
       'How to tell you about being added',
-      'How to tell you about sidekick runs',
-      'How to tell you about pinned canvas updates',
+      'How to tell you about Sidekick runs',
+      'How to tell you about pinned Canvas updates',
       'How to tell you about access requests',
     ]);
     // The kinds still accepted when stored are never offered.
