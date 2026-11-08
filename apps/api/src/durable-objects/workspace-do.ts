@@ -778,7 +778,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   // `canvas_artifacts` is deliberately absent: the expired-drafts due time
   // reads it through this object's local executor, the same predicate the
   // reap applies, as the Slack due times above are read.
-  "canvas_directory", "canvas_participants",
+  "canvas_directory", "canvas_participants", "canvas_access_requests",
   // Each person's Activity: written beside a notification intent, read by the socket.
   "workspace_activity_items", "workspace_activity_seen",
   "realtime_transcription_sessions",

@@ -205,6 +205,8 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "canvas_directory",
   "canvas_participants",
   "canvas_artifacts",
+  // Requests to open a Canvas (migration 151), behind the same facade.
+  "canvas_access_requests",
   // Each person's Activity (migration 148): written beside a notification
   // intent and read for their workspace socket, both inside the object.
   "workspace_activity_items",
