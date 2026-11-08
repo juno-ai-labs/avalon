@@ -7943,44 +7943,36 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-sidekick-mark { display: inline-flex; flex: none; height: 36px; width: 36px; }
 .navigation-row-live-dot { background: var(--av-sys-color-success-base); border-radius: 999px; display: inline-block; height: 7px; margin-right: 6px; vertical-align: 1px; width: 7px; }
 .navigation-row-time { color: var(--av-sys-color-text-muted); flex: none; font-size: 12px; }
-/* Activity: one row per thing that happened to this person. A row is a
-   link like the others, but its text wraps, so it aligns to its top. */
-.activity-row {
-  --tile-ring: var(--av-cmp-sidebar-background-solid);
-  align-items: flex-start;
-  border-radius: 12px;
-  color: var(--av-sys-color-text-default);
-  display: flex;
-  gap: 11px;
-  padding: 9px 10px;
-  text-decoration: none;
-}
-.activity-row:hover { background: var(--av-sys-color-state-hover); }
-/* The row about what is open now, by the route, as a list row is marked. */
-.activity-row.is-active { background: var(--av-sys-color-surface-raised-hover); }
+/* Activity: one row per thing that happened to this person, in the shared row
+   layout (RowLayout): the kind's glyph in a tile, who did what on one line
+   with the time, the preview on the second, the unseen dot at its end. */
 .activity-row-glyph {
   align-items: center;
   background: var(--av-sys-color-surface-raised);
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong);
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-subtle);
   color: var(--av-sys-color-text-subtle);
   display: inline-flex;
   flex: none;
-  height: 32px;
+  height: 36px;
   justify-content: center;
-  width: 32px;
+  width: 36px;
 }
-/* Seen history stays quiet, but legible again while it is pointed at. */
-.activity-row.is-seen { opacity: 0.45; }
-.activity-row.is-seen:hover,
-.activity-row.is-seen:focus-visible { opacity: 1; }
-@media (prefers-contrast: more) { .activity-row.is-seen { opacity: 1; } }
-.activity-row-body { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
-.activity-row-text { color: var(--av-sys-color-text-subtle); font-size: 14px; line-height: 1.35; text-wrap: pretty; }
+.activity-row-text { color: var(--av-sys-color-text-subtle); font-weight: 400; }
 .activity-row-text strong { color: var(--av-sys-color-text-default); font-weight: 600; }
-.activity-row-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.activity-row-detail { color: var(--av-sys-color-text-muted); font-size: 12px; }
-.activity-unseen-dot { align-self: center; background: var(--av-sys-color-workstream-news); border-radius: 999px; flex: none; height: 8px; width: 8px; }
+/* Seen history recedes through text colours, not opacity: the title in
+   text-muted (5.2:1 light, 7.6:1 dark on the sidebar) and the second line in
+   text-disabled (3.1:1 and 4.1:1), each clear of its WCAG floor, where 45%
+   opacity left the preview at 1.9:1 in light and 2.45:1 in dark. */
+.activity-row.is-seen:not(.is-active) .activity-row-text,
+.activity-row.is-seen:not(.is-active) .activity-row-text strong { color: var(--av-sys-color-text-muted); font-weight: 500; }
+.activity-row.is-seen:not(.is-active) :is(.navigation-row-detail, .navigation-row-time) { color: var(--av-sys-color-text-disabled); }
+.activity-row.is-seen:not(.is-active) .activity-row-glyph { color: var(--av-sys-color-text-muted); }
+/* The rows the route has open are drawn open, at full contrast; a gap keeps
+   two of them from merging into one block. Keyboard focus is a ring, not the
+   open fill, so the focused row and the open one never look alike. */
+.activity-row + .activity-row { margin-top: 2px; }
+.activity-row:focus-visible { box-shadow: var(--av-sys-focus-ring-default); outline: none; }
 .navigation-row.is-unread:not(.navigation-channel-row) .navigation-row-time { color: var(--av-sys-color-workstream-news); }
 .navigation-row-lock { color: var(--av-sys-color-text-muted); flex: none; }
 .navigation-row-detail { color: var(--av-sys-color-text-muted); flex: 1; font-size: 12.5px; line-height: 17px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

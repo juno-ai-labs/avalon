@@ -2,13 +2,13 @@ import type { ActivityItem } from '@rally/contracts';
 import { IconAt, IconCircleCheck, IconMessageQuestion, IconUserPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode, RefObject } from 'react';
-import { Link, matchPath, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 import { canvasRoute, canvasTurnRoute, useCanvasNameSources } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList, type ActivityList } from '../lib/sidebar-list-store';
-import { SectionHeading, useSectionMotion } from './navigation-rows';
+import { RowLayout, SectionHeading, useSectionMotion } from './navigation-rows';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { sidekickRunSearch } from './sidekick-run-row';
@@ -68,11 +68,15 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
   const { membersById, sidekicksById } = useCanvasNameSources(api);
   useSectionMotion(scroll, undefined);
   // The highlight follows the route, Back and Forward included, never the row
-  // last clicked: the rows about the Canvas or Sidekick open now are marked.
+  // last clicked: a row is open when the route has its conversation open, the
+  // run included, so opening one run marks that run's row and not every row
+  // about its Sidekick.
   const location = useLocation();
-  // `matchPath` decodes the segment as the route does, and never throws on a
-  // malformed one.
-  const openParentId = (matchPath('/canvases/:id', location.pathname) ?? matchPath('/sidekicks/:id', location.pathname))?.params.id;
+  const openRun = new URLSearchParams(location.search).get('run');
+  const isOpen = (item: ActivityItem): boolean => {
+    const [pathname, search = ''] = activityRoute(item).split('?');
+    return pathname === location.pathname && new URLSearchParams(search).get('run') === openRun;
+  };
   const who = (item: ActivityItem): string => {
     if (item.actor.kind === 'rally') return 'Rally';
     if (item.actor.kind === 'sidekick') {
@@ -88,23 +92,22 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
     {activity !== undefined && activity.items.length === 0 && <p className="navigation-empty">{ACTIVITY_EMPTY}</p>}
     {activity?.items.map((item) => {
       const run = item.kind === 'needs_input' || item.kind === 'run_finished';
-      const active = openParentId !== undefined && openParentId === item.parentId;
+      const active = isOpen(item);
       return <Link
         aria-current={active ? 'page' : undefined}
-        className={clsx('activity-row', item.seen ? 'is-seen' : 'is-unseen', active && 'is-active')}
+        className={clsx('navigation-row activity-row', item.seen ? 'is-seen' : 'is-unread', active && 'is-active')}
         data-motion-key={`activity:${item.id}`}
         key={item.id}
         to={activityRoute(item)}
       >
-        <span className={clsx('activity-row-glyph', `is-${item.kind}`)}>{GLYPHS[item.kind]}</span>
-        <span className="activity-row-body">
-          <span className="activity-row-text">
-            <strong>{who(item)}</strong> {VERBS[item.kind]}{!run && <> <strong>{where(item)}</strong></>}
-          </span>
-          {item.preview && <span className="activity-row-detail activity-row-preview">{item.preview}</span>}
-          <RelativeTime className="activity-row-detail" format={formatSidebarActivityTime} value={item.createdAt} />
-        </span>
-        {!item.seen && <span aria-label="Unseen" className="activity-unseen-dot" role="img" />}
+        <RowLayout
+          detail={item.preview ?? ''}
+          tile={<span className={clsx('activity-row-glyph', `is-${item.kind}`)}>{GLYPHS[item.kind]}</span>}
+          time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={item.createdAt} />}
+          title={<span className="activity-row-text"><strong>{who(item)}</strong> {VERBS[item.kind]}{!run && <> <strong>{where(item)}</strong></>}</span>}
+          unread={!item.seen}
+          unreadLabel="Unseen"
+        />
       </Link>;
     })}
   </section>;
