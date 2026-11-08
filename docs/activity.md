@@ -124,7 +124,10 @@ the conversation's `directory_user` effect carries the report's time
 unchanged cursor was byte-identical to the last one, the conversation's outbox
 reused the earlier message id, and the parent's receipt fence dropped it as a
 replay, so the row never cleared. A redelivery of one report still dedupes,
-and the parent dates the read by that time, not by when it arrived. The host
+and the parent dates the read by that time, not by when it arrived: a report
+for a person with no read recorded (`lastReadAt: null`) is dated `0`, so a
+message somebody else sends cannot mark their rows seen, and only an older
+object that sends no time is dated at arrival. The host
 republishes only when the person
 has Activity about that parent (`hasActivityFor`, a seek on
 `(recipient_user_id, parent_id)`), so a read of anything else costs one
@@ -268,6 +271,29 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 
 ## Changelog
 
+### 2026-11-08 — A row lists only while its person may open the parent, and every read report is heard
+
+**What changed:** `activityPage` filters out, from the page and the unseen
+count, a row about a Canvas or Sidekick its person cannot open, where it only
+withheld the title. A conversation's `directory_user` effect carries the
+report's time (`lastReadAt`), and the parent dates the read by it, so a report
+at an unchanged cursor is a new effect.
+
+**Why:** The end-to-end pass found a confirmed mention in a creator-only
+Canvas sending its preview, message id and sequence to someone who could not
+open it, and a requester who reopened a Sidekick after its run finished, at
+the cursor they had already read, left with the run's row unseen: the report
+was byte-identical to the last, so the outbox reused its message id and the
+parent's receipt fence dropped it.
+
+**Considered and rejected:** Redacting more fields of a row the person cannot
+open: the row's existence is itself the parent's activity. Dating the read by
+its arrival: a report delivered after a run finished would clear the run's row
+for a read that came before it.
+
+**What a future change must respect:** the access filter and the page are one
+statement, and a read is dated by when the person read, never by delivery.
+
 ### 2026-11-08 — Activity returns as a per-person feed of the four push events
 
 **What changed:** A third rail section, Activity, lists one person's mentions,
@@ -286,12 +312,7 @@ deleted at plan step B-3 with the Threads it read. It returns sourced from the
 same four events as push, written in the intent's transaction, so the feed
 cannot drift from what was pushed. Seen is derived from the read cursor that
 already drives every unread, so the feed cannot disagree with the Canvas or
-Sidekick row either (the coordinator's 2026-11-08 amendment). A row lists
-only while its person may open the parent: the end-to-end pass found the
-first version withheld only the title, sending a mention's preview from a
-creator-only Canvas to someone who could not open it. A read report carries
-its time, so reopening a Sidekick at the cursor already read is heard: the
-pass found such a report dropped as a duplicate and the run's row left unseen.
+Sidekick row either (the coordinator's 2026-11-08 amendment).
 
 **Considered and rejected:** Deriving the feed from each conversation's
 transcript on read, as the old feed derived replies and starts — a fan-out read

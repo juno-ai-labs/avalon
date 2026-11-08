@@ -168,6 +168,29 @@ manage it); `POST /canvases/:id/audience` changes who can open it;
 `POST /canvases/:id/pin` and `POST /sidekicks/:id/pin` pin. The Chat is opened
 through the conversation routes like any conversation.
 
+A Canvas a person makes with no title starts as **Untitled Canvas** with
+`titleStatus: "naming"` (`canvas_directory.title_status`, migration 149). When
+the first projection of its Chat that carries a message reaches the parent
+(`onChildProjection`, `latestAttentionOrdinal` at least 1), the Canvas arms a
+`canvas_naming` alarm entry keyed by its id; the entry's handler,
+`HostedCanvas.nameFromOpening`, reads the oldest text message a person sent
+in the Chat through the message port (`saidMessages`, `peopleOnly`), asks `canvasTitleFromOpening` (the `workstream_naming` role,
+reasoning off, metered as `channel_naming`) and writes the title in one
+statement guarded by `title_status = 'naming'`, which also settles it, so the
+list and the detail move as a retitle moves them. A retitle settles the row
+first, so a person's title always wins over a pass still in flight; a model
+that fails or answers nothing settles the row as it is, logged
+`canvas_naming_failed` with its code. A Canvas a Sidekick run makes, or one
+made with a title, is `settled` from the start. A first message that carries
+only attachments has no text to read, so the Canvas stays `naming` until a
+person's text message arrives, which arms the entry again.
+
+`PATCH /canvases/:id` refuses a title that is empty, blank or over 300
+characters as `canvas_rename_invalid:title:<issue>`, and every Canvas route
+refuses a malformed id as `canvas_id_invalid:id:<issue>`, through
+`namedZValidator`, each with a sentence the client shows; a well-formed id
+that names no Canvas is `canvas_not_found`.
+
 ### A Canvas that was a Thread
 
 A Canvas may have been a Thread. `convert_threads_to_canvases`, an operator
@@ -517,6 +540,31 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 ## Changelog
 
+### 2026-11-08 — A Canvas made with no title is titled from its first message, and a refused retitle names its field
+
+**What changed:** WorkspaceDO migration 149 adds `canvas_directory.title_status`.
+A Canvas a person makes with no title is `naming` until the first text message
+of its Chat reaches the parent, which arms a `canvas_naming` entry;
+`HostedCanvas.nameFromOpening` titles it on the `workstream_naming` role and
+settles it. A retitle settles the row. `PATCH /canvases/:id` and every Canvas
+route's id refuse by name (`canvas_rename_invalid:…`, `canvas_id_invalid:…`)
+through `namedZValidator`. `CanvasSummary` carries `titleStatus`.
+
+**Why:** The end-to-end pass found every Canvas started from the composer
+stayed **Untitled Canvas**, and a refused retitle answered `invalid_request`
+"The request is invalid", naming nothing. Titling from the opening message is
+the implementer's reading, recorded in the PRD's decision log (2026-11-08) and
+open to the product owner's reversal.
+
+**Considered and rejected:** Naming in the conversation object, where the
+deleted Thread naming service ran: the title is the parent's row, and a pass in
+the parent writes it in the same statement a retitle uses. A lock or a version
+check against a concurrent retitle: the retitle settles the row, and the pass
+writes only while it is still `naming`, so a person's title wins without one.
+
+**What a future change must respect:** only a Canvas still `naming` may be
+titled automatically, and every person's retitle must settle it.
+
 ### 2026-11-08 — A Canvas is renamed in its own pill, and the pill follows a rename from anywhere
 
 **What changed:** The pill's menu and a sidebar row's menu offer Rename…,
@@ -567,14 +615,6 @@ Thread's, with a creation time older than Canvases, participants with no
 `added_by_user_id`, and no writer. Nothing may assume a Canvas was made by
 `create`.
 
-A Canvas made with no title is titled from its Chat's first message
-(migration 149 adds `title_status`; the PRD's 2026-11-08 entry records it as
-the implementer's reading): the end-to-end pass found every Canvas started
-from the composer stayed **Untitled Canvas**. The pass lives in the parent,
-not the conversation, because the title is the parent's row and the deleted
-Thread naming service had run in the conversation; a retitle settles the row,
-which is what lets a person's title win without a lock.
-
 ### 2026-11-07 — Document created: a Canvas is a hosted conversation with its own audience
 
 **What changed:** A Canvas has a directory row in `WorkspaceDO` (migration 139),
@@ -591,25 +631,7 @@ with `POST /canvases`; its Chat's publishes are its artifacts (recorded in
 it makes or one it writes. Rally in the Chat is told the Canvas's artifacts,
 and what it learns is the Canvas's memory.
 
-A Canvas a person makes with no title starts as **Untitled Canvas** with
-`titleStatus: "naming"` (`canvas_directory.title_status`, migration 149). When
-the first projection of its Chat that carries a message reaches the parent
-(`onChildProjection`, `latestAttentionOrdinal` at least 1), the Canvas arms a
-`canvas_naming` alarm entry keyed by its id; the entry's handler,
-`HostedCanvas.nameFromOpening`, reads the Chat's oldest text message through
-the message port, asks `canvasTitleFromOpening` (the `workstream_naming` role,
-reasoning off, metered as `channel_naming`) and writes the title in one
-statement guarded by `title_status = 'naming'`, which also settles it, so the
-list and the detail move as a retitle moves them. A retitle settles the row
-first, so a person's title always wins over a pass still in flight; a model
-that fails or answers nothing settles the row as it is, logged
-`canvas_naming_failed` with its code. A Canvas a Sidekick run makes, or one
-made with a title, is `settled` from the start.
-
-`PATCH /canvases/:id` retitles a Canvas for anyone it admits (a title that
-is empty, blank or over 300 characters is refused as
-`canvas_rename_invalid:title:<issue>`, and a malformed id on every Canvas
-route as `canvas_id_invalid:id:<issue>`, through `namedZValidator`), and
+`PATCH /canvases/:id` retitles a Canvas for anyone it admits, and
 `PUT /workspace/pinned-order` takes `{ kind, itemIds }` and orders the
 Canvases or Sidekicks Pinned group (`reorderSidebarPins`); the Space-era
 container order and the All Pinned order it replaced went with the Channel

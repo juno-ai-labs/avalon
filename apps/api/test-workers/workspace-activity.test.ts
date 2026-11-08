@@ -145,8 +145,7 @@ async function latestOrdinal(parentId: string): Promise<number> {
 
 /** The recipient reads the Chat through its newest message, by the route's own acknowledge operation. */
 async function readThroughLatest(canvasId: string, parentKind: "canvas" | "automation" = "canvas"): Promise<void> {
-  const latest = await runInDurableObject(conversation(canvasId), (_instance, state) => state.storage.sql.exec<{ next: number }>(
-    `SELECT next_attention_ordinal AS next FROM workstream WHERE id = 1`).one().next - 1);
+  const latest = await latestOrdinal(canvasId);
   const response = await conversation(canvasId).fetch("https://object.test/internal/product", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ operation: "acknowledge_read", parentKind, auth: auth(RECIPIENT), input: {

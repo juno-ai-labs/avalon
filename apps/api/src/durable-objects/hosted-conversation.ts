@@ -333,7 +333,7 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
        ON CONFLICT(sidekick_id, user_id) DO UPDATE SET source_version = excluded.source_version,
          seen_attention_ordinal = excluded.seen_attention_ordinal,
          manual_unread_from_ordinal = excluded.manual_unread_from_ordinal, updated_at = excluded.updated_at`,
-      this.parentId, effect.userId, sourceVersion, seen, manual, effect.lastReadAt ? Date.parse(effect.lastReadAt) : now,
+      this.parentId, effect.userId, sourceVersion, seen, manual, readAt(effect.lastReadAt, now),
     );
     if (!existing || existing.seen_attention_ordinal !== seen || existing.manual_unread_from_ordinal !== manual) {
       this.onViewerReadChanged(effect.userId);
@@ -402,6 +402,17 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
     if (!children.some((child) => child.substreamId === "0")) children.unshift({ substreamId: "0", kind: "main", createdAt: 0 });
     return children;
   }
+}
+
+/**
+ * When a `directory_user` report says its person read: the report's own time;
+ * `0` for `null`, a person with no read recorded, so another member's message
+ * cannot date a read nobody made; and arrival for an older object that sends
+ * no time at all.
+ */
+function readAt(lastReadAt: string | null | undefined, now: number): number {
+  if (lastReadAt === undefined) return now;
+  return lastReadAt === null ? 0 : Date.parse(lastReadAt);
 }
 
 /**
