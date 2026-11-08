@@ -361,6 +361,8 @@ keeps the desktop's top clearance (v4-F9), focus rings the tile (v4-F10,
 v3-G12), the account avatar is 28px (v1-F12), the account menu's Sidekicks
 item wears the rail's single hexagon (v3-G13), and the Canvases home and
 Settings name the window (v4-F24).
+A list row reads its age in the design's words ("now", "2m", "1h", "Tue")
+instead of a clock time that cut the title beside it (v4-F5).
 
 **Why:** The PRD makes design.html the authority for every screen, and the
 design inspection (v1-F1, v4-F4) measured a 264px list that cut ordinary

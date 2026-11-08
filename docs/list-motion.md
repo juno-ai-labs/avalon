@@ -10,7 +10,9 @@ slides out of frame to the left, the rows between its two slots close the gap,
 and it slides back in from the left at its new slot. A row whose arrival or
 departure is itself the change, which a list may mark `data-motion-insert`, plays
 the same two halves on their own: in from the left when it appears, and out to the
-left, through a stand-in, when it is removed.
+left, through a stand-in, when it is removed. The Canvases list marks a
+row that arrives after the list first did (a Canvas just made), so it slides in
+rather than overprinting the row it displaces.
 
 Nothing in it knows what a Canvas is: the sidebar's Canvases and Sidekicks
 lists are its callers, and it is written against a small contract — keyed rows under a
@@ -390,6 +392,16 @@ row (a pin from its right-click menu, say), then pause every animation with
 each one.
 
 ## Changelog
+
+### 2026-11-08 — A new Canvas's row slides in
+
+**What changed:** The Canvases section marks a row that arrives after its
+first list with `data-motion-insert`.
+
+**Why:** This document promised a row that appears plays in from the left,
+but no Canvas row was marked, so a new Canvas was drawn in place over the row
+it displaced for the length of the shift (v1-F6). The first list and the
+device cache's rows still play nothing.
 
 ### 2026-10-16 — One pass, run by every part of a list
 

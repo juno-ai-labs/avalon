@@ -3135,6 +3135,10 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   .settings-content-header { gap: 10px; justify-content: flex-start; padding: 11px 12px 7px; }
   .settings-content-header h1 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .settings-menu-toggle { flex: none; }
+  /* With the sections sheet open the header has one close, Settings' own:
+     choosing a section or Escape shuts the sheet, so its toggle would be a
+     second × beside the first (v4-F23). */
+  .settings-menu-toggle[aria-expanded="true"] { visibility: hidden; }
 }
 @media (max-width: 640px) and (prefers-reduced-motion: reduce) {
   .settings-sidebar,

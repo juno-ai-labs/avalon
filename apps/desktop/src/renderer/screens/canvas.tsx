@@ -9,7 +9,7 @@ import { CanvasMark } from '../components/canvas-mark';
 import { PaneState } from '../components/pane-state';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import { AvatarStack, Button, EmptyState, ErrorNotice, OpeningState, TitleSkeleton } from '../components/primitives';
-import { canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import { canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { copyLink } from '../lib/copy-link';
 import { sidebarListApplied } from '../lib/sidebar-list-store';
 import { useDocumentTitle } from '../lib/document-title';
@@ -62,6 +62,14 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     setRenaming(true);
     void navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
   }, [location.pathname, location.search, navigate, renameRequested]);
+  // The row's Share… arrives the same way, and opens the panel once the
+  // detail it shares has answered.
+  const shareRequested = canvasShareRequested(location.state);
+  useEffect(() => {
+    if (!shareRequested || !canvas.data) return;
+    setSharing(true);
+    void navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [canvas.data, location.pathname, location.search, navigate, shareRequested]);
   // A link that opens the Canvas onto one artifact arrives here as
   // `?artifact=` (the browser host's form of the link's `/a/` segment); it
   // becomes the route state the rail opens from, as a desktop deep link's does.
