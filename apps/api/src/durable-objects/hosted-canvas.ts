@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { IdSchema, UserIdSchema, WorkspaceIdSchema } from "@rally/contracts";
+import { IdSchema, UserIdSchema, WorkspaceIdSchema, WorkstreamAppearancePatchSchema, WorkstreamAppearanceSchema, type WorkstreamAppearance } from "@rally/contracts";
 import {
   CanvasAccessDecisionRequestSchema,
   CanvasAccessDecisionSchema,
@@ -131,8 +131,12 @@ export function canvasArtifactKind(resourceType: string, mimeType: string | null
 }
 export type CanvasActorRequest = z.infer<typeof CanvasActorRequestSchema>;
 
-export const CanvasRenameRequestSchema = CanvasActorRequestSchema.extend({ title: z.string().trim().min(1).max(300) });
-export type CanvasRenameRequest = z.input<typeof CanvasRenameRequestSchema>;
+/** A retitle, an appearance choice, or both; the route refuses a body with neither. */
+export const CanvasUpdateRequestSchema = CanvasActorRequestSchema.extend({
+  title: z.string().trim().min(1).max(300).optional(),
+  appearance: WorkstreamAppearancePatchSchema.optional(),
+});
+export type CanvasUpdateRequest = z.input<typeof CanvasUpdateRequestSchema>;
 
 export const CanvasSetAudienceRequestSchema = CanvasActorRequestSchema.extend({ update: CanvasAudienceUpdateSchema });
 export type CanvasSetAudienceRequest = z.input<typeof CanvasSetAudienceRequestSchema>;
@@ -154,6 +158,8 @@ export interface CanvasRow extends Record<string, SqlStorageValue> {
   authority_generation: number;
   /** `naming` while a Canvas made with no title waits for its opening message's (migration 149). */
   title_status: "naming" | "settled";
+  /** The chosen icon and colour, `WorkstreamAppearanceSchema` JSON; null until someone chooses (migration 153). */
+  appearance_json: string | null;
 }
 
 /** What a hosted Canvas needs from the Organization object that holds it. */
@@ -179,6 +185,15 @@ function notFound(): ApiError {
   return new ApiError(404, "canvas_not_found", "This Canvas does not exist");
 }
 
+/**
+ * What somebody chose for the Canvas to look like; both fields null until
+ * someone does, which the client draws as the default. A row read without the
+ * column (a reader that names its columns) reads as unchosen.
+ */
+export function canvasAppearance(row: CanvasRow): WorkstreamAppearance {
+  return row.appearance_json ? WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) : { icon: null, color: null };
+}
+
 /** The row's public shape. */
 export function canvasSummary(row: CanvasRow): CanvasSummary {
   return CanvasSummarySchema.parse({
@@ -191,6 +206,7 @@ export function canvasSummary(row: CanvasRow): CanvasSummary {
     writerSidekickId: row.writer_sidekick_id,
     visibility: row.visibility,
     titleStatus: row.title_status,
+    appearance: canvasAppearance(row),
   });
 }
 
@@ -616,17 +632,28 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   }
 
   /**
-   * Retitle the Canvas. Anyone it admits may, as anyone it admits may change
-   * its artifacts from its Chat; anyone else is told it does not exist.
+   * Retitle the Canvas, choose its icon and colour, or both. Anyone it admits
+   * may, as anyone it admits may change its artifacts from its Chat; anyone
+   * else is told it does not exist. An appearance is merged field by field
+   * into what is stored, as a Sidekick's is, so two people picking at once
+   * each keep their field. Choosing an appearance is not activity, so it does
+   * not move `updated_at` and the Canvas keeps its place in the recency list.
    */
-  rename(input: CanvasRenameRequest): CanvasDetail {
-    const request = parseRpcInput(CanvasRenameRequestSchema, input, "canvas_rename");
+  update(input: CanvasUpdateRequest): CanvasDetail {
+    const request = parseRpcInput(CanvasUpdateRequestSchema, input, "canvas_update");
     const row = this.assertCanvas(request.workspaceId, request.canvasId);
     if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
+    const appearance = request.appearance === undefined
+      ? null : WorkstreamAppearanceSchema.parse({ ...canvasAppearance(row), ...request.appearance });
     this.host.storage.transactionSync(() => {
       // A person's title settles it, so a naming pass still in flight leaves it alone.
-      this.sql.exec(`UPDATE canvas_directory SET title = ?, title_status = 'settled', updated_at = ? WHERE canvas_id = ?`,
-        request.title, Date.now(), this.canvasId);
+      if (request.title !== undefined) {
+        this.sql.exec(`UPDATE canvas_directory SET title = ?, title_status = 'settled', updated_at = ? WHERE canvas_id = ?`,
+          request.title, Date.now(), this.canvasId);
+      }
+      if (appearance !== null) {
+        this.sql.exec(`UPDATE canvas_directory SET appearance_json = ? WHERE canvas_id = ?`, JSON.stringify(appearance), this.canvasId);
+      }
       this.host.noteCanvasDirectoryChanged(this.canvasId);
     });
     return this.detail({ workspaceId: request.workspaceId, canvasId: request.canvasId, actor: request.actor });

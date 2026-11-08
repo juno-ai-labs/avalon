@@ -10,7 +10,7 @@ import {
   CanvasAccessSchema,
   CanvasAudienceUpdateSchema,
   CanvasDetailSchema,
-  CanvasRenameRequestSchema,
+  CanvasUpdateRequestSchema,
   CreateCanvasRequestSchema,
   CreatedCanvasSchema,
   SidebarPinRequestSchema,
@@ -31,7 +31,8 @@ const requesterParam = namedZValidator("canvas_access_requester", "This is not a
 
 /**
  * A Canvas: create one (with no artifacts, and optionally its first prompt),
- * read what its reader sees, retitle it, change who can open it, and pin it.
+ * read what its reader sees, retitle it or choose its icon and colour, change
+ * who can open it, and pin it.
  * `docs/canvases.md`. Its Chat is an ordinary conversation, opened through
  * `/conversations/:canvasId`.
  */
@@ -43,10 +44,15 @@ canvasRoutes.get("/:id", canvasIdParam, async (c) => {
   c.header("Cache-Control", "no-store");
   return c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).detail(c.req.valid("param").id)));
 });
+// The title, the appearance, or both. The refusal keeps the rename's released
+// label and sentence, so a client that only renames reads it as it always has:
+// only a typed title can be refused for a reason a person fixes, and the
+// appearance picker sends catalog keys alone. An appearance refusal still names
+// its field (`canvas_rename_invalid:appearance.icon:invalid_value`).
 canvasRoutes.patch("/:id", canvasIdParam, namedZValidator("canvas_rename",
-  "A Canvas title needs 1 to 300 characters other than spaces at either end")("json", CanvasRenameRequestSchema), async (c) =>
+  "A Canvas title needs 1 to 300 characters other than spaces at either end")("json", CanvasUpdateRequestSchema), async (c) =>
   c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c))
-    .rename(c.req.valid("param").id, c.req.valid("json").title))));
+    .update(c.req.valid("param").id, c.req.valid("json")))));
 canvasRoutes.post("/:id/audience", canvasIdParam, zValidator("json", CanvasAudienceUpdateSchema), async (c) =>
   c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c))
     .setAudience(c.req.valid("param").id, c.req.valid("json")))));
