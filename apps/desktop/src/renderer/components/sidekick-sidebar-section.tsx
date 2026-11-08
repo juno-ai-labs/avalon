@@ -87,7 +87,7 @@ export function SidekicksSection({ scroll }: { scroll: RefObject<HTMLElement | n
   return <>
     {pinError && <ErrorNotice occurrence={pinError}>The Sidekick could not be pinned. Try again.</ErrorNotice>}
     {waiting.length > 0 && <section aria-label="Needs input" className="navigation-section">
-      <SectionHeading motionKey="needs-input">Needs input</SectionHeading>
+      <SectionHeading comesAndGoes motionKey="needs-input">Needs input</SectionHeading>
       {waiting.map((sidekick) => row(sidekick, { pinned: sidekick.pinnedPosition != null, draggable: false }))}
     </section>}
     <PinnedSection

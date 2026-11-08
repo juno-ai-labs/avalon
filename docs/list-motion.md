@@ -135,7 +135,10 @@ rows that are not held, the largest set that kept their relative order is found
 as the longest increasing run of old ranks read in the new order; everything outside that set
 is a **mover**, everything inside it that nonetheless sits at a different
 position is a **shifter**, and a held row is a shifter whatever moved past it. This
-is the smallest set of moves that explains the change: one message lifting a
+is the smallest set of moves that explains the change. Where more than one
+such set does, the one kept is the one whose rows stayed in their group: a row
+whose count of held rows above it changed (it crossed a heading) is the mover,
+and the row it passed in the group it joined shifts. One message lifting a
 row to the top of its group yields one mover and a shift of one slot for each
 row it passed, rather than "every row above it moved". It is more general than
 any single trigger needs — every trigger the sidebar has today moves one row —
@@ -393,15 +396,28 @@ each one.
 
 ## Changelog
 
-### 2026-11-08 — A new Canvas's row slides in
+### 2026-11-08 — A new Canvas's row slides in, and a row that changes group is the one that moves
 
 **What changed:** The Canvases section marks a row that arrives after its
-first list with `data-motion-insert`.
+first list with `data-motion-insert`. Among the longest runs that explain a
+change, `planListMotion` keeps the one whose rows did not cross a held row
+(`longestIncreasingRun` takes weights for the tie-break), so a row that
+changed group is the mover. The Needs input heading, drawn only while that
+group has rows, carries `data-motion-insert` and slides in and out.
 
 **Why:** This document promised a row that appears plays in from the left,
 but no Canvas row was marked, so a new Canvas was drawn in place over the row
 it displaced for the length of the shift (v1-F6). The first list and the
-device cache's rows still play nothing.
+device cache's rows still play nothing. A Sidekick leaving Needs input for the
+slot below the recent list's newest row is a swap either row explains, and
+patience sorting kept the Sidekick: it glided up across the Pinned and All
+Sidekicks headings, drawn over them, while the row it passed left the frame
+and was seen mid-entrance without its tile (round-2 review, R2-5). The
+heading itself blinked out in one frame.
+
+**Considered and rejected:** Sending every row that crosses a heading out and
+back: an unpin moves a row one slot past the All heading with nobody else
+reordered, and that glide is the motion the held heading exists for.
 
 ### 2026-10-16 — One pass, run by every part of a list
 
