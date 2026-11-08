@@ -83,7 +83,9 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   `99+` past two digits): **Canvases**, each Canvas holding something this
   person has not read; **Sidekicks**, each Sidekick that needs input or holds
   something unread; **Activity**, every item this person has not seen
-  (`unseenCount`, "3 unseen"). All three are read from the lists the
+  (`unseenCount`, "3 unseen"). A section with a count is named section
+  first ("Sidekicks, 1 waiting"), where reading the button's content put the
+  badge ahead of the name. All three are read from the lists the
   workspace socket keeps, the same rows the lists draw. The dock badge adds up
   the first two only: Activity is not Needs attention
   ([`menu-bar.md`](menu-bar.md)). The desktop host renders a top spacer for
@@ -337,6 +339,9 @@ heading, where it was in the server's alphabetical order with no control.
 sidekicks" sorted by recency with a "Recent ⇵" control; alphabetical rows
 beside their times read as a broken sort. The heading keeps "All Sidekicks",
 the product noun's case.
+
+A rail section with a count is now named section first ("Sidekicks, 1
+waiting"); its content read "1 waiting Sidekicks".
 
 **What a future change must respect:** the order is the client's over the
 list the socket keeps, so a reorder costs no request.
