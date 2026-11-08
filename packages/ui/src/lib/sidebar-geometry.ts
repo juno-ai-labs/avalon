@@ -8,14 +8,21 @@ export const COLLAPSED_SIDEBAR_WIDTH = 88;
  * stays in its 32px button (99+ past two digits). Shared by every host, web too.
  */
 export const MIN_SIDEBAR_WIDTH = 306;
-export const MAX_SIDEBAR_WIDTH = 400;
-export const DEFAULT_SIDEBAR_WIDTH = 280;
+/** The navigation rail's column (`--navigation-rail-width` in app.css). */
+export const NAVIGATION_RAIL_WIDTH = 76;
+/** The list column beside the rail, from design.html §1 and §2. */
+export const SIDEBAR_LIST_DEFAULT_WIDTH = 340;
 /**
- * The single navigation sidebar's starting width, from the redesign's mockup:
- * room for a Channel title beside its time without cutting it off. A width the
- * person dragged to is kept over it.
+ * The single navigation sidebar's starting width: the rail plus the design's
+ * list column. A width the person dragged to is kept over it.
  */
-export const SINGLE_SIDEBAR_DEFAULT_WIDTH = 340;
+export const SINGLE_SIDEBAR_DEFAULT_WIDTH = NAVIGATION_RAIL_WIDTH + SIDEBAR_LIST_DEFAULT_WIDTH;
+/**
+ * Keeps the 60px of drag room above the default that the sidebar had before
+ * the default moved from 340 (rail included) to the design's rail plus list.
+ */
+export const MAX_SIDEBAR_WIDTH = SINGLE_SIDEBAR_DEFAULT_WIDTH + 60;
+export const DEFAULT_SIDEBAR_WIDTH = 280;
 /** The main conversation width GrokBot protects before forcing the icon rail. */
 export const SIDEBAR_CONTENT_MIN_WIDTH = 424;
 /** Drag thresholds include GrokBot's ten-pixel hysteresis on expansion. */
