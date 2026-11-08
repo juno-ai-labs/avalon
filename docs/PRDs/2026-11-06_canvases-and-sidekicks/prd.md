@@ -359,6 +359,26 @@ rejected for that reason.
 **Changes:** docs/activity.md, docs/workspace-retirement.md; the deploy
 order in the plan's section 9 is dump, convert, retire.
 
+### 2026-11-08 — A Canvas made with no title is titled from its first message
+
+**Decided:** A Canvas a person makes with no title is titled from the first
+message of its Chat, by the `workstream_naming` model role the Thread product
+named a Thread's opening message with. It reads as `naming` until the title
+lands and `settled` after; a person who retitles it first keeps their title,
+and a model that answers nothing leaves it **Untitled Canvas**. A Canvas a
+Sidekick run makes, or one made with a title, is not renamed. This was the
+implementer's reading, made while fixing the end-to-end pass's finding that a
+new Canvas stayed **Untitled Canvas** forever, and is open to the product
+owner's reversal.
+
+**Why:** Nothing titled a Canvas, so a list of Canvases a person had started
+from the composer read as a column of **Untitled Canvas**. The Thread product
+titled from the opening message, and the role survived the pivot for pasted
+text.
+
+**Changes:** `HostedCanvas.nameFromOpening`, `canvas-naming.ts`, WorkspaceDO
+migration 149 (`docs/canvases.md`).
+
 ### 2026-11-07 — Anyone a Canvas admits can retitle it
 
 **Decided:** Retitling a Canvas is open to anyone the Canvas admits, as

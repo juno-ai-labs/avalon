@@ -474,7 +474,7 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 | Table | Keyed by | Holds |
 | --- | --- | --- |
-| `canvas_directory` | `canvas_id` | The row: title, creator, times, last editor, writer Sidekick and run, visibility, authority generation. Indexed by recency, by writer Sidekick, and uniquely by `(writer_sidekick_id, writer_run_id)`. |
+| `canvas_directory` | `canvas_id` | The row: title, creator, times, last editor, writer Sidekick and run, visibility, authority generation, title status (`naming` until a Canvas made with no title is titled from its first message, migration 149). Indexed by recency, by writer Sidekick, and uniquely by `(writer_sidekick_id, writer_run_id)`. |
 | `canvas_participants` | `(canvas_id, user_id)` | Whom its managers added (`added`) or a claimed share brought (`invitation`). Indexed by person for "shared with me". |
 | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts`, `sidekick_viewer_reads` | `(sidekick_id, …)`, the column holding the Canvas id | The hosted conversation's children, their projections and receipts, and each reader's read of the Chat. |
 | `workspace_sidebar_list_state` | `list` | Gains the `canvases` waterline; the table is rebuilt to widen its CHECK. |
@@ -502,6 +502,14 @@ Thread's, with a creation time older than Canvases, participants with no
 `added_by_user_id`, and no writer. Nothing may assume a Canvas was made by
 `create`.
 
+A Canvas made with no title is titled from its Chat's first message
+(migration 149 adds `title_status`; the PRD's 2026-11-08 entry records it as
+the implementer's reading): the end-to-end pass found every Canvas started
+from the composer stayed **Untitled Canvas**. The pass lives in the parent,
+not the conversation, because the title is the parent's row and the deleted
+Thread naming service had run in the conversation; a retitle settles the row,
+which is what lets a person's title win without a lock.
+
 ### 2026-11-07 — Document created: a Canvas is a hosted conversation with its own audience
 
 **What changed:** A Canvas has a directory row in `WorkspaceDO` (migration 139),
@@ -517,6 +525,21 @@ with `POST /canvases`; its Chat's publishes are its artifacts (recorded in
 `canvas_artifacts`, migration 142), and a Sidekick run publishes into a Canvas
 it makes or one it writes. Rally in the Chat is told the Canvas's artifacts,
 and what it learns is the Canvas's memory.
+
+A Canvas a person makes with no title starts as **Untitled Canvas** with
+`titleStatus: "naming"` (`canvas_directory.title_status`, migration 149). When
+the first projection of its Chat that carries a message reaches the parent
+(`onChildProjection`, `latestAttentionOrdinal` at least 1), the Canvas arms a
+`canvas_naming` alarm entry keyed by its id; the entry's handler,
+`HostedCanvas.nameFromOpening`, reads the Chat's oldest text message through
+the message port, asks `canvasTitleFromOpening` (the `workstream_naming` role,
+reasoning off, metered as `channel_naming`) and writes the title in one
+statement guarded by `title_status = 'naming'`, which also settles it, so the
+list and the detail move as a retitle moves them. A retitle settles the row
+first, so a person's title always wins over a pass still in flight; a model
+that fails or answers nothing settles the row as it is, logged
+`canvas_naming_failed` with its code. A Canvas a Sidekick run makes, or one
+made with a title, is `settled` from the start.
 
 `PATCH /canvases/:id` retitles a Canvas for anyone it admits (a title that
 is empty, blank or over 300 characters is refused as

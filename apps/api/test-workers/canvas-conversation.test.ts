@@ -44,7 +44,26 @@ const GUEST = asUserId("00000000-0000-7000-8000-0000000cb004");
 const NOW = "2026-11-07T10:00:00.000Z";
 const TEST_ENV: Env = env;
 useHeldEffectQueue();
-const provider = useOpenRouterDouble(() => ({ say: "Here is the plan." }));
+/** The naming pass's own structured call, told from a Chat turn by its schema. */
+function namingCall(call: { stream: boolean; body: Record<string, unknown> }): boolean {
+  return !call.stream && JSON.stringify(call.body.response_format ?? {}).includes("canvas_title");
+}
+/**
+ * The naming role's model, for the naming cases alone: `wrangler.test.jsonc`
+ * leaves it unset, so every other case here makes no naming call.
+ */
+async function withNamingModel<T>(run: () => Promise<T>): Promise<T> {
+  const mutable = env as { OPENROUTER_CLASSIFIER_MODEL?: string };
+  mutable.OPENROUTER_CLASSIFIER_MODEL = "double/naming";
+  try {
+    return await run();
+  } finally {
+    delete mutable.OPENROUTER_CLASSIFIER_MODEL;
+  }
+}
+const provider = useOpenRouterDouble((call) => namingCall(call)
+  ? { say: JSON.stringify({ title: "December pricing launch" }) }
+  : { say: "Here is the plan." });
 useSelectedModel();
 
 function auth(userId: string): AuthContext {
@@ -320,6 +339,42 @@ describe("a Canvas's title and pin order", () => {
     await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.title).toBe("Launch plan, v2");
     creator.socket.close(1000, "done");
   });
+
+  it("titles a Canvas made with no title from its opening message, on every open list", () => withNamingModel(async () => {
+    const creator = await connect(CREATOR);
+    const { canvasId } = await new CanvasService(TEST_ENV, auth(CREATOR)).create({
+      prompt: { text: "Plan the December pricing launch: owners, dates, and what gates the announcement.", clientMessageId: "canvas-name-1" },
+    });
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    expect(await service.detail(canvasId)).toMatchObject({ title: "Untitled Canvas", titleStatus: "naming" });
+    // The Chat's first message reaches the Canvas's parent, which names it by an alarm of its own.
+    await deliverChildEffects(TEST_ENV, env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, canvasId))));
+    await expect.poll(async () => (await service.detail(canvasId)).titleStatus, { timeout: 15_000 }).toBe("settled");
+    expect((await service.detail(canvasId)).title).toBe("December pricing launch");
+    await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.title)
+      .toBe("December pricing launch");
+    const naming = provider.calls.filter(namingCall);
+    expect(naming).toHaveLength(1);
+    expect(JSON.stringify(naming[0]!.messages)).toContain("Plan the December pricing launch");
+    creator.socket.close(1000, "done");
+  }));
+
+  it("keeps a person's title over the one its opening message would give it", () => withNamingModel(async () => {
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    const { canvasId } = await service.create({});
+    await service.rename(canvasId, "Mine");
+    expect(await service.detail(canvasId)).toMatchObject({ title: "Mine", titleStatus: "settled" });
+    const client = await new ConversationService(TEST_ENV, auth(CREATOR)).writableClient(canvasId, "0");
+    await client.createMessage({ text: "Plan the December pricing launch.", clientMessageId: "canvas-name-2",
+      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] });
+    await deliverChildEffects(TEST_ENV, env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, canvasId))));
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `SELECT 1 FROM _internal_durable_alarms WHERE kind = 'canvas_naming'`).toArray())).toEqual([]);
+    expect(await service.detail(canvasId)).toMatchObject({ title: "Mine", titleStatus: "settled" });
+    expect(provider.calls.filter(namingCall)).toEqual([]);
+  }));
 
   it("orders one viewer's pinned Canvases as asked, keeping the ones left out after them", async () => {
     const canvases = [];
