@@ -1,4 +1,5 @@
 import { startConnectorAuthorization } from '../lib/start-connector-authorization';
+import { useDocumentTitle } from '../lib/document-title';
 import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstallationRecovery } from '../components/connector-installation';
 import { ConnectorApiKeyField, ConnectorApiKeyIssuingLink } from '../components/connector-api-key-field';
 import { CopyButton, CopyField } from '../components/copy-button';
@@ -613,6 +614,8 @@ export function WorkspaceSettingsScreen({
   } = useAppSession();
   const { host, guest } = useShellCapabilities();
   const browserHost = host === 'browser';
+  // The tab and the Settings window are named for what they show.
+  useDocumentTitle('Settings');
   const workspaceSocket = useOptionalWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
   const queryClient = useQueryClient();

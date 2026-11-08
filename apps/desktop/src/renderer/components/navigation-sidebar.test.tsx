@@ -100,8 +100,10 @@ describe('the Canvases and Sidekicks sections', () => {
       .toEqual(['Canvases', 'Sidekicks', 'Activity']);
     const canvases = within(rail).getByRole('button', { name: /Canvases/ });
     expect(canvases).toHaveAttribute('aria-current', 'page');
-    expect(within(canvases).getByRole('img', { name: '1 unread' })).toHaveTextContent('1');
-    expect(within(within(rail).getByRole('button', { name: /Sidekicks/ })).getByRole('img', { name: '1 waiting' })).toHaveTextContent('1');
+    // The section first, then its count, in the button's own name.
+    expect(canvases).toHaveAccessibleName('Canvases, 1 unread');
+    expect(canvases.querySelector('.navigation-rail-badge')).toHaveTextContent('1');
+    expect(within(rail).getByRole('button', { name: /Sidekicks/ })).toHaveAccessibleName('Sidekicks, 1 waiting');
     fireEvent.click(within(rail).getByRole('button', { name: /Sidekicks/ }));
     expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
     expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
@@ -263,10 +265,8 @@ describe('the Activity section', () => {
     renderSidebar(workspace, '/', page);
     const rail = screen.getByRole('navigation', { name: 'Sections' });
     const activity = within(rail).getByRole('button', { name: /Activity/ });
-    expect(within(activity).getByRole('img', { name: '2 unseen' })).toHaveTextContent('2');
-    // The section first, then its count.
     expect(activity).toHaveAccessibleName('Activity, 2 unseen');
-    expect(within(rail).getByRole('button', { name: /^Sidekicks, \d+ waiting$/ })).toBeInTheDocument();
+    expect(activity.querySelector('.navigation-rail-badge')).toHaveTextContent('2');
     fireEvent.click(activity);
     expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
 

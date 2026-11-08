@@ -188,10 +188,9 @@ export function NavigationSidebar({
         {SECTIONS.map((candidate) => <RailItem
           active={candidate.id === section}
           aria-current={candidate.id === section ? 'page' : undefined}
-          // The section first, then its count: read from the content the
-          // badge came first ("1 waiting Sidekicks").
-          {...(badges[candidate.id] > 0 ? { 'aria-label': `${candidate.label}, ${badgeLabel(candidate.id, badges[candidate.id])}` } : {})}
-          badge={<RailBadge count={badges[candidate.id]} label={badgeLabel(candidate.id, badges[candidate.id])} />}
+          // Named section first, then its count: "Canvases, 10 unread".
+          aria-label={badges[candidate.id] > 0 ? `${candidate.label}, ${badgeLabel(candidate.id, badges[candidate.id])}` : candidate.label}
+          badge={<RailBadge count={badges[candidate.id]} />}
           icon={candidate.icon}
           key={candidate.id}
           label={candidate.label}
@@ -266,12 +265,12 @@ function badgeLabel(section: SidebarSection, count: number): string {
   return `${count} ${BADGE_NOUNS[section]}`;
 }
 
-/** A red count over a section button's corner; nothing at zero, `99+` past two digits. */
-function RailBadge({ count, label }: { count: number; label: string }): React.JSX.Element | null {
+/**
+ * A red count over a section button's corner; nothing at zero, `99+` past two
+ * digits. The button's own name says the count after the section, so the
+ * badge is decoration to a screen reader.
+ */
+function RailBadge({ count }: { count: number }): React.JSX.Element | null {
   if (count <= 0) return null;
-  return <span
-    aria-label={label}
-    className="navigation-rail-badge"
-    role="img"
-  >{count > 99 ? '99+' : count}</span>;
+  return <span aria-hidden="true" className="navigation-rail-badge">{count > 99 ? '99+' : count}</span>;
 }

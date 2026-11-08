@@ -10,6 +10,7 @@ import { RelativeTime } from '../components/relative-time';
 import { SidebarSearch } from '../components/sidebar-search';
 import { canvasNaming, canvasRoute, canvasRowDetail, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
+import { useDocumentTitle } from '../lib/document-title';
 import { formatSidebarActivityTime } from '../lib/format';
 
 type CanvasFilter = 'all' | 'mine' | 'shared' | 'sidekicks';
@@ -41,6 +42,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const { guest } = useShellCapabilities();
   const currentUserId = session?.user.id;
   const rows = useCanvasList();
+  useDocumentTitle('Canvases');
   const { membersById, sidekicksById } = useCanvasNameSources(api);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<CanvasFilter>('all');
