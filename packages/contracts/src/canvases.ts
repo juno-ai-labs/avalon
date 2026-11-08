@@ -215,7 +215,8 @@ export type SidebarPinOrderRequest = z.infer<typeof SidebarPinOrderRequestSchema
 export const CanvasUpdateRequestSchema = z.strictObject({
   title: z.string().trim().min(1).max(300).optional(),
   appearance: WorkstreamAppearancePatchSchema.optional(),
-}).refine((update) => update.title !== undefined || update.appearance !== undefined, { message: "names a title or an appearance" });
+}).refine((update) => update.title !== undefined || Object.keys(update.appearance ?? {}).length > 0,
+  { message: "names a title, an icon or a colour" });
 export type CanvasUpdateRequest = z.infer<typeof CanvasUpdateRequestSchema>;
 
 /**

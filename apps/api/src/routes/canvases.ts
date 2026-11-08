@@ -45,12 +45,11 @@ canvasRoutes.get("/:id", canvasIdParam, async (c) => {
   return c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).detail(c.req.valid("param").id)));
 });
 // The title, the appearance, or both. The refusal keeps the rename's released
-// label and sentence, so a client that only renames reads it as it always has:
-// only a typed title can be refused for a reason a person fixes, and the
-// appearance picker sends catalog keys alone. An appearance refusal still names
-// its field (`canvas_rename_invalid:appearance.icon:invalid_value`).
+// label, which the desktop reads a title's issue from, and names the field it
+// refused (`canvas_rename_invalid:appearance.icon:invalid_value`); its one
+// sentence holds for a title, an appearance and a body that changes nothing.
 canvasRoutes.patch("/:id", canvasIdParam, namedZValidator("canvas_rename",
-  "A Canvas title needs 1 to 300 characters other than spaces at either end")("json", CanvasUpdateRequestSchema), async (c) =>
+  "A Canvas change needs a title of 1 to 300 characters other than spaces at either end, or an icon or colour from the catalog")("json", CanvasUpdateRequestSchema), async (c) =>
   c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c))
     .update(c.req.valid("param").id, c.req.valid("json")))));
 canvasRoutes.post("/:id/audience", canvasIdParam, zValidator("json", CanvasAudienceUpdateSchema), async (c) =>

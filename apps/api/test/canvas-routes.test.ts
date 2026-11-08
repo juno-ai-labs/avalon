@@ -60,7 +60,7 @@ describe('the Canvas routes', () => {
       const response = await patch(CANVAS_ID, { title });
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({ error: {
-        code: `canvas_rename_invalid:title:${issue}`, message: 'A Canvas title needs 1 to 300 characters other than spaces at either end', requestId: null } });
+        code: `canvas_rename_invalid:title:${issue}`, message: 'A Canvas change needs a title of 1 to 300 characters other than spaces at either end, or an icon or colour from the catalog', requestId: null } });
     }
     const malformed = await patch('not-a-canvas', { title: 'Launch plan' });
     expect(malformed.status).toBe(400);
@@ -79,9 +79,11 @@ describe('the Canvas routes', () => {
     const unknownIcon = await patch({ appearance: { icon: 'not-an-icon' } });
     expect(unknownIcon.status).toBe(400);
     expect(await unknownIcon.json()).toMatchObject({ error: { code: 'canvas_rename_invalid:appearance.icon:invalid_value' } });
-    const empty = await patch({});
-    expect(empty.status).toBe(400);
-    expect(await empty.json()).toMatchObject({ error: { code: 'canvas_rename_invalid:-root-:custom' } });
+    for (const body of [{}, { appearance: {} }]) {
+      const empty = await patch(body);
+      expect(empty.status).toBe(400);
+      expect(await empty.json()).toMatchObject({ error: { code: 'canvas_rename_invalid:-root-:custom' } });
+    }
     expect(update).not.toHaveBeenCalled();
   });
 
