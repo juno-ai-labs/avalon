@@ -178,6 +178,13 @@ export function parseLinkTarget(raw: string, options: { webBaseUrl: string | rea
 }
 
 /**
+ * What Rally says, on every host, when it is handed a link to something deleted
+ * with Threads: the web app's entry card and the desktop's deep-link error
+ * window both show this sentence.
+ */
+export const RETIRED_LINK_MESSAGE = "This link is to something that no longer exists. Rally replaced Channels, Threads and Breakouts with Canvases.";
+
+/**
  * Whether a path has the shape of a link to something that no longer exists:
  * a Space (later a Channel), a Channel (later a Thread) or a Breakout, in the
  * hierarchical form (`/app/<region>/<organization>/s/...`), the addressed

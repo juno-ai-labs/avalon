@@ -135,12 +135,14 @@ The main process accepts only the deep links `parseDesktopDeepLinkIntent`
 reads, so a Space, Channel, Breakout or Thread deep link (`rallywithai://…/spaces/…`,
 `…/workstreams/…`, addressed or not, `workstreams/new` included) is refused
 there. `emitDeepLink` does not drop it silently: `isRetiredDeepLink` in
-`apps/desktop/src/main/deep-links.ts` recognizes the retired shapes, the same
-ones `isRetiredLinkPath` recognizes for an HTTPS link on a Rally host, and main
-opens its deep-link error window with **This link is to something that no
-longer exists.** A retired HTTPS link handed over as a universal link is not
-claimed (`httpsLinkDeepLink` takes only Canvas and Sidekick links), so the
-browser opens it and the handoff page says the same.
+`apps/desktop/src/main/deep-links.ts` recognizes the retired deep-link shapes
+and main opens its deep-link error window with `RETIRED_LINK_MESSAGE`
+(`@rally/contracts/links`), the sentence the web app's entry card shows:
+**This link is to something that no longer exists. Rally replaced Channels,
+Threads and Breakouts with Canvases.** A retired HTTPS link handed over as a
+universal link is not claimed (`httpsLinkDeepLink` takes only Canvas and
+Sidekick links), so it never reaches `isRetiredDeepLink`:
+the browser opens it and the handoff page says the same.
 
 A Canvas deep link that names an artifact navigates to
 `#/canvases/<canvas>?artifact=<artifact>` (`canvasArtifactRoute`), the hash
