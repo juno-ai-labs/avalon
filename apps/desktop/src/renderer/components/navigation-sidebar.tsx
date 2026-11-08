@@ -132,10 +132,20 @@ export function NavigationSidebar({
   // switching sections while one is open does not navigate.
   // Activity is a list of things to go to, so opening one of its rows keeps
   // it open, the next row a click away.
+  // The window's first route is the landing's, and a section home there
+  // (`/canvases`, the default landing) names no row, so the section the person
+  // left open is kept; only a Canvas or a Sidekick the route opens moves it.
+  // Read from the route rather than counted in the effect, which StrictMode
+  // runs twice.
+  const landedOn = useRef(pathname);
+  const navigated = useRef(false);
+  if (pathname !== landedOn.current) navigated.current = true;
   useEffect(() => {
     const opened = sectionForPath(pathname);
     const current = useUiStore.getState().sidebarSection;
-    if (opened && opened !== current && current !== 'activity') setSection(opened);
+    if (!opened || opened === current || current === 'activity') return;
+    if (!navigated.current && !routeNamesItem(pathname)) return;
+    setSection(opened);
   }, [pathname, setSection]);
   const panel = useRef<HTMLElement>(null);
   const scroll = useRef<HTMLElement | null>(null);
@@ -221,6 +231,11 @@ export function sectionForPath(pathname: string): SidebarSection | null {
   if (/^\/canvases(\/|$)/.test(pathname)) return 'canvases';
   if (/^\/(sidekicks|automations)(\/|$)/.test(pathname)) return 'sidekicks';
   return null;
+}
+
+/** Whether a route opens one Canvas or one Sidekick, rather than a section's home. */
+function routeNamesItem(pathname: string): boolean {
+  return /^\/(canvases|sidekicks|automations)\/[^/]+/.test(pathname);
 }
 
 /** What a section's count says it counts, for its accessible name. */
