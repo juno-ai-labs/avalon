@@ -45,7 +45,8 @@ several folders that link to each other, not several PRDs in one folder.
 **Where a PRD has got to is recorded in `state.md`, not in the folder name.**
 Every PRD folder has one. It opens with this checklist — these three lines, in
 this order, worded this way — and the only thing that may follow is a short note
-beneath it. There are two kinds: the supersession note described under
+beneath it. There are three kinds: the supersession or abandonment note and
+the partial note, both described under
 [Abandoned and superseded PRDs](#abandoned-and-superseded-prds), and the
 standing-contract note that says the freeze rule does not apply, which only [the
 implementation brief](PRDs/2026-08-05_avalon-implementation-brief/state.md)
