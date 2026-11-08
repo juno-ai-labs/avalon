@@ -317,31 +317,13 @@ export interface ActivityViewer {
 }
 
 /**
- * One person's newest `limit` items that they may open the parent of, and how
- * many of those are unseen, in one statement: the count is a window over every
- * listed row before the page's `LIMIT`. Whether the viewer may open a parent
- * is decided in the same statement by the rules `canvasSidebarRows` and the
- * Sidekick list read (`sidekickListedSql`, which binds `?1` the user and `?2`
- * the Organization), and it is a filter, not a redaction: a row about a parent
- * they cannot open sends nothing, not its preview, message or ids, and counts
- * toward nothing. The row stays stored, so it lists once access arrives. The
- * one rule SQL does not express, a Canvas a Sidekick writes admitting that
- * Sidekick's audience, is `writerAdmits`, asked once per Sidekick that
- * writes a Canvas, before the page is read: bounded by those Sidekicks, not
- * by the person's rows.
+ * The rows this viewer may open the parent of, with whether each is seen: the
+ * one filter the page and the counts read, so they cannot disagree. Binds
+ * `?1` the user, `?2` the Organization, `?3` member (1) or guest (0) and `?5`
+ * the admitting writer Sidekicks (JSON).
  */
-export function activityPage(
-  sql: SqlStorage,
-  viewer: ActivityViewer,
-  limit: number,
-  sidekickListedSql: string,
-  writerAdmits: (sidekickId: string) => boolean,
-): { unseenCount: number; items: ActivityItem[] } {
-  const admittingWriters = sql.exec<{ writer_sidekick_id: string }>(
-    `SELECT DISTINCT writer_sidekick_id FROM canvas_directory WHERE writer_sidekick_id IS NOT NULL`,
-  ).toArray().map((row) => row.writer_sidekick_id).filter((sidekickId) => writerAdmits(sidekickId));
-  const rows = sql.exec<ActivityRow>(
-    `WITH mine AS (
+function listedSql(sidekickListedSql: string): string {
+  return `WITH mine AS (
        SELECT item.*, ${ACTIVITY_SEEN_SQL} AS seen
          FROM workspace_activity_items item
          LEFT JOIN sidekick_viewer_reads reads ON reads.sidekick_id = item.parent_id AND reads.user_id = item.recipient_user_id
@@ -368,7 +350,40 @@ export function activityPage(
                   OR canvas.writer_sidekick_id IN (SELECT value FROM json_each(?5)))
                 WHEN directory.automation_id IS NOT NULL THEN ?3 = 1 AND ${sidekickListedSql}
                 ELSE 0 END
-     )
+     )`;
+}
+
+/** Writer Sidekicks whose audience admits this viewer to the Canvases they write (`writerAdmits`, asked once per writer). */
+function admittingWriters(sql: SqlStorage, writerAdmits: (sidekickId: string) => boolean): string[] {
+  return sql.exec<{ writer_sidekick_id: string }>(
+    `SELECT DISTINCT writer_sidekick_id FROM canvas_directory WHERE writer_sidekick_id IS NOT NULL`,
+  ).toArray().map((row) => row.writer_sidekick_id).filter((sidekickId) => writerAdmits(sidekickId));
+}
+
+/**
+ * One person's newest `limit` items that they may open the parent of, and how
+ * many of those are unseen, in one statement: the count is a window over every
+ * listed row before the page's `LIMIT`. Whether the viewer may open a parent
+ * is decided in the same statement by the rules `canvasSidebarRows` and the
+ * Sidekick list read (`sidekickListedSql`, which binds `?1` the user and `?2`
+ * the Organization), and it is a filter, not a redaction: a row about a parent
+ * they cannot open sends nothing, not its preview, message or ids, and counts
+ * toward nothing. The row stays stored, so it lists once access arrives. The
+ * one rule SQL does not express, a Canvas a Sidekick writes admitting that
+ * Sidekick's audience, is `writerAdmits`, asked once per Sidekick that
+ * writes a Canvas, before the page is read: bounded by those Sidekicks, not
+ * by the person's rows.
+ */
+export function activityPage(
+  sql: SqlStorage,
+  viewer: ActivityViewer,
+  limit: number,
+  sidekickListedSql: string,
+  writerAdmits: (sidekickId: string) => boolean,
+): { unseenCount: number; items: ActivityItem[] } {
+  const writers = admittingWriters(sql, writerAdmits);
+  const rows = sql.exec<ActivityRow>(
+    `${listedSql(sidekickListedSql)}
      SELECT listed.item_id, listed.kind, listed.parent_kind, listed.parent_id, listed.substream_id, listed.message_id,
             listed.message_sequence, listed.run_id,
             listed.actor_kind, listed.actor_id, listed.preview, listed.created_at, listed.seen,
@@ -380,7 +395,7 @@ export function activityPage(
        LEFT JOIN canvas_access_requests request ON listed.kind IN ('access_request', 'access_denied') AND request.request_id = listed.subject_id
       ORDER BY listed.created_at DESC, listed.item_id DESC
       LIMIT ?4`,
-    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit, JSON.stringify(admittingWriters),
+    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit, JSON.stringify(writers),
   ).toArray();
   return {
     unseenCount: rows[0]?.unseen_count ?? 0,
@@ -408,6 +423,27 @@ export function activityPage(
         : {}),
     } as ActivityItem)),
   };
+}
+
+/**
+ * How many of this person's listed rows are unseen, and how many of those are
+ * a run waiting on them (`needs_input`): the page's own filter and seen rule
+ * (`listedSql`), so the Organization's attention and the push badge are the
+ * number the Activity rail shows.
+ */
+export function activityCounts(
+  sql: SqlStorage,
+  viewer: ActivityViewer,
+  sidekickListedSql: string,
+  writerAdmits: (sidekickId: string) => boolean,
+): { unseen: number; unseenNeedsInput: number } {
+  const row = sql.exec<{ unseen: number | null; unseen_needs_input: number | null }>(
+    `${listedSql(sidekickListedSql)}
+     SELECT SUM(1 - seen) AS unseen, SUM(CASE WHEN kind = 'needs_input' THEN 1 - seen ELSE 0 END) AS unseen_needs_input
+       FROM listed`,
+    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, null, JSON.stringify(admittingWriters(sql, writerAdmits)),
+  ).toArray()[0];
+  return { unseen: row?.unseen ?? 0, unseenNeedsInput: row?.unseen_needs_input ?? 0 };
 }
 
 /** Whether this person has Activity about this parent, so a read of a parent with none republishes nothing. */
