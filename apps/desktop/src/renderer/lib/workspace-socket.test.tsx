@@ -993,7 +993,8 @@ describe('WorkspaceSocketProvider', () => {
       expect(screen.getByText('Loading Canvases…')).toBeInTheDocument();
       // A 403 at the handshake reaches a page as a socket that fails before it opens.
       act(() => FakeWebSocket.instances[0]!.close(1006));
-      expect(screen.getByText('Rally can’t connect')).toBeInTheDocument();
+      expect(screen.getByText('Rally can’t reach the server right now.')).toBeInTheDocument();
+      expect(screen.getByText('Your Canvases appear when Rally reconnects.')).toBeInTheDocument();
       expect(FakeWebSocket.instances).toHaveLength(1);
 
       fireEvent.click(screen.getByRole('button', { name: 'Try again' }));

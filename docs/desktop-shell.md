@@ -52,6 +52,11 @@ the router mounts, the helper sets the initial hash for the router to index.
 Opening and launch skeletons carry the same leading slot as loaded headers.
 PUSH drops the forward branch,
 REPLACE keeps it, and POP moves the cursor. Unavailable directions are disabled.
+An entry pushed around the router, a raw `#/…` link such as a plain anchor in
+rendered Markdown, carries no `idx`; it is read as the successor of the entry
+it left, and stamped with that index so the router's next push counts on from
+it. Read as 0, it disabled Back and enabled Forward on the very entry a person
+had just arrived at.
 The cursor belongs to the shell, so changing the pane that draws the controls
 does not reset it. A new shell starts at the current entry with no forward visits
 recorded; history is not persisted separately.
@@ -105,7 +110,9 @@ It holds two columns:
   tile and its badge do not touch the tab's edge. Keyboard focus rings the
   34px tile in its own radius, not the whole button, and the account tile's
   avatar is the design's 28px. A section home names the window
-  ("Canvases · Rally"), as Settings does ("Settings · Rally").
+  ("Canvases · Rally", "Sidekicks · Rally"), as Settings does ("Settings ·
+  Rally"), and so do a missing Canvas ("Canvas not found · Rally") and an
+  unknown route ("Nothing here · Rally").
 - **One list**, titled with the section's name. **Canvases** is a Pinned
   group, then every Canvas by recent activity; its action is **New Canvas**
   (`POST /canvases`, then the new Canvas's route). **Sidekicks** is **Needs
@@ -372,7 +379,9 @@ instead of a clock time that cut the title beside it (v4-F5).
 In the second round the sidebar gives way between 641px and 840px, so the
 pane keeps the conversation's minimum (v3-R2-2), and every section home, the
 Sidekicks home as well as the Canvases home, hides its own heading at phone
-width (v4-R2-3).
+width (v4-R2-3). Back and Forward read an entry pushed around the router as
+the next one (v1-R2-6), and the Sidekicks home and the not-found states name
+the window (v4-F24).
 
 **Why:** The PRD makes design.html the authority for every screen, and the
 design inspection (v1-F1, v4-F4) measured a 264px list that cut ordinary

@@ -9,19 +9,25 @@ import { EmptyState } from './primitives';
  * never a dialog over it, under a header that keeps the shell's Back and
  * Forward (and the phone's menu button), so the way out is where it always is.
  */
-export function PaneState({ action, description, title, trailing }: {
+export function PaneState({ action, description, header, title, trailing }: {
   action?: ReactNode;
   description: string;
+  /**
+   * The pane's own header, where it has one without its content: a Canvas
+   * that cannot be reached keeps its title pill, Share and "⋯". Replaces the
+   * bare Back and Forward row and `trailing`.
+   */
+  header?: ReactNode;
   title: string;
   /** Controls at the header's right edge, such as a menu that copies an id for support. */
   trailing?: ReactNode;
 }): React.JSX.Element {
   return <div className="pane-state">
-    <header className="pane-state-header window-drag">
+    {header ?? <header className="pane-state-header window-drag">
       <TitlePillLeading />
       <TitlePillNavigation />
       {trailing && <span className="pane-state-trailing window-no-drag">{trailing}</span>}
-    </header>
+    </header>}
     <div className="pane-state-body">
       <EmptyState action={action} description={description} title={title} />
     </div>

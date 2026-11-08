@@ -422,9 +422,14 @@ the rail's first section and `/canvases` the landing route
 - **No connection.** A conversation socket that cannot open without the
   server saying why is the PRD's offline state, "Live edits resume when Rally
   reconnects.", never "This Canvas is unavailable"; one the server refused
-  names the Canvas and keeps its reason behind Connection details. While the
-  Organization socket cannot open, the sidebar says so in place of its
-  placeholder rows (`SidebarListDown`).
+  names the Canvas and keeps its reason behind Connection details. Either
+  keeps the Canvas's own header over it (`stateHeader`), its pill, Share and
+  "⋯", since the list row already names it. While the Organization socket
+  cannot open, the sidebar says so in place of its placeholder rows
+  (`SidebarListDown`) and a section home in place of its list
+  (`PushedListPending`): every one of these says "Rally can’t reach the server
+  right now." (`OFFLINE_TITLE`) and offers the same outlined Try again
+  (`OfflineRetry`).
 - **Naming.** While a row or the detail says `titleStatus: 'naming'` (a
   Canvas made with no title, waiting for the title its opening message gives
   it), the pill, the sidebar row and the home card draw the `TitleSkeleton`
@@ -601,7 +606,8 @@ A missing Canvas and an unreachable one are each one in-pane state. A row
 reads its age as "2m", "1h", "Tue", a Canvas just made slides into the list,
 and its menu matches the pill's. After the second inspection, both header
 menus offer **Open artifact** (v1-R2-4), and the Share panel's guest invite
-is sent by its Save.
+is sent by its Save. Offline, the Canvas keeps its header, and the pane, the
+sidebar and a section home say one sentence (v1-R2-8, v4-R2-9).
 
 **Why:** The PRD makes design.html the authority for every screen. The mark
 was a grey tile on purpose ("a Canvas has no hue of its own, as a pinned
@@ -622,6 +628,9 @@ panel left nothing in the Canvas to reopen it, while design §2 always shows the
 artifact beside a Canvas that has one (v1-R2-4). The guest invite kept its own
 Share button above the dialog's Save, two primary actions in one panel, and
 Everyone mode showed a people search over nothing (v1-F18, v4-R2-10, v1-R2-7).
+Offline, the pane dropped the Canvas's pill and Share for a bare Back and
+Forward and an uncircled "⋯", and one outage read three ways with two button
+styles (v1-R2-8, v4-R2-9).
 
 Two choices the design does not settle, made in review and open to the
 owner's reversal: the hue is per Canvas from its id rather than per kind,

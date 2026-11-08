@@ -1,5 +1,19 @@
+import { RefreshCcw } from 'lucide-react';
+
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { Button, EmptyState, OpeningState } from './primitives';
+
+/**
+ * Rally's one sentence for a connection it cannot open, said the same way by
+ * every surface that waits on it: a Canvas's pane, a section home and the
+ * sidebar's lists.
+ */
+export const OFFLINE_TITLE = 'Rally can’t reach the server right now.';
+
+/** The one Try again those surfaces offer: outlined, with its arrow. */
+export function OfflineRetry({ onRetry }: { onRetry: () => void }): React.JSX.Element {
+  return <Button onClick={onRetry}><RefreshCcw aria-hidden="true" size={14} /> Try again</Button>;
+}
 
 /**
  * What a page shows before the Organization socket has delivered the list it
@@ -18,9 +32,9 @@ export function PushedListPending({ label, noun }: {
   const socket = useOptionalWorkspaceSocket();
   if (socket && (socket.state === 'reconnecting' || socket.state === 'unavailable')) {
     return <EmptyState
-      action={<Button onClick={() => socket.retry()}>Try again</Button>}
-      description={`Your ${noun} arrive over Rally’s live connection, which could not be opened. Rally keeps trying.`}
-      title="Rally can’t connect"
+      action={<OfflineRetry onRetry={() => socket.retry()} />}
+      description={`Your ${noun} appear when Rally reconnects.`}
+      title={OFFLINE_TITLE}
     />;
   }
   return <OpeningState label={label} />;
@@ -37,5 +51,5 @@ export function usePushedListsDown(): boolean {
 
 /** The sidebar's line in place of its placeholder rows while the socket is down. */
 export function SidebarListDown({ noun }: { noun: string }): React.JSX.Element {
-  return <p className="navigation-empty" role="status">{`Rally can’t connect. Your ${noun} appear once it does.`}</p>;
+  return <p className="navigation-empty" role="status">{`${OFFLINE_TITLE} Your ${noun} appear when Rally reconnects.`}</p>;
 }

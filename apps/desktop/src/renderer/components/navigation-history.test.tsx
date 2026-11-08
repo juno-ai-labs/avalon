@@ -65,6 +65,23 @@ describe('navigation history', () => {
     await path('/replacement');
   });
 
+  it('steps back from an entry a raw hash change pushed, which carries no router index', async () => {
+    start();
+    click('Open artifact');
+    await path('/artifact');
+    window.location.hash = '#/missing';
+    await path('/missing');
+    expect(screen.getByRole('button', { name: 'Back' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled();
+    click('Back');
+    await path('/artifact');
+    expect(screen.getByRole('button', { name: 'Forward' })).toBeEnabled();
+    click('Open other');
+    await path('/other');
+    click('Back');
+    await path('/artifact');
+  });
+
   it('leaves the browser header without history controls', () => {
     start(false);
     expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();

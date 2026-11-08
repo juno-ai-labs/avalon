@@ -54,6 +54,7 @@ import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from
 import { SidekicksLibraryRoute } from './screens/sidekicks-library';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
 import { SidekickMentionProvider } from './lib/sidekick-mentions';
+import { useDocumentTitle } from './lib/document-title';
 
 const queryClient = createQueryClient();
 
@@ -110,6 +111,7 @@ function NotFoundScreen(): React.JSX.Element {
   // Through the hook rather than the hash, so the entry is replaced and Back
   // does not return to the route that had nothing to show.
   const openLanding = useOpenLanding();
+  useDocumentTitle('Nothing here');
   return (
     <div className="screen-error-state screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />
