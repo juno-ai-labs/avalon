@@ -2,7 +2,7 @@ import type { CanvasAccess } from '@rally/contracts';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { canvasAccessQueryKey, canvasDetailQueryKey } from '../lib/canvases';
+import { canvasAccessDecisionRefusal, canvasAccessQueryKey, canvasDetailQueryKey } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatRelative } from '../lib/format';
 import { PaneState } from './pane-state';
@@ -103,8 +103,12 @@ export function CanvasAccessRequestPane({ access, canvasId }: { access: CanvasAc
  */
 export function AccessDecisionActions({ canvasId, label, userId }: {
   canvasId: string;
-  /** Who asked, for the buttons' accessible names: "Approve Maya Lin". */
-  label: string;
+  /**
+   * Who asked, for the buttons' accessible names ("Approve Maya Lin"); while
+   * their name is not known yet the buttons are "Approve request" and
+   * "Deny request", never a placeholder name.
+   */
+  label: string | undefined;
   userId: string;
 }): React.JSX.Element {
   const { api } = useCollaborationSession();
@@ -113,9 +117,13 @@ export function AccessDecisionActions({ canvasId, label, userId }: {
     mutationFn: (decision: 'approve' | 'deny') => api!.decideCanvasAccess(canvasId, userId, decision),
     onSettled: () => queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(canvasId) }),
   });
+  // Answered: both stay disabled until the push or the read replaces this
+  // row, so a second press cannot meet the person's own answer as "settled".
+  const held = !api || decide.isPending || decide.isSuccess;
+  const who = label ?? 'request';
   return <div className="access-decision-actions">
-    <Button aria-label={`Deny ${label}`} disabled={!api || decide.isPending} onClick={() => decide.mutate('deny')}>Deny</Button>
-    <Button aria-label={`Approve ${label}`} className="button-primary" disabled={!api || decide.isPending} onClick={() => decide.mutate('approve')}>Approve</Button>
-    {decide.error && <ErrorNotice occurrence={decide.error} title="The request could not be answered">{decide.error.message}</ErrorNotice>}
+    <Button aria-label={`Deny ${who}`} disabled={held} onClick={() => decide.mutate('deny')}>Deny</Button>
+    <Button aria-label={`Approve ${who}`} className="button-primary" disabled={held} onClick={() => decide.mutate('approve')}>Approve</Button>
+    {decide.error && <ErrorNotice occurrence={decide.error} title="The request could not be answered">{canvasAccessDecisionRefusal(decide.error)}</ErrorNotice>}
   </div>;
 }
