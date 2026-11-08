@@ -15,6 +15,11 @@ follow the member across devices. Two kinds today:
   a Canvas you asked for), **Sidekick runs** (`runFinished`, both run
   notices), **Pinned Canvas updates** (`artifactUpdates`) and **Access
   requests** (`accessRequests`, for whoever decides on a Canvas's people).
+  In the client, each kind's picker offers **Push** (only where this
+  deployment can push, though a stored `push` stays in a save) and **Email**,
+  the same two for every kind (`NotificationChannelSettings`); a stored
+  `slack_agent_dm` is dropped by the contract's lenient channel list on read,
+  so it is never drawn and a save of that kind never sends it back.
 
 ## Where the code lives
 
@@ -154,6 +159,12 @@ never opened Settings). `NOTIFICATION_KIND_FOR_PUSH` drops `thread_started`,
 `breakout_started` and `merged`, and maps `access_request` to
 `accessRequests` and `access_granted` to `added`. [Client half: the Settings
 rows, folded in at merge.]
+
+[Client half] Settings → Notifications offers Push and Email for every kind
+and nothing else: the connector-surface options, the unlinked Slack row and
+the "connected messaging apps" footnote are gone, and a stored Slack choice is
+neither drawn nor saved back. The owner's instruction of 2026-11-08: "Remove
+Slack but email should support all notifications".
 
 **Why:** The owner asked on 2026-11-08 that Settings offer only kinds real
 producers create, and that every offered one create Activity and push.

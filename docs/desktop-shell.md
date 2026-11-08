@@ -121,12 +121,12 @@ It holds two columns:
   the badge itself hidden from a screen reader: **Canvases**, each Canvas holding something this
   person has not read; **Sidekicks**, each Sidekick that needs input or holds
   something unread; **Activity**, every item this person has not seen
-  (`unseenCount`, "3 unseen"). A section with a count is named section
-  first ("Sidekicks, 1 waiting"), where reading the button's content put the
-  badge ahead of the name. All three are read from the lists the
-  workspace socket keeps, the same rows the lists draw. The dock badge adds up
-  the first two only: Activity is not Needs attention
-  ([`menu-bar.md`](menu-bar.md)). The desktop host renders a top spacer for
+  (`unseenCount`, "3 unseen"). All three are read from the lists the
+  workspace socket keeps, the same rows the lists draw. The dock badge, and
+  an installed browser app's icon badge, is Activity's `unseenCount`
+  (`dockBadgeCount`), the count a push sets while Rally is closed
+  ([`push-notifications.md`](push-notifications.md)); the menu bar stays
+  Needs attention only ([`menu-bar.md`](menu-bar.md)). The desktop host renders a top spacer for
   macOS window controls and a window-drag region on Windows and Linux. The
   browser host omits it and pads the rail by the same clearance, so the first
   tile and its badge do not touch the tab's edge. Keyboard focus rings the
@@ -400,6 +400,33 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-08 — The dock badge is the unseen Activity count
+
+**What changed:** While Rally is open the dock badge, and an installed
+browser app's icon badge, is the Activity rail badge's `unseenCount`
+(`dockBadgeCount` in `navigation-sidebar.tsx`), sent once the Activity list
+has arrived; it was the Canvases and Sidekicks needs-attention rows added up.
+
+**Why:** The owner asked on 2026-11-08 to "fix" the dock badge clearing when
+an alert arrives while Rally is closed. The push badge is now the person's
+unseen Activity count after the notice was recorded, so the count Rally
+writes while open must be the same one, or opening Rally would replace the
+number an alert left with a different kind of count.
+
+This reverses the earlier 2026-11-08 entry's rejection of Activity on the
+dock badge and the menu bar's 2026-11-07 rule that the menu, the rail and the
+dock are one number: that held while the push badge was `0` and nothing set
+the icon while Rally was closed.
+
+**Considered and rejected:** Keeping needs-attention rows on the dock while
+the push badge counts Activity: the icon would change meaning each time Rally
+opened or closed.
+
+**Consequences:** The menu bar still counts Needs attention, because it counts
+the rows it lists ([`menu-bar.md`](menu-bar.md)); the dock and the menu bar
+can now show different numbers. A change to what Activity
+counts as unseen changes the dock badge.
 
 ### 2026-11-08 — A restored Canvas route the viewer may ask into stays, and Activity rows carry actions
 
