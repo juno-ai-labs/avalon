@@ -14,6 +14,7 @@ import { createExecutionContext, createMessageBatch, getQueueResult, reset, runI
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, type AutomationDraft } from "@rally/contracts";
+import { EffectQueueMessageSchema } from "@rally/contracts/conversation-effects";
 
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
@@ -78,8 +79,18 @@ async function publishedRevocations(run: () => Promise<unknown>): Promise<unknow
   // Accepted, as a Queue with room answers: the consumer below is the delivery.
   const accepted = { metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } };
   vi.spyOn(queue, "send").mockImplementation(async (body: unknown) => { bodies.push(body); return accepted; });
+  // `useHeldEffectQueue` already spied `sendBatch` on the binding prototype,
+  // and `vi.spyOn` reuses that spy, so this implementation also answers the
+  // Activity Queue's sends from every object in the isolate. A conversation
+  // object's drain alarm firing inside this window (seen under a loaded full
+  // suite) would otherwise be recorded as a revocation hop; it is held, as
+  // that helper holds it.
   vi.spyOn(queue, "sendBatch").mockImplementation(async (messages: Iterable<MessageSendRequest<unknown>>) => {
-    for (const message of messages) bodies.push(message.body);
+    const batch = [...messages];
+    if (batch.some((message) => EffectQueueMessageSchema.safeParse(message.body).success)) {
+      throw new Error("effect_queue_held_by_test");
+    }
+    for (const message of batch) bodies.push(message.body);
     return accepted;
   });
   await run();

@@ -155,7 +155,7 @@ export const ThreadConversionCandidateSchema = z.strictObject({
   artifactCount: z.number().int().nonnegative(),
   /** Artifacts another conversation made that the Thread linked. */
   linkedArtifactCount: z.number().int().nonnegative(),
-  /** Its viewers, who become the Canvas's participants. */
+  /** Who becomes a participant of the Canvas: every viewer of a personal Thread, the participants of a Workspace-scoped one. */
   participantCount: z.number().int().nonnegative(),
   /** Its conversations, Main and Breakouts, and how many have no transcript dump yet. */
   conversations: z.number().int().nonnegative(),

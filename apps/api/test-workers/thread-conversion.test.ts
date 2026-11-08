@@ -34,6 +34,8 @@ const TEST_ENV: Env = env;
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000c801");
 const USER_ID = asUserId("00000000-0000-7000-8000-00000000c802");
 const VIEWER = asUserId("00000000-0000-7000-8000-00000000c803");
+/** Listed a Workspace-scoped Thread without taking part in it. */
+const LURKER = asUserId("00000000-0000-7000-8000-00000000c805");
 const SESSION_ID = "00000000-0000-7000-8000-00000000c804";
 /** Personal, with a Breakout, an artifact it made and one it linked. */
 const THREAD = "00000000-0000-7000-8000-00000000c811";
@@ -42,11 +44,14 @@ const BREAKOUT = "00000000-0000-7000-8000-00000000c812";
 const ORPHAN_THREAD = "00000000-0000-7000-8000-00000000c813";
 /** No artifact: retired later, never converted. */
 const PLAIN_THREAD = "00000000-0000-7000-8000-00000000c814";
+/** Workspace-scoped, with a participant and a viewer who only listed it. */
+const WORKSPACE_THREAD = "00000000-0000-7000-8000-00000000c816";
 /** A conversation no row names any more, whose artifact the Thread linked. */
 const GONE = "00000000-0000-7000-8000-00000000c815";
 const MADE = "00000000-0000-7000-8000-00000000c821";
 const LINKED = "00000000-0000-7000-8000-00000000c822";
 const ORPHAN_MADE = "00000000-0000-7000-8000-00000000c823";
+const WORKSPACE_MADE = "00000000-0000-7000-8000-00000000c824";
 const SIDEKICK = "00000000-0000-7000-8000-00000000c831";
 const OPERATOR = { subject: "access-engineer", email: "engineer@example.com", audience: "engineering-mcp" };
 const AT = Date.parse("2026-11-07T09:00:00.000Z");
@@ -90,13 +95,13 @@ function insertArtifact(state: DurableObjectState, resourceId: string, workstrea
     VALUES (?, ?, ?, ?, 'static', 0, 1, 'manifest', ?, ?)`, crypto.randomUUID(), WORKSPACE_ID, resourceId, workstreamId, AT, AT);
 }
 
-function insertViewer(state: DurableObjectState, workstreamId: string, userId: string, addedAt: number): void {
+function insertViewer(state: DurableObjectState, workstreamId: string, userId: string, addedAt: number, participant = true): void {
   state.storage.sql.exec(`INSERT INTO channel_viewers
       (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
        unread_count, you_are_mentioned, listable, seen_attention_ordinal, manual_unread_from_ordinal,
        manual_unread_generation, latest_mention_attention_ordinal, projected_at, participant_added_at)
-    VALUES (?, ?, 1, 1, ?, 'hash', 1, 0, 0, 1, 0, NULL, 0, 0, ?, ?)`,
-  workstreamId, userId, `viewer:${workstreamId}:${userId}`, addedAt, addedAt);
+    VALUES (?, ?, 1, 1, ?, 'hash', ?, 0, 0, 1, 0, NULL, 0, 0, ?, ?)`,
+  workstreamId, userId, `viewer:${workstreamId}:${userId}`, participant ? 1 : 0, addedAt, addedAt);
 }
 
 async function seedOrganization(): Promise<void> {
@@ -106,6 +111,10 @@ async function seedOrganization(): Promise<void> {
       WHERE workstream_id = ?`, USER_ID, AT, AT + 60_000, THREAD);
     insertChannelRow(state, ORPHAN_THREAD, "Nobody's", "workspace");
     insertChannelRow(state, PLAIN_THREAD, "Hiring", "workspace");
+    insertChannelRow(state, WORKSPACE_THREAD, "Roadmap", "workspace");
+    state.storage.sql.exec(`UPDATE channels SET created_by_user_id = ? WHERE workstream_id = ?`, USER_ID, WORKSPACE_THREAD);
+    insertViewer(state, WORKSPACE_THREAD, VIEWER, AT);
+    insertViewer(state, WORKSPACE_THREAD, LURKER, AT, false);
     insertViewer(state, THREAD, USER_ID, AT);
     insertViewer(state, THREAD, VIEWER, AT + 1_000);
     state.storage.sql.exec(`INSERT INTO breakouts (workstream_id, substream_id, authority_generation, waterline,
@@ -116,6 +125,8 @@ async function seedOrganization(): Promise<void> {
     insertResource(state, MADE, "launch.html");
     insertResource(state, LINKED, "pricing.html");
     insertResource(state, ORPHAN_MADE, "orphan.html");
+    insertResource(state, WORKSPACE_MADE, "roadmap.html");
+    insertArtifact(state, WORKSPACE_MADE, WORKSPACE_THREAD);
     insertArtifact(state, MADE, THREAD);
     insertArtifact(state, LINKED, GONE);
     insertArtifact(state, ORPHAN_MADE, ORPHAN_THREAD);
@@ -138,6 +149,7 @@ async function seedOrganization(): Promise<void> {
   await seedConversation(THREAD, BREAKOUT, "Draft", ["Draft the post."]);
   await seedConversation(ORPHAN_THREAD, "0", "Nobody's", ["Anyone?"]);
   await seedConversation(PLAIN_THREAD, "0", "Hiring", ["Two offers out."]);
+  await seedConversation(WORKSPACE_THREAD, "0", "Roadmap", ["Q1 first."]);
 }
 
 const dryRun = () => bridge().convertThreadsToCanvases({ orgId: WORKSPACE_ID }, OPERATOR);
@@ -187,6 +199,7 @@ describe("convert_threads_to_canvases", () => {
       candidates: [
         { threadId: THREAD, title: "Launch plan", artifactCount: 1, linkedArtifactCount: 1, participantCount: 2, conversations: 2, undumped: 2 },
         { threadId: ORPHAN_THREAD, title: "Nobody's", artifactCount: 1, linkedArtifactCount: 0, participantCount: 0, conversations: 1, undumped: 1 },
+        { threadId: WORKSPACE_THREAD, title: "Roadmap", artifactCount: 1, linkedArtifactCount: 0, participantCount: 1, conversations: 1, undumped: 1 },
       ],
       converted: 0, alreadyConverted: 0, failed: [], artifactsWithoutThread: 1,
     });
@@ -206,7 +219,8 @@ describe("convert_threads_to_canvases", () => {
 
     const result = await apply();
 
-    expect(result).toMatchObject({ dryRun: false, converted: 1, alreadyConverted: 0, artifactsWithoutThread: 1,
+    // The linked artifact is the Canvas's now, so no artifact is left without one.
+    expect(result).toMatchObject({ dryRun: false, converted: 2, alreadyConverted: 0, artifactsWithoutThread: 0,
       failed: [{ threadId: ORPHAN_THREAD, substreamId: null, error: "thread_conversion_no_creator" }] });
     const detail = await organization().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: THREAD,
       actor: { userId: VIEWER, actorRole: "member" } });
@@ -232,6 +246,9 @@ describe("convert_threads_to_canvases", () => {
       locations: [{ parent_kind: "canvas" }],
       attachments: [{ parent_kind: "canvas", substream_id: "0" }],
     });
+    // A Workspace-scoped Thread's participants are kept, and not who only listed it.
+    expect(await organization().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: WORKSPACE_THREAD,
+      actor: { userId: LURKER, actorRole: "member" } })).toMatchObject({ visibility: "workspace", participantUserIds: [VIEWER] });
     // The Thread it could not convert is left for the operator, untouched.
     expect(await storedParentKind(ORPHAN_THREAD)).toBe("workstream");
   });
@@ -242,7 +259,7 @@ describe("convert_threads_to_canvases", () => {
 
     const resumed = await apply();
 
-    expect(resumed).toMatchObject({ converted: 0, alreadyConverted: 1 });
+    expect(resumed).toMatchObject({ converted: 1, alreadyConverted: 1 });
     expect(await storedParentKind(THREAD)).toBe("canvas");
     const done = await organizationRows();
 

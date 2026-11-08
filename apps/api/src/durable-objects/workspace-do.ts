@@ -5094,7 +5094,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * links one through `workspace_workstream_resource_links`. A Channel
    * (`spaces`) is never one. With each, what the conversion keeps and the
    * conversations under it; and the artifacts whose conversation names no
-   * Thread, Canvas or Sidekick, which nothing converts.
+   * Thread, Canvas or Sidekick and that no Canvas holds, which nothing
+   * converts.
    */
   async threadConversionInventory(): Promise<{
     candidates: {
@@ -5116,7 +5117,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `SELECT * FROM (SELECT thread.workstream_id, thread.title,
               (SELECT COUNT(*) FROM artifact_registry artifact WHERE artifact.workstream_id = thread.workstream_id) AS artifact_count,
               ${linked} AS linked_count,
-              (SELECT COUNT(*) FROM channel_viewers viewer WHERE viewer.workstream_id = thread.workstream_id) AS participant_count
+              (SELECT COUNT(*) FROM channel_viewers viewer WHERE viewer.workstream_id = thread.workstream_id
+                 AND (thread.scope = 'personal' OR viewer.is_participant = 1)) AS participant_count
          FROM channels thread)
         WHERE artifact_count > 0 OR linked_count > 0
         ORDER BY workstream_id`,
@@ -5131,7 +5133,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         `SELECT COUNT(*) AS count FROM artifact_registry
           WHERE workstream_id NOT IN (SELECT workstream_id FROM channels)
             AND workstream_id NOT IN (SELECT canvas_id FROM canvas_directory)
-            AND workstream_id NOT IN (SELECT automation_id FROM automation_directory)`,
+            AND workstream_id NOT IN (SELECT automation_id FROM automation_directory)
+            AND resource_id NOT IN (SELECT resource_id FROM canvas_artifacts)`,
       ).one().count,
     };
   }
@@ -5146,7 +5149,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    *   time, last activity and authority generation (the conversation's own,
    *   which the directory row projected); a Workspace-scoped Thread is open
    *   to the Organization and a personal one to its participants;
-   * - every viewer as a participant, and every artifact it made or linked;
+   * - as participants, every viewer of a personal Thread and the viewers
+   *   marked participants of a Workspace-scoped one; every artifact it made
+   *   or linked;
    * - the memory facts learned in its Main, whose source names a Thread
    *   (`<id>`) and so opens to nobody, renamed to the Canvas's
    *   (`canvas:<id>`), with the sweep receipt the next sweep continues from;
@@ -5170,11 +5175,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).toArray()[0];
       let created = false;
       if (thread) {
-        const viewers = sql.exec<{ user_id: string; added_at: number }>(
-          `SELECT user_id, COALESCE(participant_added_at, projected_at) AS added_at FROM channel_viewers
+        const viewers = sql.exec<{ user_id: string; added_at: number; is_participant: number }>(
+          `SELECT user_id, COALESCE(participant_added_at, projected_at) AS added_at, is_participant FROM channel_viewers
             WHERE workstream_id = ? ORDER BY added_at, user_id`, input.threadId,
         ).toArray();
         const creator = thread.created_by_user_id ?? viewers[0]?.user_id ?? null;
+        // A personal Thread's viewer row is what admitted them, so every one
+        // is kept; a Workspace-scoped Thread's admits the Organization, and a
+        // participant row for someone who only listed it would outlive a
+        // later narrowing, so only its participants are.
+        const participants = thread.scope === "personal" ? viewers : viewers.filter((viewer) => viewer.is_participant === 1);
         if (creator === null) {
           throw new ApiError(409, "thread_conversion_no_creator", "This Thread names no creator and has no viewers",
             undefined, "thread_conversion_no_creator");
@@ -5193,7 +5203,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           createdAt: thread.source_created_at, updatedAt: thread.last_activity_at,
           visibility: thread.scope === "workspace" ? "workspace" : "participants",
           authorityGeneration: thread.authority_generation,
-          participants: viewers.map((viewer) => ({ userId: viewer.user_id, addedAt: viewer.added_at })),
+          participants: participants.map((viewer) => ({ userId: viewer.user_id, addedAt: viewer.added_at })),
           artifacts: artifacts.map((artifact) => ({ resourceId: artifact.resource_id, addedAt: artifact.added_at })),
         }).created;
       } else if (!canvas.row()) {
