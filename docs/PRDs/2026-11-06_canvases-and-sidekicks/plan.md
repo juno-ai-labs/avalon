@@ -228,3 +228,51 @@ still works; a run that asks twice makes two unseen Activity rows; the naming
 flip fires on any first turn, not only a person's.
 
 **Tests and lanes.** The e2e lane killed the local workerd in 2 of 8 full runs at the current chaos burst sizes (e2e.md records the sizes as the team's to set). No renderer test covers the Canvas restored-route fallback (checked in a real window). The prepareApply malformed-evaluator 422 case has no cheap fixture. `test/provider-webhooks.test.ts` must move onto WorkspaceDO before its legacy branch goes.
+
+**Recorded after the notifications round and the documentation audit
+(2026-11-08).** The four notification kinds the pivot had dropped came back on
+the one Activity pipeline (e26aa66): `new_message` (a `reply_batch` alarm per
+conversation coalesces replies for `REPLY_BATCH_SECONDS`, the row collapses to
+the newest message while unseen, and a push repeats only after
+`CONVERSATION_ALERT_COOLDOWN_MS`), `artifact_updated` (every pinner of the
+Canvas who did not write the version), and `access_request` /
+`access_granted` (the `canvas_access_requests` table, `GET /canvases/:id/access`
+answering `requestable` with no title, `activity_access_decision` for deciders:
+the creator, owners and administrators, and a writer Sidekick's managers).
+Decisions made as the implementer's reading, open to the owner's reversal: a
+denial tells the requester nothing and allows a new request; a duplicate
+request while one is pending answers pending; adding the person through Share
+or making the Canvas Organization-wide settles pending requests as grants;
+the Settings page offers exactly Mentions, New messages, Being added, Sidekick
+runs, Pinned Canvas updates and Access requests, and the three stored-only
+kinds are emitted for one release so older desktops keep parsing; no cap on
+requests per person or Canvas was added (the number is the team's).
+
+Follow-ups found and not fixed: a reply push opens the conversation at its
+newest message (the row carries the turn, the push body does not); reply and
+run notices are push only, email and Slack still go out for mentions and
+being added alone, while Settings offers all three channels for every kind;
+a guest who opens an unshared Canvas is refused with a 403 and its message
+("Only a member of the Organization can ask to open a Canvas"), which tells a
+non-member the Canvas exists where the design asked for the not-found pane;
+`attention()` still answers zero for every other Organization, so the account
+menu never shows a count; the desktop-action request/answer protocol has no
+caller since session import was deleted; the per-conversation Terminal
+provider check went with the Thread host and nothing polls a sandbox now;
+nothing skips a demo persona's `.invalid` address in notification email.
+
+The documentation audit (five slices, each sampled against the code by a
+reviewer; about 600 claims sampled, 15 wrong and fixed) retired seventeen
+documents into retirement records in their owners' changelogs (spaces,
+space-access-sources, projects, listing-rules, workstream-creation, -naming,
+-descriptions, -appearance, -markers, -origin-attachments,
+conversation-suggestions, session-import, contextual-routing,
+implementation-plan, harness-production-qa-2026-08-22, and
+jev-classifier-opportunities folded into jev-best-practices), corrected about
+120 documents and the help centre's 40 pages, and left the Trust Center's
+versioned legal text alone (its stale vocabulary is listed in the audit
+report). Historical changelog entries were kept verbatim; only dead link
+targets inside them changed. Code defects the audit found and did not fix are
+in the slice reports (dead exports in the Slack and connector services, stale
+comments naming deleted documents, `#CEDC00` hard-coded where the brand is
+`#CCFF00`, two Workers proofs lost with deleted test files).
