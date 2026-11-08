@@ -114,7 +114,8 @@ async function runNoticeContent(env: Env, workspace: WorkspaceStub, row: Workspa
  * they are no longer an active member, its parent is gone, or it no longer
  * admits them. Null when it may be sent.
  */
-async function recipientRefused(env: Env, workspace: WorkspaceStub, row: WorkspaceNotificationIntentDelivery): Promise<PushContent | null> {
+async function recipientRefused(env: Env, workspace: WorkspaceStub, row: WorkspaceNotificationIntentDelivery,
+  options: { unlisted?: boolean } = {}): Promise<PushContent | null> {
   const member = await workspaceRegionalDatabase(env).prepare(
     `SELECT 1 AS active FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
   ).bind(row.workspaceId, row.recipientUserId).first<{ active: number }>();
@@ -122,7 +123,8 @@ async function recipientRefused(env: Env, workspace: WorkspaceStub, row: Workspa
   const raw = await workspace.notificationDirectoryState({ workspaceId: row.workspaceId, workstreamId: row.workstreamId, userId: row.recipientUserId });
   const viewer = raw ? WorkspaceDirectoryNotificationStateSchema.parse(raw) : null;
   if (!viewer) return { outcome: "skipped", reason: "notification_parent_missing" };
-  if (!viewer.listable) return { outcome: "skipped", reason: "recipient_not_listable" };
+  // A declined request is about a Canvas its requester may not open, by definition.
+  if (!viewer.listable && !options.unlisted) return { outcome: "skipped", reason: "recipient_not_listable" };
   return null;
 }
 
@@ -133,6 +135,7 @@ function parentNoticeWords(notice: ParentNotice): { title: string; body: string 
     case "artifact_updated": return { title: `${notice.authorName} updated ${notice.artifactTitle} in ${notice.parentTitle}`, body: "" };
     case "access_request": return { title: `${notice.requesterName} asked to open ${notice.parentTitle}`, body: notice.message ?? "" };
     case "access_granted": return { title: `${notice.deciderName} let you into ${notice.parentTitle}`, body: "" };
+    case "access_denied": return { title: `${notice.deciderName} declined your request to open a Canvas`, body: "" };
   }
 }
 
@@ -143,7 +146,7 @@ function parentNoticeWords(notice: ParentNotice): { title: string; body: string 
  */
 async function parentNoticeContent(env: Env, workspace: WorkspaceStub, row: WorkspaceNotificationIntentDelivery): Promise<PushContent> {
   const notice = ParentNoticeSchema.parse(JSON.parse(row.payloadJson));
-  const refused = await recipientRefused(env, workspace, row);
+  const refused = await recipientRefused(env, workspace, row, { unlisted: notice.kind === "access_denied" });
   if (refused) return refused;
   const words = parentNoticeWords(notice);
   return {

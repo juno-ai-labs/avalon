@@ -5,7 +5,7 @@ exists — never its title — and may ask to be let in, with an optional
 one-line message. Whoever decides on that Canvas's people is told, in
 Activity and by push, and approves or denies from the Activity row or the
 Share panel. An approval seats the requester and tells them; a denial tells
-nobody. A request also settles on its own when the person is let in some other
+them who declined, never the title. A request also settles on its own when the person is let in some other
 way. Read this before changing who may ask, who decides, or what a decision
 does; who can open a Canvas at all is [`canvases.md`](canvases.md)'s.
 
@@ -14,11 +14,11 @@ does; who can open a Canvas at all is [`canvases.md`](canvases.md)'s.
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/canvases.ts` | `CanvasAccessSchema` (`GET /canvases/:id/access`), `CanvasAccessRequestSchema` and `CanvasAccessRequestResultSchema` (asking), `CanvasAccessDecisionRequestSchema` and `CanvasAccessDecisionSchema` (deciding), and `CanvasDetail.pendingAccessRequests`. |
-| `packages/contracts/src/activity.ts` | The `access_request` and `access_granted` kinds and the item's `accessRequest` (`state`, `decidedByName`). |
-| `apps/api/src/durable-objects/canvas-access-requests.ts` | WorkspaceDO migration 151, `requestCanvasAccess`, `settleCanvasAccessRequest` (one settlement for a decision and for every other way in), `settleAdmittedAccessRequests`, the deciders, and the named refusals. |
+| `packages/contracts/src/activity.ts` | The `access_request`, `access_granted` and `access_denied` kinds and the item's `accessRequest` (`state`, `decidedByName`). |
+| `apps/api/src/durable-objects/canvas-access-requests.ts` | WorkspaceDO migration 151 (migration 152, which admits `access_denied`, is `NOTIFICATION_INTENTS_ACCESS_DENIED_MIGRATION` and `WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS` beside the tables it rebuilds), `requestCanvasAccess`, `settleCanvasAccessRequest` (one settlement for a decision and for every other way in), `settleAdmittedAccessRequests`, the deciders, and the named refusals. |
 | `apps/api/src/durable-objects/hosted-canvas.ts` | `HostedCanvas.access`, `requestAccess`, `decideAccess`; `detail`'s pending list for a decider; `setAudience` settling what the new audience admits. |
 | `apps/api/src/routes/canvases.ts` | The three routes; `CanvasService` carries them to `WorkspaceDO.canvasAccess`, `canvasRequestAccess` and `canvasDecideAccess`. |
-| `apps/api/src/durable-objects/workspace-activity.ts` | A request's row reads as seen once settled, and names its state and decider. |
+| `apps/api/src/durable-objects/workspace-activity.ts` | A request's row reads as seen once settled, and names its state and decider; a declined request's row lists for a requester who cannot open the Canvas, untitled, and reads as seen once they ask again. |
 
 ## How it works
 
@@ -26,7 +26,9 @@ does; who can open a Canvas at all is [`canvases.md`](canvases.md)'s.
 
 `GET /canvases/:id/access` answers a member who cannot open the Canvas with
 `{ access: "requestable", title: null, request }`, where `request` is their
-latest request (`pending` or `denied`, with when they asked) or null. A
+latest request (`pending` or `denied`, with when they asked and, once
+declined, `decidedAt`) or null, so the pane can say "Request declined" and
+offer Request access again. A
 Canvas they can open answers `409 canvas_access_open`; an id that is no Canvas
 of their Organization is `404 canvas_not_found`, as every Canvas route says.
 A guest is refused `403 canvas_access_request_not_member` before the id is
@@ -70,7 +72,19 @@ each one's Activity is sent again and the row reads as settled and seen. An
 approval also adds the requester to `canvas_participants` with source
 `request`, moves a Canvas open to its creator alone to `participants`, and
 writes the requester's `access_granted` intent and Activity row naming the
-decider, linking to the Canvas. A denial tells the requester nothing; a new request after a denial is a new row.
+decider, linking to the Canvas. A denial writes the requester's
+`access_denied` intent and Activity row instead ("<decider> declined your
+request to open a Canvas"), linking to the Canvas, whose pane then reads the
+denied request; a new request after a denial is a new row.
+
+The denial's notice and row never carry the Canvas's title: the notice
+(`ParentNotice` `access_denied`) has no title field, its row's `parentTitle`
+is always null, and its push is sent though the requester cannot list the
+Canvas (`recipientRefused`'s `unlisted`) — that is what it is about. It lists
+while the Canvas exists, reads as seen on Mark all seen or once the requester
+asks again, and goes under `accessRequests` in the person's choices
+(`NOTIFICATION_KIND_FOR_PUSH`), the same kind a decider chooses for a
+request.
 
 ### Let in another way
 
@@ -101,6 +115,8 @@ Client: a 404 on a well-formed Canvas id asks `GET /canvases/:id/access`; `reque
   the actions; leaving one unsettled would offer an Approve that is refused.
   Guard: the first case, proved to fail with the settled clause of
   `ACTIVITY_SEEN_SQL` removed.
+- **A denial never names the title.** Guard: the denial case asserts the
+  row's null title and the push's words.
 - **A guest learns nothing.** Asking and the access read refuse a guest
   before the id is read. Guard: the refusal case.
 - **Only a manager decides.** Guard: the refusal case, proved to fail with the
@@ -147,14 +163,21 @@ detail lists it for a decider only, the push says "Robin asked to open Launch
 plan"; approval seats the requester with source `request`, settles both
 deciders' rows, and tells the requester ("Avery let you into Launch plan",
 linking to the Canvas); a second decision is `canvas_access_request_settled`;
-a denial tells the requester nothing and allows a new request; Share adding
+a denial tells the requester ("Ada declined your request to open a Canvas",
+an untitled row on their socket, linking to the Canvas), the access read
+names the denial with `decidedAt`, and a new request is allowed and reads
+the denial as seen — proved to fail with the denial's notice dropped; Share adding
 the person, and the Canvas becoming Organization-wide, settle a waiting
 request and tell the requester; a guest is
 `canvas_access_request_not_member`, an id that is no Canvas
 `canvas_not_found`, and a participant who does not manage it
 `canvas_access_decision_not_manager`. Each case uses fresh Organization and
 Canvas ids. `apps/api/test/workspace-canvas-access-requests-migration.test.ts`
-proves migration 151 over populated participants.
+proves migration 151 over populated participants;
+`apps/api/test-workers/access-denied-migration.test.ts` proves migration 152
+over a populated v151 object (intents and Activity rows kept, `subject_id`
+included, the identity trigger kept), proved to fail with `subject_id` left
+out of the copy.
 
 ## Data model
 
@@ -162,9 +185,30 @@ proves migration 151 over populated participants.
 | --- | --- | --- |
 | `canvas_access_requests` | `request_id` | `canvas_id`, `user_id`, `requester_name`, `message`, `state` (`pending`, `approved`, `denied`), `decided_by_user_id`, `decided_by_name`, `created_at`, `decided_at` (null exactly while pending). Unique `(canvas_id, user_id)` where pending; indexed by `(canvas_id, user_id, created_at DESC)`. |
 | `canvas_participants` | `(canvas_id, user_id)` | `source` admits `request` (migration 151 copied the table, and remade its index and the memory-digest triggers). |
-| `workspace_activity_items` | `item_id` | An `access_request` or `access_granted` row's `subject_id` is the request's id. |
+| `workspace_activity_items` | `item_id` | An `access_request`, `access_granted` or `access_denied` row's `subject_id` is the request's id. `kind` admits `access_denied` from migration 152, as `workstream_notification_intents.notification_kind` does. |
 
 ## Changelog
+
+### 2026-11-08 — A denial tells the requester
+
+**What changed:** Denying a request now writes the requester an
+`access_denied` intent and Activity row naming who declined, never the
+Canvas's title, and pushes it under their `accessRequests` choice; the access
+read gives the denied request's `decidedAt`. WorkspaceDO migration 152
+rebuilds `workstream_notification_intents` and `workspace_activity_items` to
+admit the kind, as 150 did.
+
+**Why:** The owner's answer of 2026-11-08: "inform the person [of] a
+denial". The first version kept the Thread-era rule that a denial tells
+nobody; a requester then waited on "Request sent" with no answer.
+
+**Considered and rejected:** Reusing `access_request` with a denied state
+for the requester's row: the row would read as a request to decide. Naming
+the title in the notice: the requester was refused it.
+
+**What a future change must respect:** the denial's notice and row carry no
+title; a new kind on these two tables needs another rebuild, not an edit to
+150 or 152.
 
 ### 2026-11-08 — Document created: a member asks to open a Canvas, and its deciders answer
 

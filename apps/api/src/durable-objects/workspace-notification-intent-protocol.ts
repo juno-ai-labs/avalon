@@ -4,7 +4,7 @@ import { z } from "zod";
 const NotificationIntentIdSchema = z.string().min(1).max(300);
 
 export const WorkspaceNotificationIntentKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished",
-  "new_message", "artifact_updated", "access_request", "access_granted"]);
+  "new_message", "artifact_updated", "access_request", "access_granted", "access_denied"]);
 
 /**
  * What a hosted parent's own notice stores on its intent: everything the push
@@ -20,6 +20,8 @@ export const ParentNoticeSchema = z.discriminatedUnion("kind", [
     parentId: z.string().min(1),
     parentTitle: z.string(),
     messageId: z.string().min(1),
+    /** The message's transcript sequence, for the link to it; absent from a notice recorded before it. */
+    messageSequence: z.number().int().positive().optional(),
     authorName: z.string(),
     text: z.string(),
   }),
@@ -40,6 +42,16 @@ export const ParentNoticeSchema = z.discriminatedUnion("kind", [
     requestId: z.string().min(1),
     requesterName: z.string(),
     message: z.string().nullable(),
+  }),
+  /**
+   * The recipient's request to open a Canvas was declined. No title: they
+   * were refused the Canvas, so the notice names it only by id.
+   */
+  z.strictObject({
+    kind: z.literal("access_denied"),
+    parentId: z.string().min(1),
+    requestId: z.string().min(1),
+    deciderName: z.string(),
   }),
   /** The recipient's request to open a Canvas was let in. */
   z.strictObject({

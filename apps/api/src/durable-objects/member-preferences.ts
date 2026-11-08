@@ -97,6 +97,8 @@ export const NOTIFICATION_KIND_FOR_PUSH: Partial<Record<PushNotificationData["ki
   access_request: "accessRequests",
   // Being let into a Canvas you asked for is being added to it.
   access_granted: "added",
+  // Being declined is the answer to your own access request.
+  access_denied: "accessRequests",
 };
 
 /** `changes` over `base`, switch by switch; a switch `changes` does not name keeps its value. */
