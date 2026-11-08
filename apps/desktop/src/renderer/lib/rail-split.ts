@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-import { SIDEBAR_CONTENT_MIN_WIDTH, savedRailWidth, useUiStore } from './ui-store';
+import { SIDEBAR_CONTENT_MIN_WIDTH, measuredPaneWidth, savedRailWidth, useUiStore } from './ui-store';
 
 /**
  * Open the right panel for `scope`, at an even split with the conversation
@@ -26,7 +26,8 @@ export function openRailAtEvenSplit(scope: string, open: () => void): void {
 
 /**
  * Reopen the panel a conversation had open, on arrival or relaunch, at the
- * width last set for `scope`. A conversation whose panel was never resized
+ * width last set for `scope`: its share of the pane as it was then, applied to
+ * the pane as it is now and held inside its bounds (`ui-store.ts`). A conversation whose panel was never resized
  * gets the even split a click would have given, not the 320px default.
  * Call it after claiming `scope`: claiming loads that scope's width, which
  * the split replaces.
@@ -46,9 +47,8 @@ export function restoreRail(scope: string, open: () => void): void {
  * returns to it.
  */
 export function evenSplitWidth(): number | null {
-  const pane = document.querySelector<HTMLElement>('.main-pane');
-  if (!pane) return null;
-  return Math.round((window.innerWidth - pane.getBoundingClientRect().left) / 2);
+  const pane = measuredPaneWidth();
+  return pane === null ? null : Math.round(pane / 2);
 }
 
 /**

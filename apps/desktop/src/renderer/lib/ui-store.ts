@@ -57,9 +57,13 @@ export const DEFAULT_RAIL_WIDTH = 320;
 /** GrokBot's compact rail and expanded-sidebar geometry. */
 export { COLLAPSED_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, SINGLE_SIDEBAR_DEFAULT_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '@rally/ui/lib/sidebar-geometry';
 import { clampSidebarWidth, loadSidebarWidth, saveSidebarPreference } from '@rally/ui/lib/sidebar-preferences';
+import { SIDEBAR_CONTENT_MIN_WIDTH as CONVERSATION_MIN_WIDTH } from '@rally/ui/lib/sidebar-geometry';
 import { SINGLE_SIDEBAR_DEFAULT_WIDTH } from '@rally/ui/lib/sidebar-geometry';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
+/** Pixels, as written before 2026-11-08; still read where no share is stored. */
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
+/** The panel's share of the main pane, which is what a drag now saves. */
+const RAIL_SHARE_STORAGE_PREFIX = 'rally.rail-share';
 const SIDEBAR_SECTION_STORAGE_KEY = 'rally.sidebar-section';
 
 /** A device preference read once; storage that throws or holds junk reads as the fallback. */
@@ -92,31 +96,71 @@ function railWidthKey(prefix: string, scope: string | null): string {
   return `${prefix}:${scope ?? 'default'}`;
 }
 
-function loadRailWidth(prefix: string, scope: string | null): number {
-  return savedWidth(prefix, scope) ?? DEFAULT_RAIL_WIDTH;
+/**
+ * The main pane's width, which the panel and the conversation share: the
+ * window less everything left of the pane. Null with no pane on screen.
+ */
+export function measuredPaneWidth(): number | null {
+  if (typeof document === 'undefined') return null;
+  const pane = document.querySelector<HTMLElement>('.main-pane');
+  if (!pane) return null;
+  return window.innerWidth - pane.getBoundingClientRect().left;
 }
 
-function savedWidth(prefix: string, scope: string | null): number | null {
-  if (typeof window === 'undefined') return null;
+/**
+ * The widths a panel can take in a pane this wide: the minimum, up to what
+ * leaves the conversation its minimum (`--rail-max-slot` in CSS, which caps
+ * what is drawn the same way).
+ */
+function clampToPane(width: number, pane: number): number {
+  return Math.max(MIN_RAIL_WIDTH, Math.min(Math.round(width), pane - CONVERSATION_MIN_WIDTH));
+}
 
+function loadRailWidth(scope: string | null): number {
+  return savedWidth(scope) ?? DEFAULT_RAIL_WIDTH;
+}
+
+function readNumber(key: string): number | null {
+  if (typeof window === 'undefined') return null;
   try {
-    const storedWidth = Number.parseFloat(window.localStorage.getItem(railWidthKey(prefix, scope)) ?? '');
-    return Number.isFinite(storedWidth) ? clampRailWidth(storedWidth) : null;
+    const stored = Number.parseFloat(window.localStorage.getItem(key) ?? '');
+    return Number.isFinite(stored) ? stored : null;
   } catch {
     return null;
   }
 }
 
-/** The width the person last set for `scope`'s panel, or null when they never have. */
-export function savedRailWidth(scope: string | null): number | null {
-  return savedWidth(RAIL_WIDTH_STORAGE_PREFIX, scope);
+/**
+ * The width `scope`'s panel comes back at in the pane as it is now. A share
+ * is the person's split of whatever pane they were in, so a panel dragged in a
+ * narrow window comes back proportionally wide in a wide one; a pixel width
+ * stored before shares were saved is kept, held inside the pane's bounds.
+ */
+function savedWidth(scope: string | null): number | null {
+  const pane = measuredPaneWidth();
+  const share = readNumber(railWidthKey(RAIL_SHARE_STORAGE_PREFIX, scope));
+  if (pane !== null && share !== null && share > 0) return clampToPane(share * pane, pane);
+  const pixels = readNumber(railWidthKey(RAIL_WIDTH_STORAGE_PREFIX, scope));
+  if (pixels === null) return null;
+  return pane === null ? clampRailWidth(pixels) : clampToPane(pixels, pane);
 }
 
-function saveRailWidth(prefix: string, scope: string | null, width: number): void {
-  if (typeof window === 'undefined') return;
+/** The width the person last set for `scope`'s panel, or null when they never have. */
+export function savedRailWidth(scope: string | null): number | null {
+  return savedWidth(scope);
+}
 
+/** Save the width as its share of the pane, or as pixels when there is no pane to measure. */
+function saveRailWidth(scope: string | null, width: number): void {
+  if (typeof window === 'undefined') return;
+  const pane = measuredPaneWidth();
   try {
-    window.localStorage.setItem(railWidthKey(prefix, scope), String(width));
+    if (pane !== null && pane > 0) {
+      window.localStorage.setItem(railWidthKey(RAIL_SHARE_STORAGE_PREFIX, scope), String(width / pane));
+      window.localStorage.removeItem(railWidthKey(RAIL_WIDTH_STORAGE_PREFIX, scope));
+    } else {
+      window.localStorage.setItem(railWidthKey(RAIL_WIDTH_STORAGE_PREFIX, scope), String(width));
+    }
   } catch {
     // Local persistence is best-effort; resizing should still work when storage is unavailable.
   }
@@ -130,7 +174,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   railOpen: false,
   railExpanded: false,
   railVariant: 'context',
-  railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
+  railWidth: loadRailWidth(null),
   inspector: null,
   railLeaving: false,
   railScope: null,
@@ -154,13 +198,13 @@ export const useUiStore = create<UiState>((set, get) => ({
   setRailVariant: (railVariant) => set({ railVariant, inspector: null }),
   setRailWidth: (width, { remember = true } = {}) => {
     const railWidth = clampRailWidth(width);
-    if (remember) saveRailWidth(RAIL_WIDTH_STORAGE_PREFIX, get().railScope, railWidth);
+    if (remember) saveRailWidth(get().railScope, railWidth);
     set({ railWidth });
   },
   inspect: (inspector) => set({ inspector }),
   setRailLeaving: (railLeaving) => set({ railLeaving }),
   setRailScope: (railScope) => set({
     railScope,
-    railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, railScope),
+    railWidth: loadRailWidth(railScope),
   }),
 }));
