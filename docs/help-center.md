@@ -183,9 +183,9 @@ Barlow for text, Barlow Semi Condensed for display, and a monospace for labels.
 The help center owns `/help/` on the public site, and the redirects that retire
 the old `/support/` pages into it. It depends on the site's Vite build, its
 fonts and brand marks, and `site-entry.ts` for telemetry. It does not own the
-Trust Center. The desktop app's **Help Center** and **Send Feedback** menu
-items, the connector **Get help** button and the Slack App Home footer link
-into it; the Slack app manifest's `support_url` still names `/support`, which
+Trust Center. The connector installation pane's **Get help** button and the
+Slack App Home footer's **Help** link open it (the desktop Help menu has only
+**Rally website**, `apps/desktop/src/main/application-menu.ts`); the Slack app manifest's `support_url` still names `/support`, which
 redirects, until the manifest is next pushed to Slack. It renders what is in the folder and
 does not check that the words are true: what a page claims about the product is
 the author's job, and the product's own documents in `docs/` remain the
