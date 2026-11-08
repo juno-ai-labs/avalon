@@ -167,6 +167,27 @@ export function canvasRowDetail(
 }
 
 /**
+ * The home card's line for a Canvas a Sidekick run last wrote: "<Sidekick> ·
+ * run #N", opening the Sidekick's conversation at that run. Null while
+ * anyone else is in it (who is here comes first, as `canvasRowDetail` says)
+ * and when its newest version is no run's. The Sidekick's name is the live
+ * one when the socket's Sidekick list has it, the row's otherwise.
+ */
+export function canvasWrittenByRun(
+  row: Pick<CanvasSidebarRow, 'lastWrittenBy' | 'presentUserIds'>,
+  sidekicksById: ReadonlyMap<string, Pick<AutomationSummary, 'name'>>,
+  currentUserId: string | undefined,
+): { label: string; to: string } | null {
+  const run = row.lastWrittenBy;
+  if (!run || othersPresent(row, currentUserId).length > 0) return null;
+  const name = sidekicksById.get(run.sidekickId)?.name ?? run.sidekickName;
+  return {
+    label: `${name} · run #${run.runNumber}`,
+    to: `/sidekicks/${encodeURIComponent(run.sidekickId)}?${new URLSearchParams({ run: run.runId })}`,
+  };
+}
+
+/**
  * Make a Canvas and open it. With a prompt, it is the Chat's first message,
  * sent by the server as the creator's (`POST /canvases`), so the Canvas opens
  * on a conversation already under way.

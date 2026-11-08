@@ -7018,6 +7018,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-card-body h3 { font-size: 15px; font-weight: 600; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-card-body small { color: var(--av-sys-color-text-muted); display: flex; font-size: 12.5px; gap: 8px; justify-content: space-between; margin-top: 4px; min-width: 0; white-space: nowrap; }
 .canvas-card-body small > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.canvas-card-run { color: inherit; position: relative; text-decoration: none; z-index: 1; }
+.canvas-card-run:hover { color: var(--av-sys-color-text-default); text-decoration: underline; }
 .canvas-prompt-card { border: 1px solid var(--av-sys-color-border-default); border-radius: 16px; max-width: 560px; padding: 20px; }
 .canvas-prompt-card h2 { align-items: center; display: flex; font-size: 16px; font-weight: 500; gap: 8px; margin: 0 0 6px; }
 .canvas-prompt-card p { color: var(--av-sys-color-text-muted); font-size: 14px; margin: 0 0 14px; }

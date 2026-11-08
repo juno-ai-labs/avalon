@@ -78,6 +78,23 @@ describe('SidekicksSection', () => {
     expect(within(all).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(['/sidekicks/alpha', '/sidekicks/zulu']);
   });
 
+  it('says Working while any run works, behind a finished newer one too, and not once none does', () => {
+    renderSection([
+      sidekick('older', 'Older run', { running: true, runState: null }),
+      sidekick('idle', 'Idle', { running: false, runState: null, lastRunAt: '2026-11-07T08:00:00.000Z' }),
+      sidekick('asking', 'Asking', { running: true, runState: null, needsInput: true, pendingQuestion: 'Which page?' }),
+    ]);
+    const all = screen.getByRole('region', { name: 'All Sidekicks' });
+    const older = within(all).getByRole('link', { name: /Older run/ });
+    expect(older).toHaveTextContent('Working');
+    expect(older.querySelector('.sidekick-working-dot')).not.toBeNull();
+    expect(within(all).getByRole('link', { name: /Idle/ })).not.toHaveTextContent('Working');
+    // Waiting and working at once: the question, with the working dot.
+    const asking = within(screen.getByRole('region', { name: 'Needs input' })).getByRole('link', { name: /Asking/ });
+    expect(asking).toHaveTextContent('Which page?');
+    expect(asking.querySelector('.sidekick-working-dot')).not.toBeNull();
+  });
+
   it('pins a Sidekick dragged into Pinned, and unpins from its menu', async () => {
     renderSection([sidekick('support', 'Support inbox'), sidekick('changelog', 'Weekly changelog', { pinnedPosition: 0 })]);
     const target = screen.getByRole('region', { name: 'Pinned Sidekicks' });

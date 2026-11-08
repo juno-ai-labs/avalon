@@ -8,7 +8,7 @@ import { AvatarStack, Button, EmptyState, ErrorNotice, TitleSkeleton } from '../
 import { PushedListPending } from '../components/pushed-list-pending';
 import { RelativeTime } from '../components/relative-time';
 import { SidebarSearch } from '../components/sidebar-search';
-import { canvasNaming, canvasRoute, canvasRowDetail, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
+import { canvasNaming, canvasRoute, canvasRowDetail, canvasWrittenByRun, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useDocumentTitle } from '../lib/document-title';
 import { formatSidebarActivityTime } from '../lib/format';
@@ -65,6 +65,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
       const member = membersById.get(userId);
       return member ? [member] : [];
     });
+    const run = canvasWrittenByRun(canvas, sidekicksById, currentUserId);
     return <li className="canvas-card" key={canvas.id}>
       <div aria-hidden="true" className="canvas-card-shot">
         <CanvasShot id={canvas.id} kind={canvas.artifactKind} />
@@ -72,7 +73,10 @@ export function CanvasesHomeScreen(): React.JSX.Element {
       </div>
       <div className="canvas-card-body">
         <h3><Link className="sidekick-list-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
-        <small><span>{canvasRowDetail(canvas, membersById, sidekicksById, currentUserId)}</span><RelativeTime format={formatSidebarActivityTime} value={canvas.updatedAt} /></small>
+        <small><span>{run
+          // Above the card's stretched title link, so it opens the run and not the Canvas.
+          ? <Link className="canvas-card-run" to={run.to}>{run.label}</Link>
+          : canvasRowDetail(canvas, membersById, sidekicksById, currentUserId)}</span><RelativeTime format={formatSidebarActivityTime} value={canvas.updatedAt} /></small>
       </div>
     </li>;
   };

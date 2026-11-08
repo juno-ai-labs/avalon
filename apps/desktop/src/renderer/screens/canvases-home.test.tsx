@@ -85,6 +85,22 @@ describe('CanvasesHomeScreen', () => {
     expect(card('Hiring pipeline').querySelector('.canvas-card-live')).toBeNull();
   });
 
+  it("names the run that wrote a card's newest version and opens the Sidekick's conversation at it", async () => {
+    const sidekickId = '00000000-0000-7000-8000-0000000000e1';
+    const runId = '00000000-0000-7000-8000-0000000000f3';
+    renderHome(clientWith([
+      canvas('00000000-0000-7000-8000-0000000000c1', 'Weekly digest', { createdByUserId: MAYA, writerSidekickId: sidekickId,
+        lastEditor: { kind: 'sidekick', id: sidekickId }, lastWrittenBy: { sidekickId, runId, runNumber: 3, sidekickName: 'Digest writer' } }),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'Launch plan', { lastEditor: { kind: 'rally', id: null }, lastWrittenBy: null }),
+    ]));
+    const recent = screen.getByRole('region', { name: 'Recent' });
+    const run = within(recent).getByRole('link', { name: 'Digest writer · run #3' });
+    expect(run).toHaveAttribute('href', `/sidekicks/${sidekickId}?run=${runId}`);
+    // A version no run made keeps the editor's line, with no run to open.
+    expect(within(recent).getByText(/Edited by Rally/)).toBeInTheDocument();
+    expect(within(recent).getAllByRole('link', { name: /run #/ })).toHaveLength(1);
+  });
+
   it('filters by who made a Canvas and by search', () => {
     renderHome(clientWith([
       canvas('00000000-0000-7000-8000-0000000000c1', 'Mine'),

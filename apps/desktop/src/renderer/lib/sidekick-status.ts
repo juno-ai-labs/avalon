@@ -7,9 +7,17 @@ import type { AutomationSummary } from './types';
  */
 export type SidekickStatus = 'needs_input' | 'working' | 'paused' | 'draft' | 'active';
 
-export function sidekickStatus(row: Pick<AutomationSummary, 'needsInput' | 'runState' | 'status'>): SidekickStatus {
+/**
+ * Whether any run of the Sidekick works now: the row's `running` (any run),
+ * or, from a server that predates it, the newest run's `runState`.
+ */
+export function sidekickWorking(row: Pick<AutomationSummary, 'running' | 'runState'>): boolean {
+  return row.running ?? row.runState === 'working';
+}
+
+export function sidekickStatus(row: Pick<AutomationSummary, 'needsInput' | 'running' | 'runState' | 'status'>): SidekickStatus {
   if (row.needsInput || row.runState === 'needs_input') return 'needs_input';
-  if (row.runState === 'working') return 'working';
+  if (sidekickWorking(row)) return 'working';
   if (row.status === 'paused') return 'paused';
   if (row.status === 'draft') return 'draft';
   return 'active';
