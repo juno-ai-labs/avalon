@@ -1,5 +1,5 @@
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
+import type { CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasSidebarRow, CanvasUpdateRequest, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
@@ -138,9 +138,9 @@ export class CanvasService {
     await (await this.workspace()).reorderSidebarPins({ workspaceId: this.auth.workspaceId, userId: this.auth.userId, kind, itemIds });
   }
 
-  /** Retitle a Canvas; see `HostedCanvas.rename`. */
-  async rename(canvasId: string, title: string): Promise<CanvasDetail> {
-    return (await this.workspace()).canvasRename({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(), title });
+  /** Retitle a Canvas, choose its icon and colour, or both; see `HostedCanvas.update`. */
+  async update(canvasId: string, update: CanvasUpdateRequest): Promise<CanvasDetail> {
+    return (await this.workspace()).canvasUpdate({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(), ...update });
   }
 
   /** Pin a Canvas or a Sidekick in, or out of, its list's Pinned group; refused for one the viewer may not open. */

@@ -301,7 +301,7 @@ async function connect(userId: string): Promise<{ socket: WebSocket; frames: Arr
   return { socket, frames };
 }
 
-type Row = { id: string; title: string; unread: boolean; sharedWithMe: boolean; presentUserIds: string[]; pinnedPosition: number | null };
+type Row = { id: string; title: string; updatedAt: string; appearance?: { icon: string | null; color: string | null }; unread: boolean; sharedWithMe: boolean; presentUserIds: string[]; pinnedPosition: number | null };
 
 /** The Canvas rows a socket was last told: the newest list push, else its subscribe payload. */
 function canvasRows(frames: Array<Record<string, unknown>>): Row[] {
@@ -382,15 +382,39 @@ describe("the Canvas list", () => {
 describe("a Canvas's title and pin order", () => {
   it("retitles a Canvas for anyone it admits, on every open list, and tells anyone else it does not exist", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
-    await expect(new CanvasService(TEST_ENV, auth(MEMBER)).rename(canvasId, "Taken over"))
+    await expect(new CanvasService(TEST_ENV, auth(MEMBER)).update(canvasId, { title: "Taken over" }))
       .rejects.toMatchObject({ code: "canvas_not_found" });
     await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
       update: { visibility: "participants", userIds: [MEMBER] } });
     const creator = await connect(CREATOR);
-    const renamed = await new CanvasService(TEST_ENV, auth(MEMBER)).rename(canvasId, "  Launch plan, v2 ");
+    const renamed = await new CanvasService(TEST_ENV, auth(MEMBER)).update(canvasId, { title: "  Launch plan, v2 " });
     expect(renamed.title).toBe("Launch plan, v2");
     expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).title).toBe("Launch plan, v2");
     await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.title).toBe("Launch plan, v2");
+    creator.socket.close(1000, "done");
+  });
+
+  it("keeps the icon and colour anyone it admits chooses, a field at a time, on its detail and every open list, and tells anyone else it does not exist", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
+    // Unchosen until someone chooses: both fields null, which the client draws as the default.
+    expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).appearance).toEqual({ icon: null, color: null });
+    await expect(new CanvasService(TEST_ENV, auth(MEMBER)).update(canvasId, { appearance: { icon: "flag", color: "emerald" } }))
+      .rejects.toMatchObject({ code: "canvas_not_found" });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
+      update: { visibility: "participants", userIds: [MEMBER] } });
+    const creator = await connect(CREATOR);
+    const before = clientCanvasRows(creator.frames).find((row) => row.id === canvasId);
+    expect(before?.appearance).toEqual({ icon: null, color: null });
+    const chosen = await new CanvasService(TEST_ENV, auth(MEMBER)).update(canvasId, { appearance: { icon: "flag", color: "emerald" } });
+    expect(chosen.appearance).toEqual({ icon: "flag", color: "emerald" });
+    // A second person's colour leaves the first person's icon as it was.
+    await new CanvasService(TEST_ENV, auth(CREATOR)).update(canvasId, { appearance: { color: "orange" } });
+    expect((await new CanvasService(TEST_ENV, auth(MEMBER)).detail(canvasId)).appearance).toEqual({ icon: "flag", color: "orange" });
+    await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.appearance)
+      .toEqual({ icon: "flag", color: "orange" });
+    // Not activity: the Canvas keeps its place in the recency list, and its title.
+    const after = clientCanvasRows(creator.frames).find((row) => row.id === canvasId);
+    expect(after).toMatchObject({ title: "Launch plan", updatedAt: before?.updatedAt });
     creator.socket.close(1000, "done");
   });
 
@@ -512,7 +536,7 @@ describe("a Canvas's title and pin order", () => {
   it("keeps a person's title over the one its opening message would give it", () => withNamingModel(async () => {
     const service = new CanvasService(TEST_ENV, auth(CREATOR));
     const { canvasId } = await service.create({});
-    await service.rename(canvasId, "Mine");
+    await service.update(canvasId, { title: "Mine" });
     expect(await service.detail(canvasId)).toMatchObject({ title: "Mine", titleStatus: "settled" });
     const client = await new ConversationService(TEST_ENV, auth(CREATOR)).writableClient(canvasId, "0");
     await client.createMessage({ text: "Plan the December pricing launch.", clientMessageId: "canvas-name-2",

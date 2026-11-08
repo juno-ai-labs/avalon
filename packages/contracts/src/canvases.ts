@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { IdSchema, UserIdSchema, WorkstreamIdSchema } from "./identifiers";
 import { PUSH_BODY_PREVIEW_CHARACTERS } from "./notification-text";
+import { WorkstreamAppearancePatchSchema, WorkstreamAppearanceSchema } from "./workstream-appearance";
 
 /**
  * A Canvas is a conversation first: its id is the parent id of its
@@ -65,6 +66,13 @@ export const CanvasSummarySchema = z.object({
    * Absent from an older Worker, and reads as `settled`.
    */
   titleStatus: z.enum(["naming", "settled"]).optional(),
+  /**
+   * The icon and colour somebody chose for it, the same two keys a Sidekick
+   * stores. A null field is unchosen and draws the default: the sketch of its
+   * newest artifact's kind for the icon, the hue its id gives it for the
+   * colour. Absent from an older Worker, and reads as both unchosen.
+   */
+  appearance: WorkstreamAppearanceSchema.optional(),
 });
 export type CanvasSummary = z.infer<typeof CanvasSummarySchema>;
 
@@ -198,9 +206,17 @@ export const SidebarPinOrderRequestSchema = z.strictObject({
 });
 export type SidebarPinOrderRequest = z.infer<typeof SidebarPinOrderRequestSchema>;
 
-/** `PATCH /canvases/:id`: the Canvas's title. */
-export const CanvasRenameRequestSchema = z.strictObject({ title: z.string().trim().min(1).max(300) });
-export type CanvasRenameRequest = z.infer<typeof CanvasRenameRequestSchema>;
+/**
+ * `PATCH /canvases/:id`: the Canvas's title, its appearance, or both. The
+ * appearance is a partial choice, as a Sidekick's is (`POST
+ * /automations/:id/appearance`), so two people picking at once change a field
+ * each; a null field goes back to the default.
+ */
+export const CanvasUpdateRequestSchema = z.strictObject({
+  title: z.string().trim().min(1).max(300).optional(),
+  appearance: WorkstreamAppearancePatchSchema.optional(),
+}).refine((update) => update.title !== undefined || update.appearance !== undefined, { message: "names a title or an appearance" });
+export type CanvasUpdateRequest = z.infer<typeof CanvasUpdateRequestSchema>;
 
 /**
  * `GET /canvases/:id/access` for a Canvas the caller cannot open: it exists

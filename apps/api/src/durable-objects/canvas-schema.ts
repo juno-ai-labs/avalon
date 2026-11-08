@@ -185,3 +185,16 @@ export const CANVAS_LAST_WRITER_RUN_STATEMENTS: readonly string[] = [
   `ALTER TABLE canvas_directory ADD COLUMN last_writer_run_id TEXT
      CHECK (last_writer_run_id IS NULL OR last_editor_kind = 'sidekick')`,
 ];
+
+/**
+ * WorkspaceDO migration 153: the icon and colour somebody chose for a Canvas.
+ * The JSON is the Sidekick's own (`WorkstreamAppearanceSchema`, the shape
+ * `automation_directory.appearance_json` holds), so one picker and one schema
+ * serve both. Null until someone chooses, which every existing Canvas is, and
+ * reads as the default: its kind's sketch and its id's hue.
+ * `docs/canvases.md` owns the mechanism.
+ */
+export const CANVAS_APPEARANCE_STATEMENTS: readonly string[] = [
+  `ALTER TABLE canvas_directory ADD COLUMN appearance_json TEXT
+     CHECK (appearance_json IS NULL OR json_valid(appearance_json))`,
+];
