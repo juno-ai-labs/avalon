@@ -1,6 +1,6 @@
 import type { CanvasDetail } from '@rally/contracts';
 import { TitleMenuItem, TitlePillHeader, TitlePillMenuAction, TitlePillTitleInput, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconLink, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
+import { IconLayoutSidebarRight, IconLink, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -152,6 +152,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   // than a conversation whose socket then fails as well. One in the list opens
   // at once, beside the detail read.
   if (!row && !canvas.data) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
+  const newestArtifact = canvas.data?.artifacts[0];
   const mark = <CanvasMark id={id} kind={canvas.data?.artifacts[0]?.kind ?? row?.artifactKind ?? null} size={24} />;
   // The pill's menu, and the header's separate "⋯" button (design.html §2), offer the same.
   const menuItems = <>
@@ -167,6 +168,14 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     <TitleMenuItem disabled={!workspace} icon={<IconLink aria-hidden="true" size={16} stroke={1.8} />} onSelect={copyCanvasLink}>
       Copy link
     </TitleMenuItem>
+    {/* A closed panel comes back from here, onto the newest artifact: each
+        navigation onto an artifact is a request of its own, so a second one
+        reopens what was closed. Beside the Chat, as on arrival. */}
+    {newestArtifact && <TitleMenuItem icon={<IconLayoutSidebarRight aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
+      void navigate(location.pathname, { state: openResourceState(id, newestArtifact.resourceId, { expanded: false }) });
+    }}>
+      Open artifact
+    </TitleMenuItem>}
   </>;
   // Edited from the title the pill shows, so not before there is one to show.
   const level = (): TitlePillLevel => renaming && (canvas.data || row) ? {
