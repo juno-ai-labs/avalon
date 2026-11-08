@@ -64,7 +64,12 @@ drags it), clamped to the shared minimum and maximum. The width is the whole
 sidebar, rail included: design.html §1 and §2 draw a 76px rail beside a 340px
 list, so the default is the two added (`NAVIGATION_RAIL_WIDTH` plus
 `SIDEBAR_LIST_DEFAULT_WIDTH`), and the maximum keeps the 60px of drag room above
-the default the sidebar had before. It holds two columns:
+the default the sidebar had before. Above phone width it gives way before the
+main pane drops under the conversation's 424px minimum
+(`SIDEBAR_CONTENT_MIN_WIDTH`): the shell draws it at the smaller of the stored
+width and the window less 424px, so a 700px browser tab gets a 276px sidebar
+and a 424px pane instead of a 284px pane, and the stored width is untouched.
+It holds two columns:
 
 - **The rail**, a 76px column under the macOS window controls, which the main
   window centers over it per macOS version (the width is
@@ -364,11 +369,23 @@ Settings name the window (v4-F24).
 A list row reads its age in the design's words ("now", "2m", "1h", "Tue")
 instead of a clock time that cut the title beside it (v4-F5).
 
+In the second round the sidebar gives way between 641px and 840px, so the
+pane keeps the conversation's minimum (v3-R2-2), and every section home, the
+Sidekicks home as well as the Canvases home, hides its own heading at phone
+width (v4-R2-3).
+
 **Why:** The PRD makes design.html the authority for every screen, and the
 design inspection (v1-F1, v4-F4) measured a 264px list that cut ordinary
 titles the design shows whole. This document said 340px for both columns, a
 number carried over from the single-column sidebar of the navigation
 redesign; the design draws 340px for the list alone, and the design wins.
+design.html §3 draws "All sidekicks" sorted by recency with a "Recent ⇵"
+control; alphabetical rows beside their times read as a broken sort. The
+heading keeps "All Sidekicks", the product noun's case. The 416px sidebar
+left a 284px pane in a 700px tab, because nothing narrowed it before the phone
+layout at 640px; the sheet's bar already titles a section home at phone width
+and carries its New and Search, so the home drawing them again was the F16
+repetition the Canvases home had already dropped.
 
 **What a future change must respect:** `sidebarWidth` is the whole sidebar,
 rail included. A width a person already dragged to is kept, so only a person
