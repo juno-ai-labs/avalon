@@ -2,7 +2,10 @@
 
 import { env } from "cloudflare:workers";
 import { createExecutionContext, reset, waitOnExecutionContext } from "cloudflare:test";
+import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { HonoAppEnv } from "../src/env";
+import { errorHandler } from "../src/middleware/errors";
 import { faviconRoutes } from "../src/routes/favicons";
 
 const EXACT_HOST = "docs.runtime-favicon.example";
@@ -25,6 +28,26 @@ function brandingResponse(hostname: string): Response {
 }
 
 describe("favicon route on workerd", () => {
+  it("answers a Firecrawl refusal with a named gateway failure, not internal_error, and caches nothing", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async (input, init) => {
+      const request = new Request(input, init);
+      if (new URL(request.url).hostname === "api.firecrawl.dev") {
+        return Response.json({ success: false, error: "Could not resolve the host" }, { status: 400 });
+      }
+      throw new Error(`unexpected favicon runtime fetch: ${request.url}`);
+    }));
+    const app = new Hono<HonoAppEnv>().onError(errorHandler).route("/favicons", faviconRoutes);
+    const ctx = createExecutionContext();
+    const response = await app.request(`https://api.rally.test/favicons/${EXACT_HOST}`, undefined,
+      { ...env, FIRECRAWL_API_KEY: "test-firecrawl-key" }, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ error: {
+      code: "favicon_unavailable:firecrawl_http_400", message: "The site's icon could not be fetched" } });
+    expect(await env.FAVICON_CACHE.get(`favicon:${EXACT_HOST}`)).toBeNull();
+  });
+
   it("returns the exact icon while waitUntil persists the fallback in real KV", async () => {
     let releasePrimaryBranding!: () => void;
     const primaryBranding = new Promise<void>((resolve) => { releasePrimaryBranding = resolve; });
