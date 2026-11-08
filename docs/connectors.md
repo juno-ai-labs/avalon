@@ -1598,7 +1598,7 @@ names stayed parse-only for rolling deploys. What survives in storage:
 `suggested_activity` relationship the desktop still normalizes to `attachment`
 (`apps/desktop/src/renderer/lib/api.ts`), and the `suggestion` message type the
 projection still filters. The lesson cited elsewhere
-([`jev-classifier-opportunities.md`](jev-classifier-opportunities.md),
+([`jev-best-practices.md`](jev-best-practices.md),
 `packages/agent-harness/src/semantic-trigger-gate.ts`): its only quality control
 was "a constant compared against a number the model made up about its own
 answer", and nothing read a dismissal back. Its 2026-08-12 rework rejected
@@ -1620,7 +1620,7 @@ live" rule.
 
 **Why:** Plan step B-8 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
 Only a Thread recorded the place it started from, and plan step C-2 deleted
-every host path that asked; [its retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments)
+every host path that asked; [`workstream-origin-attachments.md`](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments)
 has the history.
 
 **Considered and rejected:** Keeping the capability for a later Sidekick
@@ -4311,7 +4311,7 @@ naming the place. `describeConnectorOrigin` in the connector base is the single
 entry point, `connectorOriginFromActivity` is the derivation every connector gets
 without code, and a described `resourceType` is checked against the manifest's
 `resourceTypes`. Slack is the first implementation. What the host does with the
-answer was `workstream-origin-attachments.md` ([retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments)).
+answer is [`workstream-origin-attachments.md`](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments).
 
 **Why:** The behaviour shipped first as Slack-specific code in an API service —
 the host knew Slack's channel-versus-thread rule, Slack's title wording, and
