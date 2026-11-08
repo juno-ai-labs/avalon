@@ -92,9 +92,9 @@ export function NotificationChannelSettings({ api, workspaceId, connections, pus
   // stays in the list: only the one toggled is added or removed.
   const toggle = (kind: OfferedNotificationKind, channel: string) => save.mutate({
     notify: {
-      [kind]: notify[kind].includes(channel as NotificationChannel)
-        ? notify[kind].filter((candidate) => candidate !== channel)
-        : [...notify[kind], channel as NotificationChannel],
+      [kind]: (notify[kind] ?? []).includes(channel as NotificationChannel)
+        ? (notify[kind] ?? []).filter((candidate) => candidate !== channel)
+        : [...(notify[kind] ?? []), channel as NotificationChannel],
     },
   });
   return (
@@ -112,7 +112,7 @@ export function NotificationChannelSettings({ api, workspaceId, connections, pus
               none="Off"
               onToggle={(channel) => toggle(kind, channel)}
               options={options}
-              selected={notify[kind]}
+              selected={notify[kind] ?? []}
             />
           </div>
         ))}
