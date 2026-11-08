@@ -200,6 +200,12 @@ The conversation remains mounted, but hidden panes do not claim window-level
 file pastes or acknowledge reads. `useVisibleReadAcknowledgement` cancels queued
 reads when hidden and rechecks visibility before dispatch.
 
+A visible conversation reports a read (`PATCH …/read-state`) when a message
+that asks for attention comes on screen past the room's cursor, and once per
+open even when nothing moved it, at the cursor the room already holds
+(`conversationReadAcknowledgement`'s `reportedThisOpen`). The open's report is
+what Activity's run and add rows clear on (`activity.md`).
+
 Human message dots and bubble backgrounds resolve the sender's current account
 color from the live member-presentation context. The same resolution applies
 to answered elicitations and optimistic answers attributed to the current user.
@@ -842,6 +848,25 @@ captured pin IDs. [Artifact annotations](artifact-annotations.md) owns the
 selection and message protocol.
 
 ## Changelog
+
+### 2026-11-08 — Every open of a conversation sends one read report
+
+**What changed:** `conversationReadAcknowledgement` returns a report at the
+room's own cursor the first time it is asked in an open of the conversation,
+where it returned nothing for a cursor nothing on screen moved.
+
+**Why:** The end-to-end pass found a Sidekick's "finished a run" Activity row
+staying unseen when the person had read the conversation before the run
+finished: reopening it sent no report, and that row clears only on a report
+accepted after it was written (`activity.md`). Sending on every
+acknowledgement pass was rejected: it would turn every scroll into a request.
+
+**What a future change must respect:** the report is at most once per open
+(per mount and conversation address) and never reads back below the room's
+cursor. The server's effect outbox still drops a `directory_user` effect
+identical to the last one, so an unchanged-cursor report reaches the Activity
+row only once that payload carries something that differs per report; that
+half is not in this change.
 
 ### 2026-11-07 — The surface's two hosts are a Canvas's Chat and a Sidekick's conversation; Breakouts, merge-back, suggestions and the Thread branches leave it
 
