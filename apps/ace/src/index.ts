@@ -1,17 +1,10 @@
 import { RegionSchema } from "@rally/contracts/regions";
-import { DemoOperationStartRequestSchema, ProductFeatureFlagKeySchema } from '@rally/contracts';
+import { ProductFeatureFlagKeySchema } from '@rally/contracts';
 import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { accessFailureMessage, readAccessConfiguration, verifyAccessRequest, type AccessPrincipal } from './access';
 import { listDeadLetterQueues, peekDeadLetterQueue } from './cloudflare-queue-admin';
-import {
-  abandonDemoOperation,
-  listDemoOperations,
-  readDemoTemplate,
-  retryDemoOperation,
-  startDemoOperation,
-} from './demos';
 import { searchUsers, searchWorkspaces, type DirectoryRegion } from './directory';
 import { devAuthEnabled, type Env } from './env';
 import {
@@ -165,14 +158,13 @@ app.put('/api/models/:role', async (c) => {
 });
 
 /**
- * The Demos page and the workspaces tab. Ace holds nothing here: each route
- * asks the regional API over the operator credential and relays its answer,
- * and a regional refusal reaches the page as the code and message the API
- * gave, so an operator reads "the template is not in this region" rather than
- * "request failed".
+ * The workspaces tab. Ace holds nothing here: each route asks the regional
+ * API over the operator credential and relays its answer, and a regional
+ * refusal reaches the page as the code and message the API gave, so an
+ * operator reads "the workspace is not in this region" rather than "request
+ * failed".
  */
 const UuidSchema = z.string().uuid();
-const AbandonRequestSchema = z.strictObject({ confirmOperationId: z.string().uuid() });
 const PlanRequestSchema = z.strictObject({
   region: RegionSchema,
   plan: PlanIdSchema,
@@ -180,67 +172,6 @@ const PlanRequestSchema = z.strictObject({
 const RetireRequestSchema = z.strictObject({
   region: RegionSchema,
   confirmWorkspaceId: z.string().uuid(),
-});
-
-app.get('/api/demos', async (c) => {
-  try {
-    return c.json({ operations: await listDemoOperations(c.env) });
-  } catch (error) { return relayRegionalError(error); }
-});
-
-app.get('/api/demos/template', async (c) => {
-  try {
-    return c.json(await readDemoTemplate(c.env));
-  } catch (error) { return relayRegionalError(error); }
-});
-
-app.post('/api/demos', async (c) => {
-  if (!sameOrigin(c)) return c.json({ error: 'same_origin_required', message: 'Writes are accepted from the Ace page only.' }, 403);
-  const body = DemoOperationStartRequestSchema.safeParse(await c.req.json().catch(() => null));
-  if (!body.success) {
-    const field = body.error.issues[0]?.path.join('.') || 'request';
-    return c.json({ error: 'invalid_demo_request', message: `The demo request is not valid: ${field}.` }, 400);
-  }
-  try {
-    const status = await startDemoOperation(c.env, body.data);
-    console.log(JSON.stringify({
-      event: 'ace_demo_preparation_started',
-      actor_subject: c.get('principal').subject,
-      operation_id: body.data.operationId,
-    }));
-    return c.json(status);
-  } catch (error) { return relayRegionalError(error); }
-});
-
-app.post('/api/demos/:operationId/:action{retry|abandon}', async (c) => {
-  if (!sameOrigin(c)) return c.json({ error: 'same_origin_required', message: 'Writes are accepted from the Ace page only.' }, 403);
-  const operationId = UuidSchema.safeParse(c.req.param('operationId'));
-  if (!operationId.success) return c.json({ error: 'invalid_operation_id', message: 'The operation id is not a UUID.' }, 400);
-  const action = c.req.param('action') as 'retry' | 'abandon';
-  let confirmOperationId: string | null = null;
-  if (action === 'abandon') {
-    // The typed confirmation has to name the operation in the path — a
-    // consistency check made here and again regionally, as retirement's is —
-    // and what the operator typed is what travels, not a value re-derived
-    // from the path.
-    const body = AbandonRequestSchema.safeParse(await c.req.json().catch(() => null));
-    if (!body.success) return c.json({ error: 'invalid_abandon_request', message: 'Type the operation id to confirm.' }, 400);
-    if (body.data.confirmOperationId !== operationId.data) {
-      return c.json({ error: 'demo_abandon_unconfirmed', message: 'The confirmation does not name this preparation.' }, 409);
-    }
-    confirmOperationId = body.data.confirmOperationId;
-  }
-  try {
-    const status = action === 'retry'
-      ? await retryDemoOperation(c.env, operationId.data)
-      : await abandonDemoOperation(c.env, operationId.data, confirmOperationId!);
-    console.log(JSON.stringify({
-      event: action === 'retry' ? 'ace_demo_preparation_retried' : 'ace_demo_preparation_abandoned',
-      actor_subject: c.get('principal').subject,
-      operation_id: operationId.data,
-    }));
-    return c.json(status);
-  } catch (error) { return relayRegionalError(error); }
 });
 
 app.post('/api/workspaces/:workspaceId/retire', async (c) => {
