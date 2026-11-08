@@ -116,6 +116,18 @@ export type CanvasDetail = z.infer<typeof CanvasDetailSchema>;
  */
 export const CanvasSidebarRowSchema = CanvasSummarySchema.extend({
   artifactKind: CanvasArtifactKindSchema.nullable(),
+  /**
+   * The Sidekick run whose publish made the Canvas's newest version, so the
+   * home card names it ("Weekly digest · run #3") and opens the run; null
+   * when the newest version is not a run's (its Chat's, a person's). Absent
+   * from an older Worker.
+   */
+  lastWrittenBy: z.object({
+    sidekickId: IdSchema,
+    runId: IdSchema,
+    runNumber: z.number().int().positive(),
+    sidekickName: z.string(),
+  }).nullable().optional(),
   unread: z.boolean(),
   presentUserIds: z.array(UserIdSchema),
   /** Its place in the viewer's Pinned group; null when it is not pinned. */

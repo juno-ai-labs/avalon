@@ -1596,6 +1596,13 @@ export const AutomationSummarySchema = z.object({
   status: z.enum(["draft", "active", "paused"]),
   nextRunAt: TimestampSchema.nullable(),
   runState: z.enum(["working", "needs_input"]).nullable().optional(),
+  /**
+   * Any run of the Sidekick is working now (queued or running), whichever run
+   * is newest: `runState` reads the newest run alone, so an older run still
+   * working behind a finished newer one read as idle. Absent from an older
+   * Worker and from reads that do not ask.
+   */
+  running: z.boolean().optional(),
   pendingQuestion: z.string().nullable().optional(),
   triggerKinds: z.array(z.enum(["manual", "schedule", "external_event", "inbound_email"])).optional(),
   /**
