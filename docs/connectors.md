@@ -1127,8 +1127,7 @@ catalog, in
 **Nothing reads this declaration today.** The digest it was written for is
 retired, and no connector event writes an Activity row or records the answer
 any more. The declaration is still required — the
-registry refuses a manifest without it, and `digestibility-doc.test.ts` keeps
-[`connector-digestibility.md`](connector-digestibility.md) in step — kept for a
+registry refuses a manifest without it — kept for a
 future surface that tells somebody about connector activity; the rules below
 are what that surface would read.
 
@@ -1149,8 +1148,9 @@ except the one that interrupts somebody on a schedule. Answer the digest
 question when classifying an event type, and nothing else. Most of what a
 provider emits belongs here, and that is the normal case rather than a failure:
 the GitHub manifest declares eighty-seven activity types and thirty of them are
-digestible. Every current connector's classification, one row per activity type
-with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
+digestible. The manifests are the only record of each type's classification;
+the reference table that gave a reason for every row is retired
+([its record](#2026-11-08--retirement-records-suggested-context-connector-digestibility)).
 
 A **polling activity stream** declares `digestible` too (`ConnectorPollingActivityStream.digestible`), and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. The rule a reader would apply is that **a stream can only ever withhold**: an activity is digestible when its event type says so *and* its stream agrees, and everything unknown — a connector this region does not register, an event type a manifest has dropped — is withheld. Nothing applies either rule today: the poll runner no longer stamps the withholding, and `activityIsDigestible`, which computed the answer when the activity log was written, was deleted with the digest. `workspace_activity_events.digestible` remains in the schema with nothing writing it.
 
@@ -1271,7 +1271,7 @@ connection-scoped events; collapsing those requires an explicit workspace-level
 product rule rather than an accidental cross-connection dedupe.
 
 The removed semantic route into an existing work stream (Suggested context) has
-its retirement record in [this document's changelog](#2026-11-08--retirement-record-suggested-context).
+its retirement record in [this document's changelog](#2026-11-08--retirement-records-suggested-context-connector-digestibility).
 It is not a dormant step in this pipeline: current processing has no
 classifier, card, or feedback endpoint.
 
@@ -1404,8 +1404,7 @@ It does not own:
 
 | For | Read |
 | --- | --- |
-| The retired Suggested context feature | [its retirement record](#2026-11-08--retirement-record-suggested-context) |
-| One row per declared activity type, with the reason | [`connector-digestibility.md`](connector-digestibility.md) |
+| The retired Suggested context feature | [its retirement record](#2026-11-08--retirement-records-suggested-context-connector-digestibility) |
 | The registrations, secrets, and the zero-copy definition | [`provider-apps.md`](provider-apps.md) |
 | Slack's product surface and its scope inventory | [`slack-integration.md`](slack-integration.md), [`slack-permissions.md`](slack-permissions.md) |
 | Linear's protocol and native-agent gate | [`linear-integration.md`](linear-integration.md) |
@@ -1528,7 +1527,6 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 | `apps/api/test/connection-tool-count.test.ts` | `GET /connections` tool counts over the migrated regional database and a real `WorkspaceDO` schema, through the service and through the route: a fixed surface counted from grants with its generated page tools and no provider call, `connector_unavailable` for a connector the region does not register, a discovered count stored by creation, a policy save, the custom-MCP tools read and the released per-row endpoint, `null` (never zero) with its reason and a named log when discovery has not succeeded, the list's failed discovery attempted once across two lists, two concurrent lists starting one discovery, a failed discovery (a 5xx, a name collision) clearing the stored count and publishing it, and a discovery that finishes after a policy change or a reconnect dropped by the write fence. It also pins that the list reads owner names and the Slack identity links for `userDelivery` concurrently rather than one after the other, and lists both. Background work is awaited with `drainWaitUntil` from the Node `cloudflare:workers` stand-in rather than slept on. `apps/api/test/tool-pagination.test.ts` pins that `paginatedToolNames` and the expansion name the same tools. |
 | `apps/api/test-workers/github-delivery-queue.test.ts` | That an inline GitHub delivery survives a real Queue: the body the consumer receives passes `GitHubDeliveryQueueMessageSchema` and routes the exact signed bytes. |
 | `apps/api/test/github-routing.test.ts` | The GitHub receiver and its Queue consumer: one signature check across both, no D1 read before the reply, staging and removing a large body (including when the enqueue fails), the retry backoff and a rate limit's Retry-After, and `unrouted` acknowledged. Its regional-data-plane block runs the consumer into a real `ProviderWebhookService` over the migrated regional database and a real `WorkspaceDO` — a delivery whose first attempt failed after its receipt committed finishes on redelivery, a retried older lifecycle event does not overwrite a newer one — and once across the real `GitHubRegionalBridge`, with the argument structured-cloned as a service binding would. Nothing in it verifies a signature downstream of the receiver, because nothing in production does. |
-| `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
 | `packages/connectors/src/observability.test.ts` | The shared adapter and provider-request log layers, level selection, identifier retention, content exclusion, and fail-open observer contract. |
 
@@ -1580,7 +1578,7 @@ creates without a recorded provider key cannot use this recovery path.
 
 ## Changelog
 
-### 2026-11-08 — Retirement record: Suggested context
+### 2026-11-08 — Retirement records: Suggested context, Connector digestibility
 
 **`contextual-routing.md` — Suggested context (retired 2026-08-30; document
 removed 2026-11-08).** Suggested context classified unclaimed connector activity
@@ -1609,6 +1607,31 @@ same model whose judgement is in question"); and it rejected reading
 only one of them is about relevance" — the gate broke the feature's own
 generic-webhook acceptance flow while every unit test passed. A future router
 over connector activity starts from those three.
+
+**`connector-digestibility.md` — What each connector activity type declares
+for a digest (retired 2026-11-08).** A reference appendix to this document: one
+table per registered connector (Ashby, Canva, GitHub, Linear, Slack, Notion,
+Google, Granola, Fireflies, X and the generic webhook), one row per declared
+activity type, answering "would a person who was away for a day want this read
+back to them?" with Yes or No and the reason. It is retired because nothing
+reads the answer: the digest it was written for is deleted, `activityIsDigestible`
+went with it, the poll runner no longer stamps a stream's withholding, and
+the manifest summary's derived `digestibleActivityTypes`
+(`packages/contracts/src/index.ts`) has no consumer. The one thing that read the
+document was `packages/connectors/src/digestibility-doc.test.ts`, which
+checked the table's rows against what `createConnectorRegistry` produced; with
+no reader of the answer left, the table was kept only so that test had
+something to read, and both were deleted. What survives is the declaration itself, still
+required: each manifest's `{ digestible, operational }` partition, refused by
+`createActivityTriggers` (`packages/connectors/src/types.ts`) when a type sits
+in both; `ConnectorPollingActivityStream.digestible`; the `digestible` field of
+an activity trigger descriptor, which `packages/agent-harness/src/index.ts`
+deliberately leaves out of what a model sees; and the unwritten
+`workspace_activity_events.digestible` column. The manifests were always
+authoritative, so the verdicts are still there; the reasons are in
+`git show 14d68b1:docs/connector-digestibility.md`. A future surface that
+tells somebody about connector activity reads the rules under
+[Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ### 2026-11-07 — The origin capability and the legacy ID-only activity producers are deleted
 
@@ -4406,7 +4429,7 @@ Shipped in #91.
 activity stream declares `digestible` too, and may only ever withhold — an
 activity reaches a digest when its event type says so *and* its stream agrees.
 Every registered connector is classified; the verdicts and their reasons are in
-[`connector-digestibility.md`](connector-digestibility.md), which this document
+`connector-digestibility.md` (retired), which this document
 owns.
 
 **Why:** A scheduled digest read the activity log directly, and the log could not
@@ -4427,7 +4450,7 @@ somebody's inbox.
 
 **Consequences:** Adding an activity type is now a compile error until it is
 classified, in both the manifest and
-[`connector-digestibility.md`](connector-digestibility.md) — `digestibility-doc.test.ts`
+`connector-digestibility.md` (retired) — `digestibility-doc.test.ts`
 enforces the second. Everything unknown is withheld: an unregistered connector,
 a dropped event type, an activity older than the declaration. That is deliberate
 and one-directional, but it means a misconfigured region withholds everything

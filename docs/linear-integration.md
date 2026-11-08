@@ -230,7 +230,7 @@ scope mapping, the routing, and the native-agent gate. It does not own:
 | --- | --- |
 | The registry, manifests, and adapter rules every connector obeys | [`connectors.md`](connectors.md) |
 | The registration itself and its regional routing | [`provider-apps.md`](provider-apps.md) |
-| Which Linear activity types are declared digestible | [`connector-digestibility.md`](connector-digestibility.md) |
+| What a Linear activity type's `digestible` declaration means | [`connectors.md`](connectors.md#declaring-what-a-digest-may-read) |
 | The configured deployment boundary the shared ingress sits on | [`regionalization.md`](regionalization.md) |
 | The flag that gates the native-agent surface | [`feature-flags.md`](feature-flags.md) |
 | Credential encryption and webhook verification rules | [`security.md`](security.md) |
@@ -260,7 +260,6 @@ scope mapping, the routing, and the native-agent gate. It does not own:
 | `apps/api/test/linear-oauth.test.ts` | Both connection scopes through the shared service callback, with migrated regional and object schemas, simulated Linear endpoints, and persisted connection/attempt/routing assertions. |
 | `packages/connectors/src/linear-agent.test.ts` | The native-agent metadata: invocation modes, activity kinds, deadlines, and the `protocol_only` refusal. |
 | `apps/api/test/linear-routing.test.ts` | The organization-to-region directory and the forwarding of exact signed bytes. |
-| `packages/connectors/src/digestibility-doc.test.ts` | That every declared Linear activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 
 Run a single file from the package directory —
 `pnpm --filter @rally/connectors exec vitest run src/linear.test.ts` — the path is
