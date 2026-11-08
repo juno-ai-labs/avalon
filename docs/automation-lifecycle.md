@@ -1939,7 +1939,10 @@ pills, both menus say **Copy link**, the sort control takes the Canvases list's
 ⇅, and a waiting Sidekick's sidebar row keeps its question, with the working
 dot, while a later run works (`pendingQuestion` is the newest waiting run's). `nextRunAt` is formatted in `scheduleTimeZone` when present. A run row's
 facts each stay on one line at phone width, wrapping only between them, where
-"6 steps" and "7 hours ago" broke mid-phrase (vis3 b1-R2-8). The client
+"6 steps" and "7 hours ago" broke mid-phrase (vis3 b1-R2-8). The run view's
+pill names the run as the row it was opened from does ("Run 6", vis3 e2-N3),
+reading the number from that row in the cached shared conversation; a run
+opened by a link before that conversation has loaded reads "Run". The client
 reads its own starting or working run's row as read as it arrives, mirroring
 the requester seat.
 
