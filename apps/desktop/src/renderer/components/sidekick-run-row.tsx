@@ -34,6 +34,31 @@ const TRIGGER_LABEL: Record<RunTrigger, string> = {
   inbound_email: 'Email',
 };
 
+/** What a run is called: "Run 6", or "Run" for one no projection has numbered. */
+export function sidekickRunLabel(runNumber: number | null | undefined): string {
+  return runNumber ? `Run ${runNumber}` : 'Run';
+}
+
+/**
+ * The open run's number, read from its row in the Sidekick's shared
+ * conversation, which the shared conversation's socket keeps cached. A run
+ * opened before that conversation has loaded (a link straight to it) reads
+ * null until it does, and its label says "Run". The observer keeps the
+ * cached transcript alive while the run view stands in for it.
+ */
+export function useSidekickRunNumber(sidekickId: string, runId: string | null): number | null {
+  return useQuery<WorkstreamTranscriptSnapshot | undefined, Error, number | null>({
+    queryKey: orderedTranscriptQueryKey(sidekickId),
+    queryFn: () => undefined,
+    enabled: false,
+    staleTime: Number.POSITIVE_INFINITY,
+    select: (snapshot) => (runId
+      ? orderedTranscriptMessages(snapshot, sidekickId)
+        .find((message) => message.automationActivation?.runId === runId)?.automationActivation?.runNumber ?? null
+      : null),
+  }).data ?? null;
+}
+
 /** The search a Sidekick screen reads to show one run's own conversation in place of the shared one. */
 export function sidekickRunSearch(runId: string): string {
   return `?run=${encodeURIComponent(runId)}`;
@@ -67,7 +92,7 @@ export function SidekickRunRow({ message }: { message: Message }): React.JSX.Ele
               says. A count of no steps says nothing yet, so it waits for the
               first. Each fact is its own unbroken span, so a narrow row
               wraps between facts ("· 6 steps") rather than inside one. */}
-          <span className="sidekick-run-row-fact sidekick-run-row-name">{activation.runNumber ? `Run ${activation.runNumber}` : 'Run'}</span>
+          <span className="sidekick-run-row-fact sidekick-run-row-name">{sidekickRunLabel(activation.runNumber)}</span>
           {activation.trigger && <> · <span className="sidekick-run-row-fact">{TRIGGER_LABEL[activation.trigger]}</span></>}
           {' · '}<span className="sidekick-run-row-fact sidekick-run-row-state">
             {live && <span aria-hidden="true" className="sidekick-working-dot" />}{STATE_LABEL[run.state]}

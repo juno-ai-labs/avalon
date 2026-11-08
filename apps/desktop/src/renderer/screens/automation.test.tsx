@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
 import type { AutomationDetail } from '../lib/types';
 import type * as WorkspaceSocket from '../lib/workspace-socket';
+import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { AutomationScreen } from './automation';
 
 const getAutomation = vi.hoisted(() => vi.fn());
@@ -141,6 +142,42 @@ describe("The Sidekick's conversation composer", () => {
     expect(screen.getByText('Run')).toBeInTheDocument();
     fireEvent.click(back);
     expect(await screen.findByRole('button', { name: 'Sidekick menu: Weekly changelog' })).toBeInTheDocument();
+  });
+
+  it("numbers the run's pill as its row in the shared conversation does", async () => {
+    viewer.session = { user: { id: 'user-1' }, workspace: { role: 'member' } };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const RUN_ID = '00000000-0000-7000-8000-0000000000bb';
+    // The shared conversation as its socket leaves it: the run's row, numbered 6.
+    client.setQueryData(orderedTranscriptQueryKey(SIDEKICK_ID), {
+      snapshotId: 'snapshot-shared', snapshotThrough: 1, eventSequence: 1, snapshotAtUtc: '2026-11-08T10:00:00.000Z',
+      unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 }, covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{
+          transcriptSequence: 1, turnId: 'turn-run-1', entryKind: 'conversation', actor: 'system', authorUserId: null,
+          authorSnapshot: null, attentionOrdinal: 1, clientMessageId: 'automation-activation:run-1', externalActor: null,
+          createdAtUtc: '2026-11-08T10:00:00.000Z', revision: 1,
+          blocks: [{
+            type: 'text', blockId: 'block-run-1', blockIndex: 0, text: 'Done.', streaming: false,
+            messageType: 'automation_activation',
+            structuredContent: {
+              type: 'automation_activation', schemaVersion: 1, automationId: '00000000-0000-7000-8000-0000000000aa', automationName: 'Weekly changelog',
+              runId: RUN_ID, deliveryId: 'delivery-1', trigger: { kind: 'manual' }, occurredAt: 1789088651967,
+              run: { state: 'completed', stepCount: 2, reply: 'Done.' },
+            },
+            sidekickRun: { requesterUserId: 'user-1', runNumber: 6 },
+            mentions: [], attachments: [],
+          }],
+          blockCount: 1, activityId: null,
+        }],
+        activities: [], pluginRuns: [],
+      }],
+      activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
+    });
+    renderScreen(client, `/sidekicks/${SIDEKICK_ID}?run=${RUN_ID}`);
+    await screen.findByRole('button', { name: /Weekly changelog/ });
+    expect(screen.getByText('Run 6')).toBeInTheDocument();
   });
 
   it('leaves Edit Sidekick from the chip at the composer, and on Escape', async () => {
