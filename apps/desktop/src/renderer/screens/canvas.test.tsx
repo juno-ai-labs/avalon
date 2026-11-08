@@ -32,9 +32,10 @@ const getWorkspaceMembers = vi.hoisted(() => vi.fn());
 const createScopeInvitations = vi.hoisted(() => vi.fn());
 const getCanvasAccess = vi.hoisted(() => vi.fn());
 const requestCanvasAccess = vi.hoisted(() => vi.fn());
+const decideCanvasAccess = vi.hoisted(() => vi.fn());
 vi.mock('../lib/collaboration-session', () => ({
   useCollaborationSession: () => ({
-    api: { getCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, createScopeInvitations, getCanvasAccess, requestCanvasAccess },
+    api: { getCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, createScopeInvitations, getCanvasAccess, requestCanvasAccess, decideCanvasAccess },
     session: { user: { id: ME }, workspace: { id: WORKSPACE, region: 'global', role: 'member' } },
   }),
   useOptionalCollaborationSession: () => null,
@@ -109,6 +110,7 @@ beforeEach(() => {
   createScopeInvitations.mockReset().mockResolvedValue({ status: 'created', invitations: [] });
   getCanvasAccess.mockReset().mockRejectedValue(new ApiError('This Canvas does not exist', 404, 'canvas_not_found'));
   requestCanvasAccess.mockReset().mockResolvedValue({ status: 'pending' });
+  decideCanvasAccess.mockReset().mockResolvedValue({ state: 'approved' });
   document.title = 'Rally';
   getWorkspaceMembers.mockReset().mockResolvedValue([
     { id: ME, name: 'Adam Jones', email: 'adam@example.test', timezone: 'UTC' },
@@ -497,6 +499,40 @@ describe('CanvasScreen', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'participants', userIds: [MAYA] }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share Canvas' })).toBeNull());
+  });
+
+  it("lists a decider's pending requests in Share, and Approve keeps the new participant when Save follows", async () => {
+    getCanvas.mockResolvedValue(detail({ visibility: 'participants', participantUserIds: [],
+      pendingAccessRequests: [{ userId: MAYA, name: 'Maya Lin', message: 'For the board review', requestedAt: '2026-11-08T09:00:00.000Z' }] }));
+    setCanvasAudience.mockResolvedValue(detail({ visibility: 'participants', participantUserIds: [MAYA] }));
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    const requests = within(dialog).getByRole('region', { name: 'Requests' });
+    const [row] = within(requests).getAllByRole('listitem');
+    expect(row).toHaveTextContent('Maya Lin');
+    expect(row).toHaveTextContent('For the board review');
+
+    // The approval is read back as the detail: Maya is in, with no request left.
+    getCanvas.mockResolvedValue(detail({ visibility: 'participants', participantUserIds: [MAYA], pendingAccessRequests: [] }));
+    fireEvent.click(within(row!).getByRole('button', { name: 'Approve Maya Lin' }));
+    await waitFor(() => expect(decideCanvasAccess).toHaveBeenCalledWith(CANVAS, MAYA, 'approve'));
+    await waitFor(() => expect(within(dialog).queryByRole('region', { name: 'Requests' })).toBeNull());
+    expect(await within(dialog).findByRole('checkbox', { name: 'Maya Lin' })).toBeChecked();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'participants', userIds: [MAYA] }));
+  });
+
+  it('shows Deny and its refusal by name', async () => {
+    getCanvas.mockResolvedValue(detail({ pendingAccessRequests: [{ userId: MAYA, name: 'Maya Lin', message: null, requestedAt: '2026-11-08T09:00:00.000Z' }] }));
+    decideCanvasAccess.mockRejectedValue(new ApiError('Someone already answered this request', 409, 'canvas_access_request_settled'));
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Share Canvas' })).getByRole('button', { name: 'Deny Maya Lin' }));
+    await waitFor(() => expect(decideCanvasAccess).toHaveBeenCalledWith(CANVAS, MAYA, 'deny'));
+    expect(await screen.findByRole('alertdialog', { name: 'The request could not be answered' })).toHaveTextContent('Someone already answered this request');
   });
 
   it('offers only guests to pick once the whole Organization can open it, and never the viewer', async () => {
