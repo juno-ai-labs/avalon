@@ -40,6 +40,13 @@ export interface CanvasLinkTarget extends WorkspaceTarget {
   canvasId: string;
   /** One of the Canvas's artifacts to open it onto, in the right rail. */
   artifactId?: string;
+  /**
+   * One message of the Canvas's Chat to open it at: the turn's id, with
+   * `sequence`, its transcript sequence. Both or neither, and never beside
+   * `artifactId`. A push about a mention or a reply opens here.
+   */
+  turnId?: string;
+  sequence?: number;
 }
 
 export interface SidekickLinkTarget extends WorkspaceTarget {
@@ -59,6 +66,34 @@ function assertCanvasLinkTarget(target: CanvasLinkTarget): void {
   if (!isWorkspaceTarget(target) || !isId(target.canvasId) || (target.artifactId !== undefined && !isId(target.artifactId))) {
     throw new Error("A Canvas link requires a region, Organization UUID, and Canvas UUID");
   }
+  if ((target.turnId === undefined) !== (target.sequence === undefined)
+    || (target.turnId !== undefined && (!isId(target.turnId) || !isSequence(target.sequence!) || target.artifactId !== undefined))) {
+    throw new Error("A Canvas link's message needs a turn UUID and a positive sequence, and no artifact");
+  }
+}
+
+function isSequence(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+/** `?turn=<turn>&sequence=<n>` for a target that names a message, else the empty string. */
+function messageSearch(target: CanvasLinkTarget): string {
+  return target.turnId === undefined ? "" : `?${new URLSearchParams({ turn: target.turnId, sequence: String(target.sequence) })}`;
+}
+
+/**
+ * The message a Canvas link's query names: `turn` (a UUID) and `sequence` (a
+ * positive integer), exactly those two keys, once each. `{}` for an empty
+ * query; null for any other.
+ */
+function parseMessageSearch(search: URLSearchParams): { turnId?: string; sequence?: number } | null {
+  const keys = [...search.keys()];
+  if (keys.length === 0) return {};
+  const turnId = search.get("turn");
+  const sequence = search.get("sequence");
+  if (keys.length !== 2 || turnId === null || sequence === null || !isId(turnId) || !/^[1-9][0-9]*$/u.test(sequence)) return null;
+  const parsed = Number(sequence);
+  return isSequence(parsed) ? { turnId, sequence: parsed } : null;
 }
 
 function assertSidekickLinkTarget(target: SidekickLinkTarget): void {
@@ -73,22 +108,23 @@ function organizationPath(target: WorkspaceTarget): string {
 
 /**
  * The canonical URL for a Canvas: `/app/<region>/<organization>/cv/<canvas>/`,
- * with `a/<artifact>/` when it opens onto one of its artifacts. A Canvas
+ * with `a/<artifact>/` when it opens onto one of its artifacts, or
+ * `?turn=<turn>&sequence=<n>` when it opens at one message. A Canvas
  * belongs to the Organization, as a Sidekick does, so it sits directly under
  * the Organization segment.
  */
 export function canvasCanonicalUrl(webBaseUrl: string, target: CanvasLinkTarget): string {
   assertCanvasLinkTarget(target);
   const artifact = target.artifactId ? `a/${uuidToBase58(target.artifactId)}/` : "";
-  return new URL(`${organizationPath(target)}/cv/${uuidToBase58(target.canvasId)}/${artifact}`, webBaseUrl).toString();
+  return new URL(`${organizationPath(target)}/cv/${uuidToBase58(target.canvasId)}/${artifact}${messageSearch(target)}`, webBaseUrl).toString();
 }
 
-/** The addressed desktop destination for a Canvas. */
+/** The addressed desktop destination for a Canvas, with the message's query when it names one. */
 export function canvasDeepLink(target: CanvasLinkTarget): string {
   assertCanvasLinkTarget(target);
   const artifact = target.artifactId ? `/artifacts/${uuidToBase58(target.artifactId)}` : "";
   return addWorkspaceTarget(
-    new URL(`${DESKTOP_DEEP_LINK_PROTOCOL}//canvases/${uuidToBase58(target.canvasId)}${artifact}`),
+    new URL(`${DESKTOP_DEEP_LINK_PROTOCOL}//canvases/${uuidToBase58(target.canvasId)}${artifact}${messageSearch(target)}`),
     target,
     { base58: true },
   ).toString();
@@ -144,13 +180,15 @@ function parseDeepLink(url: URL): LinkTarget | null {
   const addressed = parseWorkspaceAddressedDeepLink(url);
   if (!addressed) return null;
   const { destination, target } = addressed;
-  if (destination.hash || destination.search || destination.username || destination.password || destination.port) return null;
+  if (destination.hash || destination.username || destination.password || destination.port) return null;
   const [encodedId = "", childKind, encodedChildId, ...extra] = destination.pathname.slice(1).split("/");
   const id = uuidFromBase58(encodedId);
   if (!id || extra.length) return null;
-  if (destination.hostname === "sidekicks") return childKind === undefined ? { kind: "sidekick", ...target, sidekickId: id } : null;
+  if (destination.hostname === "sidekicks") return childKind === undefined && !destination.search ? { kind: "sidekick", ...target, sidekickId: id } : null;
   if (destination.hostname !== "canvases") return null;
-  if (childKind === undefined) return { kind: "canvas", ...target, canvasId: id };
+  const message = parseMessageSearch(destination.searchParams);
+  if (!message || (destination.search && childKind !== undefined)) return null;
+  if (childKind === undefined) return { kind: "canvas", ...target, canvasId: id, ...message };
   const artifactId = childKind === "artifacts" && encodedChildId ? uuidFromBase58(encodedChildId) : null;
   return artifactId ? { kind: "canvas", ...target, canvasId: id, artifactId } : null;
 }
@@ -173,8 +211,12 @@ export function parseLinkTarget(raw: string, options: { webBaseUrl: string | rea
   }
   const deepLink = parseDeepLink(url);
   if (deepLink) return deepLink;
-  if (!origins.includes(url.origin) || url.search || url.hash || url.username || url.password) return null;
-  return parseLinkPathTarget(url.pathname);
+  if (!origins.includes(url.origin) || url.hash || url.username || url.password) return null;
+  const target = parseLinkPathTarget(url.pathname);
+  if (!target || !url.search) return target;
+  // Only a Canvas link with no artifact takes a query: the message it opens at.
+  const message = target.kind === "canvas" && target.artifactId === undefined ? parseMessageSearch(url.searchParams) : null;
+  return message ? { ...target, ...message } : null;
 }
 
 /** What the web app's Organization URL names: its landing, or a Canvas or Sidekick inside it. */
@@ -187,7 +229,8 @@ const SHELL_HASH = /^#\/(?:(canvases|sidekicks)\/([^/?]+)(?:\?(.*))?)?$/u;
  * Read the web app's own Organization URL,
  * `/app/workspaces/<region>/<organization>`, on one of the origins the caller
  * names, with no hash or `#/` (its landing), `#/canvases/<canvas>` (with
- * `?artifact=<artifact>` and nothing else) or `#/sidekicks/<sidekick>`. Ids
+ * `?artifact=<artifact>` and nothing else, or `?turn=<turn>&sequence=<n>`
+ * and nothing else) or `#/sidekicks/<sidekick>`. Ids
  * are UUIDs here, as the web app writes them. Any other hash route, query or
  * credential reads as null. `parseLinkTarget` refuses a hash, which is why this
  * reader is separate; it takes no canonical or deep link.
@@ -216,7 +259,11 @@ export function parseOrganizationShellTarget(raw: string, options: { webBaseUrl:
   if (query === undefined) return { kind: "canvas", ...organization, canvasId: id! };
   const search = new URLSearchParams(query);
   const artifactId = search.get("artifact");
-  return [...search.keys()].length === 1 && artifactId !== null && isId(artifactId)
+  if (artifactId === null) {
+    const message = parseMessageSearch(search);
+    return message?.turnId !== undefined ? { kind: "canvas", ...organization, canvasId: id!, ...message } : null;
+  }
+  return [...search.keys()].length === 1 && isId(artifactId)
     ? { kind: "canvas", ...organization, canvasId: id!, artifactId }
     : null;
 }
