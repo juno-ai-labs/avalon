@@ -212,15 +212,6 @@ const AZURE_MODEL_BINDINGS = new Map<CanonicalModelId, AzureModelBinding>([
   }],
 ]);
 
-/**
- * Whether a model is bound to the Azure transport — tried there first, or
- * only there — rather than reaching OpenRouter alone. A caller that replaces
- * the OpenRouter client's `fetch` (the demo seed seam) has to know, because
- * the seam covers that client and nothing else.
- */
-export function isAzureBoundModel(modelId: string): boolean {
-  return AZURE_MODEL_BINDINGS.has(modelId as CanonicalModelId);
-}
 const DEFAULT_CATALOG_TOKENS = 2_500;
 const COMPACTION_FRACTION = 0.8;
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;

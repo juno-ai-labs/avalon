@@ -1508,9 +1508,9 @@ describe("a hosted Sidekick", () => {
         [scheduled, JSON.stringify({ kind: "schedule", scheduleId: "daily", scheduledFor: NOW })],
       ] as const) {
         state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
-            harness_run_id, state, summary, opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at,
+            harness_run_id, state, summary, opening_json, run_as_user_id, coordinator_user_id, created_at, started_at,
             completed_at, updated_at)
-          VALUES (?, ?, ?, ?, 1, ?, 'running', NULL, NULL, NULL, ?, ?, 1, 1, NULL, 1)`,
+          VALUES (?, ?, ?, ?, 1, ?, 'running', NULL, NULL, ?, ?, 1, 1, NULL, 1)`,
           AUTOMATION_ID, runId, `notice:${runId}`, trigger, `${runId}-harness`, AUTHOR_ID, AUTHOR_ID);
       }
     });
@@ -1814,9 +1814,9 @@ describe("a hosted Sidekick", () => {
     const runId = (suffix: string) => `00000000-0000-7000-8000-00000000${suffix.padStart(4, "0")}`;
     const seed = (id: string, state: string, revision: number, at: number) => `
       INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision, harness_run_id,
-        state, summary, opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at, completed_at, updated_at)
+        state, summary, opening_json, run_as_user_id, coordinator_user_id, created_at, started_at, completed_at, updated_at)
       VALUES ('${AUTOMATION_ID}', '${id}', 'manual:${id}', '{"kind":"manual"}', ${revision}, '${id}-harness', '${state}',
-        NULL, NULL, NULL, '${AUTHOR_ID}', '${AUTHOR_ID}', ${at}, ${at}, ${state === "needs_input" ? "NULL" : at}, ${at})`;
+        NULL, NULL, '${AUTHOR_ID}', '${AUTHOR_ID}', ${at}, ${at}, ${state === "needs_input" ? "NULL" : at}, ${at})`;
     await runInDurableObject(workspaceStub(), async (_instance, state) => {
       // Twenty-three completed, then three failures newer than all of them, then
       // two stops newer still, two runs waiting for input, and two runs under

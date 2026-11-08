@@ -3,13 +3,10 @@ import {
   asUserId,
   asWorkspaceId,
   type AutomationDetail,
-  type AutomationDraft,
   type AutomationExecutionPrincipalClaim,
   type AutomationRun,
   type AutomationScope,
-  type AutomationSetEvaluatorRulesInputV1,
   type AutomationSummary,
-  type DemoSeed,
   type WorkstreamAppearancePatch,
   type SidekickAudienceUpdate,
 } from "@rally/contracts";
@@ -125,49 +122,6 @@ export class AutomationService {
   async apply(automationId: string): Promise<AutomationDetail> {
     const workspace = await this.workspace();
     return workspace.sidekickApply(await this.actorRequest(automationId));
-  }
-
-  /**
-   * Record a definition and, when it is ready, publish it — the same call the
-   * drafting conversation makes when a person accepts what it wrote.
-   *
-   * The caller supplies the definition rather than a model writing it, which is
-   * how a demo gets a published Sidekick without depending on a live drafting
-   * run. Management authority is the object's to check, as it is for every
-   * other method here.
-   */
-  async saveDefinition(automationId: string, input: {
-    draft: AutomationDraft;
-    evaluatorRules: AutomationSetEvaluatorRulesInputV1 | null;
-    submittedByRunId: string | null;
-  }): Promise<{ definitionRevision: number; ready: boolean }> {
-    const workspace = await this.workspace();
-    const { actor } = await this.actorRequest(automationId);
-    return workspace.sidekickSaveDefinition({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      automationId: asAutomationId(automationId),
-      draft: input.draft,
-      evaluatorRules: input.evaluatorRules,
-      submittedByRunId: input.submittedByRunId,
-      actor,
-    });
-  }
-
-  /**
-   * Start one run whose model bytes come from a demo's pack instead of a
-   * provider. Only the demo seeder calls this; `POST /sidekicks/:id/run` goes
-   * to `runNow`, whose request shape cannot carry a seed. See
-   * `HostedSidekick.runSeeded`.
-   */
-  async runSeeded(automationId: string, seed: DemoSeed): Promise<{ runId: string; reused: boolean }> {
-    const workspace = await this.workspace();
-    const { actor } = await this.actorRequest(automationId);
-    return workspace.sidekickRunSeeded({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      automationId: asAutomationId(automationId),
-      actor,
-      seed,
-    });
   }
 
   /**

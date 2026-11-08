@@ -102,7 +102,7 @@ function signingKey(env: Env): Uint8Array {
 /**
  * A socket ticket is a session credential: admission stores its `sid` on the
  * attachment, and the access-revocation queue matches that id against real
- * `sessions` rows to close what a logout revoked. A connector or demo-seed
+ * `sessions` rows to close what a logout revoked. A connector or other non-session
  * principal has no session behind its correlation id, so a ticket minted from
  * one would be admitted for reads and then closeable by no session revocation
  * — the documented invariant is that sockets never carry a non-session

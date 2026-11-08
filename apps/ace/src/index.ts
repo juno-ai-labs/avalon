@@ -160,9 +160,9 @@ app.put('/api/models/:role', async (c) => {
 /**
  * The workspaces tab. Ace holds nothing here: each route asks the regional
  * API over the operator credential and relays its answer, and a regional
- * refusal reaches the page as the code and message the API gave, so an
- * operator reads "the workspace is not in this region" rather than "request
- * failed".
+ * refusal reaches the page as the code and message the API gave
+ * (`workspace_not_found`, "No workspace with this id in this region") rather
+ * than "request failed".
  */
 const UuidSchema = z.string().uuid();
 const PlanRequestSchema = z.strictObject({

@@ -181,6 +181,18 @@ export const SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE sidekick_runs ADD COLUMN requester_user_id TEXT`,
 ];
 
+/**
+ * WorkspaceDO migration 154: the demo seeder's script for a seeded run's model
+ * bytes leaves `sidekick_runs`. Demo preparation was removed on 2026-11-08 and
+ * nothing writes or reads the column; every run production made held NULL.
+ * The column's CHECK is its own and no index, trigger or key names it, so
+ * SQLite drops it in place. `docs/architecture.md`'s 2026-11-08 entry records
+ * the retirement.
+ */
+export const SIDEKICK_RUN_SEED_DROP_STATEMENTS: readonly string[] = [
+  `ALTER TABLE sidekick_runs DROP COLUMN seed_json`,
+];
+
 /** The alarm kind that writes one run's row into its Sidekick's shared conversation. */
 export const SIDEKICK_RUN_ROW_ALARM_KIND = "sidekick_run_row";
 

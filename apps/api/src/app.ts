@@ -20,7 +20,6 @@ import { automationRoutes, sidekickRoutes } from "./routes/automations";
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
 import { connectorMaintenanceOperatorRoutes } from './routes/connector-maintenance-operations';
 import { conversationRoutes } from "./routes/conversations";
-import { demoOperatorRoutes } from './routes/demo-operations';
 import { devRoutes } from "./routes/dev";
 import { featureFlagRoutes } from "./routes/feature-flags";
 import { faviconRoutes } from "./routes/favicons";
@@ -144,7 +143,6 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/telemetry", publicTelemetryRoutes);
   app.route("/links", linkRoutes);
   app.route('/internal/telemetry', telemetryOperatorRoutes);
-  app.route('/internal/demos', demoOperatorRoutes);
   app.route('/internal/connector-maintenance', connectorMaintenanceOperatorRoutes);
   app.route('/internal/access', accessOperatorRoutes);
   app.route('/internal/workspaces', workspaceOperatorRoutes);

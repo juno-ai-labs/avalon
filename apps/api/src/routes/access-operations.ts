@@ -6,10 +6,10 @@ import type { HonoAppEnv } from '../env';
 import { ApiError } from '../lib/api-error';
 import { accessAcknowledgementContent } from '../services/access-request-content';
 import { requestAccess } from '../services/access-request-service';
-import { getOperator, requireDemoOperator, requireOperatorRole } from '../telemetry/operator-auth';
+import { ACE_OPERATOR_ROLE, getOperator, requireAceOperator, requireOperatorRole } from '../telemetry/operator-auth';
 
 export const accessOperatorRoutes = new Hono<HonoAppEnv>();
-accessOperatorRoutes.use('*', requireDemoOperator, requireOperatorRole('demos'));
+accessOperatorRoutes.use('*', requireAceOperator, requireOperatorRole(ACE_OPERATOR_ROLE));
 accessOperatorRoutes.post('/requests/:id/recover', async (c) => {
   if (c.env.AVALON_REGION !== 'global') throw new ApiError(404, 'not_found', 'Not found');
   const id = z.string().uuid().safeParse(c.req.param('id'));

@@ -270,7 +270,7 @@ describe("socket ticket transport", () => {
     expect(response).toBe(rejection);
   });
 
-  it.each(["connector", "demo_seed"] as const)("refuses to mint any socket ticket for a %s principal", async (principal) => {
+  it.each(["connector"] as const)("refuses to mint any socket ticket for a %s principal", async (principal) => {
     // A socket ticket is a session credential: admission stores its `sid`, and
     // the access-revocation queue closes sockets by matching that id against
     // real `sessions` rows. A non-session principal's correlation id matches
@@ -284,7 +284,7 @@ describe("socket ticket transport", () => {
       SESSION_SIGNING_KEY: "socket-ticket-test-signing-key",
     });
     const auth = {
-      sessionId: principal === "connector" ? "slack:T123:U456" : "demo-seed:op:action",
+      sessionId: "slack:T123:U456",
       userId: asUserId("00000000-0000-7000-8000-000000000722"),
       workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000723"),
       region: "global" as const,

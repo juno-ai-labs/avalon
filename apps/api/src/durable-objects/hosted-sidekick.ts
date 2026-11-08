@@ -57,7 +57,6 @@ import {
   type AutomationRunDefinitionV1,
   type AutomationRunTriggerV1,
   type AutomationScope,
-  type DemoSeed,
   externalEventOccurrenceKey,
   withoutUnusableAutomationResourceIds,
 } from "@rally/contracts";
@@ -101,7 +100,6 @@ import {
   type SidekickConversationMessageRequest,
   type SidekickConversationMessageRoute,
   AutomationRunRequestSchema,
-  AutomationRunSeededRequestSchema,
   AutomationSetAppearanceRequestSchema,
   AutomationSetAudienceRequestSchema,
   type AutomationSetAudienceRequest,
@@ -122,7 +120,6 @@ import {
   type AutomationRunDefinitionRequest,
   type AutomationRunNowRequest,
   type AutomationRunRequest,
-  type AutomationRunSeededRequest,
   type AutomationSetAppearanceRequest,
   type AutomationSubmitDefinitionRequest,
   type SidekickRunContinuation,
@@ -308,8 +305,6 @@ interface RunRow extends Record<string, SqlStorageValue> {
   state: RunState;
   summary: string | null;
   opening_json: string | null;
-  /** A demo seed's script for this run's model bytes; null for every other run. */
-  seed_json: string | null;
   /** Who the run runs as, recorded when it is provisioned; null while pending. */
   run_as_user_id: string | null;
   coordinator_user_id: string | null;
@@ -354,7 +349,6 @@ export interface SidekickRunProvisioning {
   modelOverride: string | null;
   definitionRevision: number;
   definition: AutomationRunDefinitionV1;
-  seedJson: string | null;
 }
 
 /** What a review's delivery needs, read once by the Queue consumer that wakes the wizard. */
@@ -1169,32 +1163,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   }
 
   /**
-   * Run once from a script instead of from a model, for a demo's seeded
-   * history. Separate from `runNow` so no client request shape carries a seed;
-   * `docs/demo-workspaces.md` owns the seeding rules.
-   */
-  async runSeeded(input: AutomationRunSeededRequest): Promise<{ runId: string; reused: boolean }> {
-    const request = parseRpcInput(AutomationRunSeededRequestSchema, input, "run_seeded");
-    await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
-    const coordinator = await this.coordinator(request.actor.userId, null, false);
-    // Read after the access check's await, as `runNow` does.
-    const row = this.assertSidekick(request.workspaceId, request.automationId);
-    if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
-    if (request.seed.assistant === null) {
-      throw new ApiError(422, "demo_seed_run_without_script", "A seeded run needs a turn to answer with");
-    }
-    const admitted = this.admitOccurrence(
-      row.accepted_definition_revision,
-      `seed:${request.seed.packVersion}:${request.seed.actionId}`,
-      { kind: "manual", requestedByUserId: asUserId(request.actor.userId) },
-      null,
-      coordinator,
-      request.seed,
-    );
-    return admitted;
-  }
-
-  /**
    * Who answers a person's input in the Sidekick's shared conversation
    * (substream `"0"`), once it is addressed to an agent.
    *
@@ -1252,7 +1220,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         text: request.text,
       }),
       coordinator ?? requester,
-      null,
       requester,
     );
     return { route: "run", runId: admitted.runId, reused: admitted.reused };
@@ -2337,7 +2304,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     trigger: AutomationRunTriggerV1,
     opening: AutomationRunDefinitionV1["opening"],
     coordinatorUserId: string | null,
-    seed: DemoSeed | null = null,
     requesterUserId: string | null = null,
   ): { runId: string; reused: boolean } {
     if (acceptedRevision === null) {
@@ -2352,9 +2318,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const run = first(this.sql.exec<{ run_id: string; state: RunState }>(
       `INSERT INTO sidekick_runs
          (sidekick_id, run_id, occurrence_key, trigger_json, definition_revision, harness_run_id, state,
-          summary, opening_json, seed_json, created_at, started_at, completed_at, updated_at, coordinator_user_id,
+          summary, opening_json, created_at, started_at, completed_at, updated_at, coordinator_user_id,
           requester_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)
        ON CONFLICT(sidekick_id, occurrence_key) DO UPDATE SET occurrence_key = excluded.occurrence_key
        RETURNING run_id, state`,
       this.sidekickId,
@@ -2366,7 +2332,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       coordinatorUserId === null ? "needs_input" : "pending",
       coordinatorUserId === null ? "Needs attention: no delegated user is available" : null,
       opening && coordinatorUserId !== null ? JSON.stringify(opening) : null,
-      seed ? JSON.stringify(seed) : null,
       now,
       now,
       coordinatorUserId,
@@ -2471,7 +2436,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       modelOverride: sidekick.model_override,
       definitionRevision: run.definition_revision,
       definition: this.runDefinition(view),
-      seedJson: run.seed_json,
     };
   }
 
@@ -2979,7 +2943,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
                 'run_id', run.run_id, 'occurrence_key', run.occurrence_key, 'trigger_json', run.trigger_json,
                 'definition_revision', run.definition_revision, 'harness_run_id', run.harness_run_id,
                 'state', run.state, 'summary', run.summary, 'opening_json', run.opening_json,
-                'seed_json', run.seed_json, 'run_as_user_id', run.run_as_user_id, 'coordinator_user_id', run.coordinator_user_id,
+                'run_as_user_id', run.run_as_user_id, 'coordinator_user_id', run.coordinator_user_id,
                 'requester_user_id', run.requester_user_id, 'created_at', run.created_at,
                 'started_at', run.started_at, 'completed_at', run.completed_at, 'updated_at', run.updated_at
               ) END AS run,
