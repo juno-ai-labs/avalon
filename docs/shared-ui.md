@@ -1,9 +1,10 @@
 # Shared collaboration UI
 
-`@rally/ui` owns the collaboration presentation used by desktop and the lite
-browser. Desktop's current UI is the reference;
-each smaller host supplies fewer actions to the same components rather than
-drawing a second design.
+`@rally/ui` owns the collaboration presentation used by the desktop and browser
+hosts. Desktop's current UI is the reference; the browser mounts the same
+desktop shell ([`browser-client.md`](browser-client.md)), and a host or a guest
+with fewer capabilities supplies fewer actions to the same components rather
+than drawing a second design.
 
 ## Where the code lives
 
@@ -21,9 +22,9 @@ drawing a second design.
 - `packages/ui/src/lib`: browser-safe display helpers, theme application and
   device preferences. `packages/ui/src/styles` owns the shared styles/tokens.
 - Desktop renderer adapters retain routing, UI stores, IPC, telemetry and data
-  queries. Existing import sites re-export shared primitives during migration.
-- The next stacked browser host supplies email entry, cookie session restoration,
-  its scoped directory and selected-conversation data. Those screens are not in #824.
+  queries. Existing import sites re-export shared primitives.
+- The browser host supplies email entry and cookie session restoration, then
+  mounts the desktop shell ([`browser-client.md`](browser-client.md)).
 
 The application error boundary is shared, with host-specific error reporting.
 
@@ -111,8 +112,8 @@ use native disabling, and enabled text controls add no redundant tooltip.
 
 Shared components receive presentation data and callbacks. They never import an
 application, fetch authority, establish sockets or call Electron. Optional actions
-represent host capabilities; omitting setup and authoring actions keeps the browser
-lite. The common feed/composer and resource/participant dialogs remain the existing
+represent host capabilities; a host or guest omits the setup and authoring
+actions it cannot offer. The common feed/composer and resource/participant dialogs remain the existing
 ConversationSurface implementation.
 
 `Toast` is the controlled confirmation pill. Its shared presence hook also
@@ -125,9 +126,9 @@ conversation. Directory appearance comes from canonical reads.
 Desktop and browser both mount `ResizableSidebar`, which only resizes, and
 compose the plain `SidebarFooter` with an account slot
 ([`desktop-shell.md`](desktop-shell.md)). Its collapse toggle, compact layout
-and `SidebarCollapseFooter` were deleted (2026-11): no host had collapsed it
-since Sideline was removed. A host that keeps a sidebar's width (and its
-collapsed state) across launches does it through `lib/sidebar-preferences.ts`
+and `SidebarCollapseFooter` were deleted (2026-11), because no host collapsed
+it any more. A host that keeps a sidebar's width (and its collapsed state, which
+the library still stores) across launches does it through `lib/sidebar-preferences.ts`
 under its own local-storage keys. A missing or unreadable width falls back to
 the default, a readable one is clamped to the sidebar's limits, a missing
 collapsed flag reads as expanded, and a refused write leaves the in-memory state
@@ -145,13 +146,10 @@ screens of the Canvases and Sidekicks lists are the desktop host's
 component infers a capability from an omitted prop: a menu with no switch is a
 host that decided not to draw one.
 
-The guest browser supplies its bounded sharing projection to the same
-`ResizableSidebar`, rows, scroll regions and resize geometry as Electron. It
-still owns its browser routes, account menu, unsupported-width state and
-guest-only loading copy, and it omits management actions that the sharing
-projection cannot authorize. At the existing 920px responsive boundary and
-below, the host shows an unsupported-width state instead of presenting a
-compressed or partial hierarchy.
+A guest in the browser gets the same desktop shell, sidebar, rows and resize
+geometry as Electron; `useShellCapabilities()` tells the shell it is a guest,
+and it omits the management actions a guest cannot take. Narrow widths follow
+the shell's phone layout ([`desktop-shell.md`](desktop-shell.md#at-phone-width)).
 
 `MarkBridge` draws a row of `IdentityMark`s as one tinted glass shape, each
 mark a control with its own tooltip. The caller supplies names and actions;
@@ -184,9 +182,8 @@ appearance observation. Visual primitives share the same theme subscription.
 
 ### People picker
 
-The People level and its ranked **Suggested** list were deleted with Threads
-(2026-11), with the server's people ranking (`GET /navigation/people-ranking`).
-Who is in a Canvas is chosen in its Share dialog, which is desktop host code
+The title pill has no People level and the server ranks no people (both were
+deleted at the 2026-11 cutover). Who is in a Canvas is chosen in its Share dialog, which is desktop host code
 ([`canvases.md`](canvases.md)); nothing here ranks people. The title pill's
 `onMenuOpen` ranking read and the People level's ordering snapshot went with
 them.
@@ -196,8 +193,6 @@ them.
 - Shared components import no application, IPC, authentication or transport code.
 - Hosts reuse the same semantic styles and presentation elements.
 - Host callbacks perform mutations through existing admitted application paths.
-- Child-only sharing must not expose Main labels or resource context. Guest hosts
-  use the selected conversation socket and omit desktop parent prewarming.
 
 ## Boundary
 
@@ -220,12 +215,11 @@ Native theme reporting and cross-window IPC belong only to the desktop adapter.
 
 `pnpm --filter @rally/desktop exec vitest run
 src/renderer/components/primitives.test.tsx
-src/renderer/components/title-pill-menu.test.tsx
 src/renderer/components/automation-header.test.tsx` covers explained disabled
 buttons and the shared menu action's keyboard focus, tooltip and selection guards.
 
-`pnpm --filter @rally/desktop exec vitest run src/renderer/components/toast.test.tsx
-src/renderer/components/conversation-motion.test.tsx` covers announcements,
+`pnpm --filter @rally/desktop exec vitest run src/renderer/components/toast.test.tsx`
+covers announcements,
 retained content, interruption, reduced motion and cleanup. Real-window
 inspection covers placement, theme contrast and native preview composition.
 
@@ -236,8 +230,8 @@ src/renderer/components/error-notice.test.tsx
 src/renderer/components/acknowledged-error-dialog.test.tsx` for the popup
 queue, acknowledgement, focus and nested-dialog behavior.
 Run `pnpm --filter @rally/desktop exec electron-vite build` and inspect the changed
-surfaces in Electron. The browser host in #825 adds Chrome verification; no second
-component test runner is needed for the same implementations.
+surfaces in Electron, and in Chrome for the browser host; no second component
+test runner is needed for the same implementations.
 
 ## Changelog
 

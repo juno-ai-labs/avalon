@@ -227,8 +227,7 @@ load.
 A row in motion keeps its pointer events: a click on a row that is sliding
 lands on that row, and nothing it needs is taken away for the length of an
 animation. What that leaves to solve is a list that reorders on `dragover`,
-which no sidebar list does today (neither Pinned group reorders; the retired
-Threads Pinned list did). Such a list moves the dragged row to the slot of
+which no sidebar list does today (neither Pinned group reorders). Such a list moves the dragged row to the slot of
 whichever row the event reaches, and mid-motion the row drawn under the pointer is not the row that
 belongs there — after one reorder, the row the dragged row displaced glides
 out through the pointer's position, an event on it would move the dragged row
@@ -363,9 +362,9 @@ step.
   reader behaviour informed them.
 - **A focused row that moves is held.** A row the reader just clicked keeps
   focus and its element, so if the list re-sorts it at that moment it glides
-  rather than leaving the frame under the cursor that clicked it. The retired
-  Threads list, ordered by the reader's own visits, made this the common case;
-  the Canvases list is ordered by the Canvas's activity, so it is rarer now.
+  rather than leaving the frame under the cursor that clicked it. A list
+  ordered by the reader's own visits would make this the common case; the
+  Canvases list is ordered by the Canvas's activity, so it is rare.
 
 ## Testing
 
