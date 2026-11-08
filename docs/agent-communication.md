@@ -357,11 +357,11 @@ share the same role selection, including workers spawned by Sidekicks.
 These are internal host RPCs, not model-callable team-management tools. Callers
 check execution and Sidekick domain authority before adding contacts. Membership
 grants no credentials, transcript access, resource access, or control over peers.
-SubstreamAgent owns content and execution. Conversation parents retain archive
+AgentLoopDO owns content and execution. Conversation parents retain archive
 and viewer authority; a hosted Sidekick owns setup, definitions, and schedules.
 
 Bind remains the core owner of the model/tool loop inside every conversation.
-SubstreamAgent supplies durable admission, leases, and persistence through the
+AgentLoopDO supplies durable admission, leases, and persistence through the
 existing harness ports. The background stop timestamp only holds future
 execution admission: an active lease still recovers and settles through Bind's
 existing fenced stop path. Messaging and responsiveness must preserve protocol

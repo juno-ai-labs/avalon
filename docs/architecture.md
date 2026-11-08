@@ -709,8 +709,10 @@ vocabulary, not a module: the appearance constants in
 `workspace-do.ts`, the `--av-sys-color-project-*` tokens and
 `lib/project-palette.ts`, all covered by
 [`rally-rebrand-inventory.md`](rally-rebrand-inventory.md). The
-`/projects/*` tombstone route and the `"projects"` sync topic it describes
-have since been deleted too.
+`/projects/*` tombstone route has since been deleted, and `"projects"` left
+`WORKSPACE_SYNC_TOPICS`; it survives only as a read-drop tombstone in
+`RETIRED_SYNC_TOPICS` (`workspace-do.ts`), so a stored sync row that names it
+is filtered rather than refused.
 
 ### 2026-11-07 — The product is Canvases and Sidekicks; the native iOS client is deleted
 

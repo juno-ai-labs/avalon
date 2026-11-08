@@ -635,13 +635,14 @@ namespace helper.
 
 Once a workspace socket is open, its terminal close outcomes are distinct:
 
-- **Access was revoked** — `1008`. Electron stops reconnecting and reports
-  `workspace_access_revoked`.
-- **The session is inactive** — `4401`. Electron stops reconnecting and asks the
-  member to sign in again under `workspace_session_inactive`.
-- **The command frame is invalid** — `4400`. Electron stops resending the same
-  invalid command and reports `workspace_socket_invalid_message`, asking the
-  member to restart the app and retry.
+- **Access was revoked** — `1008` (`WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE`).
+- **The session is inactive** — `4401` (`WORKSPACE_SOCKET_SESSION_INACTIVE_CODE`).
+- **The command frame is invalid** — `4400` (`WORKSPACE_SOCKET_INVALID_MESSAGE_CODE`).
+
+On any of the three the client's provider (`workspace-socket.tsx`) stops
+reconnecting and moves to `unavailable`; a revocation also calls
+`onAccessRevoked` and reports the disconnect as `access_revoked`. The client
+shows no code-specific copy for the other two.
 
 WorkspaceDO records every identity, protocol, or inactive-session close as
 `workspace_socket_closed`, with the close code, fixed cause, operation, frame
@@ -750,11 +751,9 @@ provider aborts any ticket in flight, settles and closes its socket, and dials
 nothing until resume, the network coming back, or a person asking to
 reconnect.
 
-Directory pages are read-only and are not reconnect-resend commands. If
-Electron receives the browser `offline` signal while a page is in flight, it
-clears that request's 120-second timer and rejects immediately with
-`workspace_directory_offline`. Room message commands remain pending because
-their client message IDs make reconnect resend idempotent. Each pending command
+On the conversation socket (`use-workstream-socket.ts`), commands remain
+pending across a disconnect because their client message IDs make reconnect
+resend idempotent. Each pending command
 also remembers the socket instance that most recently accepted it: submitting a
 second command on a healthy connection sends only the new command, while a new
 socket instance after reconnect replays every command still awaiting its private
