@@ -48,13 +48,22 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
   const [invalidEmails, setInvalidEmails] = useState<{ emails: string } | null>(null);
   // Someone approved from the Requests section (or anywhere) while this form
   // is open joins the list as the detail is read again; they join the choice
-  // too, so Save does not take back the access just given.
+  // too, so Save does not take back the access just given. An approval on a
+  // creator-only Canvas also moves it to Specific people on the server, so a
+  // visibility the server changed replaces the form's: left at "Only you",
+  // Save would send `creator` and remove the person just let in.
   const seenParticipants = useRef(canvas.participantUserIds);
+  const seenVisibility = useRef(canvas.visibility);
   useEffect(() => {
     const added = canvas.participantUserIds.filter((id) => !seenParticipants.current.includes(id));
     seenParticipants.current = canvas.participantUserIds;
     if (added.length > 0) setChosen((current) => new Set([...current, ...added]));
   }, [canvas.participantUserIds]);
+  useEffect(() => {
+    if (canvas.visibility === seenVisibility.current) return;
+    seenVisibility.current = canvas.visibility;
+    setVisibility(canvas.visibility);
+  }, [canvas.visibility]);
   const isMember = (id: string): boolean => membersById.get(id)?.accessClass === 'member';
   const workspaceId = session?.workspace?.id;
   // The guest invite is part of this form: Save sends it, so the dialog has
