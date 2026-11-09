@@ -28,7 +28,8 @@ the Canvas or Sidekick row stops being unread.
 | `apps/api/src/durable-objects/conversation-reply-batch.ts` | The `reply_batch` alarm entry: a conversation's replies batched, then one `new_message` intent and row per recipient. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `noteActivityMoved`, `noteActivityReadMoved`, `publishActivityList`, the `activity` page in `sidebarPayload`, and the `activity_mark_all_seen` command. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Applies the page and the push through the versioned sidebar-list receiver; sends Mark all seen. |
-| `apps/desktop/src/renderer/components/activity-sidebar-section.tsx` | The rail section: rows, the unseen count, the empty state and Mark all seen. |
+| `apps/desktop/src/renderer/components/activity-sidebar-section.tsx` | The Activity list and its rows. |
+| `apps/desktop/src/renderer/screens/activity-home.tsx` | The Activity home shown when there is no item to open. |
 
 ## How it works
 
@@ -289,8 +290,9 @@ Activity section open, and so does anything else the pane opens: only a rail
 pick leaves it. Entering the section opens its top row in the pane, the row
 drawn open and its conversation reporting the read as a click would (pushed
 from the rail, replacing a Canvases-home landing at a launch with Activity stored;
-[`desktop-shell.md`](desktop-shell.md) has the navigation rule); an empty
-feed opens nothing, and nothing the feed does afterwards moves the pane. The rail badge is `unseenCount` ("3 unseen"). The dock
+[`desktop-shell.md`](desktop-shell.md) has the navigation rule). An empty
+feed opens `/activity`, which explains what will appear in the list. If items
+arrive while that page is open, it prompts the viewer to choose one. The rail badge is `unseenCount` ("3 unseen"). The dock
 badge, and an installed browser app's icon badge, is the same `unseenCount`
 while Rally is open (`dockBadgeCount`), the count a push sets on the icon
 while it is closed ([`push-notifications.md`](push-notifications.md)); the

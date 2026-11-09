@@ -42,6 +42,7 @@ import { useWindowActivationTracking } from './lib/window-activation';
 import { useEscapeClosesWindow } from './lib/window-escape';
 import { useOptionalWorkspaceSocket, WorkspaceSocketProvider } from './lib/workspace-socket';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
+import { ActivityHomeScreen } from './screens/activity-home';
 import { AutomationScreen } from './screens/automation';
 import { CanvasScreen } from './screens/canvas';
 import { CanvasesHomeScreen } from './screens/canvases-home';
@@ -393,12 +394,13 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
                 its destination resolves, rather than on the landing route,
                 which would open an unrelated screen first. */}
             <Route element={<LoadingState label="Opening…" />} path="/opening" />
-            {/* The Channels, Threads, Spaces, Projects, Activity and Artifacts
+            {/* The Channels, Threads, Spaces, Projects and Artifacts
                 surfaces are gone (2026-11 cutover); their stored and linked
                 addresses open the Canvases home rather than a dead screen. */}
-            {['/channels/*', '/spaces/*', '/workstreams/*', '/projects/*', '/activity', '/artifacts'].map((path) => (
+            {['/channels/*', '/spaces/*', '/workstreams/*', '/projects/*', '/artifacts'].map((path) => (
               <Route element={<Navigate replace to="/canvases" />} key={path} path={path} />
             ))}
+            <Route element={<ActivityHomeScreen />} path="/activity" />
             <Route element={<CanvasesHomeScreen />} path="/canvases" />
             <Route element={<CanvasScreen />} path="/canvases/:id" />
             <Route element={<AutomationScreen />} path="/automations/:id" />

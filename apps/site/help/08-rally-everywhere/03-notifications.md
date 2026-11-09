@@ -41,9 +41,8 @@ clears its rows whichever way you got there. **Mark all seen**, the tick at the
 top of the list, clears the rest. Once an access request has been answered,
 its row says who approved or denied it.
 
-When there is nothing yet, the list says **Nothing yet. Mentions, replies,
-Canvases you are added to and Sidekick runs that need you or finish show up
-here.**
+If the list is empty when you open Activity, the main pane shows **No
+activity yet**. Back returns to the Canvas or Sidekick you were viewing.
 
 ## Choosing how each kind reaches you
 

@@ -2012,6 +2012,20 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .pane-state-header { align-items: center; display: flex; gap: 8px; padding: 0 16px; }
 .pane-state-trailing { margin-left: auto; }
 .pane-state-body { align-items: center; display: flex; justify-content: center; }
+.activity-home-body { overflow: auto; }
+.activity-home-message { margin: auto; max-width: 400px; padding: 24px; text-align: center; }
+.activity-home-mark {
+  background: var(--av-sys-color-surface-raised);
+  border: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-subtle);
+  border-radius: 20px;
+  color: var(--av-sys-color-text-subtle);
+  display: inline-grid;
+  height: 64px;
+  place-items: center;
+  width: 64px;
+}
+.activity-home-message h1 { font-size: 24px; font-weight: 650; letter-spacing: -0.025em; margin: 18px 0 6px; }
+.activity-home-message p { color: var(--av-sys-color-text-muted); font-size: 14px; line-height: 1.5; margin: 0; }
 /* A Canvas the viewer may ask into: Request access, and under it when they asked. */
 .canvas-access-request-actions { display: grid; gap: 8px; justify-items: center; }
 .empty-state .canvas-access-request-sent { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 0; }
