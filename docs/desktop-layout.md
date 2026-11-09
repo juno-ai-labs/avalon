@@ -65,7 +65,11 @@ between `MIN_RAIL_WIDTH` and the width that leaves the conversation its
 minimum (the same bound `--rail-max-slot` draws). A panel dragged to half a
 narrow window's pane therefore comes back at half a wide one's. A pixel width
 saved before shares (`rally.rail-width:<scope>`) is still read, held inside
-the same bounds, until the next drag replaces it. A conversation
+the same bounds, until the next drag replaces it. A drag applies each step
+without saving it (`RailResize` with `remember: false`) and saves the width
+it ends at once, on pointer up: saving measures the pane and writes
+`localStorage`, which on every pointer move was layout and storage work per
+frame. A conversation
 with no stored width restores at the even split, the same width a click gives. Double-click or `Enter` on the panel's
 edge resets it to the even split it opened at; unlike the opening, the reset is
 the person's own act, so it is saved as the conversation's width like a drag.
@@ -163,7 +167,8 @@ small for it.
 
 **What a future change must respect:** anything that saves a panel width
 must save it through `setRailWidth`, which measures the pane; a pixel width
-written directly is read as the legacy format.
+written directly is read as the legacy format. A drag saves once, at its end,
+not at each step.
 
 Shipped in juno-ai-labs/avalon#1490.
 
