@@ -199,3 +199,26 @@ describe("skills, resources and prompts", () => {
         text: "Catch me up on the Rally Canvas \"Q3 launch\": find it, read its whole Chat and its artifacts' latest versions, then tell me what changed, what was decided and what is still open." } }]);
   });
 });
+
+describe("the request bound", () => {
+  it("carries a publish of the largest artifact Rally takes, and refuses one past it before parsing", async () => {
+    // 25,000,000 bytes as base64 is 33,333,336 characters; the SDK's own
+    // default bound (4 MiB) would refuse it.
+    const largest = "A".repeat(33_333_336);
+    let forwarded = 0;
+    const upstream = api(async (incoming) => {
+      forwarded = ((await incoming.json()) as { content: { data: string } }).content.data.length;
+      return Response.json({ resourceId: "0190a000-0000-7000-8000-0000000000ff", title: "big.bin", kind: "file", version: 1, outcome: "created", url: null }, { status: 201 });
+    });
+    const accepted = await rpc(upstream.binding, call("publish_file", { canvasId: "0190a000-0000-7000-8000-000000000001",
+      name: "big.bin", content: largest, encoding: "base64" }));
+    expect(accepted.status).toBe(200);
+    expect(forwarded).toBe(33_333_336);
+
+    const tooLarge = await worker.fetch(new Request("https://mcp.example.test/mcp", { method: "POST",
+      headers: { authorization: `Bearer ${live()}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify(call("publish_file", { canvasId: "0190a000-0000-7000-8000-000000000001", name: "huge.bin",
+        content: "A".repeat(35_000_000), encoding: "base64" })) }) as Request<unknown, IncomingRequestCfProperties>, env(upstream.binding));
+    expect(tooLarge.status).toBe(413);
+  }, 60_000);
+});

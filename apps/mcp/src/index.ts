@@ -2,6 +2,7 @@ import { createMcpHandler } from "@modelcontextprotocol/server";
 
 import { IDENTITY_REGION } from "@rally/contracts/regions";
 import { MCP_HOSTED_REDIRECT_ORIGINS, MCP_SCOPE } from "@rally/contracts/mcp-oauth";
+import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 
 import { inspectBearer, RallyApi, regionalApi } from "./api";
 import type { Env } from "./env";
@@ -54,6 +55,16 @@ export function authorizationServerMetadata(origin: string, browserOrigin: strin
     scopes_supported: [MCP_SCOPE],
   };
 }
+
+/**
+ * The largest MCP request: the largest artifact Rally takes
+ * (`DEFAULT_MAX_ATTACHMENT_BYTES`) as base64, four bytes for every three,
+ * plus 1 MiB for the JSON-RPC envelope around it (tool name, arguments, a
+ * site's file paths). Anything larger is refused 413 before it is parsed. A
+ * deployment that raises the API's `MAX_ATTACHMENT_BYTES` above the default
+ * must raise this too: this Worker cannot read that variable.
+ */
+export const MCP_MAX_REQUEST_BYTES = Math.ceil(DEFAULT_MAX_ATTACHMENT_BYTES / 3) * 4 + 1_048_576;
 
 const OAUTH_ROUTES: Record<string, string> = { "/register": "/mcp-oauth/register", "/token": "/mcp-oauth/token", "/revoke": "/mcp-oauth/revoke" };
 
@@ -119,13 +130,11 @@ export default {
     if (!api) return Response.json({ error: "region_unavailable" }, { status: 503 });
     const rally = new RallyApi(api, bearer.token, bearer.region);
     // One stateless server per request, for the connected person. The SDK's
-    // handler serves both the 2026-07-28 revision and 2025-era clients; its
-    // request body bound is the SDK's own default (4 MiB), see
-    // `docs/rally-mcp.md#failure-modes-and-limits`.
+    // handler serves both the 2026-07-28 revision and 2025-era clients.
     return createMcpHandler(async () => {
       const server = createRallyMcpServer(rally);
       (await rallySkillCatalog()).attach(server);
       return server;
-    }).fetch(request);
+    }, { maxRequestBodySize: MCP_MAX_REQUEST_BYTES }).fetch(request);
   },
 } satisfies ExportedHandler<Env>;
