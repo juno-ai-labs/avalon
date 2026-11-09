@@ -1854,7 +1854,9 @@ sentences ("say in your final message what is blocked… report once"), keeping
 only that a failed post is reported and never claimed. The run change guidance
 gets a tie-break for where a wizard's answer goes (the final message for a
 person who wrote in Rally, a post for an outside thread), and the wizard's
-continuation note points at it. The standing prompt gives the no-Terminal
+continuation note points at it. The data-report rule, which outranks the saved
+instructions and comes first, says a source that fails for missing access is
+the access rule's case: ask and wait first. The standing prompt gives the no-Terminal
 alternative beside each rule that assumes one (calculation, documents, sites),
 since a requester-scoped run has no Terminal; to stay under the 8,500-byte
 ceiling it drops a duplicated person-mention line, a "create a new file"

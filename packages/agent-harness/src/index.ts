@@ -2803,7 +2803,7 @@ const automationDraftSubmissionJsonSchema = {
     expectedOutputs: {
       type: "array",
       items: { type: "string" },
-      description: "Observable results of using these instructions, one entry per output; use [] when none are needed. For triggered work, describe what each run produces, for example [\"A summary posted to the Thread\"]. Write results rather than steps.",
+      description: "Observable results of using these instructions, one entry per output; use [] when none are needed. For triggered work, describe what each run produces, for example [\"A summary of the week's merged pull requests in each run's reply\"]. Write results rather than steps.",
     },
     defaultBehavior: {
       type: "string",

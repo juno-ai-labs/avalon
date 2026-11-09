@@ -68,7 +68,7 @@ export async function renderNotice(env: Env, workspace: WorkspaceStub, address: 
   const raw = await workspace.readNotificationIntentForDelivery({ workspaceId: asWorkspaceId(address.workspaceId), intentId: address.intentId });
   if (!raw) return { outcome: "skipped", reason: "notification_intent_missing" };
   const row = WorkspaceNotificationIntentDeliverySchema.parse(raw);
-  if (row.recipientUserId !== address.recipientUserId) throw new Error("Notice recipient mismatch");
+  if (row.recipientUserId !== address.recipientUserId) throw new Error("notice_recipient_mismatch");
   const words = row.notificationKind === "needs_input" || row.notificationKind === "run_finished"
     ? await runNoticeWords(env, workspace, row)
     : row.notificationKind === "mention" || row.notificationKind === "participant_added"

@@ -542,8 +542,9 @@ async function forget(
     case "not_forgettable":
       throw new MemoryToolError(
         "memory_fact_not_forgettable",
-        "That fact belongs to a Channel or to the Organization, and only an administrator may forget it. Tell the person it can be removed from the review surface by an administrator.",
-        { reason: `This ${outcome.subjectKind} fact can be forgotten only by an administrator. Do not retry.` },
+        "That fact is filed for the whole Organization or under an earlier shared space, and only an administrator may forget it. Tell the person an administrator can remove it from the review surface.",
+        // The stored subject kind (`channel`) is not a word the model knows.
+        { reason: `${outcome.subjectKind === "organization" ? "This Organization-wide fact" : "This fact, filed under an earlier shared space,"} can be forgotten only by an administrator. Do not retry.` },
       );
   }
 }
@@ -576,7 +577,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
     {
       definition: {
         name: "recall",
-        description: "Search what Rally remembers that this conversation may use: facts about this Organization, this Channel, this Thread, this Breakout and the person you are working for. Returns facts with when they were true and where each was said. Nothing remembered on the subject is an empty list, not an error.",
+        description: "Search what Rally remembers that this conversation may use: facts about this Organization, this conversation's Canvas or Sidekick, and the person you are working for. Returns facts with when they were true and where each was said. Nothing remembered on the subject is an empty list, not an error.",
         capability: "memory.recall",
         mode: "read",
         idempotency: "safe",
@@ -652,7 +653,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
     {
       definition: {
         name: "forget",
-        description: "Retract one remembered fact a person asked Rally to forget, by the factId a recall returned. You may forget a fact about the person you are working for, or a fact this conversation itself established. A Channel's or the Organization's facts can be forgotten only when an administrator asks; otherwise say so. Retraction is immediate for every later run and cannot be undone by you.",
+        description: "Retract one remembered fact a person asked Rally to forget, by the factId a recall returned. You may forget a fact about the person you are working for, or a fact this conversation itself established. A fact filed for the whole Organization, or under an earlier shared space, can be forgotten only when an administrator asks; otherwise say so. Retraction is immediate for every later run and cannot be undone by you.",
         capability: "memory.write",
         mode: "write",
         idempotency: "provider_key",
