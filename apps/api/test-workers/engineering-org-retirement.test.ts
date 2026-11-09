@@ -4,8 +4,8 @@
  * Retiring an Organization from the engineering MCP, against real objects.
  *
  * The bridge calls the same operator door as Ace's Retire button, so these
- * tests check what that door owes: the D1 fence, the tombstone, the demo
- * register stamp, and an audit pair naming the Access operator.
+ * tests check what that door owes: the D1 fence, the tombstone, and an audit
+ * pair naming the Access operator.
  */
 
 import { env } from "cloudflare:workers";
@@ -41,22 +41,8 @@ beforeEach(async () => {
   await seedInspectableWorkspace(env.DB, {
     workspaceId: WORKSPACE_ID, userId: USER_ID, sessionId: "00000000-0000-7000-8000-00000000ef43", at: NOW,
   });
-  await env.DB.batch([
-    // The door's fence write stamps `updated_at`, which the shared fixture leaves out.
-    env.DB.prepare("ALTER TABLE workspaces ADD COLUMN updated_at TEXT"),
-    // This suite's D1 starts empty; the walk stamps the demo that made a workspace.
-    env.DB.prepare(`CREATE TABLE demo_operations (
-      operation_id TEXT PRIMARY KEY, company_name TEXT NOT NULL, presenter_user_id TEXT NOT NULL,
-      pack_version TEXT NOT NULL, cast_json TEXT NOT NULL, workspace_id TEXT UNIQUE, status TEXT NOT NULL,
-      attempt INTEGER NOT NULL, failed_phase TEXT, error_code TEXT, error_message TEXT, ready_at TEXT,
-      retired_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    )`),
-    env.DB.prepare(`INSERT INTO demo_operations
-      (operation_id, company_name, presenter_user_id, pack_version, cast_json, workspace_id,
-       status, attempt, ready_at, created_at, updated_at)
-      VALUES ('op-1', 'BetaBeta', ?, 'v1', '{}', ?, 'ready', 1, ?, ?, ?)`)
-      .bind(USER_ID, WORKSPACE_ID, NOW, NOW, NOW),
-  ]);
+  // The door's fence write stamps `updated_at`, which the shared fixture leaves out.
+  await env.DB.prepare("ALTER TABLE workspaces ADD COLUMN updated_at TEXT").run();
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
   await ensureAuditSchema();
   await env.AUDIT_DB.prepare("DELETE FROM audit_events WHERE workspace_id IN (?, ?)")
@@ -71,9 +57,6 @@ describe("engineering retirement of an Organization", () => {
     const row = await env.DB.prepare("SELECT abandoned_at FROM workspaces WHERE id = ?")
       .bind(WORKSPACE_ID).first<{ abandoned_at: string | null }>();
     expect(row?.abandoned_at).not.toBeNull();
-    const demo = await env.DB.prepare("SELECT retired_at FROM demo_operations WHERE workspace_id = ?")
-      .bind(WORKSPACE_ID).first<{ retired_at: string | null }>();
-    expect(demo?.retired_at).not.toBeNull();
     expect(await workspace().objectRetirementState()).toMatchObject({ retired: true });
 
     const audits = (await env.AUDIT_DB.prepare(

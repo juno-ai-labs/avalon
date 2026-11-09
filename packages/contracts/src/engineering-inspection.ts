@@ -84,6 +84,8 @@ export const RetireEngineeringOrgResultSchema = deferredZodSchema(() => Workspac
   region: RegionSchema,
 }));
 export type RetireEngineeringOrgResult = z.infer<typeof RetireEngineeringOrgResultSchema>;
+
+
 /**
  * One Organization's Threads, Breakouts and Channels, retired after the
  * cutover (docs/workspace-retirement.md#retiring-threads-breakouts-and-channels).
@@ -550,10 +552,10 @@ export type EngineeringD1SqlResult = z.infer<typeof EngineeringD1SqlResultSchema
 export interface EngineeringInspectionRpcBinding {
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
-  retireOrg(input: RetireEngineeringOrgInput, operator: EngineeringOperator): Promise<RetireEngineeringOrgResult>;
   dumpThreadTranscripts(input: ThreadRetirementOperationInput, operator: EngineeringOperator): Promise<DumpThreadTranscriptsResult>;
   retireThreads(input: ThreadRetirementOperationInput, operator: EngineeringOperator): Promise<RetireThreadsResult>;
   convertThreadsToCanvases(input: ConvertThreadsToCanvasesInput, operator: EngineeringOperator): Promise<ConvertThreadsToCanvasesResult>;
+  retireOrg(input: RetireEngineeringOrgInput, operator: EngineeringOperator): Promise<RetireEngineeringOrgResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;

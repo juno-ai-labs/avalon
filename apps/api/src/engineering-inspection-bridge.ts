@@ -12,9 +12,6 @@ import {
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
   type SetEngineeringSidekickPausedResult,
-  RetireEngineeringOrgInputSchema,
-  RetireEngineeringOrgResultSchema,
-  type RetireEngineeringOrgResult,
   ThreadRetirementOperationInputSchema,
   type ThreadRetirementOperationInput,
   DumpThreadTranscriptsResultSchema,
@@ -24,6 +21,9 @@ import {
   ConvertThreadsToCanvasesInputSchema,
   ConvertThreadsToCanvasesResultSchema,
   type ConvertThreadsToCanvasesResult,
+  RetireEngineeringOrgInputSchema,
+  RetireEngineeringOrgResultSchema,
+  type RetireEngineeringOrgResult,
   type EngineeringTextResult,
   CreateEngineeringOrgInputSchema,
   CreateEngineeringOrgResultSchema,
@@ -92,9 +92,9 @@ import { createEngineeringOrg } from "./services/engineering-creation";
 import { sendEngineeringMessage, readEngineeringConversation } from "./services/engineering-messages";
 import { auditedEngineeringWrite } from "./services/engineering-audit";
 import { setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
-import { retireWorkspaceForOperator } from "./services/workspace-retirement-service";
 import { dumpThreadTranscripts, retireThreads } from "./services/thread-retirement-service";
 import { convertThreadsToCanvases } from "./services/thread-conversion-service";
+import { retireWorkspaceForOperator } from "./services/workspace-retirement-service";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
   id: z.string(),
@@ -265,24 +265,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
-  async retireOrg(input: unknown, operator: unknown): Promise<RetireEngineeringOrgResult> {
-    return this.productOperation("retireOrg", async () => {
-      const request = RetireEngineeringOrgInputSchema.parse(input);
-      const trusted = EngineeringOperatorSchema.parse(operator);
-      // Ace's own door, so the D1 fence, the graph walk and the demo register
-      // stamp are the same; no user is represented, since an operator closes it.
-      // A pass is resumable rather than idempotent: a fresh ID pairs this
-      // call's audit rows, and the walk resumes from what it recorded.
-      return auditedEngineeringWrite(this.env, trusted, {
-        action: "retire_org", orgId: request.orgId, operationId: crypto.randomUUID(),
-      }, async () => RetireEngineeringOrgResultSchema.parse({
-        region: this.env.AVALON_REGION,
-        workspaceId: request.orgId,
-        ...await retireWorkspaceForOperator(this.env, request.orgId, { operatorId: trusted.subject }),
-      }), (result) => ({ complete: result.complete, remaining: result.remaining }));
-    });
-  }
-
   /**
    * B-7a: every Thread, Breakout and Channel conversation of one Organization
    * written to R2 as text, before any is retired. Resumable: a rerun writes
@@ -362,6 +344,24 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
       throw new ApiError(404, "workspace_not_found", "No Organization with this id in this region");
     }
     return request;
+  }
+
+  async retireOrg(input: unknown, operator: unknown): Promise<RetireEngineeringOrgResult> {
+    return this.productOperation("retireOrg", async () => {
+      const request = RetireEngineeringOrgInputSchema.parse(input);
+      const trusted = EngineeringOperatorSchema.parse(operator);
+      // Ace's own door, so the D1 fence and the graph walk are the same; no
+      // user is represented, since an operator closes it.
+      // A pass is resumable rather than idempotent: a fresh ID pairs this
+      // call's audit rows, and the walk resumes from what it recorded.
+      return auditedEngineeringWrite(this.env, trusted, {
+        action: "retire_org", orgId: request.orgId, operationId: crypto.randomUUID(),
+      }, async () => RetireEngineeringOrgResultSchema.parse({
+        region: this.env.AVALON_REGION,
+        workspaceId: request.orgId,
+        ...await retireWorkspaceForOperator(this.env, request.orgId, { operatorId: trusted.subject }),
+      }), (result) => ({ complete: result.complete, remaining: result.remaining }));
+    });
   }
 
   async readConversation(input: unknown): Promise<EngineeringTextResult> {
