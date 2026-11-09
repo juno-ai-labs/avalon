@@ -1827,7 +1827,7 @@ named tools that no longer exist (the dead-code PRD, phase 5).
 **Consequences:** no run's prompt changed, since none had the plugin in scope;
 the catalogue is ten skills.
 
-Shipped in juno-ai-labs/avalon#TBD.
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-11-09 — The prompts speak of Canvases and Sidekicks, a run's report is its final message, a blocked run asks, and seeded runs are gone
 

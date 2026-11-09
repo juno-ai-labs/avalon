@@ -1871,7 +1871,7 @@ parse.
 `desktop_actions` table go in a later step, once the oldest desktop in use has
 updated and the effect queue has drained.
 
-Shipped in juno-ai-labs/avalon#TBD.
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-11-09 — The conversation class is `AgentLoopDO`, a conversation belongs to a Canvas or a Sidekick, and the Thread machinery is deleted
 
