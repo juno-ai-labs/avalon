@@ -606,8 +606,9 @@ describe("a Breakout's access to its Channel", () => {
     const now = Date.now();
     // Keep lifecycle alarms outside this fixture's read/revocation assertions.
     const deadlines = { idleExpiresAt: now + 600_000, archiveDueAt: now + 1_200_000, expireDueAt: now + 1_800_000 };
+    // A Canvas's one shared sandbox, whoever is acting in it.
     await terminal.reserveFirstGeneration({ stableName: "imported-calendar", authorityFingerprint: await sha256(JSON.stringify({
-      principal: `user:${AUTHOR_ID}`, repository: "scratch",
+      principal: `canvas:${AUTOMATION_ID}`, repository: "scratch",
     })), networkRevision: 1, runId: context.harnessRunId, operationLeaseExpiresAt: now + 60_000, ...deadlines, now });
     await terminal.attachProviderSandbox({ generation: 1, sandboxId: "sandbox", lifecycleState: "running", ...deadlines, now });
     await terminal.releaseOperation({ runId: context.harnessRunId, now });
