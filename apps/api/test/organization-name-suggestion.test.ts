@@ -70,7 +70,7 @@ describe("account creation", () => {
       DB: sqliteD1(db), AVALON_REGION: "global", LOG_LEVEL: "error",
       SESSION_SIGNING_KEY: "suggestion-test-signing-key", OAUTH_STATE_ENCRYPTION_KEY: "suggestion-test-encryption-key",
       BROWSER_APP_ORIGIN: "https://app.rally.test", PUBLIC_API_BASE_URL: "https://api.rally.test",
-      RESEND_FROM_EMAIL: "Rally <login@rally.test>",
+      EMAIL_FROM: "Rally <login@rally.test>",
       EMAIL_LOGIN_POLICY_JSON: '{"otpDigits":6,"ttlSeconds":600,"maxFailedAttempts":3}',
     });
     const challengeId = crypto.randomUUID();

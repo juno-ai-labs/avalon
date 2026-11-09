@@ -350,28 +350,116 @@ it.
 
 Set `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` only on the Global Worker. They belong exclusively to the platform login client and are never used by Google service connectors.
 
-Set `RESEND_WEBHOOK_SIGNING_SECRET` and `WORKSTREAM_EMAIL_ADDRESS_KEY` only on the
-Global Worker. `RESEND_API_KEY` is required in configured deployments with Resend's
-**Full access** permission because each owning region retrieves its own full
-message after the Global ingress has routed only signed metadata. An optional
-`RESEND_RECEIVING_API_KEY` can override it later if Rally returns to separate
-sending and receiving credentials. All non-Global conversation and automation
-email-name reservations use
-the Global `WorkstreamEmailRoutingBridge`; there is no regional allocator key or
-regional fallback registry.
+Set `WORKSTREAM_EMAIL_ADDRESS_KEY` only on the Global Worker. All non-Global
+work-stream and automation email-name reservations use the Global
+`WorkstreamEmailRoutingBridge`; there is no regional allocator key or fallback
+registry. Cloudflare Email Service uses the native `EMAIL` binding, so no
+Cloudflare administration token belongs in Worker secrets.
 
 Production email guest sign-in is configured through checked-in Global vars:
 `BROWSER_APP_ORIGIN=https://app.rallywith.ai` and `EMAIL_LOGIN_POLICY_JSON`.
 Do not duplicate these as Worker secrets. The policy is six digits, ten-minute
 expiry and five failed redemption attempts. The team explicitly chose to launch
 without issuance limits; see [email sign-in](email-login.md). Existing signing,
-encryption and transactional email credentials remain required. Both API and
+encryption keys and the native transactional email binding remain required. Both API and
 browser deployments must succeed before invitation recipients can sign in.
 Sharing validates origin/keys before participant-authority handoff.
 
-`RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. There are two checked-in senders, both `vars` in each region's Wrangler config: `RESEND_FROM_EMAIL` (`Rally <invites@rallywith.ai>`) for transactional mail, and `RESEND_NOTIFICATION_FROM_EMAIL` (`Rally <notifications@rallywith.ai>`) for mail Rally generates — Sidekick results and notifications. Resend verifies the domain rather than the address, so the second rides the same verification; keep both `rallywith.ai` and `with-avalon.com` verified with their own DKIM/SPF records — Resend verifies the sending domain, so the Rally senders do not inherit the Rally verification and mail from them is rejected until the Rally records are live. An unset notification sender does not fail: `sendResendEmail` falls back to the transactional one silently, which is why `GET /health` reports `resendNotificationSender` separately — check it after a deploy that touches either var. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
+Transactional mail uses Cloudflare Email Service through the Global Worker's
+`send_email` binding named `EMAIL`. `EMAIL_FROM` is `Rally <invites@rallywith.ai>`;
+`EMAIL_NOTIFICATION_FROM` is `Rally <notifications@rallywith.ai>`. Authored access
+acknowledgements retain their frozen `hi@rallywith.ai` sender. An unset notification
+sender falls back to the transactional one; `/health` reports `email` and
+`emailNotificationSender`. Acceptance means queued by Cloudflare, not delivered
+to an inbox. A provider failure still revokes a newly created invitation.
 
-Inbound conversation and automation mail uses the dedicated catch-all subdomain `automation.rallywith.ai`. Create it with Resend Receiving enabled, install the exact MX record returned by Resend in Cloudflare DNS, and create one `email.received` webhook pointing to `https://api.rallywith.ai/ingest/resend`. **Keep `automation.with-avalon.com` receiving, with its own MX record and webhook, for as long as any address on it exists.** Addresses are stored per conversation rather than derived, so every address issued before the rename still carries that domain, is printed in the sender's mail client, and is what mail rules forward to; the Worker accepts either domain and resolves the full recipient address in the Global registry. See [`domain-migration.md`](domain-migration.md). Store its `whsec_...` value as the Global `RESEND_WEBHOOK_SIGNING_SECRET`. Ensure the reused `RESEND_API_KEY` has Full access in configured deployments because the regional Worker retrieves the full received message after routing. Store one stable 32+ byte `WORKSTREAM_EMAIL_ADDRESS_KEY` in the Global Worker. Do not log any of these values. Existing deployments using `RESEND_WEBHOOK_SECRET` remain compatible during migration.
+To cut over a deployment:
+
+1. Enable Email Sending on a Workers Paid account and verify every sending
+   domain in Cloudflare, including `rallywith.ai` and any domain present in an
+   existing encrypted delivery intent. Install Cloudflare's supplied SPF, DKIM,
+   and other verification records; Resend verification does not transfer.
+2. Deploy the API with its checked-in `EMAIL` binding and sender vars. Retain the
+   old receiving credentials and signed `/ingest/resend` webhook for previously
+   issued automation-subdomain addresses and pending Resend events. Reconcile uncertain outbound attempts before reissuing
+   them: Cloudflare does not deduplicate Resend keys or `X-Rally-Delivery-Key`.
+3. Use the dedicated `rallywithai.com` zone for new inbound addresses. Enable
+   Email Routing DNS at its apex and configure one catch-all to the
+   `avalon-api-global` Worker's `email()` handler. Hold new-address issuance
+   during activation using the existing release maintenance procedure: promote
+   the Worker, enable the catch-all, then reopen issuance. The checked-in
+   `WORKSTREAM_EMAIL_DOMAIN` is `rallywithai.com`; verify it in the deployed
+   version as part of activation. Preserve the domain's unrelated web DNS.
+   Existing `automation.rallywith.ai` and `automation.with-avalon.com` MX records
+   stay on Resend; their signed webhook remains active and both full domains stay
+   accepted by the new Worker. Google Workspace MX on `rallywith.ai` is separate.
+4. Send a test invitation, sign-in email, notification and incoming message on
+   each receiving domain. Verify provider acceptance, regional receipt/resource
+   creation and Sidekick admission. `/health` checks code and bindings; it cannot
+   verify external DNS, Email Sending enablement, or receiving-rule configuration.
+5. Retain the signed Resend webhook and `RESEND_WEBHOOK_SIGNING_SECRET` /
+   `RESEND_WEBHOOK_SECRET`, `RESEND_API_KEY` and optional `RESEND_RECEIVING_API_KEY`
+   while existing automation subdomains still receive through Resend. Draining
+   pending webhooks alone is not enough: people can write to issued addresses
+   indefinitely. Historical storage names need no data migration.
+
+Live setup on 2026-11-09: the account has Workers Paid. `rallywith.ai` is now
+onboarded to Email Sending with `enabled: true` and `preview_enabled: true`.
+Cloudflare created its managed bounce MX/SPF at `cf-bounce.rallywith.ai` and
+DKIM at `cf-bounce._domainkey.rallywith.ai`; public DNS reads confirm all are
+published. The existing `_dmarc.rallywith.ai` policy (`p=none`), Google Workspace
+apex MX and SPF, and both Resend `automation.*` MX records were preserved.
+No test message was sent and no Worker deployment was performed by this setup.
+The last inspected deployed Worker still has Resend sender vars and no `EMAIL`
+binding, so outbound app activation remains a deployment step. The legacy
+`with-avalon.com` sender domain is not onboarded to Cloudflare.
+
+Dedicated inbound setup on 2026-11-09: `rallywithai.com` now has Cloudflare's
+managed apex MX/SPF/DKIM records, and Email Routing reports `enabled: true` and
+`status: ready`. Its `Rally inbound email` catch-all is staged with action
+`worker: avalon-api-global` and `enabled: false`; it must remain disabled until
+the Worker release is activated. Public DNS confirms the new MX/SPF records.
+The pre-existing web A record was retained. The checked-in canonical minting
+setting is `rallywithai.com`, but the running app has not been deployed by this
+setup. Existing Google Workspace and legacy automation MX records are unchanged.
+
+The Global address ledger contains 622 issued addresses on
+`automation.rallywith.ai` and 335 on `automation.with-avalon.com`, exceeding the
+standard 200-routing-rules-per-domain capacity if every issued address is
+provisioned. These are permanent claims, including historical/tombstoned owners;
+the Global ledger alone does not establish which owners currently accept mail.
+Provisioning only active owners would require an authority-backed audit and
+lifecycle reconciliation, and still needs an explicit capacity plan for new
+addresses. `rallywith.ai` is a Pro zone and `with-avalon.com` is a Free zone;
+dedicated subdomain-zone support must not be assumed from Workers Paid.
+
+The Cloudflare account owner can use this request to resolve the inbound blocker:
+
+> We need catch-all incoming email delivery to a Worker for
+> `automation.rallywith.ai` and `automation.with-avalon.com`, preserving Google
+> Workspace MX on the parent domain and the existing full email addresses.
+> We have 622 and 335 permanent address claims respectively. Your documentation
+> restricts catch-alls to the zone apex and defaults to 200 literal rules per
+> domain. Can you enable subdomain catch-alls, support these subdomains as separate
+> routing zones on our account, or increase literal-rule capacity for the issued
+> namespace and its future growth? Please confirm the supported design and any
+> plan or billing changes before activation.
+
+That account request is necessary only if the old receiving subdomains must
+also leave Resend. New addresses avoid the limitation using the dedicated
+`rallywithai.com` apex. Do not change either legacy receiving MX until a supported
+compatibility design is implemented. A higher rule limit alone does not create
+rules or keep future allocations synchronized.
+
+The native send API has no idempotency-key parameter. Caller-owned delivery
+receipts still suppress completed work, but a crash after provider acceptance
+and before local settlement can duplicate a later send. Only explicit quota
+refusals are classified retryable by the shared sender; unknown outcomes and
+permanent provider failures carry `retryable: false`. Access acknowledgements
+require operator reconciliation in that case. Email-login and invitation recovery
+still use their existing durable intents; their delivery is at least once, so
+provider-side exactly-once delivery must not be claimed. See
+[the email mechanism](workstream-email-addresses.md#cloudflare-transport).
 
 For non-interactive Wrangler commands, prefer `CLOUDFLARE_API_TOKEN`. The older global-key method requires both `CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` in `.env.local`; an API key by itself cannot authenticate a deployment.
 
@@ -913,7 +1001,7 @@ For ordinary releases after both entrypoints exist:
    required secret answers `503` here and names the keys, rather than reporting
    healthy while every other route returns `service_misconfigured`.
 
-8. Send a workspace invitation to a real test inbox, confirm Resend accepts it, and complete the one-time email-bound acceptance flow.
+8. Send a workspace invitation to a real test inbox, confirm Cloudflare accepts it, and complete the one-time email-bound acceptance flow.
 
 9. Complete one Google identity login in a provider test account.
 

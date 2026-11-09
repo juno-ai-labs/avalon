@@ -170,18 +170,19 @@ class FakeDatabase {
 }
 
 describe("WorkstreamEmailRoutingService", () => {
-  it("reserves one stable four-segment address idempotently", async () => {
+  it.each([undefined, "  RALLYWITHAI.COM  "])("reserves a stable address on the dedicated domain with configuration %s", async (configuredDomain) => {
     const database = new FakeDatabase();
-    const service = new WorkstreamEmailRoutingService(environment(database, {
-      WORKSTREAM_EMAIL_DOMAIN: `  ${DOMAIN.toUpperCase()}  `,
-    }));
+    const env = environment(database);
+    if (configuredDomain) env.WORKSTREAM_EMAIL_DOMAIN = configuredDomain;
+    else delete env.WORKSTREAM_EMAIL_DOMAIN;
+    const service = new WorkstreamEmailRoutingService(env);
     const input = routeInput("sidekick-stable");
 
     const first = await service.reserveAutomation(input);
     const second = await service.reserveAutomation(input);
 
     expect(second).toEqual(first);
-    expect(first.emailAddress).toBe(`${first.localPart}@${DOMAIN}`);
+    expect(first.emailAddress).toBe(`${first.localPart}@rallywithai.com`);
     expect(first.localPart).toMatch(/^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u);
     expect(first.localPart.split("-")).toHaveLength(4);
     // The row is the claim and nothing else. Anything resembling a lifecycle

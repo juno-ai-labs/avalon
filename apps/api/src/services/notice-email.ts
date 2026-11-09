@@ -1,7 +1,7 @@
 import type { PushNotificationData } from "@rally/contracts/push-notifications";
 
 import type { Env } from "../env";
-import { escapeHtml, sendResendEmail, singleLine, type ResendDelivery } from "./resend";
+import { escapeHtml, sendEmail, singleLine, type EmailDelivery } from "./email";
 import type { Notice } from "./notification-notice";
 import { workspaceRegionalDatabase } from "./workspace-runtime-database";
 
@@ -49,15 +49,14 @@ async function recipient(env: Env, notice: Notice): Promise<Recipient | null> {
   return row ? { email: row.email, name: row.name ?? "", workspaceName: row.workspace_name } : null;
 }
 
-export type NoticeEmailOutcome = { outcome: ResendDelivery } | { outcome: "skipped"; reason: string };
+export type NoticeEmailOutcome = { outcome: EmailDelivery } | { outcome: "skipped"; reason: string };
 
 /**
  * The email sink: one template for every kind, its subject the notice's own
  * title (which is per kind), its body the notice's text as a quote, and one
- * button to the notice's link. Sent through the one Resend caller, keyed on
- * the intent so a retried queue message is one email.
+ * button to the notice's link. Sent through the shared Cloudflare sender, with the intent as its delivery reference.
  */
-export async function sendNoticeEmail(env: Env, notice: Notice, request: typeof fetch = fetch): Promise<NoticeEmailOutcome> {
+export async function sendNoticeEmail(env: Env, notice: Notice, send?: (message: EmailMessageBuilder) => Promise<EmailSendResult>): Promise<NoticeEmailOutcome> {
   const to = await recipient(env, notice);
   if (!to) return { outcome: "skipped", reason: "recipient_inactive_or_identity_missing" };
   const title = singleLine(notice.title);
@@ -77,7 +76,7 @@ export async function sendNoticeEmail(env: Env, notice: Notice, request: typeof 
     "",
     footer,
   ].join("\n");
-  const outcome = await sendResendEmail(env, {
+  const outcome = await sendEmail(env, {
     recipientEmail: to.email,
     subject: title,
     html: noticeHtml({ greeting: name ? `Hi ${name},` : "Hi,", title, excerpt, url: notice.url, replyTo: notice.replyTo, footer }),
@@ -88,7 +87,7 @@ export async function sendNoticeEmail(env: Env, notice: Notice, request: typeof 
     ...(notice.replyTo ? { replyTo: notice.replyTo } : {}),
     sender: "notification",
     errors: EMAIL_ERRORS,
-  }, request);
+  }, send);
   return { outcome };
 }
 

@@ -40,9 +40,10 @@ proof and redemption ID can recover the response, while another redemption ID
 cannot consume the challenge again. Expiry of the resumed session is anchored to
 the original redemption. Rotation or revocation makes the old receipt unusable.
 
-Email delivery uses the frozen encrypted body and a stable provider idempotency
-key. Provider acceptance marks delivery complete; a lost response leaves it
-pending for retry. Scheduled recovery continues past individual delivery failures.
+Email delivery uses the frozen encrypted body through Cloudflare Email Service.
+Provider acceptance marks delivery complete; a lost response leaves it pending
+for retry. Cloudflare has no provider idempotency key: the same delivery reference
+is correlation metadata, and a retry after acceptance can send the same proof twice. Scheduled recovery continues past individual delivery failures.
 Development delivery is skipped by the existing shared email sender.
 
 Authenticated GET `/auth/workspaces` lists active relationships in the current
@@ -81,7 +82,7 @@ Signup uses the opaque first-account flow and stage contract in [complete signup
   from enumerating a short OTP. Recoverable delivery and session secrets remain
   encrypted and are never logged.
 - Sender and message content are frozen at issuance so provider retries do not
-  change their body under the same idempotency key.
+  change their body under the same delivery reference.
 
 ## Boundary
 
@@ -103,8 +104,8 @@ Invalid, expired, exhausted or already consumed proofs return a generic 401.
 GET redemption returns 405. The routes reuse the existing auth body-size limit.
 
 Delivery errors leave the durable intent pending until expiry or redemption. A
-successful provider response can still be lost; the shared provider's idempotency
-semantics determine deduplication. Scheduled cleanup deletes expired unredeemed
+successful provider response can still be lost; Cloudflare does not deduplicate
+these retries, so email delivery is at least once. Scheduled cleanup deletes expired unredeemed
 proofs and receipts whose sessions have expired or been revoked. A consumed receipt
 without a session is retained through the existing initial session lifetime so
 crash recovery remains possible. Live receipts remain encrypted for response-loss
