@@ -1728,19 +1728,22 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
 
   /**
    * Whoever the Sidekick is shared with (`sidekickReaderAllows`). A guest is
-   * admitted only from its `people` list, whichever path asks: the caller
-   * admitted the person to the Organization, and a guest asks with
-   * `requireGrantAuthority`, so only that path withholds Organization scope.
+   * admitted only from its `people` list, whichever path asks: the role is
+   * read from the person's relationship, as `HostedCanvas.admitsViewer` reads
+   * it, so a caller that did not say `requireGrantAuthority` for a guest (a
+   * mention's notice asks for whoever was named) still withholds Organization
+   * scope from them.
    */
   protected async admitsViewer(request: ConversationParentAuthorizeViewerRequest): Promise<boolean> {
     const row = this.row()!;
-    // The answer does not need it, but the read records the person in the
-    // Organization's member table (a table read once they are known), which
-    // is how an audience narrowing finds whose open conversation to close.
-    await this.host.readRelationship(row.workspace_id, request.userId);
-    return sidekickReaderAllows(this.row() ?? row, {
-      userId: request.userId, actorRole: request.requireGrantAuthority ? null : "member",
-    }, this.sql);
+    // Read on every path, also for a guest: besides the role, the read
+    // records the person in the Organization's member table (a table read
+    // once they are known), which is how an audience narrowing finds whose
+    // open conversation to close.
+    const relationship = await this.host.readRelationship(row.workspace_id, request.userId);
+    const actorRole = !request.requireGrantAuthority && relationship?.status === "active" && relationship.accessClass === "member"
+      ? relationship.role ?? "member" : null;
+    return sidekickReaderAllows(this.row() ?? row, { userId: request.userId, actorRole }, this.sql);
   }
 
   protected onViewerReadChanged(userId: string): void {
