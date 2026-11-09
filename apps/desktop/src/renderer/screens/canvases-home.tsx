@@ -68,8 +68,8 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     const run = canvasWrittenByRun(canvas, sidekicksById, currentUserId);
     const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.artifactKind, canvas.appearance);
     return <li className="canvas-card" key={canvas.id}>
-      <div aria-hidden="true" className="canvas-card-shot" style={{ background: tint, color: ink }}>
-        <Icon size={44} />
+      <div aria-hidden="true" className="canvas-card-shot" style={{ background: tint }}>
+        <Icon color={ink} size={44} />
         {present.length > 0 && <span className="canvas-card-live"><AvatarStack members={present} nameTooltip={false} showTooltip={false} />Live</span>}
       </div>
       <div className="canvas-card-body">
