@@ -117,7 +117,6 @@ import {
   type ConnectorPollWorkflowInput,
   type ExecutionPrincipal,
   type Message,
-  type NormalizedActivity,
   type ServerSocketEvent,
   type ToolInvocation,
   type ToolDefinition,
@@ -9144,14 +9143,8 @@ export async function pollConnectorConnection(
   ));
   const activityIds = new Set<string>();
   for (const activity of result.activities) {
-    if (env.WORKSPACE_DOS) {
-      const persisted = await persistNormalizedActivity(env, activity, String(row.connector_type));
-      activityIds.add(persisted.activityId);
-    } else {
-      for (const activityId of await persistPolledActivity(env.DB, activity)) {
-        activityIds.add(activityId);
-      }
-    }
+    const persisted = await persistNormalizedActivity(env, activity, String(row.connector_type));
+    activityIds.add(persisted.activityId);
   }
   return {
     activityIds: [...activityIds],
@@ -9217,74 +9210,6 @@ export async function hydrateConnectorActivitySource(
   ));
 }
 
-
-async function persistPolledActivity(
-  database: D1Database,
-  activity: Omit<NormalizedActivity, "id">,
-): Promise<string[]> {
-  const id = newId();
-  const inserted = await database.prepare(
-    `INSERT INTO activities
-     (id, workspace_id, connection_id, connection_scope, connection_owner_user_id,
-      provider, provider_event_id, event_type, resource_type, provider_resource_id,
-      actor_json, subject_json, occurred_at, received_at, title, summary, text_snippet,
-      payload_ref, visibility_json, entity_keys_json, dedupe_key, raw_content_hash,
-      target_user_ids_json, external_people_json,
-      processing_status, metadata_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-     ON CONFLICT DO NOTHING RETURNING id, processing_status`,
-  ).bind(
-    id,
-    activity.workspaceId,
-    activity.connectionId,
-    activity.connectionScope,
-    activity.connectionOwnerUserId,
-    activity.provider,
-    activity.providerEventId,
-    activity.eventType,
-    activity.resourceType,
-    activity.providerResourceId,
-    JSON.stringify(activity.actor),
-    JSON.stringify(activity.subject),
-    activity.occurredAt,
-    activity.receivedAt,
-    activity.title,
-    activity.summary,
-    activity.textSnippet,
-    activity.payloadRef,
-    JSON.stringify(activity.visibility),
-    JSON.stringify(activity.entityKeys),
-    activity.dedupeKey,
-    activity.rawContentHash,
-    JSON.stringify(activity.targetUserIds),
-    JSON.stringify(activity.externalPeople ?? []),
-    JSON.stringify(activity.metadata),
-  ).first<{ id: string; processing_status: string }>();
-  if (inserted) return [inserted.id];
-
-  // A workflow step can be retried after D1 accepted the insert but before the
-  // step result was checkpointed. Recover every canonical row that could have
-  // won either unique constraint so pending/failed work is enqueued before the
-  // provider cursor advances. Already-processed rows intentionally stay quiet.
-  const canonical = await database.prepare(
-    `SELECT id, processing_status
-       FROM activities
-      WHERE workspace_id = ?1
-        AND connection_id = ?2
-        AND (
-          (provider_event_id = ?3 AND event_type = ?4)
-          OR dedupe_key = ?5
-        )
-        AND processing_status IN ('pending', 'failed')`,
-  ).bind(
-    activity.workspaceId,
-    activity.connectionId,
-    activity.providerEventId,
-    activity.eventType,
-    activity.dedupeKey,
-  ).all<{ id: string; processing_status: string }>();
-  return [...new Set(canonical.results.map((row) => row.id))];
-}
 
 // Only polling owns these diagnoses; other operational errors must survive its writes.
 const recoverableConnectorPollErrorSql =
@@ -9646,7 +9571,6 @@ export const __integrationTesting = {
   persistSuccessfulToolResult,
   settleRootHarnessToolCompletion,
   settleRootHarnessToolFailure,
-  persistPolledActivity,
   withAuthorizedConnection,
   pluginAuthorizationFromHealth,
   builtinPluginAuthorization,

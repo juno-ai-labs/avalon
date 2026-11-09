@@ -66,6 +66,10 @@ describe("Granola workspace connection", () => {
        granted_scopes_json, model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
       VALUES (?, ?, 'granola', 'workspace', NULL, 'Granola workspace', ?, ?, '["granola.workspace.read"]', 'plugin_granola_fixture', 'healthy', '{}', '{}', ?, ?)`)
       .run(connectionId, auth.workspaceId, encrypted.ciphertext, encrypted.iv, new Date().toISOString(), new Date().toISOString());
+    database.prepare(`INSERT INTO connector_ingress_routes
+      (connection_id, workspace_id, region, connector_type, scope, status, updated_at)
+      VALUES (?, ?, 'global', 'granola', 'workspace', 'active', ?)`)
+      .run(connectionId, auth.workspaceId, new Date().toISOString());
     const event = {
       event_id: "33333333-3333-4333-8333-333333333333",
       event_type: "note.regenerated",
@@ -478,6 +482,17 @@ function fixture() {
   const database = new DatabaseSync(":memory:");
   databases.push(database);
   database.exec(`
+    CREATE TABLE connector_ingress_routes (
+      connection_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      region TEXT NOT NULL,
+      connector_type TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      provider_account_id TEXT,
+      provider_user_id TEXT,
+      status TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE connector_connections (
       id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
