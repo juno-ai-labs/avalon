@@ -377,6 +377,19 @@ do not publish a new Ace bundle.
 
 ## Changelog
 
+### 2026-11-09 — Ace retires `suggested-work-enabled`
+
+**What changed:** the flag left `MANAGED_FLAGS` and the editor's default
+selection, and the deploy retires it from Flagship instead of ensuring it.
+
+**Why:** the Suggested Work surfaces it gated were deleted, and no client read
+it.
+
+**Consequences:** the flag catalog is two product flags; the editor opens on
+`multiple-workspaces-enabled`.
+
+Shipped in juno-ai-labs/avalon#TBD.
+
 ### 2026-10-16 — Ace stops managing `digests-enabled`
 
 **What changed:** `digests-enabled` left `MANAGED_FLAGS`, and the deploy

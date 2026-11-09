@@ -1487,10 +1487,10 @@ window, `SIDEKICK_REVIEW_SAMPLE_LIMITS`). Every count and every sampled run is
 under the accepted revision, since the window can reach back past a revision
 and an earlier revision's runs followed a procedure the person already
 changed. It carries no run content: the wizard reads a run with
-`sidekick_runs_read`. It still carries `announceTo` (the Sidekick's own shared
-conversation, whose id is the Sidekick's, for every Sidekick), but the
-rendered notice no longer names it: the review runs in that conversation, so
-the wizard's report is the announcement. It is admitted through
+`sidekick_runs_read`. It no longer carries `announceTo`: the review runs in
+the Sidekick's own shared conversation, so the wizard's report is the
+announcement. The schema keeps the field optional until notices written
+before the change have drained. It is admitted through
 `admitSystemActivation`
 (`AgentLoopDO.admitSidekickReview`, only on a Sidekick's substream `0`) as
 a queued `system` row whose text (`sidekickReviewText`) is the one sentence a
@@ -2164,6 +2164,19 @@ conversation-object SQLite; the vocabulary, `StatusDot`, the
 survive as described above.
 
 ## Changelog
+
+### 2026-11-09 — A review notice stops writing `announceTo`
+
+**What changed:** a Sidekick review notice no longer carries `announceTo`, and
+the schema marks it optional.
+
+**Why:** nothing read it; the review runs in the Sidekick's shared
+conversation, so its report is the announcement (the dead-code PRD, phase 5).
+
+**Consequences:** the field leaves the schema once notices written before the
+change have drained.
+
+Shipped in juno-ai-labs/avalon#TBD.
 
 ### 2026-11-09 — The shared conversation starts runs and shows them, a Sidekick has its own audience, and a blocked run asks and waits
 

@@ -703,9 +703,10 @@ column catalog; what follows is only what WorkspaceDO still holds.
 - A conversation's effects, a mention or an add among them, are receipted
   by its Canvas or Sidekick in `WorkspaceDO.sidekick_child_receipts`; message
   ID and payload hash detect replay or conflict, and a mention's intent commits
-  in the same transaction. An `activity_event` is receipted and stored nowhere:
-  the Activity log it fed is retired, and migration 139 dropped
-  `workspace_activity_events` and its targets, reads and pushes.
+  in the same transaction. No conversation produces an `activity_event` any
+  more; one already queued is receipted and stored nowhere, since migration 139
+  dropped `workspace_activity_events` and its targets, reads and pushes. The
+  `parent_outbox` CHECK still admits the value.
   `WorkspaceDO.workspace_workstream_effect_receipts`, the Thread host's inbox,
   was unwritten from 2026-11-07 and migration 141 dropped it.
 - WorkspaceDO `workstream_notification_intents` temporarily retains a bounded
