@@ -5110,7 +5110,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * because a Space created before 2026-09-26 has a hidden one) and every
    * child the parent registry, its projections or the Breakout directory
    * knows. Canvases and Sidekicks are other parents, in other tables, and are
-   * never named here.
+   * never named here: nor is a Thread a conversion made a Canvas of, whose
+   * `channels` row a partly failed conversion leaves beside the Canvas row of
+   * the same id. Its Main is the Canvas's Chat now; retiring it would
+   * tombstone a live Canvas.
    */
   async threadRetirementInventory(): Promise<{
     parents: { parentKind: "workstream" | "space"; parentId: string; substreamIds: string[] }[];
@@ -5121,6 +5124,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `SELECT 'workstream' AS parent_kind, workstream_id AS parent_id FROM channels
        UNION SELECT 'space', space_id FROM spaces
        UNION SELECT parent_kind, parent_id FROM parent_metadata
+       EXCEPT SELECT 'workstream', canvas_id FROM canvas_directory
        ORDER BY parent_kind DESC, parent_id`,
     ).toArray();
     return {

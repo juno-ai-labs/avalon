@@ -286,6 +286,47 @@ describe("retire_threads", () => {
   });
 });
 
+describe("retire_threads beside the Thread conversion", () => {
+  it("is refused while a Thread with an artifact is unconverted, and touches nothing", async () => {
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO artifact_registry
+          (artifact_id, workspace_id, resource_id, workstream_id, mode, stateful, current_version, manifest_ref, created_at, updated_at)
+        VALUES ('artifact-b', ?, ?, ?, 'static', 0, 1, 'manifest', 0, 0)`, WORKSPACE_ID, RESOURCE, THREAD_B);
+    });
+    await bridge().dumpThreadTranscripts({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR);
+
+    await expect(bridge().retireThreads({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR))
+      .rejects.toThrow("engineering_operation_failed:thread_retirement_conversion_pending");
+    expect(await survivors()).toEqual({
+      threads: 2, channel: 1, parentState: 7, invitations: 2, canvas: 1, sidekick: 1, resource: 1,
+      retired: { threadA: false, breakout: false, threadB: false, channel: false, canvas: false },
+    });
+  });
+
+  it("never dumps or retires the Chat of a Canvas a partly failed conversion left beside its Thread's rows", async () => {
+    // What a conversion that stopped after its first two steps leaves: the
+    // Canvas row, a Main of kind `canvas`, and the Thread's rows still there.
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO canvas_directory (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at,
+           visibility, authority_generation) VALUES (?, ?, 'Hiring', ?, 0, 0, 'workspace', 1)`,
+        THREAD_B, WORKSPACE_ID, USER_ID,
+      );
+    });
+    await runInDurableObject(await conversation(THREAD_B), (_instance, state) => {
+      state.storage.sql.exec("UPDATE workstream SET parent_kind = 'canvas' WHERE id = 1");
+    });
+
+    const dump = await bridge().dumpThreadTranscripts({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR);
+    const result = await bridge().retireThreads({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR);
+
+    expect(dump.failed).toEqual([]);
+    expect(await dumpedText(THREAD_B)).toBeNull();
+    expect(result.failed).toEqual([]);
+    expect((await survivors()).retired).toEqual({ threadA: true, breakout: true, threadB: false, channel: true, canvas: false });
+  });
+});
+
 describe("a conversation the dump refuses", () => {
   it.each([
     ["thread_transcript_identity_mismatch", "UPDATE workstream SET workstream_key = ? WHERE id = 1", "00000000-0000-7000-8000-00000000b7aa"],
