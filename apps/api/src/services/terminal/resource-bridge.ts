@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import {
   AttachmentKindSchema,
@@ -639,7 +640,7 @@ export function createTerminalResourceBridge(
           { reason: "Retry once; if bytes remain unavailable, reattach the source resource." },
         );
       }
-      const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", 25_000_000);
+      const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
       if (Number.isFinite(object.size) && object.size > maximum) {
         throw new TerminalToolError("resource_limit_exceeded", `The resource is ${object.size} bytes; Terminal imports allow at most ${maximum}. Publish or attach a smaller source file.`, { field: "resourceId", expected: `resource bytes at most ${maximum}` });
       }
@@ -858,7 +859,7 @@ export function createTerminalResourceBridge(
 
     async publishResource(context, input, bytes) {
       const target = await publicationAddress(context, input, input.providerResourceId);
-      const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", 25_000_000);
+      const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
       if (bytes.byteLength > maximum) {
         throw new TerminalToolError("resource_limit_exceeded", `The file is ${bytes.byteLength} bytes; published resources allow at most ${maximum}. Reduce or split it and retry.`, { field: "filePath", expected: `file bytes at most ${maximum}` });
       }

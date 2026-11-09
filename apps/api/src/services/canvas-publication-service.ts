@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import {
   SITE_MANIFEST_MIME_TYPE,
   asWorkspaceId,
@@ -104,7 +105,7 @@ export class CanvasPublicationService {
   }
 
   private maximumBytes(): number {
-    return numericEnv(this.env, "MAX_ATTACHMENT_BYTES", 25_000_000);
+    return numericEnv(this.env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
   }
 
   private async publishFile(runtime: Env, canvasId: string, name: string, providerResourceId: string,

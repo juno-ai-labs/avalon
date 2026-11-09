@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import { classifyAttachmentKind, type ExecutionPrincipal } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 
@@ -144,7 +145,7 @@ export function createMultimodalGenerationResourceStore(
     },
     async publish(context, input) {
       const bytes = input.bytes;
-      const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", 25_000_000);
+      const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
       if (bytes.byteLength > maximum) {
         throw new MultimodalGenerationError(
           "resource_limit_exceeded",
@@ -511,7 +512,7 @@ async function loadSource(
       { resourceId, retryable: true },
     );
   }
-  const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", 25_000_000);
+  const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
   if (Number.isFinite(object.size) && object.size > maximum) {
     throw new MultimodalGenerationError(
       "resource_limit_exceeded",

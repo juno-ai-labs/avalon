@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { asUserId } from "@rally/contracts";
 import { newId } from "@rally/db";
@@ -141,7 +142,7 @@ export class CanvasBuildService {
         return { sizeBytes: Number(size), sha256: sha256!, path: rest.join(" ") };
       });
       const total = entries.reduce((sum, entry) => sum + entry.sizeBytes, 0);
-      const maximum = numericEnv(this.env, "MAX_ATTACHMENT_BYTES", 25_000_000);
+      const maximum = numericEnv(this.env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
       if (total > maximum) throw new ApiError(413, "attachment_too_large", `The built site is ${total} bytes; an artifact may be at most ${maximum}`);
       const built: BuiltFile[] = [];
       for (const entry of entries) {
