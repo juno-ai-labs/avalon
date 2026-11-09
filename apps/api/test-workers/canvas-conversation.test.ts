@@ -208,6 +208,23 @@ describe("a Canvas's Chat", () => {
     }
   });
 
+  it("refuses a participant who has left the Organization on a path with no session behind it", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
+      update: { visibility: "participants", userIds: [MEMBER] } });
+    // The notice path's check: the Organization object, asked directly.
+    const decide = () => workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: canvasId,
+      userId: MEMBER, substreamId: asSubstreamId("0") });
+    expect(await decide()).toMatchObject({ authorized: true });
+    // They leave; the participant list still names them.
+    await env.DB.prepare(`DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?`)
+      .bind(WORKSPACE_ID, MEMBER).run();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`DELETE FROM workspace_member_status WHERE user_id = ?`, MEMBER);
+    });
+    expect(await decide()).toEqual({ authorized: false, archived: false, refusal: "viewer_relationship_inactive" });
+  });
+
   it("makes one Canvas and sends its prompt once for a create retried with the same id", async () => {
     const canvasId = asWorkstreamId(crypto.randomUUID());
     const request = { canvasId, title: "Launch plan", prompt: { text: "Draft the launch plan.", clientMessageId: "canvas-create-1" } };

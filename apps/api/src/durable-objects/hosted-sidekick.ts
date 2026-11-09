@@ -1740,14 +1740,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    * mention's notice asks for whoever was named) still withholds Organization
    * scope from them.
    */
-  protected async admitsViewer(request: ConversationParentAuthorizeViewerRequest): Promise<boolean> {
+  protected async admitsViewer(request: ConversationParentAuthorizeViewerRequest, relationship: WorkspaceRelationship): Promise<boolean> {
     const row = this.row()!;
-    // Read on every path, also for a guest: besides the role, the read
-    // records the person in the Organization's member table (a table read
-    // once they are known), which is how an audience narrowing finds whose
-    // open conversation to close.
-    const relationship = await this.host.readRelationship(row.workspace_id, request.userId);
-    const actorRole = !request.requireGrantAuthority && relationship?.status === "active" && relationship.accessClass === "member"
+    const actorRole = !request.requireGrantAuthority && relationship.accessClass === "member"
       ? relationship.role ?? "member" : null;
     return sidekickReaderAllows(this.row() ?? row, { userId: request.userId, actorRole }, this.sql);
   }
