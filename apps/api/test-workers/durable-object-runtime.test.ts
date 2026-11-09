@@ -457,7 +457,7 @@ describe("Durable Objects in the Workers runtime", () => {
           "workspace_activity_event_targets", "workspace_activity_events", "work_opportunity_provenance_roots", "work_opportunity_snapshots", "work_opportunity_user_links", "work_opportunity_user_states", "work_opportunities", "opportunity_batch_events", "opportunity_batch_windows", "opportunity_provenance_edges", "opportunity_provenance_nodes", "suggested_work_ranking_rounds", "suggested_work_sets", "workspace_workstream_pins", "workspace_batch_dispatch_targets", "workspace_batch_dispatches",
           // Dropped by migration 141, once the Threads were retired.
           "channels", "channel_viewers", "spaces", "breakouts", "parent_metadata", "parent_child_projections",
-          "parent_outbox", "parent_state_changes", "digest_schedules", "slack_agent_sessions",
+          "parent_outbox", "parent_state_changes", "slack_agent_sessions",
           "workspace_workstream_effect_receipts", "workspace_workstream_resource_links"],
       },
     ] as const;
