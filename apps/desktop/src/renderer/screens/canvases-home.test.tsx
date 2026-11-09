@@ -70,7 +70,8 @@ describe('CanvasesHomeScreen', () => {
       expect(card(title).querySelector('.canvas-card-shot svg')).toHaveClass(`lucide-${glyph}`);
       expect(card(title).querySelector('h3 svg')).toBeNull();
     }
-    expect(card('Chosen').querySelector('.canvas-card-shot')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-orange)', color: 'var(--av-sys-color-project-ink-orange)' });
+    expect(card('Chosen').querySelector('.canvas-card-shot')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-orange)' });
+    expect(card('Chosen').querySelector('.canvas-card-shot > svg')).toHaveAttribute('stroke', 'var(--av-sys-color-project-ink-orange)');
     expect(card('Unchosen').querySelector('.canvas-card-shot')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-emerald)' });
   });
 
