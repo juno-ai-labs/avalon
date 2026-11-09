@@ -575,7 +575,15 @@ tool-side bounds (`text` at most 600 characters, `limit` at most 25, the recall
 query at `MEMORY_RECALL_QUERY_LIMIT`) are from the PRD's design and are not
 defensive numbers.
 
+Canvas archive removes both person and whole-conversation audiences, including
+Organization-wide source shortcuts. Migration 142 marks every digest holder and
+advances the memory revision when `archived_at` changes. Refresh drops an archived
+Canvas's holder and withdraws its source facts from copies in other conversations.
+
 ## Testing
+
+`test-workers/memory-facts.test.ts` covers archive withdrawal from Organization
+audiences, holder invalidation and removal of an archived destination holder.
 
 | Suite | Covers |
 | --- | --- |
@@ -629,6 +637,14 @@ when nothing it cites is in the window, and never defaults to `person`. The mode
 authority. `retracted_by` records who forgot a fact.
 
 ## Changelog
+
+### 2026-11-09 — Withdraw archived Canvas memory sources
+
+An archived Canvas admits nobody, so its source facts and previously rendered
+digest copies must disappear together. Checking only person admission left the
+Organization-wide shortcut open; checking only fresh reads left copies stale.
+Archive therefore changes the audience rule and triggers the existing revision
+and copy-sync mechanism in the same commit.
 
 ### 2026-11-09 — Memory is learned in Canvases and Sidekicks, and its visibility is derived from them alone
 

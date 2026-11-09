@@ -479,6 +479,10 @@ SQL joins.
   resource can appear in multiple conversations, so projections that report
   attachment state must use the current object's link; existence anywhere in the
   workspace is not the relationship for the current conversation.
+- WorkspaceDO migration 142 adds `resources.publication_parent_id`, retained
+  from the publication target and backfilled from existing Canvas artifact links.
+  Resource and artifact-registry writes reject an archived Canvas inside SQLite,
+  so byte preparation or a cached publication target cannot outlive archive.
 - WorkspaceDO `resources` holds metadata while `content_ref` points at the user-visible
   regional R2 object and `content_sha256` identifies the exact bytes selected for
   model extraction. Uploads hash before the row commits; connector hydration

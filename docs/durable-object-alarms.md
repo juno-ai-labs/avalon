@@ -50,6 +50,12 @@ selection and the event cutoffs that unchanged rows preserve.
 | `apps/api/src/durable-objects/agent-loop-do.ts` | Adopts it for a conversation's agent: `agent_timer` entries index `workstream_wakeups`; one `terminal_observation` entry indexes its Terminal sandbox's `next_observe_at`; the retired `merge_suggestion` kind is named only so a leftover entry can be recognised. Execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | A hosted Sidekick's entries in `WorkspaceDO`'s store, each keyed `<sidekickId>:<key>`: `automation_schedule`, `automation_run`, `sidekick_review` (one per Sidekick, armed by run finishes; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), `sidekick_run_row` (`<sidekickId>:<runId>`, armed by migration 136's triggers on `sidekick_runs`, handled by `projectRunRow`), `sidekick_memory_tables`, and the delegation kinds. |
 
+Canvas archive uses stored entries too: `canvas_archive_conversation`, keyed by
+Canvas and child, saves the recipients whose Chat sockets must close and stops
+the child's execution; `canvas_archive_artifact`, keyed by artifact, withdraws
+viewer sessions. They commit with the archive tombstone, and a failed delivery
+throws into the existing retry gate. [Canvases](canvases.md#archiving) owns them.
+
 ### Two kinds of wake reason
 
 An object declares what it wants woken for in one of two ways, and the base

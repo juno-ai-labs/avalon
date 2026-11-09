@@ -102,6 +102,11 @@ canvasRoutes.post("/:id/pin", canvasIdParam, zValidator("json", SidebarPinReques
   await new CanvasService(c.env, getWorkspaceAuth(c)).pin("canvas", c.req.valid("param").id, c.req.valid("json").pinned);
   return c.body(null, 204);
 });
+canvasRoutes.post("/:id/archive", canvasIdParam, async (c) => {
+  await new CanvasService(c.env, getWorkspaceAuth(c)).archive(c.req.valid("param").id);
+  return c.body(null, 204);
+});
+
 // A member who cannot open a Canvas: whether they may ask, asking, and a
 // decider's answer. `docs/canvas-access-requests.md`.
 canvasRoutes.get("/:id/access", canvasIdParam, async (c) => {

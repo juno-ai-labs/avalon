@@ -368,6 +368,9 @@ afterEach(() => {
  */
 function hostingSidekicks(database: ToolSelectionDatabase): Env["WORKSPACE_DOS"] {
   const sidekicks: Record<string, unknown> = {
+    // This catalog fixture has an active parent. Archive admission is proved
+    // against the real parent and Chat in test-workers/canvas-conversation.
+    authority: async () => ({ exists: true, authorityGeneration: 1, archived: false }),
     // Catalog input only. Real consent/admission is exercised in test-workers;
     // this suite checks tool projection for a supplied eligible-user snapshot.
     sidekickReadExecutionDelegation: async (request: { automationId: string }) => ({

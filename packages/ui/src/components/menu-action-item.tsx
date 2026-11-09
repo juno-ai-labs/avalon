@@ -8,7 +8,7 @@ export function MenuActionItem({ children, className = 'menu-item', disabled = f
   className?: string;
   disabled?: boolean | undefined;
   disabledReason?: string | undefined;
-  onSelect: () => void;
+  onSelect: (event: Event) => void;
   tooltipSide?: 'top' | 'right' | 'bottom' | 'left';
 }): React.JSX.Element {
   const explained = disabled && Boolean(disabledReason);
@@ -19,7 +19,7 @@ export function MenuActionItem({ children, className = 'menu-item', disabled = f
     disabled={disabled && !explained}
     onSelect={(event) => {
       if (disabled) event.preventDefault();
-      else onSelect();
+      else onSelect(event);
     }}
   >{children}</DropdownMenu.Item>;
   return explained ? <Tip label={disabledReason} side={tooltipSide}>{row}</Tip> : row;

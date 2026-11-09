@@ -2204,6 +2204,21 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     );
   }
 
+  /** Durable fan-out from WorkspaceDO after the Canvas tombstone committed. */
+  async archiveFromParent(input: { workspaceId: string; canvasId: string }): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, canvasId: IdSchema }), input, "canvas_archive_conversation");
+    const identity = this.objectStore.identity();
+    if (!identity) return;
+    if (identity.workspaceId !== request.workspaceId || identity.parentId !== request.canvasId || identity.parentKind !== "canvas") {
+      throw new Error("canvas_archive_conversation_identity_mismatch");
+    }
+    this.product.archiveFromParent();
+    this.syncAgentTimerAlarms();
+    // The active loop owns its platform alarm until it settles the stop.
+    // Re-arming here can cancel that very invocation (as for product.update).
+  }
+
   /** Ownership is resolved by the host's workspace team authority before this RPC. */
   async stopOwnedAgent() {
     await this.initialized;

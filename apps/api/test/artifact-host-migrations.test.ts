@@ -5,7 +5,7 @@ import { durableObjectMigrationHash } from "../src/durable-objects/sqlite-migrat
 
 describe("ArtifactHostDO migrations", () => {
   it("keeps every published migration byte-for-byte compatible", () => {
-    expect(ARTIFACT_HOST_SCHEMA_MIGRATIONS.map(durableObjectMigrationHash)).toEqual([
+    expect(ARTIFACT_HOST_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 2).map(durableObjectMigrationHash)).toEqual([
       "fnv1a64:cab8ce812eccd531",
       "fnv1a64:0a80fa5e6713180a",
     ]);

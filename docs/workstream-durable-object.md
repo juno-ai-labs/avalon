@@ -1454,7 +1454,18 @@ The realtime in-memory window is an optimization. Canonical message records and 
 output are SQL. Provider fragments are batched; regional D1 sees semantic
 projection changes only, not token cadence.
 
+A Canvas archive reaches each Chat child through WorkspaceDO's durable archive
+alarm entry. `archiveFromParent` checks the addressed identity, then commits the
+existing archive-generation and active-loop stop fence with the child's archive
+state and cancellation of pending wakeups. It reconciles timer entries without
+re-arming the platform alarm that an executing loop still owns. The loop settles
+its own stop and effects. Run authority also asks the Canvas parent for member
+runs in Chat `0`, so delayed fan-out cannot authorize another tool boundary.
+
 ## Testing
+
+`test-workers/canvas-conversation.test.ts` covers archive during a streamed
+reply, run-authority refusal, stopped output, and pending timer cancellation.
 
 `test-workers/message-to-output-pipeline.test.ts` also holds a socket send during
 preparation, repeats it under the same or a new operation ID, and verifies two
@@ -1851,6 +1862,14 @@ the tab may go to any site, the boundary being the one tab. The Workers proof
 of the creator-only rule went with the import suite and was never replaced.
 
 ## Changelog
+
+### 2026-11-09 — Propagate Canvas archive to Chat execution
+
+Archiving the directory alone closed new viewers while a member Chat run could
+keep executing and timers could reactivate it. The parent now delivers a durable
+child archive which reuses the existing stop fence; member Chat authority also
+checks its live parent. The active loop must settle itself, so archive does not
+cancel its platform alarm from a competing RPC.
 
 ### 2026-11-09 — Desktop actions and activity effects stop being produced
 
