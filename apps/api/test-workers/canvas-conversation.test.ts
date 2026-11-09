@@ -807,7 +807,7 @@ describe("a Canvas's artifacts", () => {
       .rejects.toMatchObject({ code: "canvas_not_written_by_sidekick" });
   });
 
-  it("puts a Canvas a Sidekick writes on the open list of whoever its audience change admits, and takes it off whoever it drops", async () => {
+  it("puts a Canvas a Sidekick writes on the open list of whoever its audience change admits, and takes it off whoever it drops or its archive", async () => {
     const sidekickId = crypto.randomUUID();
     const actor = { userId: CREATOR, actorRole: "member" as const, participantOfOwningWorkstream: false };
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
@@ -823,6 +823,12 @@ describe("a Canvas's artifacts", () => {
       await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id)).toContain(canvasId);
       await workspace().sidekickSetAudience({ workspaceId: WORKSPACE_ID, automationId: sidekickId, actor,
         update: { audience: "personal", userIds: [] } });
+      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id)).not.toContain(canvasId);
+      // Archiving moves the same rule: its Canvas leaves an admitted reader's open list.
+      await workspace().sidekickSetAudience({ workspaceId: WORKSPACE_ID, automationId: sidekickId, actor,
+        update: { audience: "people", userIds: [MEMBER] } });
+      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id)).toContain(canvasId);
+      await workspace().sidekickRemove({ workspaceId: WORKSPACE_ID, automationId: sidekickId, actor });
       await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id)).not.toContain(canvasId);
     } finally {
       member.socket.close(1000, "done");

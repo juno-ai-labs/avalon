@@ -366,10 +366,13 @@ audience (`canvasReaderAllows` for a person, Organization-wide for
 The workspace socket carries each viewer's Canvas list: `canvases` on the
 subscribe payload's sidebar, and a `workspace_canvas_list` push whenever a
 Canvas's row, its participants, a Chat's latest message, who is in a Canvas,
-or the audience of the Sidekick that writes it moves (to every socket, each
-read for its own viewer; a Sidekick call ends with the same publish a Canvas
-write does, and `HostedSidekick.setAudience` marks the list when the Sidekick
-writes any Canvas), or one person's read of
+or who the Sidekick that writes it admits moves (to every socket, each read
+for its own viewer). For the last, `HostedSidekick.touchDirectory`, which
+every write of a Sidekick's directory row ends with, hands the host the
+inputs of the reader rule (scope, lifecycle, executor, `people` list) when the
+Sidekick writes any Canvas, and the host marks the list only when they differ
+from what it last saw, so a run's own touches push nothing; a Sidekick call
+and a Sidekick alarm end with the same publish a Canvas write does, or one person's read of
 a Chat or their pins move (to that person's sockets alone). It is its own
 event type rather than a third `workspace_sidebar_list` member because a
 released client fails a discriminator value it does not know and ignores an
@@ -1124,11 +1127,14 @@ of the pivot (decision log, "An open Canvas reuses the conversation layout").
 
 **Consequences:** A guest is admitted only from a list; the participant list,
 not the grant, is the authority for whom managers added; a writer Sidekick's
-audience is read live, so anything that changes that audience must mark the
-Canvas list (`noteCanvasDirectoryChanged` on the Sidekick host) in the same
-transaction: the first build marked only the Sidekick list, so someone a
-Sidekick was newly shared with did not see its Canvases, and someone it was
-unshared from kept their rows, until they reconnected. A new hosted parent kind extends `HostedConversation`
+audience is read live, so a change to any input of the Sidekick's reader rule
+must reach the Canvas list. The first build marked only the Sidekick list, so
+someone a Sidekick was newly shared with did not see its Canvases, and someone
+it was unshared from kept their rows, until they reconnected; a fix in
+`setAudience` alone missed archive, restore and executor changes, so the mark
+sits in `touchDirectory` (`noteWriterReaders`), where any future input to the
+rule is covered too. The host's memory of the last inputs is per instance: a
+fresh instance pushes once on a Sidekick's first touch. A new hosted parent kind extends `HostedConversation`
 and is dispatched in `WorkspaceDO.hostedConversationParent`. Listing a Canvas's
 shares and grants has no route. The client (plan step A-12) draws a Canvas
 with the conversation layout: the Chat in `ConversationSurface` and the
