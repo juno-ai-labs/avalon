@@ -1,7 +1,7 @@
 import { ErrorNotice } from '../components/primitives';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { PanelRight, Pencil, X } from 'lucide-react';
 import { IconHistory, IconLink, IconPin, IconPinnedOff, IconPlayerPlay } from '@tabler/icons-react';
 import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
@@ -286,8 +286,12 @@ function SidekickHeader({ context, detail, onCopyLink, onRunNow }: {
       }}>Copy link</TitleMenuItem>
     </>,
   };
-  // The run's pill names it as the row it was opened from does ("Run 6").
-  const runLabel = sidekickRunLabel(useSidekickRunNumber(detail.id, runId));
+  // The run's pill names it as the row it was opened from does ("Run 6"). A
+  // link that already knew the number, such as a Canvas card's "run #5",
+  // carries it in the route's state, so the pill is numbered before the
+  // shared conversation that numbers it has loaded.
+  const linked = (useLocation().state as { runNumber?: unknown } | null)?.runNumber;
+  const runLabel = sidekickRunLabel(useSidekickRunNumber(detail.id, runId) ?? (typeof linked === 'number' ? linked : null));
   const current: TitlePillLevel = runId
     ? { key: `run:${runId}`, icon: <IconHistory aria-hidden="true" size={16} stroke={1.8} />, title: runLabel, label: runLabel }
     : sidekickLevel;

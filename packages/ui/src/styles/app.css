@@ -1719,7 +1719,8 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   font-size: var(--av-sys-font-size-meta);
   padding: 1px 5px;
 }
-.workspace-counts-stale { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-font-size-meta); }
+/* One line: the menu label is a column, which put the time under its words. */
+.workspace-counts-stale { color: var(--av-sys-color-text-muted); display: block; font-size: var(--av-sys-font-size-meta); }
 .workspace-region-choice { border: 0; display: flex; gap: 12px; margin: 12px 0 0; padding: 0; }
 .workspace-region-choice legend { color: var(--av-sys-color-text-subtle); font-size: var(--av-sys-font-size-meta); margin-bottom: 6px; }
 .workspace-region-choice label { align-items: center; display: flex; gap: 5px; }
@@ -7992,9 +7993,12 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   .workstream-composer .composer-highlight { font-size: 16px !important; }
 }
 
-/* A touch screen has no keyboard to press the Submit shortcut with. */
+/* A touch screen has no keyboard to press the Submit shortcut or an option's letter with. */
 @media (hover: none) and (pointer: coarse) {
-  .elicitation-submit kbd { display: none; }
+  .elicitation-submit kbd,
+  .app-shell .elicitation-option > kbd,
+  .app-shell .elicitation-option:has(input[type='checkbox']) > kbd,
+  .elicitation-option > kbd { display: none; }
 }
 
 /* ── Navigation: the section switcher and its one list ─────────────────────

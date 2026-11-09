@@ -368,7 +368,9 @@ one installation id per browser profile lives in `localStorage`. Settings →
 Notifications shows "In this browser" with a toggle instead of the Mac's
 section. Safari on iPhone and iPad offers Web Push only to a Home Screen app, so
 an iOS Safari tab reports `home-screen` and the section explains how to add
-Rally ([`browser-client.md`](browser-client.md)).
+Rally ([`browser-client.md`](browser-client.md)). Why the toggle is off
+(unsupported, Home Screen, not available yet, blocked for the site) is a row
+inside its card, as the Mac's reason is, not a line below it.
 
 The consumer renders both payloads and sends each device the one for its
 transport. `web-push-transport.ts` encrypts one `aes128gcm` record to the
@@ -604,6 +606,14 @@ notice carries the turn and its sequence, and the link is the canonical Canvas
 link with `?turn=&sequence=`; the push data repeats them as `turnId` and
 `sequence`. Why: the owner's "fix this" for a reply push opening at the
 newest message instead of at the message.
+
+**Also this round — the email narrows at phone width.** A `<style>` rule
+under `max-width: 480px` takes the card's padding from 36px to 20px and the
+outer gutter from 16px to 8px, in clients that honour a style block (the rest
+keep the wide layout). Why: the round-5 visual check (F14) found the text
+column about 260px wide on a phone. In the same pass (F4) the browser's
+reason its notifications are off moved inside the toggle's card, as a row the
+way the Mac's is, from a loose line below the card.
 
 **What a future change must respect:** a kind's words live in `renderNotice`
 only; a sink never branches on kind except for its own transport's needs

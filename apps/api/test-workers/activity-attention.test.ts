@@ -69,7 +69,8 @@ beforeEach(async () => {
 it('counts the unseen Activity the person may open, its waiting runs apart, and nothing after Mark all seen', async () => {
   expect(await attention()).toEqual({ waitingForYou: 0, waitingReason: null, hasUnreadActivity: false, readerAttentionCount: 0 });
   await runInDurableObject(workspace(), (_instance, state) => row(state.storage.sql, 'mention:one', 'mention', 'canvas', canvasId, 10));
-  expect(await attention()).toEqual({ waitingForYou: 0, waitingReason: 'unseen', hasUnreadActivity: true, readerAttentionCount: 1 });
+  // An unseen mention is the reason it names, though no run waits.
+  expect(await attention()).toEqual({ waitingForYou: 0, waitingReason: 'mentioned', hasUnreadActivity: true, readerAttentionCount: 1 });
   await runInDurableObject(workspace(), (_instance, state) => {
     const sql = state.storage.sql;
     sql.exec(`INSERT INTO automation_directory
@@ -82,6 +83,9 @@ it('counts the unseen Activity the person may open, its waiting runs apart, and 
   expect(await attention()).toEqual({ waitingForYou: 1, waitingReason: 'needs_input', hasUnreadActivity: true, readerAttentionCount: 2 });
   await runInDurableObject(workspace(), (_instance, state) => markAllActivitySeen(state.storage.sql, userId, 20));
   expect(await attention()).toEqual({ waitingForYou: 0, waitingReason: null, hasUnreadActivity: false, readerAttentionCount: 0 });
+  // Unseen and no mention: only the count.
+  await runInDurableObject(workspace(), (_instance, state) => row(state.storage.sql, 'new_message:one', 'new_message', 'canvas', canvasId, 30));
+  expect(await attention()).toEqual({ waitingForYou: 0, waitingReason: 'unseen', hasUnreadActivity: true, readerAttentionCount: 1 });
 });
 
 it("sets a push's badge to the count with its own row in it", async () => {

@@ -68,7 +68,7 @@ export function CanvasAccessRequestPane({ access, canvasId }: { access: CanvasAc
       description={pending
         ? 'The people who manage it have been asked. It opens here once someone lets you in.'
         : declined
-          ? 'Someone who manages it declined. You can ask again.'
+          ? 'Ask again if you still need it.'
           : 'Ask the people who manage it to let you in.'}
       title="You don't have access to this Canvas"
     />

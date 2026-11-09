@@ -28,10 +28,10 @@ function sidekickRowState(row: AutomationSummary): React.ReactNode {
   switch (sidekickStatus(row)) {
     // The question comes from the newest waiting run, which need not be the
     // newest run: one still asking while another works reads Working with
-    // that question, the dot from any working run and the words from the
-    // waiting one.
+    // that question, the dot and its word from any working run and the
+    // question from the waiting one, so colour alone never carries Working.
     case 'needs_input': return <>
-      {sidekickWorking(row) && <span aria-hidden="true" className="sidekick-working-dot" />}
+      {sidekickWorking(row) && <><span aria-hidden="true" className="sidekick-working-dot" />Working · </>}
       {row.pendingQuestion ?? 'Needs input'}
     </>;
     case 'working': return <><span aria-hidden="true" className="sidekick-working-dot" />Working</>;

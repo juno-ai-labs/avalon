@@ -244,6 +244,20 @@ describe('organization account menu', () => {
     renderMenu({
       attention: {
         [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
+          // An unseen mention with no run waiting: the count, and the mention named.
+          waitingForYou: 0, waitingReason: 'mentioned', hasUnreadActivity: true, readerAttentionCount: 1,
+        },
+      },
+    });
+    openMenu();
+    const mentioned = screen.getByRole('menuitem', { name: 'Europe Studio, enterprise, 1 new in Activity, You were mentioned' });
+    fireEvent.pointerMove(within(mentioned).getByText('1'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('You were mentioned');
+    cleanup();
+
+    renderMenu({
+      attention: {
+        [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
           // Runs waiting on the person are unseen Activity rows too.
           waitingForYou: 2, waitingReason: 'needs_input', hasUnreadActivity: true, readerAttentionCount: 2,
         },

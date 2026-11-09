@@ -101,7 +101,9 @@ function regionLabel(region: RallyRegion): string {
  */
 function waitingLabel(attention: WorkspaceAttention): string | null {
   const count = attention.waitingForYou;
-  if (count === 0) return null;
+  // A mention is named though no run waits: the server ranks an unseen
+  // mention as the reason with `waitingForYou` at zero.
+  if (count === 0) return attention.waitingReason === 'mentioned' ? 'You were mentioned' : null;
   const plural = count === 1 ? '' : 's';
   return attention.waitingReason === 'mentioned'
     ? `${count} mention${plural} waiting for you`

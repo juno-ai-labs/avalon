@@ -91,7 +91,7 @@ describe('SidekicksSection', () => {
     expect(within(all).getByRole('link', { name: /Idle/ })).not.toHaveTextContent('Working');
     // Waiting and working at once: the question, with the working dot.
     const asking = within(screen.getByRole('region', { name: 'Needs input' })).getByRole('link', { name: /Asking/ });
-    expect(asking).toHaveTextContent('Which page?');
+    expect(asking).toHaveTextContent('Working · Which page?');
     expect(asking.querySelector('.sidekick-working-dot')).not.toBeNull();
   });
 

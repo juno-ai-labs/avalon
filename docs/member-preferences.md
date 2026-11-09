@@ -143,6 +143,11 @@ the previous release, whose list is lenient too, parses the record.
 Slack's place: it would start mailing everyone who never chose it; that is a
 product call left to the owner.
 
+**Open:** a stored choice that was Slack alone now reads as `[]`, which
+silences that kind for the person rather than falling back to the kind's
+default; the end-to-end pass of round 5 observed it. Whether it should fall
+back is the owner's call, not made here.
+
 **What a future change must respect:** a channel removed from the schema is
 read as absent, never as an error.
 
@@ -164,7 +169,12 @@ rows, folded in at merge.]
 and nothing else: the connector-surface options, the unlinked Slack row and
 the "connected messaging apps" footnote are gone, and a stored Slack choice is
 neither drawn nor saved back. The owner's instruction of 2026-11-08: "Remove
-Slack but email should support all notifications".
+Slack but email should support all notifications". **Access requests** is
+described as "When someone asks to open a Canvas whose people you manage, or
+declines your request to open one", since a denial to the requester goes
+under it too (`access_denied` reads that choice); described as the decider's
+alone, a member who only ever asks could turn it off without knowing they
+lose denials (the round-5 visual check, F5).
 
 **Why:** The owner asked on 2026-11-08 that Settings offer only kinds real
 producers create, and that every offered one create Activity and push.

@@ -165,7 +165,25 @@ export function AppearancePicker({ id, appearance, defaults, label: triggerLabel
 }): React.JSX.Element {
   const { selected, change, error, onOpenChange } = useAppearanceChoice(id, appearance, onChange, defaults);
   const controlled = open !== undefined;
+  const content = useRef<HTMLDivElement>(null);
   useEffect(() => { if (controlled) onOpenChange(open); }, [controlled, onOpenChange, open]);
+  // Opened from another menu, focus would stay on that menu's trigger, which
+  // it hands focus back to as it closes, after this opened, or on the popup
+  // itself: start a keyboard user on the chosen colour (else the first
+  // choice) once that has happened, unless they are already on a choice.
+  useEffect(() => {
+    if (!controlled || !open) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const frame = requestAnimationFrame(() => {
+      timer = setTimeout(() => {
+        const popup = content.current;
+        if (!popup || (popup !== document.activeElement && popup.contains(document.activeElement))) return;
+        (popup.querySelector<HTMLElement>('[role="menuitemradio"][aria-checked="true"]')
+          ?? popup.querySelector<HTMLElement>('[role="menuitemradio"]'))?.focus();
+      }, 0);
+    });
+    return () => { cancelAnimationFrame(frame); if (timer !== undefined) clearTimeout(timer); };
+  }, [controlled, open]);
   return <DropdownMenu.Root {...(controlled ? { open } : {})} onOpenChange={(value) => { onOpenChange(value); setOpen?.(value); }}>
     <DropdownMenu.Trigger asChild>
       <button type="button" aria-label={triggerLabel} className={clsx('appearance-picker-trigger window-no-drag', triggerClassName)}>
@@ -173,7 +191,7 @@ export function AppearancePicker({ id, appearance, defaults, label: triggerLabel
       </button>
     </DropdownMenu.Trigger>
     <DropdownMenu.Portal>
-      <DropdownMenu.Content className="menu-content appearance-picker-popup" align="start" sideOffset={8} collisionPadding={12} aria-label={triggerLabel}
+      <DropdownMenu.Content ref={content} className="menu-content appearance-picker-popup" align="start" sideOffset={8} collisionPadding={12} aria-label={triggerLabel}
         {...(controlled ? { onFocusOutside: (event: Event) => event.preventDefault() } : {})}>
         <AppearanceChoices change={change} colors={colors} error={error} selected={selected} />
       </DropdownMenu.Content>
