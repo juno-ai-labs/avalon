@@ -3,7 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
-import { Link, MemoryRouter, Navigate, Route, Routes, useLocation, useNavigationType, type InitialEntry } from 'react-router-dom';
+import { Link, MemoryRouter, Navigate, Route, Routes, useLocation, useNavigate, useNavigationType, type InitialEntry } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CollaborationSessionProvider } from '../lib/collaboration-session';
@@ -51,10 +51,12 @@ function sidekick(id: string, name: string, overrides: Partial<AutomationSummary
 /** The pane: where the route is, how it got there, and a link inside it, as a Canvas's own links are. */
 function Location(): React.JSX.Element {
   const { pathname, search } = useLocation();
+  const navigate = useNavigate();
   return <div>
     <div data-navigation={useNavigationType()} data-testid="location">{pathname}</div>
     <div data-testid="address">{`${pathname}${search}`}</div>
     <Link to="/sidekicks/triage">Open a Sidekick from the pane</Link>
+    <button onClick={() => void navigate(-1)} type="button">Back</button>
   </div>;
 }
 
@@ -130,6 +132,13 @@ describe('the Canvases and Sidekicks sections', () => {
     fireEvent.click(screen.getByRole('link', { name: /Launch plan/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Canvas dashboard' }));
     expect(screen.getByTestId('location')).toHaveTextContent(/^\/canvases$/);
+
+    // Repeated dashboard shortcuts must not add extra Back steps.
+    fireEvent.click(canvases);
+    fireEvent.click(canvases);
+    fireEvent.click(screen.getByRole('button', { name: 'Canvas dashboard' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/canvases/00000000-0000-7000-8000-0000000000c2');
   });
 
   it('keeps the phone sheet open for Sidekicks and closes it for the Canvas dashboard or a row', () => {
