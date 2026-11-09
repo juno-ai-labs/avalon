@@ -41,11 +41,11 @@ someone to approve a tool. Rally does not ask anyone to approve its tool calls.
 The red number on the **Canvases** button counts the Canvases with something new
 for you. The number on **Sidekicks** counts the Sidekicks waiting for you: those
 that need input, and those with something new. Each Canvas or Sidekick counts
-once, however much has happened in it. Rally's icon in the Dock and the Mac
-menu bar show those two added together.
+once, however much has happened in it. The Mac menu bar shows those two added
+together.
 
-The number on **Activity** counts the Activity rows you have not seen. It is
-not added to the Dock or the menu bar. Opening the Canvas or Sidekick a row is
+The number on **Activity** counts the Activity rows you have not seen, and it
+is the number on Rally's icon in the Dock. Opening the Canvas or Sidekick a row is
 about clears that row, and **Mark all seen** at the top of the Activity list clears the rest.
 
 ## Inside a Sidekick's conversation

@@ -1,11 +1,11 @@
 ---
 title: Activity and notifications
-description: The Activity list of what happened to you, and how each kind reaches you by push, email or Slack.
+description: The Activity list of what happened to you, and how each kind reaches you by push or email.
 nav_title: Activity and notifications
 ---
 
 Rally keeps one list of the things that happened to you, called Activity, and
-it can also tell you about each of them by push, email or Slack. The list and
+it can also tell you about each of them by push or email. The list and
 the alerts come from the same place, so an alert is never about something your
 Activity does not show.
 
@@ -68,18 +68,8 @@ can tick. Your choices apply on every device in that Organization.
   notifications on.
 - **Email** goes to your account's address, from **Rally
   <notifications@rallywith.ai>**, with an **Open in Rally** button.
-- **Slack** is a direct message from the Rally app. It appears once Rally is
-  [installed in your Slack workspace](01-rally-in-slack.md); until you link your
-  own Slack account, Rally finds you by your email address.
-
-Everything starts on **Push**, and **Mentions** and **Being added** also start
-on **Slack**. With **Off**, that kind still shows in Activity, but nothing is
-sent.
-
-> [!NOTE]
-> Email and Slack are sent today for **Mentions** and for being added to a
-> Canvas. For the other kinds, only push is sent, even if the menu has email
-> or Slack ticked.
+Everything starts on **Push**. With **Off**, that kind still shows in
+Activity, but nothing is sent. Notifications do not go to Slack.
 
 Notification text is plain: formatting is removed and mentions appear as
 **@Name**. A newer reply in the same conversation replaces the alert before it
@@ -106,19 +96,16 @@ to your other devices.
 In a web browser the same switch sits under **In this browser**; see [Rally in
 a web browser](04-rally-in-a-browser.md). If there is no **On this Mac** or
 **In this browser** switch at all, push notifications have not been switched on
-for your account yet, and **Push** is not offered; Activity, email and Slack
-still work.
+for your account yet, and **Push** is not offered; Activity and email still
+work.
 
 ### The number on the app icon
 
-Rally's icon in the Dock carries a badge: the Canvases with something new for
-you plus the Sidekicks waiting for you, the same count as the **Canvases** and
-**Sidekicks** buttons on the rail added together. Activity's own count is not
-included. Each Canvas or Sidekick counts once, however much has happened in
-it. Rally keeps the badge up to date while it is running, for the Organization
-you have open. An alert that arrives while Rally is closed clears the badge
-rather than setting it, so after a day away the icon may show no number until
-you open Rally again.
+Rally's icon in the Dock carries a badge: the Activity rows you have not seen
+yet, the same number as the **Activity** button on the rail. Rally keeps it up
+to date while it is running, for the Organization you have open, and an alert
+that arrives while Rally is closed sets it to that alert's count, so the
+number is waiting when you come back.
 
 ## The small print
 
