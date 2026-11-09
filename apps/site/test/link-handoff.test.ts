@@ -18,8 +18,9 @@ beforeEach(() => {
 const visible = (selector: string): boolean => !document.querySelector<HTMLElement>(selector)!.hidden;
 
 describe('the link handoff page', () => {
-  it('says a retired Thread link names something that no longer exists, and offers Rally', async () => {
-    history.replaceState(null, '', '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY');
+  it('says a retired Breakout link names something that no longer exists, and offers Rally', async () => {
+    // A Thread link reads as the Canvas it became; a Breakout link has nothing to open.
+    history.replaceState(null, '', '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY/b/1111117Hxt1fAWDjN7TZ');
     await import('../src/link-handoff');
     expect(document.querySelector('#link-title')!.textContent).toBe('This link is to something that no longer exists');
     expect(visible('#link-gone')).toBe(true);
@@ -29,6 +30,15 @@ describe('the link handoff page', () => {
     expect(browser.hidden).toBe(false);
     expect(browser.textContent).toBe('Go to Rally');
     expect(browser.href).toBe('http://localhost:8794/');
+  });
+
+  it('opens an old Thread link as the Canvas it became', async () => {
+    history.replaceState(null, '', '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY');
+    await import('../src/link-handoff');
+    expect(document.querySelector('#link-title')!.textContent).toBe('Opening in Rally');
+    expect(visible('#link-gone')).toBe(false);
+    expect(document.querySelector<HTMLAnchorElement>('#open-browser')!.href)
+      .toBe('http://localhost:8794/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TY/');
   });
 
   it('opens a Canvas link and says nothing of a retired one', async () => {
