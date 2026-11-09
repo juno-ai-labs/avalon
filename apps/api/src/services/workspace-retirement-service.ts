@@ -184,6 +184,12 @@ export async function retireWorkspaceGraph(
         const childReceipt = await conversation.retireObject(tombstone);
         receipt.retainedOutbox += childReceipt.retainedOutbox;
         receipt.retiredChildren += 1;
+        // Receipted per child so a pass cut off inside a large parent resumes
+        // at the next child.
+        await workspace.recordRetiredChild({
+          parentId: node.parentId,
+          substreamId: child.substreamId,
+        });
       }
 
       receipt.retiredParents += 1;
