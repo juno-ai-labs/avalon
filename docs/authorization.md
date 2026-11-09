@@ -55,7 +55,12 @@ admits them only from a Canvas's participant list or a Sidekick's `people`
 list. Organization-wide visibility never admits a guest, also on a path that
 does not set `requireGrantAuthority` (a mention's notice asks for whoever was
 named): `HostedCanvas` and `HostedSidekick` both read the person's role from
-their relationship rather than assuming a member.
+their relationship rather than assuming a member. Before either rule runs,
+`HostedConversation.authorizeViewer` refuses a person whose relationship with
+the Organization is not active (`refusal: "viewer_relationship_inactive"`), so
+a participant or `people` list that still names someone who left admits them
+on no path; the socket path was already protected by session membership, the
+notice path was not.
 
 Pure policy tests run with `pnpm --filter @rally/api exec vitest run
 test/scope-grant-policy.test.ts`. Storage and populated-schema upgrade tests run

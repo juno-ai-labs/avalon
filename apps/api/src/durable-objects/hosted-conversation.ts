@@ -135,8 +135,13 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
   /** The parent's own row as the contract reads it; null when there is none. */
   protected abstract identity(): HostedConversationIdentity | null;
 
-  /** Whether this viewer reads the parent's conversations. Called only for a parent that exists and is not archived. */
-  protected abstract admitsViewer(request: ConversationParentAuthorizeViewerRequest): boolean | Promise<boolean>;
+  /**
+   * Whether this viewer reads the parent's conversations. Called only for a
+   * parent that exists and is not archived, and for a person whose
+   * relationship with the Organization is active, which it is handed.
+   */
+  protected abstract admitsViewer(request: ConversationParentAuthorizeViewerRequest,
+    relationship: WorkspaceRelationship): boolean | Promise<boolean>;
 
   /** Refuse an id or Organization that is not this parent's, the way the parent's own reads refuse it. */
   protected abstract assertParent(workspaceId: string, parentId: string): HostedConversationIdentity;
@@ -155,6 +160,9 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
   /**
    * The conversation-parent viewer check. A guest asks with
    * `requireGrantAuthority`; the parent's own rule decides what that admits.
+   * A person who has left the Organization is refused first, whatever list
+   * still names them: a caller with no session behind it (a notice for a
+   * mention) would otherwise admit them from a participant or `people` list.
    */
   async authorizeViewer(input: ConversationParentAuthorizeViewerRequest): Promise<ConversationParentAuthorizeViewerResult> {
     const request = parseRpcInput(ConversationParentAuthorizeViewerRequestSchema, input, "authorize_viewer");
@@ -163,7 +171,18 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
       return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: true });
     }
     this.assertParent(request.workspaceId, request.parentId);
-    return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: await this.admitsViewer(request), archived: false });
+    // Read on every path: besides the answer, the read records the person in
+    // the Organization's member table, which is how an audience narrowing
+    // finds whose open conversation to close.
+    const relationship = await this.host.readRelationship(identity.workspaceId, request.userId);
+    if (relationship?.status !== "active") {
+      return ConversationParentAuthorizeViewerResultSchema.parse({
+        authorized: false, archived: false, refusal: "viewer_relationship_inactive",
+      });
+    }
+    return ConversationParentAuthorizeViewerResultSchema.parse({
+      authorized: await this.admitsViewer(request, relationship), archived: false,
+    });
   }
 
   authorizationDiscoveryChildren(input: ConversationParentAuthorityRequest): { substreamIds: string[] } {

@@ -668,7 +668,7 @@ describe("a Sidekick's shared conversation", () => {
     expect(await wizardExecutions()).toEqual([]);
   });
 
-  it("does not admit a guest to an Organization Sidekick's run on a path that did not say it asks for a guest", async () => {
+  it("admits a guest to a Sidekick's run only from its list, and nobody who left, on a path that did not say who asks", async () => {
     await activeSidekick("workspace");
     // The mention notice's check: the Organization object, asked for a run
     // child, with no `requireGrantAuthority`, because it asks for whoever was named.
@@ -678,6 +678,19 @@ describe("a Sidekick's shared conversation", () => {
     })).authorized;
     expect(await admits(MEMBER_ID)).toBe(true);
     expect(await admits(GUEST_ID)).toBe(false);
+    // On a people list the same path admits the guest: the fix did not over-narrow.
+    await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickSetAudience({
+      ...addressed(), actor: actor(), update: { audience: "people", userIds: [GUEST_ID] } }));
+    expect(await admits(GUEST_ID)).toBe(true);
+    // Someone who has left the Organization is refused, though the list still names them.
+    await TEST_ENV.DB.prepare(`DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?`)
+      .bind(WORKSPACE_ID, GUEST_ID).run();
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`DELETE FROM workspace_member_status WHERE user_id = ?`, GUEST_ID);
+    });
+    expect(await workspaceStub().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID,
+      userId: asUserId(GUEST_ID), substreamId: asSubstreamId(crypto.randomUUID()) }))
+      .toEqual({ authorized: false, archived: false, refusal: "viewer_relationship_inactive" });
   });
 
   it("opens a personal Sidekick's conversation only to its author and the people it is shared with", async () => {
