@@ -5,10 +5,10 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { asArtifactId, asUserId, asWorkspaceId } from "@rally/contracts";
 
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
-import { workspaceDOName } from "../src/durable-objects/names";
+import { artifactHostDOName, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { CanvasPublicationService } from "../src/services/canvas-publication-service";
 import { CanvasService, createCanvas } from "../src/services/canvas-service";
@@ -162,6 +162,30 @@ describe("publishing into a Canvas", () => {
       content: text('import * as THREE from "three";\nexport default function Scene() { return null; }') }] }))
       .rejects.toMatchObject({ status: 422, code: "canvas_build_unsupported_import:three" });
     expect(builder.build).toHaveBeenCalledOnce();
+  });
+
+  it("finishes a site publish that stopped before the registry and the server moved, when it is retried unchanged", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const publisher = new CanvasPublicationService(TEST_ENV, auth(CREATOR));
+    const site = (heading: string) => ({ kind: "site" as const, name: "home", files: [{ path: "index.html", content: text(`<h1>${heading}</h1>`) }] });
+    await publisher.publish(canvasId, site("One"));
+    const second = await publisher.publish(canvasId, site("Two"));
+    expect(second).toMatchObject({ outcome: "updated", version: 2 });
+    const registry = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ artifact_id: string; current_version: number }>(
+      "SELECT artifact_id, current_version FROM artifact_registry WHERE resource_id = ?", second.resourceId).one());
+    const { artifact_id: artifactId } = await registry();
+    const host = env.ARTIFACT_HOSTS.get(env.ARTIFACT_HOSTS.idFromName(artifactHostDOName(env.AVALON_REGION, asArtifactId(artifactId))));
+    const served = () => runInDurableObject(host, (_instance, state) =>
+      state.storage.sql.exec<{ current_version: number }>("SELECT current_version FROM artifact_state WHERE id = 1").one().current_version);
+    // As if the second publish had moved the resource row and stopped there.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE artifact_registry SET current_version = 1 WHERE resource_id = ?", second.resourceId);
+    });
+    await runInDurableObject(host, (_instance, state) => { state.storage.sql.exec("UPDATE artifact_state SET current_version = 1 WHERE id = 1"); });
+
+    expect(await publisher.publish(canvasId, site("Two"))).toMatchObject({ outcome: "unchanged" });
+    expect((await registry()).current_version).toBe(2);
+    expect(await served()).toBe(2);
   });
 
   it("refuses someone the Canvas does not admit, and writes nothing", async () => {
