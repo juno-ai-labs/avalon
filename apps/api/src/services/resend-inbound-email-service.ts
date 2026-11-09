@@ -1,3 +1,6 @@
+import PostalMime from "postal-mime";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import { CloudflareEmailPayloadSchema } from "../lib/rpc-contracts";
 import { verifySvixSignature as verifyStandardWebhookSignature, type VerifySvixInput } from "../lib/svix-signature";
 import { RegionSchema } from "@rally/contracts/regions";
 import { regionalBindings } from "../lib/regional-bindings";
@@ -74,6 +77,7 @@ const ResendReceivedEmailSchema = z.looseObject({
 });
 
 const RegionalEmailInputSchema = z.object({
+  cloudflareEmail: CloudflareEmailPayloadSchema.optional(),
   resendEmailId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/u),
   svixId: z.string().min(1).max(200),
   receivedAt: z.string().datetime({ offset: true }),
@@ -123,6 +127,7 @@ interface WebhookReceiptRow {
 }
 
 export interface ResendRegionalEmailInput {
+  cloudflareEmail?: z.infer<typeof CloudflareEmailPayloadSchema>;
   resendEmailId: string;
   svixId: string;
   receivedAt: string;
@@ -181,8 +186,9 @@ export interface ResendRegionalEmailServiceOptions {
 }
 
 /**
- * Public Global ingress for Resend Receiving. It sees only the signed event
- * envelope and opaque route metadata; regional services retrieve email bodies.
+ * Global ingress for Cloudflare email events and signed legacy Resend webhooks.
+ * Cloudflare MIME bytes pass transiently to the owning region; Global persists
+ * only route receipts. Legacy Resend bodies are still retrieved regionally.
  */
 export class ResendInboundEmailRoutingService {
   private readonly now: () => number;
@@ -244,19 +250,40 @@ export class ResendInboundEmailRoutingService {
       throw new ApiError(400, "invalid_webhook", "The Resend received-email event is invalid");
     }
 
-    const svixId = requiredHeader(headers, "svix-id");
+    return this.routeEmail(data.email_id, requiredHeader(headers, "svix-id"), data.to);
+  }
+
+  /** Cloudflare invokes this through its email event, never a public HTTP body. */
+  async ingestCloudflare(message: z.infer<typeof CloudflareEmailPayloadSchema>): Promise<ResendInboundRoutingResult> {
+    this.assertGlobalIngress();
+    // Hash exact bytes rather than trusting a sender-controlled Message-ID.
+    // Include the SMTP recipient in the receipt identity: Bcc and alias copies
+    // arrive as separate events even when their message bytes are identical.
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", message.raw));
+    const emailId = `cf_${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    const recipientDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(message.to.toLowerCase())));
+    const receiptId = `${emailId}_${Array.from(recipientDigest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    return this.routeEmail(emailId, receiptId, [message.to], message);
+  }
+
+  private async routeEmail(
+    emailId: string,
+    svixId: string,
+    recipients: string[],
+    cloudflareEmail?: z.infer<typeof CloudflareEmailPayloadSchema>,
+  ): Promise<ResendInboundRoutingResult> {
     const receivedAt = new Date(this.now()).toISOString();
     const claimed = await this.env.DB.prepare(
       `INSERT OR IGNORE INTO resend_webhook_receipts
        (svix_id, resend_email_id, event_type, received_at, routed_at, error_json)
        VALUES (?, ?, 'email.received', ?, NULL, NULL)`,
-    ).bind(svixId, data.email_id, receivedAt).run();
+    ).bind(svixId, emailId, receivedAt).run();
     if (changes(claimed) === 0) {
       const existing = await this.env.DB.prepare(
         `SELECT resend_email_id, event_type, routed_at, error_json
          FROM resend_webhook_receipts WHERE svix_id = ?`,
       ).bind(svixId).first<WebhookReceiptRow>();
-      if (!existing || existing.resend_email_id !== data.email_id || existing.event_type !== "email.received") {
+      if (!existing || existing.resend_email_id !== emailId || existing.event_type !== "email.received") {
         throw new ApiError(409, "webhook_replay_conflict", "The Resend webhook identity conflicts with an earlier delivery");
       }
       if (existing.routed_at) {
@@ -269,7 +296,7 @@ export class ResendInboundEmailRoutingService {
     // future custom domains may safely use the same local part for different
     // owners, so discarding the domain here would make the route ambiguous.
     const recipientAddresses = new Map<string, string>();
-    for (const recipient of data.to) {
+    for (const recipient of recipients) {
       const match = recipientAddress(recipient, domains);
       if (match) recipientAddresses.set(`${match.localPart}@${match.domain}`, match.localPart);
     }
@@ -317,7 +344,8 @@ export class ResendInboundEmailRoutingService {
       if (!route.automation_subscription_id) return Promise.reject(threadEmailRetired());
       const target = { targetType: "automation" as const, automationSubscriptionId: route.automation_subscription_id };
       return this.dispatchInRegion(route.region, {
-        resendEmailId: data.email_id,
+        resendEmailId: emailId,
+        ...(cloudflareEmail ? { cloudflareEmail } : {}),
         svixId,
         receivedAt,
         region: route.region,
@@ -468,8 +496,10 @@ export class ResendRegionalEmailService {
     let parsed: z.infer<typeof RegionalEmailInputSchema>;
     try {
       parsed = RegionalEmailInputSchema.parse(rawInput);
-    } catch {
-      throw new ApiError(400, "invalid_email_route", "The inbound-email route is invalid");
+    } catch (error) {
+      if (!(error instanceof z.ZodError)) throw error;
+      throw new ApiError(400, "invalid_email_route", "The inbound-email route is invalid", undefined,
+        zodDiagnosticCode(error, "inbound_email_route") ?? undefined);
     }
     if (parsed.region !== this.env.AVALON_REGION) {
       throw new ApiError(409, "email_region_mismatch", "The inbound email was routed to the wrong region");
@@ -484,6 +514,7 @@ export class ResendRegionalEmailService {
     this.env = withWorkspaceRuntimeDatabase(this.env, parsed.workspaceId);
     const targetType = parsed.targetType ?? (parsed.automationSubscriptionId ? "automation" : "workstream");
     const baseInput = {
+      ...(parsed.cloudflareEmail ? { cloudflareEmail: parsed.cloudflareEmail } : {}),
       resendEmailId: parsed.resendEmailId,
       svixId: parsed.svixId,
       receivedAt: parsed.receivedAt,
@@ -513,7 +544,7 @@ export class ResendRegionalEmailService {
     // every member can see rather than a secret. What the automation refuses
     // is recorded on its receipt, so a retry answers from that rather than
     // fetching again.
-    const received = await this.retrieveReceivedEmail(input.resendEmailId);
+    const received = await this.retrieveReceivedEmail(input.resendEmailId, input.cloudflareEmail);
     const email = normalizeReceivedEmail(received);
     const senderMailbox = mailboxAddress(email.from);
     const senderUserId = senderMailbox
@@ -522,7 +553,7 @@ export class ResendRegionalEmailService {
     const payloadRef = `workspaces/${input.workspaceId}/inbound-email/${input.resendEmailId}.json`;
     await this.env.PAYLOADS.put(payloadRef, JSON.stringify({
       version: 1,
-      provider: "resend",
+      provider: input.cloudflareEmail ? "cloudflare" : "resend",
       untrusted: true,
       emailId: input.resendEmailId,
       ...email,
@@ -535,7 +566,7 @@ export class ResendRegionalEmailService {
       },
     });
     const resourceId = await this.upsertEmailResource(input, email, payloadRef);
-    const structuredContent = inboundStructuredContent(input.resendEmailId, email, resourceId);
+    const structuredContent = { ...inboundStructuredContent(input.resendEmailId, email, resourceId), provider: input.cloudflareEmail ? "cloudflare" : "resend" };
     const run = await workspace.sidekickAdmitInboundEmail({
       workspaceId: asWorkspaceId(input.workspaceId),
       automationId,
@@ -558,7 +589,31 @@ export class ResendRegionalEmailService {
     };
   }
 
-  private async retrieveReceivedEmail(emailId: string) {
+  private async retrieveReceivedEmail(emailId: string, cloudflareEmail?: z.infer<typeof CloudflareEmailPayloadSchema>) {
+    if (cloudflareEmail) {
+      if (cloudflareEmail.raw.byteLength > numericEnv(this.env, "INBOUND_EMAIL_MAX_BYTES", DEFAULT_MAX_RECEIVED_EMAIL_BYTES)) {
+        throw new ApiError(413, "email_too_large", "The received email exceeds the configured size limit");
+      }
+      const email = await PostalMime.parse(cloudflareEmail.raw);
+      return {
+        id: emailId,
+        authentication: { dmarc: cloudflareEmail.senderAuthenticated === true ? "pass" : "fail" },
+        from: email.from?.address ?? "",
+        // The SMTP recipient is authoritative; MIME To/Bcc never select routes.
+        to: [cloudflareEmail.to],
+        cc: (email.cc ?? []).flatMap((address) => address.address ? [address.address] : (address.group ?? []).map((mailbox) => mailbox.address)),
+        reply_to: (email.replyTo ?? []).flatMap((address) => address.address ? [address.address] : (address.group ?? []).map((mailbox) => mailbox.address)),
+        subject: email.subject,
+        text: email.text,
+        html: email.html,
+        message_id: email.messageId,
+        attachments: email.attachments.map((attachment) => ({
+          ...(attachment.filename ? { filename: attachment.filename } : {}),
+          content_type: attachment.mimeType,
+          ...(attachment.disposition ? { content_disposition: attachment.disposition } : {}),
+        })),
+      };
+    }
     const apiKey = requiredConfiguration(
       this.bindings().RESEND_RECEIVING_API_KEY ?? this.bindings().RESEND_API_KEY,
       "Resend full-access API key",
@@ -941,7 +996,7 @@ function normalizeStatus(status: number): ApiError["status"] {
 }
 
 function stableErrorCode(error: unknown): string {
-  if (error instanceof ApiError) return error.code.slice(0, 120);
+  if (error instanceof ApiError) return (error.diagnosticCode ?? error.code).slice(0, 120);
   return "inbound_email_failed";
 }
 

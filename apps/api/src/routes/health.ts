@@ -179,9 +179,9 @@ healthRoutes.get("/", async (c) => {
       ? "configured"
       : "not configured",
   };
-  checks.resend = {
-    ok: Boolean(c.env.RESEND_API_KEY && c.env.RESEND_FROM_EMAIL),
-    message: c.env.RESEND_API_KEY && c.env.RESEND_FROM_EMAIL ? "configured" : "not configured",
+  checks.email = {
+    ok: Boolean(c.env.EMAIL && c.env.EMAIL_FROM?.trim()),
+    message: c.env.EMAIL && c.env.EMAIL_FROM?.trim() ? "configured" : "not configured",
   };
   checks.pushDelivery = { ok: Boolean(c.env.APNS_AUTH_KEY && c.env.APNS_KEY_ID), message: c.env.APNS_AUTH_KEY && c.env.APNS_KEY_ID ? "configured" : "not configured" };
   checks.opsNotifications = opsNotificationsConfigured(c.env)
@@ -194,9 +194,9 @@ healthRoutes.get("/", async (c) => {
   // invitations address and returns "sent" — which is how it went unnoticed for
   // the life of the feature. Not part of the required environment contract: an
   // unset sender must not 503 a region, it must be visible.
-  checks.resendNotificationSender = {
-    ok: Boolean(c.env.RESEND_NOTIFICATION_FROM_EMAIL?.trim()),
-    message: c.env.RESEND_NOTIFICATION_FROM_EMAIL?.trim()
+  checks.emailNotificationSender = {
+    ok: Boolean(c.env.EMAIL_NOTIFICATION_FROM?.trim()),
+    message: c.env.EMAIL_NOTIFICATION_FROM?.trim()
       ? "configured"
       : "unset; digests and automation results send from the transactional sender",
   };
@@ -235,15 +235,14 @@ healthRoutes.get("/", async (c) => {
       message: c.env.APP_ENV === "development" ? reason : "unavailable",
     };
   }
-  const receivingKeyConfigured = Boolean(c.env.RESEND_RECEIVING_API_KEY ?? c.env.RESEND_API_KEY);
-  const inboundConfigured = c.env.AVALON_REGION === "global"
-    ? receivingKeyConfigured
-      && Boolean(c.env.RESEND_WEBHOOK_SIGNING_SECRET ?? c.env.RESEND_WEBHOOK_SECRET)
-      && configuredRegions.filter((region) => region !== c.env.AVALON_REGION).every((region) => typeof regionalBindings(c.env, region).inboundEmail?.ingestResendEmail === "function")
-    : receivingKeyConfigured;
+  const inboundConfigured = c.env.AVALON_REGION !== "global"
+    || configuredRegions.filter((region) => region !== c.env.AVALON_REGION)
+      .every((region) => typeof regionalBindings(c.env, region).inboundEmail?.ingestResendEmail === "function");
   checks.inboundEmail = {
     ok: inboundConfigured,
-    message: inboundConfigured ? "configured" : "not configured",
+    message: !inboundConfigured ? "regional binding unavailable"
+      : c.env.AVALON_REGION === "global" ? "Worker handler available; verify Email Routing rules in Cloudflare"
+        : "regional email RPC handler available",
   };
   const required = [
     checks.envContract,

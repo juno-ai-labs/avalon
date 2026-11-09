@@ -113,19 +113,19 @@ it('sends no email for a kind left on push, and reads a stored Slack choice as n
   expect((await workspace().memberPreferences({ workspaceId, userId })).notify).toMatchObject({ mentions: [], added: ['email'] });
 });
 
-it('sends one email per notice through Resend, its subject the notice title and its key the intent', async () => {
-  const request = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({ id: 're_1' }), { status: 200 }));
-  const production = { ...env, APP_ENV: 'production' as const, RESEND_API_KEY: 'key', RESEND_NOTIFICATION_FROM_EMAIL: 'Rally <notify@rallywith.ai>' };
+it('sends one email per notice through Cloudflare, its subject the notice title and its key the intent', async () => {
+  const send = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: 'cf_1' }));
+  const production = { ...env, APP_ENV: 'production' as const, EMAIL_NOTIFICATION_FROM: 'Rally <notify@rallywith.ai>' };
   const notice: Notice = { intentId: 'new_message:one', kind: 'new_message', title: 'Avery in Launch plan', body: 'Moved the date',
     actorName: 'Avery', url: CANVAS_URL, workspaceId, recipientUserId: userId, parentId: canvasId, substreamId: '0', replyTo: null };
-  expect(await sendNoticeEmail(production, notice, request as unknown as typeof fetch)).toEqual({ outcome: 'sent' });
-  const [, init] = request.mock.calls[0]!;
-  const body = JSON.parse(String(init.body)) as { to: string[]; subject: string; text: string; tags: Array<{ name: string; value: string }> };
-  expect((init.headers as Record<string, string>)['idempotency-key']).toBe(`rally-notice/${workspaceId}/new_message:one`);
-  expect(body).toMatchObject({ to: ['robin@example.test'], subject: 'Avery in Launch plan',
-    tags: [{ name: 'category', value: 'notification_new_message' }, { name: 'region', value: 'global' }] });
+  expect(await sendNoticeEmail(production, notice, send)).toEqual({ outcome: 'sent' });
+  const body = send.mock.calls[0]![0];
+  expect(body.headers!["X-Rally-Delivery-Key"]).toBe(`rally-notice/${workspaceId}/new_message:one`);
+  expect(body.subject).toBe('Avery in Launch plan');
+  expect(body.to).toBe('robin@example.test');
   expect(body.text).toBe([
     'Hi Robin,', '', 'Avery in Launch plan.', '', '"Moved the date"', '', `Open in Rally: ${CANVAS_URL}`, '',
     'You chose email for New messages in Juno Labs. Change it in Rally under Settings, Notifications.',
   ].join('\n'));
+  expect(body.headers!["X-Rally-Category"]).toBe('notification_new_message');
 });

@@ -220,6 +220,77 @@ class FakeBucket {
   }
 }
 
+// Cloudflare supplies the MIME message directly; only the external send/receive
+// provider is doubled. The regional resource uses its real workspace store.
+describe("Cloudflare incoming email", () => {
+  const mime = [
+    "From: =?UTF-8?B?RXh0ZXJuYWw=?= <outside@example.com>",
+    "To: public@example.com",
+    "Reply-To: reply@example.com",
+    "Subject: =?UTF-8?B?UXVhcnRlcmx5IHVwZGF0ZQ==?=",
+    "Message-ID: <same-header@example.com>",
+    'Content-Type: multipart/mixed; boundary="parts"',
+    "", "--parts", "Content-Type: text/plain; charset=utf-8",
+    "Content-Transfer-Encoding: base64", "", "SGVsbG8gJiB3ZWxjb21l", "--parts",
+    'Content-Type: text/plain; name="notes.txt"',
+    'Content-Disposition: attachment; filename="notes.txt"', "", "Attachment contents",
+    "--parts--", "",
+  ].join("\r\n");
+
+  it("routes SMTP recipients, including Bcc, and deduplicates each recipient independently", async () => {
+    const database = new FakeDatabase();
+    const legacyAddress = `${LOCAL_PART}@${LEGACY_DOMAIN}`;
+    const dedicatedAddress = `${LOCAL_PART}@rallywithai.com`;
+    for (const address of [dedicatedAddress, EMAIL_ADDRESS, legacyAddress]) database.routes.set(address, {
+      email_address: address, region: "enterprise", workspace_id: WORKSPACE_ID,
+      workstream_id: null, automation_subscription_id: AUTOMATION_ID,
+    });
+    const dispatched: ResendRegionalEmailInput[] = [];
+    const routing = new ResendInboundEmailRoutingService(environment(database, "global"), {
+      now: () => NOW,
+      dispatchInRegion: async (_region, input) => {
+        dispatched.push(input);
+        return { accepted: true, duplicate: false, messageId: "stored", resourceId: "resource" };
+      },
+    });
+    const message = { raw: new TextEncoder().encode(mime).buffer, from: "outside@example.com", to: dedicatedAddress };
+    await expect(routing.ingestCloudflare(message)).resolves.toMatchObject({ routedCount: 1 });
+    await expect(routing.ingestCloudflare(message)).resolves.toMatchObject({ duplicate: true });
+    await expect(routing.ingestCloudflare({ ...message, to: EMAIL_ADDRESS })).resolves.toMatchObject({ routedCount: 1 });
+    await expect(routing.ingestCloudflare({ ...message, to: legacyAddress })).resolves.toMatchObject({ routedCount: 1 });
+    expect(dispatched.map((input) => input.emailAddress)).toEqual([dedicatedAddress, EMAIL_ADDRESS, legacyAddress]);
+    expect(dispatched[0]!.resendEmailId).toMatch(/^cf_[a-f0-9]{64}$/u);
+    // Reusing a Message-ID with different content is a new delivery.
+    await routing.ingestCloudflare({ ...message, raw: new TextEncoder().encode(`${mime}Changed`).buffer });
+    expect(dispatched).toHaveLength(4);
+    expect(dispatched[3]!.resendEmailId).not.toBe(dispatched[0]!.resendEmailId);
+  });
+
+  it.each([true, false, undefined])("parses Cloudflare MIME and preserves the trusted authentication verdict %s", async (senderAuthenticated) => {
+    const database = new FakeDatabase();
+    database.activeMembers.set("outside@example.com", OWNER_USER_ID);
+    const bucket = new FakeBucket();
+    const fetcher = vi.fn(async () => { throw new Error("Cloudflare mail must not fetch Resend"); });
+    const admitInboundEmail = vi.fn(async () => ({ admitted: true, duplicate: false, outcomeCode: "admitted", runId: "00000000-0000-7000-8000-0000000000aa" }));
+    const service = new ResendRegionalEmailService(environment(database, "enterprise", bucket, { admitInboundEmail }), { fetch: fetcher, now: () => NOW });
+    const input = { ...automationRegionalInput(), resendEmailId: "cf_mime_test", cloudflareEmail: {
+      raw: new TextEncoder().encode(mime).buffer, from: "outside@example.com", to: EMAIL_ADDRESS,
+      ...(senderAuthenticated === undefined ? {} : { senderAuthenticated }),
+    } };
+    await expect(service.ingest(input)).resolves.toMatchObject({ accepted: true });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(admitInboundEmail).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      automationId: AUTOMATION_ID, senderUserId: OWNER_USER_ID, senderAuthenticated: senderAuthenticated === true,
+      textContent: expect.stringContaining("Hello & welcome"),
+      structuredContent: expect.objectContaining({ provider: "cloudflare", untrusted: true, subject: "Quarterly update", to: [EMAIL_ADDRESS], attachmentCount: 1 }),
+    }));
+    expect(database.emailResources()).toHaveLength(1);
+    const payload = JSON.parse([...bucket.values.values()][0]!);
+    expect(payload).toMatchObject({ provider: "cloudflare", from: "outside@example.com", replyTo: ["reply@example.com"], attachments: [{ filename: "notes.txt" }] });
+    expect(payload.text).not.toContain("Attachment contents");
+  });
+});
+
 describe("Resend inbound-email routing", () => {
   it("verifies exact signed bytes before touching global route state", async () => {
     const database = new FakeDatabase();
@@ -749,7 +820,9 @@ describe("regional Resend email ingestion", () => {
 
 describe("Resend text normalization", () => {
   it("extracts only the exact Avalon local part and removes active HTML content", () => {
-    const accepted = __resendInboundEmailTesting.acceptedEmailDomains(DOMAIN);
+    const accepted = __resendInboundEmailTesting.acceptedEmailDomains("rallywithai.com");
+    expect(__resendInboundEmailTesting.recipientAddress(`${LOCAL_PART}@rallywithai.com`, accepted))
+      .toEqual({ localPart: LOCAL_PART, domain: "rallywithai.com" });
     expect(__resendInboundEmailTesting.recipientAddress(
       `Name <${EMAIL_ADDRESS}>`,
       accepted,
@@ -829,7 +902,7 @@ function environment(
     WORKSPACE_DOS: workspaceBinding,
     AVALON_REGION: region,
     APP_ENV: "test",
-    WORKSTREAM_EMAIL_DOMAIN: DOMAIN,
+    WORKSTREAM_EMAIL_DOMAIN: "rallywithai.com",
     RESEND_WEBHOOK_SIGNING_SECRET: WEBHOOK_SECRET,
     // One Full access key is intentionally shared by transactional sending and
     // received-message retrieval. RESEND_RECEIVING_API_KEY remains an override.

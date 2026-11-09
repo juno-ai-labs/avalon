@@ -22,7 +22,7 @@ afterEach(async () => { await drainWaitUntil(); db.close(); });
 function bindings() {
   return createTestEnv({ DB: sqliteD1(db), TELEMETRY_DB: sqliteD1(db), APP_ENV: 'production', AVALON_REGION: 'global',
     LOG_LEVEL: 'error', SESSION_SIGNING_KEY: 'signup-test-signing-key', OAUTH_STATE_ENCRYPTION_KEY: 'signup-test-encryption-key',
-    BROWSER_APP_ORIGIN: 'https://app.example.test', ALLOWED_ORIGINS: 'https://app.example.test', PUBLIC_API_BASE_URL: 'https://api.example.test', RESEND_FROM_EMAIL: 'Rally <login@example.test>',
+    BROWSER_APP_ORIGIN: 'https://app.example.test', ALLOWED_ORIGINS: 'https://app.example.test', PUBLIC_API_BASE_URL: 'https://api.example.test', EMAIL_FROM: 'Rally <login@example.test>',
     EMAIL_LOGIN_POLICY_JSON: '{"otpDigits":6,"ttlSeconds":600,"maxFailedAttempts":3}' });
 }
 // Each stage is accepted in its own deferred write, and stages emitted together

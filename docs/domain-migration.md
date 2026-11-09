@@ -43,7 +43,7 @@ deep-link scheme, and the conversation email domain.
 | `linear.rallywith.ai` | Linear webhook ingress | `linear.with-avalon.com` |
 | `notion.rallywith.ai` | Notion callback and webhook, answering for configured deployments | `notion.with-avalon.com` |
 | `slack.rallywith.ai` | Slack events, interactivity, commands | `slack.with-avalon.com` |
-| `automation.rallywith.ai` | Inbound conversation and automation mail (Resend MX) | `automation.with-avalon.com` |
+| `rallywithai.com` | Dedicated Cloudflare apex catch-all for new Sidekick addresses | `automation.rallywith.ai` and `automation.with-avalon.com` retain Resend receiving |
 | `downloads.rallywith.ai` | R2 custom domain for desktop installers and the update feed | `downloads.with-avalon.com` |
 
 Seven are attached to a Worker by a `routes` entry, listing the Rally pattern
@@ -144,8 +144,14 @@ remembers it.
 
 ### The conversation email domain
 
-New addresses are minted on `automation.rallywith.ai`. Mail to
-`automation.with-avalon.com` is still routed.
+The checked-in configuration mints new addresses on `rallywithai.com`, a
+dedicated inbound apex domain. Cloudflare's single apex catch-all reaches the
+Global Worker without creating a routing rule for every issued address. Its web
+DNS remains independent of the mail setup.
+
+Both `automation.rallywith.ai` and `automation.with-avalon.com` keep their exact
+issued addresses and their existing Resend receiving MX/webhook. They remain
+accepted inbound; neither changes when a new canonical minting domain is deployed.
 
 A conversation address is **stored, not derived** — one row per conversation in
 the Global `workstream_email_routes` ledger — so renaming the domain does not
@@ -282,6 +288,21 @@ before releasing the corresponding entitlement; legacy origins remain browser
 handoffs. See [links](links.md#apple-universal-links).
 
 ## Changelog
+
+### 2026-11-09 — New email addresses use a dedicated apex
+
+**What changed:** The canonical minting domain becomes `rallywithai.com`; both
+previous automation subdomains remain accepted and retain their stored addresses.
+
+**Why:** Cloudflare supports apex catch-alls but not subdomain catch-alls, and
+literal per-address rules impose an avoidable provider limit and provisioning
+lifecycle. An already-owned domain without mail service supplies one catch-all
+without changing Google Workspace or issued email addresses.
+
+**Consequences:** The new Worker and domain routing must be ready before new
+addresses are issued. Existing Resend receiving paths remain required; this is a
+forward-only minting change, never a rewrite of historical address ownership.
+
 
 ### 2026-08-27 — The raster pipeline regenerates from the new vector
 

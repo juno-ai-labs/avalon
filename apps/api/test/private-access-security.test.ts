@@ -32,9 +32,9 @@ describe('early-access abuse regressions against real migrations', () => {
   it('admits only one provider call while a duplicate acknowledgement is in flight', async () => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
-    const provider = mockAccessMail()
-      .mockImplementationOnce(async () => { await held; return Response.json({ id: 'first' }); })
-      .mockImplementation(async () => Response.json({ id: 'duplicate' }));
+    const provider = mockAccessMail(env)
+      .mockImplementationOnce(async () => { await held; return ({ messageId: 'first' }); })
+      .mockImplementation(async () => ({ messageId: 'duplicate' }));
     // Both real SELECTs see pending before either UPDATE may claim it. This
     // proves the conditional write, not just the early return for sending rows.
     let reads = 0;
@@ -64,11 +64,10 @@ describe('early-access abuse regressions against real migrations', () => {
       .toEqual({ acknowledgement_status: 'sent' });
   });
 
-  it('does not resend an uncertain acknowledgement outside the provider deduplication window', async () => {
-    const provider = mockAccessMail().mockRejectedValueOnce(new Error('connection lost after send'))
-      .mockImplementation(async () => Response.json({ id: 'duplicate' }));
-    expect((await submit()).status).toBe(502);
-    vi.setSystemTime(start + 24 * 60 * 60 * 1000);
+  it('does not resend an uncertain acknowledgement immediately after an unknown provider outcome', async () => {
+    const provider = mockAccessMail(env).mockRejectedValueOnce(new Error('connection lost after send'))
+      .mockImplementation(async () => ({ messageId: 'duplicate' }));
+    expect((await submit()).status).toBe(503);
     const repeat = await submit();
     expect(repeat.status).toBe(503);
     expect(await repeat.json()).toMatchObject({ error: { code: 'access_email_review_required' } });
@@ -84,7 +83,7 @@ describe('early-access abuse regressions against real migrations', () => {
   });
 
   it.each(['api.with-avalon.com', 'github.with-avalon.com'])('does not expose acquisition through the alternate host %s', async (host) => {
-    const provider = mockAccessMail().mockImplementation(async () => Response.json({ id: 'unused' }));
+    const provider = mockAccessMail(env).mockImplementation(async () => ({ messageId: 'unused' }));
     const response = await app.request(`https://${host}/access/requests`, { method: 'POST',
       headers: { origin: 'https://rallywith.ai', 'content-type': 'application/json' },
       body: JSON.stringify({ email: 'unwanted@example.com' }),
@@ -95,7 +94,7 @@ describe('early-access abuse regressions against real migrations', () => {
   });
 
   it('refuses non-JSON signup bodies before storing an address or contacting the provider', async () => {
-    const provider = mockAccessMail().mockImplementation(async () => Response.json({ id: 'unused' }));
+    const provider = mockAccessMail(env).mockImplementation(async () => ({ messageId: 'unused' }));
     const response = await app.request('https://api.rallywith.ai/access/requests', { method: 'POST',
       headers: { origin: 'https://rallywith.ai', 'content-type': 'text/plain' },
       body: JSON.stringify({ email: 'unwanted@example.com' }),

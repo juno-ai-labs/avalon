@@ -71,14 +71,15 @@ describe('launch acquisition essentials', () => {
   });
 
   it('refuses a replayed token before accepting a different address', async () => {
-    const mail = vi.fn(async () => Response.json({ id: 'mail' }));
+    const mail = vi.fn(async () => ({ messageId: 'mail' }));
+    env.EMAIL = { send: mail };
     let verified = false;
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       if (String(url).includes('siteverify')) {
         const success = !verified; verified = true;
         return Response.json({ success, hostname: 'rallywith.ai', action: 'access_request' });
       }
-      return mail();
+      throw new Error("unexpected HTTP request");
     });
     expect((await submit('first@example.com')).status).toBe(202);
     expect((await submit('second@example.com')).status).toBe(400);
@@ -112,7 +113,7 @@ describe('launch acquisition essentials', () => {
   });
 
   it('retains quota-deferred requests without starting their uncertainty clock, then retries after capacity returns', async () => {
-    const mail = mockAccessMail().mockImplementation(async () => Response.json({ id: 'mail' }));
+    const mail = mockAccessMail(env).mockImplementation(async () => ({ messageId: 'mail' }));
     db.prepare('INSERT INTO access_email_budget (id, bucket, count) VALUES (1, ?, ?)').run(Math.floor(start / 3_600_000), MAX_ACCESS_EMAILS_PER_HOUR);
     await requestAccess(env, 'waiting@example.com');
     expect(row()).toMatchObject({ status: 'pending', firstAttemptAt: null });
@@ -123,17 +124,17 @@ describe('launch acquisition essentials', () => {
   });
 
   it('retries the documented concurrent-provider conflict with the same key', async () => {
-    const mail = mockAccessMail().mockResolvedValueOnce(Response.json({ name: 'concurrent_idempotent_requests' }, { status: 409 }))
-      .mockImplementation(async () => Response.json({ id: 'mail' }));
+    const mail = mockAccessMail(env).mockRejectedValueOnce(Object.assign(new Error('quota'), { code: 'E_RATE_LIMIT_EXCEEDED' }))
+      .mockImplementation(async () => ({ messageId: 'mail' }));
     expect((await submit('retry@example.com')).status).toBe(502);
     expect(row().status).toBe('failed');
     expect((await submit('retry@example.com')).status).toBe(202);
-    expect(mail.mock.calls[0]![1]!.headers).toEqual(mail.mock.calls[1]![1]!.headers);
+    expect(mail.mock.calls[0]![0].headers).toEqual(mail.mock.calls[1]![0].headers);
   });
 
   it('requires operator authentication, reconciliation and a current generation before restarting uncertain mail', async () => {
-    const mail = mockAccessMail().mockRejectedValueOnce(new Error('uncertain')).mockImplementation(async () => Response.json({ id: 'mail' }));
-    expect((await submit('recover@example.com')).status).toBe(502);
+    const mail = mockAccessMail(env).mockRejectedValueOnce(new Error('uncertain')).mockImplementation(async () => ({ messageId: 'mail' }));
+    expect((await submit('recover@example.com')).status).toBe(503);
     expect((await recover('retry', 0, 'untrusted')).status).toBe(401);
     const unconfirmed = await app.request(`https://api.rallywith.ai/internal/access/requests/${row().id}/recover`, {
       method: 'POST', headers: { authorization: `Bearer ${operatorToken}`, 'content-type': 'application/json' },
@@ -148,17 +149,17 @@ describe('launch acquisition essentials', () => {
     expect(row()).toMatchObject({ status: 'sent', generation: 1 });
     expect((await recover('retry_reconciled', 0)).status).toBe(409);
     expect(mail).toHaveBeenCalledTimes(2);
-    expect(new Headers(mail.mock.calls[1]![1]!.headers).get('idempotency-key')).toBe(`rally-access-request/${row().id}/1`);
+    expect(new Headers(mail.mock.calls[1]![0].headers).get('X-Rally-Delivery-Key')).toBe(`rally-access-request/${row().id}/1`);
   });
 
   it('fences an older failed completion while a reconciled generation is sending', async () => {
     let arrivedFirst!: () => void; let arrivedSecond!: () => void;
     const firstArrived = new Promise<void>((resolve) => { arrivedFirst = resolve; });
     const secondArrived = new Promise<void>((resolve) => { arrivedSecond = resolve; });
-    let releaseFirst!: (response: Response) => void; let releaseSecond!: (response: Response) => void;
-    const firstReply = new Promise<Response>((resolve) => { releaseFirst = resolve; });
-    const secondReply = new Promise<Response>((resolve) => { releaseSecond = resolve; });
-    mockAccessMail().mockImplementationOnce(() => { arrivedFirst(); return firstReply; })
+    let rejectFirst!: (error: Error) => void; let releaseSecond!: (response: EmailSendResult) => void;
+    const firstReply = new Promise<EmailSendResult>((_resolve, reject) => { rejectFirst = reject; });
+    const secondReply = new Promise<EmailSendResult>((resolve) => { releaseSecond = resolve; });
+    mockAccessMail(env).mockImplementationOnce(() => { arrivedFirst(); return firstReply; })
       .mockImplementationOnce(() => { arrivedSecond(); return secondReply; });
     const first = submit('fenced@example.com');
     await firstArrived;
@@ -166,15 +167,15 @@ describe('launch acquisition essentials', () => {
     const second = recover('retry_reconciled');
     await secondArrived;
     try {
-      releaseFirst(new Response('late failure', { status: 503 }));
+      rejectFirst(Object.assign(new Error('quota'), { code: 'E_RATE_LIMIT_EXCEEDED' }));
       expect((await first).status).toBe(502);
       expect(row()).toMatchObject({ status: 'sending', generation: 1 });
-    } finally { releaseSecond(Response.json({ id: 'second' })); await second; }
+    } finally { releaseSecond(({ messageId: 'second' })); await second; }
     expect(row()).toMatchObject({ status: 'sent', generation: 1 });
   });
 
   it('suppresses acknowledgements for an address without making a new signup send again', async () => {
-    const mail = mockAccessMail().mockImplementation(async () => Response.json({ id: 'mail' }));
+    const mail = mockAccessMail(env).mockImplementation(async () => ({ messageId: 'mail' }));
     await requestAccess(env, 'stop@example.com', 0);
     expect((await recover('suppress')).status).toBe(200);
     expect((await submit('stop@example.com')).status).toBe(202);

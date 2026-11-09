@@ -9,15 +9,16 @@ export const WORKSTREAM_ADDRESS_GENERATION_VERSION = "v1";
  * domain does not move the addresses already issued — and those are printed in
  * mail clients, saved in contacts, and forwarded to by rules nobody here can
  * see. The rename is therefore forward-only: new addresses are minted on
- * `automation.rallywith.ai`, while the Global registry retains the exact old
+ * `rallywithai.com`, while the Global registry retains the exact old
  * full addresses for inbound lookup.
  *
  * A legacy domain leaves this list only when inbound mail to it has stopped.
  */
-export const WORKSTREAM_EMAIL_DOMAIN = "automation.rallywith.ai";
+export const WORKSTREAM_EMAIL_DOMAIN = "rallywithai.com";
 
 /** Domains still accepted inbound, whose addresses are no longer minted. */
 export const LEGACY_WORKSTREAM_EMAIL_DOMAINS: readonly string[] = Object.freeze([
+  "automation.rallywith.ai",
   "automation.with-avalon.com",
 ]);
 

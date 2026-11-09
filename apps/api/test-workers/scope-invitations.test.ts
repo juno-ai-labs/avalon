@@ -101,7 +101,7 @@ async function prepareBrowserSignIn(): Promise<Env> {
     env.DB.prepare("CREATE TABLE browser_sessions(session_id TEXT PRIMARY KEY,credential_hash TEXT UNIQUE)"),
     env.DB.prepare("CREATE TABLE browser_workspace_sessions(browser_session_id TEXT,workspace_id TEXT,session_id TEXT UNIQUE,PRIMARY KEY(browser_session_id,workspace_id))"),
   ]);
-  return { ...env, RESEND_FROM_EMAIL: "Rally <login@example.test>",
+  return { ...env, EMAIL_FROM: "Rally <login@example.test>",
     EMAIL_LOGIN_POLICY_JSON: JSON.stringify({ otpDigits: 6, ttlSeconds: 600, maxFailedAttempts: 3 }) };
 }
 

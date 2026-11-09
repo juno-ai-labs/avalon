@@ -2,7 +2,7 @@
 
 Every Sidekick (storage `automation`) from the moment it is accepted receives
 one permanent address
-on the domain configured when it is issued — `automation.rallywith.ai` today —
+on the domain configured when it is issued — `rallywithai.com` for new addresses —
 generated from a frozen vocabulary and reserved in a single Global registry that
 configured deployments share. An address is never recomputed,
 never recycled, and never reassigned — a deleted owner leaves a tombstone rather
@@ -27,9 +27,11 @@ New version-2 Sidekick definitions receive email only when inbound_email is conf
 | `apps/api/src/workstream-email-routing-bridge.ts` | The named RPC binding every non-Global region reserves through. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | Inbound delivery: the Global route lookup, the sender resolution, and the one `admitInboundEmail` call. A Thread's route is refused by name. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | A Sidekick's half of all of that: its `automation_directory` row holds the issued address, `apply` reserves it, and `admitInboundEmail` decides lifecycle, address, and sender in one call and writes the receipt (`sidekick_email_receipts`). |
-| `apps/api/src/inbound-email-regional-bridge.ts` | The one verified Resend event handed to the owning region. |
-| `apps/api/src/routes/resend.ts` | The Global receiving webhook. |
+| `apps/api/src/inbound-email-regional-bridge.ts` | Verified email metadata and Cloudflare MIME bytes handed to the owning region. |
+| `apps/api/src/routes/resend.ts` | The signed legacy Resend receiving webhook. |
 | `apps/api/src/services/email-markdown.ts` | The Markdown renderer both Rally emails share; owned by [`markdown-rendering.md`](markdown-rendering.md). |
+| `apps/api/src/services/cloudflare-inbound-email.ts` | Platform-only Cloudflare email event handler and stream-size admission. |
+| `apps/api/src/services/email.ts` | The shared native Cloudflare sender. |
 | `apps/api/src/services/user-delivery.ts` | The connector-declared personal delivery surfaces beside it. |
 
 ### The v1 format
@@ -43,7 +45,7 @@ and must contain three different words. The noun is either the surname of a
 deceased scientist or an animal name. For example:
 
 ```text
-luminous-tidal-structured-curie@automation.rallywith.ai
+luminous-tidal-structured-curie@rallywithai.com
 ```
 
 V1 contains 128 adjectives and 512 nouns: 256 scientist surnames and 256 animal
@@ -121,6 +123,74 @@ afterwards, so there is nothing for a per-read verification to catch that the
 reservation did not already settle. Both were once reconciled because the
 regional row and the Global claim had independent writers.
 
+### Cloudflare transport
+
+The Global Worker's `email()` entrypoint receives Cloudflare Email Routing
+messages. It checks the maintenance fence and `INBOUND_EMAIL_MAX_BYTES` against
+both `rawSize` and the actual stream before routing. Oversized mail is rejected
+permanently; storage, maintenance and regional failures propagate to the platform.
+Only the first Cloudflare `Authentication-Results` header, with service identifier
+`mx.cloudflare.net` and a passing DMARC verdict, sets `senderAuthenticated` on
+the internal handoff. Later headers, comments and quoted values cannot supply a
+passing verdict. That trusted boolean feeds the existing Sidekick sender gate;
+missing or failing authentication stays refused. The legacy Resend path retains
+its receiving-server authentication data and its current admission policy.
+Only the SMTP envelope recipient selects a route: MIME To/Cc/Bcc headers never
+add recipients, so blind copies and aliases reach the intended owner without
+allowing a sender to fan out by editing headers.
+
+The delivery ID is `cf_` followed by SHA-256 of the exact raw MIME bytes. A Global
+routing receipt also includes a hash of the normalized SMTP recipient, so retries
+of the same bytes converge while separate alias events can route independently.
+The sender's Message-ID is display metadata, never the dedupe authority. A fresh
+SMTP delivery whose transport headers differ has different bytes and can be a new
+delivery even if it reuses Message-ID.
+
+Global passes the raw bytes transiently through the internal regional RPC; it
+persists only routing metadata. The owning region parses MIME with `postal-mime`,
+decodes text, subject and attachment metadata, and uses the existing safe-text,
+resource, receipt, membership and Sidekick-admission paths. Attachments remain
+metadata, matching the prior behavior. Raw HTML and attachment bytes do not enter
+the transcript. Cloudflare payloads and structured messages say
+`provider: "cloudflare"`.
+
+Existing `resend_email_id`, `svix_id`, resource provider `resend`, RPC method
+names and client-message prefixes remain storage compatibility identifiers.
+Cloudflare IDs are namespaced with `cf_`, while historical records stay readable
+under the same attachment authorization and search rules. Renaming only the
+resource provider would bypass those rules, so this cutover deliberately does
+not do that. Legacy signed Resend events can drain through `/ingest/resend` and
+still fetch their bodies with the legacy receiving key; Cloudflare events never
+call Resend.
+
+Outgoing mail uses `EMAIL.send()` with a structured body, named From address,
+optional HTML and Reply-To. `EMAIL_FROM` and `EMAIL_NOTIFICATION_FROM` replace
+the Resend-specific sender vars. `X-Rally-Category`, `X-Rally-Region`, and
+`X-Rally-Delivery-Key` preserve correlation metadata. The delivery-key header is
+not a provider deduplication guarantee. Caller receipts remain authoritative for
+completed work; an uncertain provider acceptance followed by a caller retry can
+send a duplicate. Rate/quota refusals are retryable, while other provider errors
+and unknown outcomes carry `retryable: false`. Sending remains production-only.
+
+The dedicated inbound domain is `rallywithai.com`, an already-owned zone with
+no pre-existing mail service. Cloudflare can route its apex catch-all to the
+Global Worker's `email()` handler using one rule, independent of the number of
+allocated addresses. The checked-in allocator default and Worker var mint new
+addresses on that domain after deployment. The same frozen local-part vocabulary
+and full-address Global registry remain authoritative.
+
+Existing `automation.rallywith.ai` and `automation.with-avalon.com` addresses stay
+unchanged and remain in the accepted-domain set. Their MX and signed Resend
+receiving path keep working; changing the configured domain must never rewrite
+an owner's stored address or free an issued claim. Resend receiving credentials
+cannot be removed while these domains still use that path.
+
+[Cloudflare catch-alls are apex-only](https://developers.cloudflare.com/email-service/configuration/subdomains/#add-a-subdomain-to-email-routing),
+so using a dedicated apex avoids both the subdomain catch-all restriction and the
+200-literal-rule limit for new addresses. It does not migrate the old subdomains;
+retiring their Resend ingress is a separate compatibility migration.
+[The runbook](runbook.md) owns DNS, domain verification and the cutover sequence.
+
 ### Inbound delivery
 
 Mail sent to a retired **Thread's** address routes nowhere. The Global webhook
@@ -137,13 +207,13 @@ and [`automation-lifecycle.md`](automation-lifecycle.md) owns that rule. The
 received message is attached to the run's conversation as an `inbound_email`
 resource and appended there as its opening `system` message, labelled as
 untrusted external data before it reaches the model. A provider retry uses the
-Resend email ID as the idempotency key, so it resolves to the same run.
+delivery ID as the idempotency key, so it resolves to the same run.
 
 **The automation decides once, after the message is stored.** The regional
 ingress fetches the message, resolves the sender to an active member, writes
 the payload to R2 and the resource, and then calls
 `WorkspaceDO.sidekickAdmitInboundEmail` exactly once. The Sidekick answers a retry from
-`sidekick_email_receipts` by Resend email id before deciding anything; a new
+`sidekick_email_receipts` by delivery ID before deciding anything; a new
 message is refused with `sidekick_not_active`,
 `sidekick_email_route_mismatch`, or `email_sender_not_authorized`, and the
 refusal is the receipt, so a retry never re-evaluates it. There is no pre-fetch
@@ -152,7 +222,7 @@ message is fetched first, and the address is a routing identifier every member
 can see rather than a secret.
 
 The receipt is a **`sidekick_email_receipts`** row keyed on the
-Sidekick and the Resend email ID, and the run it admits is that Sidekick's own. The Global address
+Sidekick and the delivery ID, and the run it admits is that Sidekick's own. The Global address
 ledger remains only the opaque address-to-region/workspace/owner route needed
 before the regional object can be selected; its column is still named
 `automation_subscription_id` and holds the automation id.
@@ -175,7 +245,7 @@ writing a refusal receipt rather than a run. Resuming makes the same address
 deliverable again. An archived or deleted owner keeps its claim forever; the
 row is the tombstone.
 
-The Global webhook resolves the complete normalized recipient address. It does
+The Global ingress resolves the complete normalized recipient address. It does
 not discard the domain and query by local part. This keeps the legacy and Rally
 domains independent today and leaves the registry compatible with custom domains
 where the same generated local part may legitimately belong to another owner.
@@ -379,7 +449,7 @@ registry, and what happens to mail addressed to one. It does not own:
 | Untrusted-input handling and the spoofing threat model | [`security.md`](security.md) |
 | The Sidekick tables the address and the receipts live in | [`automation-lifecycle.md`](automation-lifecycle.md), [`data-model.md`](data-model.md) |
 | The resource aliases this generator also mints | [`agent-attachments.md`](agent-attachments.md) |
-| The Resend receiving domain and its secrets | [`runbook.md`](runbook.md) |
+| Sending domains, receiving MX/rules and legacy secrets | [`runbook.md`](runbook.md) |
 
 ## Failure modes and limits
 
@@ -395,12 +465,12 @@ registry, and what happens to mail addressed to one. It does not own:
   refusal receipt alone.
 - **A message an automation refuses is receipted, not dropped.** The outcome code
   (`sidekick_not_active`, `sidekick_email_route_mismatch`,
-  `email_sender_not_authorized`) is stored against the Resend email ID, so a
+  `email_sender_not_authorized`) is stored against the delivery ID, so a
   provider retry resolves to the same refusal instead of being re-evaluated
   against a lifecycle that has since moved. The message is fetched and stored
   before the object decides, so a refused message still costs one payload and
   one resource row; the address is a routing identifier every member can see.
-- **A provider retry converges on the same run.** The Resend email ID is the
+- **A provider retry converges on the same run.** The content-derived Cloudflare ID (or legacy Resend ID) is the
   idempotency key.
 - **A v1 local part is at most 64 ASCII bytes**, and the namespace holds 1,048,707,072
   addresses — the expansion block in the HMAC input is what a v2 would use rather
@@ -419,7 +489,10 @@ registry, and what happens to mail addressed to one. It does not own:
 | --- | --- |
 | `apps/api/test/workstream-email-address.test.ts` | The format, the frozen vocabulary indexes, the distinct-adjective rule, collision advance, and the 64-byte bound. |
 | `apps/api/test/workstream-email-routing.test.ts` | Reservation, owner claims, tombstones (a retired Thread's included), and the regional fail-closed path. |
-| `apps/api/test/resend-inbound-email.test.ts` | Idempotency by Resend email ID, the sender resolution, the single admission call, and the refusal of a Thread's route. |
+| `apps/api/test/resend-inbound-email.test.ts` | Cloudflare MIME parsing and trusted-authentication handoff, legacy delivery IDs, sender resolution, the single admission call, and refusal of retired Thread routes. |
+| `apps/api/test/cloudflare-email-authentication.test.ts` | Cloudflare DMARC results, missing authentication, and rejection of spoofed later headers, comments and quoted values. |
+| `apps/api/test/email.test.ts` | Native sender payloads, production-only sending, and provider outcome classification. |
+| `apps/api/test-workers/cloudflare-email.test.ts` | On real workerd: streamed byte limits, content-derived Global receipts, and maintenance refusal. |
 | `apps/api/test/email-markdown.test.ts` | The shared renderer: the structure these emails use, escaping, refused link targets, and the plain-text preview line. |
 | `apps/api/test-workers/hosted-sidekick.test.ts` | On real workerd: that applying a revision reserves and stores the address, and that `admitInboundEmail` admits once, answers a retry from its receipt, and refuses a stranger. |
 | `apps/api/test/health-env-contract.test.ts` | That the probe says when notification mail is falling back to the transactional sender. |
@@ -450,6 +523,35 @@ Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
 
 ## Changelog
+
+### 2026-11-09 — Cloudflare handles outgoing and incoming mail
+
+**What changed:** The shared sender uses the native Email Service binding, and
+Global receives MIME through an email event before handing it to its owning
+region. The signed Resend webhook remains for previously issued addresses and
+pending deliveries. New Sidekick addresses use the dedicated `rallywithai.com` apex; retired Thread
+routes stay retired. Cloudflare's trusted DMARC verdict preserves the existing
+sender-authentication gate.
+
+**Why:** The requested provider switch puts email on the existing Cloudflare
+platform. Retaining historical receipt and resource identifiers preserves access
+and replay behavior without rewriting stored messages. MIME headers alone cannot
+select recipients because Bcc delivery uses the SMTP envelope.
+
+**Considered and rejected:** Moving the new resource rows to a `cloudflare`
+provider label without migrating every resource reader: that would widen access.
+Pretending a custom header replaces Resend idempotency is also rejected; Cloudflare
+has no documented send-idempotency option, so the acceptance/settlement gap remains
+an explicit at-least-once delivery limitation.
+
+**Consequences:** Outbound deployment needs verified Cloudflare sender domains.
+New incoming addresses use the dedicated `rallywithai.com` apex, where one
+Cloudflare catch-all reaches the Worker without per-address rule provisioning.
+Existing addresses retain their exact domains and Resend receiving path. Deploy
+the Worker and enable the dedicated-domain catch-all before issuing new addresses;
+retain legacy receiving credentials until those old ingress paths retire. Future
+changes must preserve regional payload storage, envelope-recipient routing and
+attachment-based authorization.
 
 ### 2026-09-03 — One admission call, no screen, no window
 
