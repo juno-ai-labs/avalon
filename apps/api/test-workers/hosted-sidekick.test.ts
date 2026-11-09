@@ -2034,6 +2034,18 @@ describe("a hosted Sidekick", () => {
     expect(message).toContain("draft.triggers");
   });
 
+  it("refuses a run whose stored trigger does not parse by the field it got wrong", async () => {
+    await activeAutomation();
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "stored-trigger" });
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE sidekick_runs SET trigger_json = ? WHERE sidekick_id = ? AND run_id = ?`,
+        JSON.stringify({ kind: "manual" }), AUTOMATION_ID, started.runId);
+    });
+    const rejection = await workspaceStub().sidekickListRuns({ ...addressed(), actor: actor() })
+      .then(() => null, (error: unknown) => (error as Error).message);
+    expect(rejection).toMatch(/^sidekick_run_trigger_invalid:.*requestedByUserId/u);
+  });
+
   it("keeps a draft personal when its definition suggests the retired Thread scope", async () => {
     await createDraft();
     // A stored suggestion from a Thread-owned draft, re-submitted as the model read it back.
