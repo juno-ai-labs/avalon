@@ -997,8 +997,10 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   From match against active workspace membership is the only control on a
   mail-started run: since 2026-09-03 such a run holds the same connector and web
   tools as every other automation run, so a spoofed From that passes the screen
-  steers a run that can write and send. The changelog entry of that date records
-  why the tool filter came out and what stands in its place.
+  steers a run that can write and send. That run acts as the member the From
+  names, never as another delegate, so a spoof reaches only that member's access
+  ([inbound email](automation-lifecycle.md#triggers-and-occurrences)). The changelog entry of
+  that date records why the tool filter came out and what stands in its place.
 
 - **An invitation token exists in D1 only as a SHA-256 hash**, and never in a query
   string, log, audit event, or Resend tag.

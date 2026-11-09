@@ -736,9 +736,14 @@ the payload in R2 and the email as a resource, and then calls
 message is refused with `sidekick_not_active`,
 `sidekick_email_route_mismatch` (the address is not this automation's), or
 `email_sender_not_authorized` (no member matched, or a `personal` automation's
-sender is neither its author nor its run-as principal), and the refusal is the
-receipt. An admitted message stores its text, structured content, and resource
-id as the run's `opening`. There is no pre-fetch screen and no hourly window.
+sender is not someone it is shared with), or `run_no_eligible_delegate` (the
+sender has since left the Organization), and the refusal is the receipt. An
+admitted message stores its text, structured content, and resource id as the
+run's `opening`. The run acts as its sender alone, by the rule a message in
+the shared conversation follows ([who a run acts as](#who-a-run-acts-as)): as
+a delegate when the sender is an eligible one, and otherwise under the
+sender's own access, recorded as the run's requester. Mail never borrows
+another delegate's access. There is no pre-fetch screen and no hourly window.
 
 ### Runs
 
@@ -1859,7 +1864,7 @@ instruction body.
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/hosted-sidekick.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg; and the scheduled self-review: ten finishes arming, requesting and delivering a review with the counts and sample, whose row carries the sentence a person reads and whose model turn is asked with the Rally-attributed notice first; the three-day floor, a new revision resetting the count and retiring a pending request, a finish under the previous revision not counting, delivery re-arming from the count, resume resending a request still owed; the accepted revision's runs sampled with failures before stops and other revisions excluded, a lost message resent and then delivered once; the Sidekick row's question read from its newest waiting run while a later run works and after it finishes, and gone once answered. |
+| `apps/api/test-workers/hosted-sidekick.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt, refusing a stranger, and running each message as its sender alone (a person the Sidekick is shared with as the run's requester, never as the author); the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg; and the scheduled self-review: ten finishes arming, requesting and delivering a review with the counts and sample, whose row carries the sentence a person reads and whose model turn is asked with the Rally-attributed notice first; the three-day floor, a new revision resetting the count and retiring a pending request, a finish under the previous revision not counting, delivery re-arming from the count, resume resending a request still owed; the accepted revision's runs sampled with failures before stops and other revisions excluded, a lost message resent and then delivered once; the Sidekick row's question read from its newest waiting run while a later run works and after it finishes, and gone once answered. |
 | `apps/api/test-workers/sidekick-shared-conversation.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: who starts a run from the shared conversation and who reaches the wizard; a run's row written, numbered, carrying its requester and its reply, and parsed by the previous release's schemas; the row's directory effects applied by the Sidekick when it writes the row, in chunks past one call's limit, so the requester's list is sent once with their own run read; the list carrying the zone its next scheduled run is read in; the question a run waits on on its row and on the Sidekick's list row; unread and manual marks per reader. |
 | `apps/api/test/sidekick-review-notice.test.ts`, `test/model-protocol-transcript.test.ts` | `pnpm --filter @rally/api test` | The notice's row sentence and model framing against literals, both windows and an empty sample; and the history projection admitting the notice as one user turn under Rally's first line. |
 | `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | Continuing a finished run as its run-as user; refusals while paused; a pause after a continuation's approval fencing its writes; a run's loop acting while its row still reads `pending`, before provisioning reports it running; and background workers beneath authoring or run conversations executing initial and follow-up assignments with inherited authority; a reader who is not a delegate refused by name, with nothing run, when they write in a run that acts as a delegate, and their answer to the run's question refused before it is recorded, so the author can still give it. |
@@ -1976,8 +1981,10 @@ conversation seats its persisted coordinator, and its state reaches nobody but
 the parent.
 
 Inbound mail is untrusted: the From header can be spoofed, so the sender must
-resolve to an active workspace member, and to the author or principal for a
-personal automation. That screening is the whole control; an inbound-email run
+resolve to an active workspace member, and to someone a personal Sidekick is
+shared with. The run then acts as that sender alone, so a spoofed From header
+reaches only the access of the person it names, never a delegate's. That
+screening is the whole control; an inbound-email run
 holds the same tools as any other run, a decision
 [`security.md`](security.md) records.
 
@@ -2388,7 +2395,12 @@ trigger-started run and have it act with a delegate's connectors (found in
 review). `continueRun` now takes the sender and refuses a person who is not
 the requester of a requester's run, or not an eligible delegate in a
 delegate's run, by name, with no new run in its place; an answer to the run's
-question is screened before it is recorded so the question stays open. A guest on the Sidekick's list runs the same way: this change first
+question is screened before it is recorded so the question stays open.
+Inbound mail follows the same rule for the same reason: `admitInboundEmail`
+accepted mail from anyone on a personal Sidekick's list and then picked any
+delegate to act, so mailing the Sidekick borrowed the author's access; it now
+admits the run as `admitConversationMessage` does, as the sender's delegate
+access or, failing that, under their own access as its requester. A guest on the Sidekick's list runs the same way: this change first
 refused one with `run_no_eligible_delegate`, on the stated ground that a guest
 holds no Organization access, but that named the wrong cause and narrowed the
 PRD. The PRD retires Threads and converts their Sidekicks to Organization

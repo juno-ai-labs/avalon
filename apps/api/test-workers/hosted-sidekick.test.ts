@@ -2096,8 +2096,18 @@ describe("a hosted Sidekick", () => {
     // Someone this personal Sidekick is shared with may email it, as they may read it.
     await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(
       `INSERT INTO sidekick_audience (sidekick_id, user_id, added_at) VALUES (?, ?, ?)`, AUTOMATION_ID, OUTSIDER_ID, Date.parse(NOW)));
-    expect(await workspaceStub().sidekickAdmitInboundEmail({ ...email, resendEmailId: "resend-email-0004", senderUserId: OUTSIDER_ID }))
-      .toMatchObject({ admitted: true, outcomeCode: "admitted" });
+    const shared = await workspaceStub().sidekickAdmitInboundEmail({ ...email, resendEmailId: "resend-email-0004", senderUserId: OUTSIDER_ID });
+    expect(shared).toMatchObject({ admitted: true, outcomeCode: "admitted" });
+    // Each run acts as its sender alone: the author as the delegate they are,
+    // the person it is shared with under their own access, never the author's.
+    const principals = await runInDurableObject(workspaceStub(), (_instance, state) =>
+      state.storage.sql.exec<{ run_id: string; coordinator_user_id: string | null; requester_user_id: string | null }>(
+        `SELECT run_id, coordinator_user_id, requester_user_id FROM sidekick_runs WHERE sidekick_id = ? ORDER BY occurrence_key`, AUTOMATION_ID,
+      ).toArray());
+    expect(principals).toEqual([
+      { run_id: admitted.runId, coordinator_user_id: AUTHOR_ID, requester_user_id: null },
+      { run_id: shared.runId, coordinator_user_id: OUTSIDER_ID, requester_user_id: OUTSIDER_ID },
+    ]);
   });
 
   it("answers a run conversation's terminal deadline from its own projection, not a Channel's", async () => {
