@@ -232,6 +232,8 @@ describe("the automations plugin", () => {
     expect(systemMessage).not.toContain("Only the run-as person can use");
     expect(systemMessage).toContain("Do not ask participants to choose it again");
     expect(systemMessage).not.toContain("owning workstream");
+    expect(systemMessage).toContain("failureNotificationConversationId");
+    expect(systemMessage).toContain("inaccessible configured destinations are refused");
   });
 
   it("stages a scheduled self-review and tells it to report to the absent owner", () => {

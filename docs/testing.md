@@ -771,6 +771,14 @@ arrive when it says so.
 
 ## Letting a run reach the model
 
+Successful Sidekick scripts use `withSuccessfulSidekickOutcome` from
+`test-workers/helpers/openrouter-double.ts` around their provider handler. It
+calls the offered `sidekick_report_outcome` tool before returning the scripted
+final reply; the receipt and terminal state remain production behavior. It
+retains that final across the extra tool turn so it cannot consume a later
+continuation's scripted answer. Tests of blocked, failed or missing outcomes
+script those explicitly instead of using this successful-completion adapter.
+
 **Decide deliberately whether your test lets a run get as far as inference, and
 say which you chose.** The workers suite has no provider double and
 `wrangler.test.jsonc` carries a placeholder `OPENROUTER_API_KEY`, so a run that

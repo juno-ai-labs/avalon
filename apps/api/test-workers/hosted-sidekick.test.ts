@@ -20,7 +20,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -140,6 +140,7 @@ const DEFINITION: AutomationDraft = {
 let loadSkillOnNextTurn = false;
 let sidekickToolScript: { name: string; arguments: unknown }[] = [];
 let submitDraftOnNextTurn = false;
+let taskOutcome: "succeeded" | "blocked" | "failed" | null = "succeeded";
 const provider = useOpenRouterDouble((call) => {
   const scripted = sidekickToolScript.shift();
   if (scripted) return { callTool: scripted };
@@ -151,6 +152,12 @@ const provider = useOpenRouterDouble((call) => {
   if (loadSkillOnNextTurn) {
     loadSkillOnNextTurn = false;
     return { callTool: { name: "load_skill", arguments: { name: "skill-manual-helper-2" } } };
+  }
+  if (taskOutcome && call.toolNames.includes("sidekick_report_outcome")
+    && !JSON.stringify(call.body.input).includes('"name":"sidekick_report_outcome"')) {
+    return { callTool: { name: "sidekick_report_outcome", arguments: {
+      outcome: taskOutcome, summary: taskOutcome === "succeeded" ? "Requested work completed." : "Dashboard publication is unavailable.",
+    } } };
   }
   return { say: "Done." };
 });
@@ -439,6 +446,7 @@ async function settledChildRun(runId: string): Promise<{ status: string; error_j
 }
 
 beforeEach(async () => {
+  taskOutcome = "succeeded";
   sidekickToolScript = [];
   loadSkillOnNextTurn = false;
   submitDraftOnNextTurn = false;
@@ -450,6 +458,44 @@ beforeEach(async () => {
 });
 
 describe("a hosted Sidekick", () => {
+  it("preserves successful task completion after an exploratory tool fails", async () => {
+    await activeAutomation();
+    sidekickToolScript.push({ name: "conversation_read", arguments: { conversation: OUTSIDER_ID } });
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "recovered-discovery-run" });
+    expect(await settledChildRun(started.runId)).toMatchObject({ status: "completed" });
+    const failed = await runInDurableObject(childStub(started.runId), (_instance, state) =>
+      state.storage.sql.exec<{ status: string }>(
+        "SELECT status FROM tool_effects WHERE json_extract(execution_plan_json, '$.capability') = 'rally.conversation.read'",
+      ).toArray());
+    expect(failed).toEqual([{ status: "failed" }]);
+  });
+
+  it.each(["succeeded", "blocked", "failed", null] as const)("settles task outcome %s independently of a completed model response", async (reported) => {
+    taskOutcome = reported;
+    await activeAutomation();
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "task-outcome-run" });
+    const settled = await settledChildRun(started.runId);
+    expect(settled.status).toBe(reported === "succeeded" ? "completed" : "failed");
+    if (reported !== "succeeded") {
+      expect(JSON.parse(settled.error_json!)).toMatchObject({
+        code: reported === null ? "sidekick_task_outcome_missing" : `sidekick_task_${reported}`,
+      });
+    }
+    await deliverChildEffects(TEST_ENV, childStub(started.runId));
+    expect(await runRows()).toEqual([expect.objectContaining({ run_id: started.runId,
+      state: reported === "succeeded" ? "completed" : "failed" })]);
+    if (reported) {
+      await evictDurableObject(childStub(started.runId));
+      const receipts = await runInDurableObject(childStub(started.runId), (_instance, state) =>
+        state.storage.sql.exec<{ status: string; input_json: string }>(
+          "SELECT status, input_json FROM tool_effects WHERE json_extract(execution_plan_json, '$.capability') = 'rally.sidekick.report_outcome'",
+        ).toArray());
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]!.status).toBe("completed");
+      expect(JSON.parse(receipts[0]!.input_json)).toMatchObject({ outcome: reported });
+    }
+  });
+
   it("publishes through the authoring conversation and completes with a durable final reply", async () => {
     await createDraft();
     const root = childStub("0");
