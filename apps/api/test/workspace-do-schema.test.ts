@@ -895,11 +895,43 @@ describe("the WorkspaceDO hosted-Sidekick migration", () => {
     ]);
   });
 
-  it("turns every Thread-owned Sidekick into an Organization one, and archives one a room archive paused", () => {
+  it("keeps a Thread-owned Sidekick's audience: Organization-wide owners stay Organization, personal ones share with their viewers", () => {
     const database = new DatabaseSync(":memory:");
     database.exec("PRAGMA foreign_keys = ON");
     apply(database, SIDEKICK_SCOPE_RETIREMENT_VERSION - 1);
     seedIdentity(database);
+    const author = "00000000-0000-7000-8000-0000000000c3";
+    const viewer = "00000000-0000-7000-8000-0000000000e1";
+    const breakoutViewer = "00000000-0000-7000-8000-0000000000e2";
+    const openThread = "00000000-0000-7000-8000-0000000000d1";
+    const privateThread = "00000000-0000-7000-8000-0000000000d3";
+    const insertThread = database.prepare(`INSERT INTO channels (
+        workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview, scope,
+        exact_state, origin_type, title_status, latest_attention_ordinal, unread_tracking_start_ordinal, last_activity_at,
+        source_created_at, source_updated_at, projected_at)
+      VALUES (?, 1, 1, ?, 'hash', 'Thread', '', '', ?, 'idle', 'ad_hoc', 'settled', 0, 0, 1, 1, 1, 1)`);
+    insertThread.run(openThread, "event-open", "workspace");
+    insertThread.run(privateThread, "event-private", "personal");
+    const insertViewer = database.prepare(`INSERT INTO channel_viewers (
+        workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant, unread_count,
+        you_are_mentioned, listable, seen_attention_ordinal, manual_unread_generation, latest_mention_attention_ordinal,
+        projected_at, participant_added_at)
+      VALUES (?, ?, 1, 1, ?, 'hash', 1, 0, 0, 1, 0, 0, 0, 30, ?)`);
+    insertViewer.run(privateThread, author, "viewer-author", 20);
+    insertViewer.run(privateThread, viewer, "viewer-one", 25);
+    insertViewer.run(openThread, viewer, "viewer-open", 25);
+    database.prepare(`INSERT INTO breakouts (
+        workstream_id, substream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, scope,
+        exact_state, title_status, last_activity_at, latest_attention_ordinal, unread_tracking_start_ordinal,
+        source_created_at, source_updated_at, projected_at)
+      VALUES (?, ?, 1, 1, 'breakout-event', 'hash', 'Breakout', '', 'personal', 'idle', 'settled', 1, 0, 0, 1, 1, 1)`)
+      .run(openThread, "00000000-0000-7000-8000-0000000000d2");
+    database.prepare(`INSERT INTO breakout_viewers (
+        workstream_id, substream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
+        unread_count, you_are_mentioned, unseen, listable, seen_attention_ordinal, manual_unread_generation,
+        latest_mention_attention_ordinal, projected_at)
+      VALUES (?, ?, ?, 1, 1, 'breakout-viewer', 'hash', 1, 0, 0, 0, 1, 0, 0, 0, 40)`)
+      .run(openThread, "00000000-0000-7000-8000-0000000000d2", breakoutViewer);
     const insert = database.prepare(
       `INSERT INTO automation_directory
          (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, paused_by, scope,
@@ -907,17 +939,18 @@ describe("the WorkspaceDO hosted-Sidekick migration", () => {
           projected_at, region)
        VALUES (?, ?, ?, 1, 'h', ?, ?, ?, ?, ?, ?, ?, '', NULL, 1, 'global')`,
     );
-    const author = "00000000-0000-7000-8000-0000000000c3";
-    const room = "00000000-0000-7000-8000-0000000000d1";
     insert.run("00000000-0000-7000-8000-0000000000c1", WORKSPACE_ID, author, "active", null, "workstream",
-      room, "00000000-0000-7000-8000-0000000000d2", null, "Breakout helper");
+      openThread, "0", null, "Open Thread helper");
     insert.run("00000000-0000-7000-8000-0000000000c2", WORKSPACE_ID, author, "paused", "room_archive", "workstream",
-      room, "0", 5, "Archived with its room");
+      openThread, "0", 5, "Archived with its room");
     insert.run("00000000-0000-7000-8000-0000000000c4", WORKSPACE_ID, author, "active", null, "personal",
       null, "0", null, "Mine");
-    // A draft that carries a room archive's marker was terminal under the old rule as well.
-    insert.run("00000000-0000-7000-8000-0000000000c5", WORKSPACE_ID, author, "draft", null, "workstream",
-      room, "0", 7, "Draft archived with its room");
+    insert.run("00000000-0000-7000-8000-0000000000c5", WORKSPACE_ID, author, "active", null, "workstream",
+      privateThread, "0", null, "Private Thread helper");
+    insert.run("00000000-0000-7000-8000-0000000000c6", WORKSPACE_ID, author, "active", null, "workstream",
+      openThread, "00000000-0000-7000-8000-0000000000d2", null, "Private Breakout helper");
+    insert.run("00000000-0000-7000-8000-0000000000c7", WORKSPACE_ID, author, "active", null, "workstream",
+      "00000000-0000-7000-8000-0000000000d9", "0", null, "Owner gone");
 
     apply(database, SIDEKICK_SCOPE_RETIREMENT_VERSION, SIDEKICK_SCOPE_RETIREMENT_VERSION - 1);
 
@@ -925,12 +958,21 @@ describe("the WorkspaceDO hosted-Sidekick migration", () => {
       `SELECT title, lifecycle, paused_by, scope, owning_workstream_id, owning_substream_id
          FROM automation_directory ORDER BY automation_id`,
     ).all()).toEqual([
-      { title: "Breakout helper", lifecycle: "active", paused_by: null, scope: "workspace", owning_workstream_id: null, owning_substream_id: "0" },
+      { title: "Open Thread helper", lifecycle: "active", paused_by: null, scope: "workspace", owning_workstream_id: null, owning_substream_id: "0" },
       { title: "Archived with its room", lifecycle: "deleted", paused_by: null, scope: "workspace", owning_workstream_id: null, owning_substream_id: "0" },
       { title: "Mine", lifecycle: "active", paused_by: null, scope: "personal", owning_workstream_id: null, owning_substream_id: "0" },
-      { title: "Draft archived with its room", lifecycle: "deleted", paused_by: null, scope: "workspace", owning_workstream_id: null, owning_substream_id: "0" },
+      { title: "Private Thread helper", lifecycle: "active", paused_by: null, scope: "personal", owning_workstream_id: null, owning_substream_id: "0" },
+      { title: "Private Breakout helper", lifecycle: "active", paused_by: null, scope: "personal", owning_workstream_id: null, owning_substream_id: "0" },
+      { title: "Owner gone", lifecycle: "active", paused_by: null, scope: "personal", owning_workstream_id: null, owning_substream_id: "0" },
+    ]);
+    // The private owners' viewers, never the author, and nobody for an
+    // Organization-wide owner or one that is gone.
+    expect(database.prepare(`SELECT sidekick_id, user_id, added_at FROM sidekick_audience ORDER BY sidekick_id, user_id`).all()).toEqual([
+      { sidekick_id: "00000000-0000-7000-8000-0000000000c5", user_id: viewer, added_at: 25 },
+      { sidekick_id: "00000000-0000-7000-8000-0000000000c6", user_id: breakoutViewer, added_at: 40 },
     ]);
     expect(database.prepare(`SELECT name FROM sqlite_master WHERE name = 'channel_rail_sidekick_owner_update'`).all()).toEqual([]);
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 });
 

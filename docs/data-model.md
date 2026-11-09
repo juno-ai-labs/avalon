@@ -559,7 +559,8 @@ column catalog; what follows is only what WorkspaceDO still holds.
   the connector fan-out, and access revocation find a Sidekick by: id,
   workspace, author, `source_version`, payload hash, lifecycle (`draft`,
   `active`, `paused`, `deleted`), scope (`personal`, `workspace`; a stored
-  `workstream` reads as `workspace` since migration 135), the dead owning
+  `workstream` reads as `workspace`; migration 135 rewrote every directory row's
+  `workstream` scope to its owning Thread's audience), the dead owning
   columns, title, description, next run time, the chosen icon and colour (null until somebody
   picks one), and when it was projected. Migration 91 added the definition
   columns (accepted revision, bindings, run-as user, pause reason and the rest);

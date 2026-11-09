@@ -142,6 +142,27 @@ The brief needs its own update once this PRD is approved.
 The implementation plan written against these decisions is
 [plan.md](plan.md).
 
+### 2026-11-09 — A Thread-owned Sidekick keeps its Thread's audience
+
+**Decided:** When the Thread-owned Sidekick scope retires, a Sidekick keeps
+the audience its owning Thread or Breakout had: an Organization-wide owner's
+becomes an Organization Sidekick; a personal owner's becomes a `people`
+Sidekick shared with that owner's viewers (the author is never listed); one
+whose owner is gone becomes personal to its author. The coordinator's call
+on review finding S-P1-3 (round 6), matching how `convertThreadToCanvas`
+keeps a personal Thread's audience.
+
+**Why:** The first version of the migration made every Thread-owned
+Sidekick an Organization one. For a personal or private Thread's Sidekick
+that published its definition, runs, conversation and the Canvases it
+writes to every member and made administrators its managers, irreversibly:
+nothing would record who could read it before.
+
+**Changes:** WorkspaceDO migration 135 seeds `sidekick_audience` from
+`channel_viewers` or `breakout_viewers`; docs/automation-lifecycle.md,
+docs/hosted-conversation-parents.md, docs/authorization.md,
+docs/data-model.md.
+
 ### 2026-11-08 — A Canvas's icon and colour can be chosen
 
 **Decided:** Anyone a Canvas admits can choose its icon and colour, from the
