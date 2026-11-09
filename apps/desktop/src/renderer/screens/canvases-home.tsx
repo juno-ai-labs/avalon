@@ -68,14 +68,14 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     });
     const run = canvasWrittenByRun(canvas, sidekicksById, currentUserId);
     const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.artifactKind, canvas.appearance);
-    return <li className="canvas-card" key={canvas.id}>
-      <div aria-hidden="true" className="canvas-card-shot" style={{ background: tint }}>
+    return <li className="dashboard-card" key={canvas.id}>
+      <div aria-hidden="true" className="dashboard-card-preview" style={{ background: tint }}>
         <Icon aria-hidden="true" color={ink} size={44} />
         {present.length > 0 && <span className="canvas-card-presence"><AvatarStack currentUserId={currentUserId} members={present} nameTooltip={false} presentUserIds={canvas.presentUserIds} showTooltip={false} /></span>}
         {canvas.hasStoredData && <span className="canvas-card-data" id={`canvas-data-${canvas.id}`}><IconDatabase aria-hidden="true" size={16} stroke={1.9} />Data</span>}
       </div>
       <div className="canvas-card-body">
-        <h3><Link aria-describedby={canvas.hasStoredData ? `canvas-data-${canvas.id}` : undefined} className="sidekick-list-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
+        <h3><Link aria-describedby={canvas.hasStoredData ? `canvas-data-${canvas.id}` : undefined} className="dashboard-card-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
         <small><span>{run
           // Above the card's stretched title link, so it opens the run and not the Canvas.
           ? <Link className="canvas-card-run" state={{ runNumber: run.runNumber }} to={run.to}>{run.label}</Link>
@@ -87,7 +87,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const newCanvas = guest ? null : <Button className="button-primary" disabled={creating} onClick={() => start()}>
     <Plus aria-hidden="true" size={16} />New Canvas
   </Button>;
-  return <main className="sidekicks-library canvases-home">
+  return <main className="sidekicks-library dashboard-home">
     <header className="sidekicks-library-heading window-drag">
       <div><h1>Canvases</h1><p>Live pages your team and Rally build together.</p></div>
       <div className="sidekicks-library-actions window-no-drag">{newCanvas}</div>
@@ -106,7 +106,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
             <div className="sidekick-results-heading"><h2 id="canvases-recent-title">{needle ? 'Search results' : 'Recent'}</h2><span>{`${shown.length} ${shown.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
             {shown.length === 0
               ? <EmptyState description="Try a different search or filter." title="No matching Canvases" />
-              : <ul className="canvases-home-grid">{shown.map(row)}</ul>}
+              : <ul className="dashboard-grid">{shown.map(row)}</ul>}
           </section>
         </>}
   </main>;

@@ -41,6 +41,14 @@ routes the shell serves, or who owns the right panel.
 
 ## How it works
 
+### Section dashboards
+
+Canvases and Sidekicks share the dashboard grid, card shell, decorative preview
+and stretched title link. Both grids follow the available pane width, using one
+column in a narrow pane, two in a medium pane and three in a wide pane. Sidekick
+cards retain search, ownership filters, sharing and next-wake information; only
+paused Sidekicks have a lifecycle pill, while Needs input is a separate badge.
+
 ### Electron navigation history
 
 The leftmost visible pane header carries Back and Forward before its breadcrumb,
@@ -153,7 +161,9 @@ It holds two columns:
   from the heading's **Recent** control (the same `DropdownSelect` and ⇵
   glyph as the Canvases list's); its action is **New Sidekick**
   (`/sidekicks/new`), preceded by **Sidekicks home** (`/sidekicks`) to return
-  to the dashboard from any Sidekick. A guest gets neither New action.
+  to the dashboard from any Sidekick. Home also dismisses the phone sheet
+  when its destination is already open, and gives a direct shortcut when the
+  rail is hidden on a phone. A guest gets neither New action.
   **Activity** lists the
   person's mentions, adds and Sidekick run notices newest first, each a kind
   glyph, who did what where, the preview, a time and an unseen dot, opening
@@ -419,8 +429,12 @@ It does not own:
 Clicking Sidekicks always navigates to `/sidekicks`, even when its section is
 already selected or a run is open, and dismisses the phone sheet. Merely
 selecting the list left the dashboard unreachable through the section button;
-the explicit navigation now makes the overview one click away. The Home action
-continues to provide the same destination beside New Sidekick.
+the explicit navigation now makes the overview one click away. The new Home
+action beside New Sidekick is retained because the phone hides the rail until
+navigation opens. Both actions dismiss the sheet even on the dashboard itself.
+This change targets Sidekicks; the Canvas rail retains its existing behavior.
+
+Shipped in [#1505](https://github.com/juno-ai-labs/avalon/pull/1505).
 
 ### 2026-11-09 — Return to the Canvas dashboard from the sidebar
 

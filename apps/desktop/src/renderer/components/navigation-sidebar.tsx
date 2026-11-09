@@ -204,6 +204,10 @@ export function NavigationSidebar({
   const createCanvas = useCreateCanvas();
   const [createCanvasError, setCreateCanvasError] = useState<Error | null>(null);
   const navigate = useNavigate();
+  const openSidekicksHome = (): void => {
+    setSidebarOpen(false);
+    void navigate('/sidekicks');
+  };
   const workspaceSocket = useOptionalWorkspaceSocket();
   // Entering Activity opens its top row, the way a mail client opens the
   // first message of the folder it opens: the rail's button pushes, so Back
@@ -273,10 +277,7 @@ export function NavigationSidebar({
             if (candidate.id === 'canvases') openCanvasDashboard();
             else {
               setSection(candidate.id);
-              if (candidate.id === 'sidekicks') {
-                setSidebarOpen(false);
-                void navigate('/sidekicks');
-              }
+              if (candidate.id === 'sidekicks') openSidekicksHome();
             }
           }}
         />)}
@@ -309,7 +310,7 @@ export function NavigationSidebar({
             {barSection === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => { setCreateCanvasError(null); void createCanvas().catch((cause: unknown) => setCreateCanvasError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))); }}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
-            {barSection === 'sidekicks' && <IconButton label="Sidekicks home" onClick={() => void navigate('/sidekicks')}>
+            {barSection === 'sidekicks' && <IconButton label="Sidekicks home" onClick={openSidekicksHome}>
               <IconHome aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
             {barSection === 'sidekicks' && !guest && <IconButton label="New Sidekick" onClick={() => void navigate('/sidekicks/new')}>
