@@ -304,7 +304,9 @@ convert, retire** a rule rather than advice: retired first, a Thread with
 artifacts would lose the Chat its Canvas keeps, and its artifacts the
 conversation their readers open them through. A Thread the conversion refuses
 (`thread_conversion_no_creator`) keeps the retirement refused until an
-operator repairs its rows; nothing meant to survive is retired by default.
+operator repairs its rows with `run_workspace_sql` (a `channels.created_by_user_id`,
+or a viewer row) and converts again; nothing meant to survive is retired by
+default.
 Then, parent by parent, children
 before parents: each conversation object is tombstoned through `retireObject`
 (reason `thread_retirement`, no user), which clears its alarms and closes its
@@ -414,8 +416,24 @@ conversation under every candidate (Main included) has its dump.
    on construction and arms its alarm, which the retired kind had cleared on
    every firing. Already `canvas` is success; any other transition is refused
    with `conversation_parent_kind_conversion_unsupported:<from>:<to>`.
-3. **Each Breakout's object retired** through `retireObject`, as
-   `retire_threads` retires it (reason `thread_conversion`).
+3. **Each Breakout's artifacts carried into the Chat, then each Breakout's
+   object retired.** Every Breakout not yet retired is read
+   (`AgentLoopDO.attachmentsForConversion`, through `identityForRetirement`),
+   its attachments of the Canvas's artifacts (`canvas_artifacts`, which step 1
+   answers) are attached to the Chat (`adoptAttachmentsForConversion`, which
+   takes them only on a `canvas` conversation of that parent, keeps one
+   already there, and moves the inventory revision when it adds one), and
+   the Chat's authorization is projected at once (`projectAuthorization`), so
+   `authorization_locations` places the artifact in the Chat before the
+   Breakout closes. Without it an artifact published only in a Breakout is
+   listed on the Canvas but opens for its uploader alone:
+   `AuthorizationService.resource` needs a conversation the reader can open
+   that holds the attachment. A private Breakout's artifact becomes visible to
+   the Canvas's readers ([`canvases.md`](canvases.md#a-canvas-that-was-a-thread)
+   has the rule); any other resource a Breakout attached stays with it. All
+   are read before any is retired, so a retired Breakout was carried by an
+   earlier pass and a resume skips it. Then each Breakout is retired through
+   `retireObject`, as `retire_threads` retires it (reason `thread_conversion`).
 4. **The Thread's rows deleted** by `deleteRetiredThreadParent`.
 
 A Thread whose rows are gone is no longer a candidate, so a finished
@@ -443,9 +461,10 @@ step 1 deletes the Thread's rows from those tables in the transaction that
 makes the Canvas's row, and only when it makes it; step 4 passes
 `convertedToCanvas`, and `deleteRetiredThreadParent` then leaves those tables
 alone. An invitation or grant made on the live Canvas between an interrupted
-pass and its resume survives the resume. A Thread's pending invitations are
-not carried to the Canvas: the Thread's participants are, from
-`channel_viewers`.
+pass and its resume survives the resume. A Thread invitation still unclaimed
+at conversion is deleted, so its emailed link stops working; the Canvas's
+owner can share the Canvas again. Guests who had claimed one keep the Canvas:
+their `channel_viewers` rows become `canvas_participants`.
 
 ## Boundary
 
@@ -825,8 +844,9 @@ Shipped in juno-ai-labs/avalon#1490.
 operation, makes every Thread of one Organization that made or linked an
 artifact a Canvas with the same id: the Canvas's rows from the Thread's
 (`HostedCanvas.createFromThread`), the Main's stored parent kind rewritten to
-`canvas` (`AgentLoopDO.convertParentKind`), the Breakouts retired and the
-Thread's rows deleted. It runs between the dump and the retirement, behind the
+`canvas` (`AgentLoopDO.convertParentKind`), each Breakout's attachments of the
+Canvas's artifacts carried into the Chat so every Canvas reader opens them,
+the Breakouts retired and the Thread's rows deleted. It runs between the dump and the retirement, behind the
 same dump guard. Migration 147, not yet shipped, now keeps
 `workspace_workstream_resource_links` and Thread-kind Sidekick attachments for
 it; `deleteRetiredThreadParent` deletes both with the Thread.
@@ -838,14 +858,14 @@ D1 anchor and route need no rewrite. The alternative, creating new Canvases
 and copying the conversation and artifacts into them, was rejected because
 every id-keyed table would need a rewrite.
 
-Review of #1490 found the order was advice only: `retire_threads` checked
+The order was advice only at first: `retire_threads` checked
 only the dumps, so run before the conversion it orphaned every artifact, and
 run after a partly failed one it tombstoned the Chat of a live Canvas, which
 keeps the Thread's id. It is now refused while a candidate remains
 (`thread_retirement_conversion_pending`), and its inventory leaves out any id
 `canvas_directory` holds. Letting the retirement skip candidates instead was
 rejected: a Thread it skipped would stay a Thread nothing can open. The
-same review found the conversion's sweep deleted every `parent_*` row of the
+conversion's sweep also deleted every `parent_*` row of the
 id, including invitations and grants made on the live Canvas between an
 interrupted pass and its rerun; the Thread's shares now go when the Canvas is
 made, and the sweep leaves `CANVAS_SHARE_TABLES` to the Canvas.

@@ -154,13 +154,13 @@ export async function retireThreads(
 ): Promise<RetireThreadsResult> {
   const workspaceId = asWorkspaceId(input.workspaceId);
   const workspace = await organizationObject(env, workspaceId);
-  const unconverted = (await workspace.threadConversionInventory()).candidates.length;
-  if (unconverted > 0) {
+  const unconverted = (await workspace.threadConversionInventory()).candidates.map((candidate) => candidate.threadId);
+  if (unconverted.length > 0) {
     logWarn(env, "thread_retirement_conversion_pending", {
-      workspace_id: workspaceId, operation_id: input.operationId, unconverted,
+      workspace_id: workspaceId, operation_id: input.operationId, unconverted: unconverted.length, thread_ids: unconverted,
     });
     throw new ApiError(409, "thread_retirement_conversion_pending",
-      `${unconverted} Threads with artifacts are not converted; run convert_threads_to_canvases until none is left`);
+      `${unconverted.length === 1 ? "1 Thread with artifacts is" : `${unconverted.length} Threads with artifacts are`} not converted; run convert_threads_to_canvases until none is left`);
   }
   const parents = (await workspace.threadRetirementInventory()).parents;
   let undumped = 0;
