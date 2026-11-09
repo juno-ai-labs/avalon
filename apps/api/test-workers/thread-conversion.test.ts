@@ -25,6 +25,7 @@ import { conversationObjectName, workspaceDOName } from "../src/durable-objects/
 import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridge";
 import type { Env } from "../src/env";
 import { durableObjectStubForWorkspace } from "../src/lib/durable-object-namespace";
+import { AuthorizationService } from "../src/services/authorization-service";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
 import { insertChannelRow } from "./helpers/hosted-parent";
@@ -290,6 +291,60 @@ async function shareRows(parentId: string) {
     grants: state.storage.sql.exec("SELECT user_id FROM parent_grants WHERE parent_id = ? ORDER BY user_id", parentId).toArray(),
   }));
 }
+
+const MADE_IN_BREAKOUT = "00000000-0000-7000-8000-00000000c825";
+const BREAKOUT_FILE = "00000000-0000-7000-8000-00000000c826";
+
+describe("an artifact a Thread published only in a Breakout", () => {
+  it("is carried into the Chat, so every Canvas reader opens it once the Breakout is retired", async () => {
+    // VIEWER takes part in the personal Thread but did not upload the artifact.
+    await TEST_ENV.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+      VALUES (?, ?, 'active', 'member', '2026-11-07T09:00:00.000Z')`).bind(WORKSPACE_ID, VIEWER).run();
+    await runInDurableObject(organization(), (_instance, state) => {
+      insertResource(state, MADE_IN_BREAKOUT, "draft.html");
+      insertResource(state, BREAKOUT_FILE, "notes.html");
+      insertArtifact(state, MADE_IN_BREAKOUT, THREAD);
+      state.storage.sql.exec(`INSERT INTO authorization_locations (parent_id, substream_id, parent_kind, resource_id)
+        VALUES (?, ?, 'workstream', ?), (?, ?, 'workstream', ?)`, THREAD, BREAKOUT, MADE_IN_BREAKOUT, THREAD, BREAKOUT, BREAKOUT_FILE);
+    });
+    await runInDurableObject(await conversation(THREAD, BREAKOUT), (_instance, state) => {
+      for (const resourceId of [MADE_IN_BREAKOUT, BREAKOUT_FILE]) {
+        state.storage.sql.exec(`INSERT INTO workstream_resource_links
+            (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+          VALUES (?, ?, 0, 'attachment', json_object('id', ?), ?, ?)`, resourceId, USER_ID, resourceId, AT, AT);
+      }
+    });
+    const opens = async () => (await new AuthorizationService(TEST_ENV).checkMany(
+      { workspaceId: WORKSPACE_ID, userId: VIEWER, delegation: null },
+      [{ kind: "resource", workspaceId: WORKSPACE_ID, resourceId: MADE_IN_BREAKOUT }],
+    ))[0]?.status;
+    await dump();
+
+    const result = await apply();
+
+    expect(result.failed).toEqual([{ threadId: ORPHAN_THREAD, substreamId: null, error: "thread_conversion_no_creator" }]);
+    expect((await (await conversation(THREAD, BREAKOUT)).objectRetirementState()).retired).toBe(true);
+    expect(await opens()).toBe("allowed");
+    // Only the Canvas's artifacts move; a file the Breakout attached stays with it.
+    const chatLinks = await runInDurableObject(await conversation(THREAD), (_instance, state) => state.storage.sql.exec<{ resource_id: string }>(
+      "SELECT resource_id FROM workstream_resource_links ORDER BY resource_id").toArray().map((row) => row.resource_id));
+    expect(chatLinks).toEqual([MADE_IN_BREAKOUT]);
+
+    // A pass interrupted before its sweep left the Thread's rows, with the
+    // Breakout already retired: the resume skips it and still finishes.
+    await runInDurableObject(organization(), (_instance, state) => {
+      insertChannelRow(state, THREAD, "Launch plan", "personal");
+      state.storage.sql.exec("UPDATE channels SET created_by_user_id = ? WHERE workstream_id = ?", USER_ID, THREAD);
+      state.storage.sql.exec(`INSERT INTO breakouts (workstream_id, substream_id, authority_generation, waterline,
+          source_event_id, payload_hash, title, description, scope, exact_state, title_status, created_by_user_id,
+          last_activity_at, latest_attention_ordinal, unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
+        VALUES (?, ?, 1, 1, 'breakout-1', 'hash', 'Draft', '', 'personal', 'idle', 'settled', ?, 0, 0, 0, 0, 0, 0)`,
+      THREAD, BREAKOUT, USER_ID);
+    });
+    expect(await apply()).toMatchObject({ alreadyConverted: 1, failed: [{ threadId: ORPHAN_THREAD }] });
+    expect(await opens()).toBe("allowed");
+  });
+});
 
 describe("a converted Thread's shares", () => {
   it("drops the Thread's before the Canvas exists, and keeps the Canvas's through a resumed pass", async () => {

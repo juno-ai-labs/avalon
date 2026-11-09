@@ -1,4 +1,4 @@
-import { asWorkspaceId, type WorkspaceId } from "@rally/contracts";
+import { asSubstreamId, asWorkspaceId, type WorkspaceId } from "@rally/contracts";
 import type { ConvertThreadsToCanvasesResult } from "@rally/contracts/engineering-inspection";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 
@@ -7,7 +7,9 @@ import { ApiError } from "../lib/api-error";
 import { workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
+import type { ConversionAttachmentLink } from "../durable-objects/agent-loop-do";
 import { UNTITLED_CANVAS } from "../durable-objects/canvas-schema";
+import { projectAuthorization } from "./authorization-projection-service";
 import { conversationObject, retiredConversationKey } from "./thread-retirement-service";
 
 /**
@@ -27,7 +29,9 @@ import { conversationObject, retiredConversationKey } from "./thread-retirement-
  *    Canvas row is the resume marker),
  * 2. the Main's stored parent kind, `workstream` to `canvas`
  *    (`AgentLoopDO.convertParentKind`; already `canvas` is success),
- * 3. each Breakout's object retired (`retireObject`),
+ * 3. each Breakout's attachments of the Canvas's artifacts carried into the
+ *    Chat (`carryBreakoutArtifacts`), then each Breakout's object retired
+ *    (`retireObject`),
  * 4. the Thread's rows deleted (`WorkspaceDO.deleteRetiredThreadParent`),
  *    all but the share rows the Canvas now keys by the same id.
  *
@@ -68,15 +72,19 @@ export async function convertThreadsToCanvases(
   for (const candidate of candidates) {
     let substreamId: string | null = null;
     try {
-      const { created } = await workspace.convertThreadToCanvas({
+      const { created, artifactResourceIds } = await workspace.convertThreadToCanvas({
         workspaceId, threadId: candidate.threadId,
         title: truncateUtf16Safe(candidate.title.trim(), 300) || UNTITLED_CANVAS,
       });
       substreamId = "0";
-      await (await conversationObject(env, workspaceId, candidate.threadId, "0")).convertParentKind({
-        workspaceId, parentId: candidate.threadId, from: "workstream", to: "canvas",
+      const chat = await conversationObject(env, workspaceId, candidate.threadId, "0");
+      await chat.convertParentKind({ workspaceId, parentId: candidate.threadId, from: "workstream", to: "canvas" });
+      const breakouts = candidate.substreamIds.filter((id) => id !== "0");
+      await carryBreakoutArtifacts(env, workspaceId, candidate.threadId, breakouts, new Set(artifactResourceIds), (id) => {
+        substreamId = id;
       });
-      for (const breakout of candidate.substreamIds.filter((id) => id !== "0")) {
+      substreamId = "0";
+      for (const breakout of breakouts) {
         substreamId = breakout;
         await (await conversationObject(env, workspaceId, candidate.threadId, breakout)).retireObject(tombstone);
       }
@@ -101,6 +109,47 @@ export async function convertThreadsToCanvases(
     failed: result.failed.length, artifacts_without_thread: result.artifactsWithoutThread,
   });
   return result;
+}
+
+/**
+ * Carry each Breakout's attachment of a Canvas artifact into the Chat, then
+ * project the Chat's authorization, so every Canvas reader opens the artifact
+ * through the Chat once its Breakout is retired. Without it, an artifact
+ * published only in a Breakout is listed on the Canvas but opens for its
+ * uploader alone: `AuthorizationService.resource` needs a conversation the
+ * reader can open that holds the attachment, and a retired Breakout is none.
+ * A private Breakout's artifact becomes visible to the Canvas's readers, by
+ * the conversion's rule that a Thread becomes one Canvas
+ * (`docs/canvases.md`). Only the Canvas's artifacts move; any other resource
+ * a Breakout attached stays with its retired Breakout.
+ *
+ * Every Breakout is read before any is retired, so a retired one was carried
+ * by an earlier pass and is skipped on a resume.
+ */
+async function carryBreakoutArtifacts(
+  env: Env, workspaceId: WorkspaceId, threadId: string, breakouts: string[], artifacts: ReadonlySet<string>,
+  at: (substreamId: string) => void,
+): Promise<void> {
+  const links: ConversionAttachmentLink[] = [];
+  for (const breakout of breakouts) {
+    at(breakout);
+    const object = await conversationObject(env, workspaceId, threadId, breakout);
+    if ((await object.objectRetirementState()).retired) continue;
+    const held = await object.attachmentsForConversion();
+    if (held.identity && (held.identity.workspaceId !== workspaceId || held.identity.parentId !== threadId)) {
+      throw new Error("thread_conversion_breakout_identity_mismatch");
+    }
+    links.push(...held.links.filter((link) => artifacts.has(link.resource_id)));
+  }
+  at("0");
+  if (links.length === 0) return;
+  const { adopted } = await (await conversationObject(env, workspaceId, threadId, "0"))
+    .adoptAttachmentsForConversion({ workspaceId, parentId: threadId, links });
+  if (adopted > 0) {
+    await projectAuthorization(env, {
+      type: "authorization_projection_v1", region: env.AVALON_REGION, workspaceId, parentId: threadId, substreamId: asSubstreamId("0"),
+    });
+  }
 }
 
 async function organizationObject(env: Env, workspaceId: WorkspaceId) {

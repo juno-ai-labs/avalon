@@ -249,8 +249,19 @@ the viewers marked participants of a Workspace-scoped one (anyone who merely
 listed it is admitted by the Organization visibility, and a participant row
 would outlive a later narrowing); every artifact it
 made or linked, in `canvas_artifacts`; the memory facts learned in its Main,
-renamed to the Canvas's source; and a Sidekick's attachment to its Main. What
-it does not keep: its Breakouts, retired as `retire_threads` retires them, and
+renamed to the Canvas's source; and a Sidekick's attachment to its Main.
+
+**A Thread becomes one Canvas, Breakouts included.** An artifact a Breakout
+attached, private Breakout or not, is carried into the Chat before the
+Breakout is retired, so every reader of the Canvas opens it as they open an
+artifact the Chat made; the Canvas lists it either way. Listing it while only
+its uploader could open it was the rejected half: a reader saw a title they
+could not open, from a conversation that no longer exists. Dropping it from
+`canvas_artifacts` was the other option, rejected because the conversion's
+point is to keep a Thread's artifacts. Only the Canvas's artifacts move; any
+other resource a Breakout attached stays with the retired Breakout.
+
+What it does not keep: its Breakouts, retired as `retire_threads` retires them, and
 its unread state, which starts empty. Such a Canvas has no writer Sidekick and
 no last editor until its Chat next publishes. A creator who had stopped being
 one of the Thread's viewers opens the Canvas again, as its creator.
@@ -1003,10 +1014,16 @@ every row keyed by it (`artifact_registry`, search, the D1 anchor) already
 names the Canvas, where a new Canvas with copied content would need each of
 them rewritten.
 
+A Thread's artifact published only in a Breakout is carried into the Chat
+(its attachment copied there before the Breakout is retired), so the Canvas's
+readers can open what it lists; before, it opened for its uploader alone. This
+makes a private Breakout's artifact visible to the Canvas's readers, by the
+rule that a Thread becomes one Canvas.
+
 **What a future change must respect:** a Canvas row can name an id that was a
 Thread's, with a creation time older than Canvases, participants with no
 `added_by_user_id`, and no writer. Nothing may assume a Canvas was made by
-`create`.
+`create`. Every artifact a Canvas lists has to be openable through its Chat.
 
 Shipped in juno-ai-labs/avalon#1490.
 
