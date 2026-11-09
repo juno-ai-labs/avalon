@@ -53,7 +53,7 @@ right. Private to its creator until shared. See
 [What a Canvas is](../02-canvases/01-what-a-canvas-is.md).
 
 **Canvases home page.** The page that shows every Canvas you can open, with
-**New Canvas**, search, the filter chips and the **Live now** group. See
+**New Canvas**, search, the filter chips and the **Recent** list. See
 [What a Canvas is](../02-canvases/01-what-a-canvas-is.md#the-home-page).
 
 **Channel.** A list of Threads, before Rally moved to Canvases. Channels were
@@ -84,6 +84,10 @@ tests, saved with the Sidekick so every run can use it. See
 [Tools and delegation](../03-sidekicks/06-tools-and-delegation.md#custom-tools).
 
 ## D
+
+**Data.** The badge on a Canvas card when it contains an artifact with its
+own database. The **Data** filter finds those Canvases. See
+[What a Canvas is](../02-canvases/01-what-a-canvas-is.md#the-home-page).
 
 **Deep link.** A link that opens the Rally app on your Mac at a particular
 place: an invitation, the end of signing in, the end of connecting a tool, a
@@ -127,10 +131,6 @@ background agents. See
 [Helpers, other conversations and receipts](../04-working-with-rally/06-helpers-and-receipts.md).
 
 ## L
-
-**Live now.** The group on the Canvases home page listing the Canvases people
-have open at this moment. See
-[People in a Canvas](../02-canvases/07-people-in-a-canvas.md#who-is-here-now).
 
 **Live site.** A web page or small app Rally builds and publishes at its own
 public address. Its card in the conversation is labelled **Site**. See

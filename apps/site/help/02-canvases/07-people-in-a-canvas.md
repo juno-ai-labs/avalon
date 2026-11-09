@@ -11,8 +11,8 @@ bring someone in, and how Rally behaves when the room gets busy.
 When other people have a Canvas open, their faces appear at the top right of
 the window, beside **Share**. Rest your pointer on a face to see the name. The
 same people show in the sidebar, under the Canvas's name, with a green dot:
-**Maya and Theo are here**. On the Canvases home page, every Canvas with someone
-in it is listed under **Live now**.
+**Maya and Theo are here**. On the Canvases home page, their faces appear at
+the top left of the Canvas's card.
 
 So if you ask a question in a Canvas with three faces at the top, someone may
 answer before Rally does. If nobody is there, the sidebar row says who last

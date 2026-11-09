@@ -13,6 +13,7 @@ import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:tes
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import type { CanvasArtifactKind } from "@rally/contracts";
 import { uuidToBase58 } from "@rally/contracts/uuid-base58";
 
 import { canvasSidebarRows } from "../src/durable-objects/hosted-canvas";
@@ -338,7 +339,7 @@ async function connect(userId: string): Promise<{ socket: WebSocket; frames: Arr
   return { socket, frames };
 }
 
-type Row = { id: string; title: string; updatedAt: string; appearance?: { icon: string | null; color: string | null }; unread: boolean; sharedWithMe: boolean; presentUserIds: string[]; pinnedPosition: number | null };
+type Row = { id: string; title: string; updatedAt: string; appearance?: { icon: string | null; color: string | null }; unread: boolean; sharedWithMe: boolean; presentUserIds: string[]; pinnedPosition: number | null; hasStoredData?: boolean; artifactKind?: CanvasArtifactKind | null };
 
 /** The Canvas rows a socket was last told: the newest list push, else its subscribe payload. */
 function canvasRows(frames: Array<Record<string, unknown>>): Row[] {
@@ -719,6 +720,50 @@ describe("a Canvas's artifacts", () => {
   async function publish(canvasId: string, filePath: string, text: string) {
     return canvasBridge(canvasId).publishResource(toolContext(canvasId), { filePath }, new TextEncoder().encode(text));
   }
+
+  it("pushes stored-data status from listed database-backed artifacts, independently of the newest artifact or presence", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const { canvasId: otherCanvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const creator = await connect(CREATOR);
+    const status = () => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)!;
+    expect(status().hasStoredData).toBe(false);
+
+    const resourceId = crypto.randomUUID();
+    const otherResourceId = crypto.randomUUID();
+    // Registry rows live beside Canvas links in WorkspaceDO. These fixtures
+    // distinguish a static site here from a database-backed site elsewhere.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (const [id, parentId, stateful] of [[resourceId, canvasId, 0], [otherResourceId, otherCanvasId, 1]] as const) {
+        state.storage.sql.exec(`INSERT INTO resources
+          (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+          VALUES (?, ?, 'generated_site', 'avalon_generated', 'Tracker', '{}', 'attached', ?, ?)`, id, WORKSPACE_ID, NOW, NOW);
+        state.storage.sql.exec(`INSERT INTO artifact_registry
+          (artifact_id, workspace_id, workstream_id, resource_id, mode, stateful, current_version, manifest_ref, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 'active', ?, 1, 'fixture-manifest', 1, 1)`, crypto.randomUUID(), WORKSPACE_ID, parentId, id, stateful);
+      }
+    });
+    const note = (id: string, parentId = canvasId) => workspace().canvasNoteArtifact({
+      workspaceId: WORKSPACE_ID, canvasId: parentId, resourceId: id, editor: { kind: "rally", id: null },
+    });
+    await note(otherResourceId, otherCanvasId);
+    await note(resourceId);
+    await expect.poll(() => status(), { timeout: waitBudget() }).toMatchObject({ artifactKind: "site", hasStoredData: false });
+
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE artifact_registry SET stateful = 1 WHERE resource_id = ?`, resourceId);
+    });
+    await note(resourceId);
+    await expect.poll(() => status().hasStoredData, { timeout: waitBudget() }).toBe(true);
+    await publish(canvasId, "notes.md", "# Tracker notes");
+    await expect.poll(() => status(), { timeout: waitBudget() }).toMatchObject({ artifactKind: "file", hasStoredData: true, presentUserIds: [] });
+
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE resources SET metadata_json = ? WHERE id = ?`, JSON.stringify({ listing: "unlisted" }), resourceId);
+    });
+    await note(resourceId);
+    await expect.poll(() => status().hasStoredData, { timeout: waitBudget() }).toBe(false);
+    creator.socket.close(1000, "done");
+  });
 
   it("notes a publish recovered after its attempt died before the note", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
