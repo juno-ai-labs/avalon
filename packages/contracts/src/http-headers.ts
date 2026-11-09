@@ -124,8 +124,15 @@ export const RESOLUTION_SUGGESTIONS_CLIENT_CONTRACT = 10;
  * length of a rollout. Raising this is a decision about which builds are still
  * in the field; raising {@link CLIENT_CONTRACT_VERSION} is a statement about
  * what this source tree speaks.
+ *
+ * `13`, the Canvases and Sidekicks pivot. A desktop from before it parses the
+ * workspace socket's opening sidebar with a strict schema whose keys the pivot
+ * changed, and every Thread route it calls is gone, so it could only reconnect
+ * forever to an empty sidebar. It is refused the socket ticket with 426
+ * `client_update_required` instead; the desktop auto-updates, and a build that
+ * cannot is told to update.
  */
-export const MINIMUM_SERVED_CLIENT_CONTRACT = 1;
+export const MINIMUM_SERVED_CLIENT_CONTRACT = 13;
 
 /** Every product header name a request may carry, canonical spelling. */
 export const RALLY_HEADERS = Object.freeze({

@@ -69,8 +69,10 @@ describe("the client contract gate", () => {
     })).toBeNull();
   });
 
-  it("keeps the hierarchy readable for contract 1 desktops", () => {
-    expect(refusal({ origin: "app://rallywithai", "x-rally-client-contract": "1" })).toBeNull();
+  it("given a desktop from before the Canvases and Sidekicks pivot, when it asks, then it is told to update", () => {
+    expect(refusal({ origin: "app://rallywithai", "x-rally-client-contract": "12" })?.code).toBe("client_update_required");
+    expect(refusal({ origin: "app://rallywithai", "x-rally-client-contract": "1" })?.code).toBe("client_update_required");
+    expect(refusal({ origin: "app://rallywithai", "x-rally-client-contract": "13" })).toBeNull();
   });
 
   it("given a native client, when it declares no contract, then it is admitted", () => {
