@@ -58,6 +58,10 @@ import { helper } from "./helper";`);
       .toMatchObject({ kind: "refused", code: "canvas_build_unsupported_import:../../workspace/a.js" });
     expect(refused([{ path: "App.jsx", text: component("", 'const data = require ("../../workspace/data.json");') }]))
       .toMatchObject({ kind: "refused", code: "canvas_build_unsupported_import:../../workspace/data.json" });
+    for (const statement of ['import pkg from"/workspace/package.json";', 'import"/workspace/package.json";', 'export { a } from"/workspace/package.json";']) {
+      expect(refused([{ path: "App.jsx", text: component("", statement) }]))
+        .toMatchObject({ kind: "refused", code: "canvas_build_unsupported_import:/workspace/package.json" });
+    }
     // What it does publish resolves as esbuild resolves it: with or without an extension, or a folder's index.
     expect(refused([
       { path: "App.jsx", text: component("", 'import { a } from "./lib/a";\nimport { b } from "./lib";\nimport "./styles/theme.css";') },

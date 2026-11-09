@@ -131,8 +131,10 @@ export function importedModules(source: string): string[] {
   const { code, strings } = codeOnly(source);
   const found = new Set<string>();
   const patterns = [
-    /\bimport\s+(?:[^"]*?\s+from\s+)?"(\d+)"/gu,
-    /\bexport\s+[^"]*?\s+from\s+"(\d+)"/gu,
+    // Whitespace is optional around a module string: `import"x"` and
+    // `from"x"` are as valid as their spaced forms, and esbuild bundles both.
+    /\bimport\s*(?:[^"]*?\bfrom\s*)?"(\d+)"/gu,
+    /\bexport\s*[^"]*?\bfrom\s*"(\d+)"/gu,
     /\bimport\s*\(\s*"(\d+)"\s*\)/gu,
     /\brequire\s*\(\s*"(\d+)"\s*\)/gu,
   ];
