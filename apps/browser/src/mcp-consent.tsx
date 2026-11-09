@@ -28,7 +28,16 @@ export const MCP_CONSENT_PATH = "/app/oauth/authorize";
  */
 const PENDING_KEY = "rally-mcp-authorization";
 
-function readQuery(): McpAuthorizationRequest | null {
+/**
+ * The authorization request this page was opened with: none, one it can act
+ * on, or one it cannot (a `plain` PKCE challenge, a missing redirect).
+ */
+type PendingRequest =
+  | { kind: "none" }
+  | { kind: "invalid" }
+  | { kind: "valid"; request: McpAuthorizationRequest };
+
+function readQuery(): McpAuthorizationRequest | "invalid" | null {
   const query = new URLSearchParams(location.search);
   if (!query.has("client_id")) return null;
   const parsed = McpAuthorizationRequestSchema.safeParse({
@@ -38,20 +47,30 @@ function readQuery(): McpAuthorizationRequest | null {
     ...(query.get("resource") !== null ? { resource: query.get("resource") } : {}),
     ...(query.get("scope") !== null ? { scope: query.get("scope") } : {}),
   });
-  return parsed.success && query.get("response_type") === "code" ? parsed.data : null;
+  return parsed.success && query.get("response_type") === "code" ? parsed.data : "invalid";
 }
 
-function pendingRequest(): McpAuthorizationRequest | null {
+/**
+ * The request in the URL, or, only when the URL names no client at all (the
+ * return from sign-in), the one kept before sign-in. A URL that names a
+ * client but cannot be read never falls back to the kept one: that would ask
+ * the person to approve a different client than the one that sent them here.
+ */
+function pendingRequest(): PendingRequest {
   const fromQuery = readQuery();
+  if (fromQuery === "invalid") {
+    forgetRequest();
+    return { kind: "invalid" };
+  }
   try {
     if (fromQuery) {
       localStorage.setItem(PENDING_KEY, JSON.stringify(fromQuery));
-      return fromQuery;
+      return { kind: "valid", request: fromQuery };
     }
     const stored = McpAuthorizationRequestSchema.safeParse(JSON.parse(localStorage.getItem(PENDING_KEY) ?? "null"));
-    return stored.success ? stored.data : null;
+    return stored.success ? { kind: "valid", request: stored.data } : { kind: "none" };
   } catch {
-    return fromQuery;
+    return fromQuery ? { kind: "valid", request: fromQuery } : { kind: "none" };
   }
 }
 
@@ -62,13 +81,27 @@ function forgetRequest() {
 type Workspaces = z.infer<typeof BrowserWorkspacesSchema>["workspaces"];
 
 /**
+ * The name the API registers a client under when it gave none
+ * (`McpOAuthService.register` in `apps/api/src/services/mcp-oauth-service.ts`),
+ * which this page shows as "An app" rather than as if it were a name.
+ */
+const UNNAMED_CLIENT = "MCP client";
+
+/** The name a client gave itself when it registered, or null when it gave none. Rally has not verified it. */
+function declaredName(clientName: string): string | null {
+  const name = clientName.trim();
+  return name === "" || name === UNNAMED_CLIENT ? null : name;
+}
+
+/**
  * Rally's MCP consent page: an MCP client (Claude, ChatGPT) asked to act in
  * Rally as this person. Signed out, it is the ordinary sign-in; signed in, it
  * names the client and where it will return, asks which Organization it may
  * use, and approves or declines. `docs/rally-mcp.md#consent`.
  */
 export function McpConsent(): React.JSX.Element {
-  const [request] = useState(pendingRequest);
+  const [pending] = useState(pendingRequest);
+  const request = pending.kind === "valid" ? pending.request : null;
   const [session, setSession] = useState<BrowserSession | null | undefined>(undefined);
   const [client, setClient] = useState<McpAuthorizationDescription | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspaces | null>(null);
@@ -108,7 +141,12 @@ export function McpConsent(): React.JSX.Element {
       setWorkspaces(local);
       setWorkspaceId(local[0]?.id ?? null);
     }, (failure: unknown) => {
-      if (current) setError(failure instanceof Error ? failure.message : "This request could not be read.");
+      if (!current) return;
+      // Rally refused the request itself (an unknown client, a redirect it
+      // never registered): it will not become approvable, so it is not kept
+      // for the next visit.
+      if (failure instanceof BrowserApiError && failure.status >= 400 && failure.status < 500) forgetRequest();
+      setError(failure instanceof Error ? failure.message : "This request could not be read.");
     });
     return () => { current = false; };
   }, [userId, request]);
@@ -129,7 +167,20 @@ export function McpConsent(): React.JSX.Element {
     }
   }
 
+  if (pending.kind === "invalid") {
+    return <ConsentCard title="This connection request is not valid">
+      <p className="entry-lead">The app that sent you here asked in a way Rally does not accept, so there is nothing to approve. Start the connection from that app again, or ask its maker to update it.</p>
+      <div className="signin-choice-list"><a className="signin-choice" href="/"><span className="signin-choice-name">Return to Rally</span><ChevronRight aria-hidden="true" size={16} /></a></div>
+    </ConsentCard>;
+  }
   if (session === null) return <BrowserEntry />;
+  if (session === undefined && error) {
+    return <ConsentCard title="Connect to Rally">
+      <p className="entry-lead">Rally could not check whether you are signed in, so this connection cannot continue yet.</p>
+      <ErrorNotice>{error}</ErrorNotice>
+      <Button className="button-primary signin-button" type="button" onClick={() => { setError(null); readSession(); }}>Try again</Button>
+    </ConsentCard>;
+  }
   if (!request) {
     return <ConsentCard title="Nothing to approve">
       <p className="entry-lead">This page opens when an app such as Claude or ChatGPT asks to connect to Rally. Start the connection from that app again.</p>
@@ -139,11 +190,15 @@ export function McpConsent(): React.JSX.Element {
   if (session === undefined || (!client && !error)) {
     return <ConsentCard title="Connect to Rally"><p className="entry-lead" role="status">Loading…</p></ConsentCard>;
   }
-  return <ConsentCard title={client ? `Allow ${client.clientName} to use Rally?` : "Connect to Rally"}>
+  const name = client ? declaredName(client.clientName) : null;
+  const title = !client ? "Connect to Rally"
+    : name ? `Allow an app that calls itself \u201c${name}\u201d to use Rally?` : "Allow an app to use Rally?";
+  return <ConsentCard title={title}>
     {client && session && <>
-      <p className="entry-lead">{client.clientName} will be able to read, create, change and share the Canvases you can open in the Organization you choose, acting as {session.user.email}. It can do only what you can.</p>
-      <p className="signed-in-identity">You will return to {client.redirectOrigin}</p>
-      {workspaces && workspaces.length > 0 ? <fieldset className="signin-choice-list" aria-label="Organization">
+      <p className="entry-lead">The app will be able to read, create, change and share the Canvases you can open in the Organization you choose, acting as {session.user.email}. It can do only what you can.</p>
+      <p className="signed-in-identity">{name ? "Rally has not verified the name the app gave itself. " : ""}You will return to {client.redirectOrigin}</p>
+      {workspaces && workspaces.length > 0 ? <fieldset className="signin-choice-list">
+        <legend className="mb-2 text-[length:var(--av-sys-font-size-meta)] text-[color:var(--av-sys-color-text-subtle)]">Organization</legend>
         {workspaces.map((workspace) => <label className="signin-choice" key={workspace.id}>
           <input type="radio" name="workspace" checked={workspaceId === workspace.id} onChange={() => setWorkspaceId(workspace.id)} />
           <span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span>

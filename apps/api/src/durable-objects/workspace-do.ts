@@ -5580,18 +5580,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray()[0]?.canvas_id ?? null };
   }
 
-  /** The Canvases a Sidekick writes that this viewer may open; see `canvasesWrittenBy`. */
   /**
    * The Canvas list one person sees, as their sidebar socket would send it,
    * for a client that holds no socket (`GET /canvases`, the MCP server).
    */
-  async canvasListFor(input: { workspaceId: string; userId: string; accessClass: "member" | "guest" }) {
+  async canvasListFor(input: { workspaceId: string; userId: string; accessClass: "member" | "guest"; titleQuery?: string }) {
     await this.initialized;
     this.assertWorkspace(input.workspaceId);
     return canvasSidebarRows(this.state.storage.sql, { userId: input.userId, member: input.accessClass === "member" },
-      this.presentByCanvas(), SIDEBAR_LIST_LIMIT, canvasAppearanceReporter(this.env));
+      this.presentByCanvas(), SIDEBAR_LIST_LIMIT, canvasAppearanceReporter(this.env), input.titleQuery ?? null);
   }
 
+  /** The Canvases a Sidekick writes that this viewer may open; see `canvasesWrittenBy`. */
   async canvasesWrittenBySidekick(input: { workspaceId: string; sidekickId: string; actor: { userId: string; actorRole: "owner" | "admin" | "member" | null } }) {
     await this.initialized;
     this.assertWorkspace(input.workspaceId);

@@ -21,6 +21,22 @@ function env(binding: Fetcher): Env {
   return { BROWSER_APP_ORIGIN: "https://app.example.test", GLOBAL_API: binding };
 }
 
+const CANVAS = "0190a000-0000-7000-8000-000000000001";
+const USER = "0190a000-0000-7000-8000-0000000000c1";
+
+/** A Canvas's sidebar row as `GET /canvases` answers it (`CanvasSidebarRowSchema`). */
+function sidebarRow(row: { id: string; title: string; visibility: string; updatedAt: string; artifactKind: string | null; unread: boolean; pinnedPosition: number | null }) {
+  return { ...row, createdByUserId: USER, createdAt: "2026-11-01T00:00:00.000Z", lastEditor: null, writerSidekickId: null,
+    presentUserIds: [], sharedWithMe: false };
+}
+
+/** A Canvas as `GET /canvases/:id` answers it (`CanvasDetailSchema`). */
+function canvasDetail(artifacts: Array<{ resourceId: string; title: string; version: number; mimeType: string | null }>) {
+  return { id: CANVAS, title: "Launch", createdByUserId: USER, createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-09T00:00:00.000Z",
+    lastEditor: null, writerSidekickId: null, visibility: "creator", participantUserIds: [], canManage: true,
+    artifacts: artifacts.map((artifact) => ({ ...artifact, kind: "file", updatedAt: "2026-11-09T00:00:00.000Z" })) };
+}
+
 
 async function rpc(binding: Fetcher, body: unknown, bearer = live()) {
   const response = await worker.fetch(new Request("https://mcp.example.test/mcp", {
@@ -65,6 +81,7 @@ describe("the OAuth surface", () => {
     expect(await resource.json()).toMatchObject({ resource: "https://mcp.example.test/mcp", authorization_servers: ["https://mcp.example.test"] });
 
     const upstream = api(async (request) => Response.json({ path: new URL(request.url).pathname, body: await request.text() }));
+    // The body is passed on as a stream, not read into this Worker first.
     const forwarded = await worker.fetch(new Request("https://mcp.example.test/token", { method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" }, body: "grant_type=refresh_token" }) as Request<unknown, IncomingRequestCfProperties>,
       env(upstream.binding));
@@ -73,23 +90,33 @@ describe("the OAuth surface", () => {
 });
 
 describe("the Canvas tools", () => {
-  it("lists the reader's Canvases through the product route, as the connected person, filtered by title", async () => {
+  it("lists the reader's Canvases through the product route, as the connected person, asking Rally to filter by title", async () => {
     const bearer = live();
     const upstream = api((request) => {
       expect(request.headers.get("authorization")).toBe(`Bearer ${bearer}`);
-      expect(new URL(request.url).pathname).toBe("/canvases");
+      // Rally filters by title, across every Canvas rather than the most recent page.
+      expect(new URL(request.url).pathname + new URL(request.url).search).toBe("/canvases?query=launch");
       return Response.json({ items: [
-        { id: "0190a000-0000-7000-8000-000000000001", title: "Launch plan", visibility: "workspace", updatedAt: "2026-11-09T00:00:00.000Z",
-          createdByUserId: "u", artifactKind: "document", unread: false, pinnedPosition: 0, sharedWithMe: false, writerSidekickId: null },
-        { id: "0190a000-0000-7000-8000-000000000002", title: "Budget", visibility: "creator", updatedAt: "2026-11-08T00:00:00.000Z",
-          createdByUserId: "u", artifactKind: null, unread: true, pinnedPosition: null, sharedWithMe: false, writerSidekickId: null },
+        sidebarRow({ id: CANVAS, title: "Launch plan", visibility: "workspace", updatedAt: "2026-11-09T00:00:00.000Z",
+          artifactKind: "file", unread: false, pinnedPosition: 0 }),
       ] });
     });
     const { body } = await rpc(upstream.binding, call("list_canvases", { query: "launch" }), bearer);
     expect(JSON.parse(body.result!.content[0]!.text)).toEqual([{
-      id: "0190a000-0000-7000-8000-000000000001", title: "Launch plan", visibility: "workspace", updatedAt: "2026-11-09T00:00:00.000Z",
-      createdByUserId: "u", newestArtifactKind: "document", unread: false, pinned: true, sharedWithMe: false, writtenBySidekickId: null,
+      id: CANVAS, title: "Launch plan", visibility: "workspace", updatedAt: "2026-11-09T00:00:00.000Z",
+      createdByUserId: USER, newestArtifactKind: "file", unread: false, pinned: true, sharedWithMe: false, writtenBySidekickId: null,
     }]);
+  });
+
+  it("names the field when Rally answers in a shape this Worker does not know, never its value", async () => {
+    const upstream = api(() => Response.json({ items: [sidebarRow({ id: CANVAS, title: "Launch plan", visibility: "workspace",
+      updatedAt: "2026-11-09T00:00:00.000Z", artifactKind: "hologram", unread: false, pinnedPosition: null })] }));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { body } = await rpc(upstream.binding, call("list_canvases", {}));
+    expect(body.result).toEqual({ isError: true, content: [{ type: "text",
+      text: "Rally answered in a form this connector does not recognize, so the request may or may not have taken effect. Check in Rally before repeating it (rally_response_invalid:items.0.artifactKind:invalid_value)" }] });
+    expect(logged).toHaveBeenCalledWith(JSON.stringify({ event: "rally_mcp_tool_failed", tool: "list_canvases",
+      code: "rally_response_invalid:items.0.artifactKind:invalid_value" }));
   });
 
   it("creates a Canvas whose id and first message are the operation id, so a retry makes one", async () => {
@@ -105,41 +132,82 @@ describe("the Canvas tools", () => {
 
   it("reports Rally's own refusal, and tells the person to reconnect when the session ended", async () => {
     const upstream = api(() => Response.json({ error: { code: "session_revoked", message: "The session is no longer active" } }, { status: 401 }));
-    const { body } = await rpc(upstream.binding, call("get_canvas", { canvasId: "0190a000-0000-7000-8000-000000000001" }));
+    const { body } = await rpc(upstream.binding, call("get_canvas", { canvasId: CANVAS }));
     expect(body.result).toEqual({ isError: true, content: [{ type: "text",
       text: "The session is no longer active (session_revoked). The connection to Rally has ended; reconnect Rally to continue." }] });
   });
 
+  it("puts a sentence before a refusal whose message is only its diagnostic code", async () => {
+    const upstream = api(() => Response.json({ error: { code: "canvas_publish_content_invalid",
+      message: "canvas_publish_content_invalid:files.0.content:base64" } }, { status: 422 }));
+    const { body } = await rpc(upstream.binding, call("publish_site", { canvasId: CANVAS, name: "pricing",
+      files: [{ path: "index.html", content: "%%%", encoding: "base64" }] }));
+    expect(body.result).toEqual({ isError: true, content: [{ type: "text",
+      text: "Rally could not accept what was sent; the code names the part to correct (canvas_publish_content_invalid:files.0.content:base64)" }] });
+  });
+
   it("publishes a self-contained page as a site through the Canvas's artifacts route", async () => {
     const upstream = api(async (request) => {
-      expect(`${request.method} ${new URL(request.url).pathname}`).toBe("POST /canvases/0190a000-0000-7000-8000-000000000001/artifacts");
+      expect(`${request.method} ${new URL(request.url).pathname}`).toBe(`POST /canvases/${CANVAS}/artifacts`);
       expect(await request.json()).toEqual({ kind: "site", name: "pricing", files: [
         { path: "index.html", content: { encoding: "text", data: "<h1>Pricing</h1>" } }] });
       return Response.json({ resourceId: "0190a000-0000-7000-8000-0000000000bb", title: "pricing", kind: "site", version: 1,
         outcome: "created", url: null }, { status: 201 });
     });
-    const { body } = await rpc(upstream.binding, call("publish_site", { canvasId: "0190a000-0000-7000-8000-000000000001",
+    const { body } = await rpc(upstream.binding, call("publish_site", { canvasId: CANVAS,
       name: "pricing", files: [{ path: "index.html", content: "<h1>Pricing</h1>" }] }));
     expect(JSON.parse(body.result!.content[0]!.text)).toMatchObject({ outcome: "created", version: 1 });
+    expect(body.result!.content[1]).toEqual({ type: "resource_link", uri: `rally://canvas/${CANVAS}/artifact/0190a000-0000-7000-8000-0000000000bb/v1`, name: "pricing" });
   });
 
-  it("reads a just-published text artifact from its original before Rally has extracted text from it", async () => {
+  it("reads a just-published text artifact as one of its Canvas's, from its original before Rally has extracted text from it", async () => {
+    const asked: string[] = [];
     const upstream = api((request) => {
       const path = new URL(request.url).pathname;
+      asked.push(path);
       if (path.endsWith("/model-content")) {
         return Response.json({ error: { code: "resource_version_content_unavailable", message: "This representation is unavailable for the resource version" } }, { status: 404 });
       }
-      expect(path).toBe("/resources/0190a000-0000-7000-8000-0000000000dd/versions/1/content");
       return new Response("deal_id,amount\nD-1,100\n", { headers: { "content-type": "text/csv" } });
     });
-    const { body } = await rpc(upstream.binding, call("read_artifact", { resourceId: "0190a000-0000-7000-8000-0000000000dd", version: 1 }));
+    const { body } = await rpc(upstream.binding, call("read_artifact", { canvasId: CANVAS, resourceId: "0190a000-0000-7000-8000-0000000000dd", version: 1 }));
     expect(body.result).toEqual({ content: [{ type: "text", text: "deal_id,amount\nD-1,100\n" }] });
+    expect(asked).toEqual([
+      `/canvases/${CANVAS}/artifacts/0190a000-0000-7000-8000-0000000000dd/versions/1/model-content`,
+      `/canvases/${CANVAS}/artifacts/0190a000-0000-7000-8000-0000000000dd/versions/1/content`,
+    ]);
+  });
+
+  it("does not read an Office document's zip bytes as text while its text is not extracted yet", async () => {
+    const upstream = api((request) => {
+      if (new URL(request.url).pathname.endsWith("/model-content")) {
+        return Response.json({ error: { code: "resource_version_content_unavailable", message: "This representation is unavailable for the resource version" } }, { status: 404 });
+      }
+      return new Response("PK\u0003\u0004[Content_Types].xml", { headers: {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } });
+    });
+    const { body } = await rpc(upstream.binding, call("read_artifact", { canvasId: CANVAS, resourceId: "0190a000-0000-7000-8000-0000000000dd", version: 1 }));
+    expect(body.result).toEqual({ content: [{ type: "text",
+      text: "This version has no text form to read yet. Try again later, or open the Canvas in Rally to see it." }] });
+  });
+
+  it("reads an SVG's original as text", async () => {
+    const upstream = api((request) => {
+      if (new URL(request.url).pathname.endsWith("/model-content")) {
+        return Response.json({ error: { code: "resource_version_content_unavailable", message: "x" } }, { status: 404 });
+      }
+      return new Response("<svg/>", { headers: { "content-type": "image/svg+xml; charset=utf-8" } });
+    });
+    const { body } = await rpc(upstream.binding, call("read_artifact", { canvasId: CANVAS, resourceId: "0190a000-0000-7000-8000-0000000000dd", version: 1 }));
+    expect(body.result).toEqual({ content: [{ type: "text", text: "<svg/>" }] });
   });
 
   it("refuses to read a Sidekick's conversation as a Canvas's Chat", async () => {
     const upstream = api(() => Response.json({ kind: "automation", title: "Digest", text: "hello", throughSequence: 3, nextAfterSequence: null }));
-    const { body } = await rpc(upstream.binding, call("read_canvas_chat", { canvasId: "0190a000-0000-7000-8000-000000000001" }));
-    expect(body.result).toMatchObject({ isError: true, content: [{ text: "That id names a Sidekick, not a Canvas" }] });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { body } = await rpc(upstream.binding, call("read_canvas_chat", { canvasId: CANVAS }));
+    expect(body.result).toMatchObject({ isError: true, content: [{ text: "That id names a Sidekick, not a Canvas (conversation_not_canvas)" }] });
+    expect(logged).toHaveBeenCalledWith(JSON.stringify({ event: "rally_mcp_tool_failed", tool: "read_canvas_chat", code: "conversation_not_canvas" }));
   });
 });
 
@@ -166,23 +234,21 @@ describe("skills, resources and prompts", () => {
   });
 
   it("links get_canvas's artifacts as resources, and reads one back as text", async () => {
-    const canvasId = "0190a000-0000-7000-8000-000000000001";
     const artifactId = "0190a000-0000-7000-8000-0000000000ee";
+    const uri = `rally://canvas/${CANVAS}/artifact/${artifactId}/v2`;
     const upstream = api((incoming) => {
       const path = new URL(incoming.url).pathname;
-      if (path === `/canvases/${canvasId}`) {
-        return Response.json({ id: canvasId, artifacts: [{ resourceId: artifactId, title: "Launch plan", version: 2, mimeType: "text/markdown" }] });
-      }
+      if (path === `/canvases/${CANVAS}`) return Response.json(canvasDetail([{ resourceId: artifactId, title: "Launch plan", version: 2, mimeType: "text/markdown" }]));
       if (path.endsWith("/model-content")) return Response.json({ error: { code: "resource_version_content_unavailable", message: "x" } }, { status: 404 });
-      expect(path).toBe(`/resources/${artifactId}/versions/2/content`);
+      expect(path).toBe(`/canvases/${CANVAS}/artifacts/${artifactId}/versions/2/content`);
       return new Response("# Launch plan", { headers: { "content-type": "text/markdown" } });
     });
-    const { body } = await rpc(upstream.binding, call("get_canvas", { canvasId }));
-    expect(body.result!.content.slice(1)).toEqual([{ type: "resource_link", uri: `rally://artifact/${artifactId}/v2`, name: "Launch plan", mimeType: "text/markdown" }]);
+    const { body } = await rpc(upstream.binding, call("get_canvas", { canvasId: CANVAS }));
+    expect(body.result!.content.slice(1)).toEqual([{ type: "resource_link", uri, name: "Launch plan", mimeType: "text/markdown" }]);
 
-    const read = (await rpc(upstream.binding, request("resources/read", { uri: `rally://artifact/${artifactId}/v2` }))).body as unknown as {
+    const read = (await rpc(upstream.binding, request("resources/read", { uri }))).body as unknown as {
       result: { contents: Array<{ uri: string; text: string }> } };
-    expect(read.result.contents).toEqual([{ uri: `rally://artifact/${artifactId}/v2`, mimeType: "text/plain", text: "# Launch plan" }]);
+    expect(read.result.contents).toEqual([{ uri, mimeType: "text/plain", text: "# Launch plan" }]);
   });
 
   it("refuses a resource whose id is not one, before asking Rally", async () => {
@@ -210,16 +276,17 @@ describe("the request bound", () => {
       forwarded = ((await incoming.json()) as { content: { data: string } }).content.data.length;
       return Response.json({ resourceId: "0190a000-0000-7000-8000-0000000000ff", title: "big.bin", kind: "file", version: 1, outcome: "created", url: null }, { status: 201 });
     });
-    const accepted = await rpc(upstream.binding, call("publish_file", { canvasId: "0190a000-0000-7000-8000-000000000001",
+    const accepted = await rpc(upstream.binding, call("publish_file", { canvasId: CANVAS,
       name: "big.bin", content: largest, encoding: "base64" }));
     expect(accepted.status).toBe(200);
     expect(forwarded).toBe(33_333_336);
 
     const tooLarge = await worker.fetch(new Request("https://mcp.example.test/mcp", { method: "POST",
       headers: { authorization: `Bearer ${live()}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
-      body: JSON.stringify(call("publish_file", { canvasId: "0190a000-0000-7000-8000-000000000001", name: "huge.bin",
+      body: JSON.stringify(call("publish_file", { canvasId: CANVAS, name: "huge.bin",
         content: "A".repeat(35_000_000), encoding: "base64" })) }) as Request<unknown, IncomingRequestCfProperties>, env(upstream.binding));
     expect(tooLarge.status).toBe(413);
+    expect((await tooLarge.json<{ error: string; error_description: string }>()).error_description).toContain("as base64");
   }, 60_000);
 });
 
@@ -245,5 +312,30 @@ describe("browser-based clients", () => {
       headers: { origin: "https://evil.example" } }) as Request<unknown, IncomingRequestCfProperties>, env(binding));
     expect(preflight.status).toBe(403);
     expect(preflight.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("compares the whole origin, so a hosted client's host over http, on another port, or an opaque origin is refused", async () => {
+    const upstream = api(() => Response.json({ items: [] }));
+    for (const origin of ["http://claude.ai", "https://claude.ai:8443", "null"]) {
+      const response = await worker.fetch(new Request("https://mcp.example.test/mcp", { method: "POST", headers: {
+        origin, authorization: `Bearer ${live()}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify(call("list_canvases", {})) }) as Request<unknown, IncomingRequestCfProperties>, env(upstream.binding));
+      expect([origin, response.status]).toEqual([origin, 403]);
+      expect(await response.json()).toEqual({ error: "origin_not_allowed" });
+    }
+    expect(upstream.fetch).not.toHaveBeenCalled();
+  });
+
+  it("lets a hosted origin read that the person's deployment is unavailable", async () => {
+    // A deployment this Worker has no binding for, as a Worker deployed
+    // before that deployment's binding was added sees it.
+    const unbound = env(api(() => Response.json({})).binding);
+    Reflect.deleteProperty(unbound, "GLOBAL_API");
+    const response = await worker.fetch(new Request("https://mcp.example.test/mcp", { method: "POST", headers: {
+      origin: "https://chatgpt.com", authorization: `Bearer ${live()}`, "content-type": "application/json" },
+      body: JSON.stringify(call("list_canvases", {})) }) as Request<unknown, IncomingRequestCfProperties>, unbound);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "region_unavailable" });
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://chatgpt.com");
   });
 });

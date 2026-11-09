@@ -356,12 +356,22 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
    * facet is *not* restarted here: it is aborted lazily on the next request
    * that observes a version it cannot confirm, which is the reference
    * platform's own update lifecycle and avoids waking a facet nobody is using.
+   *
+   * Never backwards: a publish older than the version already served (one
+   * that stalled past a later publish, or a retry reconciling from a stale
+   * read) changes nothing. The same version again is admitted, so a retry
+   * converges. `advanced` says whether this call moved what is served.
    */
-  async recordPublish(publish: ArtifactPublish): Promise<void> {
+  async recordPublish(publish: ArtifactPublish): Promise<{ advanced: boolean }> {
     await this.initialized;
     const input = ArtifactPublishSchema.parse(publish);
     const now = Date.now();
-    this.state.storage.sql.exec(
+    // One synchronous event: nothing interleaves between this read and the
+    // fenced upsert below.
+    const before = this.state.storage.sql.exec<{ current_version: number }>(
+      "SELECT current_version FROM artifact_state WHERE id = 1",
+    ).toArray()[0]?.current_version ?? null;
+    const written = this.state.storage.sql.exec<{ current_version: number }>(
       `INSERT INTO artifact_state (
          id, artifact_id, workspace_id, workstream_id, resource_id, region,
          current_version, mode, stateful, manifest_json, updated_at
@@ -372,7 +382,9 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
          stateful = excluded.stateful,
          manifest_json = excluded.manifest_json,
          resource_id = excluded.resource_id,
-         updated_at = excluded.updated_at`,
+         updated_at = excluded.updated_at
+       WHERE excluded.current_version >= artifact_state.current_version
+       RETURNING current_version`,
       input.artifactId,
       input.workspaceId,
       input.workstreamId,
@@ -383,11 +395,13 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       input.manifest.stateful ? 1 : 0,
       JSON.stringify(input.manifest),
       now,
-    );
+    ).toArray()[0];
+    if (!written) return { advanced: false };
     // In-memory only, and deliberately pessimistic: the next request aborts
     // and reloads rather than trusting that this process is the one that will
     // serve it.
     this.facetVersion = null;
+    return { advanced: before === null || before < written.current_version };
   }
 
   /**

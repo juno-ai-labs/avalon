@@ -47,4 +47,26 @@ import { helper } from "./helper";`);
     expect(importedModules(`import a from "a"; import "b"; export { c } from "c"; await import("d"); require("e");`).sort())
       .toEqual(["a", "b", "c", "d", "e"]);
   });
+
+  it("does not read an import out of a comment, a string, a template or a regular expression", () => {
+    const source = `import { useState } from "react";
+// import Chart from "three";
+/* import Scene from "three";
+   require("three"); */
+const sample = "import x from 'three'";
+const other = 'require("three")';
+const snippet = \`import("three")\`;
+const pattern = /import\\("three"\\)/u;
+export default function App() { return <p>Don't import "three" here</p>; }`;
+    expect(importedModules(source)).toEqual(["react"]);
+    expect(detectSiteSource([{ path: "App.jsx", text: source }])).toEqual({ kind: "component", entry: "App.jsx" });
+  });
+
+  it("still reads a real import after a line of JSX text with an apostrophe, and inside a template's substitution", () => {
+    expect(importedModules(`const a = <p>Don't</p>;
+const b = \`\${await import("lodash")}\`;
+import * as THREE from "three";`).sort()).toEqual(["lodash", "three"]);
+    expect(importedModules("const at = `${'x'}`; const ratio = total / 2; import('d3' /* inline */);")).toEqual(["d3"]);
+    expect(importedModules("const path = `three`; import(`recharts`);")).toEqual(["recharts"]);
+  });
 });

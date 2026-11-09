@@ -109,10 +109,14 @@ export class CanvasService {
     return { canvasId: asWorkstreamId(canvasId), turnId: receipt.turn.turnId };
   }
 
-  /** The Canvases this person may open, most recently active first, as their sidebar lists them. */
-  async list(): Promise<CanvasSidebarRow[]> {
+  /**
+   * The Canvases this person may open, most recently active first, as their
+   * sidebar lists them; with `titleQuery`, only those whose title contains it,
+   * found among all of them rather than the sidebar's first page.
+   */
+  async list(titleQuery?: string): Promise<CanvasSidebarRow[]> {
     return (await this.workspace()).canvasListFor({ workspaceId: this.auth.workspaceId, userId: this.auth.userId,
-      accessClass: this.auth.role === null ? "guest" : "member" });
+      accessClass: this.auth.role === null ? "guest" : "member", ...(titleQuery ? { titleQuery } : {}) });
   }
 
   async detail(canvasId: string): Promise<CanvasDetail> {

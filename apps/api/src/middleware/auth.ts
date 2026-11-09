@@ -65,15 +65,39 @@ async function touchLastSeen(env: Env, workspaceId: string, userId: string): Pro
   }
 }
 
+const ID = "[0-9A-Za-z-]+";
+
 /**
- * The product routes an MCP client's token reaches (`docs/rally-mcp.md`):
- * Canvases, their Chats and artifacts, sharing, and the Organization's
- * profile and roster, which an audience change names people from. Account,
- * token, onboarding, settings, connector and every other route answer
- * `mcp_route_unavailable`. Inside these, the person's ordinary role and the
- * Canvas's audience decide, exactly as they do for the app.
+ * Every route an MCP client's token reaches, by method and exact path: one
+ * entry per call the MCP server's tools make (`apps/mcp/src/server.ts`,
+ * `docs/rally-mcp.md`), and nothing else. The consent page asks the person to
+ * let a client "read, create, change and share the Canvases", so a token that
+ * reached an Organization setting, a connector, an upload or a socket ticket
+ * would hold more than the person agreed to. A tool that needs a new route
+ * adds its entry here. Inside these, the person's ordinary role and the
+ * Canvas's audience decide, exactly as they do for the app; a conversation
+ * route additionally admits only a Canvas (`ConversationService`).
  */
-const MCP_ROUTE_FAMILIES = /^\/(?:(?:canvases|conversations|sharing|resources)(?:\/|$)|workspace(?:\/members)?$)/u;
+const MCP_ROUTES: ReadonlyArray<readonly [method: string, path: RegExp]> = [
+  ["GET", /^\/canvases$/u],
+  ["POST", /^\/canvases$/u],
+  ["GET", new RegExp(`^/canvases/${ID}$`, "u")],
+  ["PATCH", new RegExp(`^/canvases/${ID}$`, "u")],
+  ["POST", new RegExp(`^/canvases/${ID}/(?:audience|pin|artifacts)$`, "u")],
+  ["POST", new RegExp(`^/canvases/${ID}/access-requests/${ID}/decision$`, "u")],
+  ["GET", new RegExp(`^/canvases/${ID}/artifacts/${ID}/versions/\\d+/(?:content|model-content)$`, "u")],
+  ["GET", new RegExp(`^/conversations/${ID}/text$`, "u")],
+  ["POST", new RegExp(`^/conversations/${ID}/substreams/0/messages$`, "u")],
+  ["PATCH", new RegExp(`^/conversations/${ID}/resources/${ID}$`, "u")],
+  ["POST", /^\/sharing$/u],
+  ["GET", /^\/workspace$/u],
+  ["GET", /^\/workspace\/members$/u],
+];
+
+/** Whether an MCP client's token may make this request. */
+export function mcpRouteAllowed(method: string, path: string): boolean {
+  return MCP_ROUTES.some(([allowed, pattern]) => allowed === method && pattern.test(path));
+}
 
 export async function authenticate(c: Context): Promise<IdentityAuthContext> {
   if (c.env.APP_ENV === "development" && c.env.RALLY_DEV_AUTH === "true") {
@@ -109,8 +133,11 @@ export async function authenticate(c: Context): Promise<IdentityAuthContext> {
     throw new ApiError(401, "authentication_required", "A valid Rally session is required");
   }
   const { claims, audience } = await verifyAudiencedAccessToken(c.env, authorization.slice(7), ["desktop", "mcp"]);
-  if (audience === "mcp" && !MCP_ROUTE_FAMILIES.test(c.req.path)) {
-    throw new ApiError(403, "mcp_route_unavailable", "This Rally operation is not available to an MCP client");
+  if (audience === "mcp") {
+    if (!mcpRouteAllowed(c.req.method, c.req.path)) {
+      throw new ApiError(403, "mcp_route_unavailable", "This Rally operation is not available to an MCP client");
+    }
+    c.set("tokenAudience", "mcp");
   }
   return authenticateSession(c.env, claims, (membership) => c.set('requestMembership', membership));
 }

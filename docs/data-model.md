@@ -101,6 +101,23 @@ acting, and `sessions.impersonator_incarnation` the staff membership that
 admitted them. NULL means a login session, which every row written before 0122 is.
 See [impersonation](impersonation.md#support-access).
 
+## MCP client grants
+
+D1 migration 0126 adds three tables for Rally's OAuth 2.1 server for MCP
+clients. `mcp_oauth_clients` holds one row per dynamically registered public
+client: its id, the name it chose, and its redirect URIs as a JSON array. No
+secret is stored, since every client proves possession with PKCE.
+`mcp_oauth_codes` holds an approved authorization request until it is
+exchanged: the code's hash, the client, the person, the Organization, the
+redirect, the S256 challenge, and when it expires and was consumed. A code is
+consumed in the statement that reads it. `mcp_oauth_grants` marks a session an
+MCP client holds, keyed by `session_id` and cascading with the session. Its
+`client_id` is `ON DELETE RESTRICT`, because a session with no grant reads as a
+desktop session, so a client with grants cannot be deleted until its sessions
+are revoked. The grant is otherwise an ordinary `sessions` row. See
+[`rally-mcp.md`](rally-mcp.md) and
+[the MCP authorization server](security.md#mcp-authorization-server).
+
 ## Agent communication relationships
 
 WorkspaceDO migration 59 adds `agent_teams`, `agent_team_members`,

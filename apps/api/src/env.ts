@@ -207,6 +207,13 @@ export interface Env {
   /** Explicit email sign-in policy; unset keeps the new entrypoint unavailable. */
   EMAIL_LOGIN_POLICY_JSON?: string;
   BROWSER_APP_ORIGIN?: string;
+  /**
+   * The MCP server's resource URL (RFC 8707), as its protected-resource
+   * metadata names it: the one resource Rally's authorization server issues
+   * tokens for (`docs/rally-mcp.md`). Unset, a request that names any resource
+   * is refused.
+   */
+  MCP_RESOURCE?: string;
   RESEND_NOTIFICATION_FROM_EMAIL?: string;
   RESEND_RECEIVING_API_KEY?: string;
   RESEND_WEBHOOK_SIGNING_SECRET?: string;
@@ -385,6 +392,12 @@ export interface AppVariables {
   /** Set only by request middleware after current workspace membership is proven. */
   requestMembership: RequestMembershipObservation | undefined;
   operator: TelemetryOperatorPrincipal | undefined;
+  /**
+   * `"mcp"` when the bearer is an MCP client's (`rally-mcp` audience), set by
+   * `authenticate`; absent for the app's own sessions. Routes that admit more
+   * than a Canvas narrow to one for it (`docs/rally-mcp.md`).
+   */
+  tokenAudience: "mcp" | undefined;
   /**
    * How long authentication took, in milliseconds.
    *
