@@ -430,6 +430,11 @@ export function WorkspaceSocketProvider({
      * Only the Sidekicks whose row moved are refetched: the list is pushed
      * whenever any one row changes, so invalidating every open detail and its
      * runs on each push refetched Sidekicks nothing had happened to.
+     *
+     * This relies on every Sidekick change moving its row: the row's
+     * `updatedAt` is the directory's `projected_at`, which `touchDirectory`
+     * sets on every mutation, including ones only the detail shows. A change
+     * that bypassed `touchDirectory` would leave an open detail stale.
      */
     const sidekickListMoved = (previous: readonly unknown[] | undefined): void => {
       const next = queryClient.getQueryData<readonly { id: string }[]>(SIDEBAR_LIST_QUERY_KEYS.automations) ?? [];
