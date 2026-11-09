@@ -121,76 +121,33 @@ migrations 106 and 107 over populated rows.
 
 ## Changelog
 
-### 2026-11-08 — Slack is no longer a notification channel
+### 2026-11-09 — Notifications go by push and email only, and Settings offers only kinds a producer records
 
-**What changed:** `NotificationChannelSchema` is `push` and `email`. A stored
-`slack_agent_dm` is dropped as the list is read, so it reads as absent and is
-never consulted; the mention and add defaults are push alone (they were push
-and Slack). `chosenChannels` reads a person's choice for a kind from the
-object's own row, for a producer queueing its notice. `access_denied` reads
-**Access requests**.
+**What changed:** `NotificationChannelSchema` is `push` and `email`; a stored
+`slack_agent_dm` is dropped as the list is read, and the mention and add
+defaults are push alone. `NotificationKindSchema` gains `accessRequests`, which
+a denial to the requester also reads, and loses `newThreads`, `newBreakouts` and
+`merges`. `OFFERED_NOTIFICATION_KINDS` names the six kinds Settings offers,
+which are now every kind, and `chosenChannels` reads a person's choice for a
+producer queueing its notice.
 
-**Why:** The owner's answer of 2026-11-08: "Remove Slack but email should
-support all notifications". Dropping an unknown channel on read was already
-the stored list's rule, so no migration rewrites stored rows, and a desktop of
-the previous release, whose list is lenient too, parses the record.
+**Why:** The owner, 2026-11-08: "Remove Slack but email should support all
+notifications", and Settings should offer only kinds a real producer creates;
+**New messages** and **Pinned artifact updates** were offered with no producer,
+and each now has one. The Thread-era kinds were first emitted for one release
+for the previous desktop, but raising `MINIMUM_SERVED_CLIENT_CONTRACT` refuses
+that desktop the socket, so nothing served reads them.
 
-**Considered and rejected:** Defaulting email on for mentions and adds in
-Slack's place: it would start mailing everyone who never chose it; that is a
-product call left to the owner.
+**Considered and rejected:** Defaulting email on in Slack's place, which would
+start mailing everyone who never chose it; that is the owner's call. A migration
+rewriting stored `notify_json`, when the object schema strips retired keys on
+read. Keeping compatibility kinds for a client that can no longer connect.
 
-**Open:** a stored choice that was Slack alone now reads as `[]`, which
-silences that kind for the person rather than falling back to the kind's
-default; the end-to-end pass of round 5 observed it. Whether it should fall
-back is the owner's call, not made here.
-
-**What a future change must respect:** a channel removed from the schema is
-read as absent, never as an error.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — Settings offers only kinds a producer records, and Access requests joins them
-
-**What changed:** `NotificationKindSchema` gains `accessRequests` (default
-push); `OFFERED_NOTIFICATION_KINDS` names the six Settings offers, which are
-now every kind: `newThreads`, `newBreakouts` and `merges` are deleted from
-`NotificationKindSchema` and `NotificationChannelsSchema`, so a stored record
-or a save naming them is read without them. `NOTIFICATION_KIND_FOR_PUSH` drops `thread_started`,
-`breakout_started` and `merged`, and maps `access_request` to
-`accessRequests` and `access_granted` to `added`. Client: Settings → Notifications draws its rows from `OFFERED_NOTIFICATION_KINDS` in contract order (Mentions, New messages, Being added, Sidekick runs, Pinned Canvas updates, Access requests); a save sends only the kind that changed.
-
-**Client:** Settings → Notifications offers Push and Email for every kind
-and nothing else: the connector-surface options, the unlinked Slack row and
-the "connected messaging apps" footnote are gone, and a stored Slack choice is
-neither drawn nor saved back. The owner's instruction of 2026-11-08: "Remove
-Slack but email should support all notifications". **Access requests** is
-described as "When someone asks to open a Canvas whose people you manage, or
-declines your request to open one", since a denial to the requester goes
-under it too (`access_denied` reads that choice); described as the decider's
-alone, a member who only ever asks could turn it off without knowing they
-lose denials (the round-5 visual check, F5).
-
-**Why:** The owner asked on 2026-11-08 that Settings offer only kinds real
-producers create, and that every offered one create Activity and push.
-**New messages** and **Pinned artifact updates** were offered with no
-producer; now each has one, and access requests are a new kind a decider may
-want to route on its own. Being let into a Canvas is being added, so it reads
-that choice rather than a seventh row.
-
-The three Thread-era kinds were first kept for one release, with
-`newThreads` and `newBreakouts` emitted in every record because the previous
-release's desktop requires both to parse it. That window closed in the same
-pull request: raising `MINIMUM_SERVED_CLIENT_CONTRACT` to the pivot contract
-refuses that desktop the workspace socket, so nothing served reads them.
-
-**Considered and rejected:** Keeping the emitted kinds after the minimum
-rose: compatibility for a client that can no longer connect is dead code. A
-migration rewriting stored `notify_json`: the object schema strips the
-retired keys on read, which costs nothing.
-
-**Consequences:** A kind is deleted, not retired, once no served client
-reads it; the record's object schemas are not strict, so a stored key that is
-no longer a kind is dropped on read rather than failing the record.
+**Consequences:** A channel or kind removed from the schema is read as absent,
+never as an error, since the record's schemas are not strict; a kind is deleted,
+not retired, once no served client reads it. A stored choice that was Slack
+alone now reads as `[]` and silences that kind rather than falling back to its
+default; whether it should fall back is open to the owner.
 
 Shipped in juno-ai-labs/avalon#1490.
 

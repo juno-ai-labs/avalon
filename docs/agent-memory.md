@@ -630,58 +630,47 @@ authority. `retracted_by` records who forgot a fact.
 
 ## Changelog
 
-### 2026-11-07 — Memory is learned in Canvases and Sidekicks, and its visibility is derived from them alone
+### 2026-11-09 — Memory is learned in Canvases and Sidekicks, and its visibility is derived from them alone
 
 **What changed:** A conversation whose parent is a Canvas is memory source
 `canvas:<canvasId>`, filed under the stored subject kind `thread` with the
-Canvas id; its audience is the Canvas's (`canvasReaderAllows`, every member
-when the Canvas or its writer Sidekick is Organization-wide). WorkspaceDO
-migration 137 rebuilds `memory_digest_holders` with `parent_kind` admitting
-`canvas`, dropping and restoring its triggers with the same text. A fact's
-sources open through `canvasReaderAllows` and `sidekickAdmits` only; Thread,
-Breakout and Channel sources, a Thread's or Channel's audience, a Sidekick's
-home Thread and the Personal Channel removal rule are gone, and a Canvas's
-Chat reads its own `thread:<canvasId>` subject. The review lists a Canvas
-source as the contract's `thread` source, which the client opens as the
-Canvas; the Thread and Channel review routes went with their routers.
-Migration 137 adds the copy-sync triggers for the parents that remain: a
-Canvas's visibility, creator or writing Sidekick changing, or the Canvas being
-deleted, marks every holder; a participant joining marks that Canvas's
-holders and one leaving also marks every copy holding a fact learned there; a
-Sidekick's people list changing marks every holder. The activity consumer's
+Canvas id, and its audience is the Canvas's (`canvasReaderAllows`). WorkspaceDO
+migration 137 rebuilds `memory_digest_holders` to admit `canvas` and adds
+copy-sync triggers for the parents that remain: a Canvas's visibility, creator
+or writer changing, or the Canvas deleted, marks every holder; a participant
+joining or leaving marks that Canvas's holders; a Sidekick's people list
+changing marks every holder. A fact's sources open through `canvasReaderAllows`
+and `sidekickAdmits` only; the Thread, Breakout and Channel sources and
+audiences, a Sidekick's home Thread and the Personal Channel removal rule are
+gone. A kind the holder CHECK refuses is reported by name
+(`memory_digest_holder_kind_unadmitted:<kind>`), and the activity consumer's
 `memory_sweep` and `memory_digest_sync` branches, dropped by mistake with the
-Space handlers beside them, are back.
+Space handlers, are back.
 
-**Why:** The Canvases and Sidekicks plan replaces `workstream:<id>` with
-`canvas:<id>` for a Canvas's Chat. The stored subject kind stays `thread`
-because `memory_facts.subject_kind` is under a CHECK, and widening it means
-rebuilding the table, which a later step that renames every subject kind does
-once. Every run in a Canvas's Chat refreshes its digest copy, and the holder's
-CHECK (migration 117) predated Canvases, so the write failed inside
-`refreshMemoryDigestCopy`, which logged and moved on: no Canvas Chat ever got
-a digest copy; that failure logged only a generic reason, so a kind the CHECK
-refuses is now reported by name
-(`memory_digest_holder_kind_unadmitted:<kind>`). Plan step C-2 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-deletes the listing rules, whose last reader this was; the Thread directory
-they read is no longer written, so its answers were already stale. Without the
-consumer branches every Canvas and Sidekick sweep was acknowledged as a legacy
-message and digest rows were republished every alarm.
+**Why:** The plan replaces `workstream:<id>` with `canvas:<id>` for a Canvas's
+Chat. The subject kind stays `thread` because `memory_facts.subject_kind` is
+under a CHECK, and widening it means rebuilding the table, which the later step
+that renames every kind does once. The holder CHECK predated Canvases, so every
+Canvas Chat's digest copy failed inside `refreshMemoryDigestCopy` with a generic
+reason, and no Canvas Chat ever got one. The listing rules this read are
+deleted, and without the consumer branches every Canvas and Sidekick sweep was
+acknowledged as a legacy message.
 
 **Considered and rejected:** Leaving a Canvas's Chat with no memory until the
 subject kinds are renamed, which would make it the one conversation Rally
-forgets in. Keeping Thread-sourced facts readable to the people who could read
-them before retirement: their conversations are closed, and withdrawing their
-facts is the rule a conversation made private already follows.
+forgets in. Keeping Thread-sourced facts readable to their former readers: their
+conversations are closed, and withdrawing the facts is the rule a conversation
+made private already follows.
 
 **Consequences:** A reader of `subject_kind = 'thread'` must not assume the id
-names a Thread; the titles a fact shows are looked up in `canvas_directory`
-as well. The Thread, Breakout and Channel triggers of migration 117 stay on
-their tables, which migration 139 kept for the Thread retirement, and a new
-trigger set goes in its own migration: `MEMORY_DIGEST_SYNC_TRIGGERS` is hashed
-into migrations 117 and 137. A Canvas's own facts have no review surface yet.
+names a Thread; titles are looked up in `canvas_directory` as well. The Thread,
+Breakout and Channel triggers of migration 117 stay on the tables migration 139
+kept, and a new trigger set goes in its own migration, since
+`MEMORY_DIGEST_SYNC_TRIGGERS` is hashed into migrations 117 and 137. A Canvas's
+own facts have no review surface yet.
 
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-19 — A person reviews and removes what Rally remembers where it lives
 

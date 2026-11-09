@@ -765,393 +765,96 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 | `workspace_pins` | `(user_id, item_kind, item_id)` | Migration 137 admits `canvas` and `sidekick`, with no parent. |
 | `canvas_artifacts` | `(canvas_id, resource_id)` | Migration 137: the resources the Canvas's conversation generated, written by the publish that attached each (`noteArtifact`); ordered by the resource's own `updated_at`. Its own table because the Thread-era resource-link table's foreign key named a Thread's directory row, which a Canvas has none of. Indexed by resource. |
 
+## Retired documents
+
+Removed from `docs/`; the last text and changelog are recoverable as
+[`architecture.md`](architecture.md#retired-documents) describes. They are
+recorded here because a Canvas's title from its opening message carried Thread
+naming forward.
+
+**`workstream-naming.md`: Naming a work stream (retired 2026-11-07).** A Thread
+was created with a placeholder title and named a moment later by a model pass
+over its opening and transcript, with an icon chosen beside the name.
+`workstream-naming-service.ts` and the harness's `prompts/workstream-name.ts`
+are deleted. What survives: the `workstream_naming` model role, which titles a
+Canvas from its opening message ([Making a Canvas](#making-a-canvas)) and titles pasted text
+(`pasted-text-service.ts`), and the `title_status` column. Its changelog is the
+record of the grace window, the provisional title and the injection boundary.
+
+**`workstream-descriptions.md`: Work-stream descriptions (retired
+2026-11-07).** A Thread's description started as the first line of its opening
+message and was rewritten by a model pass after each run, behind a rest
+window, a novelty threshold and generalization guards. A Canvas carries no
+model-written description, so `workstream-description-service.ts` and its
+prompt are deleted and the `workstream_description` model role and its
+Flagship key retired ([`feature-flags.md`](feature-flags.md)). The
+`description_refresh_state` table remains in conversation-object SQLite. Its
+changelog is the record of why a proposal is repaired before it is judged and
+why the refresh lease shares the owning object's transaction.
+
 ## Changelog
 
-### 2026-11-08 — A Canvas row names the run that wrote its newest version, and the home card opens it
+### 2026-11-09 — Document created: a Canvas is a hosted conversation with its own audience
 
-**What changed:** A publish note from a Sidekick run carries the run id.
-WorkspaceDO migration 137 stores it on the Canvas's row
-(`last_writer_run_id`), and any other publish clears it. The Canvas list row
-gains optional `lastWrittenBy` (Sidekick, run, run number, name), and the
-home card reads "<Sidekick> · run #N" and opens that run.
+**What changed:** A Canvas is a conversation first: a `canvas_directory` row in
+`WorkspaceDO` keyed by the parent id of its `canvas`-kind conversation, whose
+Chat is an ordinary `AgentLoopDO` object on the `HostedConversation` primitive a
+Sidekick also uses, and whose artifacts are what that Chat, or a Sidekick run
+writing into it, publishes (`canvas_artifacts`). It has a participant list,
+creator-only by default, an Organization-wide option, guests invited through the
+share primitive re-keyed to the Canvas, and owners and administrators admitted
+to every Canvas; `canvasAdmits` and `sidekickAdmits` are both `audienceAdmits`.
+Each viewer's list, with unread, presence and pins, rides the workspace socket.
+A Canvas made with no title is titled from its first message; anyone it admits
+may retitle it and choose its icon and colour, with the Sidekick's own picker
+and schema; its row names the Sidekick run that wrote its newest version; a new
+version tells its pinners; and a member it does not admit may ask to be let in
+([`canvas-access-requests.md`](canvas-access-requests.md)). A Thread that holds
+artifacts becomes a Canvas under its own id (`HostedCanvas.createFromThread`).
 
-**Why:** The owner answered "add this to the row" on 2026-11-08 to plan
-§9's follow-up that "a Canvas card cannot sit at the run that made it until
-the summary carries `writerRunId`". `writer_run_id` was not that: it names
-the run that *created* the Canvas, and a Sidekick that writes one Canvas
-across runs never moves it. The run number is computed at read time rather
-than stored, because a run's ordinal never changes and the run row already
-defines it.
+**Why:** The pivot's decisions: a Canvas is identified by its conversation and
+starts empty, so it can generate many artifacts; only its creator and the
+Organization's owners and administrators change who can open it, and an
+administrator can open every Canvas so a creator who leaves cannot strand one; a
+Sidekick's Canvas admits the Sidekick's audience as it stands. The share
+primitive was re-keyed rather than copied because it already owns delivery, the
+sign-in claim and the guest relationship, and the hosting was generalized from
+the Sidekick's so receipts, projections and read state have one implementation.
+Retitling and appearance are open to anyone admitted because anyone admitted
+already changes the artifacts (the PRD's decision log, open to the owner's
+reversal), and titling from the opening message answered the end-to-end pass
+finding every Canvas stuck at **Untitled Canvas**. The run on the row is stored
+from the publish note because `writer_run_id` names the run that created the
+Canvas, and deriving it from versions would cost every list read a join across
+every artifact version. A converted Thread keeps its id so that
+`artifact_registry`, search and the D1 anchor already name the Canvas.
 
-**Considered and rejected:** deriving the run at read time from the newest
-version's `author_run_id`. That column holds the harness run, mapping it back
-to a Sidekick run costs every list read a join across every artifact version,
-and the publish note already knew the run.
+**Considered and rejected:** Keying a Canvas by an artifact: an empty Canvas has
+none. Copying a Sidekick's audience into a new Canvas, which the first build did
+while also reading it live, two sources that disagreed as soon as either list
+changed. A second host class cloned from `HostedSidekick`, or new `canvas_*`
+child tables. The mockup's artifact-first pane with Chat and Comments tabs,
+which would have been the pivot's one new client primitive. Naming in the
+conversation object, where the deleted Thread naming ran: the title is the
+parent's row, written by the statement a retitle uses. Recording pinner news
+from the resource-version ledger's drain, which runs outside any entry point and
+cannot enqueue a push durably.
 
-**Consequences:** the column follows the publish note,
-not the resource versioning layer. A version made outside a publish (a
-person's rename, a connector refetch) does not move it, just as it does not
-move the last editor. Only a `sidekick` editor's note may name a run; the
-column's CHECK and the note's schema both refuse anything else.
+**Consequences:** A guest is admitted only from a list. A writer Sidekick's
+audience is read live, so any input to the Sidekick's reader rule must reach the
+Canvas list; the mark sits in `touchDirectory` (`noteWriterReaders`) so a new
+input is covered. Only a Canvas still `naming` may be titled automatically, and
+every person's retitle settles it. An unchosen appearance field draws the
+default and must never be filled with it on the server, and the icon catalog and
+ring are shared with Sidekicks. A Canvas row can name an id that was a Thread's,
+with an older creation time, participants with no `added_by_user_id` and no
+writer, so nothing may assume a Canvas was made by `create`, and every artifact
+a Canvas lists must open through its Chat. The socket's list row is the source
+of a Canvas's title; the detail only mirrors it. A new hosted parent kind
+extends `HostedConversation` and is dispatched in
+`WorkspaceDO.hostedConversationParent`. Listing a Canvas's shares and grants has
+no route, and the client offers no pin reorder. [`links.md`](links.md) owns the
+link form.
 
-After the round-5 visual check (F11): a card's "run #5" opened a run whose
-pill said "Run", because the pill reads the number from the shared
-conversation, not yet loaded when the run is opened straight from the card.
-The card's link now carries the number in its route state, which the pill
-reads while the conversation has not said.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — A Canvas's icon and colour can be chosen
-
-**What changed:** WorkspaceDO migration 137 adds
-`canvas_directory.appearance_json`, the Sidekick's own
-`WorkstreamAppearanceSchema` JSON. `PATCH /canvases/:id` takes a partial
-`appearance` beside or instead of the title (`HostedCanvas.update`, which
-replaces `rename`), by anyone the Canvas admits, merged field by field, not
-moving `updated_at`. The summary carries `appearance`, both fields null while
-unchosen; a stored value that no longer parses reads as unchosen and is logged
-by field. Client: the pill's mark is the Sidekick's palette
-(`AppearancePicker` in the pill's icon action) and its menu offers **Change
-appearance**, which opens it; the pill, the sidebar row, the home card and a Canvas's
-Activity rows draw the choice, else the kind's sketch and the id's hue.
-
-**Why:** The owner, 2026-11-08: "keep the ability to manually choose a color
-and icon for a canvas (and sidekick)". A Canvas had a stable hue and a kind
-sketch and no choice; the Sidekick's picker and schema already existed, so
-the Canvas reuses both rather than adding a second vocabulary. The rename
-route is widened rather than a second route added, and keeps its released
-refusal label (`canvas_rename_invalid:…`) so a released desktop still reads a
-title's refusal in its own words; its one sentence now holds for a title, an
-appearance and an empty body. Choosing is not activity, so it does not lift
-the Canvas in the recency list, unlike a retitle. A stored value is read with
-`parsedAppearance`, not `.parse`, because one row whose key a later catalog
-retired would otherwise fail every viewer's list (review of the first cut).
-
-**What a future change must respect:** an unchosen field draws the default,
-so `appearance` must never be filled in with the default on the server; the
-icon catalog and the ring are the Sidekick's, and a key added for one is
-offered to both. There is no "back to default" control yet: the route takes a
-null field, the picker sends none. The palette is a popup from the mark, not
-a submenu, because a submenu has no room beside a phone-width menu. After the
-round-5 visual check (F9), a palette opened from the menu moves focus onto
-its chosen colour once the menu has handed focus back to its own trigger;
-before, focus was left outside a palette of some hundred choices.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — Retirement records: Naming a work stream, Work-stream descriptions
-
-**What changed:** Nothing in the code. Two documents kept after their
-mechanism was deleted, only as records for their changelogs, were removed in
-the documentation audit; their retirement records are below, here because a
-Canvas's title from its opening message is the mechanism that carried Thread
-naming forward. Each one's full text and changelog is
-`git show e26aa66:docs/<name>.md`.
-
-**`workstream-naming.md` — Naming a work stream (retired 2026-11-07).** A
-Thread was created with a placeholder title and named a moment later by a model
-pass over its opening and transcript, with an icon chosen from the appearance
-catalog beside the name. Plan step C-2 deleted `workstream-naming-service.ts`,
-the harness's `prompts/workstream-name.ts` and the pass after a run. What
-survives: the `workstream_naming` model role, which titles a Canvas from the
-message that opened its Chat (`canvas-naming.ts`, described above) and titles
-pasted text (`pasted-text-service.ts`), and the `title_status` column. Its
-changelog is the record of the grace window, the provisional title and the
-injection boundary.
-
-**`workstream-descriptions.md` — Work-stream descriptions (retired
-2026-11-07).** A Thread's description started as the first line of its opening
-message and was then rewritten by a model pass after each run, behind a rest
-window, a novelty threshold and generalization guards. A Canvas and a Sidekick
-conversation carry no model-written description, so plan step C-2 deleted
-`workstream-description-service.ts` and `prompts/workstream-description.ts`;
-the `workstream_description` model role and its Flagship key
-(`agent-model-workstream-description`) were retired on 2026-11-07
-([`feature-flags.md`](feature-flags.md)). The `description_refresh_state`
-table remains in conversation-object SQLite. Its changelog is the record of
-why a proposal is repaired before it is judged and why the refresh lease
-shares the owning object's transaction.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — The Canvas screens follow design.html, a pinned Canvas's new version tells its pinners, and members may ask to be let in
-
-**What changed (pinners):** A publish's note to its Canvas reads the
-resource's newest version and, when it is news by `artifactNewsSql`, records
-an `artifact_updated` intent and a collapsing Activity row for every pinner
-of the Canvas but the version's author (`tellCanvasPinners`), and enqueues
-their pushes, which open the Canvas onto the artifact. `noteArtifact` is
-async for it. Client: the Activity row reads "<author> updated <artifact> in <Canvas>" and opens the Canvas with `?artifact=<resourceId>`; the push's `/cv/<id>/a/<id>/` link was already routed by both clients.
-
-**Why (pinners):** The owner asked on 2026-11-08 for pinned Canvas updates
-to come back: Settings offered **Pinned artifact updates** with no producer
-since the pinned-artifact feed was deleted with Threads. The note is where a
-publish meets its Canvas, and the news rule is the one the Canvas row's
-unread already takes, so the two cannot disagree about what is news.
-
-**Considered and rejected (pinners):** Recording from the resource-version
-ledger's drain, which every producer passes: it runs as a microtask outside
-any entry point and cannot enqueue a push durably without a new alarm kind,
-and the versions it adds (an image edit, a refetch) are not the Canvas's
-work. Telling everyone who may open the Canvas: that is the Canvas row's
-unread; a push is for the people who asked to follow it by pinning.
-
-**What changed (access):** A member a Canvas does not admit may ask to be let
-in, and an approval seats them as a `request` participant; an audience change
-that admits them settles the request. The mechanism has its own document,
-[`canvas-access-requests.md`](canvas-access-requests.md), because its table,
-routes and settlement rules are more than this document's scope.
-
-**What changed:** A Canvas's mark is tinted, in a hue stable for its id. The
-home page draws the design's card grid, each card's shot sketching what the
-Canvas holds, with a Live chip; its copy is the design's, and the sidebar's
-list is "All canvases" with a sort. The header puts the pill at the left with
-a separate "⋯" button. The Share panel draws its controls from the tokens and
-offers only guests to pick when the whole Organization can open the Canvas.
-A missing Canvas and an unreachable one are each one in-pane state. A row
-reads its age as "2m", "1h", "Tue", a Canvas just made slides into the list,
-and its menu matches the pill's. After the second inspection, both header
-menus offer **Open artifact** (v1-R2-4), and the Share panel's guest invite
-is sent by its Save. Offline, the Canvas keeps its header, and the pane, the
-sidebar and a section home say one sentence (v1-R2-8, v4-R2-9).
-
-**Why:** The PRD makes design.html the authority for every screen. The mark
-was a grey tile on purpose ("a Canvas has no hue of its own, as a pinned
-artifact's tile has none"), carried over from the pinned-artifact tile; the
-design draws every Canvas sheet in its own pastel pair and switches it to the
-dark pair in dark, and a column of identical grey squares could not be
-scanned (v1-F2, v4-F3, v3-G4). The home page was a two-column list of icon
-rows where the design draws cards with a thumbnail and a Live chip (v1-F3,
-v4-F2), and the header centred the pill, hung its menu off the chevron only,
-and moved Share when the artifact panel opened (v1-F8). The Share panel drew
-the browser's blue radios and a raw disclosure marker, set its actions above
-the guest invite, and listed members, the viewer among them, to pick when
-every member was already in (v1-F18, v1-F19, v4-F14, v3-G9). A missing
-Canvas raised a dialog over a pane that said something else and offered Try
-again for what does not exist, and a blocked connection blamed the Canvas
-under endless placeholders (v1-F20, v4-F12, v4-F12b). Closing the artifact
-panel left nothing in the Canvas to reopen it, while design §2 always shows the
-artifact beside a Canvas that has one (v1-R2-4). The guest invite kept its own
-Share button above the dialog's Save, two primary actions in one panel, and
-Everyone mode showed a people search over nothing (v1-F18, v4-R2-10, v1-R2-7).
-Offline, the pane dropped the Canvas's pill and Share for a bare Back and
-Forward and an uncircled "⋯", and one outage read three ways with two button
-styles (v1-R2-8, v4-R2-9). The guest email field's placeholder was
-preflight's fixed grey, no theme's and 2.3:1 on the light well, so every form
-field's placeholder now takes the people search's muted token (vis3 e1-N1).
-
-Two choices the design does not settle, made in review and open to the
-owner's reversal: the hue is per Canvas from its id rather than per kind,
-because the design colours Canvases individually and the hue then needs no
-storage; and the shot is a sketch per `artifactKind` with no contract change.
-A sketch per MIME type (an `artifactMime` on the row) is a follow-up for the
-owner.
-
-**What a future change must respect:** a mark's colours come from
-`markColors`, so both appearances stay themed by `themes.css`; a chosen
-Canvas colour replaces `canvasHue`, not sits beside it (now built: see the
-2026-11-08 entry on choosing a Canvas's icon and colour).
-
-**Making one, and what Share says:** the API client minted a fresh
-`canvasId` and the hook a fresh `clientMessageId` on every call, so the
-server's replay of a create could never be reached: a double click on the
-sidebar's New made two Canvases, and a retry after a lost answer a second.
-`useCreateCanvas` now holds one attempt series and guards the in-flight
-call, in the hook every New button shares rather than at each button. Share
-said "Nobody else can open it." of a Canvas a Sidekick writes, which its
-Sidekick's audience can open whatever the visibility; its copy now names
-that audience. The offline pane's "Live edits resume" promised live editing,
-which was cut.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — A Canvas made with no title is titled from its first message, and a refused retitle names its field
-
-**What changed:** WorkspaceDO migration 137 adds `canvas_directory.title_status`.
-A Canvas a person makes with no title is **Untitled Canvas**, settled, until
-the first message of its Chat reaches the parent, which sets it `naming` in
-the same write and arms a `canvas_naming` entry;
-`HostedCanvas.nameFromOpening` titles it on the `workstream_naming` role and
-settles it, with the harness prompt `renderCanvasTitleMessages`
-(`prompts/canvas-title.ts`). A retitle settles the row. `PATCH /canvases/:id` and every Canvas
-route's id refuse by name (`canvas_rename_invalid:…`, `canvas_id_invalid:…`)
-through `namedZValidator`. `CanvasSummary` carries `titleStatus`.
-
-**Why:** The end-to-end pass found every Canvas started from the composer
-stayed **Untitled Canvas**, and a refused retitle answered `invalid_request`
-"The request is invalid", naming nothing. Titling from the opening message is
-the implementer's reading, recorded in the PRD's decision log (2026-11-08) and
-open to the product owner's reversal.
-
-**Considered and rejected:** Naming in the conversation object, where the
-deleted Thread naming service ran: the title is the parent's row, and a pass in
-the parent writes it in the same statement a retitle uses. A lock or a version
-check against a concurrent retitle: the retitle settles the row, and the pass
-writes only while it is still `naming`, so a person's title wins without one.
-
-A Canvas created `naming` showed the naming skeleton for ever when nobody wrote
-in it, since only a message arms the pass, so the flip moved from creation to
-the first message; the same change stopped an empty Chat's provisioning
-projection from counting as activity.
-
-The title prompt first shipped inline in `canvas-naming.ts`, with no golden
-hash, asking for "two to five words" and dropping the deleted Thread prompt's
-measured rules; it moved under `prompts/` and took back the thirty-character
-limit, sentence case with "never capitalize every word" (without it the model
-title-cased: "Logo For Oslo Coffee") and dropping the framing words first. The
-Thread service's host-side cut at thirty characters was not restored; the
-stored bound stays the title's own 300.
-
-**What a future change must respect:** only a Canvas still `naming` may be
-titled automatically, and every person's retitle must settle it.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — A Canvas is renamed in its own pill, and the pill follows a rename from anywhere
-
-**What changed:** The pill's menu and a sidebar row's menu offer Rename…,
-which edits the title in the pill and saves with `PATCH /canvases/:id`. A
-change to the list row's title is written into the open Canvas's detail
-cache, and the window takes the Canvas's name.
-
-**Why:** The route shipped with the pivot (PRD decision log, 2026-11-07:
-anyone the Canvas admits may retitle it) but nothing in the renderer called
-it, and the end-to-end pass found every Canvas stuck at "Untitled Canvas".
-The same pass found the header keeping the old title after a rename made
-elsewhere until a reload: the sidebar and the home read the pushed list,
-the header read the detail, and the detail is not pushed. Writing the row's
-title through was preferred to invalidating the detail on every push, which
-costs a fetch per rename for every window that has the Canvas open.
-
-**What a future change must respect:** the row the socket applied is the
-pushed source of a Canvas's title; the detail only mirrors it. Only a change
-of the row's title is written through, and only once the socket has applied
-the list (`sidebarListApplied`): the device cache seeds the same list
-asynchronously, without the waterline ledger, and its row may be older than
-a detail the server just answered. A Canvas Rally is still naming draws the
-skeleton a Thread being named drew, rather than "Untitled Canvas". The client
-does not validate
-a title; the server's refusal is what the person reads. The newest artifact
-a Canvas opens on arrival opens beside its Chat: it opened expanded, through
-the same request a deliberate artifact link makes, and on a first visit the
-device cache's empty copy of the conversation closed it again, so the tester
-met no panel, then a maximized one after a reload. A malformed Canvas id
-in a link reads as a missing one: it names nothing that could exist, and
-"The request is invalid" told the person less than the not-found state does.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — A Thread that has artifacts can become a Canvas in place
-
-**What changed:** `HostedCanvas.createFromThread`, beside `create` and sharing
-its row insert, writes a Canvas's directory, participant and artifact rows from
-a Thread's, for the operator conversion `convert_threads_to_canvases`. The
-Canvas keeps the Thread's id.
-
-**Why:** The user decided on 2026-11-08 that Threads with artifacts become
-Canvases rather than being deleted. Keeping the id is what makes it cheap:
-every row keyed by it (`artifact_registry`, search, the D1 anchor) already
-names the Canvas, where a new Canvas with copied content would need each of
-them rewritten.
-
-A Thread's artifact published only in a Breakout is carried into the Chat
-(its attachment copied there before the Breakout is retired), so the Canvas's
-readers can open what it lists; before, it opened for its uploader alone. This
-makes a private Breakout's artifact visible to the Canvas's readers, by the
-rule that a Thread becomes one Canvas.
-
-**What a future change must respect:** a Canvas row can name an id that was a
-Thread's, with a creation time older than Canvases, participants with no
-`added_by_user_id`, and no writer. Nothing may assume a Canvas was made by
-`create`. Every artifact a Canvas lists has to be openable through its Chat.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — Document created: a Canvas is a hosted conversation with its own audience
-
-**What changed:** A Canvas has a directory row in `WorkspaceDO` (migration 137),
-keyed by the parent id of its `canvas`-kind conversation, with a participant
-list, a creator-only default, an Organization-wide option, guests invited
-through the share primitive keyed by the Canvas id, and administrators
-admitted to every Canvas. Its Chat is an ordinary conversation object on the
-one hosting primitive a Sidekick also uses, `HostedConversation`, and its
-artifacts are admitted to whoever opens it. `audienceAdmits` is the one rule
-under both `canvasAdmits` and `sidekickAdmits`. Each viewer's Canvas list,
-with unread, presence and pins, rides the workspace socket. A Canvas is made
-with `POST /canvases`; its Chat's publishes are its artifacts (recorded in
-`canvas_artifacts`, migration 137), and a Sidekick run publishes into a Canvas
-it makes or one it writes. Rally in the Chat is told the Canvas's artifacts,
-and what it learns is the Canvas's memory.
-
-`PATCH /canvases/:id` retitles a Canvas for anyone it admits, and
-`PUT /workspace/pinned-order` takes `{ kind, itemIds }` and orders the
-Canvases or Sidekicks Pinned group (`reorderSidebarPins`); the Space-era
-container order and the All Pinned order it replaced went with the Channel
-routes. A Canvas is linked as `/app/<region>/<organization>/cv/<canvas>/`, and
-a notification, email or Slack message about its Chat links to the Canvas.
-`canvasSetAudience` re-checks presence inside its write, so someone the Canvas
-no longer admits leaves its face pile, and a new artifact version is announced
-to a Canvas's readers from `canvas_artifacts`.
-
-**Why:** The Canvases and Sidekicks decisions: a Canvas is identified by its
-conversation and starts empty, so it can generate many artifacts; it has its
-own participant list, creator-only by default, with guests; only its creator
-and the Organization's owners and administrators change who can open it, and
-an administrator can open every Canvas because they manage it (a creator who
-leaves would otherwise strand one); a Sidekick's Canvas admits the Sidekick's
-audience as it stands. The share primitive was re-keyed rather than copied
-because it already owns delivery, the sign-in claim and the guest
-relationship. The hosting was generalized from the Sidekick's rather than
-cloned, so the effect receipts, projections and read state have one
-implementation.
-
-Retitling is open to anyone the Canvas admits rather than only to its managers
-because anyone it admits already changes its artifacts from its Chat; the
-title is no more protected than what it names (recorded in the PRD's decision
-log as open to the product owner's reversal). The order route kept its path,
-which the browser's `workspace` route family already forwards. A Canvas
-borrowed the Thread link forms until plan step B-5, and those went with
-Threads. After the Thread server code was deleted, presence was re-checked
-only on socket changes and revocations, so a person removed from a Canvas
-stayed listed in it, and the resource-link table the version announcement read
-was written only by the retired Thread projection, so a Canvas artifact's new
-version reached nobody; the restored runtime suites showed both.
-
-**Considered and rejected:** Keying a Canvas by an artifact: an empty Canvas
-has no artifact, and a version with no maker has no provenance. Copying a
-Sidekick's audience into a new Canvas: the first build did, and also read it
-live, two sources of truth that disagreed as soon as either list changed. A
-second host class cloned from `HostedSidekick`: two copies of the receipt and
-projection logic. New `canvas_*` child tables: the hosted-conversation tables
-are keyed by parent id already, and nothing that scans them across parents
-reads them without joining its own directory. The mockup's artifact-first pane
-with Chat and Comments tabs: it would have been the one new client primitive
-of the pivot (decision log, "An open Canvas reuses the conversation layout").
-
-**Consequences:** A guest is admitted only from a list; the participant list,
-not the grant, is the authority for whom managers added; a writer Sidekick's
-audience is read live, so a change to any input of the Sidekick's reader rule
-must reach the Canvas list. The first build marked only the Sidekick list, so
-someone a Sidekick was newly shared with did not see its Canvases, and someone
-it was unshared from kept their rows, until they reconnected; a fix in
-`setAudience` alone missed archive, restore and executor changes, so the mark
-sits in `touchDirectory` (`noteWriterReaders`), where any future input to the
-rule is covered too. The host's memory of the last inputs is per instance: a
-fresh instance pushes once on a Sidekick's first touch, and a Sidekick call
-or alarm that throws forgets that Sidekick's entry, because the memory is
-written inside a transaction the throw may have rolled back. A new hosted parent kind extends `HostedConversation`
-and is dispatched in `WorkspaceDO.hostedConversationParent`. Listing a Canvas's
-shares and grants has no route. The client (plan step A-12) draws a Canvas
-with the conversation layout: the Chat in `ConversationSurface` and the
-artifacts in the existing right rail, with its per-conversation restore; its
-home page and sidebar section group the socket's list on the client from the
-row's own fields, so no list route was added. Both sidebar sections pass
-`reorderable={false}`, so a pin lands at the end of its group. Restoring
-someone to a Canvas's audience does not put them back in its face pile until
-their window says so.
-[`links.md`](links.md) owns the link form; a Canvas's id being its
-conversation's parent id is what lets a server mint the link from a
-conversation alone.
-
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.

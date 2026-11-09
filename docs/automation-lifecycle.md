@@ -2135,427 +2135,109 @@ That reading skill composes with `polling-for-events` for a recurring workflow.
 The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
-## Changelog
+## Retired documents
 
-### 2026-11-08 — The Sidekick row says whether any run is working
+Removed from `docs/`; the last text and changelog are recoverable as
+[`architecture.md`](architecture.md#retired-documents) describes. What survives
+of each is shared code a Sidekick is now the only user of, described in
+[Choosing what a Sidekick looks like](#choosing-what-a-sidekick-looks-like).
 
-**What changed:** `AutomationSummary` gains optional `running`, true while
-any run of the Sidekick is pending or running (`AUTOMATION_RUNNING_SQL`) on
-the socket's Sidekick list. The sidebar row and the Sidekicks home draw
-Working from it, with the newest run's `runState` as the fallback.
+**`workstream-appearance.md`: Work-stream appearance (retired 2026-11-07).**
+A Channel and a Breakout had one icon and colour, chosen from a header picker
+on the conversation socket (`set_workstream_appearance`), and from 2026-10-12
+a Thread wore its Channel's colour, written by WorkspaceDO's
+`channel_color_sync` lane and the `recolor` identity operation, all deleted
+(WorkspaceDO migration 139 dropped the lane's tables). The icon catalog, its
+descriptions, the palette's pickable-versus-storable split, the picker and the
+id-derived default survive here. Its changelog is the record of why the stored
+vocabulary is wider than the menu, why a person's choice outranks a generated
+one as a condition on the write, and why every choice is a merged patch.
 
-**Why:** The owner answered "add this" on 2026-11-08 to plan §9's "A
-'Working' state on the Sidekicks home needs a running flag on the directory
-row". `runState` reads the newest run alone, so a Sidekick whose newest run
-had finished while an older one still worked read as idle (a follow-up
-recorded after the visual passes). The flag is a probe rather than a stored
-column for the reason the Needs input probe is: no writer can leave it
-stale. It uses the states `sidekickRowRunState` calls working, so no new
-publish was needed. The coordinator settled the badge order as: running
-outranks the lifecycle and `runState` on the pill and the row, and the
-Needs input badge stays beside a working pill.
-
-Client, after the round-5 visual check (F12): a sidebar row both waiting and
-working put the green dot before its question with no word, so only colour
-said Working; it now reads "Working · <question>".
-
-**Considered and rejected:** a stored `running` column on the directory row,
-written on every run transition. Every writer of a run state would have had
-to keep it true, and one missed transition would leave a Sidekick Working
-for good; the probe cannot go stale.
-
-**Consequences:** `running` and `runState` may describe different runs (an
-older run working behind a finished newer one is exactly the case). The
-client keeps its `runState` fallback for one release, until every Worker
-publishes `running`. The EXISTS reads the Sidekick's run history on each
-list read; a partial index over the working states is the fix if that ever
-shows, and is deliberately not added now.
-
-Shipped in juno-ai-labs/avalon#1490.
-### 2026-11-08 — A run a missing connection or grant blocks asks for it and waits
-
-**What changed:** A Sidekick run holds the connection-state check and the
-connection card, and in a run the card is a question: it opens an
-elicitation carrying the card's selection (`Elicitation.connection`, optional)
-and the run waits in `needs_input`. The question panel draws the card;
-connecting answers Continue, and Decline ends the run `completed` with its
-reason. Every such halt had also been logged at warn as
-`workstream_harness_run_failed` with a null `failure_code` (the round-5
-end-to-end pass, D3); a waiting halt now logs `workstream_harness_run_waiting`
-at info. The question says it is answered by those two options alone
-(`allowOther` and `allowSkip` false): the round-5 visual check found the panel
-offering a typed "Other" answer and Skip, neither of which means anything to a
-run waiting on a connection. A missing grant is asked with `request_elicitation`. The activation
-prompt's permission rule says to ask and wait, and to report in the final
-message only on a decline or when no tool can ask.
-
-**Why:** The owner, on plan §9's "a run blocked on permissions ends
-`completed` after saying what is blocked": "fix this to show needs input". A
-run that finished with the work undone looked done on its row and on the
-Sidekick's list row, and nobody was asked for the one thing that would have
-let it finish; the elicitation path already had the waiting state, the
-Activity row, the notice and the resume.
-
-**Considered and rejected:** keeping a run that is blocked finishing
-`completed` with a message saying what is blocked, which is what the owner
-asked to fix; a separate "blocked" run state or a parallel
-connection-wait table (the brief: reuse the elicitation primitives); resuming
-a run from the connection's OAuth completion on the server, which would make
-the connection service find every open question across run children, where
-the card that made the connection is already in the question; letting the card
-answer for any viewer it shows Connected, which loops when the viewer's own
-personal connection is not the run's (the answer resumes, the run checks
-again, and asks again).
-
-**Not changed:** a run that lacks a capability (no Terminal, no file
-publication) still ends `completed` with a message, since no person can grant
-a capability; the round-5 visual check observed it, and the body records it
-beside the connection rule.
-
-**Consequences:** A personal-scope question is answered by whoever connects,
-but only the run's principal's personal connection serves the run; a manager
-who is not the principal connecting their own account resumes a run that asks
-again. The Needs input notice still goes to the requester and the managers, as
-for any question a run asks.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — Retirement records: Work-stream appearance, Work-stream markers
-
-**What changed:** Nothing in the code. Two documents whose mechanism was
-mostly deleted with the Thread client were removed in the documentation audit.
-What survives of each is shared code a Sidekick is now the only user of, so it
-is described in [Choosing what a Sidekick looks like](#choosing-what-a-sidekick-looks-like)
-above, and their retirement records are below. Each one's full text and
-changelog is `git show e26aa66:docs/<name>.md`.
-
-**`workstream-appearance.md` — Work-stream appearance (retired 2026-11-07).**
-A Channel and a Breakout had one shared icon and colour, chosen from a header
-picker on the conversation socket (`set_workstream_appearance`), and from
-2026-10-12 a Thread and its Breakouts wore their canonical Channel's colour,
-written by WorkspaceDO's `channel_color_sync` lane and the `recolor` identity
-operation. Threads, Breakouts and Channels were deleted, the colour lane and
-`recolor` with them (WorkspaceDO migration 139 dropped the lane's tables), and
-the sidebar-row reads and cache writers went with the Thread client. The icon
-catalog, its descriptions, the palette's pickable-versus-storable split, the
-picker and the id-derived default survive, and this document now owns them.
-Its changelog is the record of why the stored vocabulary is wider than the
-menu, why a person's choice outranks a generated one as a condition on the
-write, and why every choice is a merged patch.
-
-**`workstream-markers.md` — Work-stream markers (retired 2026-11-07).** One
+**`workstream-markers.md`: Work-stream markers (retired 2026-11-07).** One
 ranking (`workstreamMarkerStatus` over `MARKER_PRECEDENCE`: unseen, mentioned,
 running, needs input, unread, completed, stopped, failed) decided which single
-coloured dot a work-stream row showed a reader, with `failed` deliberately below
-`unread`. It went with the Thread client in plan step C-2, together with
-`attention-ranking.ts`, the work-stream header and the Threads-tab rows.
-`participants.first_opened_at` (the unseen state) remains in conversation-object
-SQLite. The vocabulary, `StatusDot`, the `sys.color.workstream` tokens and the
-run history's `scheduled` exception survive as described above.
+dot a work-stream row showed, with `failed` deliberately below `unread`. It
+went with the Thread client, together with `attention-ranking.ts`.
+`participants.first_opened_at` (the unseen state) remains in
+conversation-object SQLite; the vocabulary, `StatusDot`, the
+`sys.color.workstream` tokens and the run history's `scheduled` exception
+survive as described above.
 
-Shipped in juno-ai-labs/avalon#1490.
+## Changelog
 
-### 2026-11-08 — A waiting run's question is answered on its row, the Sidekick row says Working, and the screens follow the design
+### 2026-11-09 — The shared conversation starts runs and shows them, a Sidekick has its own audience, and a blocked run asks and waits
 
-**What changed:** A run waiting on input shows its question on its row in the
-shared conversation with the answer form (`SidekickRunQuestion`), which
-answers that run through the run's own conversation socket. The run view
-keeps its answer form and loses only its composer (`withoutComposer`, which
-replaced a `readOnly` flag that never stopped the form). `AutomationSummary`
-gains optional `runState`, `pendingQuestion`, `triggerKinds` and
-`scheduleTimeZone` (`AUTOMATION_RUN_STATE_SQL`, `AUTOMATION_TRIGGER_KINDS_SQL`,
-`AUTOMATION_SCHEDULE_TIME_ZONE_SQL`), and the socket's
-Sidekick list carries `lastRunAt` (the newest run's start). A run's
-conversation sends a pending elicitation's prompt as its `preview` and
-`reply`, so the run's row, the Sidekick's sidebar row and the notice carry the
-question. The Sidekick list is sent again when a run is admitted, when a pause
-stops a pending run, and when a projection moves a run into or out of working
-or brings a waiting run's question. `SidekickRunRowProjection` gains optional
-`requesterUserId`, and the row's write marks its own turn read for that person
-while the run works, when they had read everything before it. The details
-column draws **Wakes on**, **Uses** and **Writes to** always, reading
-**Nothing yet** when empty; a draft shows neither Pause nor the delegation
-block; the home draws design §3's pills and Next column; the wizard's tool row
-says "Used Sidekicks"; the edit chip sits at the composer with a close; New
-Sidekick reopens an existing draft. The home's row facts collapse on the
-pane's width rather than the window's (v4-R2-1, v3-R2-3).
-The answer form marks the chosen option
-with the accent (a wash, a filled keycap and a check), and a run view's header
-draws the Sidekick's pill and the run's side by side after Back and Forward
-(`align: "start"`) rather than the run's alone in the centre. The details'
-pills take the home's pill size (13px), a draft's ⋯ sits at the end of its
-pills, both menus say **Copy link**, the sort control takes the Canvases list's
-⇅, and a waiting Sidekick's sidebar row keeps its question, with the working
-dot, while a later run works (`pendingQuestion` is the newest waiting run's). `nextRunAt` is formatted in `scheduleTimeZone` when present. A run row's
-facts each stay on one line at phone width, wrapping only between them, where
-"6 steps" and "7 hours ago" broke mid-phrase (vis3 b1-R2-8). The run view's
-pill names the run as the row it was opened from does ("Run 6", vis3 e2-N3),
-reading the number from that row in the cached shared conversation; a run
-opened by a link before that conversation has loaded reads "Run". Between an
-answer and the resume it lets in, a run's conversation still says needs_input
-with no question pending, and its projection now says the question it was
-answered on: read as the last reply, a run that had said nothing yet sent an
-empty summary, and the Sidekick's list was sent once waiting with no question,
-a bare "Needs input" for about a second (vis3 e2-N1). An intermediate
-migration numbered the run rows it found, because runs made before the column
-read a bare "Run" beside numbered ones; folding the unshipped migrations made
-the column part of the table from the start, so no row predates it. The client
-reads its own starting or working run's row as read as it arrives, mirroring
-the requester seat.
+**What changed:** A message addressed to a Sidekick in its conversation (`"0"`)
+starts a run under its definition, whoever sent it; only a manager's message
+marked `intent: "edit_sidekick"` (the composer's **Edit Sidekick** mode), or a
+manager's answer to the wizard, reaches the wizard. Every run has one row in
+`"0"`, an `automation_activation` turn carrying the run's state, number, step
+count and whole reply, kept current from `sidekick_runs` by triggers, and a
+waiting run's question is answered on that row through the run's own
+conversation. A Sidekick is shared with its author, the Organization or a
+`people` list, and no Thread owns one: WorkspaceDO migration 136 gave each
+Thread-owned Sidekick its owner's audience and cleared its home. A member who is
+not a delegate runs under their own access, and `continueRun` screens every
+sender: a reader's agent counts as the person it acts for, inbound mail as its
+sender only on an aligned DMARC or DKIM pass, and a reply in a thread the run's
+own message bound continues the run as the run, framed as evidence. A run
+blocked on a missing connection or grant asks through an elicitation and waits
+in `needs_input`. The list row carries `running`, `runState`, `pendingQuestion`,
+`triggerKinds` and `scheduleTimeZone`. The separate Sidekicks window is deleted:
+Sidekicks render in the main window, and Settings opens one through
+`openSidekick(id)`'s deep link.
 
-**Why:** The design (§3 and §4, the PRD's authority for every screen) puts
-the question in the transcript, draws "● Working" and a waiting row whose
-second line is the question, and reads "On alert", "On email" or "On request"
-in Next. The inspection found a person told a Sidekick needed them with no
-way to see what it asked short of finding the run view, while the natural
-reply, typed in the shared composer, starts a new run; the chosen answer was
-a slightly darker grey than the others (round 2, R2-14); the details' pills
-were 9 and 10.5px against the design's 13, a draft's ⋯ stood alone under 90px
-of empty space, "0 steps" read as noise, the same trigger was "Manual" in one
-place and "On request" in another (R2-9 to R2-12); the sidebar and the home
-formatted `nextRunAt` in the machine's zone while the details' summary used the
-schedule's, so a Mac in UTC read "Fri 10:00 PM" beside "Every Friday at 2:00
-PM" (R2-7); the requester's own run flashed an "Unread messages" divider and
-a red dot until the detail was refetched, because the client advanced its
-read only for a turn the viewer authored (R2-6); and the run view's
-"Run" pill floated mid-header away from its Sidekick's (R2-15); a Sidekick that uses
-nothing could not be told from one whose block was hidden; and the plan's
-section 9 had recorded that "A 'Working' state on the Sidekicks home needs a
-running flag on the directory row". The flag is derived by a probe rather
-than stored, for the reason the Needs input probe is: no writer can leave it
-stale. (That probe was the newest run's `runState`; `running`, added in the
-entry above, is the same probe over all of the Sidekick's runs.) The question was nowhere a list could read it: the run's summary was
-its last text turn, and the asking is an elicitation turn (v2-F2, v2-F6,
-v2-F8, v2-F10, v2-F25). v2-F11's stale time was the socket list sending no
-`lastRunAt` at all. The requester seat answers v2-F12: the row you have open
-turned unread for the run you just started. The facts were a fixed 398px
-grid hidden only in a window under 760px, so once the sidebar took 416px of
-every window they squeezed the name to one letter per line between the
-desktop's 860px minimum and about 1150px. The question is read from the newest waiting run rather
-than the newest run (vis2-v2 R2-1): read from the newest run only, a waiting
-Sidekick fell back to "Needs input" after a reload, during a later run's
-Starting, and after a later run finished, while its question was still open. After an inline answer the run view showed the answer
-with no question above it (vis2-v2 R2-2); the run's transcript was found to
-keep both turns, now pinned by a test, so the fix is the client's. `scheduleTimeZone` answers vis2-v2 R2-7 and vis2-v4
-R2-15: the sidebar and the home formatted `nextRunAt` in the machine's zone
-while the details read the schedule's own summary, so one schedule showed two
-times eight hours apart; naming the zone on each screen instead was rejected
-because the design writes the time alone. The run row's directory effects are applied by the Sidekick
-when the row is written (vis2-v2 R2-6): the Queue delivers one effect per
-message, so the row's ordinal and the requester's seat were two sidebar frames.
-Grouping a batch's effects per conversation in the Queue consumer was
-rejected: a batch is not guaranteed to hold both, and the consumer's
-per-message retry and notification handling would have to be rebuilt. The row's block names the requester (`sidekickRun`) so the run
-view's client can mirror the seat, since a transcript frame carries no read
-state, and numbers the run for design §4's "Run 412" (vis2-v2 R2-11). It sits
-on the block rather than in the strict `run` facts so a desktop from the
-previous release, which refuses unknown keys there, keeps the row; a test
-parses the new frame with that release's schemas.
-
-**Considered and rejected:** Answering from the shared composer: a message
-there is routed to a new run by design, and teaching admission to guess which
-run a message answers is the inference the decision log refuses. Copying the
-question onto the run row's projection as a second source: sending the prompt
-as the run's reply puts it in the summary every reader already takes. A
-storage column, or a new alarm armed by a trigger on `sidekick_runs` state,
-for the republish: every state change already passes one of the three inline
-sites, and the list republish is one statement in the same transaction. Holding an answered run's question in the Sidekick, or skipping a waiting
-run with no summary in the list's probe (vis3 e2-N1): the projection is where
-the reply is chosen, and the run's own row read the same empty reply in that
-frame.
-
-**What a future change must respect:** the inline form answers through the
-run's conversation, never through `"0"`; it opens a socket only while its row
-says Needs input. An empty details block says so; it is never hidden. The
-requester seat moves a cursor only from the row's own ordinal minus one to
-its ordinal and never touches a manual unread mark. `pendingQuestion` and `runState` are read from
-different runs on purpose; do not re-pair them.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-
-### 2026-11-07 — The shared conversation starts runs and shows them, no Thread owns a Sidekick, and Sidekicks open in the main window
-
-**What changed:** A message in a Sidekick's conversation (`"0"`) addressed to
-the Sidekick now starts a run under its definition, admitted as a manual run
-with the message as its opening, whoever sent it; the message lands in `"0"` as
-said to the room. Only input for the wizard reaches the wizard: a manager's
-message marked `intent: "edit_sidekick"`, or a manager's answer to what the
-wizard asked. Anything refused lands with a `system` row that names its code.
-Every run has one row in `"0"`, an `automation_activation` turn carrying the
-run's id, state, step count and reply, kept current from `sidekick_runs` by
-triggers that arm a delivery on every change; a manager's replay rebuilds
-every row. The row carries the reply whole: a run's `directory_common` effect
-sends `reply` up to `MESSAGE_MAX_CHARACTERS` beside the 1,000-unit `preview`.
-The self-review's guide ends with one report in `"0"` (its "Where to announce
-a change" line is gone; the notice keeps `announceTo`), and the run
-instructions and `RUN_POST_INSTRUCTION` say a run's final message is its
-row's reply. A `conversation_post` that names no conversation lands in `"0"`
-([`conversation-tools.md`](conversation-tools.md)). A Sidekick is shared with
-a `people` list as well as its author or the Organization, and its sidebar
-row says what the viewer has not read in `"0"`, and reads Needs input while
-any of its runs waits on input (the end-to-end pass found a run asking a
-question left its Sidekick reading Active). A member who is not a delegate
-runs under their own access (migration 136 records the requester). A
-schedule's occurrence is admitted only once its `next_due_at` has arrived.
-
-No Thread owns a Sidekick: WorkspaceDO migration 136 gave every
-Thread-owned Sidekick its owner's audience (Organization for an
-Organization-wide owner, its viewers as a `people` list for a personal one)
-and cleared its home,
-archived any a room archive had paused under the old rule, and dropped the
-rail trigger that bumped an owning room. The scope enum is `personal |
-workspace`, with stored drafts and transcript rows that say `workstream`
-reading as `personal` (first `workspace`, which let a re-submitted draft
-widen a private Thread's Sidekick again; a review found it). Gone with it: the home color at creation, the Thread
-manager rule, `setOwningRoomArchived` and the archive cascade, the host's
-Channel reads, `listWorkstreamAutomations` and `GET /automations/workstream/:id`,
-the rail's owned list, the REST routes and loop tools for a Thread's attached
-and recommended Sidekicks, and review announcements in a Channel.
-
-The separate Sidekicks window is deleted (`createSidekicksWindow`,
-`system:open-sidekicks`, `common/sidekicks.ts`, the `?surface=sidekicks`
-branch). The Sidekicks home and each Sidekick render in the main window on
-both hosts; Settings, which has no router, asks main through
-`openSidekick(id)`, which emits the Sidekick's deep link for the active
-Organization. A manager switches **Edit Sidekick** on in the composer's menu
-to mark messages; a run row draws collapsed and opens the run's own,
-read-only conversation through `?run=`; the Canvases a Sidekick writes show as
-cards over the conversation and as a **Writes to** list in its profile.
-
-**Why:** The Canvases and Sidekicks pivot opens a Sidekick's conversation to
-everyone it is shared with, and its decision log keeps the wizard and run
-separation there: that split is what makes a run auditable and delegatable,
-and a conversation whose loop ran the definition on any message would act with
-delegate access for whoever typed. Before this every message in `"0"` ran the
-wizard with the authoring tools loaded, whoever sent it, and a run wrote
-nothing there, so the people who asked never saw an answer. The first build
-of the routing sent every manager's message to the wizard, so a manager could
-not ask for work there; the 2026-11-07 decision has a manager mark an edit
-instead, because inferring an edit from the text would be a second classifier
-that can misroute. Routing at claim time reuses the decision point a run child
-already has (`sidekickContinueRun`) and the admission `runNow` already has, so
-there is no new trigger kind and no new loop. The row reuses
-`automation_activation`, which every client already renders under the
-Sidekick's name, and is a projection of `sidekick_runs` rather than a second
-record, so the two cannot disagree. The reply rides whole because a run's
-report in Rally is its final message, and a row cut at the preview's length
-would show a long data report's first 1,000 characters. The review's
-announce and report were merged because the review runs in `"0"` and
-`announceTo` is `"0"`, so a review that saved a change posted twice there;
-runs had the same doubling once their final message became their row while
-the guide still saved `conversation_post` as the delivery. A post defaults to
-`"0"` because that is where the people who asked are reading. `people` sits
-beside `scope` on the wire, not in it, because released clients parse `scope`
-as a closed enum. Unread is a projection of `"0"`'s own read state, so nothing
-new decides it; a Sidekick shared with someone who has never opened it reads
-as unread to them, the product owner's call, so being shared with is noticed.
-A reader's own read is sent only to that reader: republishing the whole
-library to every socket on every acknowledgement cost a send per socket per
-read and told everyone else nothing.
-
-A non-delegate runs under their own access because of the decision log's "a
+**Why:** The pivot opens a Sidekick's conversation to everyone it is shared
+with, and the decision log keeps the wizard and run separation there: it is what
+makes a run auditable and delegatable, where a loop that ran the definition on
+any message would act with delegate access for whoever typed. The first build
+sent every manager's message to the wizard, so a manager could never ask for
+work there; inferring an edit from the text would have been a second classifier.
+The row is a projection of `sidekick_runs` so the two cannot disagree, and it
+carries the reply whole because a run's report in Rally is its final message. "A
 shared Sidekick uses delegate access only for its own runs": a person must not
-read through the Sidekick what they cannot read themselves, and refusing them
-outright left everyone it was shared with but not delegated by unable to use
-it. The same reasoning screens who continues a run. The first build
-of this change asked `continueRun` only about the run, while the Sidekick
-seats everyone it is shared with in every run child, so a reader could write
-in someone else's own-access run and have it act as them, or in a
-trigger-started run and have it act with a delegate's connectors (found in
-review). `continueRun` now takes the sender and refuses a person who is not
-the requester of a requester's run, or not an eligible delegate in a
-delegate's run, by name, with no new run in its place; an answer to the run's
-question and a Retry are screened before they are recorded, so the question
-stays open. A review found the same route one hop away: another agent's
-message was stored as Rally's own input, so a reader's agent could continue a
-run as its principal. An agent's message now counts as the person it acts
-for. A bound Slack thread's reply was screened the same way at first, as the
-Rally user its sender resolved to, and that broke the product's Slack ask: an
-outside person the run messaged could not answer it. Every binding is the
-run's own outbound, so a reply there continues the run as the run, framed as
-evidence (the owner's decision).
-Inbound mail follows the same rule for the same reason: `admitInboundEmail`
-accepted mail from anyone on a personal Sidekick's list and then picked any
-delegate to act, so mailing the Sidekick borrowed the author's access; it now
-admits the run as `admitConversationMessage` does, as the sender's delegate
-access or, failing that, under their own access as its requester. That
-widened a spoof's reach from the consenting delegates to whoever the From
-header names, so a review required the From to be more than a claim: the run
-acts as the sender only on the receiving server's aligned DMARC or DKIM pass
-(Resend's `authentication` verdict, `email_sender_unauthenticated` otherwise),
-and a guest is admitted on every scope only from the Sidekick's `people` list
-(the first build screened only a personal Sidekick, as a member). Considered
-and rejected: keeping mail runs on a delegate, which spends a delegate's
-access on an unauthenticated claim. A guest on the Sidekick's list runs the same way: this change first
-refused one with `run_no_eligible_delegate`, on the stated ground that a guest
-holds no Organization access, but that named the wrong cause and narrowed the
-PRD. The PRD retires Threads and converts their Sidekicks to Organization
-scope rather than personal, so the people who used a Thread's Sidekick keep
-it. The window went (plan step B-2) because Sidekicks are one of the main
-window's two sections, so a second window showing the same screens would be
-two places to keep in step; the deep link was chosen over a new
-main-to-renderer navigation channel because it already brings the main window
-forward and queues a link that arrives before the renderer is ready. The
-schedule fix: an entry that ran after an RPC moved `next_due_at` forward (a
-pause and resume, or an apply that kept the schedule id) while an earlier
-entry in the same drain pass was awaited admitted the next occurrence early.
+read through it what they cannot read themselves, and reviews found the routes
+around that rule one at a time (a reader writing in another's own-access run, an
+agent's message stored as Rally's own input, mail from anyone on the list, an
+unauthenticated From). A bound Slack thread's reply was screened the same way at
+first, as the Rally user its sender resolved to, and that broke the Slack ask:
+an outside person the run messaged could not answer it, while every binding a
+run child has is one its own outbound message made. A blocked run used to finish
+`completed` after saying what was blocked, which looked done; the owner asked
+for it to show needs input, and the elicitation path already had the waiting
+state, the notice and the resume. `runState` reads only the newest run, so a
+Sidekick whose older run still worked read as idle.
 
-**Considered and rejected:** Appending a row per state change, which turns one
-run into a column of status lines; arming the row at each of the seven places
-that write a run, where a writer added later would leave its row behind (the
-cost of the triggers is that the arming is in SQL). Telling the wizard to skip
-a post when the target is its own conversation, which asks the model to
-compare an id it is never shown. Borrowing a delegate's access for a
-non-delegate's request, which is exactly what the decision forbids, and
-re-picking a delegate on continuation, which would widen the run halfway
-through. Seating only the run's principal in a run child, which would
-hide a run from the people the Sidekick is shared with, who may read it;
-starting a fresh run for a refused sender, which would turn a reply into a
-second request the sender never made. Dropping the owning columns, which released CHECKs name. A second
-composer or a per-message prompt for a wizard edit: the mark is a mode a
-manager holds while describing a change, and a toggle is the smallest
-affordance that says it. Requiring `next_due_at === alarm.dueAt`, which needs
-the entry's instant threaded from the scheduler into the handler for the same
-effect.
+**Considered and rejected:** A row appended per state change, or armed at each
+of the seven places that write a run, where a writer added later would leave its
+row behind. Answering a question from the shared composer, where a message
+starts a new run by design. A separate blocked state or a connection-wait table,
+and resuming a run from the connection's OAuth completion on the server.
+Borrowing a delegate's access for a non-delegate, or re-picking a delegate on
+continuation, which widens a run halfway through. Seating only the run's
+principal in a run child, which hides the run from the people it is shared with.
+Stored `running` or question columns written on every transition, which one
+missed writer leaves stale for good; each is a probe instead.
 
 **Consequences:** Any new kind of human input in `"0"` must say whether it is
-the wizard's; the claim routes it as a run otherwise. Authoring tools in `"0"`
-follow `sidekickWizard`, not the conversation, so a producer that activates a
-turn there outside the claim gets none. A message in `"0"` can no longer steer
-a running turn. The row is a projection: anything that needs a run's truth
-reads `sidekick_runs`, a row that drifted is rebuilt by a replay, and a replay
-is the only delivery that overrides a newer version. Runs from before the
-change have no row until a manager's replay appends one, at the end of the
-conversation. An already-installed desktop renders a run row under the
-generic "Sidekick" label (its `strictObject` parse of the new `run` key
-fails), accepted since the row still renders. The preview's 1,000 cut stays
-for every other reader of a conversation's directory row; `announceTo` is
-unread by the model and waits for its writer to go; a Sidekick whose saved
-instructions predate this still names `conversation_post` for its report
-until a review or a manager revises it. A requester's run gets no Terminal,
-and its account view names nobody once they leave the Organization. Every new path that lets a person's input reach a run child must
-pass the sender to `continueRun`; the `sender` field is required so a caller
-cannot omit it. Another agent's message is screened as the person it acts for
-(an agent acting for nobody is refused), outside text in a thread the run's
-own message bound is not screened by sender, the wizard's as the
-person who drove its turn, Rally's own input not at all, and a delegate who continues a
-delegate's run acts as the run's principal, not as themselves. Any seated
-reader can Stop another person's run, and a refused message stays in the
-transcript as the room's context. The
-owning columns stay dead, null on every row, and no new read may decide
-audience, posting or archival from them. Settings is now the only secondary
-renderer window, so it is the workspace-sync relay's only consumer; anything
-opening a Sidekick from outside the main window goes through `openSidekick`,
-which requires an active Organization. Every writer of `next_due_at` must arm
-the schedule's entry at that instant in the same transaction, and the drain's
-`settle()` deletes an entry only by the instant that ran. A Sidekick's own
-transaction is the only writer of its connector registrations: the projection
-RPC `applyExternalEventRegistrations`, which nothing called once Sidekicks
-moved into WorkspaceDO, is deleted with its generation fence, and a Slack
-source's join is keyed on the revision whose registrations named it.
+the wizard's, and authoring tools follow `sidekickWizard`, not the conversation.
+Every path that lets a person's input reach a run child passes the sender to
+`continueRun` (the field is required); outside text in a thread the run's own
+message bound is not screened by sender, an agent acting for nobody is refused,
+and a delegate who continues a delegate's run acts as its principal. The row is
+a projection: truth is `sidekick_runs`, a drifted row is rebuilt by a manager's
+replay, and runs from before the change have no row until one. The inline answer
+goes through the run's conversation, never `"0"`, and `pendingQuestion` and
+`runState` are read from different runs on purpose. Only the run's principal's
+personal connection serves a run, so a manager connecting their own account
+makes it ask again; a missing capability (no Terminal) still ends `completed`,
+since nobody can grant one. Every writer of `next_due_at` arms the schedule's
+entry at that instant in the same transaction. The owning columns stay dead and
+null. The client keeps its `runState` fallback until every Worker publishes
+`running`.
 
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-07 — The review plan asks whether a tool could have settled its exceptions
 
@@ -3368,7 +3050,6 @@ provider's capabilities defeats the connector-neutral composition model.
 **Consequences:** The agent must inspect relevant authorized plugins and choose
 an actual notes source event or polling. It must still verify note access and
 must not infer that an invitation proves a conversation occurred.
-
 
 ### 2026-10-16 — The membership-checking Sidekick directory read is gone
 

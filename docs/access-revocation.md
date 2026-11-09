@@ -441,70 +441,42 @@ would be a way into somebody else's workspace.
 
 ## Changelog
 
-### 2026-11-07 — Narrowing a Canvas's or a Sidekick's audience closes the feeds it took away
+### 2026-11-09 — Narrowing a Canvas's or a Sidekick's audience closes the feeds it took away, and the Thread and Channel hops end at the consumer
 
 **What changed:** `canvasSetAudience` and `sidekickSetAudience` publish a
 per-person revocation for everyone the change stopped admitting to a parent's
-shared conversation, a `substream` hop per Canvas conversation and an
-`automation` hop per Sidekick (whose narrowing also covers the Canvases it
-writes), logged once as `conversation_audience_narrowed`.
-`HostedSidekick.admitsViewer` reads the person's relationship, so a Sidekick's
-reader is in the Organization's member table like a Canvas's.
+shared conversation: a `substream` hop per Canvas conversation and an
+`automation` hop per Sidekick, whose narrowing also covers the Canvases it
+writes, logged once as `conversation_audience_narrowed`.
+`HostedSidekick.admitsViewer` reads the person's relationship. A queued
+`workstream_audience_narrowed`, `workstream`, `space` or
+`workstream_automations` target is acknowledged without a hop, and the
+relationship consumer seats nobody in a Channel.
 
-**Why:** A narrowing backgrounded presence and closed nothing, so a person taken
-off a Canvas or a Sidekick kept receiving its conversation until they
-reconnected; the conversation object authorized the socket when it connected
-and cannot see the audience move. A Sidekick's admission did not read the
-relationship, so a member who had opened only a Sidekick was invisible to the
-before-and-after comparison.
+**Why:** The conversation object authorizes a socket when it connects and cannot
+see the audience move, so a person taken off a Canvas or a Sidekick kept
+receiving its conversation until they reconnected. A Sidekick's admission did
+not read the relationship, so a member who had opened only a Sidekick was
+invisible to the before-and-after comparison. Threads and Channels are retired,
+so a hop queued before the deploy has nothing left to close.
 
 **Considered and rejected:** Reviving `workstream_audience_narrowed`, which asks
-the room who holds a socket: it needs a new conversation-object method and a
-consumer branch, where the Organization object can already name the people and
-the per-user hops already close their sockets. Asking only the explicit lists
-(participants, `sidekick_audience`): a change from Organization-wide takes
-access from members no list names.
+the room who holds a socket: a new conversation-object method and consumer
+branch, where the Organization object can already name the people. Asking only
+the explicit lists: a change from Organization-wide takes access from members no
+list names. Failing a retired hop, which would retry to the dead-letter queue
+this module reads as the alarm that somebody kept access. Removing the retired
+targets from the schema while messages of those kinds may still be queued.
 
 **Consequences:** A new way to change who opens a hosted parent runs through
 `closingNarrowedConversations`. The comparison asks every known active person
-twice per audience change; at a larger Organization that is the number to watch.
+twice per audience change, the number to watch at a larger Organization. The
+four retired target kinds stay in `AccessRevocationMessageSchema` until one
+queue-retention period after the deploy that stopped their publishes. A failed
+revocation publish is logged only.
 
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — The four Thread and Channel hops end at the consumer
-
-**What changed:** A `workstream_audience_narrowed`, `workstream`, `space` or
-`workstream_automations` revocation target is acknowledged by the access
-revocation consumer without a hop, and `WorkspaceDO.revokeSocketAccess` no
-longer runs a hosted Channel's step; it names every Canvas and its children's
-conversations for the caller to close. `automationIdsOwnedByWorkstream` is
-deleted, `revokeNarrowedAudienceAccess` answers an empty `automationIds`, and
-the last producer of `workstream_automations` is deleted (11e82d0). The
-relationship consumer seats nobody in General or a Personal Channel.
-
-**Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-retired Threads and Channels and the conversations under them, so a hop queued
-before the deploy has nothing left to close, and acknowledging it ends the
-message where its work already ended. The PRD converts every Thread-scoped
-Sidekick to the Organization's scope, so no room owns one and a person who
-loses a room loses no Sidekick with it: their access to a Sidekick comes from
-its own scope and audience.
-
-**Considered and rejected:** Failing the queued hop. A message that can never
-succeed retries to the dead-letter queue, which this module reads as the alarm
-that somebody kept access, so a retired target would raise it falsely.
-Removing the targets from the schema now: messages of those kinds may be
-queued at a deploy, so a rejected parse would dead-letter them.
-
-**Consequences:** The four target kinds stay in `AccessRevocationMessageSchema`
-until no message of those kinds can still be queued, which is one
-queue-retention period after the deploy that stopped the publishes. Narrowing a
-Canvas's or a Sidekick's audience has no hop at all, so the removed person's
-open feed outlives the change until it reconnects (the Known gap); a future
-rule that closes it needs a new per-person hop, not the old narrowing hop
-revived.
-
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-07 — Organization settings can suspend a member
 

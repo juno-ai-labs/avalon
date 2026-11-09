@@ -420,44 +420,6 @@ agents; this is the record of what each step left behind.
 
 ## Changelog
 
-### 2026-11-08 — Ace's operator credential keeps the demo feature's names
-
-**What changed:** A row records that `DEMO_OPERATORS_JSON` and the role value
-`demos` survive the demo feature's removal, behind the code-facing names
-`requireAceOperator` and `ACE_OPERATOR_ROLE`, and lists the secret and role as
-a later rename.
-
-**Why:** The owner's instruction of 2026-11-08 was to "remove the demo
-functionality completely"; the credential is not demo functionality, but its
-stored names are, and renaming a Worker secret and the role in every region's
-map is deploy-affecting, so the coordinator's decision was to keep the stored
-names and record the mismatch here under the storage-name rule.
-
-**Consequences:** A reader meeting `demos` on an operator route reads it as
-Ace's role, not as a live demo surface.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — The product-name renames are recorded beside the Avalon ones
-
-**What changed:** A section records each product-name rename the tree carries
-— Automation to Sidekick, Workspace to Organization, Project to Space, Work
-stream to Channel and Substream to Breakout, the navigation redesign, and the
-Canvases and Sidekicks pivot, which deleted Threads, Channels and Breakouts —
-with the storage name each one left in place.
-
-**Why:** The pivot made `workstream` the storage name of a Canvas, the third
-product noun it has stood for, and no document said so outside the agents'
-rule sheet. A reader meeting `workstream_id` on an artifact row, or
-`SUBSTREAM_AGENTS` beside `AgentLoopDO`, needs one place that says the name is
-storage and was kept on purpose.
-
-**Consequences:** A later rename of a product noun adds a row here and to the
-"Rebranding Guide" in `AGENTS.md`, in the same change. Renaming one of these
-storage names is a migration, not a sweep, for the reasons section 1 gives.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-08-25 — The person-notification emails and both Resend senders
 
 **What changed:** `participant-` and `mention-email-service.ts` say Rally, and

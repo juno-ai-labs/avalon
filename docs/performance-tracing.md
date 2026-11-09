@@ -802,18 +802,6 @@ a Worker exports when its own config names one.
 
 ## Changelog
 
-### 2026-11-07 — `sidekick_recommendations_ms` and `_read` leave the preparation row
-
-**What changed:** The inference-preparation log row no longer carries
-`sidekick_recommendations_ms` or `sidekick_recommendations_read`.
-
-**Why:** They timed reading a Channel's default Sidekicks, which the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-deleted; both were constant (`0`, `false`) since, which reads as a measurement
-that is not one.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-09-23 — Keep first-dispatch timing accurate after removing repeated checks
 
 **What changed:** Bind still reports first-dispatch timing while using the host's

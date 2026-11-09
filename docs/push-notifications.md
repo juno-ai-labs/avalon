@@ -570,220 +570,57 @@ signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
 
-### 2026-11-08 — Every kind renders once into a notice, and push and email are its sinks
+### 2026-11-09 — Every kind renders once into a notice for the push and email sinks, checked against its Canvas or Sidekick, with an Activity row beside each intent
 
-**What changed:** `renderNotice` renders every kind into one channel-neutral
-`Notice`; the push sink and a new email sink each take it. Email now covers
-every offered kind through one template whose subject is the kind's title,
-queued per chosen sink by `enqueueNotice` from every producer and from the
-mention processor (which no longer sends email inline). The Slack DM sender
-for mentions and adds (`slack-notification-service.ts`) and the two
-per-kind email services (`mention-email-service.ts`,
-`participant-email-service.ts`) were deleted with their tests;
-`slack_agent_dm` is no longer a notification channel.
+**What changed:** `notificationDirectoryState` checks a recipient against the
+Canvas's row and `canvasReaderAllows`, or the Sidekick's row and
+`sidekickReaderAllows`, with the person's role, so an administrator hears a
+creator-only Canvas's mention, and reads the relationship through
+`readRelationship`; the Thread directory reads and the projection-version wait
+are gone. The kinds are a Canvas mention and add; a Sidekick run's `needs_input`
+and `run_finished`, recorded by a `sidekick_run_notice` alarm entry the run's
+projection arms; a reply (`new_message`), batched per conversation in a
+`reply_batch` entry with the Thread-era 15-second batch and two-minute cooldown;
+a pinned Canvas's new version (`artifact_updated`); and an access request, grant
+and denial. WorkspaceDO migration 138 widens the intents' kind CHECK. Every
+intent writes its recipient's Activity row in the same transaction.
+`renderNotice` renders each kind once into a channel-neutral `Notice` that a
+push sink and an email sink take, one queue message per chosen sink; the Slack
+DM sender and the per-kind email services are deleted. A push's link comes from
+the conversation's parent (a mention or reply opens at its message,
+`?turn=&sequence=`), a delivery about a Thread is skipped as
+`conversation_not_linkable`, and every push's badge is the person's unseen
+Activity count.
 
-**Why:** The owner's answer of 2026-11-08: "Remove Slack but email should
-support all notifications (this should be generic pathway, it's easy to hook
-notification sinks into)". Before it, email and Slack went out for mentions
-and adds alone, inline in the processor, while Settings offered all three
-channels for every kind.
+**Why:** The PRD keeps push for Canvas mentions, Needs input and finished runs,
+and none was sent: nothing writes the Thread directory any more, so every Canvas
+mention waited on a projection that never came. The owner asked on 2026-11-08
+for replies, pinned updates and access requests to notify again, and for Slack
+to go while "email should support all notifications (this should be generic
+pathway, it's easy to hook notification sinks into)". Writing the Activity row
+with the intent is what keeps the feed and the push from disagreeing, and the
+badge from clearing when an alert arrives while Rally is closed.
 
-**Considered and rejected:** One queue message fanning out to every sink: a
-push retry would resend the email, or every sink would need its own receipt;
-one message per sink retries each on its own, and Resend's idempotency key
-makes an email retry one email. Rendering per sink: each sink would carry its
-own copy of each kind's words. Skipping demo personas' `.invalid` addresses
-in the email sink: the demo personas are being removed this round.
+**Considered and rejected:** Sending a Thread push with no link: a tap that
+opens nothing reads as broken. One queue message fanning out to every sink,
+where a push retry would resend the email. Rendering per sink, each carrying its
+own copy of every kind's words. A reply notification per recipient, which sends
+the text across the Queue once per person, or an intent per message, which makes
+ten replies ten pushes. Reading the feed from the intents table, whose rows are
+30-day delivery records.
 
-**Also this round — the badge is the unseen Activity count.** Every push's
-badge is `attention().readerAttentionCount`, now the person's unseen Activity
-in the Organization rather than the zero it answered since Threads were
-retired; the data carries it too, as `badge`. Why: the owner's "fix this" for
-the dock badge clearing when an alert arrives while Rally is closed.
+**Consequences:** A kind's words live in `renderNotice` only; a sink branches on
+kind only for its own transport's needs (push's collapse id), and the consumer
+checks `notificationAllows` for the message's own channel. A new person-facing
+kind is recorded through one of the three recorders or writes its Activity row
+in its own intent's transaction, and the intents' reaper must keep leaving
+Activity alone. An inactive recipient's mention is now recorded and skipped at
+delivery. A desktop older than this release drops a push whose kind it does not
+know. The `platform: "ios"` registration shape and its APNs topic stay in code
+with no client sending them.
 
-**Also this round — a mention's and a reply's push opens the message.** The
-notice carries the turn and its sequence, and the link is the canonical Canvas
-link with `?turn=&sequence=`; the push data repeats them as `turnId` and
-`sequence`. Why: the owner's "fix this" for a reply push opening at the
-newest message instead of at the message.
-
-**Also this round — the email narrows at phone width.** A `<style>` rule
-under `max-width: 480px` takes the card's padding from 36px to 20px and the
-outer gutter from 16px to 8px, in clients that honour a style block (the rest
-keep the wide layout). Why: the round-5 visual check (F14) found the text
-column about 260px wide on a phone. In the same pass (F4) the browser's
-reason its notifications are off moved inside the toggle's card, as a row the
-way the Mac's is, from a loose line below the card.
-
-**What a future change must respect:** a kind's words live in `renderNotice`
-only; a sink never branches on kind except for its own transport's needs
-(push's collapse id). The consumer checks `notificationAllows` for the
-message's own channel.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — Every intent writes an Activity row, and replies notify again
-
-**What changed:** `recordPersonNotificationIntent` and
-`recordSidekickRunNotices` each write the recipient's
-`workspace_activity_items` row in the transaction that writes the intent,
-keyed by the intent's id. The `mention_notification` effect carries the
-mentioning message's `attentionOrdinal`.
-
-A person's reply in a Canvas's Chat or a Sidekick's shared conversation is
-pushed again, as `new_message` ([A person's reply](#a-persons-reply)): the
-conversation emits one `new_message_notification` per message naming its
-recipients, the hosted parent batches it in a `reply_batch` alarm entry, and
-the entry records a `delivered` (or, within the cooldown, `skipped`) intent
-and a collapsing Activity row per recipient through `recordParentNotice`.
-WorkspaceDO migration 138 widens the intents' `notification_kind` CHECK to
-the four kinds a hosted parent now records about itself (`new_message`,
-`artifact_updated`, `access_request`, `access_granted`) and adds a
-recipient-and-kind index the cooldown reads. The push consumer renders those
-four from `ParentNoticeSchema`. Settings offers only the kinds a producer
-records (`member-preferences.md`). Client: no main-process or service-worker change was needed; both clients route a push by its link alone (`/cv/<id>/` and `/cv/<id>/a/<id>/`), so a reply's push opens the Canvas Chat at its newest message and an artifact push opens the Canvas with the artifact; a message-level landing would need a turn form on the canonical URL.
-
-A pinned Canvas's new version tells its pinners as `artifact_updated`
-([A pinned Canvas's new version](#a-pinned-canvass-new-version)), recorded by
-the publish's note to the Canvas and pushed onto the artifact.
-
-**Why (replies):** The owner asked on 2026-11-08 that human replies produce
-Activity and push again. The Thread-era reply batch went with Activity's
-sweep (plan step C-2), so Settings offered **New messages** and nothing ever
-sent one. The batch and cooldown keep the team's numbers (15 seconds, two
-minutes) from that implementation. The batch rides the existing alarm store,
-as a run notice does, and the cooldown reads the intent's own
-`delivered_at`, so no second table of alerts exists.
-
-A request to open a Canvas tells its deciders as `access_request`, and its
-approval tells the requester as `access_granted`
-([A request to open a Canvas](#a-request-to-open-a-canvas-and-its-grant)).
-
-**Why (pinned Canvases):** The owner asked for pinned Canvas updates to come
-back. The Thread-era pinned-artifact news (`artifactUpdateSql` in the
-deleted feed) was pinned artifacts; a Canvas is what is pinned now, so the
-news is a version in a pinned Canvas, by the same rule its row's unread uses.
-
-**Why (access requests):** The owner asked for the whole access request flow
-back; its notices ride the same intent and Activity row as every other kind,
-so the push consumer reads them as it reads a reply's.
-
-**Considered and rejected (replies):** One `new_message_notification` per
-recipient, as mentions are: the message's text would cross the Queue once per
-person. Recording one intent per message and per recipient: a burst of ten
-replies would be ten pushes and ten rows. Delaying the Queue message, as the
-Thread-era batch did: the delayed message could not carry the newest reply,
-since it was enqueued with the first. Keying the batch by conversation alone:
-a reply arriving while the batch is being sent would be deleted with it.
-
-**Client:** A mention's or a reply's push opens at its message on both
-hosts (the canonical link's `?turn=&sequence=`, routed by `shellLocation` and
-`inPlaceHash` in the browser and by `canvasLinkRoute` on the Mac). While
-Rally is open the dock badge and the installed browser app's badge are the
-live unseen Activity count (`dockBadgeCount`), not the Canvases and Sidekicks
-needs-attention rows, because the push badge is now that count and the two
-must agree; the service worker leaves the icon to any visible Rally tab
-rather than only a focused one. The owner's "fix this" of 2026-11-08, for a reply
-push opening at the newest message and for the badge clearing when an alert
-arrives while Rally is closed.
-
-**Why:** Activity returns as a feed of exactly what push tells a person
-([`activity.md`](activity.md), the user's 2026-11-08 decision). Writing the row
-where the intent is written is what makes the two unable to disagree; the
-ordinal is what lets a mention's row clear when the recipient reads past it.
-
-**Considered and rejected:** Reading the feed from the intent table itself.
-Its rows are delivery records with a 30-day retention and are reaped, and a
-mention's intent can be skipped at delivery; the feed is the person's.
-
-**Consequences:** The intents' reaper must keep leaving Activity alone. A new
-person-facing push kind should be recorded through one of the three recorders
-(`recordParentNotice` for a notice a Canvas or Sidekick records about
-itself), or write its Activity row in its own intent's transaction. A reply
-notice goes by push only: an email or Slack channel chosen on **New messages**
-sends nothing for it today. A Rally reply is never pushed; the conversation's
-unread is its signal.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — A mention in a Canvas's Chat or a Sidekick's conversation is delivered
-
-**What changed:** The hosted parent records a conversation's mention and add
-effects as intents, and the activity consumer delivers them (owned by
-[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-mention-or-an-add)).
-`notificationDirectoryState` reads the recipient's relationship through
-`readRelationship`, which asks D1 once for somebody the Organization object
-has not heard of, instead of reading its table alone.
-
-**Why:** The PRD keeps push for these mentions, and none was sent: the parent
-receipted the effect and wrote no intent, and every delivery test seeded its
-intent row by hand, so the pipeline was proved from the row onward and never
-from the message. Reading the table alone made a recipient whose relationship
-the object had never read (a Sidekick's admission does not read it) count as
-nobody, so an Organization-wide Sidekick's mention was skipped as
-`recipient_not_listable`.
-
-**Consequences:** An inactive recipient's mention is now recorded and skipped
-at delivery as `recipient_inactive_or_identity_missing`, where the Thread path
-never recorded it; the row is reaped with the rest.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — Push is a Canvas mention and a Sidekick run's two notices, checked against the Canvas or Sidekick and opening it
-
-**What changed:** `notificationDirectoryState` reads the Canvas's row and
-`canvasReaderAllows`, or the Sidekick's row and `sidekickReaderAllows`, instead
-of the Thread directory (`channels` and `channel_viewers`), and passes an
-owner's or administrator's role, so a mention reaches an administrator in a
-creator-only Canvas; memory-fact visibility does the same. The delivery gate
-waits only for the parent generation; the viewer-projection version gate and
-`viewerVersion` are gone, and a parent that is neither is skipped as
-`notification_parent_missing` instead of retrying as
-`directory_projection_pending` forever. A push's link, and a mention email's
-or Slack DM's, comes from the conversation's parent: the Canvas for its Chat,
-the Sidekick for its conversation and runs; a delivery about a Thread or
-Breakout is skipped, `conversation_not_linkable`. A run's transition into
-`needs_input`, or into a finished state, arms a `sidekick_run_notice` alarm
-entry in the Organization object; the entry records a `needs_input` or
-`run_finished` intent per recipient (WorkspaceDO migration 138 widens
-`notification_kind`) and enqueues the push, which renders from the stored
-notice and links to the Sidekick. `needs_input` joins
-`PushNotificationData.kind` and reads the `runFinished` choice, whose Settings
-row is now **Sidekick runs**. The Activity-row push, the reply batch and the
-attention count it badged went with Activity and the Thread directory, so the
-push badge is `0`. `apps/ios` is gone; only the Mac registers through APNs.
-
-**Why:** The [Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-keeps push for Canvas Chat mentions, Needs input and finished runs. Nothing
-writes the Thread directory any more, so every Canvas mention waited on a
-projection that never came; a Canvas's and a Sidekick's rows are written in
-the same object that answers, so there is no projection lag to wait for. Needs
-input and finished runs were Activity rows, retired in plan step C-2, so
-nothing told anyone a run was waiting on them. The recipient rule was decided
-there: Needs input to the requester of a person-started run plus the managers,
-a finish to the requester alone, because a scheduled run's row and unread
-already signal it. The notice rides the existing intent row and push pointer
-rather than a second pipeline, and an alarm entry in the projection's
-transaction makes it durable without a transactional enqueue. Reading every
-member as `member` withheld mentions from administrators, whom
-`canvasReaderAllows` admits by role. The Thread link forms were deleted with
-Thread surfaces (plan step B-5), so a Thread push would open nothing.
-
-**Considered and rejected:** Sending Thread pushes with no link: a
-notification whose tap opens nothing reads as broken, so a skipped delivery
-with a named reason is the honest outcome.
-
-**Consequences:** A run notice goes by push only: an email or Slack channel
-chosen on **Sidekick runs** sends nothing for it today. A Run now counts as a
-person's request, as a conversation message does. A desktop build older than
-this release does not parse `needs_input` in a clicked notification's data.
-Each delivery costs one `resolveHostedParent` call on the Organization's
-object. The push badge stays `0` until a Canvas and Sidekick attention count
-is summarized for it. The `platform: "ios"` registration shape, the
-`ai.rallywith.ios` topic and the sandbox APNs host stay in code with no client
-sending them.
-
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-21 — The installed browser app shows the badge
 
@@ -827,7 +664,6 @@ scheduler is unnecessary because the existing delivery Queue supports delays.
 
 **Consequences:** Cooldowns never clear unread state. Mentions remain immediate
 and independently controlled. Queue retries check the read/access state again.
-
 
 ### 2026-10-19 — A Channel merge reaches the Channel's readers
 

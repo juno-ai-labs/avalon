@@ -8,7 +8,7 @@ Breakout) was renamed by
 [`2026-10-10_channels-threads-navigation`](../2026-10-10_channels-threads-navigation/prd.md),
 which made the Space a Channel and the Channel a Thread, and then deleted
 whole. The `spaces` and `channels` tables that survive are recorded in
-[`architecture.md`](../../architecture.md#2026-11-08--retirement-records-spaces-space-access-sources-projects-the-implementation-plan);
+[`architecture.md`](../../architecture.md#retired-documents);
 `retire_threads`
 ([`workspace-retirement.md`](../../workspace-retirement.md#retiring-threads-breakouts-and-channels))
 deletes their rows, and the tables are dropped once it has run in every

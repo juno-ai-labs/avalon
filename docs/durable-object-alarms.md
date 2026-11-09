@@ -626,47 +626,6 @@ alarm retries a failed apply. See [scope grant directory](scope-grant-directory.
 
 ## Changelog
 
-### 2026-11-08 — A conversation's Terminal provider check is a stored kind
-
-**What changed:** `AgentLoopDO` stores a `terminal_observation` entry (key
-`sandbox`) reconciled from `terminal_provider_observation.next_observe_at` in
-every Terminal write's transaction and on each alarm pass; its handler observes
-the sandbox and re-arms the entry.
-
-**Why:** The owner asked for the periodic check removed with the Thread host to
-come back "as it was"; the brief put it on the store `reply_batch` and
-`sidekick_run_notice` use rather than on the deleted derived candidate, so a
-provider that keeps failing is held behind the entry's own backoff instead of
-being retried on every wake.
-
-**Consequences:** The entry's handler must re-derive the entry after the check
-(the base settles it guarded on the instant that ran, so the re-arm survives).
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — A Sidekick's run rows are a stored kind armed by triggers
-
-**What changed:** `sidekick_run_row` joins a Sidekick's stored kinds. It is the
-one kind armed in SQL: WorkspaceDO migration 136's triggers on `sidekick_runs`
-write the entry in the statement that changes the run, at one past any due
-instant already held. A replay arms the same entry with a payload that forces
-the conversation to apply the projection whatever version it holds.
-
-**Why:** A run's row in the Sidekick's shared conversation must follow every
-change to the run, and seven code paths write runs; arming at each would let a
-writer added later leave its row behind. The +1 fence is the drain's rule: it
-deletes the entry it ran by its instant, so a change during the delivery must
-land at another instant to survive. The forced replay exists because an
-ordinary delivery drops a projection older than the row, which would never
-repair a row whose version ran ahead.
-
-**Consequences:** A change to how this kind is armed is a migration, not an
-edit to `HostedSidekick`. A trigger that re-arms the entry before a replay's
-entry runs replaces it with an ordinary one; the handler reads the run either
-way, so only a row whose version is ahead needs the replay run again.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-11-03 — A stopped agent's queue is not a wake reason, and an idle pass is held
 
 **What changed:** `SubstreamAgent.nextLoopWorkAt` no longer reports a stopped

@@ -8,6 +8,6 @@ Threads, Channels and Breakouts, along with the merge route, the merge response
 card and the prompt vocabulary that named merging; nothing replaces it. Stored
 messages may still carry the `mergedFrom` tag, which only shipped migration
 statements (`workspace-do.ts`, `retired-workspace-schema.ts`) name. See
-[`conversation-surfaces.md`](../../conversation-surfaces.md#2026-11-07--the-surfaces-two-hosts-are-a-canvass-chat-and-a-sidekicks-conversation-breakouts-merge-back-suggestions-and-the-thread-branches-leave-it)
+[`conversation-surfaces.md`](../../conversation-surfaces.md#changelog)
 and [`conversation-tools.md`](../../conversation-tools.md). Do not build against
 this PRD.

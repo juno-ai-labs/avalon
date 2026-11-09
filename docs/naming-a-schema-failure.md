@@ -206,30 +206,6 @@ error made that diagnosable in minutes; it did not make it visible.
 
 ## Changelog
 
-### 2026-11-08 — A route can name its rejection to the caller
-
-**What changed:** `namedZValidator(label, message)` in `middleware/validation.ts` is
-`zValidator` with a public code built by `zodDiagnosticCode`: declared field
-names and issue codes, never a value and never a caller's unknown key. Its
-message is the route's own sentence, because a client shows the message to
-the person and a code-shaped string is no sentence. The Canvas routes use it
-for the id parameter and the retitle's body.
-
-**Why:** The end-to-end pass found `PATCH /canvases/:id` refusing an empty,
-blank or 301-character title, and a malformed id, as `invalid_request` "The
-request is invalid", which tells the person retitling nothing to fix, while a
-well-formed missing id already said `canvas_not_found`.
-
-**Considered and rejected:** Naming every route's rejection by changing
-`zValidator` itself: the generic envelope is a deliberate public contract
-and every client and test that reads `invalid_request` would move with it in
-one change nobody asked for. A route opts in where a person's input reaches it.
-
-**Consequences:** A route that adopts it answers a schema refusal with a code
-that is no longer a closed set; a client branches on its prefix.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-19 — A conversation object's refusal is named by its code
 
 **What changed:** `diagnosticErrorCode` answers an `ObjectPortError` with its
@@ -291,7 +267,6 @@ and for an `ApiError` that has a `diagnosticCode`.
 A sentence the platform table does not know still reduces to the caller's
 fallback; add it to `PLATFORM_ERRORS` when a log shows it. The queue refusal's
 message grows a fourth segment only when the fence failed closed.
-
 
 ### 2026-09-26 — A Workers runtime failure is named behind the caller's code
 

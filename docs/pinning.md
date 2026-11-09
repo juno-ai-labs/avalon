@@ -149,53 +149,40 @@ recency table `workspace_workstream_access` were dropped by migration 139.
 
 ## Changelog
 
-### 2026-11-07 — A Canvas and a Sidekick are what a person pins; Thread, Channel, Breakout and artifact pins are removed
+### 2026-11-09 — A Canvas and a Sidekick are what a person pins; Thread, Channel, Breakout and artifact pins are removed
 
 **What changed:** WorkspaceDO migration 137 admits `canvas` and `sidekick` in
 `workspace_pins.item_kind`. `setSidebarPin` and `reorderSidebarPins` pin and
-order them in their lists' Pinned groups (`POST /canvases/:id/pin`,
-`POST /sidekicks/:id/pin`, `PUT /workspace/pinned-order`), and each list's
-rows carry `pinnedPosition`. The client pins from a row's context menu, a
-Canvas's title menu, or by dragging the row into its section's Pinned group
-(`useRowPinDrop`, the list-agnostic sibling of the deleted `usePinDrop`), at
-the end of the group; a Sidekick that needs input is drawn in Needs input
-rather than twice. The Pinned, Threads, Channels and Artifacts sections, their
-drag to reorder (`usePinnedDrag`), the personal order (`personal-order.ts`),
-the pin hooks (`lib/pins.ts`), the artifact pin actions, the landing that
-opened the first pinned Channel, the shared `pins` list and its
-`/navigation/pins` routes, and the older per-Space routes are deleted;
-`GET /navigation/artifact-pins` stays for the detached artifact window and
-answers empty. `WorkspacePinStorage` loses `list`, `artifactPinners`,
-`listArtifacts` and `count`, which read the retired kinds, and `pin` no longer
-takes a parent (`StoredPinKind` is `canvas | sidekick`). This document was
-`workstream-pinning.md` and is renamed `pinning.md`.
+order them in their lists' Pinned groups (`POST /canvases/:id/pin`, `POST
+/sidekicks/:id/pin`, `PUT /workspace/pinned-order`), and each list's rows carry
+`pinnedPosition`. The client pins from a row's or a Canvas's title menu, or by
+dragging the row into its section's Pinned group (`useRowPinDrop`), at the end
+of the group. The Pinned, Threads, Channels and Artifacts sections, their
+reorder drag, the personal order, the shared `pins` list and its routes, and
+`WorkspacePinStorage`'s reads of the retired kinds are deleted; `GET
+/navigation/artifact-pins` answers empty for the detached artifact window. This
+document was `workstream-pinning.md`.
 
-**Why:** Plan steps A-8, A-14, B-3 and C-1 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-the PRD keeps "a Pinned group in each list" and removes the Pinned section,
-and the pinnable kinds other than Canvases and Sidekicks are deleted with
-Threads, Channels and Breakouts (decision log, 2026-11-06). An artifact pin was
-listed only while its Thread's Main could be opened, so no stored one can be
-listed now. In plan step C-2, `WorkspacePinStorage`'s `list`,
-`artifactPinners`, `listArtifacts` and `count` reads lost their last callers
-with the Thread routes and the old sidebar sections, so they were deleted.
+**Why:** The PRD keeps "a Pinned group in each list" and removes the Pinned
+section, and the other pinnable kinds are deleted with Threads, Channels and
+Breakouts. An artifact pin was listed only while its Thread's Main could be
+opened, so no stored one can be listed now.
 
 **Considered and rejected:** Widening `PinKind` and carrying the new kinds in
-`pins`: a released client parsed `PinKind` as a closed enum, so every released
-desktop would have dropped its whole sidebar payload. Folding this document
-into `canvases.md`, as plan step D-3 proposed: the Pinned group is one
-mechanism shared by Canvases and Sidekicks, so a Canvas document would have
-owned half of a Sidekick behaviour, and server documents and code comments
-link this document's anchors.
+`pins`: a released client parsed `PinKind` as a closed enum and would have
+dropped its whole sidebar payload. Folding this document into `canvases.md`: the
+Pinned group is one mechanism shared by Canvases and Sidekicks, and server
+documents and code comments link this document's anchors.
 
 **Consequences:** A new pinnable kind rides its own list's rows, not a shared
-list. The retired kinds' rows stay in `workspace_pins`, and the per-Space
-tables in storage, until a data migration drops them (plan step C-7); no
-reader lists them. The client offers no reorder yet, since both sections pass
-`reorderable={false}`; the order route is ready for it. See
-[`canvases.md`](canvases.md#the-canvas-list).
+list. The retired kinds' rows stay in `workspace_pins` until a data migration
+drops them, and no reader lists them. The client offers no reorder yet (both
+sections pass `reorderable={false}`), though the route is ready. Pinning a
+Canvas also subscribes the pinner to its new versions
+([`push-notifications.md`](push-notifications.md)).
 
-Shipped in juno-ai-labs/avalon#1490.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-17 — Generated artifacts can be pinned
 
@@ -229,7 +216,6 @@ and list read, for a case attaching the artifact to its thread already covers.
 list keeps answering for three kinds; a new reader of `workspace_pins` must do
 the same. The pin limit counts artifacts. A pinned artifact's row reflects its
 thread's title and access as of the last connect or pin write, not live.
-
 
 ### 2026-10-12 — Dragging a row into Pinned pins it again
 
@@ -455,7 +441,6 @@ outside the five recent background rows. This removes serial connection setup
 without changing navigation order, skip lists, empty-directory handling, or
 explicit New/deep-link routes. Warming still does not count as viewing.
 
-
 ### 2026-09-09 — Every leaving screen opens the first work stream
 
 Archiving the open work stream, a batch archive that took it, marking it
@@ -534,7 +519,6 @@ project section's scope is what keeps a member row from being taken for the
 recent list's copy of the same work stream; a new place that renders the same
 row twice needs one of its own.
 
-
 ### 2026-09-19 — The pinned list keeps its own table beside the container-order primitive
 
 **What changed:** `workspace_space_order` became `workspace_container_order`, a
@@ -591,7 +575,6 @@ Workspace-wide invalidation would notify other members about one user's visit.
 directory waterline orders workspace-owned fields, including visits; it is not a
 read marker. Unvisited rows intentionally use creation time rather than activity.
 
-
 ### 2026-09-07 — Order recent work streams by the viewer's access
 
 **What changed:** WorkspaceDO records foreground visits per user, pages by those
@@ -606,7 +589,6 @@ Counting pooled sockets as visits would promote rows the person never viewed.
 
 **Consequences:** Preserve the independent directory waterline for workspace-owned
 access fields, keep pins manual, and do not reinterpret message activity as visits.
-
 
 ### 2026-09-05 — Open the first sidebar work stream by default
 
@@ -633,7 +615,6 @@ order back into the complete stored arrangement before sending it. Sending only
 matches made the server append hidden pins, moving work the reader never touched.
 Hidden pins keep their positions, matching the reference app's slot-preserving
 reorder behavior; the server still receives the complete list.
-
 
 ### 2026-08-27 — Project ordering stays independent from pins
 

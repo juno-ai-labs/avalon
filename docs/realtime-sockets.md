@@ -854,156 +854,55 @@ Child archive admission uses the same `parent_archived` ticket field as parent a
 
 ## Changelog
 
-### 2026-11-08 — A reconnecting window hears everything it missed, and keeps hearing
+### 2026-11-09 — The sockets carry Canvases, Sidekicks and Activity, a pre-pivot desktop is refused, and the subscribe answer is authoritative
 
-**What changed:** The renderer applies the answer to each `subscribe` as
-authoritative: its lists replace the window's whatever its per-list ledger
-holds, the ledger and the sync cursor reset to the answer's numbers, and an
-answer on a reconnect that moved the Sidekick list refreshes the Sidekick
-page, its runs and the library as a push would. WorkspaceDO resolves the
-viewer's flags before it reads the answer, so nothing it sends can be older
-than the first push the socket may receive.
+**What changed:** A conversation ticket's `pk` may be `canvas`, and the route
+seats a Canvas reader in the Chat before minting, as it does for a Sidekick's
+conversation. The workspace socket carries each viewer's Canvas list
+(`workspace_canvas_list`), `set_presence` admits a Canvas, and each person's
+Activity page and `workspace_activity_list` go to that person's sockets alone,
+with `activity_mark_all_seen` the one command. The Thread listing, the Channel
+rows, rails and directory frames and the Channel control socket are deleted, and
+retired commands are ignored. The workspace ticket refuses a desktop below
+contract 13 (`MINIMUM_SERVED_CLIENT_CONTRACT`) with 426
+`client_update_required`, and the renderer stops on that answer and offers the
+update. The renderer applies each subscribe answer as authoritative over its
+per-list ledgers, sync cursor and per-topic waterlines, and WorkspaceDO resolves
+the viewer's flags before it reads what it answers with. A page waiting on a
+socket-owned list draws `PushedListPending`, which says when the socket cannot
+connect.
 
-**Why:** The owner's answer to the follow-up "after a local API restart an
-open Electron window stopped receiving live Sidekick updates until reloaded"
-was "do this". Three gaps, each enough to show it. A write landing while
-WorkspaceDO awaited the flags was in neither the answer, read before the
-await, nor any push, sent only to sockets already marked subscribed, and an
-API restart makes every window resubscribe at once against a cold object,
-when that await is longest (proved on workerd by
-`test-workers/workspace-socket-subscribe.test.ts`). A Sidekick change made
-while the socket was away arrived in the answer's list but refreshed nothing
-else, because only a push invalidated the Sidekick page. And a window kept its
-ledgers and cursor across an object whose counters had gone back, dropping
-everything below them until a reload cleared them.
+**Why:** A Canvas's Chat is an ordinary conversation object, so it opens on the
+same feed socket. Empty placeholder fields were first kept so a pre-pivot
+desktop could parse the subscribe answer, but its strict sidebar schema rejected
+the answer anyway and it reconnected forever, so the minimum rose instead. The
+refusal tells that build nothing (the auto-updater is its way out, so the
+desktop release ships with the Worker), but no socket opens and no subscribe
+runs for a build that would discard it. After a local API restart an open window
+stopped hearing Sidekick updates: a write during the flags await reached neither
+the answer nor a push, a change missed while away refreshed nothing else, and a
+window kept ledgers above an object whose counters had gone back. The browser
+sat on "Loading Canvases…" for good when the API refused the socket's origin.
 
-The per-topic waterlines a surface keys on (`topicWaterlines`) are set by the
-answer the same way, not raised, so an effect such as the OAuth-attempt
-reconcile runs again after the object's log went back. The conversation
-sockets were checked and left alone: `use-workstream-socket.ts` reconnects on
-its own loop and resubscribes from its retained sequence, and the room replays
-what was missed, sends a snapshot, or asks for a resync from zero when it can
-do neither.
+**Considered and rejected:** Refusing the retired commands: a refusal on this
+socket is a permanent close. Resetting the ledgers only on
+`history_unavailable`, when a list's waterline and the sync log are separate
+counters. Refetching every Sidekick surface on each reconnect. A per-item
+Activity mark command, a second read state. Stopping retries on a refused
+socket: a browser cannot tell a 403 from a dropped connection.
 
-**Considered and rejected:** Resetting the ledgers only on
-`history_unavailable`: a list's waterline and the sync log are separate
-counters, and the answer is already the newest state the socket can know, so
-applying it unconditionally is simpler and as cheap. Refetching each
-Sidekick surface on every reconnect: a resume that missed nothing would pay
-for it.
+**Consequences:** A new sidebar list goes on its own event type, never as a new
+discriminator value of an existing one, and a sidebar change a served desktop
+cannot parse raises `MINIMUM_SERVED_CLIENT_CONTRACT` rather than carrying
+placeholder fields. The subscribe answer is the one producer allowed to move a
+ledger backwards, and nothing in `subscribe` may await between reading its
+answer and marking the socket subscribed. A person's Activity is never
+broadcast. A page that reads a socket-owned list draws `PushedListPending` for
+its `undefined`. The conversation object refuses a ticket whose kind disagrees
+with its root row.
 
-**What a future change must respect:** the subscribe answer is the one
-producer allowed to move a ledger backwards; a push never is. Nothing in
-WorkspaceDO's `subscribe` may await between reading what it answers with and
-marking the socket subscribed.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — A page waiting on the workspace socket says when it cannot connect
-
-**What changed:** The workspace socket context gains `retry()`, and the
-Canvases home and the Sidekicks library draw `PushedListPending`, which turns
-their opening state into "Rally can’t connect" with Try again once a dial has
-failed.
-
-**Why:** The browser tester's shell sat on "Loading Canvases…" for good when
-the API refused the socket's origin: the provider retried with backoff, as it
-should, and no page read its state. Stopping the retries on a refusal was
-rejected: a browser cannot tell a 403 from a dropped connection, and the
-socket must keep recovering from the second.
-
-**What a future change must respect:** a page that reads a socket-owned list
-has to draw `PushedListPending` (or its own use of the socket's `state`) for
-the list's `undefined`, or a refused socket is invisible there again.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — The workspace socket carries each person's Activity
-
-**What changed:** The subscribe payload's sidebar gains an optional
-`activity` page beside `automations` and `canvases`; `workspace_activity_list`
-pushes one person's page to that person's sockets only; the socket accepts
-`activity_mark_all_seen`, answered by that push. The waterline is
-`workspace_sidebar_list_state` row `activity` (migration 140).
-
-**Why:** Activity returns as a per-person feed (the user's 2026-11-08
-decision, [`activity.md`](activity.md)), and the workspace socket is where every
-sidebar list already arrives, versioned against its connect payload. Its own
-event type, as the Canvas list's, because a released client ignores an event
-type it does not know and fails a discriminator value it does not know.
-
-**Considered and rejected:** A per-item `activity_mark_seen` command. Seen is
-derived from the conversation's read cursor, so opening an item already clears
-it, and a second command would be a second read state.
-
-**Consequences:** A person's Activity is never broadcast: every send is read
-for and addressed to its one recipient. A new command on this socket must be
-safe for an older server to ignore, which an unknown type is.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — The sockets carry Canvases and Sidekicks; the Thread listing and the Channel control socket go
-
-**What changed:** A conversation ticket's `pk` may be `canvas`, and
-`verifySocketTicket` accepts it. The route admits a Canvas reader by the
-Canvas's audience and seats them in the Chat before minting, as it does for a
-Sidekick's conversation. The workspace socket carries each viewer's Canvas
-list: `canvases` on the subscribe payload's sidebar and a
-`workspace_canvas_list` push; `set_presence` admits a Canvas the viewer may
-open as its foreground conversation. `list_workstreams`, `space_channels` and
-`channel_rails` are ignored, the sidebar's `workstreams` page and `notes` list are gone,
-and Channel rows, rails, recency and the Channel directory frames are no
-longer sent; the guest rules apply to the Canvas list and presence alone. The
-workspace socket ticket refuses a desktop below the pivot contract
-(`MINIMUM_SERVED_CLIENT_CONTRACT` is 13) with 426 `client_update_required`,
-and the ticket no longer carries `ind` (`readsIndividualSpaces`), which
-nothing read.
-`GET /workstreams/:id/control-socket`, `/socket/workstreams/:id`,
-`WorkstreamControlSocketService` and its ticket audience
-(`avalon-workstream-control-socket`) were deleted with the Thread routes, and
-the Organization object's `/parent-socket` with the hosted Thread parent. The
-native iOS client, which set `app://rallywithai` on its own handshake and kept
-opening the control socket, is deleted.
-
-**Why:** A Canvas's Chat is an ordinary conversation object (the Canvases and
-Sidekicks decision log), so it opens on the same feed socket. The list is its
-own event type because a released client fails a `workspace_sidebar_list`
-discriminator value it does not know and ignores an event type it does not
-know. Plan step C-2 deleted the Channel directory the retired frames read, and
-no client asks for them after B-1 to B-6; Channels and Threads are gone from
-every client, so nothing can name a Channel to open, and the control socket
-was kept only for desktops released before the workspace socket carried a
-Channel's state. An ignored command keeps an old desktop's socket open. An
-always-empty `workstreams` page and `notes` list were first kept so a
-pre-pivot desktop could parse the subscribe answer, but that desktop rejects
-the answer anyway (its strict sidebar schema's other keys changed) and
-reconnects forever without painting, and every Thread route it calls is
-gone. So the minimum contract rose and the empty fields went. The refusal
-does not tell a released build anything: it retries the ticket with backoff
-like any failed dial and shows itself reconnecting, and the desktop
-auto-updater (first check ten minutes after launch, then every three hours)
-is its way out, so the pivot's desktop release has to be published with the
-Worker deploy. What the refusal buys is that no socket opens and no
-WorkspaceDO subscribe runs for a build that would discard it, and that the
-failure is legible in telemetry. So that the next raise does tell the
-person, the renderer now stops on a 426 `client_update_required` and offers
-the update (`update_required`, `UpdateRallyAction`, shared with the connector
-card that already offered it); it could not help the builds this raise shuts
-out. Rejected: keeping the retry with the update copy beside it, since a dial
-that cannot succeed only spends tickets.
-
-**Considered and rejected:** Refusing the retired commands. A refusal on this
-socket is a permanent close, so an old desktop that still sends one would lose
-its socket for asking.
-
-**Consequences:** The conversation object refuses a ticket whose kind
-disagrees with its root row, so a Canvas id cannot be opened as a Thread. A
-new sidebar list goes on its own event type, never as a new discriminator
-value of an existing one. A sidebar change a served desktop cannot parse
-raises `MINIMUM_SERVED_CLIENT_CONTRACT` rather than carrying placeholder
-fields.
-
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-16 — The dictation lease is held by the open socket, not by its frames
 
@@ -1384,7 +1283,6 @@ Ticket URLs are query-free across workspace, control, conversation, and dictatio
 The Azure upstream transcription intent is provider-owned and remains required.
 Clients predating tolerant reception still require an update to understand an
 expanded known frame; this change cannot retroactively change installed parsers.
-
 
 ### 2026-09-09 — One write for unversioned facts on both caches
 

@@ -481,38 +481,6 @@ scrolling.
 
 ## Changelog
 
-### 2026-11-07 — The Canvases and Sidekicks directory has its own slice; the Channel and Thread directory slice is no longer read
-
-**What changed:** A `canvas-directory` slice holds the Canvases and Sidekicks
-lists as the socket last applied them, seeded before the socket answers and
-mirrored after, under the sidebar-list waterline ledger rather than a `live`
-flag. The `directory` slice (`workspace-directory-cache.ts`), which seeded the
-Thread list, the Space directories, each Channel's breakouts and rail, pins
-and Channel stats, is deleted with the client code that read it
-(`channel-rails.ts`, `channel-viewer-state.ts`), and the subscribe answer's two
-lists are what bound the conversation cache. A Space's read-only seed state,
-the Channel row's pruning of a parent's children, and Breakout launch gating
-are gone with those surfaces.
-
-**Why:** Plan steps A-15 and B-3 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-the pivot's lists must paint before the socket as the Channel list did (PRD,
-"Loading"), and the Channel, Thread and Breakout surfaces are deleted, so
-nothing draws what the old slice held.
-
-**Considered and rejected:** Fields for the new lists on the `directory` row.
-That row was the Channel directory the cutover deleted, read back only while
-the Channel list was unseeded, so a slice of its own let the old row go
-without touching the new one.
-
-**Consequences:** Rows written under `directory` before this change stay on a
-device's disk, unread, until the workspace's rows are cleared; nothing
-migrates or deletes them, because a stale row costs a few kilobytes and a
-sweep would be code kept for one release. A list missing from the
-`canvas-directory` row means never heard, not empty; keep the two apart.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-21 — Fence image saves across browser tabs
 
 **What changed:** Cache wipes advance shared global/scoped IndexedDB generations atomically

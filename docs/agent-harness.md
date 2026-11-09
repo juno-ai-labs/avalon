@@ -20,14 +20,13 @@ acknowledges the save, and conversational completion requires a persisted final
 assistant turn. The generic `completedByTool` harness outcome does not exempt a
 AgentLoopDO run from that terminalization requirement.
 
-
 `runRallyEvaluation` uses the production `runHarnessWithBind` assembly from an
 initial prepared scenario or a settled checkpoint. Bind owns checkpoint advancement
 and forks; Rally captures its flat projection and plugin/skill activation hints.
 The eval host restores configuration and isolated tool state, and allocates a fresh
 loop identity per fork. Production without checkpoint capture keeps the existing
 ledger path. (Session import, the one production producer of a prepared
-conversation, is deleted; [its retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions) is in `workstream-durable-object.md`.)
+conversation, is deleted; [its retirement record](workstream-durable-object.md#retired-documents) is in `workstream-durable-object.md`.)
 
 A Thread's and a Breakout's first message had its own classifier
 (`opening-message.ts`, with an evaluation under `evals/opening-message`); both
@@ -414,7 +413,7 @@ prompt (`renderCanvasTitleMessages`, `prompts/canvas-title.ts`) with a golden
 hash, the opening message as its user-role message: two to four words, thirty
 characters or less, sentence case and never every word capitalized, the rules
 the Thread naming prompt measured. The Thread naming pass is
-deleted ([its retirement record](canvases.md#2026-11-08--retirement-records-naming-a-work-stream-work-stream-descriptions) is in `canvases.md`). The
+deleted ([its retirement record](canvases.md#retired-documents) is in `canvases.md`). The
 `workstream_naming` model role serves that call and one other, the title a
 long pasted text is given (`pasted-text-service.ts`).
 
@@ -1700,7 +1699,6 @@ covers agent identity and addressing semantics through live JEV regressions.
 Sidekick catalog naming is covered by `apps/api/test/sidekick-presentation.test.ts`
 (`pnpm --filter @rally/api exec vitest run test/sidekick-presentation.test.ts`).
 
-
 The suite table below is an inventory, not a claim that the ordered-transcript
 PRD is fully proved. Its focused [test contract](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md#test-contract)
 maps the persistent-loop, safe-boundary, exact-settlement, observable-failure,
@@ -1817,188 +1815,56 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
-### 2026-11-08 — A Canvas chat's interrupted delegation write re-enters under the name it was called by
+### 2026-11-09 — The prompts speak of Canvases and Sidekicks, a run's report is its final message, a blocked run asks, and seeded runs are gone
 
-**What changed:** `reenterInterruptedWriteForRecovery` builds the Sidekick
-delegation plugin as `rally_sidekicks` with unprefixed tool names for every
-parent. It rebuilt a conversation that is not a Sidekick's as the retired
-`rally_skill_recommendations` presentation, whose canonical names carried the
-`sidekick_` prefix themselves.
+**What changed:** The standing work prompt (`prompts/workstream.ts`) replaces
+the Channel, Thread and Breakout paragraph with Organization, Canvas and
+Sidekick, and the task context's `workstream` key is `conversation`. The run
+instructions, `RUN_POST_INSTRUCTION` and the wizard's guide say a run's final
+message is the reply on its row in the Sidekick's shared conversation and is not
+posted there again. The authoring prompt offers only `personal` and `workspace`
+scope. The Thread loop's skill-recommendation variant, the turn-disposition and
+work-opportunity prompts and evals, the naming, description, suggestion and
+session-import prompts and the merge instruction are deleted. A Sidekick run
+reaches `get_connector_connection_state` and `show_connector_connection`, whose
+card in a run is a question (`openToolQuestion`, shared with
+`request_elicitation`) that halts with `needs_input`, and missing access has one
+statement, in the activation section: ask and wait, and report in the final
+message only on a decline or when nothing can ask. Demo `seed` runs are removed.
+A Canvas Chat's interrupted delegation write re-enters as `rally_sidekicks`, the
+name the live loop offers it.
 
-**Why:** The live loop (`loadHarnessTools`) offers the delegation tools as
-`rally_sidekicks`, unprefixed, to every user principal whatever the parent, so
-a Canvas chat's receipt records `set_delegation`. The re-entry looked for
-`sidekick_set_delegation`, `reenterInterruptedWrite` found no such tool, and an
-interrupted consent change in a Canvas ended `unknown` instead of being asked
-what it did. The room presentation went with Threads (see the body's skill
-recommendations paragraph); this branch was missed then. Found by the
-round-5 review of the Slack App Home change, 2026-11-08.
+**Why:** After the cutover every run is a Canvas Chat, a Sidekick's wizard or a
+Sidekick run, and the prompt still told the model it was in a Thread under a
+Channel. A run's final message became its row, so "notifies nobody" was false,
+and posting the report as well put it in `"0"` twice. The owner asked for a
+blocked run to show needs input; the plugin's older wording rendered after the
+activation section and said the opposite, so a medium model reported and
+finished anyway, and "calculate in the terminal" left a requester-scoped run
+following a procedure it could not run. Demo preparation, removed on the owner's
+instruction, was the only producer of a seed. The delegation re-entry looked for
+`sidekick_set_delegation`, a name the live loop never offers, so an interrupted
+consent change in a Canvas ended `unknown`.
 
-**Consequences:** `sidekickDelegationTools`'s `room` argument has no
-production caller left; only its own presentation test passes `true`. The
-workers test that recovers a lost consent response in a Canvas now admits the
-receipt under the tool the live loop offers.
+**Considered and rejected:** Telling a wizard edit from a request by its text, a
+second classifier with its own way to misroute. A new tool name for the run's
+question, which would teach the model two names for one card. Deriving the
+question's id from the tool call id rather than the receipt key every durable
+question uses.
 
-Shipped in juno-ai-labs/avalon#1490.
-### 2026-11-08 — A Sidekick run asks for a missing connection instead of finishing past it
+**Consequences:** Golden hashes moved for `workstream`, `automationWorkstream`,
+`memorySweep` and `memoryDigest`, each regenerated by diffing the render before
+and after; the 8,500-byte fixed-prompt ceiling holds, and the premature-stop
+addressing set passed 15 of 15 after the change. A prompt that names a room
+names a Canvas or a Sidekick's conversation. A plugin message that restates the
+missing-access rule reintroduces the contradiction. The prompt files and memory
+subject kinds keep their storage names (`workstream.ts`, `thread`, `channel`,
+`breakout`) until the `memory_facts` rebuild. A stored run context or
+authorization may still carry a `seed` key; the schemas that read them are
+loose, so neither may be made strict without accounting for those rows.
 
-**What changed:** `get_connector_connection_state` and
-`show_connector_connection` reach a Sidekick run; in a run the card tool is a
-question (`AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION`) that opens an
-elicitation through the executor `request_elicitation` now shares
-(`openToolQuestion`) and halts with `needs_input`. The activation prompt's
-permission rule changes from "Say what is blocked in this activation's final
-message" to ask and wait, reporting only once declined or unaskable. The
-conversations plugin's `RUN_POST_INSTRUCTION` loses its own permission
-sentences ("say in your final message what is blocked… report once"), keeping
-only that a failed post is reported and never claimed. The run change guidance
-gets a tie-break for where a wizard's answer goes (the final message for a
-person who wrote in Rally, a post for an outside thread), and the wizard's
-continuation note points at it. The data-report rule, which outranks the saved
-instructions and comes first, ends with its own sentence: when one source or
-every source fails for missing access, the access rule comes first (ask and
-wait). The standing prompt gives the no-Terminal
-alternative beside each rule that assumes one (calculation, documents, sites),
-since a requester-scoped run has no Terminal; to stay under the 8,500-byte
-ceiling it drops a duplicated person-mention line, a "create a new file"
-sentence that contradicted the same-path revision rule, and two repeats in the
-Sites and Documents sections.
-
-**Why:** The owner: "fix this to show needs input". A run's only recourse was
-its final message, so a missing connection ended the run `completed`. The
-plugin's older wording rendered after the activation section and said the
-opposite, so a medium model followed it and reported and ended `completed`
-anyway; "post the answer where the person wrote" contradicted "never post that
-reply there again" for a person who wrote in Rally; and "calculate in the
-terminal" and "publish it through the terminal" left a run without one
-following a procedure it could not run.
-
-**Considered and rejected:** a new tool name for the run's question, which
-would teach the model two names for one card; keeping the read-only `safe`
-card and deriving the question's id from the tool call id, where a provider
-key is what every other durable question's identity is derived from.
-
-**Consequences:** The question's identity is derived from the call's receipt
-key, so a replay converges on one question. The golden hashes of the
-`automationWorkstream` and `workstream` prompts moved. Missing access has one
-statement, in the activation section; a plugin message that restates it
-reintroduces the contradiction.
-
-Shipped in juno-ai-labs/avalon#1490.
-### 2026-11-08 — Seeded runs are removed
-
-**What changed:** A run no longer carries a demo `seed`: `runWorkstreamHarness`
-stops replacing the OpenRouter client's `fetch` with a seed's scripted answer,
-stops routing such a run past Azure (`demoSeedModelRoute`), and drops the
-completion-verification bypass for it; the conversation object no longer lets
-a seed decide a message's addressing. `isAzureBoundModel`, exported only for
-that routing, is deleted. `OpenRouterConfig.fetch` stays: tests and evals use
-it.
-
-**Why:** The owner's instruction of 2026-11-08: "remove the demo
-functionality completely". Demo preparation was the only producer of a seed.
-
-**What a future change must respect:** a stored run context or conversation
-authorization written by a seeded run may still carry a `seed` key; the
-schemas that read them are non-strict and loose, so it is ignored. Do not make
-either strict without accounting for those rows.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — The prompts speak of Canvases and Sidekicks, a run's result is posted once, and a Sidekick's conversation goes to the wizard only on a manager's marked edit
-
-**What changed:** In a Sidekick's conversation (`"0"`), a message addressed to
-an agent starts a run of the Sidekick, whoever sent it; `"0"`'s loop takes no
-turn for it. A message marked `intent: "edit_sidekick"` on `create_message`, an
-elicitation answer and a resource authorization are the wizard's, and only from
-a manager. A marked edit skips the classifier, whose prompt is unchanged. With
-the `workstream` scope retired (plan step A-5), the Thread loop's
-`rally:sidekicks` variant keeps only the delegation tools, presented as
-`rally_sidekick_delegation`; `list_skill_recommendations`, `recommend_skill`
-and `unrecommend_skill` are gone. The authoring prompt and the submission
-schema offer only `personal` and `workspace`, and lose the owning-Thread lines
-(the room scope, "Scheduled result delivery to a workstream is limited to the
-owning workstream", and the home conversation as where feedback and Terminal
-publications live).
-
-Then plan step C-5's vocabulary half. The standing work prompt
-(`prompts/workstream.ts`) replaces the Channel, Thread and Breakout paragraph
-and its identifier map with the Organization, Canvas and Sidekick paragraph
-above, renames the task context's `workstream` key to `conversation`, and says
-"outside Rally" where it said "outside this thread". The `self_delivery`
-section and the activation rules now say the final message is the reply on the
-run's row in the Sidekick's shared conversation, read by everyone the Sidekick
-is shared with, where they said it notified nobody; permission recovery says
-what is blocked in the final message rather than alerting an owning
-conversation that no Sidekick has. `RUN_POST_INSTRUCTION` and the wizard's
-guide (`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`) say the same and tell a run not to
-post its report into the shared conversation a second time; the wizard's
-sandbox line names "the conversation that asked for this one" and its
-publication line a Canvas the Sidekick writes. The compaction prompt and the
-live inventory appendix say "conversation" (`# Authoritative conversation
-resource inventory`); the memory digest titles a Canvas's facts (stored kind
-`thread`) "About the Canvas" and a retired room's by its label, and the sweep's
-prose files a fact under the placement's own subject; the `building-live-sites`
-skill saves the Canvas a site is in and publishes a refresh into it with
-`publish_resource`'s `canvas` argument rather than using a Thread-owned
-Sidekick; `sidekicks_list`, the run change guidance, the skill catalog, the
-document policy, the scheduled wake-up header and three built-in skills drop
-Thread wording, and so do the `rally:conversations` attach tool, its
-not-found refusal and the peer instruction, which now name a Canvas's Chat or a
-Sidekick's conversation. The context-length error tells a member to start a new
-Canvas. The turn-disposition eval and `turn-disposition-evaluation.ts`, which
-only exercised merge and Breakout dispositions, are deleted, with
-`prompts/turn-disposition.ts` and its provenance test (the eval was its only
-consumer) and `prompts/work-opportunity.ts` (no importer since suggested work
-was deleted). A run's row now carries its reply whole
-([`automation-lifecycle.md`](automation-lifecycle.md#runs-in-the-shared-conversation)),
-which the prompts' claim that the row is the delivery depends on.
-`workstream-name.ts`, `workstream-description.ts` and `session-import.ts` went
-in C-2 with the naming and description services; `suggestion-draft.ts` and
-`src/turn-disposition.ts` went in C-3 with the suggestion services;
-`mergeInstruction` and the `merges` option of the conversation tools are
-deleted; C-3 also deleted `opening-message.ts` and its evaluation with a
-Thread's and a Breakout's first-message admission.
-
-**Why:** The Canvases and Sidekicks decision log keeps the wizard and run
-separation in a conversation now open to everyone the Sidekick is shared with,
-and its 2026-11-07 entry has a manager mark a wizard edit explicitly. The first
-build sent every manager's message to the wizard, so a manager could never ask
-the Sidekick for work there. After the cutover every run is a Canvas Chat, a
-Sidekick's wizard or a Sidekick run, and the prompt still told the model it
-was in a Thread under a Channel, a structure no conversation has any more. A-4
-projects a run's final message into the Sidekick's shared conversation as the
-run's row, so "notifies nobody" was false, and the guidance that also had runs
-post their report with `conversation_post` put the same report in `"0"` twice.
-
-**Considered and rejected:** Telling an edit from a request by the text, which
-would be a second classifier with its own way to misroute.
-
-**Golden hashes moved:** `workstream`, `automationWorkstream` (the paragraph,
-the context key, the document line and, for the second, the activation lines),
-`memorySweep` (the subject rule) and `memoryDigest` (two group titles) moved
-with the prompts; each was regenerated by rendering the case before and after
-the change and reading the diff, which held only the edits above.
-`compactionCheckpoint` moved only because its fixture's appendix string was
-renamed to the new heading; the renderer did not change. The fixed-prompt byte
-ceiling (8,500) holds: the new paragraph is shorter than the one it replaced.
-
-**Evals:** The plan asked for the addressing and premature-stop evals before
-and after. The addressing prompt is unchanged, so its eval inputs are byte for
-byte the same. The premature-stop addressing set, whose wake-up case quotes the
-renamed header, was rerun after the change against JEV 1.14.0: 15 of 15 labels
-correct.
-
-**Consequences:** Addressing in a Sidekick's conversation has two stages, the
-classifier (or the mark) and the Sidekick's routing; anything that adds a new
-kind of human input to `"0"` must say whether it is the wizard's. The prompt
-files keep their stored names (`workstream.ts`, `outputSurface: "workstream"`,
-the memory subject kinds `thread`, `channel`, `breakout`), and the prose avoids
-those names until the `memory_facts` rebuild renames the kinds. A future
-prompt that names a room must name a Canvas or a Sidekick's conversation, and
-a Sidekick report in Rally is its final message.
-
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-03 — Task skills: reporting on data and creating an app
 
@@ -2248,7 +2114,6 @@ changes before the first timer or compare against missing files. The builder als
 copied rows manually despite loading the skill. Explicit input and completion
 boundaries address those concrete failures without adding a second sync system.
 
-
 ### 2026-10-21 — Carry trigger decisions and site recovery into saved runs
 
 **What changed:** The event skill branches explicitly between requested schedules,
@@ -2376,7 +2241,6 @@ synthetic regressions evaluated again.
 
 PR: [#1376](https://github.com/juno-ai-labs/avalon/pull/1376).
 
-
 ### 2026-10-20 — Resume verified settled history after a loop relocation
 
 **What changed:** Added host validation for historical accepted, failed, and
@@ -2435,7 +2299,6 @@ would duplicate the same catalog entry when Mail and Drive are separate presets.
 scope. Loading instructions grants no tools. Future guidance should extend the
 shared skill and its sourced reference rather than expanding standing prompts.
 
-
 ### 2026-10-19 — A wake-up fires in the conversation that scheduled it
 
 **What changed:** `schedule_wakeup` had already written a Breakout's or a
@@ -2493,7 +2356,7 @@ charter, what it has produced so far, the newest three messages and the judged
 turn. Every provider call is recorded through the classifier diagnostic sink
 under `turn_disposition_classifier`. The step never fails settlement. The
 harness also gained the `suggestion_draft` prompts, golden-hashed. The
-mechanism is owned by [`conversation-suggestions.md`](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions);
+mechanism is owned by [`conversation-suggestions.md`](workstream-durable-object.md#retired-documents);
 the question, its 0.6 threshold and its three recent messages are pinned to the
 corpus evaluation and the GEPA ablation in
 `docs/PRDs/2026-10-17_merge-and-breakout-suggestions/design.md`.

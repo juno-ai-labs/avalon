@@ -666,7 +666,7 @@ measure — because that is a property of the surface. It may not restyle a
 markdown element, and it paints by re-pointing the group rather than by naming
 an element. No surface takes a heading exemption today: the two that did, a
 note's page (headings 22/17/14) and the meeting briefing's rail (every level at
-15px), went with built-in notes ([their retirement record](architecture.md#2026-11-08--retirement-records-spaces-space-access-sources-projects-the-implementation-plan-meeting-notes)), and
+15px), went with built-in notes ([their retirement record](architecture.md#retired-documents)), and
 compact resource rows no longer contain a markdown glance.
 
 A heading exemption is written as `<host> .markdown-body :is(h1, …)`, naming
@@ -965,53 +965,6 @@ restoration are owned by [artifact annotations](artifact-annotations.md).
 
 ## Changelog
 
-### 2026-11-08 — A failed favicon lookup answers a named gateway failure, and a table shades only its header
-
-**What changed:** When neither candidate host resolves, `GET /favicons/:host`
-answers 502 `favicon_unavailable:<reason>` (`faviconFailureReason`): the phase
-of a fetch that did not complete (`branding_fetch_failed`), or a Firecrawl
-failure's kind and status (`firecrawl_http_400`, `firecrawl_network`), never the
-provider's message. It answered 500 `internal_error`.
-
-**Why:** The end-to-end pass found every keystroke of a partial host
-(`en.wikipe`) logged as an unexpected error with no reason, while
-`FirecrawlError` held its kind and status (CLAUDE.md, "Naming a schema
-failure": a generic code on a path that had the reason is a defect).
-
-A table's body cells are transparent, so only its header row is shaded in
-either appearance, and an artifact's headings take `text-default`.
-
-The design inspection found the dark table's body cells drawn in the same
-raised grey as its header, a block per cell, where light shaded only the header
-(v4-R2-7, v3-R2-5); and an artifact's headings in the conversation's quiet
-grey, lighter than the body under them, where design.html §2 draws them in full
-ink (v4-R2-6).
-
-**Considered and rejected:** A 404 for a Firecrawl 4xx: a 401 or 402 is this
-deployment's key, not the host.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — The email converter moves here from the retired digests document
-
-**What changed:** `email-markdown.ts` is listed and described here. It was
-owned by `docs/digests.md`, which was deleted with the digests (plan step C-2).
-
-**Why:** The converter outlived the digest it was extracted from: invitations,
-access and share emails and the Sidekick result email still render through it.
-Its decisions, recorded in the retired document's changelog (`git log -- docs/digests.md`), carry over and
-still bind: one converter rather than one per email, because a second copy of
-an escaping renderer is a second place to miss a rule (2026-08-22); citations
-are reduced before TeX is repaired, and widening what the repair escapes breaks
-the reduction (2026-08-23, 2026-08-27); fences are read from
-`markdownLineKinds`, the one shared answer (2026-08-28); a bare `<br/>` is a
-line break in prose but tables stay preformatted, since this renderer has no
-table model (2026-08-30); and every email is drawn light only, because a mail
-client cannot report the reader's appearance and strips `<style>` blocks
-(2026-10-16).
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-11-02 — Sidekick mention chips
 
 **What changed:** A `[@Name](sidekick://<uuid>)` link draws as a Sidekick chip
@@ -1292,7 +1245,6 @@ values, so a palette colour added to the product needs no rule here; they were
 checked in both appearances against both default fills, a dark profile fill and
 a light one, which are the two ink cases the palette can produce. Nothing
 outside a bubble moved.
-
 
 ### 2026-09-15 — Non-renderer deliveries share one plain-text reduction
 
@@ -2746,7 +2698,7 @@ one override — a note's descending heading scale, a briefing's flat one — an
 stylesheet test asserts that neither host states any other markdown element
 styling. This document was created in the same change, because until then
 markdown rendering had no document and its history was accumulating in
-[`workstream-creation.md`](hosted-conversation-parents.md#2026-11-08--retirement-record-starting-a-work-stream), whose scope is the create
+[`workstream-creation.md`](hosted-conversation-parents.md#retired-documents), whose scope is the create
 path and explicitly not the screens a work stream is read on.
 
 **Why:** The entry below restored the list markers by naming all three containers
@@ -2806,7 +2758,7 @@ nothing took it back. The surrounding rules read as though something had — the
 set the indent a marker needs and a colour for `li::marker` — so a bulleted list
 rendered as indented paragraphs and a numbered one lost its numbers, everywhere
 markdown appears. The work-stream message bubble entry in
-[`workstream-creation.md`](hosted-conversation-parents.md#2026-11-08--retirement-record-starting-a-work-stream) had reported this against the
+[`workstream-creation.md`](hosted-conversation-parents.md#retired-documents) had reported this against the
 `tw-fade` preflight, which was wrong; that sentence is corrected in place there,
 and this entry is where the repair itself is recorded.
 

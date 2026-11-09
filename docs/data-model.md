@@ -981,7 +981,6 @@ has a document, and the column notes above point at it rather than restating it:
 
 ## Testing
 
-
 `pnpm --filter @rally/db test` is the suite that covers the schema itself:
 
 - `packages/db/test/baseline-migration.test.ts` replays every `.sql` file in
@@ -1089,184 +1088,48 @@ The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
 
-### 2026-11-08 — The demo tables lose their last reader, and the seed column is dropped
+### 2026-11-09 — The Thread, Channel, Thread-era Activity and demo storage loses its code; what is dropped and what waits
 
-**What changed:** Nothing reads or writes `demo_operations`,
-`demo_operation_phases` or `demo_seed_receipts` any more, and WorkspaceDO
-migration 136 drops `sidekick_runs.seed_json` with an in-place `DROP COLUMN`.
-The D1 tables themselves are dropped by `0125_drop_demo_tables.sql` (children
-first). The shipped migrations that made and rebuilt them (0100, 0102, 0103,
-0106, 0108) are unchanged. An earlier 0125 on this branch rebuilt
-`demo_seed_receipts` for a Canvas-shaped pack; it never shipped, and was
-deleted rather than shipped and then dropped, since nothing would ever have
-written a row of its new kinds.
+**What changed:** The server code that read and wrote the Thread, Channel,
+Space, Breakout, Thread-era Activity, digest, suggested-work, merge,
+access-request, session-import, backfill and colour-sync rows is deleted, and
+every migration statement those modules exported moved byte for byte to
+`retired-workspace-schema.ts`, so the migration ledger's hashes are unchanged.
+Queue messages of the retired kinds are acknowledged by tombstones rather than
+dead-lettered. WorkspaceDO migration 139 drops the Thread-era tables that lost
+their last reader (the Thread-era Activity, digests but `digest_schedules`,
+suggested work, a Channel's own ledgers, Thread pins and order, Thread access,
+batch dispatches, `thread_backfill`, the import reclaim,
+`workstream_email_receipts`), their dangling triggers and the Thread rows of
+shared tables, and AgentLoopDO migration 84 drops the per-conversation Thread
+tables. Migration 140 adds the per-person Activity tables
+([`activity.md`](activity.md)). Migration 136 drops `sidekick_runs.seed_json`,
+and D1 `0125_drop_demo_tables.sql` drops the three demo tables.
 
-**Why:** The owner's instruction of 2026-11-08: "remove the demo
-functionality completely". Nothing reads or writes these rows once the demo
-code is gone, and an empty shell left in D1 would let a stale query succeed
-against nothing instead of failing, the reason 0090 gave for dropping the
-legacy product tables.
-
-**What a future change must respect:** 0125 is a Worker-first migration: its
-name is in the list the deploy job passes to
-`scripts/classify-pending-d1-migrations.mjs`, and it must be the only pending
-migration in each region's ledger when it deploys, so no other regional D1
-migration may ship in the same deploy. The deploy job applies every pending D1 migration before it
-promotes the Worker unless the sole pending migration is on that list, and it
-fails closed when a listed one has a companion
-([`runbook.md`](runbook.md)); applied first, 0125 would break the previous
-Worker, which reads `demo_operations` on every regional discovery. The persona `users` rows a demo minted (`@persona.invalid`, no
-platform identity) are not deleted; they cannot sign in and the retired demos'
-history references them.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — Each person's Activity is stored beside their notification intents
-
-**What changed:** WorkspaceDO migration 140 adds `workspace_activity_items`
-and `workspace_activity_seen`, and widens `workspace_sidebar_list_state`'s
-CHECK to `activity` by copying the table.
-
-**Why:** Activity returns as a per-person feed written in the transaction of
-the push intent it mirrors ([`activity.md`](activity.md)). It is WorkspaceDO
-state because the intents, the read cursors that decide seen, and the
-workspace socket that carries it all live there.
-
-**Considered and rejected:** A `seen_at` column. Seen is derived from
-`sidekick_viewer_reads` and the one Mark all seen row.
-
-**Consequences:** Nothing prunes either table; retention is an open decision.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — Thread, Channel and Activity subsystems retired from the server
-
-**What changed:** The server half of the Canvases and Sidekicks pivot (plan
-steps C-1 and C-2) deletes the code that read and wrote the Thread, Channel,
-Breakout, Activity, digest and suggested-work rows. Retired so far:
-
-- **Suggested work.** `work-opportunity-service.ts`,
-  `work-opportunity-batching.ts`, `workflows/work-opportunity.ts` and its
-  `WORK_OPPORTUNITY_WORKFLOW` binding, `WorkspaceProductStorage`,
-  `workspace-opportunity-protocol.ts`, and the WorkspaceDO RPCs and product
-  alarm they served. A `product` alarm an object armed before the deploy is
-  answered with nothing to do. The verified-identity sync that ran inside the
-  admission step went with it; `external_user_identities` rows it wrote are
-  still read by `connector-actor-identity.ts`. `docs/suggested-work.md` is
-  deleted; its tables (`opportunity_batch_*`, `work_opportunit*`,
-  `opportunity_provenance_*`, `suggested_work_*`) stay until the WorkspaceDO
-  drop migration of step C-7, and `workspace-product-schema.ts` stays because
-  migration 1 still spreads its statements.
-- **Digests.** `digest-service.ts`, `digest-run-service.ts`,
-  `digest-delivery-service.ts`, `digest-email-content.ts`,
-  `digest-personal-channel.ts`, `workspace-digests-protocol.ts`,
-  `workspace-digests-storage.ts`, the WorkspaceDO digest RPCs, the cron's
-  default reconciler and the timezone re-derivation. A `schedules` row that
-  names a digest is advanced and sends nothing until C-7 drops the digest
-  tables and those rows. `docs/digests.md` is deleted; the email converter it
-  also owned, `email-markdown.ts`, is now
-  [`markdown-rendering.md`](markdown-rendering.md)'s, with the decisions that
-  still bind it. The client's Daily digest section (`DailyDigestSettings`,
-  `getDigestSchedule`/`updateDigestSchedule`, the `DigestSchedule` types) went
-  with it, and a notification kind with no channel now reads **Off**.
-- **Merge, Channel access requests and session import.**
-  `conversation-merge-service.ts` and the agent's `conversation_merge` tool
-  backend, `conversation-access-request-service.ts` (its WorkspaceDO storage
-  goes with the Channel host) and `session-import-run-service.ts`; their
-  routes went in C-1. `docs/conversation-merge.md` and
-  `docs/channel-access-requests.md` are deleted.
-- **Thread backfill and Channel colour sync.** `thread-backfill.ts`,
-  `channel-color-sync.ts`, their alarm lanes and RPCs, and their activity-Queue
-  handlers. A message of either type still in the Queue at deploy is
-  acknowledged by the consumer's retired-message tombstone (with Projects'),
-  rather than dead-lettered. The migration statements they exported (99, 100,
-  115, 133, and the trigger migration 102 restates) moved byte for byte to
-  `retired-workspace-schema.ts`, the home for statements whose module is gone;
-  the colour triggers keep marking rows until C-7 drops their tables.
-  `docs/thread-backfill.md` is deleted.
-- **Breakout creation.** `substream-creation-service.ts` and
-  `substream-context-summary.ts` (its one structured inference, and the
-  `substream-context-summary-policy` routing it used) had no caller after
-  C-1; `docs/substream-creation.md` is deleted. The engineering MCP's
-  `create_channel`, `create_thread`, `read_channel`, `list_channels`,
-  `list_threads` and `list_breakouts` go with the services they called
-  ([`engineering-mcp.md`](engineering-mcp.md)).
-- **Spaces and Channels.** `space-service.ts`, `space-bootstrap-service.ts`,
-  `workspace-space-storage.ts`, `workspace-space-default-publication.ts`,
-  `workspace-space-protocol.ts`, `system-channels.ts`, `channel-rails.ts`,
-  `workspace-channel-read-storage.ts`, `unread-state.ts`,
-  `channel-message-search-projection.ts`, `channel-access-service.ts` and
-  `shared-directory-service.ts`, with their WorkspaceDO RPCs and socket
-  commands. Onboarding seats a new member nowhere. The Sidekick list SQL that
-  lived in `channel-rails.ts` moved to `sidekick-directory-sql.ts`. Queue
-  messages of the `space_default`, `space_bootstrap` and `space_intent_resume`
-  types are acknowledged by the tombstone. `docs/spaces.md` is kept as a
-  retired record for its changelog.
-- **The Thread and Breakout host.** `hosted-parent.ts` (the Channel and Space
-  parent; [`hosted-conversation-parents.md`](hosted-conversation-parents.md)),
-  `workspace-breakout-storage.ts`, `conversation-access-request-storage.ts`,
-  `workspace-people-ranking.ts`, `workstream-object-creation-service.ts`,
-  `workstream-directory-service.ts`, `workstream-batch-update.ts`,
-  `workstream-origin-resource.ts`, `connector-workstream-audience.ts` and
-  `slack-workspace-workstream-service.ts`. `workstream-service.ts` keeps only
-  the harness launch, wake-up and external-message admission a Sidekick or
-  Canvas conversation still uses. Slack starts no conversation any more: a
-  mention or an App Home prompt is answered with
-  `conversation_ingress_retired`'s copy, and a bot joining a channel binds no
-  room (`room_bindings_retired`). The unfurl refresh sweep
-  (`slack-unfurl-refresh.ts`) is deleted; a shared link still unfurls once.
-  Session import's desktop action and reservation reclaim
-  (`session-import-plugin.ts`, `session-import-reclaim.ts`,
-  `import-reservation-reclaim.ts`), its share-URL and file helpers
-  (`session-import.ts`, `session-import-files.ts`) and the `session_import`
-  agent profile went with the Thread host; `docs/session-import.md` is kept as
-  a retired record.
-  `docs/workstream-creation.md` is kept as a retired record.
-- **Activity.** `activity-event-service.ts`, `activity-email-service.ts`,
-  `workspace-activity-feed.ts`, `workspace-activity-push.ts`,
-  `workspace-activity-event-protocol.ts`, `activity-clear-rules.ts`,
-  `activity-audience.ts` and `breakout-activity.ts`. A regional
-  `activity_event` effect is receipted and stored nowhere; a push Queue
-  message for an Activity item is logged `activity_item_retired` and
-  acknowledged; `GET /artifact-pins` answers an empty list.
-- **Listing rules.** `listing-rules.ts`, the ladder of who may be told a
-  Space, Channel or Breakout exists, once agent memory's fact visibility was
-  re-derived from Canvas and Sidekick participation
-  ([`agent-memory.md`](agent-memory.md)); `docs/listing-rules.md` is kept as a
-  retired record.
-- **Moved, not changed.** Every migration statement those modules exported is
-  in `retired-workspace-schema.ts`, byte for byte: the WorkspaceDO migration
-  ledger's statement hashes are identical before and after.
-- **The tables (plan step C-7).** WorkspaceDO migration 139 drops 49 of them
-  (Activity, digests but `digest_schedules`, suggested work, a Channel's own
-  ledgers, `workspace_workstream_pins` and the other Thread pin and order
-  tables, Thread access and resource links, batch dispatches,
-  `conversation_access_requests`, `thread_backfill`, the import-reservation
-  reclaim, `workstream_email_receipts`), and the Thread rows of the shared
-  tables; AgentLoopDO migration 84 drops `sidekick_attachments`. The Thread,
-  Channel and Breakout directories, their viewers and the `parent_*` tables
-  stay until the operator's Thread retirement has run everywhere, and
-  `digest_schedules` stays empty under the `schedules` foreign key; the why is
-  in [`workspace-retirement.md`](workspace-retirement.md#changelog).
-
-**Why:** After the client cutover nothing shows a suggestion, a Thread or a
-Channel; the PRD's decision log removes them from the product. Code that only
-served them is deleted rather than left dormant so the next change does not
+**Why:** After the cutover nothing shows a Thread or a Channel, and code that
+only served them is deleted rather than left dormant so the next change does not
 have to reason about it. Tables are dropped worker-first: the Worker that no
-longer reads them deploys before the migration that drops them.
+longer reads them deploys before the migration that drops them. An empty table
+left behind would let a stale query succeed against nothing instead of failing,
+the reason 0090 gave for dropping the legacy product tables.
 
-**Consequences:** WorkspaceDO migration 139 (plan step C-7) dropped the
-Activity, digest (but `digest_schedules`), suggested-work, Space-ledger,
-Thread pin, order, access, resource-link and batch-dispatch tables, the
-Channel-rail and Channel-colour triggers and the Thread rows of shared tables;
-AgentLoopDO migration 84 dropped `sidekick_attachments`. `channels`, `spaces`,
-`breakouts`, their viewer tables and `parent_*` stay until the operator has
-run `retire_threads` in every Organization, since its inventory reads them;
-`digest_schedules` stays emptied because `schedules` names it in a foreign
-key; D1 `workstreams` and the authority tables stay because Canvas and
-Sidekick creation read them.
+**Considered and rejected:** Dropping `channels`, `spaces`, `breakouts`, their
+viewers and `parent_*` now: the Thread retirement's inventory reads them.
+Shipping an earlier 0125 that rebuilt `demo_seed_receipts` for a Canvas-shaped
+pack and then dropping it: it never shipped and was deleted.
 
-Shipped in juno-ai-labs/avalon#1490.
+**Consequences:** Those tables, `digest_schedules` (emptied, under the
+`schedules` foreign key), D1 `workstreams` (the conversation-parent anchor, and
+the guard that keeps retired search rows unreachable) and the D1 authority
+tables (read by Canvas and Sidekick creation) stay until a later migration;
+[`workspace-retirement.md`](workspace-retirement.md) says when. 0125 is a
+Worker-first migration and must be the only pending regional D1 migration when
+it deploys, because applied first it would break the previous Worker, which
+reads `demo_operations` on every regional discovery. The persona `users` rows a
+demo minted stay. Nothing prunes the Activity tables.
+
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-18 — A rename is a version cause of its own
 

@@ -136,27 +136,6 @@ assert on the control by its accessible name.
 
 ## Changelog
 
-### 2026-11-08 — A copied assistant reply is reported by its turn id
-
-**What changed:** A copy reports the message's transcript turn id rather
-than its rendered block's id, and `content_copied`'s `resourceId` admits an
-assistant turn id when `resourceType` is `message`, matched exactly to the
-loop's turn form.
-
-**Why:** Every Copy of a reply threw `Invalid telemetry intent` in the main
-process and dropped the event: the renderer sent the block id
-(`<turn>:text:0`), which is no UUID, and an assistant's turn id is not one
-either once the transcript keys it by the loop. Keeping the message's
-identity was the point of the event, so the sender names the turn and the
-contract widened, rather than the sender dropping the id; the transcript's own
-`TranscriptTurnIdSchema` (any non-empty string) was rejected because a
-telemetry value must not be able to carry free text.
-
-**What a future change must respect:** a new turn-id form has to be added to
-the contract's pattern, or its copies are refused again at the IPC gate.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-21 — Copy confirmation floats over its preview
 
 **What changed:** Visible `CopyStatus` uses the generic shared `Toast` pill,

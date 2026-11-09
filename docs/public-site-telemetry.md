@@ -228,25 +228,6 @@ is allowed.
 
 ## Changelog
 
-### 2026-11-07 — Canvas links are classified, and retired links fold into one path
-
-**What changed:** `normalizedTelemetryPathname` recognizes the Canvas link
-(`/cv/:canvas`, `/cv/:canvas/a/:artifact`) and folds the Space, Channel,
-Breakout, addressed and ID-only forms into `/app/:retired`. The handoff event's
-type gains `canvas` and `sidekick`; a retired link reports `workstream` as
-`invalid`. The handoff module is `link-handoff.ts`.
-
-**Why:** Plan step B-5 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-added the Canvas link and retired the Thread forms ([`links.md`](links.md)).
-How often a retired link is still followed is worth seeing as one number;
-which retired shape it was is not.
-
-**Considered and rejected:** Renaming the `workstream_handoff` page value. It
-is a closed enum the API validates and dashboards group by; a rename would
-split every chart at the deploy for no new information.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-27 — The Worker sets the homepage's CSP
 
 **What changed:** `/` now runs the site Worker (`run_worker_first`), which
@@ -304,7 +285,6 @@ every site page would expose credential-bearing handoff URLs.
 
 **Consequences:** New landing variants must opt into the loader and CSP. Apollo
 tracking is separate from the first-party event and regional-delivery guarantees.
-
 
 ### 2026-10-11 — Report which ad platform's click identifier a landing carried
 

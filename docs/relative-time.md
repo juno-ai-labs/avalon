@@ -146,21 +146,6 @@ whether or not the first frame was stale.
 
 ## Changelog
 
-### 2026-11-08 — A turn's byline reads its clock time under a day divider
-
-**What changed:** The byline shows the clock time, not "7 minutes ago", and the
-feed names each day above its first turn. The byline can carry an avatar.
-
-**Why:** The PRD makes design.html the authority, and §2 draws "Today" between
-hairlines and "10:42" against each name, with an "R" avatar on Rally's turn
-and a person's initial on a colleague's (v1-F9, v4-F8). A turn older than a
-week read as a full date on every line.
-
-**What a future change must respect:** the feed's divider is what dates a
-turn; a byline that grows a date again repeats it on every line.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-09-10 — One byline, one clock, one relative label
 
 **What changed:** Three primitives replace nine hand-rolled timestamps. `useNow`

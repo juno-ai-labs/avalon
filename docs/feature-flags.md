@@ -101,13 +101,20 @@ or Worker fallback change and produce a different seed under the same receipt.
 The `workstream_description` and `suggestion_draft` roles are retired: their
 callers (the description loop, the conversation suggestions) were deleted in
 plan step C-2, and the Ace deploy retires `agent-model-workstream-description`
-and `agent-model-suggestion-draft` through `retireFlag`. `workstream_naming`
+and `agent-model-suggestion-draft` through `retireFlag`, as it does the
+`session_import`, `work_opportunity_admission` and `work_opportunity_ranking`
+keys, whose callers (session import, suggested work) were deleted too.
+`session_import`, `suggestion_draft` and `turn_disposition_classifier` stay in
+the usage contract's metered activities, so a usage event queued before the
+deploy still parses rather than going unbilled, and `OPENROUTER_STRUCTURED_MODEL`
+has no reader left; removing that Worker variable is a deploy-affecting change
+of its own. `workstream_naming`
 keeps its Thread-era name because it is a Flagship key, and now titles pasted
 text (`pasted-text-service.ts`); a rename would be a flag migration for no
 change in behaviour. The loop read a window of up to 600 messages to judge whether
 a Thread's purpose had moved, which is why it once wanted a stronger default
 than the classifiers it shared one with; its retirement record is in
-[`workstream-durable-object.md`](workstream-durable-object.md#changelog).
+[`canvases.md`](canvases.md#retired-documents).
 
 Naming sits at the cheap end: it relabels one request in a single turn, runs
 while somebody watches for the result, and asks for no reasoning at all, so the
@@ -680,7 +687,7 @@ what they do with the model they are handed:
 | The `model_override` column and where it is copied | [`data-model.md`](data-model.md) |
 | Why **Debug enabled** crosses no trust boundary | [`security.md`](security.md) |
 | Why `userPlatformId` is the stable per-person id | [`regionalization.md`](regionalization.md) |
-| The retired description loop's retirement record | [`workstream-durable-object.md`](workstream-durable-object.md#changelog) |
+| The retired description loop's retirement record | [`canvases.md`](canvases.md#retired-documents) |
 | Provisioning credentials and the release health gate | [`runbook.md`](runbook.md) |
 
 A subsystem that wants a rollout adds a flag here and reads it through the
@@ -764,7 +771,6 @@ correctly provisioned flag.
 | `apps/desktop/src/renderer/screens/workspace-settings.test.tsx`, `apps/desktop/src/renderer/lib/use-debug-enabled.test.tsx` | Live application-setting broadcasts win over older reads, read failures, and mutation replies, so a poll can reveal or withdraw Developer without a relaunch. |
 
 | `apps/desktop/src/renderer/components/workstream-composer.test.tsx` | The locked pill inside a conversation: the same gate, the exact id and the claim each of `pinned`'s two states may make, and that it opens no menu. |
-
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/agent-model-flags.test.ts` — the
@@ -1049,59 +1055,6 @@ hiding the Notifications section.
 
 ## Changelog
 
-### 2026-11-07 — The session-import and suggested-work model roles are retired
-
-**What changed:** `session_import`, `work_opportunity_admission` and
-`work_opportunity_ranking` left `AGENT_MODEL_ROLES`, the structured-inference
-roles, the route defaults and Ace's catalog, and the Ace deploy retires
-`agent-model-session-import`, `agent-model-work-opportunity-admission` and
-`agent-model-work-opportunity-ranking` instead of ensuring them.
-
-**Why:** session import made Channels and suggested work made Threads, both
-retired by the Canvases and Sidekicks pivot (plan step B-8); nothing calls the
-roles. `session_import` stays in the usage ledger's `METERED_ACTIVITIES` and
-`ORGANIZATION_PAYS`, so a usage event already queued still parses. With the
-two suggested-work roles gone `OPENROUTER_STRUCTURED_MODEL` has no reader;
-removing the Worker variable is a later, deploy-affecting change.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — Thread-era model roles and `live-artifacts-enabled` are retired
-
-**What changed:** `workstream_description` and `suggestion_draft` left
-`AGENT_MODEL_ROLES`, the structured-inference roles, the route defaults and
-Ace's catalog; the Ace deploy retires their Flagship keys.
-`workstream_naming` stays, relabelled in Ace as pasted-text naming. The
-`liveArtifactsEnabled` client field, the `live-artifacts-enabled` managed key,
-its Ace editor entry and its `ensureFlag` provisioning are gone: Ace's deploy
-`retireFlag`s the key, and `useSiteArtifacts` builds the rail's site detail,
-preview pane, Data view and artifact window for every signed-in surface that
-has a bridge to present through.
-
-**Why:** Plan step C-2 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-deleted both roles' only callers, and a key left in Flagship can still be
-served and edited in Ace for nothing. The PRD makes a live artifact the Canvas
-itself, and a Canvas is opened through exactly the site surfaces, so a flag
-that can hide them would hide the product's primary object.
-
-**Considered and rejected:** Renaming `workstream_naming` to a pasted-text
-role. It is a Flagship key, so the rename is a flag migration with no change
-in what runs. The `turn_disposition_classifier` and `suggestion_draft` metered
-activities stay in the usage contract: a usage event queued before the deploy
-must still parse, or the consumer drops it as invalid and the call goes
-unbilled.
-
-**Consequences:** Do not revive `live-artifacts-enabled` for a new purpose; a
-site-surface rollout control would now be a kill switch for Canvases, which
-is a different decision from a presentation flag. An older desktop build
-still defaults the missing field to `false`, so it hides the site surfaces
-until the updater delivers this build; that is expected, not a bug.
-`suggested-work-enabled` is still served with no reader; retiring it is the
-same `retireFlag` step.
-
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
-
 ### 2026-10-21 — Route the Sidekick wizard independently on Sol
 
 **What changed:** Sidekick authoring Main uses `agent-model-sidekick-authoring`,
@@ -1151,7 +1104,7 @@ icons. Terra accepts the schema.
 
 **Consequences:** The Gemini fallbacks serve naming only with the plain-string
 icon and `reasoningRequired` from the same pull request; see
-the naming retirement record in [`workstream-durable-object.md`](workstream-durable-object.md#changelog). A
+the naming retirement record in [`canvases.md`](canvases.md#retired-documents). A
 `.env.local` that sets the key, as one copied from the old `.env.example` does,
 outranks the new default until it is edited.
 

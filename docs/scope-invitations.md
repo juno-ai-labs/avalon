@@ -382,40 +382,6 @@ the test RPC bridge otherwise reports its expected rejection twice.
 
 ## Changelog
 
-### 2026-11-07 — A Canvas is shared through the same invitations, and the Thread branch is gone
-
-**What changed:** `ScopeInvitationService` takes a `parent` hook, and
-`WorkspaceDO` routes creating, claiming and revoking a share, and its delivery
-and index alarms, to a Canvas when the parent id names one. A claimed Canvas
-share writes its grant as a Channel's did, and the Canvas's directory step
-adds the guest to its participants. A Canvas share's email carries the
-Canvas's canonical link (`/cv/`) instead of the addressed Channel path. Then
-the service's Thread branch was deleted: `parent` is required, readiness and
-the invitation's title come from it alone, and the participant-migration gate,
-the `channels` title read and the Organization-shell link a Thread share
-carried are gone, with the Channel share routes for listing shares, scope
-options and grants.
-
-**Why:** A Canvas invites guests the way a Channel did (the Canvases and
-Sidekicks decision log), and this service already owns delivery, the sign-in
-claim and the guest relationship; a second invitation path would have been a
-second place for those to drift. The Thread link forms were deleted in plan
-step B-5 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md),
-and a Canvas share was sending a Thread-shaped address the web app no longer
-opens. Nothing opens a Thread any more, and the Canvas host is the service's
-only constructor, so the Thread branch was unreachable.
-
-**Considered and rejected:** A Canvas-only invitation table and claim: the
-sign-in claim reads one lookup table keyed by parent id, and would have needed
-a second.
-
-**Consequences:** The `parent` a Canvas host passes is the whole description
-of what is shared; a new kind of shared parent passes its own hook and link.
-Listing a Canvas's shares and its grants has no route, so the share panel
-shows its form alone.
-
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
-
 ### 2026-11-05 — A guest's run finishes its thread's handoff before refusing
 
 **What changed:** A guest's run check (`readRunAuthority` in `integrations.ts`)

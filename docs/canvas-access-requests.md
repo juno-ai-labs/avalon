@@ -191,72 +191,46 @@ intents and in Activity.
 
 ## Changelog
 
-### 2026-11-08 — A denial tells the requester
+### 2026-11-09 — Document created: a member asks to open a Canvas, and its deciders answer
 
-**What changed:** Denying a request now writes the requester an
-`access_denied` intent and Activity row naming who declined, never the
-Canvas's title, and pushes it under their `accessRequests` choice; the access
-read gives the denied request's `decidedAt`, to every build: one older than
-contract 13 was first served the request without it, a branch deleted once
-13 became `MINIMUM_SERVED_CLIENT_CONTRACT` and such a build stopped
-connecting. WorkspaceDO migration 138 admits the kind in
-`workstream_notification_intents` and migration 140 in
-`workspace_activity_items`.
-Asking again republishes the requester's own Activity list
-(`noteActivityChanged`), because their denied row now reads as seen through
-the seen join: without it the row and the badge stayed unseen on an open
-socket until a reload (the round-5 visual check, F1).
+**What changed:** Access requests return for Canvases: `GET
+/canvases/:id/access`, which answers `requestable` without the title, the
+request and decision routes, `canvas_access_requests` and the `request`
+participant source (WorkspaceDO migration 137). A request writes an
+`access_request` intent and Activity row per decider (the creator, the
+Organization's administrators and a writer Sidekick's managers), settled for all
+of them by one decision; an approval writes `access_granted` for the requester
+and a denial `access_denied`, naming who declined and never the Canvas's title.
+Share adding the person, or the Canvas opening to the Organization, settles a
+waiting request. The Share panel and the Activity row offer the same Approve and
+Deny (`AccessDecisionActions`); the requester's pane reads "Request declined"
+and offers to ask again, and asking again republishes their own Activity so the
+declined row clears.
 
-**Why:** The owner's answer of 2026-11-08: "inform the person [of] a
-denial". The first version kept the Thread-era rule that a denial tells
-nobody; a requester then waited on "Request sent" with no answer.
+**Why:** The owner asked on 2026-11-08 for the whole flow back and, the same
+day, that a denial inform the person. The Thread-era flow
+(`services/conversation-access-request-service.ts` and its storage, built on
+Thread tables; `git log --diff-filter=D -1 --
+apps/api/src/services/conversation-access-request-service.ts` finds it) was
+deleted with Threads, after which a member who followed a link to a Canvas they
+were not in was told it did not exist, with no way to ask. The request rides the
+one pipeline every notice does, an intent and its Activity row in one
+transaction, rather than a second table of alerts or a socket event of its own.
 
-**Considered and rejected:** Reusing `access_request` with a denied state
-for the requester's row: the row would read as a request to decide. Naming
-the title in the notice: the requester was refused it.
+**Considered and rejected:** One row per Canvas and person, reset on each ask:
+an earlier, denied request's rows would read as waiting again with live buttons,
+so each request is its own row and only the waiting one is unique. A socket
+command for the row's actions: the decision route answers with a named code, and
+the Activity push follows from the write. Keeping the Thread-era rule that a
+denial tells nobody, which left the requester on "Request sent". Reusing
+`access_request` with a denied state for the requester's row, which would read
+as a request to decide. A cap on requests per person, a number the team has not
+set.
 
-**What a future change must respect:** the denial's notice and row carry no
-title; a new kind on these two tables needs another rebuild, not an edit to
-150 or 152.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — Document created: a member asks to open a Canvas, and its deciders answer
-
-**What changed:** Access requests return for Canvases: the access read, the
-request and the decision routes; `canvas_access_requests` and the `request`
-participant source (WorkspaceDO migration 137); an `access_request` intent and
-Activity row per decider (the creator, the Organization's administrators and
-a writer Sidekick's managers), settled for all of them by one decision; an
-`access_granted` intent and row for the requester; and a request settling when
-Share adds the person or the Canvas opens to the Organization. Client: the Share panel lists `pendingAccessRequests` for deciders with the same Approve and Deny the Activity row has (`AccessDecisionActions`, held once answered), which drop under the message at narrow widths; an approval made while the panel is open joins its choice of people, and the visibility the approval moved the Canvas to replaces the panel's, so Save keeps it (a creator-only Canvas left at "Only you" would have sent `creator` and removed the person just let in). On the Activity row the buttons are named for the Canvas too, and a settled row says "You approved" to the decider (`decidedByUserId`) in the buttons' place.
-
-**Client:** The requestable pane reads a declined request as "Request
-declined · <when>" with Request access offered again, and the requester's
-`access_denied` row opens it; an open pane re-reads its access when that row
-arrives after its access read. The owner's instruction of 2026-11-08: "inform
-the person [of] a denial".
-
-**Why:** The owner asked on 2026-11-08 for the whole flow back. The
-Thread-era flow (`git show 3df4150^:apps/api/src/services/access-request-service.ts`
-and its storage) was built on Thread tables and deleted with them; a member
-who followed a link to a Canvas they were not in was told it did not exist,
-with no way to ask. The request rides the one pipeline every notice does
-(an intent and its Activity row in one transaction), with its actions on the
-row, rather than a second table of alerts or its own socket event.
-
-**Considered and rejected:** One row per (Canvas, person) reset on each ask,
-as the brief sketched: an earlier, denied request's Activity rows would read
-as waiting again, with live Approve and Deny, so each request is its own row
-and only the waiting one is unique. A socket command for the row's actions:
-the decision route already answers with a named code, and the Activity push
-follows from the write. Telling the requester of a denial: the old rule kept
-it quiet, and a later request is allowed (the owner reversed this the same
-day; see "A denial tells the requester" above). A cap on requests per person: a
-number the team has not set.
-
-**What a future change must respect:** every way a requester gets in settles
-through `settleCanvasAccessRequest`, and only someone `canvasManages` admits
-decides.
+**Consequences:** Every way a requester gets in settles through
+`settleCanvasAccessRequest`, and only someone `canvasManages` admits decides.
+The denial's notice and row carry no title. A new kind on the intents or
+Activity tables needs another table-copy migration, not an edit to a shipped
+one.
 
 Shipped in juno-ai-labs/avalon#1490.

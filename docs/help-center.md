@@ -220,33 +220,6 @@ phone widths.
 
 ## Changelog
 
-### 2026-11-07 — Manual restructured around Canvases and Sidekicks
-
-**What changed:** The two chapters on working in a Channel and on Spaces and
-Breakouts became one Canvases chapter (chapter 2), and the Sidekicks chapter
-moved up to chapter 3. Getting started, the tour, who-can-see-what and the
-glossary were rewritten for the new rail, sidebar and per-Canvas sharing, and
-every other chapter's wording followed. Pages whose subject no longer exists
-(Channel name and icon, session import, Sidekicks in Channels, email into
-Rally, the digest, the two iPhone pages) were deleted. Every removed or
-renamed page, and its Markdown copy, has a 301 in `_redirects` to the page that
-now covers its subject, or to its chapter when nothing does. The authoring
-guide's list of today's names changed with it.
-
-**Why:** The Canvases and Sidekicks PRD
-(`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`) removes Channels,
-Threads, Breakouts, Activity, digests and the iPhone app, and its decision log
-puts the help center and site copy in the same cutover train as the code, so
-the manual cannot describe a product that is gone. The Sidekicks folder
-moved from `07-` to `03-` and kept its pages' addresses, because the number
-never reaches a URL; only changed slugs needed redirects. Redirects are
-exact paths rather than chapter splats, so a page added later under an old
-chapter slug is never shadowed. Old names stay only in the glossary and in
-"where did it go" notes, in the past tense, because readers arrive with old
-links and old words.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-01 — Help center built from Markdown at /help/
 
 **What changed:** Added the help center: a content folder, a build step that

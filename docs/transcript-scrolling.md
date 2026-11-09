@@ -354,23 +354,6 @@ and checking that no row moves further than the scroll step in any frame.
 
 ## Changelog
 
-### 2026-11-08 — A transcript that fits opens following
-
-**What changed:** Opening at the first unread message releases the follow
-only when the transcript overflows its viewport; one that fits opens at the
-end and follows.
-
-**Why:** A Sidekick run's own view, short and with an unread anchor, drew
-**Jump to latest** over a transcript with nothing below it (round-2 review,
-R2-15): `release()` reports `atEnd` false whatever the distance, by design, so
-the button cannot be hidden from a stale measurement.
-
-**Considered and rejected:** Hiding the button whenever the transcript cannot
-scroll: content growing later fires no scroll event, so a hidden button would
-stay hidden over a reply that had grown past the fold.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-08 — Hold the reading row in the commit that prepends
 
 **What changed:** Loading an older range no longer restores the scroll position
@@ -434,7 +417,6 @@ Shipped through [PR #565](https://github.com/juno-ai-labs/avalon/pull/565).
 **Considered and rejected:** A lifetime marker keyed only by turn ID suppressed valid repeated navigation.
 
 **Consequences:** Search positioning releases follow and must clear stale parameters before normal unread positioning resumes.
-
 
 ### 2026-08-28 — Automation authoring adopts the shared follow controller
 
