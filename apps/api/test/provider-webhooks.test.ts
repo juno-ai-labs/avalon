@@ -1,8 +1,12 @@
 import "../../../tests/isolated-region";
 import type { ConnectorConnectionContext, ConnectorError } from "@rally/connectors";
-import type { Scope } from "@rally/contracts";
+import { asWorkspaceId, type NormalizedActivity, type Scope } from "@rally/contracts";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
+import { workspaceDOName } from "../src/durable-objects/names";
+import { __connectionServiceTesting } from "../src/services/connection-service";
 import { decryptString, encryptString, sha256 } from "../src/lib/crypto";
 import { webhookIngestionRoutes } from "../src/routes/connections";
 import {
@@ -13,7 +17,10 @@ import {
 } from "../src/services/provider-webhook-service";
 import { publishWorkspaceSync } from "../src/services/workspace-realtime-service";
 import type * as WorkspaceRealtimeService from "../src/services/workspace-realtime-service";
-import { createCloudflareTestBinding, createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { openWorkstreamAuthorityForTest } from "./helpers/durable-authority";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
 
 // Which audience each publish names is the decision under test; that the
 // Organization object honours an audience is proved on real sockets in
@@ -145,10 +152,7 @@ class FakeStatement {
 }
 
 class FakeDatabase {
-  readonly connections: StoredConnection[] = [];
   readonly receipts = new Map<string, Receipt>();
-  readonly activities: StoredActivity[] = [];
-  readonly resources: StoredResource[] = [];
   readonly setupNonces = new Map<string, StoredSetupNonce>();
   challenge: StoredChallenge | null = null;
 
@@ -211,44 +215,8 @@ class FakeDatabase {
     throw new Error(`Unexpected first query: ${sql}`);
   }
 
-  all(sql: string, values: unknown[]): D1Result<Record<string, unknown>> {
-    if (sql.includes("FROM activities")) {
-      const [provider, providerEventId, payloadRef] = values.map(String);
-      return result(0, this.activities
-        .filter((activity) =>
-          activity.provider === provider &&
-          activity.providerEventId === providerEventId &&
-          activity.payloadRef === payloadRef &&
-          ["pending", "failed"].includes(activity.processingStatus))
-        .map((activity) => ({
-          id: activity.id,
-          workspace_id: activity.workspaceId,
-        })));
-    }
-    if (!sql.includes("FROM connector_connections")) {
-      throw new Error(`Unexpected all query: ${sql}`);
-    }
-    // One clause now: an inbound delivery reaches any connection a person has
-    // not disabled, so whether a provider's event is processed no longer
-    // depends on what this row believed about the grant.
-    const rows = this.connections.filter((connection) => {
-      if (connection.status === "disabled") return false;
-      if (sql.includes("connector_type = 'notion'")) {
-        return connection.connector_type === "notion"
-          && connection.scope === "workspace"
-          && values.includes(connection.provider_account_id);
-      }
-      if (sql.includes("json_extract(config_json, '$.githubUserId')")) {
-        const config = JSON.parse(connection.config_json) as Record<string, unknown>;
-        return connection.connector_type === "github"
-          && connection.scope === "personal"
-          && String(config.githubUserId ?? "") === String(values[0]);
-      }
-      return connection.connector_type === values[0]
-        && connection.provider_account_id === values[1]
-        && (!sql.includes("scope = 'workspace'") || connection.scope === "workspace");
-    });
-    return result(0, rows);
+  all(sql: string): D1Result<Record<string, unknown>> {
+    throw new Error(`Unexpected all query: ${sql}`);
   }
 
   run(sql: string, values: unknown[]): D1Result {
@@ -285,106 +253,6 @@ class FakeDatabase {
         processedAt: null,
         errorJson: null,
       });
-      return result(1);
-    }
-    if (sql.includes("INSERT INTO activities")) {
-      const provider = String(values[23]);
-      const deliveryId = String(values[24]);
-      const payloadRef = String(values[25]);
-      const receipt = this.receipts.get(receiptKey(provider, deliveryId));
-      if (!receipt || receipt.payloadRef !== payloadRef || receipt.processedAt !== null) {
-        return result(0);
-      }
-      const activity: StoredActivity = {
-        id: String(values[0]),
-        workspaceId: String(values[1]),
-        connectionId: String(values[2]),
-        connectionScope: values[3] as Scope,
-        connectionOwnerUserId: values[4] == null ? null : String(values[4]),
-        provider: String(values[5]),
-        providerEventId: String(values[6]),
-        eventType: String(values[7]),
-        payloadRef: String(values[17]),
-        dedupeKey: String(values[20]),
-        rawContentHash: values[21] == null ? null : String(values[21]),
-        processingStatus: "pending",
-      };
-      if (this.activities.some((candidate) =>
-        candidate.connectionId === activity.connectionId &&
-        (
-          (candidate.providerEventId === activity.providerEventId &&
-            candidate.eventType === activity.eventType) ||
-          candidate.dedupeKey === activity.dedupeKey
-        ))) return result(0);
-      this.activities.push(activity);
-      return result(1);
-    }
-    if (sql.includes("INSERT INTO resources")) {
-      const [workspaceId, connectionId, provider, , , rowsJson, receiptProvider, deliveryId, payloadRef] = values;
-      const receipt = this.receipts.get(receiptKey(String(receiptProvider), String(deliveryId)));
-      if (!receipt || receipt.payloadRef !== payloadRef || receipt.processedAt !== null) {
-        return result(0);
-      }
-      const rows = JSON.parse(String(rowsJson)) as Array<{
-        id: string;
-        resourceType: string;
-        providerResourceId: string;
-        title: string;
-        canonicalUrl: string | null;
-        metadataJson: string;
-      }>;
-      let changes = 0;
-      for (const row of rows) {
-        const existing = this.resources.find((candidate) =>
-          candidate.workspaceId === workspaceId &&
-          candidate.connectionId === connectionId &&
-          candidate.provider === provider &&
-          candidate.providerResourceId === row.providerResourceId);
-        if (existing) {
-          existing.resourceType = row.resourceType;
-          existing.title = row.title;
-          existing.canonicalUrl = row.canonicalUrl ?? existing.canonicalUrl;
-          existing.metadataJson = JSON.stringify({
-            ...JSON.parse(existing.metadataJson) as Record<string, unknown>,
-            ...JSON.parse(row.metadataJson) as Record<string, unknown>,
-          });
-        } else {
-          this.resources.push({
-            id: row.id,
-            workspaceId: String(workspaceId),
-            connectionId: String(connectionId),
-            provider: String(provider),
-            resourceType: row.resourceType,
-            providerResourceId: row.providerResourceId,
-            title: row.title,
-            canonicalUrl: row.canonicalUrl,
-            metadataJson: row.metadataJson,
-          });
-        }
-        changes += 1;
-      }
-      return result(changes);
-    }
-    if (sql.includes("INSERT INTO resources") && sql.includes("FROM json_each(?)")) {
-      // Resource discovery is guarded by the same still-pending provider
-      // receipt as the canonical activity insert. This fake does not need to
-      // materialize resource rows; it only models the guarded upsert result.
-      const provider = String(values[6]);
-      const deliveryId = String(values[7]);
-      const payloadRef = String(values[8]);
-      const receipt = this.receipts.get(receiptKey(provider, deliveryId));
-      return result(receipt && receipt.payloadRef === payloadRef && receipt.processedAt === null ? 1 : 0);
-    }
-    if (sql.includes("UPDATE connector_connections") && sql.includes("delivery_id")) {
-      const [status, errorJson, , connectionId, , provider, deliveryId, payloadRef] = values;
-      const receipt = this.receipts.get(receiptKey(String(provider), String(deliveryId)));
-      if (!receipt || receipt.payloadRef !== payloadRef || receipt.processedAt !== null) {
-        return result(0);
-      }
-      const connection = this.connections.find((candidate) => candidate.id === connectionId);
-      if (!connection) return result(0);
-      connection.status = status as StoredConnection["status"];
-      connection.error_json = errorJson == null ? null : String(errorJson);
       return result(1);
     }
     if (sql.includes("SET processed_at")) {
@@ -444,16 +312,6 @@ class FakeDatabase {
       this.challenge.consumed_at ??= String(values[0]);
       return result(1);
     }
-    if (sql.includes("UPDATE connector_connections")) {
-      if (sql.includes("SET status = 'needs_reconnect'")) {
-        const [errorJson, , connectionId] = values;
-        const connection = this.connections.find((candidate) => candidate.id === connectionId);
-        if (!connection || connection.status !== "healthy") return result(0);
-        connection.status = "needs_reconnect";
-        connection.error_json = String(errorJson);
-      }
-      return result(1);
-    }
     throw new Error(`Unexpected run query: ${sql}`);
   }
 }
@@ -479,13 +337,156 @@ class FakeQueue {
   }
 }
 
+/**
+ * The production path's own stores: a migrated regional database holding the
+ * receipts and ingress routes, and one real `WorkspaceDO` per Organization
+ * holding its connections and resources. A delivery's activities are read off
+ * the queue, which is where WorkspaceDO authority sends them.
+ *
+ * Connections are seeded through `connections` before the service is built;
+ * afterwards the same getter reads each one back from its object.
+ */
+class WorkspacePlane {
+  private readonly seeds: StoredConnection[] = [];
+  private readonly objects = new Map<string, { instance: WorkspaceDO; database: DatabaseSync }>();
+  private regionalDatabase: DatabaseSync | null = null;
+  private queue: FakeQueue | null = null;
+
+  get connections(): StoredConnection[] {
+    if (!this.regionalDatabase) return this.seeds;
+    return this.seeds.map((seed) => this.objects.get(seed.workspace_id)!.database
+      .prepare("SELECT * FROM connector_connections WHERE id = ?")
+      .get(seed.id) as unknown as StoredConnection);
+  }
+
+  get activities(): StoredActivity[] {
+    return (this.queue?.messages ?? []).flatMap((message) => {
+      const queued = message as { kind?: string; request?: { event: { activity: NormalizedActivity } } };
+      if (queued.kind !== "workspace_connector_event" || !queued.request) return [];
+      const activity = queued.request.event.activity;
+      return [{
+        id: activity.id,
+        workspaceId: activity.workspaceId,
+        connectionId: activity.connectionId,
+        connectionScope: activity.connectionScope,
+        connectionOwnerUserId: activity.connectionOwnerUserId,
+        provider: activity.provider,
+        providerEventId: activity.providerEventId,
+        eventType: activity.eventType,
+        dedupeKey: activity.dedupeKey,
+        processingStatus: "pending",
+        payloadRef: activity.payloadRef ?? "",
+        rawContentHash: activity.rawContentHash,
+      }];
+    });
+  }
+
+  get resources(): StoredResource[] {
+    return [...this.objects.values()].flatMap(({ database }) => database.prepare(
+      `SELECT id, workspace_id AS workspaceId, connection_id AS connectionId, provider,
+              resource_type AS resourceType, provider_resource_id AS providerResourceId,
+              title, canonical_url AS canonicalUrl, metadata_json AS metadataJson
+         FROM resources ORDER BY provider_resource_id`,
+    ).all() as unknown as StoredResource[]);
+  }
+
+  /** The bound regional database, for the Global tables a test seeds or reads. */
+  get regional(): DatabaseSync {
+    if (!this.regionalDatabase) throw new Error("workspace_plane_unbound");
+    return this.regionalDatabase;
+  }
+
+  receiptProcessedAt(provider: string, deliveryId: string): string | null | undefined {
+    const row = this.regional.prepare(
+      "SELECT processed_at FROM provider_webhook_receipts WHERE provider = ? AND delivery_id = ?",
+    ).get(provider, deliveryId) as { processed_at: string | null } | undefined;
+    return row ? row.processed_at : undefined;
+  }
+
+  get receiptCount(): number {
+    if (!this.regionalDatabase) return 0;
+    return (this.regionalDatabase.prepare("SELECT COUNT(*) AS count FROM provider_webhook_receipts")
+      .get() as { count: number }).count;
+  }
+
+  /** Stand the stores up with the seeded connections, and bind them. */
+  bind(queue: FakeQueue): Pick<Env, "DB" | "WORKSPACE_DOS"> {
+    const regional = migratedSqliteDatabase();
+    planeDatabases.push(regional);
+    openWorkstreamAuthorityForTest(regional);
+    this.regionalDatabase = regional;
+    this.queue = queue;
+    const at = new Date(NOW).toISOString();
+    for (const [userId, label] of [[USER_ONE, "one"], [USER_TWO, "two"]] as const) {
+      regional.prepare(
+        `INSERT INTO users(id, google_subject, email, name, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(userId, `google-${label}`, `${label}@example.test`, label, at, at);
+    }
+    for (const workspaceId of new Set(this.seeds.map((seed) => seed.workspace_id))) {
+      regional.prepare(
+        `INSERT INTO workspaces(id, name, slug, region, created_by_user_id, created_at, updated_at, placement_affinity)
+         VALUES (?, ?, ?, 'global', ?, ?, ?, 'wnam')`,
+      ).run(workspaceId, workspaceId, workspaceId, USER_ONE, at, at);
+      const { instance, objectDatabase } = createTestWorkspaceDO({
+        workspaceId,
+        regionalDatabase: regional,
+        register: (database) => planeDatabases.push(database),
+      });
+      this.objects.set(workspaceId, { instance, database: objectDatabase });
+    }
+    for (const seed of this.seeds) {
+      this.objects.get(seed.workspace_id)!.database.prepare(
+        `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+          display_name, encrypted_credentials, credential_iv, credential_key_version,
+          granted_scopes_json, status, cursor_json, config_json, error_json,
+          created_at, updated_at, model_plugin_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        seed.id, seed.workspace_id, seed.connector_type, seed.scope, seed.owner_user_id,
+        seed.provider_account_id, seed.connector_type, seed.encrypted_credentials, seed.credential_iv,
+        seed.granted_scopes_json, seed.status, seed.cursor_json, seed.config_json, seed.error_json,
+        at, at, `plugin-${seed.id}`,
+      );
+      const route = __connectionServiceTesting.connectorIngressRouteValues({ ...seed, updated_at: at }, "global");
+      regional.prepare(
+        `INSERT INTO connector_ingress_routes
+         (connection_id, workspace_id, region, connector_type, scope, provider_account_id,
+          provider_user_id, status, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        route.connectionId, route.workspaceId, route.region, route.connectorType, route.scope,
+        route.providerAccountId, route.providerUserId, route.status, route.updatedAt,
+      );
+    }
+    const stubs = new Map([...this.objects].map(([workspaceId, { instance }]) => [
+      workspaceDOName("global", asWorkspaceId(workspaceId)),
+      workspaceObjectRpcs(instance, ["executeRuntimeSql", "upsertDiscoveredResources"]),
+    ]));
+    const binding: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: (name: string) => createTestDurableObjectId(name),
+      get: (id: DurableObjectId) => {
+        const stub = stubs.get(id as unknown as string);
+        if (!stub) throw new Error(`workspace_object_missing:${String(id)}`);
+        return stub;
+      },
+      jurisdiction: (): Env["WORKSPACE_DOS"] => binding,
+    });
+    return { DB: sqliteD1(regional), WORKSPACE_DOS: binding };
+  }
+}
+
+const planeDatabases: DatabaseSync[] = [];
+
 afterEach(() => {
   vi.restoreAllMocks();
+  for (const database of planeDatabases.splice(0)) database.close();
 });
 
 describe("provider-wide webhook ingestion", () => {
   it("stores exact GitHub bytes, fans out only to safe matching connections, and deduplicates", async () => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(
       await connection({
         id: CONNECTION_ONE,
@@ -589,12 +590,12 @@ describe("provider-wide webhook ingestion", () => {
         providerResourceId: "avalon/example#1",
       }),
     ]));
-    expect(queue.messages).toEqual([{
+    expect(queue.messages).toEqual([expect.objectContaining({
+      kind: "workspace_connector_event",
       region: "global",
-      workspaceId: WORKSPACE_ONE,
-      activityId: database.activities[0]!.id,
       attempt: 0,
-    }]);
+      request: expect.objectContaining({ workspaceId: WORKSPACE_ONE, ingressEventId: database.activities[0]!.id }),
+    })]);
     expect(bucket.puts).toHaveLength(1);
     expect(new Uint8Array(bucket.puts[0]!.value as ArrayBuffer)).toEqual(rawBytes);
     expect(githubFetch).toHaveBeenCalledTimes(1);
@@ -633,7 +634,7 @@ describe("provider-wide webhook ingestion", () => {
   });
 
   it("ingests a delivery the Global receiver verified without checking its signature again", async () => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(await connection({
       id: CONNECTION_ONE,
       workspaceId: WORKSPACE_ONE,
@@ -690,7 +691,7 @@ describe("provider-wide webhook ingestion", () => {
     ["suspend", "needs_reconnect"],
     ["unsuspend", "healthy"],
   ])("applies GitHub %s authorization state without creating an activity", async (action, status) => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(await connection({
       id: CONNECTION_ONE,
       workspaceId: WORKSPACE_ONE,
@@ -727,7 +728,7 @@ describe("provider-wide webhook ingestion", () => {
   });
 
   it("records bounded installation repository selection changes as one activity", async () => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(await connection({
       id: CONNECTION_ONE,
       workspaceId: WORKSPACE_ONE,
@@ -775,7 +776,7 @@ describe("provider-wide webhook ingestion", () => {
   });
 
   it("matches GitHub user authorization revocation by sender ID without an installation", async () => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(
       await connection({
         id: CONNECTION_ONE,
@@ -865,7 +866,7 @@ describe("provider-wide webhook ingestion", () => {
   });
 
   it("does not persist a valid regional delivery when no authorized connection matches", async () => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     const bucket = new FakeBucket();
     const queue = new FakeQueue();
     const service = serviceFor(database, bucket, queue);
@@ -883,12 +884,12 @@ describe("provider-wide webhook ingestion", () => {
       "x-hub-signature-256": `sha256=${await hmacHex(GITHUB_SECRET, rawBody)}`,
     }))).resolves.toEqual({ accepted: true, duplicate: false, activityCount: 0 });
     expect(bucket.puts).toHaveLength(0);
-    expect(database.receipts.size).toBe(0);
+    expect(database.receiptCount).toBe(0);
     expect(database.resources).toHaveLength(0);
   });
 
   it("verifies Linear delivery metadata, normalizes lifecycle activity, and marks reconnect", async () => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(
       await connection({
         id: CONNECTION_ONE,
@@ -942,7 +943,7 @@ describe("provider-wide webhook ingestion", () => {
   });
 
   it("records Linear team-access changes without forcing OAuth reconnect", async () => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(await connection({
       id: CONNECTION_ONE,
       workspaceId: WORKSPACE_ONE,
@@ -981,7 +982,7 @@ describe("provider-wide webhook ingestion", () => {
   });
 
   it("fans Linear activity to a personal connection only after its token proves resource access", async () => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(
       await connection({
         id: CONNECTION_ONE,
@@ -1047,7 +1048,7 @@ describe("provider-wide webhook ingestion", () => {
 
   it("tells only the owner of a personal connection that its resources moved", async () => {
     vi.mocked(publishWorkspaceSync).mockClear();
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(await connection({
       id: CONNECTION_TWO,
       workspaceId: WORKSPACE_ONE,
@@ -1098,7 +1099,7 @@ describe("provider-wide webhook ingestion", () => {
   });
 
   it("marks a personal Linear connection for reconnect when access proof loses authorization", async () => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(
       await connection({
         id: CONNECTION_ONE,
@@ -1172,7 +1173,7 @@ describe("provider-wide webhook ingestion", () => {
   });
 
   it("acknowledges stale Linear agent subscriptions without starting work while disabled", async () => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(await connection({
       id: CONNECTION_ONE,
       workspaceId: WORKSPACE_ONE,
@@ -1217,14 +1218,14 @@ describe("provider-wide webhook ingestion", () => {
       duplicate: false,
       activityCount: 0,
     });
-    expect(database.receipts.size).toBe(0);
+    expect(database.receiptCount).toBe(0);
     expect(database.activities).toHaveLength(0);
     expect(bucket.puts).toHaveLength(0);
     expect(queue.messages).toHaveLength(0);
   });
 
   it("acknowledges every accepted Linear delivery with HTTP 200", async () => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(await connection({
       id: CONNECTION_ONE,
       workspaceId: WORKSPACE_ONE,
@@ -1233,6 +1234,7 @@ describe("provider-wide webhook ingestion", () => {
       scope: "workspace",
       credentials: { organizationId: "linear-org-1" },
     }));
+    const queue = new FakeQueue();
     const at = Date.now();
     const rawBody = JSON.stringify({
       action: "create",
@@ -1256,9 +1258,9 @@ describe("provider-wide webhook ingestion", () => {
         body: rawBody,
       },
       createTestEnv({
-        DB: createTestD1Database(database),
+        ...database.bind(queue),
         PAYLOADS: createCloudflareTestBinding<R2Bucket>(new FakeBucket()),
-        ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>(new FakeQueue()),
+        ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>(queue),
         AVALON_REGION: "global",
         PUBLIC_API_BASE_URL: "https://api.avalon.example",
         LINEAR_INGRESS_BASE_URL: "https://linear.with-avalon.com",
@@ -1275,7 +1277,7 @@ describe("provider-wide webhook ingestion", () => {
   });
 
   it("recovers an unqueued lifecycle activity after its connection leaves healthy status", async () => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(await connection({
       id: CONNECTION_ONE,
       workspaceId: WORKSPACE_ONE,
@@ -1309,21 +1311,19 @@ describe("provider-wide webhook ingestion", () => {
       code: "provider_error",
     } satisfies Partial<ConnectorError>);
     expect(database.connections[0]?.status).toBe("needs_reconnect");
-    expect(database.activities).toHaveLength(1);
-    expect(database.receipts.get(`linear:${LINEAR_DELIVERY}`)?.processedAt).toBeNull();
+    expect(database.activities).toHaveLength(0);
+    expect(database.receiptProcessedAt("linear", LINEAR_DELIVERY)).toBeNull();
 
+    // The pending receipt falls through and re-applies its effects: the
+    // activity reaches the queue once, under the id the first attempt drew.
     await expect(service.ingestLinear(rawBody, headers)).resolves.toEqual({
       accepted: true,
       duplicate: true,
       activityCount: 0,
     });
-    expect(queue.messages).toEqual([{
-      region: "global",
-      workspaceId: WORKSPACE_ONE,
-      activityId: database.activities[0]!.id,
-      attempt: 0,
-    }]);
-    expect(database.receipts.get(`linear:${LINEAR_DELIVERY}`)?.processedAt).not.toBeNull();
+    expect(database.activities).toHaveLength(1);
+    expect(database.activities[0]).toMatchObject({ connectionId: CONNECTION_ONE, eventType: "linear.oauth_app.revoked" });
+    expect(database.receiptProcessedAt("linear", LINEAR_DELIVERY)).not.toBeNull();
   });
 
   it("claims a one-time nonce and encrypts the Notion verification challenge", async () => {
@@ -1442,7 +1442,7 @@ describe("provider-wide webhook ingestion", () => {
   });
 
   it("verifies Notion events and fans out only to matching accessible bots", async () => {
-    const database = new FakeDatabase();
+    const database = new WorkspacePlane();
     database.connections.push(
       await connection({
         id: CONNECTION_ONE,
@@ -1543,7 +1543,8 @@ describe("provider-wide webhook ingestion", () => {
       eventType: "notion.page.content_updated",
     });
     expect(queue.messages).toHaveLength(1);
-    expect(database.challenge?.consumed_at).not.toBeNull();
+    expect(database.regional.prepare("SELECT consumed_at FROM provider_webhook_challenges").get())
+      .toEqual({ consumed_at: expect.any(String) });
   });
 });
 
@@ -1580,14 +1581,16 @@ async function connection(input: {
 }
 
 function serviceFor(
-  database: FakeDatabase,
+  database: FakeDatabase | WorkspacePlane,
   bucket: FakeBucket,
   queue: FakeQueue,
   overrides: Partial<Env> = {},
   options: ProviderWebhookServiceOptions = {},
 ): ProviderWebhookService {
   const env = createTestEnv({
-    DB: createTestD1Database(database),
+    ...(database instanceof WorkspacePlane
+      ? database.bind(queue)
+      : { DB: createTestD1Database(database) }),
     PAYLOADS: createCloudflareTestBinding<R2Bucket>(bucket),
     ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>(queue),
     AVALON_REGION: "global",
@@ -1605,10 +1608,17 @@ function serviceFor(
 }
 
 async function seedNotionSetupNonce(
-  database: FakeDatabase,
+  database: FakeDatabase | WorkspacePlane,
   nonce: string,
   expiresAt = NOW + 30 * 60 * 1_000,
 ): Promise<void> {
+  if (database instanceof WorkspacePlane) {
+    database.regional.prepare(
+      `INSERT INTO notion_webhook_setup_nonces (nonce_hash, created_at, expires_at)
+       VALUES (?, ?, ?)`,
+    ).run(await sha256(nonce), new Date(NOW).toISOString(), new Date(expiresAt).toISOString());
+    return;
+  }
   for (const stored of database.setupNonces.values()) stored.isCurrent = false;
   database.setupNonces.set(await sha256(nonce), {
     verificationTokenHash: null,

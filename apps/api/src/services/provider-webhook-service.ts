@@ -1,5 +1,4 @@
 import {
-  ActivityQueueMessageSchema,
   asWorkspaceId,
   NormalizedActivitySchema,
   type NormalizedActivity,
@@ -483,27 +482,12 @@ export class ProviderWebhookService {
   ): Promise<ProviderWebhookIngestionResult> {
     const payloadRef = `${this.env.AVALON_REGION}/provider-webhooks/${input.provider}/${input.bodyHash}.json`;
     const priorReceipt = await this.loadReceipt(input.provider, input.deliveryId);
-    const legacyRegionalAuthority = !this.env.WORKSPACE_DOS;
-    // With WorkspaceDO authority a pending receipt is a delivery whose effects
-    // did not finish — the Queue consumer threw after the receipt committed —
-    // so it falls through and re-applies them below; every one is keyed to the
-    // delivery. Only a processed receipt is answered here.
-    if (priorReceipt && (legacyRegionalAuthority || priorReceipt.processed_at !== null)) {
+    // A pending receipt is a delivery whose effects did not finish (the Queue
+    // consumer threw after the receipt committed), so it falls through and
+    // re-applies them below; every one is keyed to the delivery. Only a
+    // processed receipt is answered here.
+    if (priorReceipt && priorReceipt.processed_at !== null) {
       this.assertMatchingReceipt(priorReceipt, input.eventType, payloadRef);
-      if (
-        priorReceipt.processed_at === null
-      ) {
-        await this.finishReceipt(
-          input.provider,
-          input.deliveryId,
-          payloadRef,
-          await this.findPendingReceiptActivities(
-            input.provider,
-            input.deliveryId,
-            payloadRef,
-          ),
-        );
-      }
       return { accepted: true, duplicate: true, activityCount: 0 };
     }
 
@@ -582,148 +566,71 @@ export class ProviderWebhookService {
       input.deliveryId,
       connection.id,
     ])));
-    const activityStatements = legacyRegionalAuthority ? normalized.map(({ activity }, index) =>
-      this.activityInsertStatement(
-        activityIds[index]!,
-        activity,
-        input.provider,
-        input.deliveryId,
-        payloadRef,
-      )) : [];
-    const legacyLifecycleStatements = legacyRegionalAuthority
-      ? lifecycleUpdates.map((update) => this.lifecycleUpdateStatement(
-          this.env.DB,
-          input.provider,
-          update,
-          input.deliveryId,
-          payloadRef,
-        ))
-      : [];
-    const legacyResourceStatements = legacyRegionalAuthority
-      ? discoveredResources.map(({ connection, resources }) => this.resourceUpsertStatement(
-          this.env.DB,
-          connection,
-          resources,
-          input.provider,
-          input.deliveryId,
-          input.eventType,
-          payloadRef,
-        ))
-      : [];
-    const results = await this.env.DB.batch([
-      receipt,
-      ...activityStatements,
-      ...legacyLifecycleStatements,
-      ...legacyResourceStatements,
-    ]);
-    const duplicate = resultChanges(results[0]) === 0;
-    const existingWorkspaceReceipt = !legacyRegionalAuthority && duplicate
+    const duplicate = resultChanges(await receipt.run()) === 0;
+    const existingWorkspaceReceipt = duplicate
       ? await this.loadReceipt(input.provider, input.deliveryId)
       : null;
     if (existingWorkspaceReceipt) {
       this.assertMatchingReceipt(existingWorkspaceReceipt, input.eventType, payloadRef);
     }
-    const insertedActivityIds = activityIds.filter(
-      (_id, index) => resultChanges(results[index + 1]) > 0,
-    );
-    if (!legacyRegionalAuthority) {
-      // A null receipt is new; a pending duplicate repairs a crash after the
-      // global receipt commit. An already processed duplicate must not replay
-      // an older lifecycle update over a newer connector state.
-      const shouldApplyWorkspaceEffects = !duplicate
-        || existingWorkspaceReceipt?.processed_at === null;
-      if (shouldApplyWorkspaceEffects) {
-        for (const { connection, resources } of discoveredResources) {
-          // The typed upsert reaches the object that owns `resources`
-          // directly; only the legacy no-namespace path below still builds
-          // the receipt-fenced regional statement.
-          const workspace = await durableObjectStubForWorkspace(
-            this.env,
-            this.env.WORKSPACE_DOS,
-            asWorkspaceId(connection.workspaceId),
-            workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(connection.workspaceId)),
-          );
-          const at = nowIso();
-          await workspace.upsertDiscoveredResources({
-            workspaceId: connection.workspaceId,
-            connectionId: connection.id,
-            provider: input.provider,
-            resources: resources.map((resource) => ({
-              id: newId(),
-              resourceType: resource.resourceType,
-              providerResourceId: resource.providerResourceId,
-              title: resource.title,
-              canonicalUrl: resource.canonicalUrl ?? null,
-              metadataJson: JSON.stringify({
-                ...resource.metadata,
-                discoveredEventType: input.eventType,
-                discoveredDeliveryId: input.deliveryId,
-              }),
-            })),
-            at,
-          });
-        }
-        const connectionWorkspace = new Map(connections.map((connection) => [
-          connection.id,
-          connection.workspaceId,
-        ]));
-        for (const update of lifecycleUpdates) {
-          const workspaceId = connectionWorkspace.get(update.connectionId);
-          if (!workspaceId) continue;
-          if (!await this.claimLifecycleWatermark(update, input)) continue;
-          await this.lifecycleUpdateStatement(
-            withWorkspaceRuntimeDatabase(this.env, workspaceId).DB,
-            input.provider,
-            update,
-          ).run();
-        }
-      }
-    }
-
-    if (!legacyRegionalAuthority) {
-      const queueActivities = existingWorkspaceReceipt?.processed_at
-        ? []
-        : normalized.map(({ activity }, index) => ({
-            connectorType: input.provider,
-            activity: { id: activityIds[index]!, ...activity },
-          }));
-      await this.finishWorkspaceReceipt(
-        input.provider,
-        input.deliveryId,
-        payloadRef,
-        queueActivities,
-      );
-      await this.publishConnectionChanges(matchedConnections, ["connector_connections", "resources"]);
-      return {
-        accepted: true,
-        duplicate,
-        activityCount: duplicate ? 0 : normalized.length,
-      };
-    }
-
-    let queueActivities = insertedActivityIds.map((activityId) => ({
-      activityId,
-      workspaceId: normalized[activityIds.indexOf(activityId)]!.activity.workspaceId,
-    }));
-    if (duplicate) {
-      const existingReceipt = await this.loadReceipt(input.provider, input.deliveryId);
-      if (existingReceipt) {
-        this.assertMatchingReceipt(existingReceipt, input.eventType, payloadRef);
-      }
-      if (
-        existingReceipt?.processed_at === null
-      ) {
-        queueActivities = await this.findPendingReceiptActivities(
-          input.provider,
-          input.deliveryId,
-          payloadRef,
+    // A null receipt is new; a pending duplicate repairs a crash after the
+    // global receipt commit. An already processed duplicate must not replay
+    // an older lifecycle update over a newer connector state.
+    const shouldApplyWorkspaceEffects = !duplicate
+      || existingWorkspaceReceipt?.processed_at === null;
+    if (shouldApplyWorkspaceEffects) {
+      for (const { connection, resources } of discoveredResources) {
+        // The typed upsert reaches the object that owns `resources`
+        // directly.
+        const workspace = await durableObjectStubForWorkspace(
+          this.env,
+          this.env.WORKSPACE_DOS,
+          asWorkspaceId(connection.workspaceId),
+          workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(connection.workspaceId)),
         );
-      } else {
-        queueActivities = [];
+        const at = nowIso();
+        await workspace.upsertDiscoveredResources({
+          workspaceId: connection.workspaceId,
+          connectionId: connection.id,
+          provider: input.provider,
+          resources: resources.map((resource) => ({
+            id: newId(),
+            resourceType: resource.resourceType,
+            providerResourceId: resource.providerResourceId,
+            title: resource.title,
+            canonicalUrl: resource.canonicalUrl ?? null,
+            metadataJson: JSON.stringify({
+              ...resource.metadata,
+              discoveredEventType: input.eventType,
+              discoveredDeliveryId: input.deliveryId,
+            }),
+          })),
+          at,
+        });
+      }
+      const connectionWorkspace = new Map(connections.map((connection) => [
+        connection.id,
+        connection.workspaceId,
+      ]));
+      for (const update of lifecycleUpdates) {
+        const workspaceId = connectionWorkspace.get(update.connectionId);
+        if (!workspaceId) continue;
+        if (!await this.claimLifecycleWatermark(update, input)) continue;
+        await this.lifecycleUpdateStatement(
+          withWorkspaceRuntimeDatabase(this.env, workspaceId).DB,
+          input.provider,
+          update,
+        ).run();
       }
     }
 
-    await this.finishReceipt(
+    const queueActivities = existingWorkspaceReceipt?.processed_at
+      ? []
+      : normalized.map(({ activity }, index) => ({
+          connectorType: input.provider,
+          activity: { id: activityIds[index]!, ...activity },
+        }));
+    await this.finishWorkspaceReceipt(
       input.provider,
       input.deliveryId,
       payloadRef,
@@ -733,7 +640,7 @@ export class ProviderWebhookService {
     return {
       accepted: true,
       duplicate,
-      activityCount: duplicate ? 0 : insertedActivityIds.length,
+      activityCount: duplicate ? 0 : normalized.length,
     };
   }
 
@@ -766,48 +673,6 @@ export class ProviderWebhookService {
         });
       }
     }));
-  }
-
-  private async finishReceipt(
-    provider: Provider,
-    deliveryId: string,
-    payloadRef: string,
-    queueActivities: Array<{ activityId: string; workspaceId: string }>,
-  ): Promise<void> {
-    try {
-      for (const { activityId, workspaceId } of queueActivities) {
-        await this.env.ACTIVITY_QUEUE.send(ActivityQueueMessageSchema.parse({
-          region: this.env.AVALON_REGION,
-          workspaceId,
-          activityId,
-          attempt: 0,
-        }));
-      }
-    } catch (error) {
-      await this.env.DB.prepare(
-        `UPDATE provider_webhook_receipts SET error_json = ?
-         WHERE provider = ? AND delivery_id = ? AND payload_ref = ?`,
-      ).bind(
-        JSON.stringify({
-          code: "activity_enqueue_failed",
-          message: "Canonical webhook activities could not be enqueued",
-        }),
-        provider,
-        deliveryId,
-        payloadRef,
-      ).run();
-      throw new ConnectorError(
-        "provider_error",
-        "The webhook was stored but could not be queued for processing",
-        error,
-      );
-    }
-
-    await this.env.DB.prepare(
-      `UPDATE provider_webhook_receipts
-       SET processed_at = COALESCE(processed_at, ?), error_json = NULL
-       WHERE provider = ? AND delivery_id = ? AND payload_ref = ?`,
-    ).bind(nowIso(), provider, deliveryId, payloadRef).run();
   }
 
   private async finishWorkspaceReceipt(
@@ -901,152 +766,23 @@ export class ProviderWebhookService {
     });
   }
 
-  private activityInsertStatement(
-    activityId: string,
-    activity: Omit<NormalizedActivity, "id">,
-    provider: Provider,
-    deliveryId: string,
-    payloadRef: string,
-  ): D1PreparedStatement {
-    return this.env.DB.prepare(
-      `INSERT INTO activities
-       (id, workspace_id, connection_id, connection_scope,
-        connection_owner_user_id, provider, provider_event_id, event_type,
-        resource_type, provider_resource_id, actor_json, subject_json,
-        occurred_at, received_at, title, summary, text_snippet, payload_ref,
-        visibility_json, entity_keys_json, dedupe_key, raw_content_hash,
-        target_user_ids_json, external_people_json,
-        processing_status, metadata_json)
-       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-              ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?28, ?27, 'pending', ?23
-       WHERE EXISTS (
-         SELECT 1 FROM provider_webhook_receipts
-         WHERE provider = ?24 AND delivery_id = ?25 AND payload_ref = ?26
-           AND processed_at IS NULL
-       )
-       ON CONFLICT DO NOTHING`,
-    ).bind(
-      activityId,
-      activity.workspaceId,
-      activity.connectionId,
-      activity.connectionScope,
-      activity.connectionOwnerUserId,
-      activity.provider,
-      activity.providerEventId,
-      activity.eventType,
-      activity.resourceType,
-      activity.providerResourceId,
-      JSON.stringify(activity.actor),
-      JSON.stringify(activity.subject),
-      activity.occurredAt,
-      activity.receivedAt,
-      activity.title,
-      activity.summary,
-      activity.textSnippet,
-      activity.payloadRef,
-      JSON.stringify(activity.visibility),
-      JSON.stringify(activity.entityKeys),
-      activity.dedupeKey,
-      activity.rawContentHash,
-      JSON.stringify(activity.metadata),
-      provider,
-      deliveryId,
-      payloadRef,
-      JSON.stringify(activity.externalPeople ?? []),
-      JSON.stringify(activity.targetUserIds),
-    );
-  }
-
   // Historical no-namespace D1 path: retain its receipt-fenced write behavior.
   // Deployed WorkspaceDO discovery owns no-op suppression in workspace-resources-storage.ts.
-  private resourceUpsertStatement(
-    database: D1Database,
-    connection: ConnectorConnectionContext,
-    resources: GitHubWebhookResourceHint[],
-    provider: Provider,
-    deliveryId: string,
-    eventType: string,
-    receiptPayloadRef?: string,
-  ): D1PreparedStatement {
-    const at = nowIso();
-    const rows = resources.map((resource) => ({
-      id: newId(),
-      resourceType: resource.resourceType,
-      providerResourceId: resource.providerResourceId,
-      title: resource.title,
-      canonicalUrl: resource.canonicalUrl,
-      metadataJson: JSON.stringify({
-        ...resource.metadata,
-        discoveredEventType: eventType,
-        discoveredDeliveryId: deliveryId,
-      }),
-    }));
-    const receiptFence = receiptPayloadRef === undefined ? "" : `WHERE EXISTS (
-         SELECT 1 FROM provider_webhook_receipts
-          WHERE provider = ? AND delivery_id = ? AND payload_ref = ?
-            AND processed_at IS NULL
-       )`;
-    return database.prepare(
-      `INSERT INTO resources
-       (id, workspace_id, connection_id, resource_type, provider,
-        provider_resource_id, title, canonical_url, metadata_json,
-        created_at, updated_at)
-       SELECT
-         json_extract(value, '$.id'), ?, ?,
-         json_extract(value, '$.resourceType'), ?,
-         json_extract(value, '$.providerResourceId'),
-         json_extract(value, '$.title'),
-         json_extract(value, '$.canonicalUrl'),
-         json_extract(value, '$.metadataJson'), ?, ?
-       FROM json_each(?)
-       ${receiptFence}
-       ON CONFLICT(workspace_id, connection_id, provider, provider_resource_id)
-       WHERE connection_id IS NOT NULL AND provider_resource_id IS NOT NULL
-       DO UPDATE SET
-         resource_type = excluded.resource_type,
-         title = excluded.title,
-         canonical_url = COALESCE(excluded.canonical_url, resources.canonical_url),
-         metadata_json = json_patch(resources.metadata_json, excluded.metadata_json),
-         updated_at = excluded.updated_at`,
-    ).bind(
-      connection.workspaceId,
-      connection.id,
-      provider,
-      at,
-      at,
-      JSON.stringify(rows),
-      ...(receiptPayloadRef === undefined ? [] : [provider, deliveryId, receiptPayloadRef]),
-    );
-  }
-
   private lifecycleUpdateStatement(
     database: D1Database,
     provider: Provider,
     update: LifecycleUpdate,
-    deliveryId?: string,
-    receiptPayloadRef?: string,
   ): D1PreparedStatement {
-    const receiptFence = deliveryId === undefined || receiptPayloadRef === undefined
-      ? ""
-      : `AND EXISTS (
-           SELECT 1 FROM provider_webhook_receipts
-            WHERE provider = ? AND delivery_id = ? AND payload_ref = ?
-              AND processed_at IS NULL
-         )`;
     return database.prepare(
       `UPDATE connector_connections
        SET status = ?, error_json = ?, updated_at = ?
-       WHERE id = ? AND connector_type = ?
-       ${receiptFence}`,
+       WHERE id = ? AND connector_type = ?`,
     ).bind(
       update.status,
       update.error === null ? null : JSON.stringify(update.error),
       nowIso(),
       update.connectionId,
       provider,
-      ...(deliveryId === undefined || receiptPayloadRef === undefined
-        ? []
-        : [provider, deliveryId, receiptPayloadRef]),
     );
   }
 
@@ -1081,27 +817,6 @@ export class ProviderWebhookService {
     return false;
   }
 
-  private async findPendingReceiptActivities(
-    provider: Provider,
-    deliveryId: string,
-    payloadRef: string,
-  ): Promise<Array<{ activityId: string; workspaceId: string }>> {
-    const canonical = await this.env.DB.prepare(
-      `SELECT id, workspace_id FROM activities
-       WHERE provider = ? AND provider_event_id = ? AND payload_ref = ?
-         AND processing_status IN ('pending', 'failed')
-       ORDER BY received_at`,
-    ).bind(
-      provider,
-      deliveryId,
-      payloadRef,
-    ).all<{ id: string; workspace_id: string }>();
-    return [...new Map((canonical.results ?? []).map((row) => [
-      row.id,
-      { activityId: row.id, workspaceId: row.workspace_id },
-    ])).values()];
-  }
-
   private async loadMatchingConnections(
     provider: Provider,
     accountId: string | null,
@@ -1112,14 +827,6 @@ export class ProviderWebhookService {
     if (provider === "linear" && accountId === null) return [];
     if (provider === "notion" && (!routingAccountIds || routingAccountIds.length === 0)) {
       return [];
-    }
-    if (!this.env.WORKSPACE_DOS) {
-      return this.loadLegacyMatchingConnections(
-        provider,
-        accountId,
-        routingAccountIds,
-        routingUserId,
-      );
     }
     const routeQuery = provider === "notion"
       ? `SELECT connection_id, workspace_id FROM connector_ingress_routes
@@ -1169,43 +876,6 @@ export class ProviderWebhookService {
       ).bind(workspaceId, provider, ...connectionIds).all<StoredProviderConnection>()).results;
     }))).flat();
     return Promise.all(rows.map((row) => this.connectionContext(row)));
-  }
-
-  /** Pre-cutover/test path while connector rows still share the regional database. */
-  private async loadLegacyMatchingConnections(
-    provider: Provider,
-    accountId: string | null,
-    routingAccountIds: string[] | undefined,
-    routingUserId: string | undefined,
-  ): Promise<ConnectorConnectionContext[]> {
-    const query = provider === "notion"
-      ? `SELECT * FROM connector_connections
-          WHERE connector_type = 'notion' AND scope = 'workspace'
-            AND provider_account_id IN (${routingAccountIds!.map(() => "?").join(", ")})
-            AND status <> 'disabled'`
-      : provider === "github" && accountId === null
-        ? `SELECT * FROM connector_connections
-            WHERE connector_type = 'github' AND scope = 'personal'
-              AND CAST(json_extract(config_json, '$.githubUserId') AS TEXT) = ?
-              AND status <> 'disabled'`
-      : provider === "linear" && routingUserId
-        ? `SELECT * FROM connector_connections
-            WHERE connector_type = 'linear' AND scope = 'personal'
-              AND provider_account_id = ?
-              AND CAST(json_extract(config_json, '$.providerUserId') AS TEXT) = ?
-              AND status <> 'disabled'`
-      : `SELECT * FROM connector_connections
-          WHERE connector_type = ? AND provider_account_id = ?
-            AND status <> 'disabled'`;
-    const statement = this.env.DB.prepare(query);
-    const rows = provider === "notion"
-      ? await statement.bind(...routingAccountIds!).all<StoredProviderConnection>()
-      : provider === "github" && accountId === null
-        ? await statement.bind(routingUserId!).all<StoredProviderConnection>()
-      : provider === "linear" && routingUserId
-        ? await statement.bind(accountId, routingUserId).all<StoredProviderConnection>()
-      : await statement.bind(provider, accountId).all<StoredProviderConnection>();
-    return Promise.all(rows.results.map((row) => this.connectionContext(row)));
   }
 
   private async connectionContext(
