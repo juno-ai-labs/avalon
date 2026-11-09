@@ -133,6 +133,7 @@ import {
 import { RECEIVE_CHILD_EFFECTS_MAX_ENVELOPES, type DirectoryCommonEffect } from "./conversation-parent-object";
 import { sidekickAudienceAllows } from "./sidekick-audience";
 import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
+import { conversationIdOf } from "./workspace-sidekick-conversation-storage";
 
 /**
  * A Sidekick's parent, hosted in its Organization's `WorkspaceDO`.
@@ -2241,6 +2242,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       definitionRevision: revision,
       since: iso(row.reviewed_at),
       until: new Date(now).toISOString(),
+      // Nothing reads it, but a Worker from before the schema made it
+      // optional still requires it; the write stops a deploy later.
+      announceTo: conversationIdOf({ parentId: this.sidekickId, substreamId: "0" }),
       finished: {
         completed: counts?.completed ?? 0, failed: counts?.failed ?? 0,
         needsInput: counts?.needs_input ?? 0, stopped: counts?.stopped ?? 0,

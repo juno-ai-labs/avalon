@@ -191,7 +191,7 @@ the same change.
 Shipped in juno-ai-labs/avalon#1500: phases 1 to 4 in full (the runtime
 database fallback kept, decision 1); phase 5's desktop-action server half, the
 browser plugin and realm (decision 2), the `activity_event` producers and
-`announceTo`'s writer; phase 7's first deploy. Phase 8's WorkspaceDO drops
+`announceTo` made optional; phase 7's first deploy. Phase 8's WorkspaceDO drops
 shipped earlier in #1494 and #1495, with `schedules` and `digest_schedules`
 kept by the #1495 hotfix.
 
@@ -200,7 +200,8 @@ Left, each waiting on something named:
 - **One desktop release or a drained queue** (decision 3 of Key design
   decisions): the `answer_desktop_action` and `desktop_action_requested` frame
   schemas and `packages/contracts/src/desktop-actions.ts`;
-  `WorkstreamActivityEffectSchema`; `announceTo` in the review notice schema;
+  `WorkstreamActivityEffectSchema`; `announceTo`'s writer (the deploy after
+  this one) and then the field;
   the AgentLoopDO `desktop_actions` tables (phase 8).
 - **Phase 7's second deploy:** `OPENROUTER_STRUCTURED_MODEL` out of
   `wrangler.global.jsonc`, `scripts/sync-dev-env.mjs` and the
