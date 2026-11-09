@@ -1,4 +1,3 @@
-import { receiveCloudflareEmail } from "./services/cloudflare-inbound-email";
 import { purgeExpiredEmailLoginChallenges } from "./services/auth-service";
 import { recoverEmailLoginDeliveries } from "./services/email-login-service";
 import { consumePushDeliveryQueue } from "./queues/push-delivery-consumer";
@@ -117,7 +116,6 @@ function withEnvContract<TArgs extends [unknown, Env, ...unknown[]], TResult>(
 }
 
 export default {
-  email: withEnvContract(receiveCloudflareEmail),
   fetch: async (request: Request, env: Env, context: ExecutionContext) => {
     const acquisitionRefusal = await privateAccessEdge(request, env);
     if (acquisitionRefusal) return acquisitionRefusal;

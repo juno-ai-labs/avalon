@@ -789,8 +789,7 @@ clarity; an omitted attachment must not block an authorized read.
 
 # Choose triggers and test the method
 Use an empty triggers array for reusable knowledge; do not add manual or scheduled
-triggers to make it valid. Use inbound_email only when the person wants email to
-start work. For work after an external change, load polling-for-events and follow
+triggers to make it valid. For work after an external change, load polling-for-events and follow
 its event-first setup and resource-registration procedure.
 
 For new or changed executable work, test the workflow with available reads or

@@ -77,8 +77,6 @@ Set these shared Worker secrets separately in each regional deployment:
 
 - `FIRECRAWL_API_KEY`
 
-- `RESEND_API_KEY`
-
 - `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID`
 
 - `GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET`
@@ -350,12 +348,6 @@ it.
 
 Set `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` only on the Global Worker. They belong exclusively to the platform login client and are never used by Google service connectors.
 
-Set `WORKSTREAM_EMAIL_ADDRESS_KEY` only on the Global Worker. All non-Global
-work-stream and automation email-name reservations use the Global
-`WorkstreamEmailRoutingBridge`; there is no regional allocator key or fallback
-registry. Cloudflare Email Service uses the native `EMAIL` binding, so no
-Cloudflare administration token belongs in Worker secrets.
-
 Production email guest sign-in is configured through checked-in Global vars:
 `BROWSER_APP_ORIGIN=https://app.rallywith.ai` and `EMAIL_LOGIN_POLICY_JSON`.
 Do not duplicate these as Worker secrets. The policy is six digits, ten-minute
@@ -373,112 +365,17 @@ sender falls back to the transactional one; `/health` reports `email` and
 `emailNotificationSender`. Acceptance means queued by Cloudflare, not delivered
 to an inbox. A provider failure still revokes a newly created invitation.
 
-To cut over a deployment:
+To configure outbound delivery, enable Email Sending and verify `rallywith.ai`
+in Cloudflare. Preserve its provider bounce MX, SPF and DKIM records and its
+Google Workspace apex MX. Apply migration 0127 before promoting a Worker with
+the `EMAIL` binding and sender vars. Cloudflare credentials belong only in the
+deployment environment.
 
-1. Enable Email Sending on a Workers Paid account and verify every sending
-   domain in Cloudflare, including `rallywith.ai` and any domain present in an
-   existing encrypted delivery intent. Install Cloudflare's supplied SPF, DKIM,
-   and other verification records; Resend verification does not transfer.
-2. Merge the email-provider PR after review and CI pass. The `Deploy Avalon API`
-   workflow runs automatically on the merge to `main`, applies ordinary migration
-   `0127_email_delivery_receipts.sql` before the Worker, and deploys the checked-in
-   `EMAIL` binding, sender vars and `WORKSTREAM_EMAIL_DOMAIN=rallywithai.com`.
-   Reconcile uncertain outbound attempts before reissuing
-   them: Cloudflare does not deduplicate Resend keys or `X-Rally-Delivery-Key`.
-3. Use the dedicated `rallywithai.com` zone for new inbound addresses. Enable
-   Email Routing DNS at its apex and configure one catch-all to the
-   `avalon-api-global` Worker's `email()` handler. After the workflow successfully
-   deploys that handler, enable the staged catch-all and verify delivery before
-   announcing inbound email as available. The owner confirmed on 2026-11-09 that
-   nobody uses the current incoming addresses, so this is a direct activation:
-   no compatibility rollout, issuance pause or second Worker deployment is
-   required. New-domain mail cannot arrive until the catch-all is enabled.
-   Verify the deployed `WORKSTREAM_EMAIL_DOMAIN` and preserve the domain's
-   unrelated web DNS. Google Workspace MX on `rallywith.ai` is separate.
-4. Send a test invitation, sign-in email and notification, plus an incoming
-   message to a new Sidekick address on `rallywithai.com`. Verify provider
-   acceptance, regional receipt/resource
-   creation and Sidekick admission. `/health` checks code and bindings; it cannot
-   verify external DNS, Email Sending enablement, or receiving-rule configuration.
-5. Retire the unused Resend receiving path after activation and any pending
-   deliveries have been settled. The implementation retains its signed webhook, credentials
-   and legacy MX for now; keeping them is not a prerequisite for the new domain.
-   Remove receiving secrets only when retiring that path. Existing stored
-   addresses and permanent claims are not rewritten or reassigned by this
-   rollout. Historical storage names need no data migration.
-
-Sign-in and scoped-invitation delivery use opaque D1 `email_delivery_receipts`.
-`sent` suppresses a repeat, `pending` may retry after a confirmed quota refusal,
-and `failed` records a permanent provider refusal. `sending` after an interrupted
-attempt and `review_required` must be reconciled against Cloudflare before
-resending. Inspect `delivery_key`, `attempt_token`, `diagnostic_code` and
-`updated_at` in the sending region. After confirming acceptance, mark the same
-receipt `sent`; reset it to `pending` only after confirming no acceptance. Fence
-either update by the observed state and attempt token, and clear that token on a
-reset. Existing sign-in recovery can then settle or retry the challenge; an expired
-challenge needs a new sign-in. A scoped invitation needs its normal delivery alarm
-rearmed to settle or retry after reconciliation. Access acknowledgements continue
-to use Ace's existing generation-fenced recovery flow. Notice sends automatically
-retry transient failures, with completed receipts suppressing subsequent queue
-redeliveries; uncertain acceptance before settlement can still cause duplicates.
-
-Live setup on 2026-11-09: the account has Workers Paid. `rallywith.ai` is now
-onboarded to Email Sending with `enabled: true` and `preview_enabled: true`.
-Cloudflare created its managed bounce MX/SPF at `cf-bounce.rallywith.ai` and
-DKIM at `cf-bounce._domainkey.rallywith.ai`; public DNS reads confirm all are
-published. The existing `_dmarc.rallywith.ai` policy (`p=none`), Google Workspace
-apex MX and SPF, and both Resend `automation.*` MX records were preserved.
-No test message was sent and no Worker deployment was performed by this setup.
-The last inspected deployed Worker still has Resend sender vars and no `EMAIL`
-binding, so outbound app activation remains a deployment step. The legacy
-`with-avalon.com` sender domain is not onboarded to Cloudflare.
-
-Dedicated inbound setup on 2026-11-09: `rallywithai.com` now has Cloudflare's
-managed apex MX/SPF/DKIM records, and Email Routing reports `enabled: true` and
-`status: ready`. Its `Rally inbound email` catch-all is staged with action
-`worker: avalon-api-global` and `enabled: false`; it must remain disabled until
-the Worker release is activated. Public DNS confirms the new MX/SPF records.
-The pre-existing web A record was retained. The checked-in canonical minting
-setting is `rallywithai.com`, but the running app has not been deployed by this
-setup. Existing Google Workspace and legacy automation MX records are unchanged.
-
-The Global address ledger contains 622 issued addresses on
-`automation.rallywith.ai` and 335 on `automation.with-avalon.com`, exceeding the
-standard 200-routing-rules-per-domain capacity if every issued address is
-provisioned. These are permanent claims, including historical/tombstoned owners;
-the Global ledger alone does not establish which owners currently accept mail.
-Provisioning only active owners would require an authority-backed audit and
-lifecycle reconciliation, and still needs an explicit capacity plan for new
-addresses. `rallywith.ai` is a Pro zone and `with-avalon.com` is a Free zone;
-dedicated subdomain-zone support must not be assumed from Workers Paid.
-
-The Cloudflare account owner can use this request to resolve the inbound blocker:
-
-> We need catch-all incoming email delivery to a Worker for
-> `automation.rallywith.ai` and `automation.with-avalon.com`, preserving Google
-> Workspace MX on the parent domain and the existing full email addresses.
-> We have 622 and 335 permanent address claims respectively. Your documentation
-> restricts catch-alls to the zone apex and defaults to 200 literal rules per
-> domain. Can you enable subdomain catch-alls, support these subdomains as separate
-> routing zones on our account, or increase literal-rule capacity for the issued
-> namespace and its future growth? Please confirm the supported design and any
-> plan or billing changes before activation.
-
-That account request is necessary only if the old receiving subdomains must
-also leave Resend. New addresses avoid the limitation using the dedicated
-`rallywithai.com` apex. Do not change either legacy receiving MX until a supported
-compatibility design is implemented. A higher rule limit alone does not create
-rules or keep future allocations synchronized.
-
-The native send API has no idempotency-key parameter. Completed delivery receipts
-suppress repeat sends. Sign-in and scoped invitations claim their reference
-before sending and park uncertain outcomes for reconciliation; confirmed quota
-refusals may retry. Notice mail retries internal and unknown failures, so a crash
-after acceptance but before receipt settlement or a concurrent queue delivery
-can still duplicate a send. Explicit permanent provider refusals are not retried.
-Access acknowledgements use their existing generation-fenced review flow,
-including when provider acceptance is followed by failed D1 settlement. See
-[the email mechanism](workstream-email-addresses.md#cloudflare-transport).
+The native send API has no idempotency-key parameter. Completed receipts suppress
+repeat sends. Login and invitations park uncertain attempts for reconciliation;
+notification retries can duplicate a send after provider acceptance. Inspect the
+receipt's delivery key, attempt token, state and diagnostic code alongside
+provider evidence before resolving uncertainty. See [email delivery](email-delivery.md).
 
 For non-interactive Wrangler commands, prefer `CLOUDFLARE_API_TOKEN`. The older global-key method requires both `CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` in `.env.local`; an API key by itself cannot authenticate a deployment.
 
@@ -1063,65 +960,6 @@ Its conversations are
 [`automation-lifecycle.md`](automation-lifecycle.md) owns the object; this is
 where to look when one misbehaves.
 
-- **"I can't find my automation."** The sidebar lists what
-  `listAutomationDirectory` returns: `workspace` automations and the viewer's
-  own `personal` ones, never a room's. A room's automation is in that room's
-  rail. `GET /automations/:id` reads the object and answers 404 for a deleted
-  one or a viewer the object refuses.
-- **The sidebar row is stale.** The row is written in the Sidekick's own
-  change, in `WorkspaceDO`, and the same call bumps the `automations` sidebar
-  waterline and republishes the list. Read the row with `run_workspace_sql`;
-  if it is right and the client still shows the old one, the client missed
-  the push and a reconnect or reopen will fetch the list again.
-- **Apply refuses.** The code is the answer: `sidekick_definition_not_ready`
-  (the chat has not submitted a ready draft), `sidekick_plugin_unavailable`
-  and its binding siblings (the workspace no longer has the connection the draft
-  named), `sidekick_timezone_invalid`, `sidekick_recurrence_has_no_future`.
-  A 500 from `POST /automations/:id/accept` is a fault, not a refusal.
-- **The wizard never reviewed it.** `automation_directory.runs_since_review`
-  is how many finishes under the accepted revision have counted since the
-  last review or revision; `reviewed_at` is the last request. Below ten, or
-  within three days of `reviewed_at`, nothing is owed. Otherwise look for the
-  `<sidekickId>:review` entry in `_internal_durable_alarms` and the
-  `sidekick_review_skipped` log line, whose `no_managing_delegate` means no
-  eligible delegate may also manage the Sidekick. A `sidekick_reviews` row with
-  `delivered_at` null is a notice the Queue still owes the wizard; the
-  consumer's `sidekick_review_delivery_retry` line carries the refusal code.
-  What reviews changed: `sidekick_revisions` rows whose `review_id` is not
-  null, each the revision a review submitted, joined to `sidekick_reviews`
-  for when; the `sidekick_review_revised` log line counts them.
-  [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)
-  owns the review.
-- **A scheduled run did not fire.** Inspect the object's `schedules`
-  (`next_due_at` null means the rule has no future occurrence) and
-  `_internal_durable_alarms` (an `automation_schedule` entry behind its retry
-  gate). Sidekicks are hosted in `WorkspaceDO`, so
-  `workspace_scheduled_alarm_failed` and `workspace_scheduled_alarm_stalled`
-  name the entry and the handler's code.
-  A paused automation fires nothing and does not catch up on resume.
-- **An event did not start a run.** `external_event_delivery_terminal` records
-  the admission outcome per registration: `sidekick_paused`,
-  `sidekick_event_before_activation_boundary` (the event's sequence is at or
-  below `effective_after_event_sequence`, so it predates the apply that
-  registered the rule), or `sidekick_occurrence_replayed` (a redelivery). No
-  delivery at all means the matcher found no active registration, which
-  `WorkspaceDO.workspace_external_event_registrations` will show.
-- **Mail did not start a run.** `WorkspaceDO.sidekick_email_receipts` holds
-  one row per Sidekick and Resend email id with the refusal code
-  (`sidekick_not_active`, `sidekick_email_route_mismatch`,
-  `email_sender_not_authorized`) or the run it admitted.
-- **A run stopped early.** `runs.state` on the object is what its child
-  conversation last reported; `stopped` with the automation `paused` or
-  `deleted` is a pause or delete after admission, and the run's provider writes
-  were refused with "This automation run is no longer running". A run that
-  never left `pending` has an `automation_run` alarm entry behind its gate.
-- **A result never reached the room.** Only the run posts, with
-  `conversation_post`; look for `conversation_archived`,
-  `conversation_access_denied`, `conversation_not_in_scope` or
-  `conversation_post_refused:<code>` in the run's tool results, and check the
-  Sidekick's home (`automation_directory.owning_substream_id`). Nothing posts
-  after the run.
-
 Inspect the object through the engineering MCP's raw SQL per
 [`engineering-mcp.md`](engineering-mcp.md); the automation's tables are listed
 in [`workstream-durable-object.md`](workstream-durable-object.md#hosted-sidekicks).
@@ -1297,40 +1135,13 @@ Migrations `0090_drop_legacy_product_tables.sql`,
 `0097_email_routes_use_full_address.sql`, `0106_configurable_regions.sql`,
 `0113_drop_legacy_observability_tables.sql`,
 `0115_drop_workspace_product_authority_ledger.sql`, and
-`0125_drop_demo_tables.sql` are deliberate reverse-order exceptions. These change schemas or deployment identifiers the previous Worker
+`0125_drop_demo_tables.sql` and `0128_drop_inbound_email.sql` are deliberate reverse-order exceptions. These change schemas or deployment identifiers the previous Worker
 still expects, so applying them first can break live requests until deployment finished — or
 indefinitely if deployment failed. The deployment workflow reads each remote
 pending-migration ledger; when one configured Worker-first migration is the sole
 pending entry in a region, it deploys the replacement Workers first and applies
 that migration afterward. If it has any companion migration, deployment fails
 closed instead of silently moving an ordinary migration across the Worker.
-
-For 0090, the replacement Worker probes the regional `workstreams` shape when
-reserving an identity anchor and can write both the through-0089 required-column
-shape and the final three-column shape. For 0094, the replacement Worker no
-longer reads `workspaces.log_agent_inference` or
-`agent_inference_payload_logs`, while it remains compatible with a database that
-still has them. For 0097, the replacement Worker probes
-`workstream_email_routes`: before the migration it reserves and resolves by the
-legacy `local_part`; afterward it writes and resolves the full `email_address`.
-Its owner-reconciliation path preserves the regional full address in both shapes.
-For 0106, deploy support for configured deployment identifiers before rebuilding
-region-constrained tables. For 0113, stop querying legacy regional observability
-tables before dropping them; the dedicated telemetry and audit stores already
-serve all producers. The pre-retirement Global health check must pass before the
-drop. Rolling back to the old reaper afterward stops telemetry delivery because
-its first query names a removed table; roll forward with compatible code instead.
-For 0125, the replacement Worker no longer reads `demo_operations` (the old one
-reads it on every regional discovery), so the demo tables are dropped only after
-it is promoted.
-A manual deploy with migrations disabled postpones the drop and leaves inactive
-legacy rows unreaped until a migration-enabled deploy completes the cleanup.
-Therefore a failed Worker deploy leaves the old schema untouched,
-while a failed migration leaves the compatible Worker serving the old schema.
-Detection comes from the remote ledger, not the triggering Git diff, so a
-superseded workflow or later regional retry retains the barrier. Once no
-Worker-first migration is pending, the workflow automatically returns to the
-ordinary migration-first order.
 
 Twenty seconds is the happy path, and it is the figure that makes this rule feel safe to skip. A failed deployment leaves the migrations applied, as the paragraph above says, so a deploy that breaks after the migration step leaves the previous Worker writing through the new default until a fix-forward lands — minutes or hours, not seconds, and every row written in that time takes the default.
 

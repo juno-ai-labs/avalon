@@ -105,7 +105,6 @@ export interface AutomationSummary {
   id: string;
   name: string;
   description: string;
-  emailAddress?: string;
   scope: AutomationScope;
   status: AutomationStatus;
   nextRunAt?: string;
@@ -125,7 +124,7 @@ export interface AutomationSummary {
   /** The question a run waiting on input asked; absent when none waits. */
   pendingQuestion?: string | null;
   /** What wakes it, each kind once in definition order; absent from a server that predates it. */
-  triggerKinds?: Array<'manual' | 'schedule' | 'external_event' | 'inbound_email'>;
+  triggerKinds?: Array<'manual' | 'schedule' | 'external_event'>;
   /** The IANA zone `nextRunAt` is read in (its schedule's); absent for an interval, no schedule, or an older server. */
   scheduleTimeZone?: string;
 }
@@ -140,7 +139,6 @@ export interface WorkstreamSummary {
   /** `naming` while Rally is choosing the title; the title is a placeholder. */
   titleStatus: 'naming' | 'automatic' | 'settled';
   objective?: string;
-  emailAddress?: string;
   createdByUserId?: string;
   harnessStatus: HarnessStatus;
   latestAttentionSequenceNumber: number;

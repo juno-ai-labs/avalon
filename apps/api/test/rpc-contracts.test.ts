@@ -2,16 +2,7 @@ import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
 
 import type { ApiError } from "../src/lib/api-error";
-import {
-  AutomationEmailRouteInputSchema,
-  GitHubRouteStatusInputSchema,
-  RPC_BATCH_LIMIT,
-  RegionalWebhookInputSchema,
-  ResendRegionalEmailInputSchema,
-  SlackRouteInputSchema,
-  parseRpcInput,
-  rpcBatch,
-} from "../src/lib/rpc-contracts";
+import { GitHubRouteStatusInputSchema, RegionalWebhookInputSchema, SlackRouteInputSchema, parseRpcInput } from "../src/lib/rpc-contracts";
 
 const workspaceId = "019fc068-22e8-739a-8394-a760fdc7c376";
 const connectionId = "019fc068-22e8-739a-8394-a760fdc7c377";
@@ -60,20 +51,6 @@ describe("internal RPC contracts", () => {
     }).details).toMatchObject({ issues: [{ path: "status" }] });
   });
 
-  it("carries field paths but never values into the error", () => {
-    const error = refusal(ResendRegionalEmailInputSchema, {
-      resendEmailId: "", svixId: "msg_secret_value", receivedAt: "yesterday",
-      region: "global", workspaceId, localPart: "", emailAddress: "not-an-email",
-    });
-    const serialized = JSON.stringify(error.details);
-    expect(serialized).toContain("resendEmailId");
-    expect(serialized).toContain("emailAddress");
-    // OAuth state, provider identifiers and addresses travel over this surface;
-    // the refusal names fields so it can be diagnosed, and nothing else.
-    expect(serialized).not.toContain("msg_secret_value");
-    expect(serialized).not.toContain("not-an-email");
-  });
-
   it("requires webhook bytes to be bytes", () => {
     const body = new ArrayBuffer(8);
     expect(parseRpcInput(RegionalWebhookInputSchema, { rawBody: body, headers: { "x-hub-signature-256": "sha256=..." } }, "ingest"))
@@ -82,27 +59,5 @@ describe("internal RPC contracts", () => {
       .toMatchObject({ issues: [{ path: "rawBody" }] });
     expect(refusal(RegionalWebhookInputSchema, { rawBody: body, headers: { "x-count": 7 } }).details)
       .toMatchObject({ issues: [{ path: "headers.x-count" }] });
-  });
-
-  it("bounds a batch so one regional caller cannot hold a Global invocation open", () => {
-    const route = { region: "enterprise" as const, workspaceId, automationSubscriptionId: connectionId };
-    const schema = rpcBatch(AutomationEmailRouteInputSchema);
-    expect(parseRpcInput(schema, Array.from({ length: RPC_BATCH_LIMIT }, () => route), "reserveAutomations"))
-      .toHaveLength(RPC_BATCH_LIMIT);
-    expect(refusal(schema, Array.from({ length: RPC_BATCH_LIMIT + 1 }, () => route)).details)
-      .toMatchObject({ issues: [{ path: "(root)", code: "too_big" }] });
-  });
-
-  it("keeps an optional routing target optional", () => {
-    const base = {
-      resendEmailId: "email_1", svixId: "msg_1", receivedAt: "2026-08-11T00:00:00.000Z",
-      region: "global" as const, workspaceId, localPart: "granular-misty",
-      emailAddress: "granular-misty@automation.with-avalon.com",
-    };
-    expect(parseRpcInput(ResendRegionalEmailInputSchema, base, "ingestResendEmail")).toEqual(base);
-    expect(parseRpcInput(ResendRegionalEmailInputSchema, { ...base, targetType: "automation" }, "ingestResendEmail"))
-      .toMatchObject({ targetType: "automation" });
-    expect(refusal(ResendRegionalEmailInputSchema, { ...base, targetType: "mailbox" }).details)
-      .toMatchObject({ issues: [{ path: "targetType" }] });
   });
 });

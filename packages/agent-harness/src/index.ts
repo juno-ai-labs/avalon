@@ -2747,8 +2747,8 @@ const automationDraftSubmissionJsonSchema = {
         properties: {
           type: {
             type: "string",
-            enum: ["manual", "inbound_email", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook"],
-            description: "What starts a run: `manual` when a person asks, `inbound_email` on mail to the Sidekick's address, `calendar` on a recurrence rule, `interval` every so many seconds, `connector_activity` on a connector event matched by deterministic filters, `semantic_activity` on a connector event that also passes a written condition, `webhook` on an inbound HTTP call. Legacy `resource_watch` does not start Sidekick runs; use declared events or polling instead."
+            enum: ["manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook"],
+            description: "What starts a run: `manual` when a person asks, `calendar` on a recurrence rule, `interval` every so many seconds, `connector_activity` on a connector event matched by deterministic filters, `semantic_activity` on a connector event that also passes a written condition, `webhook` on an inbound HTTP call. Legacy `resource_watch` does not start Sidekick runs; use declared events or polling instead."
           },
           rrule: { type: ["string", "null"], description: "For a `calendar` trigger, the recurrence as an iCalendar RRULE, for example `FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0`. Null for every other type." },
           timezone: {

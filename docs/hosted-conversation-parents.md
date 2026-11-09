@@ -122,12 +122,11 @@ nothing, so a reply joins one batch once. The batching rule is
 
 `HostedSidekick` is constructed per call with the Organization's storage and
 the Sidekick's id, and extends `HostedConversation` with a Sidekick's
-lifecycle: drafts, revisions, schedules, runs and inbound email.
+lifecycle: drafts, revisions, schedules, runs.
 
 | Legacy `SidekickDO` table | Hosted |
 | --- | --- |
 | `automation` (`id = 1`) | `automation_directory`, which gains the definition columns: the sidebar row and the definition row are one row, so there is no copy to publish |
-| `definition_revisions`, `schedules`, `runs`, `inbound_email_receipts` | `sidekick_revisions`, `sidekick_schedules`, `sidekick_runs`, `sidekick_email_receipts` |
 | `conversation_children`, `substream_directory`, `child_effect_receipts` | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts` |
 | `_internal_durable_alarms` | the Organization's own, keyed `<sidekickId>:<key>`; `sidekick_publication` became `sidekick_memory_tables` |
 | `durable_outbox` | none: the directory row is written in place |
@@ -473,7 +472,7 @@ edited.
 ### 2026-10-05 — Sidekick parents move into WorkspaceDO
 
 **What changed:** A Sidekick's parent, definition, revisions, schedules, runs,
-inbound-email receipts and child registry live in `WorkspaceDO` (migration 91,
+child registry live in `WorkspaceDO` (migration 91,
 `HostedSidekick`), beside Channels and Spaces. `automation_directory` became the
 Sidekick's definition row. Each Sidekick moves on first use or on the alarm's
 `sidekick_import` phase, from a legacy `SidekickDO` that freezes on export and

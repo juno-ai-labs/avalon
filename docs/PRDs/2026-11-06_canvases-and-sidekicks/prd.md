@@ -263,8 +263,8 @@ existing `publish_resource`, scoped to a Canvas.
 
 ### 2026-11-06 — Connector ingress stops creating conversations
 
-**Decided:** A Slack mention of Rally and inbound email no longer create a
-conversation. Slack and email remain Sidekick triggers and delivery, and a
+**Decided:** A Slack mention of Rally no longer create a
+conversation. Slack remains a Sidekick trigger and delivery surface, and a
 Slack reply still continues the Sidekick run it answers. Routing suggestions and
 Suggested Work are deleted. Digests are deleted. Push notifications stay for
 mentions in a Canvas Chat or Sidekick conversation, "Needs input" and finished

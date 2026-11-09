@@ -226,7 +226,7 @@ its own facts and the Organization's when it is Organization-wide. A person whos
 run (`PERSONAL_SYSTEM_PROMPT_REASONS`: a message, an answer, a retry, in Rally
 or from a linked Slack account) reads as themselves: the shared facts every
 participant may see, plus their own `person` facts whatever the room. Every
-other run (a wake-up, a connector trigger, an inbound email, a background
+other run (a wake-up, a connector trigger, a background
 agent, a workspace principal) reads as the conversation: what every participant
 may, and nobody's own facts, because nobody in particular asked. The copy's
 row key is the principal: `user:<id>`, `sidekick:<automationId>`, or
@@ -343,7 +343,7 @@ tool call passes).
 - `memory_remember(text, kind, validUntil?, about?)`: writes one fact under
   the acting person (`about: "me"`) or the conversation's own subject. The
   trust class is the input that started the run (`derivedFromOf`): a Slack or
-  email trigger writes `external`, an agent exchange or a Sidekick's
+  connector trigger writes `external`, an agent exchange or a Sidekick's
   scheduled self-review `agent`. A sentence that
   matches an active fact on the subject word for word, among the facts the
   reader may see from here, returns that fact with `deduplicated: true`; a

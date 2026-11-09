@@ -139,51 +139,6 @@ export const SlackCommandRpcInputSchema = z.object({
   bodyHash: z.string().min(1).max(200),
 });
 
-export const CloudflareEmailPayloadSchema = z.object({
-  senderAuthenticated: z.boolean().optional(),
-  raw: rawBody,
-  from: z.string(),
-  to: z.string().email(),
-});
-
-export const ResendRegionalEmailInputSchema = z.object({
-  cloudflareEmail: CloudflareEmailPayloadSchema.optional(),
-  resendEmailId: z.string().min(1).max(200),
-  svixId: z.string().min(1).max(200),
-  receivedAt: z.string().datetime({ offset: true }),
-  region: RegionSchema,
-  workspaceId: IdSchema,
-  targetType: z.enum(["workstream", "automation"]).optional(),
-  workstreamId: IdSchema.optional(),
-  automationSubscriptionId: IdSchema.optional(),
-  localPart: z.string().min(1).max(200),
-  emailAddress: z.string().email().max(254),
-});
-
-export const AutomationEmailRouteInputSchema = z.object({
-  region: RegionSchema,
-  workspaceId: IdSchema,
-  automationSubscriptionId: IdSchema,
-});
-export const AutomationEmailAddressClaimSchema = AutomationEmailRouteInputSchema.extend({
-  emailAddress: z.string().email().max(254),
-});
-/**
- * The registry's batch methods take arrays. Bounding them is part of the
- * contract: an unbounded batch is a way to hold one Global invocation open on
- * behalf of a regional caller.
- *
- * This is the bound `WorkstreamEmailRoutingService.assertBulkSize` already
- * enforces, and it is defined here so there is one number rather than two. A
- * second, tighter bound on the same path would mean a batch that succeeds on
- * Global comes back from a regional caller as a 400 — a deployment behavioural
- * divergence introduced by the guard meant to prevent one.
- */
-export const RPC_BATCH_LIMIT = 512;
-export function rpcBatch<T extends z.ZodTypeAny>(schema: T) {
-  return z.array(schema).max(RPC_BATCH_LIMIT);
-}
-
 /**
  * Parse an RPC argument, or fail as a business error the caller already knows
  * how to read.

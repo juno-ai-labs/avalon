@@ -247,19 +247,7 @@ describe("semantic trigger conditions", () => {
         source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
         verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL
       )`),
-      env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-        local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-        workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-      )`),
     ]);
-    // The Sidekick's address is reserved up front: minting one needs a signing
-    // key this test Worker has no reason to configure, and the address is not
-    // what any case below is about.
-    await env.DB.prepare(`INSERT OR REPLACE INTO workstream_email_routes
-        (local_part, region, workspace_id, workstream_id, automation_subscription_id, created_at, updated_at)
-      VALUES ('design-applications-watcher', 'global', ?, NULL, ?, ?, ?)`)
-      .bind(WORKSPACE_ID, AUTOMATION_ID, NOW, NOW).run();
     await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
     await runInDurableObject(workspace(), (_instance: WorkspaceDO, state) => {
       state.storage.sql.exec(

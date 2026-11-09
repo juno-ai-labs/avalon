@@ -243,32 +243,6 @@ describe("Avalon Firecrawl harness tools", () => {
     ]);
   });
 
-  it("gives an inbound-email run the same web tools as any other run", () => {
-    // Deliberately the inverse of what this asserted before. The trigger no
-    // longer decides the tool surface: mail reaches a run only after the sender
-    // has resolved to an active workspace member, and a `connector_activity`
-    // run reading an equally untrusted third-party page was never restricted,
-    // so stripping one channel described a boundary the system did not have.
-    // Pinned rather than deleted, because the comment it replaced read like an
-    // invariant and the next person to see a mail-triggered run holding `fetch`
-    // should find this instead of re-adding the filter.
-    const tools = __integrationTesting
-      .createAvalonTools(envWithFirecrawl("fc-test-key"), {
-        ...workflowInput,
-        reason: "inbound_email",
-      })
-      .filter((tool) => tool.definition.capability.startsWith("web.")
-        || tool.definition.capability.startsWith("workstream.")
-        || tool.definition.capability.startsWith("resource."))
-      .map((tool) => tool.definition.name);
-
-    expect(tools).toContain("search");
-    expect(tools).toContain("fetch");
-    expect(tools).toContain("list_resources");
-    expect(tools).toContain("read_resource");
-    expect(tools).toContain("search_resource");
-  });
-
   it("returns link-only search output without exposing Firecrawl credit telemetry", async () => {
     const fetcher = mockFetchResponse(jsonResponse({
       success: true,

@@ -28,7 +28,6 @@ import { onboardingRoutes } from "./routes/onboarding";
 import { navigationRoutes } from "./routes/navigation";
 import { pushDeviceRoutes } from "./routes/push-devices";
 import { realtimeRoutes } from "./routes/realtime";
-import { resendInboundRoutes } from "./routes/resend";
 import { resourceRoutes } from "./routes/resources";
 import { searchRoutes } from "./routes/search";
 import { slackIngressRoutes } from "./routes/slack";
@@ -139,7 +138,6 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/dev", devRoutes);
   app.route("/connections", connectionCallbackRoutes);
   app.route("/ingest", webhookIngestionRoutes);
-  app.route("/ingest/resend", resendInboundRoutes);
   app.route("/ingest/daytona", daytonaWebhookRoutes);
   app.route("/socket", socketRoutes);
   app.route("/slack", slackIngressRoutes);

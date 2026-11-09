@@ -56,7 +56,6 @@ afterEach(() => {
 async function fixture(input?: {
   backupResult?: string;
   baseSha?: string;
-  emailAddress?: string | null;
   residentResourceAttacher?: boolean;
 }) {
   const database = preRetirementProductSqliteDatabase();
@@ -69,9 +68,7 @@ async function fixture(input?: {
        ADD COLUMN cleanup_eligible INTEGER NOT NULL DEFAULT 1
        CHECK (cleanup_eligible IN (0, 1))`,
   );
-  const emailAddressSql = input?.emailAddress === null
-    ? "NULL"
-    : `'${input?.emailAddress ?? "bright-coastal-exact-heron@automation.with-avalon.com"}'`;
+  const emailAddressSql = 'NULL';
   const readPolicy = JSON.stringify({
     githubRepositoryAccess: {
       version: 1,
@@ -91,7 +88,7 @@ async function fixture(input?: {
     },
   });
   // The routed statements read work-stream product state (the branch name
-  // comes from the work stream's email address) and the run rows from the
+  // is generated from the conversation identity) and the run rows from the
   // object, so the fixture opens the authority and seeds the object the way
   // the cutover left production.
   openWorkstreamAuthorityForTest(database);
@@ -136,9 +133,6 @@ async function fixture(input?: {
     originType: "ad_hoc",
     createdByUserId: U,
     exactState: "running",
-    emailAddress: input?.emailAddress === null
-      ? null
-      : input?.emailAddress ?? "bright-coastal-exact-heron@automation.with-avalon.com",
   }, Date.parse("2026-08-13T00:00:00.000Z"));
   seedWorkstreamObjectParticipant(objectStore, {
     userId: U,
@@ -420,7 +414,7 @@ describe("Terminal model repository selection", () => {
       remoteAccess: "read_only",
       localEditsAllowed: true,
       remoteWritesAllowed: false,
-      headRef: "avalon/bright-coastal-exact-heron",
+      headRef: "avalon/sequential-aquatic-polished-gibbon",
       outcome: "selected",
       backup: { title: "Terminal backup before acme/widget", sizeBytes: 12 },
     });
@@ -453,7 +447,7 @@ describe("Terminal model repository selection", () => {
       remoteAccess: "full_access",
       localEditsAllowed: true,
       remoteWritesAllowed: true,
-      headRef: "avalon/bright-coastal-exact-heron",
+      headRef: "avalon/sequential-aquatic-polished-gibbon",
       backup: null,
     });
   });
@@ -478,7 +472,7 @@ describe("Terminal model repository selection", () => {
   });
 
   it("reuses the shared four-word Avalon naming scheme when no work-stream address exists", async () => {
-    const { context, selector } = await fixture({ emailAddress: null });
+    const { context, selector } = await fixture({ });
 
     await expect(selector.checkout(context, {
       repositoryFullName: "acme/widget",
@@ -519,7 +513,7 @@ describe("Terminal model repository selection", () => {
        VALUES (1, ?, 41, 'acme/widget', 'main', ?, ?, 'selected', ?, ?, ?)`,
       PERSONAL,
       "a".repeat(40),
-      "avalon/bright-coastal-exact-heron",
+      "avalon/sequential-aquatic-polished-gibbon",
       U,
       Date.parse("2026-08-13T00:00:00.000Z"),
       Date.parse("2026-08-13T00:00:00.000Z"),
@@ -531,7 +525,7 @@ describe("Terminal model repository selection", () => {
     })).resolves.toMatchObject({
       outcome: "selected",
       baseSha: nextBase,
-      headRef: "avalon/bright-coastal-exact-heron",
+      headRef: "avalon/sequential-aquatic-polished-gibbon",
     });
     expect(workstreamObjectGet(
       objectStore,

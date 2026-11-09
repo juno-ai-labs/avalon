@@ -1,7 +1,7 @@
 import { AutomationGlyph } from './workstream-glyph';
 import { AppearancePicker } from './appearance-picker';
 import { useState, type ReactNode } from 'react';
-import { Archive, ChevronRight, CirclePause, Clock, Copy, Ellipsis, Hand, History, Mail, Play, Zap } from 'lucide-react';
+import { Archive, ChevronRight, CirclePause, Clock, Copy, Ellipsis, Hand, History, Play, Zap } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ArchiveAutomationDialog } from './archive-automation-dialog';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
@@ -73,7 +73,7 @@ function runTriggerLabel(run: AutomationRun): string {
     case 'manual': return 'On request';
     case 'schedule': return 'Scheduled';
     case 'external_event': return 'Event';
-    case 'inbound_email': return 'Email';
+    case 'inbound_email': return 'Email (retired)';
   }
 }
 
@@ -105,7 +105,6 @@ type TriggerType = NonNullable<AutomationDetail['currentDefinition']>['triggers'
 /** The mark beside a "Wakes on" row, as design §4 draws one per trigger: a clock for a schedule, a bolt for an event. */
 function TriggerIcon({ type }: { type: TriggerType | undefined }): React.JSX.Element {
   if (type === 'calendar') return <Clock aria-hidden="true" size={15} />;
-  if (type === 'inbound_email') return <Mail aria-hidden="true" size={15} />;
   if (type === 'manual') return <Hand aria-hidden="true" size={15} />;
   return <Zap aria-hidden="true" size={15} />;
 }
@@ -160,12 +159,9 @@ export function AutomationHeader({
   }[automation.lifecycle];
   const historyDisabledReason = hasTriggers || listedRuns.length > 0
     ? undefined : 'This Sidekick has no triggers or previous runs.';
-  // Older accepted definitions receive email without listing an email trigger.
   // Summaries are derived one per definition trigger, in order (`lib/api.ts`),
   // so the trigger at the same index says which mark the row wears.
-  const triggers: Array<{ summary: string; type: TriggerType | undefined }> = automation.triggerSummaries.length === 0 && automation.emailAddress
-    ? [{ summary: 'When an email arrives', type: 'inbound_email' }]
-    : automation.triggerSummaries.map((summary, index) => ({ summary, type: definition?.triggers[index]?.type }));
+  const triggers: Array<{ summary: string; type: TriggerType | undefined }> = automation.triggerSummaries.map((summary, index) => ({ summary, type: definition?.triggers[index]?.type }));
   const isDraft = automation.lifecycle === 'draft';
   // The connections its runs use, named as the rest of the profile names
   // plugins; and the Canvases it writes that this reader may open.
@@ -280,7 +276,6 @@ export function AutomationHeader({
         {/* Who it may act as is a question for a Sidekick that runs; a draft has nobody to ask yet. */}
         {!isDraft && automation.delegationAttention && <p role="status">{automation.delegationAttention.message}</p>}
         {!isDraft && delegation}
-        {automation.emailAddress && <details className="sidekick-profile-section sidekick-email-details"><summary>Email this Sidekick</summary><span className="automation-header-email"><Mail aria-hidden="true" size={14} /><span>{automation.emailAddress}</span></span></details>}
         {customTools.length > 0 && <section className="sidekick-profile-section sidekick-tools-section">
           <h2>Tools</h2>
           <p className="sidekick-tools-lead">Steps this Sidekick runs the same way every time. Ask in its setup conversation to change one.</p>

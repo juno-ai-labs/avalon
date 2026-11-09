@@ -6,7 +6,7 @@ import { serializeAshbyRpcResult } from "../src/services/ashby-routing-service";
 import { serializeGitHubRegionalRpcResult } from "../src/services/github-routing-service";
 import { serializeLinearRpcResult } from "../src/services/linear-routing-service";
 import { serializeNotionRpcResult } from "../src/services/notion-routing-service";
-import { serializeResendRegionalRpcResult } from "../src/services/resend-inbound-email-service";
+
 import { serializeSlackRpcResult } from "../src/services/slack-routing-service";
 
 // Every regional bridge runs the work-stream fence, and every one rebuilds the
@@ -18,7 +18,6 @@ const serializers = {
   github: serializeGitHubRegionalRpcResult,
   linear: serializeLinearRpcResult,
   notion: serializeNotionRpcResult,
-  resend: serializeResendRegionalRpcResult,
   slack: serializeSlackRpcResult,
 };
 

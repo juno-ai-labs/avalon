@@ -285,7 +285,6 @@ function workspaceSyncNamespace(listable = true, mentionChannels: NotificationCh
         authorityGeneration: 1,
         listable,
         title: "Regional effects",
-        emailAddress: "regional-effects@example.com",
       })),
       // The conversation is a Canvas's Chat, so each transport carries its link.
       resolveHostedParent: vi.fn(async () => (parentKind ? { kind: parentKind, authority: { exists: true } } : { kind: null })),

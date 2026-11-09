@@ -465,16 +465,6 @@ rather than three. The conversions still land in slice order and each is
 independently useful — slice 4 converts every transcript reader and deletes
 five repository functions — but the *views* come down at the end.
 
-**And the batches are more of the slice than the counts suggested.** Slice 4's
-first pass named three; converting the rest of its readers found that *every*
-statement still on `_runtime_messages` afterwards is cross-slice. Six of them
-are in `harness-run-runtime.ts`, each joining `messages` to `harness_runs` or
-`harness_run_lifecycle_events` inside one statement; Slack's elicitation answer
-guards a counter update on `EXISTS (SELECT 1 FROM messages)`; inbound email's
-sequence claim is fenced on `workstreams.email_address`, which makes it
-identity's as much as messages'. What is left on the view is not a tail of
-plain readers somebody skipped — it is the ordering problem itself.
-
 This is what the cross-slice note below predicts, at a scale the statement
 counts did not show: the statement decides the ownership, and the biggest
 batches decide the order. Statement counts are distinct SQL
@@ -518,7 +508,6 @@ settled:
 | # | Slice | Tables | Statements | Files |
 | --- | --- | --- | --- | --- |
 | 8 | sandbox policy | `workspace_sandbox_network_policies`, `_domains`, `_policy_mutations` | 14 | 3 |
-| 9 | workspace misc | `workstream_notification_intents`, `workspace_workstream_pins`, `workstream_email_receipts`, `realtime_transcription_*` | 26 | 7 |
 | 10 | digests | `digest_*`, `schedules` | 47 | 9 |
 | 11 | Slack | `slack_*` | 55 | 7 |
 | 12 | memory | `memory_*` | 63 | 4 |
