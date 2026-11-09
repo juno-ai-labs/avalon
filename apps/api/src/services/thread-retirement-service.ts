@@ -134,8 +134,14 @@ export async function dumpThreadTranscripts(
  * walk's reason: a parent deleted first would leave its conversations open and
  * unnamed by anything a later pass could find.
  *
- * Refused, before anything is touched, unless every conversation it would
- * retire has its dump in R2: the dump is the only copy once this runs.
+ * Refused, before anything is touched, while `convert_threads_to_canvases`
+ * still has a Thread to convert (`thread_retirement_conversion_pending`):
+ * retired first, a Thread with artifacts loses the Chat its Canvas would have
+ * kept, and its artifacts the conversation that opens them. A Thread the
+ * conversion refuses (`thread_conversion_no_creator`) keeps this refused
+ * until an operator repairs it, by design: nothing is retired that was meant
+ * to survive. And refused unless every conversation it would retire has its
+ * dump in R2: the dump is the only copy once this runs.
  *
  * Resumable without a receipt table. A parent whose rows are gone is not in
  * the next inventory; one interrupted between its conversations and its rows
@@ -147,7 +153,16 @@ export async function retireThreads(
   input: { workspaceId: string; operationId: string; operatorSubject: string },
 ): Promise<RetireThreadsResult> {
   const workspaceId = asWorkspaceId(input.workspaceId);
-  const parents = await threadRetirementInventory(env, workspaceId);
+  const workspace = await organizationObject(env, workspaceId);
+  const unconverted = (await workspace.threadConversionInventory()).candidates.length;
+  if (unconverted > 0) {
+    logWarn(env, "thread_retirement_conversion_pending", {
+      workspace_id: workspaceId, operation_id: input.operationId, unconverted,
+    });
+    throw new ApiError(409, "thread_retirement_conversion_pending",
+      `${unconverted} Threads with artifacts are not converted; run convert_threads_to_canvases until none is left`);
+  }
+  const parents = (await workspace.threadRetirementInventory()).parents;
   let undumped = 0;
   for (const parent of parents) {
     for (const substreamId of parent.substreamIds) {
@@ -167,7 +182,6 @@ export async function retireThreads(
     conversations: parents.reduce((total, parent) => total + parent.substreamIds.length, 0),
     retiredParents: 0, retiredConversations: 0, retainedOutbox: 0, failed: [],
   };
-  const workspace = await organizationObject(env, workspaceId);
   for (const parent of parents) {
     let substreamId: string | null = null;
     try {
