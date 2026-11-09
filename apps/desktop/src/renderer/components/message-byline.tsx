@@ -1,7 +1,7 @@
 import { IconCloudDownload } from "@tabler/icons-react";
 import type { ReactNode } from 'react';
 
-import { formatTime } from '../lib/format';
+import { formatMessageTime } from '../lib/format';
 import { Tip } from './primitives';
 import { RelativeTime } from './relative-time';
 
@@ -59,8 +59,7 @@ export function MessageByline({
       )}
     </span>,
     contextLabel ? <span className="message-context-label" key="context">{contextLabel}</span> : null,
-    // The clock time; the feed's day dividers carry the date (design.html §2).
-    <RelativeTime format={formatTime} key="time" value={createdAt} />,
+    <RelativeTime format={formatMessageTime} key="time" value={createdAt} />,
     workSummary ? <span className="message-work-summary" key="summary">{workSummary}</span> : null,
   ];
   return (
