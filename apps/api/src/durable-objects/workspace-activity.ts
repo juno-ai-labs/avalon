@@ -426,8 +426,8 @@ export function activityPage(
 }
 
 /**
- * How many of this person's listed rows are unseen, and how many of those are
- * a run waiting on them (`needs_input`): the page's own filter and seen rule
+ * How many of this person's listed rows are unseen, how many of those are a
+ * run waiting on them (`needs_input`), and how many mention them: the page's own filter and seen rule
  * (`listedSql`), so the Organization's attention and the push badge are the
  * number the Activity rail shows.
  */
@@ -436,14 +436,15 @@ export function activityCounts(
   viewer: ActivityViewer,
   sidekickListedSql: string,
   writerAdmits: (sidekickId: string) => boolean,
-): { unseen: number; unseenNeedsInput: number } {
-  const row = sql.exec<{ unseen: number | null; unseen_needs_input: number | null }>(
+): { unseen: number; unseenNeedsInput: number; unseenMentions: number } {
+  const row = sql.exec<{ unseen: number | null; unseen_needs_input: number | null; unseen_mentions: number | null }>(
     `${listedSql(sidekickListedSql)}
-     SELECT SUM(1 - seen) AS unseen, SUM(CASE WHEN kind = 'needs_input' THEN 1 - seen ELSE 0 END) AS unseen_needs_input
+     SELECT SUM(1 - seen) AS unseen, SUM(CASE WHEN kind = 'needs_input' THEN 1 - seen ELSE 0 END) AS unseen_needs_input,
+            SUM(CASE WHEN kind = 'mention' THEN 1 - seen ELSE 0 END) AS unseen_mentions
        FROM listed`,
     viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, null, JSON.stringify(admittingWriters(sql, writerAdmits)),
   ).toArray()[0];
-  return { unseen: row?.unseen ?? 0, unseenNeedsInput: row?.unseen_needs_input ?? 0 };
+  return { unseen: row?.unseen ?? 0, unseenNeedsInput: row?.unseen_needs_input ?? 0, unseenMentions: row?.unseen_mentions ?? 0 };
 }
 
 /** Whether this person has Activity about this parent, so a read of a parent with none republishes nothing. */

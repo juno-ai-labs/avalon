@@ -107,10 +107,21 @@ function noticeHtml(input: { greeting: string; title: string; excerpt: string; u
     : "";
   return `<!doctype html>
 <html lang="en">
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- At phone width the card's 36px padding left a column of about 260px; a
+         client that honours this rule narrows it, and one that strips it keeps the wide layout. -->
+    <style>
+      @media (max-width: 480px) {
+        .rally-notice-outer { padding: 16px 8px !important; }
+        .rally-notice-card { padding: 20px !important; }
+      }
+    </style>
+  </head>
   <body style="margin:0;background:#10130f;color:#f2f3ec;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#10130f;padding:40px 16px">
+    <table class="rally-notice-outer" role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#10130f;padding:40px 16px">
       <tr><td align="center">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#181b17;border:1px solid #343832;border-radius:18px;padding:36px">
+        <table class="rally-notice-card" role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#181b17;border:1px solid #343832;border-radius:18px;padding:36px">
           <tr><td style="font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#CCFF00">Rally</td></tr>
           <tr><td style="padding-top:18px;font-size:15px;line-height:1.6;color:#c9ccc4">${escapeHtml(input.greeting)}</td></tr>
           <tr><td><h1 style="margin:8px 0 18px;font-size:22px;line-height:1.3;color:#f2f3ec">${escapeHtml(input.title)}</h1></td></tr>

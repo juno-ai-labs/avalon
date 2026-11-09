@@ -257,6 +257,10 @@ describe('CanvasScreen', () => {
     await openMenu('Q4 revenue review');
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Change appearance' }));
     const palette = await screen.findByRole('menu', { name: 'Change appearance' });
+    // Focus starts inside the palette, on the colour the Canvas wears (its id's hue while unchosen).
+    await waitFor(() => expect(document.activeElement).toHaveAttribute('role', 'menuitemradio'));
+    expect(palette).toContainElement(document.activeElement as HTMLElement);
+    expect(document.activeElement).toHaveAttribute('aria-checked', 'true');
     fireEvent.click(within(palette).getByRole('menuitemradio', { name: 'Orange' }));
     expect(setCanvasAppearance).toHaveBeenCalledWith(CANVAS, { color: 'orange' });
     // The pill's mark is the palette's own button, beside its menu.
@@ -385,7 +389,7 @@ describe('CanvasScreen', () => {
       renderCanvas();
       expect(await screen.findByRole('button', { name: 'Request access' })).toBeEnabled();
       expect(screen.getByRole('status')).toHaveTextContent('Request declined · just now');
-      expect(screen.getByText('Someone who manages it declined. You can ask again.')).toBeInTheDocument();
+      expect(screen.getByText('Ask again if you still need it.')).toBeInTheDocument();
     });
 
     it('says declined, with Request access again, when its access_denied row arrives', async () => {

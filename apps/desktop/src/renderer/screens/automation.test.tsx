@@ -180,6 +180,23 @@ describe("The Sidekick's conversation composer", () => {
     expect(screen.getByText('Run 6')).toBeInTheDocument();
   });
 
+  it('numbers the run from the link that opened it before its shared conversation has loaded', async () => {
+    viewer.session = { user: { id: 'user-1' }, workspace: { role: 'member' } };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const RUN_ID = '00000000-0000-7000-8000-0000000000bc';
+    render(
+      <QueryClientProvider client={client}>
+        <Tooltip.Provider>
+          <MemoryRouter initialEntries={[{ pathname: `/sidekicks/${SIDEKICK_ID}`, search: `?run=${RUN_ID}`, state: { runNumber: 5 } }]}>
+            <Routes><Route element={<AutomationScreen />} path="/sidekicks/:id" /></Routes>
+          </MemoryRouter>
+        </Tooltip.Provider>
+      </QueryClientProvider>,
+    );
+    await screen.findByRole('button', { name: /Weekly changelog/ });
+    expect(screen.getByText('Run 5')).toBeInTheDocument();
+  });
+
   it('leaves Edit Sidekick from the chip at the composer, and on Escape', async () => {
     await open('user-1', 'member');
     act(() => editAction()!.onSelect());

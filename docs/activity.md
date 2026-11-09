@@ -444,8 +444,8 @@ desktop parses Activity yet.
 
 On the client the row's lock and a grant's open lock differ only in the
 right shackle leg, which the Canvas badge covered; a badged tile now draws its
-glyph up and to the left (the round-5 visual check, F3). Asking again also
-republishes the requester's list, so the row reads seen without a reload.
+glyph up and to the left (the round-5 visual check, F3). The republish when
+the requester asks again is in `docs/canvas-access-requests.md`'s denial entry.
 
 **What a future change must respect:** the exemption is this kind alone, and
 its row must keep carrying nothing of the Canvas but its id.
