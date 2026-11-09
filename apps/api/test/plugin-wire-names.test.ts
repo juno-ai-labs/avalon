@@ -100,9 +100,9 @@ function allPlugins(): HarnessPlugin[] {
     createAgentCommunicationPlugin(new AgentCommunicationService(env, input), "role guidance", { sidekickRun: true }),
     createAvalonMultimodalGenerationPlugin(env, input),
     createTerminalPlugin(terminalExecutors),
-    // The configuration conversation's scope offers all four tools.
+    // A manager's wizard turn in the configuration conversation offers all four tools.
     createConversationsPlugin(
-      { ...input, parentKind: "automation", parentId: "00000000-0000-4000-8000-00000000000a" },
+      { ...input, parentKind: "automation", parentId: "00000000-0000-4000-8000-00000000000a", sidekickWizard: true },
       conversationToolPorts(env, input),
       (tool) => expandPages(tool, CONVERSATIONS_WIRE_PREFIX),
     ),

@@ -844,7 +844,7 @@ it('drops the organization form when another account signs in elsewhere', async 
   } finally { view.unmount(); channel.close(); }
 });
 
-it('says a retired Thread link names something gone, and says nothing of the kind on the Organization shell path', async () => {
+it('says a retired Breakout link names something gone, and says nothing of the kind on the Organization shell path', async () => {
   vi.stubGlobal('fetch', vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
     if (path === '/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
@@ -854,7 +854,7 @@ it('says a retired Thread link names something gone, and says nothing of the kin
     throw new Error(`Unexpected request ${input}`);
   }));
   const retired = 'This link is to something that no longer exists. Rally replaced Channels, Threads and Breakouts with Canvases.';
-  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}/workstreams/dddddddd-dddd-4ddd-8ddd-dddddddddddd`);
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}/workstreams/dddddddd-dddd-4ddd-8ddd-dddddddddddd/substreams/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee`);
   let view = render(<BrowserEntry />);
   try {
     await screen.findByRole('heading', { name: 'Your organizations' });
