@@ -288,83 +288,19 @@ describe("the D1 baseline reproduces the migration chain", () => {
 });
 
 describe("the baseline's triggers are live, not just present", () => {
-  it("keeps the Global email ledger a full-address claim register, in both databases", () => {
-    // Ported from the per-migration suite when it was retired: it asserted the
-    // shape 0092 leaves, and a chain-versus-baseline diff cannot stand in for
-    // that — a lifecycle column wrongly present would appear on both sides and
-    // compare equal. Driving it through each database keeps the original
-    // assertion and adds the one this file exists for.
-    //
-    // Global records the claim and nothing else. A lifecycle column here would
-    // be a second copy of a decision each region already makes from its own row
-    // when a message arrives. One assertion per column: `arrayContaining` with
-    // two entries would pass while either survived.
-    const seed = (database: DatabaseSync) => database.exec(`
-      INSERT INTO users
-        (id, google_subject, email, name, created_at, updated_at)
-      VALUES ('user-email', 'google-email', 'email@example.com', 'Email Owner', '2026-01-01', '2026-01-01');
-      INSERT INTO workspaces
-        (id, name, slug, region, created_by_user_id, created_at, updated_at)
-      VALUES ('workspace-email', 'Email Workspace', 'email-workspace', 'global', 'user-email', '2026-01-01', '2026-01-01');
-      INSERT INTO workstreams
-        (id, workspace_id, do_identity_anchor)
-      VALUES ('workstream-email', 'workspace-email', 1);
-      INSERT INTO workstream_email_routes
-        (email_address, address_source, region, workspace_id, workstream_id, created_at, updated_at)
-      VALUES ('bright-steady-clear-otter@automation.rallywith.ai', 'owner',
-              'global', 'workspace-email', 'workstream-email',
-              '2026-01-01', '2026-01-01');
-    `);
-
+  it("retires receiving while preserving outbound delivery receipts in both databases", () => {
     for (const [label, open] of [["chain", chainDatabase], ["baseline", baselineDatabase]] as const) {
       const database = open();
       try {
-        seed(database);
-        const routeColumns = (database.prepare("PRAGMA table_info(workstream_email_routes)")
-          .all() as Array<{ name: string }>).map((column) => column.name);
-        expect(routeColumns, label).not.toContain("status");
-        expect(routeColumns, label).not.toContain("disabled_at");
-        expect(routeColumns, label).not.toContain("local_part");
-        expect(routeColumns, label).toContain("email_address");
-        expect(
-          (database.prepare("PRAGMA table_info(workstreams)").all() as Array<{ name: string }>)
-            .map((column) => column.name),
-          label,
-        ).not.toContain("email_address");
-
-        // The route is a permanent claim: nobody else may take the full
-        // address, it cannot be renamed, and it cannot be deleted.
-        expect(() => database.exec(`
-          INSERT INTO workstream_email_routes
-            (email_address, address_source, region, workspace_id, workstream_id, created_at, updated_at)
-          VALUES ('bright-steady-clear-otter@automation.rallywith.ai', 'owner',
-                  'global', 'workspace-other', 'workstream-other',
-                  '2026-01-01', '2026-01-01');
-        `), label).toThrow();
-        expect(() => database.exec(
-          "UPDATE workstream_email_routes SET email_address = 'different-route@automation.rallywith.ai' WHERE workstream_id = 'workstream-email'",
-        ), label).toThrow(/immutable/u);
-        expect(() => database.exec(
-          "DELETE FROM workstream_email_routes WHERE workstream_id = 'workstream-email'",
-        ), label).toThrow(/permanent tombstones/u);
-
-        // The same local part on another domain is a different address and may
-        // belong to a different destination.
-        database.exec(`
-          INSERT INTO workstream_email_routes
-            (email_address, address_source, region, workspace_id, workstream_id, created_at, updated_at)
-          VALUES ('bright-steady-clear-otter@customer.example', 'owner',
-                  'global', 'workspace-other', 'workstream-other',
-                  '2026-01-01', '2026-01-01');
-        `);
-
-        // And the original outlives the work stream that claimed it.
-        database.exec("DELETE FROM workstreams WHERE id = 'workstream-email'");
-        expect(database.prepare(
-          "SELECT email_address, workstream_id FROM workstream_email_routes WHERE email_address = 'bright-steady-clear-otter@automation.rallywith.ai'",
-        ).get(), label).toEqual({
-          email_address: "bright-steady-clear-otter@automation.rallywith.ai",
-          workstream_id: "workstream-email",
+        expect(() => database.prepare("SELECT * FROM workstream_email_routes"), label)
+          .toThrow(/no such table/u);
+        expect(() => database.prepare("SELECT * FROM resend_webhook_receipts"), label)
+          .toThrow(/no such table/u);
+        database.prepare(`INSERT INTO email_delivery_receipts (delivery_key, state, updated_at)
+          VALUES ('outbound-notice', 'sent', 1000)`).run();
+        expect(database.prepare(`SELECT delivery_key, state, updated_at FROM email_delivery_receipts
+          WHERE delivery_key = 'outbound-notice'`).get(), label).toEqual({
+          delivery_key: "outbound-notice", state: "sent", updated_at: 1000,
         });
       } finally {
         database.close();
