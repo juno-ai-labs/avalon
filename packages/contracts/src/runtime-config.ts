@@ -70,7 +70,6 @@ export const AGENT_MODEL_DEFAULTS = {
 
 export const AGENT_MODEL_ENV_KEYS = {
   workstream: "OPENROUTER_PRIMARY_MODEL",
-  inline_child: "OPENROUTER_PRIMARY_MODEL",
   memory_sweep: "OPENROUTER_PRIMARY_MODEL",
   sidekick_wizard: "OPENROUTER_SMARTER_MODEL",
   sidekick_run: "OPENROUTER_PRIMARY_MODEL",

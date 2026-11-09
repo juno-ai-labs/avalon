@@ -46,7 +46,7 @@ deployments, but the new server does not publish it.
 
 | Roles | Default model | Shared override |
 | --- | --- | --- |
-| `workstream`, `inline_child`, `memory_sweep`, `sidekick_run` | `openai/gpt-5.6-terra` | `OPENROUTER_PRIMARY_MODEL` |
+| `workstream`, `memory_sweep`, `sidekick_run` | `openai/gpt-5.6-terra` | `OPENROUTER_PRIMARY_MODEL` |
 | `sidekick_wizard` | `openai/gpt-6.1-sol` | `OPENROUTER_SMARTER_MODEL` |
 | `workstream_naming` | `openai/gpt-5.6-terra` | `OPENROUTER_FASTER_MODEL` |
 
@@ -171,7 +171,8 @@ and run roles are independently configurable as `sidekick_wizard` and
 `sidekick_run`, including scheduling and delegation. The faster model group also
 defaults to `openai/gpt-5.6-terra`; explicit deployment and
 per-role overrides retain precedence. The unused structured-model constant was
-removed with its retired roles.
+removed with its retired roles. The unused `inline_child` model role and its
+logging-source type were also removed because no production caller selects it.
 
 **Why:** Feature configuration should be straightforward to review and run locally,
 without depending on Cloudflare's feature flag service. Shared placement lets
