@@ -100,6 +100,12 @@ export const AdmitAgentMessageInputSchema = z.strictObject({
   resumeStopped: z.boolean().optional(),
   attachmentIds: z.array(IdSchema).max(10).default([]),
   executionPrincipal: ExecutionPrincipalSchema,
+  /**
+   * Whom the sending agent acts for, when the recipient is a background
+   * worker that carries its own `executionPrincipal`. A Sidekick run child
+   * asks the Sidekick whether this person may continue its run.
+   */
+  senderExecutionPrincipal: ExecutionPrincipalSchema.optional(),
   origin: z.literal("agent_message"),
   now: z.number().int().nonnegative(),
 }).refine((input) => input.agentExchange.messageId === input.messageId, "Agent exchange and input message IDs must match.");
