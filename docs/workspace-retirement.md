@@ -35,6 +35,7 @@ that first needed it ships separately, calling what is here.
 | `packages/contracts/src/workspace-retirement.ts` | The receipt a retirement answers with. |
 | `packages/contracts/src/conversation-parent.ts` | `childrenForRetirement`'s three-way answer. |
 | `apps/ace/src/regional-api.ts`, `apps/ace/src/client/workspaces.tsx` | Ace's relay to the regional route and the workspaces tab that calls it ([`ace.md`](ace.md)). |
+| `apps/api/src/engineering-inspection-bridge.ts` | `retireOrg`, the engineering MCP's `retire_org`, which calls the same door ([`engineering-mcp.md`](engineering-mcp.md#retiring-an-organization)). |
 
 ### The gate
 
