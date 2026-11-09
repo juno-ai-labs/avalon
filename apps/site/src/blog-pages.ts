@@ -25,7 +25,7 @@ export interface BlogPost {
 
 const ORIGIN = 'https://rallywith.ai';
 /** The index shares the home page's card; each post has its own, drawn at build time. */
-const HOME_IMAGE = `${ORIGIN}/rally-social-v01.jpg`;
+const HOME_IMAGE = `${ORIGIN}/rally-og.jpg`;
 const FIELDS = ['slug', 'title', 'description', 'author'] as const;
 
 /**
@@ -85,7 +85,7 @@ function page({ path, title, description, type, image, extraHead, main }: {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="theme-color" content="#f4f2ed" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
@@ -105,14 +105,12 @@ function page({ path, title, description, type, image, extraHead, main }: {
     <meta name="twitter:title" content="${escapeHtml(title)}" />
     <meta name="twitter:description" content="${escapeHtml(description)}" />
     <meta name="twitter:image" content="${image}" />
-${extraHead}    <link rel="stylesheet" href="/src/landing.css" />
+${extraHead}    <link rel="stylesheet" href="/src/site.css" />
+    <script type="module" src="/src/site-motion.ts"></script>
   </head>
 <body>
 <a class="skip-link" href="#content">Skip to content</a>
-<header class="site-header"><div class="site-header-inner">
-<a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt="">rally</a>
-<!-- rally:site-nav -->
-</div></header>
+<!-- rally:site-header -->
 <main id="content">
 ${main}
 </main>

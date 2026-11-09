@@ -6,7 +6,7 @@ The Download for Mac action is a plain installer link. What the landing reports,
 
 Help center pages under `/help/` report as the `support` page class; [`help-center.md`](help-center.md) owns them.
 
-Trust Center pages load the landing's `landing.css` and add `apps/site/src/trust.css` for their own layouts. Their policy content, contact destinations, and telemetry entry remain unchanged.
+Trust Center pages load the site's `site.css` and add `apps/site/src/trust.css` for their own layouts. Their policy content, contact destinations, and telemetry entry remain unchanged.
 
 ## Where the code lives
 

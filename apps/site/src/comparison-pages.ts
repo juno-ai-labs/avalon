@@ -179,7 +179,7 @@ export function renderComparisonPage(comparison: Comparison): string {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="theme-color" content="#f4f2ed" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
@@ -205,16 +205,14 @@ export function renderComparisonPage(comparison: Comparison): string {
     <meta name="twitter:description" content="${escapeHtml(description)}" />
     <meta name="twitter:image" content="${ORIGIN}${path}social.png" />
     <meta name="twitter:image:alt" content="Rally vs ${escapeHtml(name)}: ${escapeHtml(comparison.edge)}" />
-    <link rel="stylesheet" href="/src/landing.css" />
+    <link rel="stylesheet" href="/src/site.css" />
     <script type="module" src="/src/section-nav.ts"></script>
+    <script type="module" src="/src/site-motion.ts"></script>
     <script type="application/ld+json">${json}</script>
   </head>
 <body>
 <a class="skip-link" href="#content">Skip to content</a>
-<header class="site-header"><div class="site-header-inner">
-<a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt="">rally</a>
-<!-- rally:site-nav -->
-</div></header>
+<!-- rally:site-header -->
 <main id="content">
 <article class="compare-page">
 <header class="compare-hero">

@@ -688,6 +688,7 @@ survives; this table is the one list.
 | `conversation-suggestions.md`, `session-import.md`, `workstream-origin-attachments.md`, `desktop-actions.md` | Merge and Breakout suggestions, the ChatGPT and Claude import, a Thread's origin resource, and the desktop-action protocol | [`workstream-durable-object.md`](workstream-durable-object.md#retired-documents) |
 | `contextual-routing.md`, `connector-digestibility.md` | Suggested context, and each activity type's digest verdict | [`connectors.md`](connectors.md#retired-documents) |
 | `browser-script-runtime.md` | The `browser_js` realm | [`embedded-browser.md`](embedded-browser.md#retired-documents) |
+| `landing-technology-schematic.md` | The home page's three.js cut-away of Rally's five layers | [`site-brand-system.md`](site-brand-system.md#changelog) |
 | `digests.md` | The Thread-era Activity feed and scheduled digests | Its email converter is [`markdown-rendering.md`](markdown-rendering.md)'s; Activity returned as [`activity.md`](activity.md) |
 | `suggested-work.md`, `conversation-merge.md`, `channel-access-requests.md`, `substream-creation.md`, `thread-backfill.md` | Suggested work, merge-back, Channel access requests, Breakout creation and the Thread backfill | Deleted with their code; what stays in storage is in [`data-model.md`](data-model.md) |
 | `attention-menu.md`, `pane-stack.md` | The Threads attention count, and the Channel–thread–Breakout pane stack | [`desktop-shell.md`](desktop-shell.md) owns what survives (the panel expanding over its conversation) |

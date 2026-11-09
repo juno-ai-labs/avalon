@@ -27,13 +27,29 @@ export const trustPages: readonly { href: string; name: string }[] = [
 
 const ORIGIN = 'https://rallywith.ai';
 
+/** The product pages, in the order the header and the footer list them. */
+export const productPages: readonly { href: string; name: string }[] = [
+  { href: '/canvases/', name: 'Canvases' },
+  { href: '/sidekicks/', name: 'Sidekicks' },
+  { href: '/pricing/', name: 'Pricing' },
+  { href: '/company/', name: 'Company' },
+];
+
 /** The header's links and sign-in button, the same on every marketing page. */
 export function renderSiteNav(): string {
-  return '<nav aria-label="Primary"><a class="header-link" href="/#features">Features</a><a class="header-link" href="/#pricing">Pricing</a>'
-    + '<a class="header-link" href="/#compare">Compare</a>'
+  const links = [...productPages.slice(0, 3), { href: '/#compare', name: 'Compare' }, productPages[3]!]
+    .map(({ href, name }) => `<a class="header-link" href="${href}">${name}</a>`).join('');
+  return `<nav aria-label="Primary">${links}`
     // The web app signs in and signs up through one door, so the label rolls between the two.
     + '<a class="button button-small header-sign-in" data-site-action="sign-in-header" href="https://app.rallywith.ai" aria-label="Sign in to Rally or sign up for Rally">'
     + '<span class="header-sign-in-wheel" aria-hidden="true"><span>Sign in to Rally</span><span>Sign up for Rally</span></span></a></nav>';
+}
+
+/** The whole header: the wordmark and the shared nav. */
+export function renderSiteHeader(): string {
+  return '<header class="site-header"><div class="site-header-inner">'
+    + '<a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt="">rally</a>'
+    + `${renderSiteNav()}</div></header>`;
 }
 
 const footerColumn = (id: string, title: string, links: readonly string[]): string =>
@@ -53,14 +69,17 @@ export function renderSiteFooter(): string {
     '<a href="/blog/">All posts</a>',
     ...blogPosts.slice(0, 1).map(({ slug, title }) => `<a href="/blog/${slug}/">${escape(title)}</a>`),
   ];
+  const product = productPages.map(({ href, name }) => `<a href="${href}">${escape(name)}</a>`);
   return `<footer class="rally-footer"><div class="footer-grid">`
-    + `<div class="footer-brand"><a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt=""><span>rally</span></a>`
-    + `<p class="footer-tagline">Made for people who work with AI, not on it.</p></div>`
+    + `<div class="footer-brand"><a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-paper.svg" width="24" height="24" alt=""><span>rally</span></a>`
+    + `<p class="footer-tagline">AI is better in company.</p></div>`
+    + footerColumn('footer-product', 'Product', product)
     + footerColumn('footer-compared', 'Compared to', compared)
     + footerColumn('footer-trust', 'Trust Center', trust)
     + footerColumn('footer-help', 'Help', help)
     + footerColumn('footer-blog', 'Blog', blog)
-    + `</div><p class="footer-legal"><small>© 2026 Juno AI Labs · Rally</small></p></footer>`;
+    + `</div><p class="footer-legal"><small>© 2026 Juno AI Labs Inc</small><small>Made for teams, not just people</small></p>`
+    + `<p class="footer-giant" aria-hidden="true">rally</p></footer>`;
 }
 
 /** Every rival in one table, each row linking to its own page. */
@@ -100,7 +119,11 @@ export function renderLlmsTxt(): string {
 
 ## Product
 
-- [Rally home](${ORIGIN}/): what Rally is, features, pricing, team, and technology
+- [Rally home](${ORIGIN}/): what Rally is, Canvases, Sidekicks, connectors, pricing and team
+- [Canvases](${ORIGIN}/canvases/): shared Canvases where a team and Rally make documents, spreadsheets and sites
+- [Sidekicks](${ORIGIN}/sidekicks/): shared AI agents that run on a schedule or when something happens
+- [Pricing](${ORIGIN}/pricing/): per-organization plans with no seat limit, and the free trial
+- [Company](${ORIGIN}/company/): who builds Rally and why
 - [Help Center](${ORIGIN}/help/): the Rally manual, from installing Rally to running an Organization. Its own index of every page, each published as Markdown: ${ORIGIN}/help/llms.txt
 
 ## Compared to
@@ -131,8 +154,20 @@ function renderLandingSections(): string {
   return renderSiteChrome(readFileSync(new URL('./landing-sections.html', import.meta.url), 'utf8'));
 }
 
+/**
+ * Blocks more than one page shows, each one file in `src/partials/` named
+ * after its marker: the Canvas scene that `site-motion.ts` plays, the pricing
+ * tiers, the founders and the closing call. Read on each render, like the
+ * landing sections, and run through the markers so a partial may hold one.
+ */
+const PARTIALS = ['live-canvas', 'pricing-tiers', 'people', 'closing'] as const;
+const renderPartial = (name: string) => (): string =>
+  renderSiteChrome(readFileSync(new URL(`./partials/${name}.html`, import.meta.url), 'utf8'));
+
 const markers: Record<string, () => string> = {
+  ...Object.fromEntries(PARTIALS.map((name) => [name, renderPartial(name)])),
   'site-nav': renderSiteNav,
+  'site-header': renderSiteHeader,
   'landing-sections': renderLandingSections,
   'site-footer': renderSiteFooter,
   'comparison-table': renderComparisonTable,

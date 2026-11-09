@@ -38,7 +38,7 @@ attributed while the pixel keeps firing.
 Two kinds of tracked click also send X a custom event, from the browser
 (`reportXIntent`): every link whose site action is `download` sends "Rally | Mac
 download intent" (`tw-rg7j5-rg7j6`), and every web-app entry link
-(`web-app-hero`, `web-app-offer`, `sign-in-header`) sends "Rally | Sign up
+(`web-app-hero`, `web-app-offer`, `web-app-closing`, `sign-in-header`) sends "Rally | Sign up
 intent" (`tw-rg7j5-ri4zl`). The header button's label alternates between Sign in
 and Sign up, so that event also counts returning users signing in. The X Conversion
 API (server-side conversions) is not wired: nothing on the server confirms a
@@ -63,20 +63,21 @@ Tagged links on the landing page, by `data-site-action` id:
 | Id | Link | Action · placement |
 | --- | --- | --- |
 | `sign-in-header` | Header sign-in button, its label rolling between Sign in to Rally and Sign up for Rally, on every device | primary_cta · header |
-| `web-app-hero` | Hero Sign up now (app.rallywith.ai), the left and primary button | secondary_cta · hero |
+| `web-app-hero` | Hero Sign up now (app.rallywith.ai), the left and primary button; also the first web-app button on `/canvases/` and `/sidekicks/` | secondary_cta · hero |
 | `web-app-offer` | Sign up in the pilot offer card (app.rallywith.ai, with `pilotOfferFirstSeen`), which slides in two seconds after the page loads | primary_cta · offer |
-| `download-hero` | Hero Download the macOS app, the right and secondary button, hidden on touch-only devices | download · hero |
-| `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
+| `download-hero` | Hero Download for Mac, the right and secondary button, hidden on touch-only devices; also on `/canvases/` | download · hero |
+| `web-app-closing` | Open Rally in the browser, in the ink closing section at the foot of `/` and every product page | secondary_cta · body |
+| `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons, on `/` and `/pricing/` | download · pricing · plan |
 | `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
-| `demo-request` | Ask for a demo (emails Katherine and Alex) | demo_request · sidekicks |
-| `founder-contact` | Founder photos and names | founder_contact · team |
+| `demo-request` | Ask for a demo (emails Katherine and Alex), in the Sidekicks chapter and the `/sidekicks/` hero | demo_request · sidekicks |
+| `founder-contact` | Founder photos and names, on `/` and `/company/` | founder_contact · team |
 | `support-contact-footer` | Footer help@ email | support_contact · footer |
 
 `web-app-hero` still reports `secondary_cta · hero`, though it is now the primary
 hero button on `/`: the value is kept so its history stays comparable, and
 `/start-fast/` shares the id. Its clicks cannot be split by device.
 
-Each activation of `web-app-hero`, `web-app-offer` or `sign-in-header` creates a fresh opaque
+Each activation of `web-app-hero`, `web-app-offer`, `web-app-closing` or `sign-in-header` creates a fresh opaque
 `flowId`, reports it on the action, and sends it to the browser as `signupFlowId`.
 Copied links stay clean. Browser entry validates and retains it in tab-scoped
 session storage before removing the URL field, so refreshing before sign-in
@@ -105,6 +106,11 @@ their own `$pathname`; see [`landing-comparisons.md`](landing-comparisons.md).
 the hero is shared with `/` through `apps/site/src/landing-sections.html`. It
 uses the same link ids, so compare the two by `$pathname`, which every page view
 and click now carries. It is `noindex`, so search engines never list it beside `/`.
+
+The product pages (`/canvases/`, `/sidekicks/`, `/pricing/`, `/company/`) reuse
+the home page's ids for the same buttons, so they too are told apart by
+`$pathname`; they are page class `landing`. They do not load Apollo, so they
+need no landing CSP override.
 
 ## Don't lose on a redesign
 

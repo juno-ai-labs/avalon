@@ -4,9 +4,9 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/site/src/access-copy.ts`, `landing.css`, `index.html` | Replaceable static landing copy, layout, and direct canonical installer link. |
+| `apps/site/src/access-copy.ts`, `site.css`, `index.html` | Replaceable static landing copy, layout, and direct canonical installer link. The look and page structure are owned by [`site-brand-system.md`](site-brand-system.md). |
 | `apps/site/src/pilot-offer.ts` | The landing's pilot offer card: when it slides in, each visitor's six-day deadline, and remembering that a visitor closed it. |
-| `apps/site/src/section-nav.ts`, `src/fonts/`, `src/assets/` | The landing's current-section marker, its self-hosted Barlow faces, and its hero and team images. |
+| `apps/site/src/section-nav.ts`, `src/fonts/`, `src/assets/` | The comparison pages' current-section marker, the site's self-hosted faces, and the team photos. |
 | `apps/api/src/services/access-request-content.ts` | Replaceable acknowledgement subject and body, delivered as plain text. |
 | `apps/api/src/services/access-request-service.ts` | Persist-before-send acknowledgement, deduplication and explicit retry. |
 | `apps/api/src/routes/private-access.ts` | Global public intake and explicit POST download redemption. |

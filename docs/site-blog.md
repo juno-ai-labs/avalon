@@ -17,7 +17,7 @@ image, and the same site-chrome markers supply the header and footer.
 | --- | --- |
 | `apps/site/content/blog/YYYY-MM-DD-<title>.md` | One post. The file name gives the date; front matter gives `slug`, `title`, `description` and `author`; the rest is the body. |
 | `apps/site/src/blog-pages.ts` | Loads and validates posts; renders the changelog index and each post. |
-| `apps/site/src/landing.css` | The `.changelog` index layout and the `.blog` post layout. |
+| `apps/site/src/site.css` | The `.changelog` index layout and the `.blog` post layout. |
 | `apps/site/src/site-chrome.ts` | `blogPosts`, the footer's Blog column, the blog sitemap, and the blog part of `llms.txt`. |
 | `apps/site/src/social-cards.ts` | `renderBlogCard`. |
 | `apps/site/vite.config.ts` | Registers the pages and emits each post's `social.png`, `index.md`, and `/blog/sitemap.xml`. |

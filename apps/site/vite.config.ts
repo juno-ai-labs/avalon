@@ -110,10 +110,6 @@ export default defineConfig({
         });
       },
     },
-    // The technology schematic is its own entry so three.js stays out of the
-    // landing page. `technology-loader.ts` adds its script when the figure
-    // nears the screen, reading the URL from `data-tech-src`.
-    hashedEntrySource('technology', 'data-tech-src', 'technology.ts'),
     // PostHog's SDK is its own entry so pages that never run it never download
     // it. `posthog-loader.ts` adds its script, reading the URL from this meta tag.
     hashedEntrySource('posthog', 'content', 'posthog.ts'),
@@ -139,7 +135,10 @@ export default defineConfig({
       input: {
         main: `${projectRoot}index.html`,
         startFast: `${projectRoot}start-fast/index.html`,
-        technology: `${projectRoot}src/technology.ts`,
+        canvases: `${projectRoot}canvases/index.html`,
+        sidekicks: `${projectRoot}sidekicks/index.html`,
+        pricing: `${projectRoot}pricing/index.html`,
+        company: `${projectRoot}company/index.html`,
         posthog: `${projectRoot}src/posthog.ts`,
         help: `${projectRoot}src/help.ts`,
         concepts: `${projectRoot}concepts/index.html`,

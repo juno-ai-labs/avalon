@@ -352,6 +352,7 @@ export const SITE_ACTION_LINKS = {
   'download-hero': { action: 'download', placement: 'hero' },
   'web-app-hero': { action: 'secondary_cta', placement: 'hero' },
   'web-app-offer': { action: 'primary_cta', placement: 'offer' },
+  'web-app-closing': { action: 'secondary_cta', placement: 'body' },
   'download-pricing-start': { action: 'download', placement: 'pricing', plan: 'start' },
   'download-pricing-grow': { action: 'download', placement: 'pricing', plan: 'grow' },
   'contact-pricing-enterprise': { action: 'founder_contact', placement: 'pricing', plan: 'enterprise' },
@@ -361,7 +362,7 @@ export const SITE_ACTION_LINKS = {
 } satisfies Record<string, SiteActionLink>;
 
 // Links into the web app, each activation of which starts a signup flow.
-const WEB_ENTRY_LINKS = new Set(['web-app-hero', 'web-app-offer', 'sign-in-header']);
+const WEB_ENTRY_LINKS = new Set(['web-app-hero', 'web-app-offer', 'web-app-closing', 'sign-in-header']);
 
 export function siteActionForLink(id: string | undefined): SiteActionLink | null {
   if (!id || !Object.hasOwn(SITE_ACTION_LINKS, id)) return null;

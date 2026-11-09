@@ -179,23 +179,27 @@ describe('public Rally site', () => {
     const ids = (page: string) => [...page.matchAll(/data-site-action="([^"]+)"/gu)].map(([, id]) => id);
     const home = renderSiteChrome(readProjectFile('index.html'));
     const variant = renderSiteChrome(readProjectFile('start-fast/index.html'));
+    const productPages = ['canvases', 'sidekicks', 'pricing', 'company'].map((page) => renderSiteChrome(readProjectFile(`${page}/index.html`)));
     // A misspelled id is ignored at runtime, which would silently stop counting that link.
-    for (const id of [...ids(home), ...ids(variant)]) expect(siteActionForLink(id), id).not.toBeNull();
+    for (const id of [home, variant, ...productPages].flatMap(ids)) expect(siteActionForLink(id), id).not.toBeNull();
+    // The pricing page carries every plan's button, as the home page does.
+    expect(ids(productPages[2] ?? '')).toEqual(expect.arrayContaining(['download-pricing-start', 'download-pricing-grow', 'contact-pricing-enterprise']));
     // A tag removed in a redesign is just as silent: every tracked link must still be on the home page.
     // Checked against the home page alone, so a variant can't hide a tag the home page lost.
     for (const id of Object.keys(SITE_ACTION_LINKS)) expect(ids(home), id).toContain(id);
     // Each installer link carries its own id, so the dashboard can tell them apart.
-    for (const link of `${home}${variant}`.match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? []) {
+    for (const link of [home, variant, ...productPages].join('').match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? []) {
       expect(link).toMatch(/data-site-action="download-[a-z-]+"/u);
     }
   });
 
-  it('lists every comparison and Trust Center page in the footer columns', () => {
+  it('lists every product, comparison and Trust Center page in the footer columns', () => {
     const footer = renderSiteChrome('<!-- rally:site-footer -->');
     const column = (title: string): string[] => {
       const nav = footer.match(new RegExp(`<h2[^>]*>${title}</h2><ul class="footer-links">(.*?)</ul>`, 'u'))?.[1] ?? '';
       return [...nav.matchAll(/href="([^"]+)"/gu)].flatMap(([, href]) => (href ? [href] : []));
     };
+    expect(column('Product')).toEqual(['/canvases/', '/sidekicks/', '/pricing/', '/company/']);
     expect(column('Compared to')).toEqual([
       '/compare/claude-tag/', '/compare/grok-bot/', '/compare/viktor/', '/compare/chatgpt/',
       '/compare/slack/',
@@ -258,7 +262,7 @@ describe('public Rally site', () => {
     const nav = renderSiteChrome('<!-- rally:site-nav -->');
     const links = [...nav.matchAll(/<a [^>]*href="([^"]+)"([^>]*)>(.*?)<\/a>/gu)];
     expect(links.map(([, href, attrs, body]) => `${/aria-label="([^"]+)"/u.exec(attrs ?? '')?.[1] ?? body} ${href}`)).toEqual([
-      'Features /#features', 'Pricing /#pricing', 'Compare /#compare',
+      'Canvases /canvases/', 'Sidekicks /sidekicks/', 'Pricing /pricing/', 'Compare /#compare', 'Company /company/',
       'Sign in to Rally or sign up for Rally https://app.rallywith.ai',
     ]);
     expect(nav).toContain('<span>Sign in to Rally</span><span>Sign up for Rally</span>');
