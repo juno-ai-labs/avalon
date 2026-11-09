@@ -60,7 +60,7 @@ export function renderSiteFooter(): string {
     '<a href="/#team">Team</a>',
   ];
   return `<footer class="rally-footer"><div class="footer-grid">`
-    + `<div class="footer-brand"><a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-volt.svg" width="24" height="24" alt=""><span>rally</span></a>`
+    + `<div class="footer-brand"><a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt=""><span>rally</span></a>`
     + `<p class="footer-tagline">Made for people who work with AI, not on it.</p></div>`
     + footerColumn('footer-product', 'Product', product)
     + footerColumn('footer-compared', 'Compared to', compared)

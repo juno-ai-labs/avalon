@@ -212,7 +212,7 @@ export function renderComparisonPage(comparison: Comparison): string {
 <body>
 <a class="skip-link" href="#content">Skip to content</a>
 <header class="site-header"><div class="site-header-inner">
-<a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-volt.svg" width="24" height="24" alt="">rally</a>
+<a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt="">rally</a>
 <!-- rally:site-nav -->
 </div></header>
 <main id="content">
