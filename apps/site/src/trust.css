@@ -1,11 +1,11 @@
 /* Trust Center pages. Loads after landing.css and reuses its tokens, fonts,
    header, footer, buttons and eyebrow, so the two read as one site. */
 .trust-center,.legal-shell{max-width:1400px;margin:auto;padding:0 var(--gutter)}
-.trust-center h1,.legal-document h1{max-width:none;margin:32px 0 0;font-family:var(--display-font);font-weight:500;line-height:1;letter-spacing:.02em;text-transform:uppercase;white-space:normal;text-align:left}
+.trust-center h1,.legal-document h1{max-width:none;margin:32px 0 0;font-family:var(--display-font);font-weight:750;line-height:.96;letter-spacing:-.045em;white-space:normal;text-align:left}
 .trust-center h1{font-size:4.5rem}
 h1 em,h2 em{font-style:normal;color:var(--muted)}
-.trust-center h2{font-family:var(--display-font);font-size:3rem;font-weight:500;line-height:1;letter-spacing:.02em;text-transform:uppercase}
-.trust-center h3{font-family:var(--display-font);font-size:24px;font-weight:500;line-height:1.15}
+.trust-center h2{font-family:var(--display-font);font-size:3rem;font-weight:750;line-height:1;letter-spacing:-.04em}
+.trust-center h3{font-family:var(--display-font);font-size:24px;font-weight:700;letter-spacing:-.03em;line-height:1.15}
 .site-header nav a[aria-current]{color:var(--paper)}
 
 .trust-hero{padding:56px 0 88px;border-bottom:1px solid var(--hairline)}
@@ -14,7 +14,7 @@ h1 em,h2 em{font-style:normal;color:var(--muted)}
 .trust-kicker::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--green)}
 .trust-hero-copy>p:not(.trust-kicker){max-width:46rem;margin-top:28px;color:var(--soft);font-size:20px;line-height:1.6}
 .trust-contact-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:36px}
-.trust-contact-row a{display:inline-flex;align-items:center;gap:10px;padding:12px 24px;border:1px solid oklch(.97 0 0/.25);border-radius:2px;font-size:var(--small);font-weight:500;transition:background .15s}
+.trust-contact-row a{display:inline-flex;align-items:center;gap:10px;padding:12px 24px;border:1px solid var(--hairline-strong);border-radius:999px;font-size:var(--small);font-weight:500;transition:background .15s}
 .trust-contact-row a:first-child{background:var(--paper);border-color:var(--paper);color:var(--ink)}
 .trust-contact-row a:hover{background:var(--wash)}
 .trust-contact-row a:first-child:hover{background:var(--paper);opacity:.85}
@@ -52,14 +52,14 @@ h1 em,h2 em{font-style:normal;color:var(--muted)}
 .trust-resource-list>a{display:grid;grid-template-columns:220px minmax(0,1fr) auto;gap:24px;align-items:center;padding:24px 16px;border-bottom:1px solid var(--hairline);transition:background .15s}
 .trust-resource-list>a:hover{background:var(--wash)}
 .trust-resource-list span{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
-.trust-resource-list strong{font-family:var(--display-font);font-size:28px;font-weight:500;line-height:1.15}
+.trust-resource-list strong{font-family:var(--display-font);font-size:28px;font-weight:700;letter-spacing:-.03em;line-height:1.15}
 .trust-resource-list i{font-family:var(--mono);font-style:normal;color:var(--muted);transition:color .15s,transform .15s}
 .trust-resource-list>a:hover i{color:var(--paper);transform:translateX(4px)}
 
 /* FAQ: the comparison pages' accordion. */
 .trust-faq-list{border-top:1px solid var(--hairline)}
 .trust-faq-list details{border-bottom:1px solid var(--hairline)}
-.trust-faq-list summary{display:flex;justify-content:space-between;gap:24px;padding:20px 0;cursor:pointer;list-style:none;font-family:var(--display-font);font-size:22px;font-weight:500;line-height:1.25}
+.trust-faq-list summary{display:flex;justify-content:space-between;gap:24px;padding:20px 0;cursor:pointer;list-style:none;font-family:var(--display-font);font-size:22px;font-weight:700;letter-spacing:-.03em;line-height:1.25}
 .trust-faq-list summary::-webkit-details-marker{display:none}
 .trust-faq-list summary span{font-family:var(--mono);font-size:16px;color:var(--muted);transition:transform .15s}
 .trust-faq-list details[open] summary span{transform:rotate(45deg)}
@@ -71,7 +71,7 @@ h1 em,h2 em{font-style:normal;color:var(--muted)}
 .trust-reporting>p:first-child{font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--muted)}
 .trust-reporting h2{margin-top:24px}
 .trust-reporting>p:not(:first-child){max-width:46rem;margin-top:24px;color:var(--soft)}
-.trust-reporting>a{display:inline-flex;align-items:center;gap:10px;margin-top:32px;padding:12px 24px;border:1px solid var(--paper);border-radius:2px;background:var(--paper);color:var(--ink);font-size:var(--small);font-weight:500;transition:opacity .15s}
+.trust-reporting>a{display:inline-flex;align-items:center;gap:10px;margin-top:32px;padding:12px 24px;border:1px solid var(--volt);border-radius:999px;background:var(--volt);color:var(--volt-ink);font-size:var(--small);font-weight:500;transition:opacity .15s}
 .trust-reporting>a:hover{opacity:.85}
 
 /* Policy documents: the landing's side rail beside a long-form column. */
@@ -91,8 +91,8 @@ h1 em,h2 em{font-style:normal;color:var(--muted)}
 .legal-lede{max-width:46rem;margin-top:24px;color:var(--soft);font-size:20px;line-height:1.6}
 .legal-meta{display:flex;flex-wrap:wrap;gap:8px 24px;margin-top:24px;font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
 .legal-section{max-width:48rem;padding:40px 0 0;color:var(--soft);line-height:1.7}
-.legal-section h2{margin-bottom:20px;font-family:var(--display-font);font-size:30px;font-weight:500;line-height:1.15;color:var(--paper)}
-.legal-section h3{margin:28px 0 12px;font-family:var(--display-font);font-size:22px;font-weight:500;line-height:1.2;color:var(--paper)}
+.legal-section h2{margin-bottom:20px;font-family:var(--display-font);font-size:30px;font-weight:700;letter-spacing:-.03em;line-height:1.15;color:var(--paper)}
+.legal-section h3{margin:28px 0 12px;font-family:var(--display-font);font-size:22px;font-weight:700;letter-spacing:-.03em;line-height:1.2;color:var(--paper)}
 .legal-section p+p,.legal-section p+ul,.legal-section ul+p,.legal-section ol+p,.legal-section p+ol{margin-top:16px}
 .legal-section ul,.legal-section ol{margin:16px 0 0;padding-left:20px}
 .legal-section li+li{margin-top:10px}

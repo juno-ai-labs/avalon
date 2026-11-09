@@ -1,8 +1,8 @@
 /** Approved landing copy. */
 export const accessCopy = {
-  title: 'Shared chat between multiple humans and AI',
-  headline: 'Two Humans and AI in a single cooperative chat',
-  description: 'Rally is an AI platform that allows for multiple humans to work with an AI agent in shared chats. Open a Canvas with your coworkers and work together on research, documents, spreadsheets and sites, or share a Sidekick that does the recurring work.',
+  title: 'Rally · One place for you, your coworkers, and AI',
+  headline: 'One place for you, your coworkers, and AI.',
+  description: 'Rally is shared AI for teams. Open a Canvas and make a document, a spreadsheet or a site with Rally and your coworkers in one conversation. Share a Sidekick to run the recurring work for all of you.',
 };
 
 export function renderAccessCopy(html: string): string {
