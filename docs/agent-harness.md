@@ -1815,6 +1815,20 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
+### 2026-11-09 — The AI-chat reading skills leave the catalogue
+
+**What changed:** `reading-an-ai-chat`, `reading-chatgpt-conversations` and
+`reading-claude-conversations` left `BUILT_IN_SKILLS`, and the `import_finish`
+and `import_fail` labels left `tool-activity.ts`.
+
+**Why:** they were owned by the browser plugin, which no run can reach, and
+named tools that no longer exist (the dead-code PRD, phase 5).
+
+**Consequences:** no run's prompt changed, since none had the plugin in scope;
+the catalogue is ten skills.
+
+Shipped in juno-ai-labs/avalon#TBD.
+
 ### 2026-11-09 — The prompts speak of Canvases and Sidekicks, a run's report is its final message, a blocked run asks, and seeded runs are gone
 
 **What changed:** The standing work prompt (`prompts/workstream.ts`) replaces

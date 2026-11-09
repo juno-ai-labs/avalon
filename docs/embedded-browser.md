@@ -186,6 +186,26 @@ real Electron verification.
 
 ## Changelog
 
+### 2026-11-09 — The browser keeps only the commands its controls send
+
+**What changed:** the script realm, agent-driven mode and its network
+recorder, and every agent-only command (`script`, `script_reset`, `snapshot`,
+`screenshot`, `click`, `scroll`, `type`, `key`, `evaluate`, `cdp`, `network`,
+`response_body`) were deleted. The command protocol is `open`, `close`,
+`select`, `move`, `navigate`, `back`, `forward`, `reload` and `stop`.
+
+**Why:** no agent drives the browser since the session import went, and the
+renderer never sent the agent commands (the dead-code PRD, phase 5).
+
+**Considered and rejected:** keeping the commands for a future agent surface;
+they kept page script and DevTools on the main process's IPC surface for no
+caller.
+
+**Consequences:** a feature that lets an agent drive the browser again adds
+its own commands and their isolation, starting from the retired record above.
+
+Shipped in juno-ai-labs/avalon#TBD.
+
 ### 2026-10-22 — Leave the browser visible beside a thread menu
 
 **What changed:** Browser placement measures a menu's positioned wrapper and

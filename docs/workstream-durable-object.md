@@ -1852,6 +1852,27 @@ of the creator-only rule went with the import suite and was never replaced.
 
 ## Changelog
 
+### 2026-11-09 — Desktop actions and activity effects stop being produced
+
+**What changed:** AgentLoopDO's desktop-action methods, its storage class, the
+`desktopAction` local authority and the browser plugin were deleted; an
+`answer_desktop_action` frame is parsed, logged as
+`desktop_action_answer_dropped` and dropped. The conversation stopped queueing
+an `activity_event` effect on every participant add and delivered turn.
+
+**Why:** no profile hands a run the desktop-action executor, and nothing has
+acted on an `activity_event` since migration 139 (the dead-code PRD, phase 5).
+
+**Considered and rejected:** removing the frame and effect schemas in the same
+change; a desktop still in use, or an effect already queued, would fail to
+parse.
+
+**Consequences:** the frame schemas, `WorkstreamActivityEffectSchema` and the
+`desktop_actions` table go in a later step, once the oldest desktop in use has
+updated and the effect queue has drained.
+
+Shipped in juno-ai-labs/avalon#TBD.
+
 ### 2026-11-09 — The conversation class is `AgentLoopDO`, a conversation belongs to a Canvas or a Sidekick, and the Thread machinery is deleted
 
 **What changed:** `SubstreamAgent` is renamed `AgentLoopDO` by Wrangler
