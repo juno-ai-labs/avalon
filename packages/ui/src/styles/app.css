@@ -6998,7 +6998,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-card:hover { background-image: var(--hover-layer); }
 .canvas-card:has(.sidekick-list-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .canvas-card-shot { border-bottom: 1px solid var(--av-sys-color-border-default); box-sizing: border-box; display: grid; height: 150px; overflow: hidden; place-items: center; position: relative; }
-.canvas-card-live { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 6px; padding: 3px 8px 3px 4px; position: absolute; right: 26px; top: 22px; }
+.canvas-card-presence { left: 12px; position: absolute; top: 12px; z-index: 1; }
+.canvas-card-data { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 4px; padding: 4px 8px; position: absolute; right: 12px; top: 12px; }
 .canvas-card-body { padding: 12px 14px 14px; }
 .canvas-card-body h3 { display: flex; font-size: 15px; font-weight: 600; margin: 0; min-width: 0; }
 .canvas-card-body h3 > a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

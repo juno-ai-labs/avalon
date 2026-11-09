@@ -1,4 +1,5 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
+import { IconDatabase } from '@tabler/icons-react';
 import { Plus, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -13,10 +14,11 @@ import { useCollaborationSession, useShellCapabilities } from '../lib/collaborat
 import { useDocumentTitle } from '../lib/document-title';
 import { formatSidebarActivityTime } from '../lib/format';
 
-type CanvasFilter = 'all' | 'mine' | 'shared' | 'sidekicks';
+type CanvasFilter = 'all' | 'data' | 'mine' | 'shared' | 'sidekicks';
 
 const FILTERS: ReadonlyArray<readonly [CanvasFilter, string]> = [
-  ['all', 'Everyone'],
+  ['all', 'All'],
+  ['data', 'Data'],
   ['mine', 'Made by me'],
   ['shared', 'Shared with me'],
   ['sidekicks', 'From Sidekicks'],
@@ -25,6 +27,7 @@ const FILTERS: ReadonlyArray<readonly [CanvasFilter, string]> = [
 function matchesFilter(row: CanvasSidebarRow, filter: CanvasFilter, currentUserId: string | undefined): boolean {
   switch (filter) {
     case 'all': return true;
+    case 'data': return row.hasLiveArtifact === true;
     case 'mine': return row.createdByUserId === currentUserId;
     case 'shared': return row.sharedWithMe;
     case 'sidekicks': return row.writerSidekickId !== null;
@@ -34,7 +37,7 @@ function matchesFilter(row: CanvasSidebarRow, filter: CanvasFilter, currentUserI
 /**
  * `/canvases`: every Canvas this person can open, the list the workspace
  * socket keeps (`workspace_canvas_list`), laid out as the Sidekicks library is.
- * The people in a Canvas now lift it into Live now; the rest are Recent, most
+ * A database-backed artifact lifts a Canvas into Data; the rest are Recent, most
  * recently active first. With none at all, the page is only how to make one.
  */
 export function CanvasesHomeScreen(): React.JSX.Element {
@@ -58,8 +61,8 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const needle = search.trim().toLocaleLowerCase();
   const shown = (rows ?? []).filter((row) => matchesFilter(row, filter, currentUserId)
     && (needle === '' || row.title.toLocaleLowerCase().includes(needle)));
-  const live = shown.filter((row) => othersPresent(row, currentUserId).length > 0);
-  const recent = shown.filter((row) => othersPresent(row, currentUserId).length === 0);
+  const withData = shown.filter((row) => row.hasLiveArtifact);
+  const recent = shown.filter((row) => !row.hasLiveArtifact);
   const row = (canvas: CanvasSidebarRow): React.JSX.Element => {
     const present = othersPresent(canvas, currentUserId).flatMap((userId) => {
       const member = membersById.get(userId);
@@ -68,9 +71,10 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     const run = canvasWrittenByRun(canvas, sidekicksById, currentUserId);
     const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.artifactKind, canvas.appearance);
     return <li className="canvas-card" key={canvas.id}>
-      <div aria-hidden="true" className="canvas-card-shot" style={{ background: tint }}>
-        <Icon color={ink} size={44} />
-        {present.length > 0 && <span className="canvas-card-live"><AvatarStack members={present} nameTooltip={false} showTooltip={false} />Live</span>}
+      <div className="canvas-card-shot" style={{ background: tint }}>
+        <Icon aria-hidden="true" color={ink} size={44} />
+        {present.length > 0 && <span className="canvas-card-presence"><AvatarStack currentUserId={currentUserId} members={present} presentUserIds={canvas.presentUserIds} /></span>}
+        {canvas.hasLiveArtifact && <span className="canvas-card-data"><IconDatabase aria-hidden="true" size={16} stroke={1.9} />Data</span>}
       </div>
       <div className="canvas-card-body">
         <h3><Link className="sidekick-list-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
@@ -100,16 +104,16 @@ export function CanvasesHomeScreen(): React.JSX.Element {
           <div aria-label="Canvas filter" className="sidekick-filters" role="group">
             {FILTERS.map(([value, label]) => <button aria-pressed={filter === value} key={value} onClick={() => setFilter(value)} type="button">{label}</button>)}
           </div>
-          {live.length > 0 && <section aria-labelledby="canvases-live-title" className="canvases-home-group">
-            <div className="sidekick-results-heading"><h2 id="canvases-live-title">Live now</h2><span>{`${live.length} ${live.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
-            <ul className="canvases-home-grid">{live.map(row)}</ul>
+          {withData.length > 0 && <section aria-labelledby="canvases-data-title" className="canvases-home-group">
+            <div className="sidekick-results-heading"><h2 id="canvases-data-title">Data</h2><span>{`${withData.length} ${withData.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
+            <ul className="canvases-home-grid">{withData.map(row)}</ul>
           </section>}
-          <section aria-labelledby="canvases-recent-title" className="canvases-home-group">
+          {(filter !== 'data' || withData.length === 0) && <section aria-labelledby="canvases-recent-title" className="canvases-home-group">
             <div className="sidekick-results-heading"><h2 id="canvases-recent-title">{needle ? 'Search results' : 'Recent'}</h2><span>{`${recent.length} ${recent.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
             {recent.length === 0
-              ? <EmptyState description="Try a different search or filter." title={live.length > 0 ? 'Nothing else here' : 'No matching Canvases'} />
+              ? <EmptyState description="Try a different search or filter." title={withData.length > 0 ? 'Nothing else here' : 'No matching Canvases'} />
               : <ul className="canvases-home-grid">{recent.map(row)}</ul>}
-          </section>
+          </section>}
         </>}
   </main>;
 }
