@@ -107,6 +107,10 @@ export const WORKSPACE_LOCAL_TABLES = [
   // one would mean every directory publish failing after its bytes had already
   // landed in the bucket.
   "artifact_registry",
+  // Emptied by WorkspaceDO migration 139 and kept by 141: `schedules` still
+  // names it in a foreign key. Routed so an accidental statement reaches the
+  // object.
+  "digest_schedules",
   // Shared: the workspace scheduler and the connector-poll paths still route
   // their statements here.
   "schedules",
