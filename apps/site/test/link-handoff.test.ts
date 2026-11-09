@@ -39,4 +39,16 @@ describe('the link handoff page', () => {
     expect(document.querySelector<HTMLAnchorElement>('#open-browser')!.href)
       .toBe('http://localhost:8794/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/');
   });
+
+  it('opens a message link at its message, in the app and on the web', async () => {
+    const turn = '00000000-0000-7000-8000-0000000000aa';
+    history.replaceState(null, '', `/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/?turn=${turn}&sequence=4`);
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)');
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    await import('../src/link-handoff');
+    expect(document.querySelector<HTMLAnchorElement>('#open-browser')!.href)
+      .toBe(`http://localhost:8794/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/?turn=${turn}&sequence=4`);
+    expect(document.querySelector<HTMLAnchorElement>('#open-rally')!.href)
+      .toBe(`rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/canvases/1111117Hxt1fAWDjN7TX?turn=${turn}&sequence=4`);
+  });
 });

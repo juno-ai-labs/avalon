@@ -106,7 +106,10 @@ A Canvas share's invitation email links to the Canvas on the web app
 
 Every `/app/` path renders one static page through a 200 rewrite in
 `_redirects`; the path stays in `window.location.pathname`, and
-`handoffPlan(pathname)` decides what the page does:
+`handoffPlan(pathname, search)` decides what the page does. A Canvas link's
+message query (`?turn=&sequence=`, `parseMessageSearch`) joins the target, so
+the deep link and the web app's URL, both minted from it, open at that
+message; any other query is dropped, never forwarded:
 
 - **A Canvas or Sidekick link.** The heading reads `Opening “<name>” in
   Rally`, with the name cut at 40 characters. Holding a link is the permission
@@ -382,7 +385,11 @@ route and the shell hash carry UUIDs.
 **What a future change must respect:** the message query is accepted only on
 a Canvas link with no artifact segment, as exactly `turn` and `sequence`;
 any other query is still refused. A build before this refuses such a link
-(an older Mac opens the app without navigating).
+(an older Mac opens the app without navigating). The handoff page first read
+only the path, so it opened a message link at the Canvas's default spot on
+both hosts; it now reads the query into the target and mints both onward
+links from it, dropping a query neither app would accept rather than
+forwarding a link the web app refuses.
 
 Shipped in juno-ai-labs/avalon#1490.
 
