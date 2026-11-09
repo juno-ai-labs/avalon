@@ -47,7 +47,7 @@ describe("development authentication", () => {
       PUBLIC_API_BASE_URL: "http://127.0.0.1:8787",
     }));
     const first = await service.createDevelopmentSession();
-    // The desktop's sign-in sends its own default name; the browser's sends none.
+    // The desktop's sign-in sends its onboarding name; a bare POST /auth/dev/session takes the default.
     await expect(service.createDevelopmentSession("Rally Development"))
       .resolves.toMatchObject({ workspace: { id: first.workspace!.id, name: "Avalon Development" } });
     expect(database.prepare("SELECT name FROM workspaces WHERE id = ?").get(first.workspace!.id))
