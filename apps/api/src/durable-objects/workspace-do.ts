@@ -5290,9 +5290,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * retired: its directory row and viewer rows (and a Thread's Breakout
    * directory), and its parent state in every table
    * `HOSTED_PARENT_STATE_TABLES` names that the schema still holds, so a table
-   * phase C drops first is skipped. A Thread's resource links, which 147
+   * phase C drops first is skipped. A Thread's resource links, which 138
    * keeps for the Thread conversion, and a Sidekick's attachment to one of
-   * its conversations go with it; the pin and access tables 147 dropped no
+   * its conversations go with it; the pin and access tables 138 dropped no
    * longer reference them. Idempotent: a second call finds nothing to
    * delete.
    *
