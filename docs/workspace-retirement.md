@@ -123,7 +123,10 @@ Retirement runs in this order, and the order is the design:
    `childrenForRetirement` leaves receipted children out, so a pass cut off
    inside a large parent leaves the next pass only the children still open.
    The child receipt only saves work; the parent's receipt still decides
-   completion.
+   completion. A parent's children are closed `RETIREMENT_CHILD_CONCURRENCY`
+   at a time (10) through `settledBatches`: every call in a batch settles
+   before the next batch starts, and the first failure stops that parent with
+   no retire left in flight.
 5. **Finish when nothing is left unreceipted.** Completion is the workspace's own
    tombstone plus the absence of NULLs in the graph table, rather than a flag
    somebody sets. The tombstone is what says the enumeration happened: reading
@@ -451,6 +454,32 @@ telemetry roles.
   workspaces it was built for.
 
 ## Changelog
+
+### 2026-11-09 — The walk closes a parent's children ten at a time
+
+**What changed:** `retireWorkspaceGraph` closes one parent's conversations in
+batches of `RETIREMENT_CHILD_CONCURRENCY` (10) through the existing
+`settledBatches` helper, instead of one at a time. A batch settles in full
+before the next starts; the first failure in a batch still leaves the parent
+unreceipted and named in `failed`.
+
+**Why:** Even with per-child receipts, each pass closed only 150 to 180
+conversations before the ~240s cutoff, because each `retireObject` waits 0.1 to
+1.7s on a cold object and the bridge spent only 68 to 82ms of CPU in a whole
+pass. A demo parent with a few hundred conversations took several passes and
+several MCP timeouts. The team set the number to 10, choosing between 6, 10 and
+20; the reasoning is not recorded beyond that choice. At about 1.7s for the
+slowest call in a batch, that is about 6 conversations a second.
+
+**Considered and rejected:** A worker pool that starts the next child as soon
+as one finishes. It is somewhat faster, but `settledBatches` already exists and
+already guarantees no write is left in flight when the walk stops, which is
+the property a retirement needs.
+
+**Consequences:** Whether Cloudflare's 6 simultaneous open connections per
+invocation counts Durable Object calls is not established; if it does, calls
+beyond 6 queue rather than fail. The entry below rejected parallel retirement
+because a concurrency figure is the team's to set; it now has one.
 
 ### 2026-11-09 — The walk receipts each conversation, so a cut-off pass keeps its progress
 
