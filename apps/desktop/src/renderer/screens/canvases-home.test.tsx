@@ -147,13 +147,13 @@ describe('CanvasesHomeScreen', () => {
     fireEvent.change(within(card).getByRole('textbox', { name: 'Prompt' }), { target: { value: 'A tracker for our Q1 hiring plan' } });
     fireEvent.click(within(card).getByRole('button', { name: 'Start' }));
     expect(await screen.findByText('Opened canvas')).toBeInTheDocument();
-    expect(createCanvas).toHaveBeenCalledWith({ prompt: { text: 'A tracker for our Q1 hiring plan', clientMessageId: expect.any(String) } });
+    expect(createCanvas).toHaveBeenCalledWith({ canvasId: expect.any(String), prompt: { text: 'A tracker for our Q1 hiring plan', clientMessageId: expect.any(String) } });
   });
 
   it('makes an empty Canvas from New Canvas', async () => {
     renderHome(clientWith([canvas('00000000-0000-7000-8000-0000000000c1', 'Mine')]));
     fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
-    await waitFor(() => expect(createCanvas).toHaveBeenCalledWith({}));
+    await waitFor(() => expect(createCanvas).toHaveBeenCalledWith({ canvasId: expect.any(String) }));
     expect(await screen.findByText('Opened canvas')).toBeInTheDocument();
   });
 

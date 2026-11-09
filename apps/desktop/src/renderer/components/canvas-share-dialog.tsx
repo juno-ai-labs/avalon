@@ -20,6 +20,18 @@ const VISIBILITY_COPY: Record<CanvasVisibility, { label: string; description: st
 };
 
 /**
+ * What a choice lets in. A Canvas a Sidekick writes is also open to everyone
+ * the Sidekick is shared with, whichever is chosen (`canvasAdmits`'s writer
+ * audience), so its copy says so rather than "Nobody else".
+ */
+function visibilityDescription(value: CanvasVisibility, written: boolean): string {
+  if (!written || value === 'workspace') return VISIBILITY_COPY[value].description;
+  return value === 'creator'
+    ? 'And everyone the Sidekick that writes it is shared with.'
+    : 'The people chosen below, guests among them, and everyone the Sidekick that writes it is shared with.';
+}
+
+/**
  * Who can open a Canvas (`docs/canvases.md#who-can-open-a-canvas`). Its
  * creator, the Organization's owners and administrators, and a Sidekick's
  * managers for a Canvas it writes change it (`canManage` on the detail); anyone
@@ -100,7 +112,7 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
   const creator = membersById.get(canvas.createdByUserId);
   if (!canvas.canManage) {
     return <div className="canvas-share">
-      <p className="canvas-share-visibility"><strong>{VISIBILITY_COPY[canvas.visibility].label}</strong>{VISIBILITY_COPY[canvas.visibility].description}</p>
+      <p className="canvas-share-visibility"><strong>{VISIBILITY_COPY[canvas.visibility].label}</strong>{visibilityDescription(canvas.visibility, canvas.writerSidekickId !== null)}</p>
       <PeopleList ids={[canvas.createdByUserId, ...canvas.participantUserIds]} membersById={membersById} owner={canvas.createdByUserId} />
       <p className="canvas-share-note">Only {creator ? creator.name : 'its creator'} and the Organization’s administrators can change who can open it.</p>
     </div>;
@@ -142,7 +154,7 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
       <legend className="sr-only">Who can open it</legend>
       {(['creator', 'participants', 'workspace'] as const).map((value) => <label className="canvas-share-option" key={value}>
         <input checked={visibility === value} className="choice-control" name="canvas-visibility" onChange={() => setVisibility(value)} type="radio" value={value} />
-        <span><strong>{value === 'creator' && canvas.createdByUserId === session?.user.id ? 'Only you' : VISIBILITY_COPY[value].label}</strong><small>{VISIBILITY_COPY[value].description}</small></span>
+        <span><strong>{value === 'creator' && canvas.createdByUserId === session?.user.id ? 'Only you' : VISIBILITY_COPY[value].label}</strong><small>{visibilityDescription(value, canvas.writerSidekickId !== null)}</small></span>
       </label>)}
     </fieldset>
     {showPeople && <section aria-label="People" className="canvas-share-people">

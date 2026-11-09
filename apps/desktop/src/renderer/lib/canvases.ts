@@ -1,11 +1,12 @@
 import type { CanvasEditor, CanvasSidebarRow } from '@rally/contracts';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useOptionalCollaborationSession } from './collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from './sidebar-list-store';
 import { ApiError, type RallyApi } from './api';
 import { sidekickRunSearch } from './sidekick-status';
+import { uuidV7 } from './telemetry';
 import type { AutomationSummary, WorkspaceMember } from './types';
 import { useWorkspaceMembers } from './workspace-members';
 
@@ -205,15 +206,38 @@ export function canvasWrittenByRun(
  * Make a Canvas and open it. With a prompt, it is the Chat's first message,
  * sent by the server as the creator's (`POST /canvases`), so the Canvas opens
  * on a conversation already under way.
+ *
+ * One attempt series makes one Canvas. A call while one is in flight (a
+ * double click) answers with that one rather than making a second, and a
+ * retry of the same prompt after a failure sends the same `canvasId` and
+ * `clientMessageId`, which the server answers as a replay
+ * (`HostedCanvas.create`), so a request that landed but whose answer was lost
+ * does not make a second Canvas. Success ends the series.
  */
 export function useCreateCanvas(): (prompt?: string) => Promise<void> {
   const api = useOptionalCollaborationSession()?.api;
   const navigate = useNavigate();
-  return useCallback(async (prompt?: string) => {
-    if (!api) throw new Error('Rally is not connected yet.');
-    const text = prompt?.trim();
-    const created = await api.createCanvas(text ? { prompt: { text, clientMessageId: crypto.randomUUID() } } : {});
-    void navigate(canvasRoute(created.canvasId));
+  const series = useRef<{ text: string; canvasId: string; clientMessageId: string; inFlight: Promise<void> | null } | null>(null);
+  return useCallback((prompt?: string) => {
+    if (!api) return Promise.reject(new Error('Rally is not connected yet.'));
+    const text = prompt?.trim() ?? '';
+    const current = series.current;
+    if (current?.inFlight) return current.inFlight;
+    const attempt = current?.text === text ? current
+      : { text, canvasId: uuidV7(), clientMessageId: crypto.randomUUID(), inFlight: null };
+    series.current = attempt;
+    const inFlight = api.createCanvas({
+      canvasId: attempt.canvasId,
+      ...(text ? { prompt: { text, clientMessageId: attempt.clientMessageId } } : {}),
+    }).then((created) => {
+      if (series.current === attempt) series.current = null;
+      void navigate(canvasRoute(created.canvasId));
+    }, (cause: unknown) => {
+      attempt.inFlight = null;
+      throw cause;
+    });
+    attempt.inFlight = inFlight;
+    return inFlight;
   }, [api, navigate]);
 }
 

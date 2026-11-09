@@ -184,7 +184,7 @@ describe('the Canvases and Sidekicks sections', () => {
     expect(screen.getByRole('button', { name: 'Search organization' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/canvases/00000000-0000-7000-8000-0000000000c9'));
-    expect(api.createCanvas).toHaveBeenCalledWith({});
+    expect(api.createCanvas).toHaveBeenCalledWith({ canvasId: expect.any(String) });
   });
 
   it('says the build is out of date above lists the device cache painted, and offers the update', () => {
@@ -203,6 +203,31 @@ describe('the Canvases and Sidekicks sections', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
     expect(await screen.findByText('The Canvas could not be made. Try again.')).toBeInTheDocument();
     expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/);
+  });
+
+  it('makes one Canvas for a double click on New Canvas', async () => {
+    let answer!: (created: { canvasId: string; turnId: null }) => void;
+    api.createCanvas.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    useUiStore.getState().setSidebarSection('canvases');
+    renderSidebar();
+    fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
+    act(() => answer({ canvasId: '00000000-0000-7000-8000-0000000000c9', turnId: null }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/canvases/00000000-0000-7000-8000-0000000000c9'));
+    expect(api.createCanvas).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a failed New Canvas as the same Canvas, so an answer lost in transit makes no second one', async () => {
+    api.createCanvas.mockRejectedValueOnce(new Error('The organization is not reachable.'));
+    useUiStore.getState().setSidebarSection('canvases');
+    renderSidebar();
+    fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
+    await screen.findByText('The Canvas could not be made. Try again.');
+    // The failure's notice is a dialog over the sidebar; the button under it is the one pressed again.
+    fireEvent.click(screen.getByRole('button', { name: 'New Canvas', hidden: true }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/canvases/00000000-0000-7000-8000-0000000000c9'));
+    const [first, second] = api.createCanvas.mock.calls.map(([input]) => input as { canvasId: string });
+    expect(second!.canvasId).toBe(first!.canvasId);
   });
 
   it('draws the Sidekicks section with Needs input first, and New Sidekick', () => {

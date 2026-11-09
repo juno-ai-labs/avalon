@@ -163,10 +163,13 @@ answers with the Canvas id; the Canvas has no artifacts, which the client shows
 as the PRD's empty state. With `prompt`, the "Start from a prompt" card's first
 message is sent to the Chat as the creator's, through the ordinary message
 admission, and the answer names its turn. A guest makes no Canvas
-(`canvas_create_member_required`). The client mints the Canvas id and sends it
-as `canvasId`, so a retried create answers the Canvas the first made
-(`HostedCanvas.create` replays `created: false`) and the prompt's
-`clientMessageId` sends the first message once there. The replay is its
+(`canvas_create_member_required`). The client mints the Canvas id and the
+prompt's `clientMessageId` once per attempt series (`useCreateCanvas`) and
+sends the id as `canvasId`: a second press while one is in flight answers
+with that one, and a retry of the same prompt after a failure resends both,
+so a create that landed but lost its answer is answered with the Canvas the
+first made (`HostedCanvas.create` replays `created: false`) and the first
+message is sent once. A success ends the series. The replay is its
 creator's alone: somebody else naming the id, or an id another conversation
 already anchors in D1's `workstreams`, is refused with `canvas_id_unavailable`. `GET /canvases/:id` is the detail (row,
 participants, artifacts at their current versions, whether the reader may
@@ -543,7 +546,7 @@ the rail's first section and `/canvases` the landing route
   detail's 404 was stale, as right after a grant, so the pane opens the
   Canvas rather than drawing either state.
 - **No connection.** A conversation socket that cannot open without the
-  server saying why is the PRD's offline state, "Live edits resume when Rally
+  server saying why is the PRD's offline state, "This Canvas opens when Rally
   reconnects.", never "This Canvas is unavailable"; one the server refused
   names the Canvas and keeps its reason behind Connection details. Either
   keeps the Canvas's own header over it (`stateHeader`), its pill, Share and
@@ -576,6 +579,9 @@ the rail's first section and `/canvases` the landing route
 - **Share** offers the three visibilities and a people picker to someone the
   detail says may manage it (`canManage`), and saves with
   `POST /canvases/:id/audience`; anyone else sees the same audience read-only.
+  A Canvas a Sidekick writes is also open to everyone the Sidekick is shared
+  with, whichever visibility is chosen (the writer audience in
+  `canvasAdmits`), so its choices say so instead of "Nobody else can open it."
   The picker never lists the viewer or the creator, and with "Everyone in the
   Organization" it lists guests only, since members are in already; only the
   chosen guests are sent with that visibility, and its people search shows
@@ -936,6 +942,17 @@ owner.
 `markColors`, so both appearances stay themed by `themes.css`; a chosen
 Canvas colour replaces `canvasHue`, not sits beside it (now built: see the
 2026-11-08 entry on choosing a Canvas's icon and colour).
+
+**Making one, and what Share says:** the API client minted a fresh
+`canvasId` and the hook a fresh `clientMessageId` on every call, so the
+server's replay of a create could never be reached: a double click on the
+sidebar's New made two Canvases, and a retry after a lost answer a second.
+`useCreateCanvas` now holds one attempt series and guards the in-flight
+call, in the hook every New button shares rather than at each button. Share
+said "Nobody else can open it." of a Canvas a Sidekick writes, which its
+Sidekick's audience can open whatever the visibility; its copy now names
+that audience. The offline pane's "Live edits resume" promised live editing,
+which was cut.
 
 Shipped in juno-ai-labs/avalon#1490.
 
