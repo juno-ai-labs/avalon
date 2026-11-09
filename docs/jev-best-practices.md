@@ -643,3 +643,5 @@ and the two transport primitives it argued for shipped on 2026-09-18. What was
 left was guidance about designing a JEV request, which is this document's
 subject. The work-stream icon entry was dropped with it: conversation naming no
 longer picks an icon.
+
+Shipped in juno-ai-labs/avalon#1490.

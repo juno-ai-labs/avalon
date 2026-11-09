@@ -470,6 +470,8 @@ are the tombstones that keep an issued address from ever pointing elsewhere.
 from the route row. The `workstream_email_receipts` table is dropped with the
 other Thread tables in the WorkspaceDO data migration, not here.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-09-03 — One admission call, no screen, no window
 
 **What changed:** Automation mail is admitted by one `AutomationDO.admitInboundEmail`

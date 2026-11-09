@@ -135,6 +135,8 @@ desktop and web.
 **Why:** It is a flex child of that row and shrank to its card, so centring it
 centred the card in itself and left it at the window's left edge (v4-F0).
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-23 — Document created, with three eggs and a smaller "can't connect" screen
 
 **What changed:** Added the key-sequence and click-burst triggers, the Konami

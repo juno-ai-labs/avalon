@@ -1834,6 +1834,8 @@ round-5 review of the Slack App Home change, 2026-11-08.
 production caller left; only its own presentation test passes `true`. The
 workers test that recovers a lost consent response in a Canvas now admits the
 receipt under the tool the live loop offers.
+
+Shipped in juno-ai-labs/avalon#1490.
 ### 2026-11-08 — A Sidekick run asks for a missing connection instead of finishing past it
 
 **What changed:** `get_connector_connection_state` and
@@ -1855,6 +1857,8 @@ key is what every other durable question's identity is derived from.
 **Consequences:** The question's identity is derived from the call's receipt
 key, so a replay converges on one question. The golden hash of the
 `automationWorkstream` prompt moved.
+
+Shipped in juno-ai-labs/avalon#1490.
 ### 2026-11-08 — Seeded runs are removed
 
 **What changed:** A run no longer carries a demo `seed`: `runWorkstreamHarness`
@@ -1872,6 +1876,8 @@ functionality completely". Demo preparation was the only producer of a seed.
 authorization written by a seeded run may still carry a `seed` key; the
 schemas that read them are non-strict and loose, so it is ignored. Do not make
 either strict without accounting for those rows.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — The prompts speak of Canvases and Sidekicks, a run's result is posted once, and a Sidekick's conversation goes to the wizard only on a manager's marked edit
 
@@ -1966,7 +1972,7 @@ those names until the `memory_facts` rebuild renames the kinds. A future
 prompt that names a room must name a Canvas or a Sidekick's conversation, and
 a Sidekick report in Rally is its final message.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-03 — Task skills: reporting on data and creating an app
 

@@ -842,6 +842,8 @@ removed in a later pass the same day, at `git show 14d68b1:docs/<name>.md`:
   public launch until admission limits and bot protection existed. Cited by
   [`private-access.md`](private-access.md).
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — The product is Canvases and Sidekicks; the native iOS client is deleted
 
 **What changed:** `apps/ios` and `ios-client.md` are gone; the deployment
@@ -861,6 +863,8 @@ client forward.
 the hosting and the conversation object are
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md) and
 [`workstream-durable-object.md`](workstream-durable-object.md).
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-09-17 — A lite browser host reuses regional identity
 

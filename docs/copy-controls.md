@@ -155,6 +155,8 @@ telemetry value must not be able to carry free text.
 **What a future change must respect:** a new turn-id form has to be added to
 the contract's pattern, or its copies are refused again at the IPC gate.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-21 — Copy confirmation floats over its preview
 
 **What changed:** Visible `CopyStatus` uses the generic shared `Toast` pill,

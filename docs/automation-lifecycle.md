@@ -2060,6 +2060,8 @@ client keeps its `runState` fallback for one release, until every Worker
 publishes `running`. The EXISTS reads the Sidekick's run history on each
 list read; a partial index over the working states is the fix if that ever
 shows, and is deliberately not added now.
+
+Shipped in juno-ai-labs/avalon#1490.
 ### 2026-11-08 — A run a missing connection or grant blocks asks for it and waits
 
 **What changed:** A Sidekick run holds the connection-state check and the
@@ -2106,6 +2108,8 @@ who is not the principal connecting their own account resumes a run that asks
 again. The Needs input notice still goes to the requester and the managers, as
 for any question a run asks.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — Retirement records: Work-stream appearance, Work-stream markers
 
 **What changed:** Nothing in the code. Two documents whose mechanism was
@@ -2138,6 +2142,8 @@ coloured dot a work-stream row showed a reader, with `failed` deliberately below
 `participants.first_opened_at` (the unseen state) remains in conversation-object
 SQLite. The vocabulary, `StatusDot`, the `sys.color.workstream` tokens and the
 run history's `scheduled` exception survive as described above.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-08 — A waiting run's question is answered on its row, the Sidekick row says Working, and the screens follow the design
 
@@ -2254,6 +2260,8 @@ says Needs input. An empty details block says so; it is never hidden. The
 requester seat moves a cursor only from the row's own ordinal minus one to
 its ordinal and never touches a manual unread mark. `pendingQuestion` and `runState` are read from
 different runs on purpose; do not re-pair them.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 
 ### 2026-11-07 — The shared conversation starts runs and shows them, no Thread owns a Sidekick, and Sidekicks open in the main window
@@ -2394,7 +2402,7 @@ RPC `applyExternalEventRegistrations`, which nothing called once Sidekicks
 moved into WorkspaceDO, is deleted with its generation fence, and a Slack
 source's join is keyed on the revision whose registrations named it.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-07 — The review plan asks whether a tool could have settled its exceptions
 

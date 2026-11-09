@@ -266,6 +266,8 @@ dark the rail's badges drew white digits on the dark `danger.base` at 3.12:1
 while the Needs input badge used the dark `danger.on` beside them, two looks
 for one object, where design.html §5 keeps the light red with white (v3-R2-4).
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-18 — A dark phone no longer opens the Home Screen app on white
 
 **What changed:** `apps/browser/index.html` carries an inline rule that paints

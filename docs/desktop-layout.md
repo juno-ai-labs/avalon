@@ -165,6 +165,8 @@ small for it.
 must save it through `setRailWidth`, which measures the pane; a pixel width
 written directly is read as the legacy format.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — The panel takes a pane narrower than two conversation minimums, and a closed panel reopens from the Canvas's menus
 
 **What changed:** An open panel fills the pane where the pane, the window less
@@ -190,6 +192,8 @@ again on each request.
 `--av-cmp-sidebar-width` must agree on the pane; change how the sidebar gives
 way in one and the other moves with it.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — The landing reopens a Canvas or Sidekick, or the Canvases home
 
 **What changed:** `last-route` is written only for Canvas and Sidekick routes
@@ -209,6 +213,8 @@ their own subject and show the unavailable state themselves.
 **Consequences:** Old keys stay in a device's local storage, unread and
 harmless; nothing removes them. A route added to the shell is restored only
 once `restorableRoute` admits it.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-18 — A restored panel nobody resized opens at the even split
 

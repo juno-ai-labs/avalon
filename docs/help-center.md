@@ -245,6 +245,8 @@ chapter slug is never shadowed. Old names stay only in the glossary and in
 "where did it go" notes, in the past tense, because readers arrive with old
 links and old words.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-01 — Help center built from Markdown at /help/
 
 **What changed:** Added the help center: a content folder, a build step that

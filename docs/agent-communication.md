@@ -414,6 +414,8 @@ that narrows contact again belongs in that check, not in where the message comes
 from. Setup from a Thread always creates a Sidekick; an existing one is reached
 by its exact name through `find_sidekick`.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-02 — A Sidekick run asks its own wizard for a change
 
 **What changed:** A Sidekick run gets `request_sidekick_change`, which sends a

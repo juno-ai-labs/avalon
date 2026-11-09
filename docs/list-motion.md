@@ -418,6 +418,8 @@ heading itself blinked out in one frame.
 back: an unpin moves a row one slot past the All heading with nobody else
 reordered, and that glide is the motion the held heading exists for.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-16 — One pass, run by every part of a list
 
 **What changed:** `useListMotionPass` returns the pass `useListMotion` runs,

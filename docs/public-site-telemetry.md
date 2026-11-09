@@ -245,6 +245,8 @@ which retired shape it was is not.
 is a closed enum the API validates and dashboards group by; a rename would
 split every chart at the deploy for no new information.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-27 — The Worker sets the homepage's CSP
 
 **What changed:** `/` now runs the site Worker (`run_worker_first`), which

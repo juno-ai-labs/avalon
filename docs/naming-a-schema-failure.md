@@ -228,6 +228,8 @@ one change nobody asked for. A route opts in where a person's input reaches it.
 **Consequences:** A route that adopts it answers a schema refusal with a code
 that is no longer a closed set; a client branches on its prefix.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-19 — A conversation object's refusal is named by its code
 
 **What changed:** `diagnosticErrorCode` answers an `ObjectPortError` with its

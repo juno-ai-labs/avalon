@@ -283,6 +283,8 @@ so the old Worker revokes them on the way out. A new producer supplies its own
 authority basis and, if retirement should revoke its edges, passes it to the
 walk.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-06 — Sideline is deleted; the relationship stays
 
 **What changed:** Sideline is gone: the `apps/sideline` Electron app, its macOS
@@ -316,7 +318,7 @@ from the service this change deleted. `principal: "impersonation"` and
 `AccountTrigger` and `SidebarCollapseFooter` in `@rally/ui` lost their only host
 and are left for the shared-UI pruning that follows.
 
-PRD: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md` (step B-10 of its plan).
+Shipped in juno-ai-labs/avalon#1490. PRD: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md` (step B-10 of its plan).
 
 ### 2026-10-07 — The Rally access list rereads on a timer, not on open
 

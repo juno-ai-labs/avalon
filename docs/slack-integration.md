@@ -786,6 +786,8 @@ Organization, which is theirs in every other surface.
 still writes `slack_delivery_preferences`, which no delivery path reads; what
 it should govern is open.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — Slack starts no conversation, binds no room and refreshes no card; its links name Canvases and Sidekicks
 
 **What changed:** The Thread-creating path is deleted: `startFromPrompt` and
@@ -838,7 +840,7 @@ a migration, and the rows are inert.
 **Open:** The retired-ingress copy is the agent's wording and needs product
 confirmation.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-02 — The connector's send tool posts through the `markdown` block
 

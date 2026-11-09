@@ -812,6 +812,8 @@ a Worker exports when its own config names one.
 deleted; both were constant (`0`, `false`) since, which reads as a measurement
 that is not one.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-09-23 — Keep first-dispatch timing accurate after removing repeated checks
 
 **What changed:** Bind still reports first-dispatch timing while using the host's

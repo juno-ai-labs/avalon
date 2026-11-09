@@ -251,6 +251,8 @@ run, are unchanged.
 still arrive and are logged; only `channel_id_changed` still moves rows,
 because a run's thread lives under the renumbered room.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-06 — A room's privacy belongs to its Channels, not its Space
 
 **What changed:** `linkExternalRoom` takes no scope or participants: every

@@ -159,6 +159,8 @@ week read as a full date on every line.
 **What a future change must respect:** the feed's divider is what dates a
 turn; a byline that grows a date again repeats it on every line.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-09-10 — One byline, one clock, one relative label
 
 **What changed:** Three primitives replace nine hand-rolled timestamps. `useNow`
