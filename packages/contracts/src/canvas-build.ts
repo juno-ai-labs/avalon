@@ -133,8 +133,8 @@ export function importedModules(source: string): string[] {
   const patterns = [
     /\bimport\s+(?:[^"]*?\s+from\s+)?"(\d+)"/gu,
     /\bexport\s+[^"]*?\s+from\s+"(\d+)"/gu,
-    /\bimport\(\s*"(\d+)"\s*\)/gu,
-    /\brequire\(\s*"(\d+)"\s*\)/gu,
+    /\bimport\s*\(\s*"(\d+)"\s*\)/gu,
+    /\brequire\s*\(\s*"(\d+)"\s*\)/gu,
   ];
   for (const pattern of patterns) for (const match of code.matchAll(pattern)) found.add(strings[Number(match[1])]!);
   return [...found];
@@ -153,6 +153,8 @@ export function unsupportedImport(source: string, local?: { importer: string; pa
       if (local && !publishedFile(specifier, local.importer, local.paths)) return specifier;
       continue;
     }
+    // A package's subpath never climbs: `lodash/../..` resolves out of the toolchain.
+    if (specifier.split("/").some((segment) => segment === "." || segment === "..")) return specifier;
     if (specifier === "@/lib/utils") continue;
     if (specifier.startsWith("@/components/ui/")) {
       if ((COMPONENT_UI_MODULES as readonly string[]).includes(specifier.slice("@/components/ui/".length))) continue;
@@ -244,7 +246,7 @@ export function detectSiteSource(files: ReadonlyArray<{ path: string; text: stri
         }
         continue;
       }
-      if (!/\.(?:jsx?|tsx?)$/u.test(file.path)) continue;
+      if (!/\.(?:[cm]?jsx?|tsx?)$/u.test(file.path)) continue;
       const unsupported = unsupportedImport(file.text, { importer: file.path, paths });
       if (unsupported) {
         return { kind: "refused", code: `canvas_build_unsupported_import:${unsupported.replace(/[^A-Za-z0-9@/._-]/gu, "_")}`,

@@ -14,7 +14,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { cp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 
@@ -85,7 +85,10 @@ async function toolchain() {
   if (existsSync(join(home, "node_modules", ".rally-ready"))) return home;
   await mkdir(home, { recursive: true });
   await writeFile(join(home, "package.json"), JSON.stringify({ private: true, ...TOOLCHAIN }, null, 2));
-  await run("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error"], { cwd: home, failure: "canvas_build_install_failed" });
+  // No package's install script runs: this sandbox holds the Canvas's
+  // checkout and its GitHub access, and none of these packages needs one
+  // (esbuild's binary arrives as its own platform package).
+  await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"], { cwd: home, failure: "canvas_build_install_failed" });
   await writeFile(join(home, "node_modules", ".rally-ready"), new Date().toISOString());
   return home;
 }
@@ -157,8 +160,7 @@ const GENERATED = new Set(["index.html", "app.js", "app.css", "styles.css"]);
  * What an `import logo from "./logo.png"` (or a stylesheet's `url()`) becomes:
  * a file esbuild copies beside `app.js` and names by its content.
  */
-const ASSET_LOADERS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".otf"]
-  .map((extension) => `--loader:${extension}=file`);
+const ASSET_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".otf"];
 
 async function buildComponent(source, work, entry) {
   const home = await toolchain();
@@ -182,9 +184,32 @@ createRoot(document.getElementById("root")).render(<App />);
   // A component that imports a stylesheet gets it bundled as `app.css`
   // beside `app.js`; its imported images and fonts land there too, named by
   // content and addressed from the site's root, where Rally serves it.
-  await run(join(bin, "esbuild"), ["main.jsx", "--bundle", "--minify", "--format=esm", "--jsx=automatic",
-    "--loader:.js=jsx", ...ASSET_LOADERS, "--public-path=/", `--alias:@=./src`, "--define:process.env.NODE_ENV=\"production\"",
-    `--outfile=${join(out, "app.js")}`], { cwd: work });
+  const esbuild = createRequire(join(home, "package.json"))("esbuild");
+  let built;
+  try {
+    built = await esbuild.build({
+      entryPoints: ["main.jsx"], absWorkingDir: work, bundle: true, minify: true, format: "esm", jsx: "automatic",
+      loader: { ".js": "jsx", ...Object.fromEntries(ASSET_EXTENSIONS.map((extension) => [extension, "file"])) },
+      publicPath: "/", alias: { "@": "./src" }, define: { "process.env.NODE_ENV": "\"production\"" },
+      outfile: join(out, "app.js"), metafile: true, logLevel: "error",
+    });
+  } catch (error) {
+    throw new BuildRefusal("canvas_build_failed", `The component did not compile: ${error instanceof Error ? error.message.split("\n")[0] : "esbuild failed"}`);
+  }
+  // Every file the bundle read must be one the person published (or this
+  // build wrote beside them) or Rally's pinned toolchain. The sandbox also
+  // holds the Canvas's checkout and every participant's files, and the
+  // bundle is served publicly, so a path that resolved anywhere else, by any
+  // import form or subpath, refuses the publish. The Worker's own import
+  // check is a fast refusal before the sandbox; this is the guard.
+  const allowed = [`${await realpath(src)}/`, `${await realpath(join(home, "node_modules"))}/`];
+  const entryFile = await realpath(join(work, "main.jsx"));
+  for (const input of Object.keys(built.metafile.inputs)) {
+    const path = await realpath(resolve(work, input)).catch(() => resolve(work, input));
+    if (path === entryFile || allowed.some((root) => path.startsWith(root))) continue;
+    throw new BuildRefusal("canvas_build_outside_source",
+      "The component reads a file that was not published with it. Import only files you publish, by a path relative to the importing file.");
+  }
   await run(join(bin, "tailwindcss"), ["-i", "tailwind.css", "-o", join(out, "styles.css"), "--minify",
     "--content", "./src/**/*.{js,jsx,ts,tsx}"], { cwd: work });
   // A file published beside the component that it names by path rather than
@@ -209,7 +234,10 @@ createRoot(document.getElementById("root")).render(<App />);
 async function buildProject(source, work) {
   await cp(source, work, { recursive: true });
   const lock = existsSync(join(work, "package-lock.json"));
-  await run("npm", [lock ? "ci" : "install", "--no-audit", "--no-fund", "--loglevel=error"], { cwd: work, failure: "canvas_build_install_failed" });
+  // The member's own build script runs; the install scripts of the packages
+  // npm fetches for it do not. Those are the dependency authors' code, run
+  // in a sandbox that holds the Canvas's checkout and GitHub access.
+  await run("npm", [lock ? "ci" : "install", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"], { cwd: work, failure: "canvas_build_install_failed" });
   await run("npm", ["run", "build"], { cwd: work });
   for (const candidate of ["dist", "build", "out"]) {
     if (existsSync(join(work, candidate, "index.html"))) return join(work, candidate);
