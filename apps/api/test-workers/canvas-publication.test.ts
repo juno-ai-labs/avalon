@@ -102,6 +102,41 @@ describe("publishing into a Canvas", () => {
     expect(detail.artifacts.map((artifact) => [artifact.resourceId, artifact.kind])).toEqual([[published.resourceId, "site"]]);
   });
 
+  it("stores bytes exactly, from either base64 alphabet or wrapped lines", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const publisher = new CanvasPublicationService(TEST_ENV, auth(CREATOR));
+    const bytes = crypto.getRandomValues(new Uint8Array(3_000));
+    const standard = btoa(String.fromCharCode(...bytes));
+    const hex = async (value: Uint8Array<ArrayBuffer>) =>
+      [...new Uint8Array(await crypto.subtle.digest("SHA-256", value))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const encodings = [standard, standard.replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, ""), standard.replace(/(.{76})/gu, "$1\n")];
+    for (const [index, data] of encodings.entries()) {
+      const published = await publisher.publish(canvasId, { kind: "file", name: `blob-${index}.bin`, content: { encoding: "base64", data } });
+      const ref = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ content_ref: string }>(
+        "SELECT content_ref FROM resources WHERE id = ?", published.resourceId).one().content_ref);
+      expect(await hex(new Uint8Array(await (await env.PAYLOADS.get(ref))!.arrayBuffer()))).toBe(await hex(bytes));
+    }
+  });
+
+  it("refuses a file over the size cap from its length, before decoding it", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    // Not base64 at all: a decode would answer 422, so a 413 means the length decided first.
+    const oversized = "!".repeat(Math.ceil(25_000_001 * 4 / 3) + 4);
+    await expect(new CanvasPublicationService(TEST_ENV, auth(CREATOR)).publish(canvasId,
+      { kind: "file", name: "huge.bin", content: { encoding: "base64", data: oversized } })).rejects.toMatchObject({ code: "attachment_too_large" });
+  });
+
+  it("treats a site's files as a set, and refuses a name published as the other kind", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const publisher = new CanvasPublicationService(TEST_ENV, auth(CREATOR));
+    const files = [{ path: "index.html", content: text("<h1>Hi</h1>") }, { path: "a.css", content: text("h1{}") }];
+    await publisher.publish(canvasId, { kind: "site", name: "home", files });
+    expect(await publisher.publish(canvasId, { kind: "site", name: "home", files: [...files].reverse() }))
+      .toMatchObject({ outcome: "unchanged", version: 1 });
+    await expect(publisher.publish(canvasId, { kind: "file", name: "home", content: text("x") }))
+      .rejects.toMatchObject({ code: "canvas_artifact_kind_changed" });
+  });
+
   it("refuses someone the Canvas does not admit, and writes nothing", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     await expect(new CanvasPublicationService(TEST_ENV, auth(MEMBER)).publish(canvasId,

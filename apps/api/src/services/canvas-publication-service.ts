@@ -10,7 +10,7 @@ import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
-import { base64UrlToBytes, sha256Hex } from "../lib/crypto";
+import { sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { verifyAttachmentMimeType } from "./attachment-mime-verification";
 import { ConversationService } from "./conversation-service";
@@ -106,6 +106,7 @@ export class CanvasPublicationService {
   private async publishFile(runtime: Env, canvasId: string, name: string, providerResourceId: string,
     existing: Awaited<ReturnType<typeof publishedRowByIdentity>>, request: Extract<CanvasPublishRequest, { kind: "file" }>,
     author: PublicationAuthor, operationId: string) {
+    this.assertSize(smallestDecodedSize(request.content));
     const bytes = decode(request.content, "content");
     if (bytes.byteLength === 0) throw new ApiError(422, "attachment_empty", "There is nothing to publish");
     this.assertSize(bytes.byteLength);
@@ -152,6 +153,7 @@ export class CanvasPublicationService {
   private async publishSite(runtime: Env, canvasId: string, name: string, providerResourceId: string,
     existing: Awaited<ReturnType<typeof publishedRowByIdentity>>, request: Extract<CanvasPublishRequest, { kind: "site" }>,
     author: PublicationAuthor, operationId: string) {
+    this.assertSize(request.files.reduce((total, file) => total + smallestDecodedSize(file.content), 0));
     const files = await Promise.all(request.files.map(async (file, index) => {
       const bytes = decode(file.content, `files.${index}.content`);
       return { path: normalizePublishPath(file.path), bytes, sha256: await sha256Hex(bytes) };
@@ -218,11 +220,40 @@ export class CanvasPublicationService {
   }
 }
 
-/** Text as UTF-8, or base64 (standard or URL-safe), named by its field when it will not decode. */
+/**
+ * The fewest bytes `content` can decode to, read from its length alone, so
+ * an oversized publish is refused before a copy is made. Text is at least one
+ * UTF-8 byte per UTF-16 unit; base64 with no whitespace is three bytes per
+ * four characters, less padding. Base64 with whitespace counts as no bytes
+ * here and is measured once decoded.
+ */
+export function smallestDecodedSize(content: CanvasPublishContent): number {
+  if (content.encoding === "text") return content.data.length;
+  if (/\s/u.test(content.data)) return 0;
+  return Math.max(0, Math.floor(content.data.length * 3 / 4) - 2);
+}
+
+/**
+ * Text as UTF-8, or base64 (standard or URL-safe), named by its field when it
+ * will not decode. Decoded in one pass where the runtime has
+ * `Uint8Array.fromBase64`: a 25 MB artifact is a 33 MB string, and every
+ * intermediate copy of it counts against the isolate's 128 MB.
+ */
 function decode(content: CanvasPublishContent, field: string): Uint8Array {
   if (content.encoding === "text") return new TextEncoder().encode(content.data);
+  const urlSafe = content.data.includes("-") || content.data.includes("_");
   try {
-    return base64UrlToBytes(content.data.replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "").replace(/\s+/gu, ""));
+    const fromBase64: unknown = Reflect.get(Uint8Array, "fromBase64");
+    const data = /\s/u.test(content.data) ? content.data.replace(/\s+/gu, "") : content.data;
+    if (typeof fromBase64 === "function") {
+      const decoded: unknown = Reflect.apply(fromBase64, Uint8Array,
+        [data, { alphabet: urlSafe ? "base64url" : "base64", lastChunkHandling: "loose" }]);
+      if (decoded instanceof Uint8Array) return decoded;
+    }
+    const binary = atob(urlSafe ? data.replaceAll("-", "+").replaceAll("_", "/") : data);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return bytes;
   } catch {
     throw new ApiError(422, "canvas_publish_content_invalid", `canvas_publish_content_invalid:${field}:base64`);
   }
