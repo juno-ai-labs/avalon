@@ -1,6 +1,6 @@
 ---
 name: canvases
-description: Work with Rally Canvases through the Rally MCP server. Use when the person asks to find, create, update, share, review or tidy up a Rally Canvas, to have Rally make or change a document, spreadsheet, site or other artifact in one, or to publish something already made here (an artifact, a file, a page) to Rally.
+description: Work with Rally Canvases through the Rally MCP server. Use when the person asks to find, create, update, share, review or tidy up a Rally Canvas, or to have Rally make or change a document, spreadsheet, site or other artifact in one.
 ---
 
 # Rally Canvases
@@ -32,27 +32,10 @@ Rally, the agent inside the Canvas, does the work. You ask it:
 To start something new, `create_canvas` with a `prompt` creates the Canvas
 and sends the prompt as the first message in one step.
 
-## Publishing work made here
+## Bringing in work made elsewhere
 
-When the person wants something you already made (an artifact in this
-conversation, a file in the workspace) in Rally, publish it rather than
-pasting it into a message:
-
-- `publish_file` for a document, spreadsheet, image or PDF. Name it with its
-  extension (`launch-plan.md`, `q3.csv`); send text as text and anything else
-  as base64.
-- `publish_site` for anything that runs in a browser. It goes live at its own
-  address. Send:
-  - an HTML artifact as one file named `index.html` (plus any CSS, scripts
-    and images it loads);
-  - a React artifact as its one `.jsx`/`.tsx` file, unchanged: Rally builds it
-    with Tailwind, lucide-react, recharts and the common shadcn/ui pieces,
-    checks it renders, and reports the error if it does not;
-  - a project folder with its `package.json`, which Rally builds with its own
-    `build` script.
-
-Publishing the same name again updates the artifact and keeps its history;
-choose a new name only for a separate artifact. Then share the returned `url`.
+To put something already made (an artifact, a file, a page) into a Canvas,
+use the `publishing` skill: publish it, do not paste it into a message.
 
 ## Sharing and access
 
