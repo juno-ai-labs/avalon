@@ -15,6 +15,7 @@ import type { Workspace, WorkspaceInvitation } from '../lib/types';
 import { WorkspaceSettingsScreen } from './workspace-settings';
 import { CollaborationSessionProvider } from '../lib/collaboration-session';
 import { mountAppStylesheet } from '../test/app-stylesheet';
+import type { ConnectedMcpApp } from '@rally/contracts/mcp-oauth';
 
 const api = vi.hoisted(() => ({
   createWorkspaceInvitation: vi.fn(),
@@ -52,6 +53,8 @@ const api = vi.hoisted(() => ({
   updateMyPreferences: vi.fn(),
   getMyMemory: vi.fn<(signal?: AbortSignal) => Promise<MemoryReview>>(async () => ({ facts: [] })),
   forgetMyMemory: vi.fn(async (factId: string) => ({ factId, retractedAt: '2026-10-19T12:00:00.000Z' })),
+  getConnectedApps: vi.fn(async () => ({ apps: [] as ConnectedMcpApp[] })),
+  disconnectConnectedApp: vi.fn<(id: string) => Promise<void>>(async () => undefined),
   getOrganizationMemory: vi.fn<(signal?: AbortSignal) => Promise<MemoryReview>>(async () => ({ facts: [] })),
   forgetOrganizationMemory: vi.fn(async (factId: string) => ({ factId, retractedAt: '2026-10-19T12:00:00.000Z' })),
 }));
@@ -318,6 +321,7 @@ describe('Organization settings', () => {
     api.getMyPersonalSystemPrompt.mockResolvedValue('');
     api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
     api.getMyMemory.mockResolvedValue({ facts: [] });
+    api.getConnectedApps.mockResolvedValue({ apps: [] });
     api.getOrganizationMemory.mockResolvedValue({ facts: [] });
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({}));
     api.getGitHubRepositoryAccessSettings.mockResolvedValue({

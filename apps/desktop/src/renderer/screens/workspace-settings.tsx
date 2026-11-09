@@ -4,6 +4,7 @@ import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstalla
 import { ConnectorApiKeyField, ConnectorApiKeyIssuingLink } from '../components/connector-api-key-field';
 import { CopyButton, CopyField } from '../components/copy-button';
 import { SupportAccessSetting } from '../components/support-access-setting';
+import { ConnectedAppsSetting } from '../components/connected-apps-setting';
 import { MemoryFactList, useMemoryFacts } from '../components/memory-review';
 import { CANVA_CONNECTION_DISCLOSURE, connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
@@ -1586,6 +1587,10 @@ export function WorkspaceSettingsScreen({
                   />
                 </>}
                 </>}
+                {/* Members and guests alike: either can connect an app. A
+                    support session is refused, since the list spans the
+                    person's other Organizations. */}
+                {api && !session?.impersonator && <ConnectedAppsSetting api={api} key={workspace.id} workspaceId={workspace.id} />}
                 {browserHost && <>
                   <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2></div>
                   <ThemePicker setting={settings.accountAppearance} />

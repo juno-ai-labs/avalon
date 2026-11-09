@@ -132,3 +132,34 @@ export const McpOAuthErrorBodySchema = z.strictObject({ error: z.string(), error
 
 /** The one scope a grant carries: act in one Organization's Canvases as the person who approved. */
 export const MCP_SCOPE = "canvases";
+
+/** Whether a registered redirect returns to the machine the client runs on, rather than to a hosted origin. */
+export function isLoopbackMcpRedirectUri(value: string): boolean {
+  try { return LOOPBACK_HOSTS.has(new URL(value).hostname); } catch { return false; }
+}
+
+/**
+ * One app a person connected to Rally, as Settings › Account lists it: a live
+ * grant (`mcp_oauth_grants`) on one of their sessions. `clientName` is the
+ * name the client registered itself under, which nothing verifies, so a
+ * reader shows it as such beside where the app returns to. `id` is the
+ * grant's session, and is what a disconnect names.
+ */
+export const ConnectedMcpAppSchema = z.strictObject({
+  id: z.string().min(1),
+  clientName: z.string(),
+  /** The distinct hosted origins its redirects return to, such as `https://claude.ai`. */
+  redirectOrigins: z.array(z.string()),
+  /** It also registered a loopback redirect: an app on the computer it was connected from. */
+  loopback: z.boolean(),
+  workspaceId: WorkspaceIdSchema,
+  workspaceName: z.string(),
+  connectedAt: z.string(),
+  /** Its last token refresh, or `connectedAt` before the first. Accurate to one access token's lifetime. */
+  lastActiveAt: z.string(),
+});
+export type ConnectedMcpApp = z.infer<typeof ConnectedMcpAppSchema>;
+
+/** `GET /workspace/me/connected-apps`: newest connection first. */
+export const ConnectedMcpAppsSchema = z.strictObject({ apps: z.array(ConnectedMcpAppSchema) });
+export type ConnectedMcpApps = z.infer<typeof ConnectedMcpAppsSchema>;

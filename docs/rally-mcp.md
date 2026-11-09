@@ -36,6 +36,7 @@ narrower reach (below).
 | `packages/contracts/src/canvas-build.ts` | `detectSiteSource`: what a site's files are (static, component, project), and the libraries a component may import. |
 | `apps/api/src/services/canvas-build/canvas-build-service.ts`, `build.sandbox.mjs` | `CanvasBuildService`, which builds a component or project in the Canvas's sandbox under a publication build's lease, and the script that builds and checks it there. |
 | `apps/browser/src/mcp-consent.tsx` | The consent page at `/app/oauth/authorize`. |
+| `apps/api/src/routes/workspace.ts` (`connectedAppRoutes`), `apps/desktop/src/renderer/components/connected-apps-setting.tsx` | Connected apps: the person's list of grants and Disconnect, in Settings in both clients. |
 | `packages/db/migrations/0126_mcp_oauth.sql` | `mcp_oauth_clients`, `mcp_oauth_codes`, `mcp_oauth_grants`. |
 | `plugins/rally/`, `.claude-plugin/marketplace.json` | The Claude Code plugin (the server and two skills) and the marketplace that lists it. |
 
@@ -108,6 +109,14 @@ Refresh renews only a session the presenting client holds, and the desktop's
 (RFC 7009) ends the session behind a token the client holds, through ordinary
 logout; any other token is ignored and answered 200. A grant references its
 client `ON DELETE RESTRICT`: a session with no grant reads as a desktop one.
+
+A person sees their grants in Settings, under Connected apps
+(`GET /workspace/me/connected-apps`), and ends one with Disconnect
+(`DELETE /workspace/me/connected-apps/:id`), the same session end as the
+client's own revoke. A grant is listed only while its session would still
+authenticate, and only in the region the request reaches. A support session
+cannot read or change the list, which spans the person's other
+Organizations, and an MCP token cannot reach either route.
 
 The Worker does not hold the signing key. It reads the bearer's claims
 without verifying them and answers 401 itself for a token whose audience is
@@ -396,7 +405,8 @@ endpoint forwards there. How to connect each client is in
 OAuth 2.1 authorization server split between the identity API and the browser
 app's consent page; a `rally-mcp` token audience confined to an exact route
 list and to Canvases; a person's publish into a Canvas, building a React
-component or a project in the Canvas's sandbox; and a Claude Code plugin.
+component or a project in the Canvas's sandbox; a Connected apps list with
+Disconnect in Settings; and a Claude Code plugin.
 
 **Why.** People asked to work with Canvases from Claude and ChatGPT, which
 reach tools only over MCP with OAuth. A grant is an ordinary session rather
@@ -407,7 +417,9 @@ grant. A route-family regex was the first boundary and was replaced by exact
 connector reads and socket tickets. A person's publish reuses the write steps
 lifted out of Rally's own publish rather than a second writer, and rather
 than asking Rally to republish an attachment, which would put a model run
-between the person and their bytes. React artifacts are source, so a publish
+between the person and their bytes. Connected apps exists because a grant
+otherwise lasted until its client revoked it or the session expired, up to
+90 days, with nothing the person could do. React artifacts are source, so a publish
 builds only what needs it, in the Canvas's one shared sandbox (the team's
 decision of 2026-11-09); compiling in the page from a CDN was rejected because
 it loads code from elsewhere on every view and never checks the page renders.
