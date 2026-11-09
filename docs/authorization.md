@@ -185,7 +185,7 @@ A Space (the product's Channel until the Canvases and Sidekicks pivot) once
 lent its audience to a guest taking part in it, disclosed its mark to a
 Channel's readers, and shared a merged artifact with its members through
 `workspace_workstream_resource_links` rows. Spaces, Channels, merge and the
-link table are gone (WorkspaceDO migration 139), so no reader is derived from
+link table are gone (WorkspaceDO migrations 139 and 141), so no reader is derived from
 a Space and `sharedThrough` names nothing; a resource is read through the
 Canvas or the Sidekick conversation that holds it.
 
@@ -257,18 +257,16 @@ new intent preserves Queue failure backoff. Parent discovery prunes retired
 children; even delayed child jobs check the current parent registry.
 
 Parent discovery for a Channel hosted in WorkspaceDO ran where it was
-enqueued: `enqueueAuthorizationDiscovery` answers a parent job in place only
-when `parent_metadata.parent_kind = 'workstream'`, registering the
-`parent_children` rows in the caller's transaction. That path is retired with
-the Channel host; no new parent of that kind is created. A Sidekick parent job
-still rides the Queue: an `authorization_delivery` row, the Worker's
+enqueued, registering its `parent_children` rows in the caller's transaction.
+That path went with `parent_metadata` in WorkspaceDO migration 141. A
+Sidekick parent job rides the Queue: an `authorization_delivery` row, the Worker's
 `projectAuthorization`, and `listAuthorizationChildren` back on WorkspaceDO.
 Per-conversation jobs ride the Queue too and read an `AgentLoopDO`.
 
 **Known gap: Canvases are not backfilled.** `beginAuthorizationBackfill`
-enumerates `channels UNION automation_directory`, with no `canvas_directory`,
-so `backfill` queues no parent discovery for a Canvas and `status` reports
-none.
+enumerates `automation_directory` alone (its `channels` half went with
+migration 141), with no `canvas_directory`, so `backfill` queues no parent
+discovery for a Canvas and `status` reports none.
 
 Deployment enables the core member read path for every workspace. There is no
 legacy/shadow mode, activation flag or comparison gate. `backfill` queues parent
