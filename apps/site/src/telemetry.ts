@@ -245,7 +245,16 @@ export function normalizedTelemetryPathname(pathname: string): string {
   if (/^\/app\/[^/]+\/[^/]+\/sk\/[^/]+\/?$/u.test(path)) {
     return '/app/:region/:organization/sk/:sidekick';
   }
-  // The Space, Channel, Breakout and Thread forms, which the handoff page now
+  // A Thread's links, which the handoff page opens as the Canvas of the
+  // Thread's id. Shape only, as above: this path is lowercased, so its Base58
+  // segments cannot be decoded here.
+  if (/^\/app\/[^/]+\/[^/]+\/s\/[^/]+\/c\/[^/]+(?:\/a\/[^/]+)?\/?$/u.test(path)) {
+    return '/app/:region/:organization/s/:space/c/:thread';
+  }
+  if (/^\/app\/workspaces\/[^/]+\/[^/]+\/workstreams\/[^/]+\/?$/u.test(path)) {
+    return '/app/workspaces/:region/:organization/workstreams/:thread';
+  }
+  // The Space, Breakout and other retired forms, which the handoff page now
   // answers as gone. Still counted, so how often a retired link is followed
   // stays visible, but as one path: which of them it was no longer matters.
   // The same test the handoff page answers with, so the two cannot disagree.

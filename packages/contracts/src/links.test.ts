@@ -148,16 +148,15 @@ describe("reading a shared link", () => {
     expect(parseLinkTarget("not a url", { webBaseUrl: WEB_BASE_URL })).toBeNull();
   });
 
-  it("no longer reads the Space, Channel, Breakout and Thread forms", () => {
+  it("no longer reads the Space, Breakout and Organization-less Thread forms", () => {
     const encoded = ENCODED_CANVAS_ID;
     for (const retired of [
       `${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${encoded}/`,
-      `${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${encoded}/c/${encoded}`,
       `${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${encoded}/c/${encoded}/b/${encoded}`,
-      `${WEB_BASE_URL}/app/workspaces/enterprise/${WORKSPACE_ID}/workstreams/${CANVAS_ID}`,
+      `${WEB_BASE_URL}/app/workspaces/enterprise/${WORKSPACE_ID}/workstreams/${CANVAS_ID}/substreams/${ARTIFACT_ID}`,
       `${WEB_BASE_URL}/app/workstreams/${CANVAS_ID}`,
       `${WEB_BASE_URL}/open#${new URLSearchParams({ target: `avalon://workstreams/${CANVAS_ID}` })}`,
-      `rallywithai://workspace/enterprise/${ENCODED_WORKSPACE_ID}/spaces/${encoded}/channels/${encoded}`,
+      `rallywithai://workspace/enterprise/${ENCODED_WORKSPACE_ID}/spaces/${encoded}/channels/${encoded}/breakouts/${encoded}`,
       `rallywithai://workstreams/${CANVAS_ID}`,
     ]) {
       expect(parseLinkTarget(retired, { webBaseUrl: WEB_BASE_URL })).toBeNull();
@@ -165,11 +164,40 @@ describe("reading a shared link", () => {
     }
   });
 
+  it("reads a Thread link as the Canvas of the Thread's id, which a converted Thread kept", () => {
+    const space = ENCODED_WORKSPACE_ID;
+    const canvas = { kind: "canvas", ...CANVAS };
+    for (const thread of [
+      `${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${space}/c/${ENCODED_CANVAS_ID}`,
+      `${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${space}/c/${ENCODED_CANVAS_ID}/`,
+      `${WEB_BASE_URL}/app/workspaces/enterprise/${WORKSPACE_ID}/workstreams/${CANVAS_ID}`,
+      `rallywithai://workspace/enterprise/${ENCODED_WORKSPACE_ID}/spaces/${space}/channels/${ENCODED_CANVAS_ID}`,
+    ]) expect(parseLinkTarget(thread, { webBaseUrl: WEB_BASE_URL })).toEqual(canvas);
+    const onArtifact = { ...canvas, artifactId: ARTIFACT_ID };
+    expect(parseLinkTarget(`${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${space}/c/${ENCODED_CANVAS_ID}/a/${uuidToBase58(ARTIFACT_ID)}`,
+      { webBaseUrl: WEB_BASE_URL })).toEqual(onArtifact);
+    expect(parseLinkTarget(`rallywithai://workspace/enterprise/${ENCODED_WORKSPACE_ID}/spaces/${space}/channels/${ENCODED_CANVAS_ID}/artifacts/${uuidToBase58(ARTIFACT_ID)}`,
+      { webBaseUrl: WEB_BASE_URL })).toEqual(onArtifact);
+    // It mints the Canvas's own forms, so the handoff page and the desktop open the Canvas.
+    expect(linkCanonicalUrl(WEB_BASE_URL, parseLinkPathTarget(`/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${space}/c/${ENCODED_CANVAS_ID}`)!))
+      .toBe(`${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/cv/${ENCODED_CANVAS_ID}/`);
+    // A malformed Space segment or Thread id is no Thread link.
+    expect(parseLinkPathTarget(`/app/enterprise/${ENCODED_WORKSPACE_ID}/s/not-base58/c/${ENCODED_CANVAS_ID}`)).toBeNull();
+    expect(parseLinkPathTarget(`/app/workspaces/enterprise/${WORKSPACE_ID}/workstreams/not-a-uuid`)).toBeNull();
+    // Thread links carried no message query.
+    expect(parseLinkTarget(`${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${space}/c/${ENCODED_CANVAS_ID}?x=1`,
+      { webBaseUrl: WEB_BASE_URL })).toBeNull();
+  });
+
   it("recognizes a retired form's shape, and not a current or unrelated path", () => {
     expect(isRetiredLinkPath(`/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${ENCODED_CANVAS_ID}/`)).toBe(true);
     expect(isRetiredLinkPath(`/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${ENCODED_CANVAS_ID}/c/${ENCODED_CANVAS_ID}/b/${ENCODED_CANVAS_ID}`)).toBe(true);
     expect(isRetiredLinkPath(`/app/enterprise/${ENCODED_WORKSPACE_ID}/i/${ENCODED_CANVAS_ID}/c/${ENCODED_CANVAS_ID}`)).toBe(true);
-    expect(isRetiredLinkPath(`/app/workspaces/enterprise/${WORKSPACE_ID}/workstreams/${CANVAS_ID}`)).toBe(true);
+    expect(isRetiredLinkPath(`/app/workspaces/enterprise/${WORKSPACE_ID}/workstreams/${CANVAS_ID}/substreams/${ARTIFACT_ID}`)).toBe(true);
+    expect(isRetiredLinkPath(`/app/enterprise/${ENCODED_WORKSPACE_ID}/s/not-base58/c/${ENCODED_CANVAS_ID}`)).toBe(true);
+    // A Thread link reads as its Canvas, so it is not retired.
+    expect(isRetiredLinkPath(`/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${ENCODED_WORKSPACE_ID}/c/${ENCODED_CANVAS_ID}`)).toBe(false);
+    expect(isRetiredLinkPath(`/app/workspaces/enterprise/${WORKSPACE_ID}/workstreams/${CANVAS_ID}`)).toBe(false);
     expect(isRetiredLinkPath(`/app/workstreams/${CANVAS_ID}`)).toBe(true);
     expect(isRetiredLinkPath(canvasPath)).toBe(false);
     expect(isRetiredLinkPath(`/app/enterprise/${ENCODED_WORKSPACE_ID}/sk/${ENCODED_SIDEKICK_ID}/`)).toBe(false);

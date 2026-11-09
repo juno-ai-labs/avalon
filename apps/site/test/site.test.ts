@@ -47,12 +47,20 @@ describe('public Rally site', () => {
     if (sidekick.kind !== 'open') throw new Error('expected a Sidekick');
     expect(handoffAppLink('mac', sidekick.target)).toBe('rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/sidekicks/1111117Hxt1fAWDjN7TX');
   });
-  it('answers a Space, Channel, Breakout or Thread link as gone, and anything else as invalid', () => {
+  it('opens a Thread link as the Canvas of the same id', () => {
+    for (const thread of [
+      '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY',
+      '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY/',
+    ]) {
+      const plan = handoffPlan(thread);
+      if (plan.kind !== 'open') throw new Error('expected a Canvas');
+      expect(handoffAppLink('mac', plan.target)).toBe('rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/canvases/1111117Hxt1fAWDjN7TY');
+    }
+  });
+  it('answers a Space, Breakout or Organization-less Thread link as gone, and anything else as invalid', () => {
     for (const retired of [
       '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/',
-      '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY',
       '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY/b/1111117Hxt1fAWDjN7Te',
-      '/app/workspaces/global/00000000-0000-7000-8000-00000000000a/workstreams/00000000-0000-7000-8000-00000000000b',
       '/app/workstreams/00000000-0000-7000-8000-00000000000b',
     ]) expect(handoffPlan(retired)).toEqual({ kind: 'gone' });
     expect(handoffPlan('/app/global/1111117Hxt1fAWDjN7TW/cv/not-base58/')).toEqual({ kind: 'invalid' });
@@ -89,7 +97,9 @@ describe('public Rally site', () => {
     )).toBe('/app/:retired');
     expect(normalizedTelemetryPathname(
       '/app/workspaces/enterprise/00000000-0000-7000-8000-000000000009/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30',
-    )).toBe('/app/:retired');
+    )).toBe('/app/workspaces/:region/:organization/workstreams/:thread');
+    expect(normalizedTelemetryPathname('/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY'))
+      .toBe('/app/:region/:organization/s/:space/c/:thread');
     expect(normalizedTelemetryPathname('/app/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30')).toBe('/app/:retired');
     expect(normalizedTelemetryPathname('/app/workspaces/global/00000000-0000-7000-8000-000000000009'))
       .toBe('/app/:unrecognized');

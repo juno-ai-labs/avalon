@@ -44,20 +44,23 @@ it("rewrites Canvas and Sidekick links into the shell's hash routes", () => {
   expect(shellLocation("/login/email", "")).toBeNull();
 });
 
-it("routes no Space, Channel, Breakout or Thread link into the shell", () => {
+it("routes no Space or Breakout link into the shell, and a Thread link as its Canvas", () => {
   const workspaceId = metadata.workspace!.id;
   const spaceId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
   const threadId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
   const space = `/app/global/${uuidToBase58(workspaceId)}/s/${uuidToBase58(spaceId)}`;
   for (const retired of [
     space,
-    `${space}/c/${uuidToBase58(threadId)}`,
     `${space}/c/${uuidToBase58(threadId)}/b/${uuidToBase58(spaceId)}`,
-    `/app/workspaces/global/${workspaceId}/workstreams/${threadId}`,
     `/app/workstreams/${threadId}`,
   ]) {
     expect(shellLocation(retired, "")).toBeNull();
     expect(inPlaceHash(`/app/workspaces/global/${workspaceId}`, `https://app.rallywith.ai${retired}`)).toBeNull();
+  }
+  // A Thread's own link opens the Canvas a conversion kept under its id.
+  for (const thread of [`${space}/c/${uuidToBase58(threadId)}`, `/app/workspaces/global/${workspaceId}/workstreams/${threadId}`]) {
+    expect(shellLocation(thread, "")).toBe(`/app/workspaces/global/${workspaceId}#/canvases/${threadId}`);
+    expect(inPlaceHash(`/app/workspaces/global/${workspaceId}`, `https://app.rallywith.ai${thread}`)).toBe(`#/canvases/${threadId}`);
   }
 });
 

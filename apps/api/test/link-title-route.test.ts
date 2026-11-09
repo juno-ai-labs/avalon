@@ -27,8 +27,15 @@ describe("linkTitleTarget", () => {
     });
   });
 
-  it("names nothing for a retired Space, Channel or Thread link, or a path that is not a link", () => {
-    expect(linkTitleTarget(`${base}/s/${uuidToBase58(CANVAS)}/c/${uuidToBase58(ARTIFACT)}`)).toBeNull();
+  it("names a Thread link's Canvas, which a conversion kept under the Thread's id", () => {
+    expect(linkTitleTarget(`${base}/s/${uuidToBase58(ARTIFACT)}/c/${uuidToBase58(CANVAS)}`)).toEqual({
+      region: "global", request: { workspaceId: WORKSPACE, target: { kind: "canvas", canvasId: CANVAS } },
+    });
+  });
+
+  it("names nothing for a retired Space or Breakout link, or a path that is not a link", () => {
+    expect(linkTitleTarget(`${base}/s/${uuidToBase58(CANVAS)}/`)).toBeNull();
+    expect(linkTitleTarget(`${base}/s/${uuidToBase58(CANVAS)}/c/${uuidToBase58(ARTIFACT)}/b/${uuidToBase58(CANVAS)}`)).toBeNull();
     expect(linkTitleTarget(`/app/workstreams/${CANVAS}`)).toBeNull();
     expect(linkTitleTarget("/help/")).toBeNull();
   });
