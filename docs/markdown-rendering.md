@@ -990,6 +990,8 @@ ink (v4-R2-6).
 **Considered and rejected:** A 404 for a Firecrawl 4xx: a 401 or 402 is this
 deployment's key, not the host.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — The email converter moves here from the retired digests document
 
 **What changed:** `email-markdown.ts` is listed and described here. It was
@@ -1007,6 +1009,8 @@ line break in prose but tables stay preformatted, since this renderer has no
 table model (2026-08-30); and every email is drawn light only, because a mail
 client cannot report the reader's appearance and strips `<style>` blocks
 (2026-10-16).
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-02 — Sidekick mention chips
 

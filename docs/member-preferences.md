@@ -151,6 +151,8 @@ back is the owner's call, not made here.
 **What a future change must respect:** a channel removed from the schema is
 read as absent, never as an error.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — Settings offers only kinds a producer records, and Access requests joins them
 
 **What changed:** `NotificationKindSchema` gains `accessRequests` (default
@@ -196,6 +198,8 @@ them. Guard: `member-preferences-previous-release.test.ts` parses the
 emitted record with the previous release's schema, copied verbatim from
 d0cab03. A later release can drop the three kinds once no stored record
 matters.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-15 — Channels per kind replace the push switches
 

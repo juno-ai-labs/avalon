@@ -321,7 +321,7 @@ title names only Canvases the acting person can open: an attach by title
 admits every match before it reports one, so a private Canvas's id is never
 disclosed by a guess.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-29 — A Sidekick's scope lists the Channel its review announces in, and `post` reaches it
 

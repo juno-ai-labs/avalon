@@ -348,6 +348,8 @@ comments already followed scroll and resize.
 as it already is and does not move the editor, so a fresh editor stays where
 the pointer let go.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-29 — One annotation script on every host, injected by the serving Worker
 
 **What changed:** The picker, cards and restore became one script that installs

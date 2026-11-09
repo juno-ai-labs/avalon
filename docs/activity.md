@@ -462,6 +462,8 @@ drift from the rail. A future change to what lists or what is seen changes
 `listedSql` or `ACTIVITY_SEEN_SQL` once, for the page, the counts and the
 badge together.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — A needs-input row opens the run that asked, clears when it is answered, rows take the shared layout, and replies return
 
 **What changed (replies):** A person's reply in a Canvas's Chat or a
@@ -544,6 +546,8 @@ run being answered, by `"0"` being read, or by Mark all seen; a seen row's
 colours are tokens chosen for contrast, and dimming a row by opacity is how
 this failed before.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — A row lists only while its person may open the parent, and every read report is heard
 
 **What changed:** `activityPage` filters out, from the page and the unseen
@@ -568,6 +572,8 @@ for a read that came before it.
 statement, and a read is dated by when the person read, never by delivery.
 (Later the same day the filter gained one exemption, `access_denied`; see
 the entry above.)
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-08 — Activity returns as a per-person feed of the four push events
 
@@ -600,3 +606,5 @@ already seen.
 **Consequences:** A new kind of person-facing event joins Activity by being
 recorded through one of the two recorders, or by calling `recordActivityItem`
 in its own intent's transaction. Retention is undecided and nothing prunes.
+
+Shipped in juno-ai-labs/avalon#1490.

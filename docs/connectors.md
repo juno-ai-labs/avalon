@@ -1633,6 +1633,8 @@ authoritative, so the verdicts are still there; the reasons are in
 tells somebody about connector activity reads the rules under
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — The origin capability and the legacy ID-only activity producers are deleted
 
 **What changed:** `ConnectorAdapter.origin`, `describeConnectorOrigin`,
@@ -1663,6 +1665,8 @@ the same way; a poll instance replaying across the deploy never reaches the
 deleted step. The provider-wide webhook service keeps its legacy branch, and
 so its ID-only producer, until its Node suite (`test/provider-webhooks.test.ts`,
 which drives only that branch over a fake D1) is moved onto WorkspaceDO.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-22 — Report shortened Sheets cell text
 

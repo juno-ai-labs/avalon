@@ -642,6 +642,8 @@ being retried on every wake.
 **Consequences:** The entry's handler must re-derive the entry after the check
 (the base settles it guarded on the instant that ran, so the re-arm survives).
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — A Sidekick's run rows are a stored kind armed by triggers
 
 **What changed:** `sidekick_run_row` joins a Sidekick's stored kinds. It is the
@@ -662,6 +664,8 @@ repair a row whose version ran ahead.
 edit to `HostedSidekick`. A trigger that re-arms the entry before a replay's
 entry runs replaces it with an ordinary one; the handler reads the run either
 way, so only a row whose version is ahead needs the replay run again.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-03 — A stopped agent's queue is not a wake reason, and an idle pass is held
 

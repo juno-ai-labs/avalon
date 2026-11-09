@@ -492,6 +492,8 @@ scope grants' Organization-wide branch (`scope-grant-policy.ts`) reads the
 access class directly. Its changelog is the record of why a guest is never
 admitted by Organization-wide scope.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — A conversation's read is answered by its Canvas or Sidekick alone, through one audience rule
 
 **What changed:** A Sidekick's conversations and the resources in them are
@@ -533,7 +535,7 @@ through the canonical resource decision. A resource is readable through the
 conversation that holds it and nothing else, and resource authorization for a
 hosted conversation is one RPC whichever kind it is.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-21 — Admit attachment and artifact reads once per request
 

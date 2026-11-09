@@ -414,7 +414,7 @@ of what is shared; a new kind of shared parent passes its own hook and link.
 Listing a Canvas's shares and its grants has no route, so the share panel
 shows its form alone.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-05 — A guest's run finishes its thread's handoff before refusing
 

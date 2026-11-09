@@ -321,6 +321,8 @@ The low-quota line is the one place the meter changes tone, so the colour of
 the fill is left to say nothing else. The 2026-10 choice of the accent was a
 look, not a signal; its reasoning was not recorded beyond that.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — Index the ledger by Sidekick
 
 **What changed:** Migration `0002_usage_events_sidekick.sql` adds a partial

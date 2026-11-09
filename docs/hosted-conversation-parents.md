@@ -320,6 +320,8 @@ Sidekick's conversation, created by its parent as this document describes. D1
 record of the optimistic hand-off, the rule that everything the response does
 not depend on still waits for it, and the email-address reservation.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — A hosted parent batches its shared conversation's replies
 
 **What changed:** `applyChildEnvelope` adds a `new_message_notification`
@@ -338,6 +340,8 @@ mention is: a burst of replies would push once per message.
 
 **What a future change must respect:** the reply joins its batch in the
 receipt's transaction, never after it.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — A hosted parent records its conversations' mentions and adds
 
@@ -375,6 +379,8 @@ row existed.
 **Consequences:** A new hosted kind records mentions without doing anything.
 `workspace_workstream_effect_receipts` is no longer written or read, and can
 be dropped with the other Thread-era tables.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — One hosting primitive for a Sidekick and a Canvas; the Channel and Space host is deleted
 
@@ -444,7 +450,7 @@ kept the `parent_*`, `channels`, `breakouts` and `spaces` rows, which the
 Thread retirement's inventory reads, until the operator has run
 `retire_threads` in every Organization.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-23 — Read historical directory projections without retaining obsolete fields
 

@@ -768,6 +768,8 @@ conversation, not yet loaded when the run is opened straight from the card.
 The card's link now carries the number in its route state, which the pill
 reads while the conversation has not said.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — A Canvas's icon and colour can be chosen
 
 **What changed:** WorkspaceDO migration 153 adds
@@ -804,6 +806,8 @@ round-5 visual check (F9), a palette opened from the menu moves focus onto
 its chosen colour once the menu has handed focus back to its own trigger;
 before, focus was left outside a palette of some hundred choices.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — Retirement records: Naming a work stream, Work-stream descriptions
 
 **What changed:** Nothing in the code. Two documents kept after their
@@ -836,6 +840,8 @@ the `workstream_description` model role and its Flagship key
 table remains in conversation-object SQLite. Its changelog is the record of
 why a proposal is repaired before it is judged and why the refresh lease
 shares the owning object's transaction.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-08 — The Canvas screens follow design.html, a pinned Canvas's new version tells its pinners, and members may ask to be let in
 
@@ -915,6 +921,8 @@ owner.
 Canvas colour replaces `canvasHue`, not sits beside it (now built: see the
 2026-11-08 entry on choosing a Canvas's icon and colour).
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — A Canvas made with no title is titled from its first message, and a refused retitle names its field
 
 **What changed:** WorkspaceDO migration 149 adds `canvas_directory.title_status`.
@@ -945,6 +953,8 @@ projection from counting as activity.
 
 **What a future change must respect:** only a Canvas still `naming` may be
 titled automatically, and every person's retitle must settle it.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-08 — A Canvas is renamed in its own pill, and the pill follows a rename from anywhere
 
@@ -978,6 +988,8 @@ met no panel, then a maximized one after a reload. A malformed Canvas id
 in a link reads as a missing one: it names nothing that could exist, and
 "The request is invalid" told the person less than the not-found state does.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — A Thread that has artifacts can become a Canvas in place
 
 **What changed:** `HostedCanvas.createFromThread`, beside `create` and sharing
@@ -995,6 +1007,8 @@ them rewritten.
 Thread's, with a creation time older than Canvases, participants with no
 `added_by_user_id`, and no writer. Nothing may assume a Canvas was made by
 `create`.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — Document created: a Canvas is a hosted conversation with its own audience
 
@@ -1073,4 +1087,4 @@ their window says so.
 conversation's parent id is what lets a server mint the link from a
 conversation alone.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.

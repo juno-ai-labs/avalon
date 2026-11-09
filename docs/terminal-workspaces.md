@@ -1373,6 +1373,8 @@ too, because the owner named both parents.
 writer of that row re-arms the check without knowing the entry exists, and
 deleting the sandbox row removes it.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-23 — Retry observation without repeating a Terminal command
 
 **What changed:** Named-session GET, command polling and log reads recover from

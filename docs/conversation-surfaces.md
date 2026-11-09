@@ -912,6 +912,8 @@ every width, and the conversation stays mounted behind the details. A turn's
 side follows `own-human-message`, so the same transcript reads from each
 person's own side.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — Every open of a conversation sends one read report
 
 **What changed:** `conversationReadAcknowledgement` returns a report at the
@@ -930,6 +932,8 @@ cursor. It reaches the Activity row only because the server's
 `directory_user` effect carries the report's time (`lastReadAt`, the server
 fix S10, 695611c): the effect outbox drops an effect identical to its last
 one, which is what every unchanged-cursor report was before it.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — The surface's two hosts are a Canvas's Chat and a Sidekick's conversation; Breakouts, merge-back, suggestions and the Thread branches leave it
 
@@ -980,6 +984,8 @@ storage names (`WorkstreamDetail`, `workstreamDetailQueryKey`,
 `useWorkstreamSocket`, `WorkstreamComposer`) stay, per the storage-name rule.
 A host that needs a participant list or a title-pill menu builds it from its
 own detail, as the Canvas screen does with its Share dialog.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-23 — Keep running counts through navigation, discard them on disconnect
 

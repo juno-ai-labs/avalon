@@ -859,6 +859,8 @@ and never sent raw, the rule the other producers (`message_sent`,
 `tool_usage`, the run outcome) already follow; namespace 1 on an elicitation
 id belongs to this producer alone.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-03 — A new account's signup flow merges into its person
 
 **What changed:** Account creation queues an `epoch_transition` profile job

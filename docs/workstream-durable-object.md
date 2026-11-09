@@ -1844,6 +1844,8 @@ content nor network bodies are redacted and the tab may go to any site, the
 boundary being the one tab. The Workers proof of the creator-only rule went
 with the import suite and was never replaced.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — Stop ends a streaming response at its next chunk
 
 **What changed:** The persistent loop's runtime exposes `stopRequested()`,
@@ -1867,6 +1869,8 @@ its receipt is the recovery authority.
 
 **What a future change must respect:** the check runs only on `stream_delta`,
 so a Stop never aborts the harness while a tool runs.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-08 — A Thread's conversation can become a Canvas's: `convertParentKind`
 
@@ -1895,6 +1899,8 @@ does both.
 write-once. A new place that caches or copies the kind inside this object has
 to be rewritten by `convertParentKind` too.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — The parent-kind contract names only Canvas and Sidekick
 
 **What changed:** `ConversationParentKindSchema` in `@rally/contracts` is
@@ -1913,6 +1919,8 @@ flag and its Activity metadata are deleted with the merge contracts.
 narrowed last, after C-3 stopped hosting the retired kinds, because a stored
 root or an in-flight effect may still name one; the readers that must see a
 retired kind each name their wider enum rather than widen the contract again.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — The conversation class is `AgentLoopDO`, a conversation belongs to a Canvas or a Sidekick, and the Thread machinery is deleted
 
@@ -1997,7 +2005,7 @@ contract's `ConversationParentKindSchema` still lists all four kinds, so the
 Worker narrows at each call into the object (`hostedConversationParentKind`)
 until the contracts step (B-8) narrows the enum.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-31 — Crash repair names a program's completed nested calls
 

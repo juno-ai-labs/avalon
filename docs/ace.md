@@ -397,6 +397,8 @@ The round-5 visual check found the Workspaces page as documented, with no
 Demos, and Ace overflowing sideways at phone width; that is recorded under
 Failure modes and limits and not fixed, Ace being a desktop operator console.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — The Thread-era, import and suggested-work model roles leave the catalog
 
 **What changed:** The managed model catalog loses five rows — work-stream
@@ -426,7 +428,7 @@ retired — not a label edit. Reusing one of the five retired keys for a new
 role means taking it out of the retire list first: the 2026-10-02 entry's rule
 is that a key in both lists is recreated on every deploy.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-16 — Ace stops managing `digests-enabled`
 

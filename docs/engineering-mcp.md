@@ -687,6 +687,8 @@ committing an Organization.
 **What a future change must respect:** run it after the dump and before
 `retire_threads`; the retirement deletes every Thread it finds.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — Canvas and Sidekick conversation tools replace the Thread ones
 
 **What changed:** `list_spaces`, `read_thread`, `read_breakout`,
@@ -711,6 +713,8 @@ they read. `run_canvas_sql` keeps the child reach `run_substream_sql` had
 A future tool must not take a Thread or Space id: the product refuses those
 parents by name (`conversation_parent_kind_retired:<kind>`).
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — The Channel and Thread creation, list and feed tools go
 
 **What changed:** `create_channel`, `create_thread`, `read_channel`,
@@ -724,6 +728,8 @@ Sidekick conversation tools replace them.
 (`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`); the services these
 tools called (`SpaceService`, `WorkstreamObjectCreationService`) are deleted in
 plan step C-2, so the tools could only fail.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — Dump an Organization's Thread transcripts, then retire its Threads
 
@@ -740,6 +746,8 @@ reaches every region's objects; Ace's retirement route is the `demos` role's.
 
 **Consequences:** The first Organization-wide write here. Its confirmation is a
 consistency check on the request, not a second approval, as Ace's is.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-06 — Pause and resume a Sidekick
 
