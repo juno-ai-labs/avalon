@@ -53,7 +53,6 @@ const SenderAuthorizationSchema = z.looseObject({
   agentExchange: z.looseObject({ senderAgentId: z.string() }).optional(),
   senderExecutionPrincipal: z.unknown().optional(),
   executionPrincipal: z.unknown().optional(),
-  slackOrigin: z.looseObject({ matchedAvalonUserId: z.string().nullable().optional() }).nullable().optional(),
 });
 const UserPrincipalSchema = z.looseObject({ type: z.literal("user"), userId: z.string().min(1) });
 
@@ -62,15 +61,18 @@ const UserPrincipalSchema = z.looseObject({ type: z.literal("user"), userId: z.s
  * actor and its stored authorization:
  *
  * - a person's own message or answer names them;
- * - outside text from a bound provider thread names the Rally user the
- *   provider identity resolved to, or nobody (`external`);
+ * - outside text from a bound provider thread is `external`, whoever wrote
+ *   it: every binding a run child has is one the run's own outbound message
+ *   made (Slack starts no conversation and binds no room), so a reply there
+ *   is an answer the run itself asked for. It continues the run under the
+ *   run's own principal, framed as evidence, not as a request;
  * - another agent's message names the person that agent acts for, so a
  *   reader's agent cannot do what the reader may not. The Sidekick's own
  *   wizard is no exception: its turn acts for whoever drove it, which for its
  *   answer to a run's change request is the run's own principal, so that
  *   answer continues the run and a wizard turn someone else drove does not.
- *   An agent acting for nobody (an Organization-authority turn) names
- *   nobody (`external`), and is refused like outside text no one resolved;
+ *   An agent acting for nobody (an Organization-authority turn) is
+ *   `unattributed`, and refused;
  * - anything else is Rally's own (`system`).
  */
 export function continuationSender(
@@ -80,13 +82,10 @@ export function continuationSender(
   if (pending.actor === "human" && pending.author_user_id !== null) return { kind: "person", userId: asUserId(pending.author_user_id) };
   const stored = SenderAuthorizationSchema.safeParse(authorization);
   const fields = stored.success ? stored.data : {};
-  if (pending.actor === "external") {
-    const matched = fields.slackOrigin?.matchedAvalonUserId;
-    return matched ? { kind: "person", userId: asUserId(matched) } : { kind: "external" };
-  }
+  if (pending.actor === "external") return { kind: "external" };
   if (fields.agentExchange) {
     const principal = UserPrincipalSchema.safeParse(fields.senderExecutionPrincipal ?? fields.executionPrincipal);
-    return principal.success ? { kind: "person", userId: asUserId(principal.data.userId) } : { kind: "external" };
+    return principal.success ? { kind: "person", userId: asUserId(principal.data.userId) } : { kind: "unattributed" };
   }
   return { kind: "system" };
 }
@@ -134,7 +133,7 @@ export const SIDEKICK_RUN_REFUSAL_TEXT: Record<SidekickRunContinuationRefusalCod
   run_no_eligible_delegate: "This message did not continue the run because no delegated user is available. Add a delegate with access to continue.",
   run_continuation_requires_requester: "This message did not continue the run because the run acts for the person who started it, and only they can continue it.",
   run_continuation_requires_delegate: "This message did not continue the run because it acts with access shared with this Sidekick, and only people who share theirs can continue it.",
-  run_continuation_requires_rally_user: "This message did not continue the run because its sender is not linked to a Rally account that may continue it.",
+  run_continuation_requires_rally_user: "This message did not continue the run because the agent that sent it acts for nobody in Rally who may continue it.",
 };
 
 /**

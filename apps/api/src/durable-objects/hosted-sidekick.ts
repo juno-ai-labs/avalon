@@ -1561,9 +1561,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     sender: SidekickRunContinuationSender,
     principal: string | null,
   ): Promise<"run_continuation_requires_requester" | "run_continuation_requires_delegate" | "run_continuation_requires_rally_user" | null> {
-    // Every run acts as somebody, so outside text that names nobody in Rally
-    // may continue none: anyone in the bound thread could otherwise steer it.
-    if (sender.kind === "external") return "run_continuation_requires_rally_user";
+    // Every run acts as somebody, so an agent acting for nobody continues
+    // none. Outside text is not screened: it arrives only through a binding
+    // the run's own outbound message made, as the answer the run asked for.
+    if (sender.kind === "unattributed") return "run_continuation_requires_rally_user";
     if (sender.kind !== "person") return null;
     if (run.requester_user_id !== null) {
       return sender.userId === run.requester_user_id ? null : "run_continuation_requires_requester";
