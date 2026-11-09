@@ -186,7 +186,10 @@ main's, the preload inbox's, the consumer's — compares both.
   values themselves never cross, and the consumer refetches its own. A
   `workspace_sidebar_list` push of the `automations` list is published as the
   `automations` topic, the refetch that push amounts to for a window that does
-  not hold the list. A `workspace_usage` push, and every subscribe answer, is
+  not hold the list, when a row in it moved. In the window that holds the
+  list, the push refetches the detail and runs of only the Sidekicks whose row
+  differs from the one it replaces (`sidekickListMoved`), since the whole list
+  is pushed for a change to any one row. A `workspace_usage` push, and every subscribe answer, is
   published as `usage`, a relay-only name
   ([`usage-metering.md`](usage-metering.md)). Conversation preview replies are
   the only content-bearing exception; no
