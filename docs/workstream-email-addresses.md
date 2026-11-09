@@ -31,7 +31,9 @@ New version-2 Sidekick definitions receive email only when inbound_email is conf
 | `apps/api/src/routes/resend.ts` | The signed legacy Resend receiving webhook. |
 | `apps/api/src/services/email-markdown.ts` | The Markdown renderer both Rally emails share; owned by [`markdown-rendering.md`](markdown-rendering.md). |
 | `apps/api/src/services/cloudflare-inbound-email.ts` | Platform-only Cloudflare email event handler and stream-size admission. |
-| `apps/api/src/services/email.ts` | The shared native Cloudflare sender. |
+| `apps/api/src/lib/cloudflare-email-message.ts` | Stable recipient-scoped delivery identity and the published raw MIME ceiling. |
+| `apps/api/src/services/email.ts` | Shared native Cloudflare sender, diagnostic classification and caller-selected delivery receipts. |
+| `packages/db/migrations/0126_email_delivery_receipts.sql` | Opaque regional delivery claims and completion receipts, without message content. |
 | `apps/api/src/services/user-delivery.ts` | The connector-declared personal delivery surfaces beside it. |
 
 ### The v1 format
@@ -126,9 +128,10 @@ regional row and the Global claim had independent writers.
 ### Cloudflare transport
 
 The Global Worker's `email()` entrypoint receives Cloudflare Email Routing
-messages. It checks the maintenance fence and `INBOUND_EMAIL_MAX_BYTES` against
+messages. It checks the maintenance fence and Cloudflare's published 25 MiB inbound ceiling against
 both `rawSize` and the actual stream before routing. Oversized mail is rejected
 permanently; storage, maintenance and regional failures propagate to the platform.
+Cloudflare [documents that it prepends its verdict before invoking the Worker](https://developers.cloudflare.com/email-service/api/route-emails/email-handler/#authentication-results).
 Only the first Cloudflare `Authentication-Results` header, with service identifier
 `mx.cloudflare.net` and a passing DMARC verdict, sets `senderAuthenticated` on
 the internal handoff. Later headers, comments and quoted values cannot supply a
@@ -139,18 +142,24 @@ Only the SMTP envelope recipient selects a route: MIME To/Cc/Bcc headers never
 add recipients, so blind copies and aliases reach the intended owner without
 allowing a sender to fan out by editing headers.
 
-The delivery ID is `cf_` followed by SHA-256 of the exact raw MIME bytes. A Global
-routing receipt also includes a hash of the normalized SMTP recipient, so retries
-of the same bytes converge while separate alias events can route independently.
-The sender's Message-ID is display metadata, never the dedupe authority. A fresh
-SMTP delivery whose transport headers differ has different bytes and can be a new
-delivery even if it reuses Message-ID.
+The delivery ID is `cf_` followed by SHA-256 of the envelope sender, normalized
+SMTP recipient, trusted authentication verdict, stable authored headers and a
+digest of the exact MIME body. An unauthenticated copy cannot suppress a later
+authenticated delivery.
+Received, ARC, Authentication-Results and provider-added X-* headers are excluded:
+receiving-hop changes on retry do not admit another run. Message-ID is one input,
+never the identity by itself; changing the body still creates a distinct delivery.
+The recipient scopes both Global receipts and regional payload/resource identities,
+so copies to two Sidekicks never overwrite each other's recipient metadata.
 
 Global passes the raw bytes transiently through the internal regional RPC; it
 persists only routing metadata. The owning region parses MIME with `postal-mime`,
 decodes text, subject and attachment metadata, and uses the existing safe-text,
 resource, receipt, membership and Sidekick-admission paths. Attachments remain
-metadata, matching the prior behavior. Raw HTML and attachment bytes do not enter
+metadata, matching the prior behavior. Parsed metadata is validated against the
+same receiving schema as legacy mail. `INBOUND_EMAIL_MAX_BYTES` continues to
+bound legacy JSON responses; attachment bytes count only toward the separate
+Cloudflare raw MIME ceiling. Raw HTML and attachment bytes do not enter
 the transcript. Cloudflare payloads and structured messages say
 `provider: "cloudflare"`.
 
@@ -167,10 +176,17 @@ Outgoing mail uses `EMAIL.send()` with a structured body, named From address,
 optional HTML and Reply-To. `EMAIL_FROM` and `EMAIL_NOTIFICATION_FROM` replace
 the Resend-specific sender vars. `X-Rally-Category`, `X-Rally-Region`, and
 `X-Rally-Delivery-Key` preserve correlation metadata. The delivery-key header is
-not a provider deduplication guarantee. Caller receipts remain authoritative for
-completed work; an uncertain provider acceptance followed by a caller retry can
-send a duplicate. Rate/quota refusals are retryable, while other provider errors
-and unknown outcomes carry `retryable: false`. Sending remains production-only.
+not a provider deduplication guarantee. D1 `email_delivery_receipts` stores only
+opaque delivery references and state. Sign-in and scoped-invitation sends atomically
+claim their reference, fence settlement with an attempt token, and park unknown
+outcomes or accepted-but-unsettled sends for review. Confirmed quota refusals return
+to pending. A crash leaves `sending` for reconciliation, rather than automatic reuse.
+Notice mail records completed sends so later queue deliveries skip them; internal
+and unknown failures remain retryable, with possible duplicates across acceptance
+and settlement or concurrent queue deliveries. Explicit permanent provider refusals
+are not retried. Provider diagnostic codes reach logs without exposing message data.
+Access acknowledgements retain their own generation-fenced review state.
+Sending remains production-only.
 
 The dedicated inbound domain is `rallywithai.com`, an already-owned zone with
 no pre-existing mail service. Cloudflare can route its apex catch-all to the
@@ -493,7 +509,7 @@ registry, and what happens to mail addressed to one. It does not own:
 | --- | --- |
 | `apps/api/test/workstream-email-address.test.ts` | The format, the frozen vocabulary indexes, the distinct-adjective rule, collision advance, and the 64-byte bound. |
 | `apps/api/test/workstream-email-routing.test.ts` | Reservation, owner claims, tombstones (a retired Thread's included), and the regional fail-closed path. |
-| `apps/api/test/resend-inbound-email.test.ts` | Cloudflare MIME parsing and trusted-authentication handoff, legacy delivery IDs, sender resolution, the single admission call, and refusal of retired Thread routes. |
+| `apps/api/test/resend-inbound-email.test.ts` | Migrated-SQL recipient isolation and receipt deduplication, Cloudflare MIME parsing and trusted-authentication handoff, legacy delivery IDs, sender resolution, the single admission call, and refusal of retired Thread routes. |
 | `apps/api/test/cloudflare-email-authentication.test.ts` | Cloudflare DMARC results, missing authentication, and rejection of spoofed later headers, comments and quoted values. |
 | `apps/api/test/email.test.ts` | Native sender payloads, production-only sending, and provider outcome classification. |
 | `apps/api/test-workers/cloudflare-email.test.ts` | On real workerd: streamed byte limits, content-derived Global receipts, and maintenance refusal. |
@@ -549,6 +565,10 @@ has no documented send-idempotency option, so the acceptance/settlement gap rema
 an explicit at-least-once delivery limitation.
 
 **Consequences:** Outbound deployment needs verified Cloudflare sender domains.
+Migration `0126_email_delivery_receipts.sql` must precede the Worker. Transactional
+delivery claims park uncertain outcomes; completed notice receipts suppress queue
+redelivery while transient notice failures remain retryable. Incoming IDs exclude
+mutable hop headers and scope regional storage by recipient.
 New incoming addresses use the dedicated `rallywithai.com` apex, where one
 Cloudflare catch-all reaches the Worker without per-address rule provisioning.
 Existing addresses retain their exact domains. Because the owner confirmed

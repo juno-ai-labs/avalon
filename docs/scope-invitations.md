@@ -54,9 +54,11 @@ external awaits.
 One operation records an invitation per distinct email, with stable grant
 operation IDs and an encrypted email payload. Its transaction schedules the
 existing alarm mechanism. Retrying the same operation returns its recorded
-invitations; changing its input conflicts. Delivery retries use the same encrypted body and correlation key with Cloudflare.
-There is no provider deduplication: a retry after acceptance but before local
-settlement can send a duplicate invitation.
+invitations; changing its input conflicts. Delivery uses the same encrypted body
+and correlation key with Cloudflare. A shared D1 delivery receipt atomically claims
+that key and records acceptance before the object's delivered marker. Confirmed
+quota refusals retry; unknown outcomes or interrupted claims remain parked for
+operator review and the delivery alarm stops automatically retrying them.
 
 The conversation's `participants` table is a projection for names, unread
 state and socket admission; who may read a Canvas is its audience
@@ -382,6 +384,22 @@ previewed is still sent. The deliberate SQL failure is caught inside the real ob
 the test RPC bridge otherwise reports its expected rejection twice.
 
 ## Changelog
+
+### 2026-11-09 — Park uncertain Cloudflare invitation sends
+
+**What changed:** Scoped invitations use the shared D1 delivery receipt with an
+atomic claim and token-fenced settlement. Non-retryable or uncertain sends end
+the delivery alarm attempt without marking the invitation delivered.
+
+**Why:** Cloudflare does not deduplicate the old provider key; an alarm must not
+keep emailing an invitation whose provider acceptance is unknown.
+
+**Considered and rejected:** Treating a missing provider response as a confirmed
+refusal would allow alarm backoff to send the same invitation indefinitely.
+
+**Consequences:** Migration 0126 precedes the Worker. Reconcile parked receipts
+before resetting them; a completed provider receipt repairs a missing object-local
+delivered marker without sending again.
 
 ### 2026-11-05 — A guest's run finishes its thread's handoff before refusing
 

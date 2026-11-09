@@ -1,4 +1,5 @@
-import PostalMime from "postal-mime";
+import PostalMime, { type Address } from "postal-mime";
+import { cloudflareEmailIdentity, CLOUDFLARE_EMAIL_MAX_BYTES } from "../lib/cloudflare-email-message";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { CloudflareEmailPayloadSchema } from "../lib/rpc-contracts";
 import { verifySvixSignature as verifyStandardWebhookSignature, type VerifySvixInput } from "../lib/svix-signature";
@@ -256,14 +257,8 @@ export class ResendInboundEmailRoutingService {
   /** Cloudflare invokes this through its email event, never a public HTTP body. */
   async ingestCloudflare(message: z.infer<typeof CloudflareEmailPayloadSchema>): Promise<ResendInboundRoutingResult> {
     this.assertGlobalIngress();
-    // Hash exact bytes rather than trusting a sender-controlled Message-ID.
-    // Include the SMTP recipient in the receipt identity: Bcc and alias copies
-    // arrive as separate events even when their message bytes are identical.
-    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", message.raw));
-    const emailId = `cf_${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-    const recipientDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(message.to.toLowerCase())));
-    const receiptId = `${emailId}_${Array.from(recipientDigest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-    return this.routeEmail(emailId, receiptId, [message.to], message);
+    const emailId = await cloudflareEmailIdentity(message);
+    return this.routeEmail(emailId, emailId, [message.to], message);
   }
 
   private async routeEmail(
@@ -591,18 +586,18 @@ export class ResendRegionalEmailService {
 
   private async retrieveReceivedEmail(emailId: string, cloudflareEmail?: z.infer<typeof CloudflareEmailPayloadSchema>) {
     if (cloudflareEmail) {
-      if (cloudflareEmail.raw.byteLength > numericEnv(this.env, "INBOUND_EMAIL_MAX_BYTES", DEFAULT_MAX_RECEIVED_EMAIL_BYTES)) {
+      if (cloudflareEmail.raw.byteLength > CLOUDFLARE_EMAIL_MAX_BYTES) {
         throw new ApiError(413, "email_too_large", "The received email exceeds the configured size limit");
       }
       const email = await PostalMime.parse(cloudflareEmail.raw);
-      return {
+      const received = ResendReceivedEmailSchema.safeParse({
         id: emailId,
         authentication: { dmarc: cloudflareEmail.senderAuthenticated === true ? "pass" : "fail" },
         from: email.from?.address ?? "",
         // The SMTP recipient is authoritative; MIME To/Bcc never select routes.
         to: [cloudflareEmail.to],
-        cc: (email.cc ?? []).flatMap((address) => address.address ? [address.address] : (address.group ?? []).map((mailbox) => mailbox.address)),
-        reply_to: (email.replyTo ?? []).flatMap((address) => address.address ? [address.address] : (address.group ?? []).map((mailbox) => mailbox.address)),
+        cc: postalAddresses(email.cc),
+        reply_to: postalAddresses(email.replyTo),
         subject: email.subject,
         text: email.text,
         html: email.html,
@@ -612,7 +607,12 @@ export class ResendRegionalEmailService {
           content_type: attachment.mimeType,
           ...(attachment.disposition ? { content_disposition: attachment.disposition } : {}),
         })),
-      };
+      });
+      if (!received.success) {
+        throw new ApiError(400, "invalid_received_email", "The received email has invalid fields", undefined,
+          zodDiagnosticCode(received.error, "cloudflare_received_email") ?? undefined);
+      }
+      return received.data;
     }
     const apiKey = requiredConfiguration(
       this.bindings().RESEND_RECEIVING_API_KEY ?? this.bindings().RESEND_API_KEY,
@@ -752,6 +752,12 @@ interface SafeReceivedEmail {
  * From header, so it does not count. Anything else, a missing verdict
  * included, is a claim only.
  */
+/** Group display names are not mailboxes; never send empty entries into normalization. */
+function postalAddresses(addresses: Address[] | undefined): string[] {
+  return (addresses ?? []).flatMap((address) => address.address ? [address.address]
+    : (address.group ?? []).flatMap((mailbox) => mailbox.address ? [mailbox.address] : []));
+}
+
 function fromDomainAuthenticated(authentication: z.infer<typeof ResendReceivedEmailSchema>["authentication"]): boolean {
   return authentication?.dmarc === "pass" || authentication?.dkim === "pass";
 }

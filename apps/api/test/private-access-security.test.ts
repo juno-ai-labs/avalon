@@ -76,6 +76,24 @@ describe('early-access abuse regressions against real migrations', () => {
       .toEqual({ acknowledgement_status: 'review_required' });
   });
 
+  it('requires review when provider acceptance is followed by a failed D1 settlement', async () => {
+    const provider = mockAccessMail(env).mockResolvedValue({ messageId: 'accepted' });
+    const prepare = env.DB.prepare.bind(env.DB);
+    let failSettlement = true;
+    vi.spyOn(env.DB, 'prepare').mockImplementation((sql) => {
+      const statement = prepare(sql);
+      if (sql.includes('acknowledged_at = ?') && failSettlement) {
+        statement.run = async () => { failSettlement = false; throw new Error('D1 settlement unavailable'); };
+      }
+      return statement;
+    });
+    expect((await submit()).status).toBe(503);
+    expect((await submit()).status).toBe(503);
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(database.prepare('SELECT acknowledgement_status FROM access_requests').get())
+      .toEqual({ acknowledgement_status: 'review_required' });
+  });
+
   it('does not let an older in-flight rate admission rewind the current IP bucket', async () => {
     expect(await admitAccessRequest(env, '192.0.2.1', 1, start + 3_600_000)).toBe(true);
     expect(await admitAccessRequest(env, '192.0.2.1', 1, start)).toBe(false);

@@ -4,6 +4,7 @@ import { reset } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { receiveCloudflareEmail } from "../src/services/cloudflare-inbound-email";
+import { CLOUDFLARE_EMAIL_MAX_BYTES } from "../src/lib/cloudflare-email-message";
 
 const bindings: Env = env;
 const recipient = "bright-steady-luminous-curie@rallywithai.com";
@@ -42,11 +43,21 @@ describe("Cloudflare email event ingress", () => {
   });
 
   it("rejects oversized mail based on actual stream bytes, including a wrong rawSize", async () => {
-    const incoming = { ...message("A message larger than the configured limit"), rawSize: 1 };
-    await receiveCloudflareEmail(incoming, { ...bindings, INBOUND_EMAIL_MAX_BYTES: "4" });
+    const incoming = { ...message("a".repeat(CLOUDFLARE_EMAIL_MAX_BYTES + 1)), rawSize: 1 };
+    await receiveCloudflareEmail(incoming, bindings);
     expect(incoming.setReject).toHaveBeenCalledExactlyOnceWith("Email exceeds the configured size limit");
     expect(await bindings.DB.prepare("SELECT count(*) AS count FROM resend_webhook_receipts").first())
       .toEqual({ count: 0 });
+  });
+
+  it("accepts raw MIME above the legacy JSON bound and rejects declared platform oversize", async () => {
+    const allowed = message(`From: outside@example.com\r\n\r\n${"a".repeat(5_500_000)}`);
+    await receiveCloudflareEmail(allowed, { ...bindings, INBOUND_EMAIL_MAX_BYTES: "5000000" });
+    expect(allowed.setReject).not.toHaveBeenCalled();
+    const oversized = { ...message(), rawSize: CLOUDFLARE_EMAIL_MAX_BYTES + 1 };
+    await receiveCloudflareEmail(oversized, bindings);
+    expect(oversized.setReject).toHaveBeenCalledExactlyOnceWith("Email exceeds the configured size limit");
+    expect(await bindings.DB.prepare("SELECT count(*) AS count FROM resend_webhook_receipts").first()).toEqual({ count: 1 });
   });
 
   it("propagates maintenance for a temporary failure before acknowledging any mail", async () => {

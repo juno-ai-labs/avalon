@@ -18,8 +18,8 @@ interface RequestRow {
 const rejectedEmail = () => new ApiError(502, 'access_email_rejected',
   'Your request was saved, but we could not deliver your confirmation email. Check that you entered the right address.');
 
-const reviewRequired = () => new ApiError(503, 'access_email_review_required',
-  'Your request was saved. We need to check the confirmation email before sending it again.');
+const reviewRequired = (diagnosticCode?: string) => new ApiError(503, 'access_email_review_required',
+  'Your request was saved. We need to check the confirmation email before sending it again.', undefined, diagnosticCode);
 
 /** Persist before contacting Cloudflare, retaining identical content across quota retries. */
 export async function requestAccess(env: Env, email: string, mailLimit = MAX_ACCESS_EMAILS_PER_HOUR): Promise<void> {
@@ -45,6 +45,7 @@ export async function requestAccess(env: Env, email: string, mailLimit = MAX_ACC
     WHERE id = ? AND acknowledgement_generation = ? AND acknowledgement_status IN ('pending', 'failed') RETURNING id`)
     .bind(now, row.id, row.acknowledgement_generation).first<{ id: string }>();
   if (!claimed) return;
+  let accepted = false;
   try {
     if (!await admitAccessEmail(env, mailLimit)) {
       // No provider attempt occurred. Preserve the first-attempt timestamp
@@ -70,14 +71,17 @@ export async function requestAccess(env: Env, email: string, mailLimit = MAX_ACC
         failed: { code: 'access_email_failed', message: 'Your request was saved, but the confirmation email could not be sent. Please try again.' },
       },
     });
+    accepted = true;
     await env.DB.prepare(`UPDATE access_requests SET acknowledgement_status = ?, acknowledged_at = ? WHERE id = ? AND acknowledgement_generation = ? AND acknowledgement_status = 'sending'`)
       .bind(status, status === 'sent' ? new Date().toISOString() : null, row.id, row.acknowledgement_generation).run();
   } catch (error) {
     // A concurrent successful attempt must not be overwritten by a failed one.
-    const needsReview = error instanceof ApiError && error.details?.retryable === false;
+    const needsReview = accepted || error instanceof ApiError
+      && (error.details?.retryable === false || error.details?.deliveryOutcomeUnknown === true);
     await env.DB.prepare(`UPDATE access_requests SET acknowledgement_status = ?
       WHERE id = ? AND acknowledgement_generation = ? AND acknowledgement_status = 'sending'`)
       .bind(needsReview ? 'review_required' : 'failed', row.id, row.acknowledgement_generation).run();
-    throw needsReview ? reviewRequired() : error;
+    throw needsReview ? reviewRequired(accepted ? 'access_email_settlement_failed'
+      : error instanceof ApiError ? error.diagnosticCode : undefined) : error;
   }
 }

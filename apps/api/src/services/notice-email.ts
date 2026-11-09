@@ -86,6 +86,7 @@ export async function sendNoticeEmail(env: Env, notice: Notice, send?: (message:
     region: env.AVALON_REGION,
     ...(notice.replyTo ? { replyTo: notice.replyTo } : {}),
     sender: "notification",
+    durableDelivery: "retry",
     errors: EMAIL_ERRORS,
   }, send);
   return { outcome };

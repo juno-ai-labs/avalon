@@ -160,7 +160,7 @@ export async function consumePushDeliveryQueue(batch: MessageBatch<unknown>, env
         message_id: message.id,
         channel: (message.body as { channel?: unknown } | null)?.channel ?? "push",
         // A malformed body names the field it failed on.
-        code: error instanceof ApiError ? error.code : error instanceof ZodError ? zodDiagnosticCode(error, "push_delivery_message")
+        code: error instanceof ApiError ? error.diagnosticCode ?? error.code : error instanceof ZodError ? zodDiagnosticCode(error, "push_delivery_message")
           : error instanceof Error ? error.name : "unknown_error",
         permanent,
       });
