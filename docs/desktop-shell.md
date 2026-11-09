@@ -41,6 +41,14 @@ routes the shell serves, or who owns the right panel.
 
 ## How it works
 
+### Section dashboards
+
+Canvases and Sidekicks share the dashboard grid, card shell, decorative preview
+and stretched title link. Both grids follow the available pane width, using one
+column in a narrow pane, two in a medium pane and three in a wide pane. Sidekick
+cards retain search, ownership filters, sharing and next-wake information; only
+paused Sidekicks have a lifecycle pill, while Needs input is a separate badge.
+
 ### Electron navigation history
 
 The leftmost visible pane header carries Back and Forward before its breadcrumb,
@@ -94,6 +102,11 @@ It holds two columns:
   the rail to its section (Activity excepted: once open, only a rail pick
   leaves it, whatever the pane opens and however, a row, a link inside the
   pane, a push or a deep link, and closing the phone sheet over it keeps it).
+  For members, clicking **Sidekicks** always opens `/sidekicks`, including when
+  its list or an individual Sidekick is already open. Repeated clicks at the
+  dashboard add no history entries, and the phone sheet closes to reveal the
+  dashboard. A guest only changes the list, keeping the shared pane open
+  because guests have no dashboard directory.
   The window's landing is its
   first route that belongs to a section, so a launch's redirect from `/` to
   `/canvases` is the landing and not a navigation; landing on a section home
@@ -149,7 +162,11 @@ It holds two columns:
   input**, then Pinned, then every Sidekick by what it last did, or by name
   from the heading's **Recent** control (the same `DropdownSelect` and ⇵
   glyph as the Canvases list's); its action is **New Sidekick**
-  (`/sidekicks/new`). A guest gets neither New action. **Activity** lists the
+  (`/sidekicks/new`), preceded by **Sidekicks home** (`/sidekicks`) to return
+  to the dashboard from any Sidekick. Home also dismisses the phone sheet
+  when its destination is already open, and gives a direct shortcut when the
+  rail is hidden on a phone. A guest gets neither New action nor Home.
+  **Activity** lists the
   person's mentions, adds and Sidekick run notices newest first, each a kind
   glyph, who did what where, the preview, a time and an unseen dot, opening
   the Canvas or the Sidekick's conversation, the rows about what the route has
@@ -408,6 +425,29 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-09 — The Sidekicks rail button opens the dashboard
+
+**What changed:** For members, both the Sidekicks rail button and the new Home
+action open `/sidekicks` and dismiss the phone sheet, including when the home
+is already open. Repeated visits add no duplicate history entry. Guests keep
+their current pane when selecting Sidekicks and have no Home action, because
+they have no dashboard directory.
+
+**Why:** Merely selecting the list left the member dashboard unreachable
+through its section button. Explicit navigation makes the overview one click
+away while preserving a useful Back history and the guest's shared pane.
+
+**Considered and rejected:** Home alone would leave the section button unable
+to open the overview. Removing Home would lose the phone's direct shortcut
+while its rail is hidden. Changing Canvas rail navigation is outside this
+request and its existing behavior is retained.
+
+**Consequences:** Both member shortcuts must close the sheet even at the same
+URL, clear any run query, and preserve one Back step to the preceding pane.
+The guest's section picker must not lead to an unavailable dashboard.
+
+Shipped in [#1505](https://github.com/juno-ai-labs/avalon/pull/1505).
 
 ### 2026-11-09 — Return to the Canvas dashboard from the sidebar
 
