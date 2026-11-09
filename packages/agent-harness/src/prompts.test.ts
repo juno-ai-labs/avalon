@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { stripPersonalSystemPrompt } from "@rally/contracts/text";
 import {
   renderAddressingMessages,
+  renderCanvasTitleMessages,
+  CANVAS_TITLE_OPENING_CHARACTERS,
   renderCompactionCheckpointContent,
   renderMemorySweepMessages,
   MAXIMUM_MEMORY_SWEEP_MESSAGE_CHARACTERS,
@@ -176,6 +178,10 @@ describe("prompt renderers", () => {
           ],
         }),
         hash: "1d42358ceff6d351f57fce0d3c816e9831799dce947c68ea2565ab7385eac8fa",
+      },
+      canvasTitle: {
+        actual: renderCanvasTitleMessages("Can you draft a launch plan for the Oslo coffee pop-up next month?"),
+        hash: "5266b0be008c932e07176316557db93831d4b5cf21b3d98a8b9ccf37d281d160",
       },
       compactionCheckpoint: {
         actual: renderCompactionCheckpointContent(
@@ -442,6 +448,27 @@ describe("prompt renderers", () => {
     expect(sweepMessages[0]!.content).not.toContain(injection);
     expect(sweepMessages[1]).toMatchObject({ role: "user" });
     expect(sweepMessages[1]!.content).toContain(injection);
+
+    // A Canvas's opening message is a person's text, titled, never obeyed.
+    const titleMessages = renderCanvasTitleMessages(injection);
+    expect(titleMessages[0]).toMatchObject({ role: "system" });
+    expect(titleMessages[0]!.content).not.toContain(injection);
+    expect(titleMessages[1]).toMatchObject({ role: "user" });
+    expect(titleMessages[1]!.content).toContain(injection);
+  });
+
+  it("titles a Canvas to the measured length and casing, and bounds the opening on code points", () => {
+    const [system, opening] = renderCanvasTitleMessages(`${"a".repeat(CANVAS_TITLE_OPENING_CHARACTERS - 1)}😀😀`);
+    // Thirty characters fits the distinguishing detail and little else, so the
+    // rule that says which half to drop carries every title that does not fit.
+    expect(system!.content).toContain("two to four words, thirty characters or less");
+    expect(system!.content).toContain("drop the words that frame the work before the detail that identifies it");
+    // "Sentence case" alone produced "Logo For Oslo Coffee".
+    expect(system!.content).toContain("Use sentence case");
+    expect(system!.content).toContain("Never capitalize every word");
+    expect(system!.content).toContain("never add a specific the message does not contain");
+    // The cut lands on a whole code point: the first emoji survives, the second does not.
+    expect(opening!.content).toBe(`Untrusted opening message:\n${"a".repeat(CANVAS_TITLE_OPENING_CHARACTERS - 1)}😀`);
   });
 
   it("bounds each sweep message and marks a window the conversation continues past", () => {

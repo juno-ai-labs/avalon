@@ -1,6 +1,7 @@
 export * from "./addressing";
 export * from "./message-continuation";
 export * from "./citations";
+export * from "./canvas-title";
 export * from "./compaction";
 export * from "./document-generation";
 export * from "./response-formatting";
