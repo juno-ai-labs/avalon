@@ -405,7 +405,7 @@ instead of guessing a member.
 
 ### Delivering to a person
 
-A connector that can deliver to a specific person declares `userDelivery` in its manifest: a `targetType`, the label and one-line description a destination choice shows, and `requiresPersonalIdentityLink`. The connections endpoint resolves it per requesting user through `apps/api/src/services/user-delivery.ts`, so a disabled connection, an unlinked installation, or a connector Rally does not register in this region carries no `userDelivery`. A connection merely marked `needs_reconnect` keeps it: the send is what discovers whether the credential still works. The scheduled digest that consumed it is retired (its tables survive in `workspace-domain-schema.ts`), so nothing in the product offers these destinations today; `resolveFrozenDeliveryIdentity`, which saved one, has no caller.
+A connector that can deliver to a specific person declares `userDelivery` in its manifest: a `targetType`, the label and one-line description a destination choice shows, and `requiresPersonalIdentityLink`. The connections endpoint resolves it per requesting user through `apps/api/src/services/user-delivery.ts`, so a disabled connection, an unlinked installation, or a connector Rally does not register in this region carries no `userDelivery`. A connection merely marked `needs_reconnect` keeps it: the send is what discovers whether the credential still works. The scheduled digest that consumed it is retired (its tables survive in `workspace-domain-schema.ts`), so nothing in the product offers these destinations today; `resolveFrozenDeliveryIdentity`, which saved one, was deleted with no caller.
 
 `requiresPersonalIdentityLink` marks the providers whose installation is workspace-wide. A team-wide bot addresses nobody on its own, so such a connection is a destination only for a user who has linked their own provider identity to it. `user-delivery.ts` maps each delivery target type to the table recording "this Rally user is this provider user on this connection" — `slack_user_links` for `slack_agent_dm` — and is the one place a new linked provider is registered. Slack declares `slack_agent_dm` with a required identity link; the type is registered in `AutomationDeliveryTargetTypeSchema`.
 
@@ -1615,8 +1615,8 @@ relevance". A future router over connector activity starts from those three.
 activity type, answering "would a person who was away for a day want this
 read back to them?" with the reason. Nothing reads the answer any more: the
 digest it was written for is deleted, `activityIsDigestible` went with it,
-and the manifest summary's `digestibleActivityTypes`
-(`packages/contracts/src/index.ts`) has no consumer; the one reader of the
+and the manifest summary's `digestibleActivityTypes` was deleted with no
+consumer; the one reader of the
 document, `packages/connectors/src/digestibility-doc.test.ts`, was deleted
 with it. What survives is the declaration, still required: each manifest's
 `{ digestible, operational }` partition, refused by

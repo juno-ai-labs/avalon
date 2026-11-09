@@ -210,7 +210,6 @@ import {
   resolveWorkstreamModelRouting,
 } from "./agent-model-flags";
 import { agentProfileFor, type AgentProfile } from "./agent-profiles";
-import { localWorkstreamAuthority } from "../runtime/local-authorities";
 import { createAzureModelPricingResolver } from "./openrouter-pricing-cache";
 import { createAvalonMultimodalGenerationPlugin } from "./multimodal-generation/plugin";
 import {
@@ -3007,8 +3006,7 @@ export async function runWorkstreamHarness(
     : loadRunPromptContext(env, input, workstream, runDefinitionPreparation));
   const principalSystemSection = profile ? "" : principalSystemSectionFor(input, runtime?.persistentLoop);
   const toolsPreparation = new Preparation(() => profile
-    ? Promise.resolve(profileHarnessTools(profile.plugins(input,
-      localWorkstreamAuthority(env, input.workspaceId, input.parentId, "desktopAction"))))
+    ? Promise.resolve(profileHarnessTools(profile.plugins(input)))
     : loadHarnessTools(
       env, input, runAuthoritySnapshot, runtime?.runtimeResourceAttacher,
       runDefinitionPreparation, inventoryPreparation, attemptLease,

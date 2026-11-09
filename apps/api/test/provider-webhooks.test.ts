@@ -143,7 +143,7 @@ class FakeStatement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return createTestD1Result<T>(this.database.all(this.sql, this.values));
+    return createTestD1Result<T>(this.database.all(this.sql));
   }
 
   async run<T>(): Promise<D1Result<T>> {
