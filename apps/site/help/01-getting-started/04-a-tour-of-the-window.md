@@ -64,7 +64,7 @@ To make the sidebar narrower or wider, drag its right edge.
 
 The Canvases and Sidekicks sections each have a home page, which shows the whole section at once and fills the window when nothing in the section is open.
 
-The **Canvases** home page has a **New Canvas** button, a search box and filter chips: **Everyone**, **Made by me**, **Shared with me** and **From Sidekicks**. Below them, **Live now** lists the Canvases people have open at this moment, and **Recent** lists the rest. In a new Organization the page shows only **New Canvas** and a **Start from a prompt** card, which is the quickest way in, as you will see on [the next page](05-your-first-canvas.md).
+The **Canvases** home page has a **New Canvas** button, a search box and filter chips: **All**, **Data**, **Made by me**, **Shared with me** and **From Sidekicks**. **Recent** lists matching Canvases by their latest activity. Faces at a card's top left show who has it open; a **Data** badge at the top right means it contains an artifact with its own database. In a new Organization the page shows only **New Canvas** and a **Start from a prompt** card, which is the quickest way in, as you will see on [the next page](05-your-first-canvas.md).
 
 The **Sidekicks** home page has **New Sidekick**, a search box and the filter chips **Everyone**, **Only you**, **Organization** and **Paused**. Each row shows what the Sidekick does, its status, who it is shared with and when it next wakes up.
 
