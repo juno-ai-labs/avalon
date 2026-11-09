@@ -734,10 +734,16 @@ the payload in R2 and the email as a resource, and then calls
 `admitInboundEmail` once. The object answers a retry from
 `sidekick_email_receipts` by Resend email id before deciding anything; a new
 message is refused with `sidekick_not_active`,
-`sidekick_email_route_mismatch` (the address is not this automation's), or
-`email_sender_not_authorized` (no member matched, or a `personal` automation's
-sender is not someone it is shared with), or `run_no_eligible_delegate` (the
-sender has since left the Organization), and the refusal is the receipt. An
+`sidekick_email_route_mismatch` (the address is not this automation's),
+`email_sender_unauthenticated` (the receiving server did not tie the message
+to its From domain: Resend's `authentication` verdict is neither a DMARC pass
+nor a DKIM pass, which Resend reports only for a signature aligned with the
+From domain; SPF alone authenticates the envelope, not the From header, and a
+missing verdict counts as none), `email_sender_not_authorized` (no one in the
+Organization matched, or the Sidekick does not admit them by the reader rule,
+`sidekickReaderAllows`, on every scope: a guest only from its `people` list),
+or `run_no_eligible_delegate` (the sender has since left the Organization),
+and the refusal is the receipt. An
 admitted message stores its text, structured content, and resource id as the
 run's `opening`. The run acts as its sender alone, by the rule a message in
 the shared conversation follows ([who a run acts as](#who-a-run-acts-as)): as
@@ -1996,11 +2002,14 @@ conversation object on the ticket and by seating the reader; a run's
 conversation seats its persisted coordinator, and its state reaches nobody but
 the parent.
 
-Inbound mail is untrusted: the From header can be spoofed, so the sender must
-resolve to an active workspace member, and to someone a personal Sidekick is
-shared with. The run then acts as that sender alone, so a spoofed From header
-reaches only the access of the person it names, never a delegate's. That
-screening is the whole control; an inbound-email run
+Inbound mail is untrusted: the From header can be spoofed, and the run acts as
+whoever it names, under their own access when they are not a delegate. So
+the message must carry the receiving server's aligned verdict for its From
+domain (DMARC pass, or DKIM pass for that domain), and its sender must
+resolve to someone in the Organization the Sidekick admits as a reader. This
+is only as strong as the sending domain's own protection: a domain that
+publishes no DMARC policy and signs nothing never passes, and a domain whose
+DKIM keys leak can be spoofed. That screening is the whole control; an inbound-email run
 holds the same tools as any other run, a decision
 [`security.md`](security.md) records.
 
@@ -2423,7 +2432,15 @@ Inbound mail follows the same rule for the same reason: `admitInboundEmail`
 accepted mail from anyone on a personal Sidekick's list and then picked any
 delegate to act, so mailing the Sidekick borrowed the author's access; it now
 admits the run as `admitConversationMessage` does, as the sender's delegate
-access or, failing that, under their own access as its requester. A guest on the Sidekick's list runs the same way: this change first
+access or, failing that, under their own access as its requester. That
+widened a spoof's reach from the consenting delegates to whoever the From
+header names, so a review required the From to be more than a claim: the run
+acts as the sender only on the receiving server's aligned DMARC or DKIM pass
+(Resend's `authentication` verdict, `email_sender_unauthenticated` otherwise),
+and a guest is admitted on every scope only from the Sidekick's `people` list
+(the first build screened only a personal Sidekick, as a member). Considered
+and rejected: keeping mail runs on a delegate, which spends a delegate's
+access on an unauthenticated claim. A guest on the Sidekick's list runs the same way: this change first
 refused one with `run_no_eligible_delegate`, on the stated ground that a guest
 holds no Organization access, but that named the wrong cause and narrowed the
 PRD. The PRD retires Threads and converts their Sidekicks to Organization

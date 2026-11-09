@@ -2047,7 +2047,7 @@ describe("a hosted Sidekick", () => {
       };
       return new HostedSidekick(host, AUTOMATION_ID).admitInboundEmail({
         ...addressed(), emailAddress: EMAIL_ADDRESS, resendEmailId: "removed-email-trigger",
-        senderUserId: AUTHOR_ID, receivedAt: Date.parse(NOW), payloadRef: "emails/removed-trigger",
+        senderUserId: AUTHOR_ID, senderAuthenticated: true, receivedAt: Date.parse(NOW), payloadRef: "emails/removed-trigger",
         resourceId: RESOURCE_ID, textContent: "Please summarize this.", structuredContent: { subject: "Summary" },
       });
     });
@@ -2062,6 +2062,7 @@ describe("a hosted Sidekick", () => {
       emailAddress: EMAIL_ADDRESS,
       resendEmailId: "resend-email-0001",
       senderUserId: AUTHOR_ID,
+      senderAuthenticated: true,
       receivedAt: Date.parse(NOW),
       payloadRef: "emails/resend-email-0001",
       resourceId: "00000000-0000-7000-8000-00000000ad60",
@@ -2108,6 +2109,34 @@ describe("a hosted Sidekick", () => {
       { run_id: admitted.runId, coordinator_user_id: AUTHOR_ID, requester_user_id: null },
       { run_id: shared.runId, coordinator_user_id: OUTSIDER_ID, requester_user_id: OUTSIDER_ID },
     ]);
+  });
+
+  it("acts on mail only when the From domain authenticated it, and admits a guest only from the Sidekick's list on every scope", async () => {
+    const guest = asUserId("00000000-0000-7000-8000-00000000ad0a");
+    await env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, access_class, last_seen_at)
+      VALUES (?, ?, 'active', NULL, 'guest', ?)`).bind(WORKSPACE_ID, guest, NOW).run();
+    await activeAutomation();
+    let ordinal = 0;
+    const mail = (senderUserId: string, senderAuthenticated = true) => workspaceStub().sidekickAdmitInboundEmail({
+      ...addressed(), emailAddress: EMAIL_ADDRESS, resendEmailId: `guest-email-${String(ordinal++).padStart(4, "0")}`,
+      senderUserId: asUserId(senderUserId), senderAuthenticated, receivedAt: Date.parse(NOW), payloadRef: "emails/guest",
+      resourceId: RESOURCE_ID, textContent: "Please summarize this.", structuredContent: { subject: "Summary" },
+    }).then((result) => result.outcomeCode);
+    // The author's own address, but the receiving server could not tie the
+    // message to it: the From header is only a claim, and the run would act as them.
+    expect(await mail(AUTHOR_ID, false)).toBe("email_sender_unauthenticated");
+    expect(await mail(guest)).toBe("email_sender_not_authorized");
+    const sql = (statement: string, ...bindings: SqlStorageValue[]) => runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(statement, ...bindings);
+    });
+    // On a personal Sidekick's list, the guest's mail runs, under their own access.
+    await sql(`INSERT INTO sidekick_audience (sidekick_id, user_id, added_at) VALUES (?, ?, ?)`, AUTOMATION_ID, guest, Date.parse(NOW));
+    expect(await mail(guest)).toBe("admitted");
+    // Shared with the Organization instead: every member, and no guest.
+    await sql(`DELETE FROM sidekick_audience WHERE sidekick_id = ?`, AUTOMATION_ID);
+    await sql(`UPDATE automation_directory SET scope = 'workspace' WHERE automation_id = ?`, AUTOMATION_ID);
+    expect(await mail(guest)).toBe("email_sender_not_authorized");
+    expect(await mail(OUTSIDER_ID)).toBe("admitted");
   });
 
   it("answers a run conversation's terminal deadline from its own projection, not a Channel's", async () => {
