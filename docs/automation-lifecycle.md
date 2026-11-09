@@ -1814,6 +1814,13 @@ or the memory store the automation scope lives in.
 
 ## Failure modes and limits
 
+- **A run's stored trigger is parsed, not cast** (`storedRunTrigger`): a
+  `sidekick_runs.trigger_json` row that does not match `AutomationRunTriggerV1Schema`
+  fails the read that needs it with `sidekick_run_trigger_invalid:<field>`
+  (`sidekick_run_trigger_unparseable` for JSON that does not parse), so a row
+  another build wrote names what it got wrong instead of being read as a shape
+  it is not.
+
 - **A failure inside the object is an `ApiError` with a stable snake_case
   code**, thrown directly and surviving the RPC hop with its status: 403
   `sidekick_forbidden`, 404 `sidekick_not_found` or

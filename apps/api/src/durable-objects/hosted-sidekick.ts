@@ -55,6 +55,7 @@ import {
   type AutomationExecutionPrincipalClaim,
   type AutomationRun,
   type AutomationRunDefinitionV1,
+  AutomationRunTriggerV1Schema,
   type AutomationRunTriggerV1,
   type AutomationScope,
   externalEventOccurrenceKey,
@@ -410,6 +411,23 @@ export interface HostedSidekickHost {
   sendRunProvision(message: { workspaceId: string; automationId: string; runId: string }): Promise<void>;
   /** Hand a review to the activity Queue, whose consumer wakes the wizard with it. */
   sendReview(message: { workspaceId: string; automationId: string; reviewId: string }): Promise<void>;
+}
+
+/**
+ * A run's stored trigger, parsed rather than cast: a row an older or newer
+ * build wrote is refused by the field it got wrong
+ * (`sidekick_run_trigger_invalid:<field>`), not read as a shape it is not.
+ */
+function storedRunTrigger(json: string): AutomationRunTriggerV1 {
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    throw new Error("sidekick_run_trigger_unparseable");
+  }
+  const parsed = AutomationRunTriggerV1Schema.safeParse(value);
+  if (!parsed.success) throw new Error(zodDiagnosticCode(parsed.error, "sidekick_run_trigger") ?? "sidekick_run_trigger_invalid");
+  return parsed.data;
 }
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -1478,7 +1496,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     if (!revision) throw new ApiError(404, "sidekick_definition_not_found", "The run's definition revision is missing");
     const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
     const opening = run.opening_json ? JSON.parse(run.opening_json) as NonNullable<AutomationRunDefinitionV1["opening"]> : null;
-    const trigger = JSON.parse(run.trigger_json) as AutomationRunTriggerV1;
+    const trigger = storedRunTrigger(run.trigger_json);
     return AutomationRunDefinitionV1Schema.parse({
       schemaVersion: 1,
       automationId: sidekick.automation_id,
@@ -1618,7 +1636,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         automationId: asAutomationId(sidekick.automation_id),
         runId: run.run_id,
         definitionRevision: sidekick.accepted_definition_revision,
-        trigger: JSON.parse(run.trigger_json),
+        trigger: storedRunTrigger(run.trigger_json),
       },
       executionPrincipal: { type: "user", userId: asUserId(coordinator) },
       stopGeneration: sidekick.stop_generation,
@@ -1857,7 +1875,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       `SELECT trigger_json FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, this.sidekickId, runId,
     ));
     if (!run) return [];
-    const trigger = JSON.parse(run.trigger_json) as { kind?: string; requestedByUserId?: string };
+    const trigger: { kind: string; requestedByUserId?: string } = storedRunTrigger(run.trigger_json);
     const candidates = new Set<string>();
     if (trigger.kind === "manual" && trigger.requestedByUserId) candidates.add(trigger.requestedByUserId);
     if (kind === "needs_input") {
@@ -1953,7 +1971,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       automationId: this.sidekickId,
       runId,
       automationName: row.title || "New Sidekick",
-      triggerKind: (JSON.parse(row.trigger_json) as AutomationRunTriggerV1).kind,
+      triggerKind: storedRunTrigger(row.trigger_json).kind,
       createdAt: row.created_at,
       state: row.state,
       stepCount: row.step_count,
@@ -3157,7 +3175,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   }
 
   private runSummary(run: RunRow): AutomationRun {
-    const trigger = JSON.parse(run.trigger_json) as AutomationRunTriggerV1;
+    const trigger = storedRunTrigger(run.trigger_json);
     return AutomationRunSchema.parse({
       id: run.run_id,
       automationId: this.sidekickId,
