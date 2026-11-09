@@ -528,9 +528,9 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Substantial interactive work starts with a brief approach; updates then focus on changes to participants' expectations or decisions they need to make. Headless runs skip progress narration. Final responses lead with the result and omit padding while retaining requested detail and material caveats. The prompt owns the writing rules; its preference for natural language applies to style only and does not relax platform policy. Private reasoning is never emitted.
 
-The standing prompt names the product as it is: an Organization holds Canvases and Sidekicks, a Canvas's Chat is where its people ask Rally for work, and a Sidekick's shared conversation is where the people it is shared with read its runs and ask for more, each run in a conversation of its own. It names no Channel, Thread, Breakout or Space, and the task context's key for the title and objective is `conversation`. Every Sidekick run that an inbound email did not start runs on the `self_delivery` surface, whose section says what the people in the Sidekick's shared conversation see (the final message is the reply on the run's row there, and nothing sends it anywhere else), that any send to a reader outside Rally is the run's own work, done with its tools, and that it sends nothing when the instructions ask for no delivery; left silent, a run that *describes* emailing a summary has not emailed it. The `rally:conversations` plugin's run instruction says the same about the row and tells the run not to post that reply into the shared conversation again; a post is for another conversation. [`conversation-tools.md`](conversation-tools.md) owns the plugin and [`automation-lifecycle.md`](automation-lifecycle.md) the run rows.
+The standing prompt names the product as it is: an Organization holds Canvases and Sidekicks, a Canvas's Chat is where its people ask Rally for work, and a Sidekick's shared conversation is where the people it is shared with read its runs and ask for more, each run in a conversation of its own. It names no Channel, Thread, Breakout or Space, and the task context's key for the title and objective is `conversation`. Every Sidekick run that an inbound email did not start runs on the `self_delivery` surface, whose section says what the people in the Sidekick's shared conversation see (the final message is the reply on the run's row there, and nothing sends it anywhere else), that any send to a reader outside Rally is the run's own work, done with its tools, and that it sends nothing when the instructions ask for no delivery; left silent, a run that *describes* emailing a summary has not emailed it. The `rally:conversations` plugin's run instruction says the same about the row and tells the run not to post that reply into the shared conversation again; a post is for another conversation. It says nothing about missing access: the activation section's ask-and-wait rule is the only statement of it, because the plugin's message renders later and an older report-and-finish wording there was the one a model followed. [`conversation-tools.md`](conversation-tools.md) owns the plugin and [`automation-lifecycle.md`](automation-lifecycle.md) the run rows.
 
-A document-shaped request is written as a Markdown file in the conversation's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every conversation run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal conversation rule steers into.
+A document-shaped request is written as a Markdown file in the conversation's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the run has no Terminal plugin or the workspace cannot be reached, which outranks a request for a document. A Sidekick run a non-delegate asked for gets no Terminal (`terminal-workspaces.md`), so the standing prompt's calculation rule and the Sites section carry the same no-Terminal alternative beside the rule each excepts. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every conversation run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal conversation rule steers into.
 
 The same module's **Sites** section is the site-shaped equivalent: a request whose natural output is a page or a small app becomes a *directory* of files, published as a live artifact people open. It carries only the trigger and the two rules a model gets wrong without it — publish the directory rather than a file inside it, and a request for a new thing is a new site at a new path — plus the pointer to the skill. The build craft is hundreds of lines and would be charged to every request, so it ships as the loadable `building-live-sites` skill and is read at the moment it matters. Like the document half it is standing rather than gated, and falls back the same way when the sandbox cannot be reached. [`live-web-artifacts.md`](live-web-artifacts.md) owns what a published directory becomes and how it is served.
 
@@ -1844,10 +1844,27 @@ question (`AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION`) that opens an
 elicitation through the executor `request_elicitation` now shares
 (`openToolQuestion`) and halts with `needs_input`. The activation prompt's
 permission rule changes from "Say what is blocked in this activation's final
-message" to ask and wait, reporting only once declined or unaskable.
+message" to ask and wait, reporting only once declined or unaskable. The
+conversations plugin's `RUN_POST_INSTRUCTION` loses its own permission
+sentences ("say in your final message what is blocked… report once"), keeping
+only that a failed post is reported and never claimed. The run change guidance
+gets a tie-break for where a wizard's answer goes (the final message for a
+person who wrote in Rally, a post for an outside thread), and the wizard's
+continuation note points at it. The standing prompt gives the no-Terminal
+alternative beside each rule that assumes one (calculation, documents, sites),
+since a requester-scoped run has no Terminal; to stay under the 8,500-byte
+ceiling it drops a duplicated person-mention line, a "create a new file"
+sentence that contradicted the same-path revision rule, and two repeats in the
+Sites and Documents sections.
 
 **Why:** The owner: "fix this to show needs input". A run's only recourse was
-its final message, so a missing connection ended the run `completed`.
+its final message, so a missing connection ended the run `completed`. The
+plugin's older wording rendered after the activation section and said the
+opposite, so a medium model followed it and reported and ended `completed`
+anyway; "post the answer where the person wrote" contradicted "never post that
+reply there again" for a person who wrote in Rally; and "calculate in the
+terminal" and "publish it through the terminal" left a run without one
+following a procedure it could not run.
 
 **Considered and rejected:** a new tool name for the run's question, which
 would teach the model two names for one card; keeping the read-only `safe`
@@ -1855,8 +1872,10 @@ card and deriving the question's id from the tool call id, where a provider
 key is what every other durable question's identity is derived from.
 
 **Consequences:** The question's identity is derived from the call's receipt
-key, so a replay converges on one question. The golden hash of the
-`automationWorkstream` prompt moved.
+key, so a replay converges on one question. The golden hashes of the
+`automationWorkstream` and `workstream` prompts moved. Missing access has one
+statement, in the activation section; a plugin message that restates it
+reintroduces the contradiction.
 
 Shipped in juno-ai-labs/avalon#1490.
 ### 2026-11-08 — Seeded runs are removed

@@ -67,12 +67,12 @@ first read.
 
 ### Tools
 
-Sidekick activation instructions direct the model to post an unresolved
-permission problem to the owning conversation once for that run, naming the
-blocked work and a concrete recovery action. Successful account fallback needs
-no error post. This uses the same `post` authorization and receipt, and grants
-no extra destination access. A refused post must stay a visible failure; its
-attempt is never evidence of delivery. An activation post refused by scope,
+What a run does about missing access is the standing activation section's
+rule ([`agent-harness.md`](agent-harness.md)): ask for it and wait, and only
+when that is declined or impossible report it once in the final message. The
+plugin's run instruction does not restate it; it says only that a failed post
+is reported in the final message and never claimed as delivered. A refused post
+must stay a visible failure; its attempt is never evidence of delivery. An activation post refused by scope,
 access or archival also records the existing Sidekick attention state with a
 fixed recovery message. No provider or event content is retained there, and
 ordinary successful posts perform no extra RPC. A later admitted occurrence

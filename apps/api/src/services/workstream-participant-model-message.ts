@@ -354,8 +354,7 @@ export function renderRunContinuationNote(continuation: {
     return {
       role: "user",
       content: "This run is continuing because this Sidekick's wizard sent a message; it is above, after the work you already did. "
-        + "If it answers a change request you sent, post its answer in the thread where the person who asked wrote: "
-        + "whether the change was saved for future runs, or its question or what blocks it. "
+        + "If it answers a change request you sent, give that answer to the person who asked, where your instructions for request_sidekick_change say. "
         + "Otherwise handle it only as the Sidekick's instructions direct.",
     };
   }
