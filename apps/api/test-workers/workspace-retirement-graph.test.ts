@@ -56,7 +56,7 @@ function freshWorkspaceId() {
  * the graph is closed, which is what the Demos page reads; a workspace with no
  * operation is retired all the same.
  */
-async function publishDemo(workspaceId: string): Promise<void> {
+async function declareDemoOperations(): Promise<void> {
   await TEST_ENV.DB.prepare(
     `CREATE TABLE IF NOT EXISTS demo_operations (
        operation_id TEXT PRIMARY KEY,
@@ -76,6 +76,10 @@ async function publishDemo(workspaceId: string): Promise<void> {
        updated_at TEXT NOT NULL
      )`,
   ).run();
+}
+
+async function publishDemo(workspaceId: string): Promise<void> {
+  await declareDemoOperations();
   await TEST_ENV.DB.prepare(
     `INSERT INTO demo_operations
        (operation_id, company_name, presenter_user_id, pack_version, cast_json, workspace_id,
@@ -339,6 +343,7 @@ describe("workspace retirement graph", () => {
     // operator saw "incomplete, retire again" forever.
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
+    await declareDemoOperations();
     await seedDirectory(stub, workspaceId);
     const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" };
     await stub.beginWorkspaceRetirement(tombstone);
@@ -361,6 +366,7 @@ describe("workspace retirement graph", () => {
     // cannot be produced here, so only that one call is stood in for.
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
+    await declareDemoOperations();
     await seedDirectory(stub, workspaceId);
     await seedMainChild(stub, workspaceId);
     const agents = TEST_ENV.SUBSTREAM_AGENTS;
@@ -388,6 +394,74 @@ describe("workspace retirement graph", () => {
     expect(resumed.failed).toEqual([]);
     expect(resumed.retiredChildren).toBe(1);
     expect(resumed.complete).toBe(true);
+  });
+
+  it("keeps the children a cut-off pass closed, and the next pass wakes only the rest", async () => {
+    // A parent can hold more conversations than one invocation can close. A
+    // demo's parent outlived two passes, each cancelled partway through its
+    // children, and each started over from the first child because only the
+    // parent carried a receipt. Here the pass is cut off after one child the
+    // way production cuts it: the next object call does not come back.
+    const workspaceId = freshWorkspaceId();
+    const stub = workspaceStub(workspaceId);
+    await declareDemoOperations();
+    await seedDirectory(stub, workspaceId);
+    await seedMainChild(stub, workspaceId);
+    await runInDurableObject(stub, (instance: WorkspaceDO, state) => {
+      state.storage.sql.exec(
+        `INSERT OR IGNORE INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at)
+         VALUES (?, ?, 'child', ?, ?)`,
+        FIRST_ROOM_ID,
+        asSubstreamId("00000000-0000-7000-8000-00000000e501"),
+        ACTOR_ID,
+        Date.now() + 1,
+      );
+      void instance;
+    });
+
+    /** The real namespace, counting retires, and refusing every one after `allowed`. */
+    function countingEnv(allowed: number) {
+      const agents = TEST_ENV.SUBSTREAM_AGENTS;
+      const counter = { retires: 0 };
+      const namespace = {
+        idFromName: (name: string) => agents.idFromName(name),
+        idFromString: (id: string) => agents.idFromString(id),
+        jurisdiction: () => namespace,
+        get: (id: DurableObjectId) => {
+          const real = agents.get(id);
+          return {
+            retireObject: (tombstone: Parameters<typeof real.retireObject>[0]) => {
+              counter.retires += 1;
+              return counter.retires > allowed
+                ? Promise.reject(new Error("durable_object_overloaded"))
+                : real.retireObject(tombstone);
+            },
+          };
+        },
+      };
+      const proxied = new Proxy(TEST_ENV, {
+        get: (target, property, receiver) => property === "SUBSTREAM_AGENTS"
+          ? namespace
+          : Reflect.get(target, property, receiver),
+      });
+      return { env: proxied, counter };
+    }
+    const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" } as const;
+
+    const cut = countingEnv(1);
+    const first = await retireWorkspaceGraph(cut.env, { workspaceId, ...tombstone });
+    expect(first.complete).toBe(false);
+    expect(first.retiredChildren).toBe(1);
+    expect(cut.counter.retires).toBe(2);
+
+    const resumed = countingEnv(Number.POSITIVE_INFINITY);
+    const second = await retireWorkspaceGraph(resumed.env, { workspaceId, ...tombstone });
+    expect(second.failed).toEqual([]);
+    expect(second.complete).toBe(true);
+    // Only the child the first pass did not finish. Without the per-child
+    // receipt this pass wakes both again.
+    expect(resumed.counter.retires).toBe(1);
+    expect(second.retiredChildren).toBe(1);
   });
 
   it("closes children before parents and reports the pass", async () => {
