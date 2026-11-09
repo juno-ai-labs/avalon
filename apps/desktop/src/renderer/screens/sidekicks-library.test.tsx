@@ -67,7 +67,7 @@ describe('the Sidekicks home', () => {
     expect(document.title).toBe('Rally');
   });
 
-  it('lists each Sidekick the workspace socket keeps as a row with its status, who it is shared with and when it next wakes', async () => {
+  it('lists each Sidekick the workspace socket keeps as a card with its status, who it is shared with and when it next wakes', async () => {
     // The rows as the socket's sidebar read carries them: only it says
     // `needsInput`, which `GET /sidekicks` never does.
     socket.mounted = true;
@@ -86,7 +86,7 @@ describe('the Sidekicks home', () => {
     expect(within(triage).getByText('Next').nextElementSibling).toHaveTextContent('On alert');
     const changelog = screen.getByRole('link', { name: 'Weekly changelog' }).closest('li')!;
     expect(within(changelog).getByText('Organization')).toBeInTheDocument();
-    expect(within(changelog).getByText('Working')).toBeInTheDocument();
+    expect(within(changelog).queryByText('Working')).toBeNull();
     expect(within(changelog).getByText('Next').nextElementSibling).not.toHaveTextContent('—');
     const revenue = screen.getByRole('link', { name: 'Revenue analyst' }).closest('li')!;
     expect(within(revenue).getByText('Paused')).toBeInTheDocument();
@@ -101,21 +101,27 @@ describe('the Sidekicks home', () => {
     expect(screen.getByRole('link', { name: 'Revenue analyst' })).toBeInTheDocument();
   });
 
-  it('shows Working on the pill while any run works, beside the Needs input badge when another waits', async () => {
+  it('only shows the top-right pill for paused Sidekicks and preserves Needs input', async () => {
     socket.mounted = true;
     const client = new QueryClient();
     applyVersionedSidebarList(client, 'automations', 1, [
       { id: 'older', name: 'Weekly changelog', description: 'Every Friday.', scope: 'workspace', status: 'active', running: true, runState: null, updatedAt: '2026-11-07T09:00:00.000Z' },
       { id: 'both', name: 'Incident triage', description: 'Watches alerts.', scope: 'workspace', status: 'active', running: true, runState: 'needs_input', needsInput: true, updatedAt: '2026-11-07T09:00:00.000Z' },
+      { id: 'draft', name: 'Draft helper', description: '', scope: 'you', status: 'draft', updatedAt: '2026-11-07T09:00:00.000Z' },
+      { id: 'paused', name: 'Paused helper', description: '', scope: 'you', status: 'paused', running: true, needsInput: true, updatedAt: '2026-11-07T09:00:00.000Z' },
       { id: 'idle', name: 'Revenue analyst', description: 'Keeps revenue current.', scope: 'workspace', status: 'active', running: false, runState: null, updatedAt: '2026-11-07T09:00:00.000Z' },
     ] satisfies AutomationSummary[]);
     render(<QueryClientProvider client={client}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
     const row = async (name: string) => (await screen.findByRole('link', { name })).closest('li')!;
-    expect((await row('Weekly changelog')).querySelector('.sidekick-status-pill')).toHaveTextContent('Working');
+    expect((await row('Weekly changelog')).querySelector('.sidekick-status-pill')).toBeNull();
     const both = await row('Incident triage');
-    expect(both.querySelector('.sidekick-status-pill')).toHaveTextContent('Working');
+    expect(both.querySelector('.sidekick-status-pill')).toBeNull();
     expect(within(both).getByText('Needs input')).toBeInTheDocument();
-    expect((await row('Revenue analyst')).querySelector('.sidekick-status-pill')).toHaveTextContent('Active');
+    expect((await row('Revenue analyst')).querySelector('.sidekick-status-pill')).toBeNull();
+    expect((await row('Draft helper')).querySelector('.sidekick-status-pill')).toBeNull();
+    const paused = await row('Paused helper');
+    expect(paused.querySelector('.sidekick-status-pill')).toHaveTextContent('Paused');
+    expect(within(paused).getByText('Needs input')).toBeInTheDocument();
   });
 
   it('offers New Sidekick beside the empty copy when there are none', async () => {

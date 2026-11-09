@@ -453,13 +453,18 @@ records where a running signal would come from.
 ### Creation and ownership
 
 The Sidekicks home (`/sidekicks`, in the main window on both hosts) lists all
-accessible personal and workspace entries, including drafts, as rows with
-their status (Needs input, Draft, Paused or Active), who they are shared with
-and when they next wake, filtered by Everyone, Only you, Organization or
-Paused. The row's facts give way on the pane's width, a container query on
-the page rather than a viewport rule: Shared with drops first, and in a narrow
-pane the status pill and Next sit under the description, so the name keeps
-its room at the desktop's 860px minimum beside the 416px sidebar. `GET /sidekicks` uses
+accessible personal and workspace entries, including drafts, in a responsive
+card grid matching the Canvas dashboard. Each card centers the Sidekick's
+hexagon in a tinted preview, with a top-right Paused pill and Tabler pause icon
+only when paused, plus any Needs input badge, then its name, description,
+sharing and next wake. Cards open the Sidekick from
+one stretched title link. Search and the Everyone, Only you, Organization and
+Paused filters retain the old library's behavior. The grid follows the pane's
+width: three columns in a wide pane, two below it and one in a narrow pane or
+on a phone. Shared with and Next remain visible at every width. The sidebar's
+Home button, immediately before New Sidekick, and the Sidekicks rail button
+return to this dashboard.
+`GET /sidekicks` uses
 `WorkspaceDO.listSidekickDirectoryForAuthorizedMember`: the request's session
 authentication already joined the caller's active member row, so the object
 applies only the per-row scope filter and does not read `workspace_members`
@@ -2165,6 +2170,17 @@ conversation-object SQLite; the vocabulary, `StatusDot`, the
 survive as described above.
 
 ## Changelog
+
+### 2026-11-09 — Sidekicks get the Canvas dashboard's card layout
+
+The Sidekicks home now uses the Canvas dashboard's grid and card shell, with
+its existing identity, search, ownership filters and live status data. The old
+library supplied the descriptions and sharing labels; paused Sidekicks show a
+top-right pill, while Needs input remains a separate badge. The next wake
+remains visible on each card. A Home action beside New Sidekick makes
+the dashboard reachable from an open Sidekick. This gives the two product
+sections a consistent overview while retaining the information needed to
+choose a Sidekick; compact rows remain the sidebar's navigation treatment.
 
 ### 2026-11-09 — The shared conversation starts runs and shows them, a Sidekick has its own audience, and a blocked run asks and waits
 
