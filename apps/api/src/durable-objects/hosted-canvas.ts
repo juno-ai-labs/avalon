@@ -154,13 +154,13 @@ export interface CanvasRow extends Record<string, SqlStorageValue> {
   last_editor_id: string | null;
   writer_sidekick_id: string | null;
   writer_run_id: string | null;
-  /** The run whose publish made the newest version, a `sidekick` editor's (migration 155). */
+  /** The run whose publish made the newest version, a `sidekick` editor's (migration 136). */
   last_writer_run_id: string | null;
   visibility: "creator" | "participants" | "workspace";
   authority_generation: number;
-  /** `naming` while a Canvas made with no title waits for its opening message's (migration 149). */
+  /** `naming` while a Canvas made with no title waits for its opening message's (migration 136). */
   title_status: "naming" | "settled";
-  /** The chosen icon and colour, `WorkstreamAppearanceSchema` JSON; null until someone chooses (migration 153). */
+  /** The chosen icon and colour, `WorkstreamAppearanceSchema` JSON; null until someone chooses (migration 136). */
   appearance_json: string | null;
 }
 

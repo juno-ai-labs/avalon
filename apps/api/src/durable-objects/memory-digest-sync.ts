@@ -162,7 +162,7 @@ export const MEMORY_DIGEST_SYNC_MIGRATION: readonly string[] = [
 const MEMORY_DIGEST_TRIGGER_STATEMENTS = Object.values(MEMORY_DIGEST_SYNC_TRIGGERS).flat();
 
 /**
- * WorkspaceDO migration 143: a holder may be a Canvas's Chat. The CHECK on
+ * Part of WorkspaceDO migration 136: a holder may be a Canvas's Chat. The CHECK on
  * `parent_kind` cannot widen in place, so the table is copied. Every trigger
  * above reads the table by name in its body, and SQLite refuses to rename a
  * table into place while a trigger names one that does not exist, so the
@@ -171,23 +171,23 @@ const MEMORY_DIGEST_TRIGGER_STATEMENTS = Object.values(MEMORY_DIGEST_SYNC_TRIGGE
 export const MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION: readonly string[] = [
   ...MEMORY_DIGEST_TRIGGER_STATEMENTS.map((statement) =>
     `DROP TRIGGER IF EXISTS ${/^CREATE TRIGGER (\S+)/u.exec(statement)![1]}`),
-  `CREATE TABLE memory_digest_holders_v143 (
+  `CREATE TABLE memory_digest_holders_v136 (
     conversation TEXT PRIMARY KEY,
     parent_kind TEXT NOT NULL CHECK (parent_kind IN ('workstream', 'automation', 'space', 'canvas')),
     parent_id TEXT NOT NULL,
     substream_id TEXT NOT NULL,
     refreshed_at INTEGER NOT NULL
   ) STRICT`,
-  "INSERT INTO memory_digest_holders_v143 SELECT * FROM memory_digest_holders",
+  "INSERT INTO memory_digest_holders_v136 SELECT * FROM memory_digest_holders",
   "DROP TABLE memory_digest_holders",
-  "ALTER TABLE memory_digest_holders_v143 RENAME TO memory_digest_holders",
+  "ALTER TABLE memory_digest_holders_v136 RENAME TO memory_digest_holders",
   ...MEMORY_DIGEST_TRIGGER_STATEMENTS,
 ];
 
 /**
- * WorkspaceDO migration 144: the copy-sync triggers for the parents that
+ * Part of WorkspaceDO migration 136: the copy-sync triggers for the parents that
  * remain, which `MEMORY_DIGEST_SYNC_TRIGGERS` (written for Threads and
- * Channels, and hashed into migrations 117 and 143) never covered. A Canvas
+ * Channels, and hashed into migrations 117 and 136) never covered. A Canvas
  * changing who may open it (`canvasReaderAllows` reads its visibility, its
  * creator and the Sidekick that writes it) or being deleted marks every
  * holder; a participant joining marks that Canvas's holders, and one leaving
@@ -270,7 +270,7 @@ export function recordMemoryDigestHolder(
     );
   } catch (error) {
     // The table's CHECK names the conversation kinds that may hold a copy. A
-    // kind it does not admit (a Canvas, before migration 143) failed every
+    // kind it does not admit (a Canvas, before migration 136) failed every
     // refresh under one generic reason; say which kind it was.
     if (!(error instanceof Error) || !/CHECK constraint failed/u.test(error.message)) throw error;
     throw new ApiError(500, "memory_digest_holder_kind_unadmitted", "This conversation kind cannot hold a memory digest copy",

@@ -22,7 +22,7 @@ the Canvas or Sidekick row stops being unread.
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/activity.ts` | `ActivityItemSchema`, `ActivityPageSchema` (the subscribe payload's `activity` page), `WorkspaceActivityListEventSchema` (the push) and `ActivityMarkAllSeenCommandSchema` (the one command). |
-| `apps/api/src/durable-objects/workspace-activity.ts` | WorkspaceDO migration 148 (`workspace_activity_items`, `workspace_activity_seen`, the `activity` waterline), `recordActivityItem`, the one seen expression (`ACTIVITY_SEEN_SQL`) and `activityPage`. |
+| `apps/api/src/durable-objects/workspace-activity.ts` | WorkspaceDO migration 139 (`workspace_activity_items`, `workspace_activity_seen`, the `activity` waterline), `recordActivityItem`, the one seen expression (`ACTIVITY_SEEN_SQL`) and `activityPage`. |
 | `apps/api/src/durable-objects/workspace-notification-intent-storage.ts` | The recorders that write a row beside their intent: `recordPersonNotificationIntent` (mention, add), `recordSidekickRunNotices` (needs input, finished) and `recordParentNotice` (a notice a Canvas or Sidekick records about itself: a reply). |
 | `apps/api/src/durable-objects/canvas-artifact-notices.ts` | `tellCanvasPinners`: a new version in a Canvas tells its pinners, one `artifact_updated` intent and row each. |
 | `apps/api/src/durable-objects/conversation-reply-batch.ts` | The `reply_batch` alarm entry: a conversation's replies batched, then one `new_message` intent and row per recipient. |
@@ -415,7 +415,7 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 
 | Table | Key | Columns |
 | --- | --- | --- |
-| `workspace_activity_items` | `item_id` (the intent's id; a collapsed row keeps its first intent's) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`, `new_message`, `artifact_updated`, `access_request`, `access_granted`, `access_denied`; migrations 150 and 152 widened it), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `message_sequence` (the mention's transcript sequence), `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms; a collapsed row's moves to its newest event), `subject_id` (what it is about beyond the parent: an artifact's resource id, an access request's id). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
+| `workspace_activity_items` | `item_id` (the intent's id; a collapsed row keeps its first intent's) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`, `new_message`, `artifact_updated`, `access_request`, `access_granted`, `access_denied`), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `message_sequence` (the mention's transcript sequence), `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms; a collapsed row's moves to its newest event), `subject_id` (what it is about beyond the parent: an artifact's resource id, an access request's id). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
 | `workspace_activity_seen` | `user_id` | `seen_through` (ms): Mark all seen. |
 | `canvas_access_requests` | `request_id` | Read for an `access_request` row's seen and its `accessRequest` ([`canvas-access-requests.md`](canvas-access-requests.md)). |
 | `workspace_sidebar_list_state` | `list` | Row `activity`: the list's waterline. |
@@ -430,7 +430,7 @@ access filter lists although its person cannot open the parent: it lists
 while the Canvas exists, with `parentTitle` always null, no preview, and
 `accessRequest` naming who declined. It stores no ordinal, so no read clears
 it; it is seen once the requester asks again (a later request of theirs on
-that Canvas) or on Mark all seen. Migration 152 admits the kind
+that Canvas) or on Mark all seen. Migration 139 makes the table with the kind
 (`docs/canvas-access-requests.md`).
 
 **Why:** The owner's answer of 2026-11-08: "inform the person [of] a
@@ -470,9 +470,9 @@ Shipped in juno-ai-labs/avalon#1490.
 Sidekick's shared conversation writes a `new_message` row for everyone else
 in it, through `recordParentNotice` when the conversation's reply batch runs.
 The row collapses: one unseen row per conversation per recipient, brought up
-to the newest reply. It clears as a mention does. Migration 150 widens the
-row's kind to the four kinds a hosted parent records about itself and adds
-`subject_id`. Client: rows for `new_message` ("<author> in <place>", opens the message via `canvasTurnRoute` or the conversation), `artifact_updated` ("<author> updated <artifact> in <Canvas>", opens `?artifact=`), `access_request` ("<name> asked to open <Canvas>", Approve and Deny under the link in one group through `AccessDecisionActions`, held once answered, named for the requester and the Canvas; settled, "You approved" or "<decider> approved/denied" takes their place at their height, seen) and `access_granted` ("<decider> let you into <Canvas>"), each with its own glyph. The sentence wraps to two lines with its tooltip holding all of it, and a row with no preview keeps its dot on the first line. `ActivityItem.accessRequest` gains an optional `decidedByUserId`, read from `canvas_access_requests.decided_by_user_id`, so the decider is told "You" rather than their own name; optional so an older client parses the page, and the name stays the display for everyone else. Entering the section opens its top row in the pane, and only a rail pick leaves it: the owner, 2026-11-08, "When opening the first activity on top should be auto selected and that should be shown in the panels." and "Stay in activity sidebar." Opening the row reports its read as a click does, so a top row about a message becomes seen when the cursor passes it; that is the existing read rule and is wanted. The first list after entering decides, so a row arriving later never moves the pane.
+to the newest reply. It clears as a mention does. Migration 150 (folded into
+139 before it shipped) widened the row's kind to the four kinds a hosted
+parent records about itself and added `subject_id`. Client: rows for `new_message` ("<author> in <place>", opens the message via `canvasTurnRoute` or the conversation), `artifact_updated` ("<author> updated <artifact> in <Canvas>", opens `?artifact=`), `access_request` ("<name> asked to open <Canvas>", Approve and Deny under the link in one group through `AccessDecisionActions`, held once answered, named for the requester and the Canvas; settled, "You approved" or "<decider> approved/denied" takes their place at their height, seen) and `access_granted` ("<decider> let you into <Canvas>"), each with its own glyph. The sentence wraps to two lines with its tooltip holding all of it, and a row with no preview keeps its dot on the first line. `ActivityItem.accessRequest` gains an optional `decidedByUserId`, read from `canvas_access_requests.decided_by_user_id`, so the decider is told "You" rather than their own name; optional so an older client parses the page, and the name stays the display for everyone else. Entering the section opens its top row in the pane, and only a rail pick leaves it: the owner, 2026-11-08, "When opening the first activity on top should be auto selected and that should be shown in the panels." and "Stay in activity sidebar." Opening the row reports its read as a click does, so a top row about a message becomes seen when the cursor passes it; that is the existing read rule and is wanted. The first list after entering decides, so a row arriving later never moves the pane.
 
 A new version in a Canvas the person pinned writes an `artifact_updated` row
 the same way, collapsing per Canvas, naming the artifact and clearing on a
@@ -578,7 +578,7 @@ Shipped in juno-ai-labs/avalon#1490.
 ### 2026-11-08 — Activity returns as a per-person feed of the four push events
 
 **What changed:** A third rail section, Activity, lists one person's mentions,
-adds and Sidekick run notices. WorkspaceDO migration 148 adds
+adds and Sidekick run notices. WorkspaceDO migration 139 adds
 `workspace_activity_items` and `workspace_activity_seen` and widens the
 sidebar-list waterline's CHECK to `activity` by copying the table. The workspace
 socket carries the page on subscribe and pushes `workspace_activity_list`;

@@ -17,135 +17,26 @@ import {
 import { recordActivityItem, recordCollapsedActivityItem, type ActivityItemInput, type NoteActivity } from "./workspace-activity";
 
 /**
- * WorkspaceDO migration 145: admit a Sidekick run's two notices,
- * `needs_input` and `run_finished`, beside a mention and an add. Push stays
- * for a Canvas Chat mention, a run that needs input and a finished run (the
- * Canvases and Sidekicks PRD), and the run notices ride the same intent row
- * and push pointer a mention does, so the push consumer, its receipts and the
- * reaper serve all four. SQLite cannot alter a CHECK in place, so the table is
- * rebuilt as migration 9 rebuilt it: new table, copy, drop, rename, then the
- * indexes and identity-fence triggers the drop took with it. Migrations 1 and
- * 9 stay as shipped; their statements are hashed into every object's receipt.
+ * WorkspaceDO migration 137: admit the notices of Canvases and Sidekicks on
+ * the intent row and push pointer a mention and an add ride, so the push
+ * consumer, its receipts and the reaper serve every kind:
+ *  * a Sidekick run's two notices, `needs_input` and `run_finished`;
+ *  * the four a hosted parent records for itself, a person's reply
+ *    (`new_message`), a new version in a pinned Canvas (`artifact_updated`),
+ *    a request to open a Canvas (`access_request`) and that request let in
+ *    (`access_granted`);
+ *  * a declined request (`access_denied`), sent to its requester
+ *    (`docs/canvas-access-requests.md`).
+ * A reply's cooldown asks for a person's last delivered reply notice in one
+ * conversation, so the rebuild adds the index it seeks. SQLite cannot alter a
+ * CHECK in place, so the table is rebuilt once, as migration 9 rebuilt it:
+ * new table, copy, drop, rename, then the indexes and identity-fence triggers
+ * the drop took with it. Migrations 1 and 9 stay as shipped; their statements
+ * are hashed into every object's receipt. `docs/push-notifications.md` owns
+ * the kinds.
  */
-export const NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION: readonly string[] = [
-  `CREATE TABLE workstream_notification_intents_run_kinds (
-    intent_id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    workstream_id TEXT NOT NULL,
-    recipient_user_id TEXT NOT NULL,
-    source_message_id TEXT NOT NULL,
-    source_generation INTEGER NOT NULL CHECK (source_generation > 0),
-    source_version INTEGER NOT NULL CHECK (source_version > 0),
-    required_directory_version INTEGER NOT NULL CHECK (required_directory_version > 0),
-    notification_kind TEXT NOT NULL CHECK (notification_kind IN ('mention', 'participant_added', 'needs_input', 'run_finished')),
-    payload_json TEXT CHECK (payload_json IS NULL OR json_valid(payload_json)),
-    payload_hash TEXT NOT NULL,
-    state TEXT NOT NULL CHECK (state IN ('pending', 'processing', 'delivered', 'skipped', 'failed')),
-    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-    lease_id TEXT,
-    lease_expires_at TEXT,
-    last_error_code TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    delivered_at TEXT,
-    UNIQUE (source_message_id, recipient_user_id, notification_kind)
-  ) STRICT`,
-  `INSERT INTO workstream_notification_intents_run_kinds
-     (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id,
-      source_generation, source_version, required_directory_version, notification_kind,
-      payload_json, payload_hash, state, attempts, lease_id, lease_expires_at,
-      last_error_code, created_at, updated_at, delivered_at)
-   SELECT intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id,
-      source_generation, source_version, required_directory_version, notification_kind,
-      payload_json, payload_hash, state, attempts, lease_id, lease_expires_at,
-      last_error_code, created_at, updated_at, delivered_at
-     FROM workstream_notification_intents`,
-  `DROP TABLE workstream_notification_intents`,
-  `ALTER TABLE workstream_notification_intents_run_kinds RENAME TO workstream_notification_intents`,
-  `CREATE INDEX workstream_notification_intents_delivery_idx
-    ON workstream_notification_intents(state, lease_expires_at, created_at, intent_id)`,
-  `CREATE INDEX workstream_notification_intents_terminal_idx
-    ON workstream_notification_intents(workstream_id, state, created_at)`,
-  `CREATE TRIGGER workstream_notification_intents_workspace_identity_insert
-    BEFORE INSERT ON workstream_notification_intents
-    WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
-    BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
-  `CREATE TRIGGER workstream_notification_intents_workspace_identity_update
-    BEFORE UPDATE OF workspace_id ON workstream_notification_intents
-    WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
-    BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
-];
-
-/**
- * WorkspaceDO migration 150: admit the four notices a hosted parent records
- * for itself — a person's reply (`new_message`), a new version in a pinned
- * Canvas (`artifact_updated`), a request to open a Canvas (`access_request`)
- * and that request let in (`access_granted`) — on the same intent row and
- * push pointer the other four ride (`docs/push-notifications.md`). Rebuilt
- * as migration 145 rebuilt it; 145 stays as shipped.
- */
-export const NOTIFICATION_INTENTS_PARENT_NOTICES_MIGRATION: readonly string[] = [
-  `CREATE TABLE workstream_notification_intents_v150 (
-    intent_id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    workstream_id TEXT NOT NULL,
-    recipient_user_id TEXT NOT NULL,
-    source_message_id TEXT NOT NULL,
-    source_generation INTEGER NOT NULL CHECK (source_generation > 0),
-    source_version INTEGER NOT NULL CHECK (source_version > 0),
-    required_directory_version INTEGER NOT NULL CHECK (required_directory_version > 0),
-    notification_kind TEXT NOT NULL CHECK (notification_kind IN ('mention', 'participant_added', 'needs_input', 'run_finished',
-      'new_message', 'artifact_updated', 'access_request', 'access_granted')),
-    payload_json TEXT CHECK (payload_json IS NULL OR json_valid(payload_json)),
-    payload_hash TEXT NOT NULL,
-    state TEXT NOT NULL CHECK (state IN ('pending', 'processing', 'delivered', 'skipped', 'failed')),
-    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-    lease_id TEXT,
-    lease_expires_at TEXT,
-    last_error_code TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    delivered_at TEXT,
-    UNIQUE (source_message_id, recipient_user_id, notification_kind)
-  ) STRICT`,
-  `INSERT INTO workstream_notification_intents_v150
-     (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id,
-      source_generation, source_version, required_directory_version, notification_kind,
-      payload_json, payload_hash, state, attempts, lease_id, lease_expires_at,
-      last_error_code, created_at, updated_at, delivered_at)
-   SELECT intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id,
-      source_generation, source_version, required_directory_version, notification_kind,
-      payload_json, payload_hash, state, attempts, lease_id, lease_expires_at,
-      last_error_code, created_at, updated_at, delivered_at
-     FROM workstream_notification_intents`,
-  `DROP TABLE workstream_notification_intents`,
-  `ALTER TABLE workstream_notification_intents_v150 RENAME TO workstream_notification_intents`,
-  `CREATE INDEX workstream_notification_intents_delivery_idx
-    ON workstream_notification_intents(state, lease_expires_at, created_at, intent_id)`,
-  `CREATE INDEX workstream_notification_intents_terminal_idx
-    ON workstream_notification_intents(workstream_id, state, created_at)`,
-  // A reply's cooldown asks for this person's last delivered reply notice in
-  // one conversation.
-  `CREATE INDEX workstream_notification_intents_recipient_kind_idx
-    ON workstream_notification_intents(recipient_user_id, notification_kind, workstream_id, delivered_at)`,
-  `CREATE TRIGGER workstream_notification_intents_workspace_identity_insert
-    BEFORE INSERT ON workstream_notification_intents
-    WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
-    BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
-  `CREATE TRIGGER workstream_notification_intents_workspace_identity_update
-    BEFORE UPDATE OF workspace_id ON workstream_notification_intents
-    WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
-    BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
-];
-
-/**
- * WorkspaceDO migration 152: admit a declined request to open a Canvas
- * (`access_denied`), the notice its requester is now sent
- * (`docs/canvas-access-requests.md`). Rebuilt as migration 150 rebuilt it;
- * 150 stays as shipped.
- */
-export const NOTIFICATION_INTENTS_ACCESS_DENIED_MIGRATION: readonly string[] = [
-  `CREATE TABLE workstream_notification_intents_v152 (
+export const NOTIFICATION_INTENTS_CANVAS_SIDEKICK_KINDS_MIGRATION: readonly string[] = [
+  `CREATE TABLE workstream_notification_intents_v137 (
     intent_id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
     workstream_id TEXT NOT NULL,
@@ -168,7 +59,7 @@ export const NOTIFICATION_INTENTS_ACCESS_DENIED_MIGRATION: readonly string[] = [
     delivered_at TEXT,
     UNIQUE (source_message_id, recipient_user_id, notification_kind)
   ) STRICT`,
-  `INSERT INTO workstream_notification_intents_v152
+  `INSERT INTO workstream_notification_intents_v137
      (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id,
       source_generation, source_version, required_directory_version, notification_kind,
       payload_json, payload_hash, state, attempts, lease_id, lease_expires_at,
@@ -179,7 +70,7 @@ export const NOTIFICATION_INTENTS_ACCESS_DENIED_MIGRATION: readonly string[] = [
       last_error_code, created_at, updated_at, delivered_at
      FROM workstream_notification_intents`,
   `DROP TABLE workstream_notification_intents`,
-  `ALTER TABLE workstream_notification_intents_v152 RENAME TO workstream_notification_intents`,
+  `ALTER TABLE workstream_notification_intents_v137 RENAME TO workstream_notification_intents`,
   `CREATE INDEX workstream_notification_intents_delivery_idx
     ON workstream_notification_intents(state, lease_expires_at, created_at, intent_id)`,
   `CREATE INDEX workstream_notification_intents_terminal_idx

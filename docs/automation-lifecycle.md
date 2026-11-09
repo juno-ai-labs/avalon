@@ -371,7 +371,7 @@ refs; retries retain the admitted bodies while rechecking access. A fresh
 snapshot starts with nothing active or recommended: only a Thread filed a
 loaded Sidekick as attached, and a Channel's defaults (`parent_sidekicks`) were
 the only recommendations, so no new execution has a `[Recommended]` catalog
-line. AgentLoopDO migration 86 dropped the Thread's `sidekick_attachments`
+line. AgentLoopDO migration 84 dropped the Thread's `sidekick_attachments`
 table; `parent_sidekicks` stays in `WorkspaceDO` until the Thread retirement
 has run everywhere, and nothing writes it.
 
@@ -468,12 +468,12 @@ variant that checks it. The old `/automations` listing remains a compatibility
 adapter. Directory membership never grants access to an owner.
 
 No conversation owns a Sidekick. The `workstream` scope is retired: WorkspaceDO
-migration 137 turned every Thread-owned Sidekick into an Organization one
+migration 135 turned every Thread-owned Sidekick into an Organization one
 (`scope = 'workspace'`, its owning room cleared), archived any a room archive
 had paused under the old rule, and dropped the rail trigger that bumped an
 owning room's waterline. `owning_workstream_id`, `owning_substream_id` and
 `owning_room_archived_at` stay on `automation_directory` as dead columns,
-because released CHECKs name them. Nothing writes them, and migration 137 left
+because released CHECKs name them. Nothing writes them, and migration 135 left
 them null. A few legacy readers still look and tolerate null: the search
 audience projection (`search-authorization-projection.ts`) and the engineering
 inspection read (`apps/api/src/engineering-inspection-bridge.ts`).
@@ -1165,7 +1165,7 @@ author or the person it runs as, because a skill is the Sidekick's procedure
 loaded into someone else's conversation, not a read of its own.
 
 - **Storage.** `people` is stored as scope `personal` with its list in
-  `sidekick_audience` (WorkspaceDO migration 136), so the released scope CHECK
+  `sidekick_audience` (WorkspaceDO migration 135), so the released scope CHECK
   and every reader of `scope` are unchanged. The wire carries it as `audience`
   beside `scope` on the summary and the detail, and the detail lists
   `sharedWithUserIds`: a third `scope` value would fail a released client's
@@ -1309,7 +1309,7 @@ delegate asks for in the shared conversation, a member or a guest on its list,
 acts as that person alone, the PRD's "a shared Sidekick uses delegate access
 only for its own runs":
 
-- `sidekick_runs.requester_user_id` (WorkspaceDO migration 138) records them,
+- `sidekick_runs.requester_user_id` (WorkspaceDO migration 135) records them,
   and `coordinator_user_id` is them too. Start, provisioning and every
   continuation keep them (`runPrincipal`) for as long as they are in the
   Organization, as a member or a guest; no delegate is ever substituted, and
@@ -1907,12 +1907,11 @@ late delivery from a superseded predicate is refused by the owner.
 
 Workspace migration 135 adds `sidekick_runs.step_count` and the two triggers
 that arm a run's row entry; AgentLoopDO migration 82 adds
-`sidekick_run_rows` (run, turn, state, steps, reply, `source_version`), empty
-everywhere but a Sidekick's `"0"`; migration 87 adds its `requester_user_id` and `run_number`,
-and numbers the rows already there oldest first by run id (a UUIDv7, so the
-order `projectRunRow` counts). No shipped build has `sidekick_run_rows`, so in
-production that backfill finds an empty table; it serves only objects that ran
-an intermediate build of this change. A finished run is never projected again
+`sidekick_run_rows` (run, turn, state, steps, reply, `source_version`,
+`requester_user_id`, `run_number`), empty everywhere but a Sidekick's `"0"`.
+No shipped build had the table, so it starts empty and nothing is
+backfilled; `projectRunRow` writes each row's number (`created_at`, then
+`run_id`). A finished run is never projected again
 on its own, so a row the backfill numbered short (a run with no row) is
 repaired only by the operator RPC `replayRunRows`, which rebuilds every row
 with its real number.
@@ -2125,7 +2124,7 @@ picker on the conversation socket (`set_workstream_appearance`), and from
 2026-10-12 a Thread and its Breakouts wore their canonical Channel's colour,
 written by WorkspaceDO's `channel_color_sync` lane and the `recolor` identity
 operation. Threads, Breakouts and Channels were deleted, the colour lane and
-`recolor` with them (WorkspaceDO migration 147 dropped the lane's tables), and
+`recolor` with them (WorkspaceDO migration 138 dropped the lane's tables), and
 the sidebar-row reads and cache writers went with the Thread client. The icon
 catalog, its descriptions, the palette's pickable-versus-storable split, the
 picker and the id-derived default survive, and this document now owns them.
@@ -2186,10 +2185,10 @@ answer and the resume it lets in, a run's conversation still says needs_input
 with no question pending, and its projection now says the question it was
 answered on: read as the last reply, a run that had said nothing yet sent an
 empty summary, and the Sidekick's list was sent once waiting with no question,
-a bare "Needs input" for about a second (vis3 e2-N1). Migration 87, unshipped, now also
-numbers the run rows it finds, because runs made before the column read a
-bare "Run" beside numbered ones and picked up a number only if they were
-projected again (vis3 e2-N2, b1-N2). The client
+a bare "Needs input" for about a second (vis3 e2-N1). An intermediate
+migration numbered the run rows it found, because runs made before the column
+read a bare "Run" beside numbered ones; folding the unshipped migrations made
+the column part of the table from the start, so no row predates it. The client
 reads its own starting or working run's row as read as it arrives, mirroring
 the requester seat.
 
@@ -2286,10 +2285,10 @@ a `people` list as well as its author or the Organization, and its sidebar
 row says what the viewer has not read in `"0"`, and reads Needs input while
 any of its runs waits on input (the end-to-end pass found a run asking a
 question left its Sidekick reading Active). A member who is not a delegate
-runs under their own access (migration 138 records the requester). A
+runs under their own access (migration 135 records the requester). A
 schedule's occurrence is admitted only once its `next_due_at` has arrived.
 
-No Thread owns a Sidekick: WorkspaceDO migration 137 converted every
+No Thread owns a Sidekick: WorkspaceDO migration 135 converted every
 Thread-owned Sidekick to the Organization's scope and cleared its home,
 archived any a room archive had paused under the old rule, and dropped the
 rail trigger that bumped an owning room. The scope enum is `personal |
