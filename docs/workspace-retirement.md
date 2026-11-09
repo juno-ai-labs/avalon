@@ -412,7 +412,10 @@ conversation under every candidate (Main included) has its dump.
 2. **The Main's parent kind** (`AgentLoopDO.convertParentKind`): the stored
    `workstream` becomes `canvas`, and so does the envelope of every effect
    still in its outbox, which would otherwise be refused by kind until it
-   dead-letters. The object then binds its loop as a hosted conversation does
+   dead-letters, and every run's stored workflow input
+   (`runs.execution_context_json`), which `WorkstreamWorkflowInputSchema`
+   refuses as `workstream`: left, Retry on a Thread-era failed or cancelled
+   run would throw on the Canvas. The object then binds its loop as a hosted conversation does
    on construction and arms its alarm, which the retired kind had cleared on
    every firing. Already `canvas` is success; any other transition is refused
    with `conversation_parent_kind_conversion_unsupported:<from>:<to>`.
@@ -873,7 +876,9 @@ made, and the sweep leaves `CANVAS_SHARE_TABLES` to the Canvas.
 **What a future change must respect:** the order is dump, convert, retire, and
 `retire_threads` enforces it. The
 conversion is the only path that changes a conversation's stored parent kind,
-and only from `workstream` to `canvas`. Anything new that keys on a Thread's
+and only from `workstream` to `canvas`; every stored copy of the kind in the
+object (root row, outbox envelopes, run inputs) moves in the same
+transaction. Anything new that keys on a Thread's
 Main by its Thread-era name (a source string, a parent kind) has to be carried
 in `convertThreadToCanvas`, or a converted Canvas loses it. A new table a Canvas writes under its
 own id that `HOSTED_PARENT_STATE_TABLES` also sweeps joins
