@@ -32,7 +32,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/services/terminal/authority.ts` | `resolveTerminalPublicationHome` (a Sidekick run publishes into a Canvas) and `canvasArtifactNoter` (a publish tells its Canvas). |
 | `apps/api/src/services/conversation-service.ts`, `socket-service.ts` | Opening a Canvas's Chat: admission by the Canvas, the reader seated, and a ticket whose `pk` is `canvas`. |
 | `apps/api/src/services/authorization-service.ts` | A Canvas conversation's and its artifacts' canonical read decision, from `hostedConversationAuthorizationFacts`. |
-| `apps/desktop/src/renderer/screens/canvases-home.tsx` | `/canvases`: the home page — New Canvas, search, the filter chips, Data and Recent, and the first-run "Start from a prompt" card. |
+| `apps/desktop/src/renderer/screens/canvases-home.tsx` | `/canvases`: the home page — New Canvas, search, the Data and authorship filters, the Recent list, and the first-run "Start from a prompt" card. |
 | `apps/desktop/src/renderer/screens/canvas.tsx` | `/canvases/:id`: the Chat as a `canvas` conversation in `ConversationSurface`, its header (pill, people present, Share, menu), and opening the newest artifact in the right rail. |
 | `apps/desktop/src/renderer/components/canvas-share-dialog.tsx` | Share: who can open it, for a manager; the same audience read-only for anyone else; guests invited by email on Save. |
 | `apps/desktop/src/renderer/components/canvas-mark.tsx` | `CanvasMark` and `canvasMark`: the chosen icon and colour, else the kind's glyph and `canvasHue`, field by field. |
@@ -390,7 +390,7 @@ state as `sidekick_viewer_reads` projects it against the Chat's latest
 attention ordinal (a Canvas never opened is unread to anyone but its creator);
 `presentUserIds`, the people whose foreground socket has the Canvas open now;
 `pinnedPosition`; `sharedWithMe`, set for a participant who did not make it;
-`artifactKind`, the newest artifact's kind; `hasLiveArtifact`, whether any listed
+`artifactKind`, the newest artifact's kind; `hasStoredData`, whether any listed
 artifact has its own database (`artifact_registry.stateful = 1`); and
 `lastWrittenBy`, the run
 whose publish made the newest version (`sidekickId`, `runId`, its
@@ -400,9 +400,7 @@ Sidekick was deleted, and absent from an older Worker. Deleting a Sidekick
 moves only the Sidekick list's waterline, so a connected client keeps
 "<Sidekick> · run #N" on the card until its next Canvas list frame. It is read by joining
 `sidekick_runs` on its primary key, so the list pays one probe per Canvas a
-run wrote last. The home page's groups are
-these fields: Data (`hasLiveArtifact`), from Sidekicks (`writerSidekickId`),
-shared with me, made by me. The list holds every Canvas the viewer may open as its creator, a
+run wrote last. The list holds every Canvas the viewer may open as its creator, a
 participant, a member of an Organization-wide one or someone its writer
 Sidekick is shared with, most recently active first, at most 250, the bound
 the Sidekick list already has; an owner's or administrator's list does not add
@@ -446,9 +444,8 @@ section records only what the code decides.
 
 - **The list** is the `canvases` query the workspace socket fills
   (`workspace_canvas_list`, `applyVersionedSidebarList`), read with
-  `useSocketOwnedList`; there is no list route. The home page groups and filters
-  it client-side from the row's own fields. The filters are All, Data, Made by
-  me, Shared with me and From Sidekicks, in that order. Data is `hasLiveArtifact`,
+  `useSocketOwnedList`; there is no list route. The home page keeps activity
+  order and filters client-side from the row's own fields: Data is `hasStoredData`,
   Made by me `createdByUserId`, Shared with me `sharedWithMe`, From Sidekicks
   `writerSidekickId`. A home card whose
   newest version a run wrote names that run, "<Sidekick> · run #N"
@@ -458,8 +455,10 @@ section records only what the code decides.
   is a facepile at the preview's top left; the independent **Data** badge at
   its top right uses the Stored data pop-out row's `IconDatabase` and means
   the Canvas holds a listed database-backed artifact.
-  A static site has no Data badge. `hasLiveArtifact` is absent from an older
-  Worker, which the client treats as false. Both indicators can appear together.
+  A static site has no Data badge. Both indicators can appear together. The
+  preview is decorative; the link describes its Data badge for assistive
+  technology, and the metadata names current viewers. Clicking a face opens
+  the Canvas through the same stretched link as the rest of the card.
 - **The mark** (`CanvasMark`) holds the chosen icon, else the row's
   `artifactKind` glyph, in a pastel pair through `markColors`: the chosen
   colour, else a hue stable for the id (`canvasHue`). The home card's preview
@@ -617,10 +616,8 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
   to a participant who has not opened it; a member's `set_presence` reaches the
   creator's row and face pile, at a waterline newer than the subscribe
   payload's, as the client applies it; a pin moves only its owner's row; a Canvas the
-  viewer may not open is neither pinned nor present. The artifact-status case
-  proves that a database-backed artifact sets `hasLiveArtifact` on pushed
-  rows even when a newer artifact is a file, while static sites, unlisted
-  artifacts and another Canvas's database do not.
+  viewer may not open is neither pinned nor present. The same file covers
+  `hasStoredData` on pushed rows and its registry and listing conditions.
 - `canvas-conversation.test.ts` publishes through the Terminal's resource
   bridge: the first publish is version 1 by Rally, a republish a new version
   of the same artifact, another path another artifact; and a Sidekick run's
@@ -655,7 +652,7 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 - `apps/desktop/src/renderer/lib/sidebar-list-store.test.ts` — the Canvas list
   orders by its own waterline.
 - `apps/desktop/src/renderer/screens/canvases-home.test.tsx` — the home page
-  from a socket-fed list: database-backed Data and Recent, facepiles
+  from a socket-fed list: activity order and the Data filter, facepiles
   independent of Data badges, the filters and search, the
   prompt card and New Canvas, no create for a guest, and no empty state before
   the list arrives.
@@ -719,8 +716,9 @@ why the refresh lease shares the owning object's transaction.
 ### 2026-11-09 — Separate viewer presence from database-backed artifacts
 
 **What changed:** The home card shows current viewers as a top-left facepile.
-Its Data badge and Data group use `hasLiveArtifact`, derived from listed
-artifacts joined to the existing registry's `stateful` flag in WorkspaceDO.
+Its Data badge and filter use `hasStoredData`, derived from listed artifacts
+joined to the existing registry's `stateful` flag in WorkspaceDO. The list
+keeps activity order across all Canvases.
 
 **Why:** The Data badge needs to identify an artifact with a database even
 when nobody is viewing it; presence answers a separate question.
@@ -729,9 +727,11 @@ when nobody is viewing it; presence answers a separate question.
 a static site has no database, and a newer file does not remove an older
 database-backed artifact from its Canvas. Fetching each artifact's manifest
 would add work to every dashboard opening when the registry already knows.
+A separate Data group would put old trackers ahead of recent work even
+though the filter and badge already make them discoverable.
 
-**Consequences:** Presence and Live status can coexist independently. A row
-from an older Worker omits the new field and shows no Data badge.
+**Consequences:** Presence and stored data can coexist independently; neither
+changes a Canvas's position in the Recent list.
 
 ### 2026-11-09 — Document created: a Canvas is a hosted conversation with its own audience
 
