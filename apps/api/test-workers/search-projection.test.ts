@@ -342,7 +342,9 @@ describe.each([
       sql.exec('UPDATE resource_search_versions SET revision = 3, pending = 1, not_before = 123 WHERE resource_id = ?', backoff);
     });
     await runInDurableObject(stub, (_instance, state) => {
-      applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+      applyDurableObjectSqliteMigrations({ storage: state.storage,
+        // Assert this re-projection's contract, independent of later policy migrations.
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= workspaceFrom + 1),
         component: 'workspace_do', workerVersionId: 'reprojection', now: 2_000 });
       expect(watermarks(state.storage.sql)).toEqual([
         { resource_id: published, revision: 7, pending: 1, not_before: 0 },
