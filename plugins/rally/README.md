@@ -24,4 +24,20 @@ and enter `https://mcp.rallywith.ai/mcp`.
 ChatGPT: in developer mode, add an app (connector) with the same URL and OAuth
 authentication.
 
+OpenCode: add Rally to `opencode.json`, then run `opencode mcp auth rally`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "rally": { "type": "remote", "url": "https://mcp.rallywith.ai/mcp" }
+    }
+  }
+}
+```
+
+From any of them, ask to publish something you made there (an artifact, a
+file, a page) to a Canvas, and it lands as that Canvas's artifact.
+
 How it works is in `docs/rally-mcp.md`.
