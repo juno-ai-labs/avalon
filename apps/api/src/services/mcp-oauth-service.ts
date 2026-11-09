@@ -1,8 +1,11 @@
+import { asWorkspaceId } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import {
   MCP_SCOPE,
   isAllowedMcpRedirectUri,
+  isLoopbackMcpRedirectUri,
+  type ConnectedMcpApp,
   type McpAuthorizationApproval,
   type McpAuthorizationDescription,
   type McpAuthorizationRequest,
@@ -162,6 +165,58 @@ export class McpOAuthService {
       }
     }
     if (sessionId) await new AuthService(this.env).logout({ sessionId });
+  }
+
+  /**
+   * The apps this person has connected and not disconnected, in every
+   * Organization of this region, newest first. A grant is listed while its
+   * session would still authenticate: not revoked, not expired, and the
+   * membership and Organization it was issued for still live, as
+   * `authenticateSession` checks them. A desktop or browser session has no
+   * grant row, so the join never lists one.
+   */
+  async connectedApps(userId: string): Promise<ConnectedMcpApp[]> {
+    const rows = (await this.env.DB.prepare(`SELECT s.id, c.client_name, c.redirect_uris, s.workspace_id, w.name AS workspace_name,
+        g.created_at, s.refresh_rotated_at
+      FROM sessions s
+      JOIN mcp_oauth_grants g ON g.session_id = s.id
+      JOIN mcp_oauth_clients c ON c.client_id = g.client_id
+      JOIN workspace_members m ON m.user_id = s.user_id AND m.workspace_id = s.workspace_id
+        AND m.status = 'active' AND m.incarnation = s.workspace_incarnation
+      JOIN workspaces w ON w.id = s.workspace_id AND w.abandoned_at IS NULL
+      WHERE s.user_id = ? AND s.region = ? AND s.revoked_at IS NULL AND s.expires_at > ?
+      ORDER BY g.created_at DESC, s.id`)
+      .bind(userId, this.env.AVALON_REGION, nowIso())
+      .all<{ id: string; client_name: string; redirect_uris: string; workspace_id: string; workspace_name: string;
+        created_at: string; refresh_rotated_at: string | null }>()).results ?? [];
+    return rows.map((row) => {
+      const redirects = RegisteredRedirectsSchema.parse(JSON.parse(row.redirect_uris));
+      const hosted = redirects.filter((uri) => !isLoopbackMcpRedirectUri(uri));
+      return {
+        id: row.id,
+        clientName: row.client_name,
+        redirectOrigins: [...new Set(hosted.map((uri) => new URL(uri).origin))],
+        loopback: hosted.length < redirects.length,
+        workspaceId: asWorkspaceId(row.workspace_id),
+        workspaceName: row.workspace_name,
+        connectedAt: row.created_at,
+        lastActiveAt: row.refresh_rotated_at ?? row.created_at,
+      };
+    });
+  }
+
+  /**
+   * The person ends one of their grants from Settings: the same session end
+   * as the client's own `revoke`. Only a session that is both this person's
+   * and an MCP client's is ended, so a desktop session id or another
+   * person's grant is not found. Disconnecting a grant that already ended
+   * succeeds, as the client's revoke does.
+   */
+  async disconnect(userId: string, grantId: string): Promise<void> {
+    const grant = await this.env.DB.prepare(`SELECT s.id FROM sessions s JOIN mcp_oauth_grants g ON g.session_id = s.id
+      WHERE s.id = ? AND s.user_id = ?`).bind(grantId, userId).first<{ id: string }>();
+    if (!grant) throw new ApiError(404, "connected_app_not_found", "This app is not connected to your account");
+    await new AuthService(this.env).logout({ sessionId: grant.id });
   }
 
   /**
