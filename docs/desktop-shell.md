@@ -102,6 +102,8 @@ It holds two columns:
   already open and its rail entry is selected. The list header's **Canvas
   dashboard** home icon, immediately before New Canvas, uses the same action.
   Both select the Canvases list and close the phone sheet to reveal the dashboard.
+  Repeated dashboard picks replace the current entry, preserving one Back step
+  to the previously open Canvas.
   Entering Activity opens its top row (the first the list draws) in the pane,
   as a mail client opens a folder's first message, and draws that row open:
   the rail's button pushes the row's route, so Back returns to what was open;
@@ -249,9 +251,9 @@ header keeps Share at the right and its actions in the centred pill's menu.
 Opening the sheet from a pane header moves focus to its close button; closing hands focus back
 to the opener, or to the visible menu button when the opener is gone
 (`useSheetOpener`). Opening anything from it closes it, as do Escape and
-widening past 640px; picking Sidekicks changes only the list, so the sheet stays
-open. Picking Canvases opens its dashboard and closes the sheet. An open menu, dialog or error popup takes Escape
-before the sheet does. Code that navigates and wants the sheet open afterwards
+widening past 640px. Section changes follow [the sidebar rules](#the-sidebar).
+An open menu, dialog or error popup takes Escape before the sheet does.
+Code that navigates and wants the sheet open afterwards
 sets `sheetAfterNavigation` instead of `sidebarOpen`: the sidebar's reset on
 mount and route change reads it and opens the sheet once.
 
@@ -409,12 +411,21 @@ It does not own:
 
 ### 2026-11-09 — Return to the Canvas dashboard from the sidebar
 
-Clicking the Canvases rail entry now opens its dashboard even while a Canvas
-is open, and a home icon before New Canvas provides the same shortcut. Both
-reuse one navigation action and close the phone sheet. Previously the rail
-only selected its list, leaving the open conversation in place and making the
-dashboard hard to return to. Sidekicks keeps its existing list-only behavior;
-the dashboard shortcuts must remain available to guests too.
+**What changed:** The Canvases rail entry and a home icon before New Canvas
+share one dashboard action, including while a Canvas is open. Repeated picks
+replace the current dashboard history entry.
+
+**Why:** The rail previously only selected its list, leaving the conversation
+open and making the dashboard hard to return to. Pushing the dashboard again
+when already there adds Back presses that appear to do nothing.
+
+**Considered and rejected:** Removing the home icon as redundant with the
+rail. The requested UI explicitly includes both shortcuts on desktop and phone.
+
+**Consequences:** Dashboard picks close the phone sheet to reveal the page.
+Sidekicks keeps its list-only behavior, and guests retain both dashboard shortcuts.
+
+Shipped in #1504.
 
 ### 2026-11-09 — The shell is Canvases, Sidekicks and Activity; Channels, Threads and Breakouts are deleted
 

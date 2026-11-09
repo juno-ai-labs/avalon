@@ -246,7 +246,7 @@ export function NavigationSidebar({
   const openCanvasDashboard = (): void => {
     setSection('canvases');
     setSidebarOpen(false);
-    void navigate('/canvases');
+    void navigate('/canvases', { replace: pathname === '/canvases' });
   };
   return <ResizableSidebar
     aria-label="Rally navigation"
