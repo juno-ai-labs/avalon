@@ -84,8 +84,8 @@
 # Wildcard rules come last. Cloudflare counts every rule after the first
 # wildcard as dynamic, and allows 100 dynamic rules but 2,000 static ones, so
 # one wildcard at the top put the help center's exact redirects over the limit.
-# No exact source above overlaps a wildcard below, so the order changes nothing
-# a visitor sees.
+# The topmost matching rule wins, so the exact /support/... rules above must
+# stay above /support/*, or every page-specific support link lands on /help/.
 /security/*  /trust/security/  301
 /terms/*  /trust/terms/  301
 /privacy/*  /trust/privacy/  301
