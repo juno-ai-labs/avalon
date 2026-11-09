@@ -310,8 +310,9 @@ Where the answer goes has a stated tie-break, because the conversations
 plugin tells a run never to post its reply into the Sidekick's own
 conversation. A person who wrote in Rally (in the run, or in the Sidekick's
 shared conversation) reads the run's final message, so the answer goes there
-and nothing is posted; a person who wrote outside Rally gets a post in that
-thread. The wizard's continuation note (`renderRunContinuationNote` with
+and nothing is posted; a person who wrote outside Rally, in the run's Slack
+thread, gets a post there. An email reply never continues a run, and no tool
+posts into an email thread. The wizard's continuation note (`renderRunContinuationNote` with
 `fromWizard`) points back at this guidance rather than restating it.
 
 

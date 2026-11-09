@@ -75,7 +75,7 @@ const definitions = memoizedValue(() => ({
   generate_image: {
     name: "generate_image",
     longRunning: true,
-    description: "Generate one new PNG image from a text prompt and attach it to the current workstream as a durable resource.",
+    description: "Generate one new PNG image from a text prompt and attach it to the current conversation as a durable resource.",
     capability: "multimodal.generate",
     mode: "write",
     idempotency: "record_before_execute",
@@ -94,7 +94,7 @@ const definitions = memoizedValue(() => ({
   },
   generate_audio: {
     name: "generate_audio",
-    description: "Turn text into one AI-generated MP3 voice recording and attach it to the current workstream as a durable audio resource.",
+    description: "Turn text into one AI-generated MP3 voice recording and attach it to the current conversation as a durable audio resource.",
     capability: "multimodal.generate",
     mode: "write",
     idempotency: "record_before_execute",
