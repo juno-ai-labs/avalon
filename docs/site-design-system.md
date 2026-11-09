@@ -51,11 +51,19 @@ started from a blank page rather than from any earlier look.
    comparisons). The product pages follow the same order: `/canvases/`
    leads with "Made once. Kept current." and `/sidekicks/` with "The AI that
    keeps work current."
-7. **Show, don't claim.** Figure 1 is a working Canvas, not a picture: a
-   launch tracker that a Sidekick updates from Linear, Slack and Granola,
-   one event and one new version at a time, with the event shown beside the
-   window as it lands; then Maya asks Rally what is still open, Rally
-   answers from the page, and Theo comments on a row.
+7. **Show, don't claim.** Figure 1, in the hero, is a carousel of seven live
+   artifacts, one for each audience Rally sells to: solopreneurs,
+   engineering teams, parents, product managers, developers on a team,
+   founders and agency recruiters. Each slide plays three tool events, each
+   publishing a version, then a person acting on the page, and builds to a
+   **payoff** for that audience (engineering: the release page flips itself
+   to "Blocked by ENG-311"; parents: "2 parents, one list").
+8. **Let the reader drive.** Below the hero the page explains the mechanism
+   the way an explorable essay does: short passages between figures the
+   reader can scrub. Figure 2 is the loop (events travel into a Sidekick,
+   which publishes the next version) on a time slider; Figure 3 is the
+   launch tracker with the team in it; Figure 4 adds people to one Canvas
+   with a slider and counts what stays the same (one page, no seats).
 
 ## Where the code lives
 
@@ -69,6 +77,10 @@ started from a blank page rather than from any earlier look.
 | `apps/site/src/canvas-demo.html` | The animated Canvas, shared by the home hero, `/start-fast/` and `/canvases/` |
 | `apps/site/canvases/index.html`, `apps/site/sidekicks/index.html` | The two product pages |
 | `apps/site/src/site-motion.ts` | The demo's timeline and the scroll reveals |
+| `apps/site/src/live-examples.ts` | The hero carousel's seven examples as data, and `renderLiveCarousel`, which writes the carousel at build time (Node only) |
+| `apps/site/src/live-carousel.ts` | Plays the carousel: rotation, each slide's steps, the dot that flies from an event to the row it changed, the pause button |
+| `apps/site/src/explorable-figures.ts` | Figures 2 and 4 as SVG, rendered at build time; all their geometry |
+| `apps/site/src/explorables.ts` | Drives Figures 2 and 4: the time slider and playback, and the people slider |
 | `apps/site/src/site-chrome.ts` | The header nav, the footer, and the `<!-- rally:… -->` markers that stitch shared markup into pages |
 | `apps/site/src/fonts/` | Instrument Serif (roman and italic), Geist and Geist Mono, latin |
 | `apps/site/public/brand/rally-mark-paper.svg` | The mark in paper, drawn on the accent (Rally's avatar, the Sidekick hexagon) |
@@ -140,6 +152,38 @@ and only the newest shows on a phone: each step adds `s<n>` to the figure, so CS
 swaps the artifact's version per step, and turns on every `[data-at]`
 element whose step has arrived. The loop runs only while the figure is on
 screen. The timings live in `STEP_HOLD`.
+
+### The hero carousel
+
+An example is data: its audience, artifact, Sidekick, three events, rows,
+a status line per step and a payoff (`LiveExample` in `live-examples.ts`).
+`renderLiveCarousel` turns all seven into tabs and slides, each slide in its
+finished state, so the page reads without a script. `live-carousel.ts` then
+plays one slide at a time: step 0 is the page before, steps 1 to 3 are tool
+events (rows arrive with `at`, are ticked with `done`, the version and byline
+move on, a dot flies from the event to the row), and step 4 is a person
+ticking what they own, with the payoff card. A row with `approve` is ticked
+in the accent and stays at full strength, so "advance this candidate" never
+reads as "crossed off". Ranks are a CSS counter over the rows that have
+arrived. A slide's height is the tallest slide's, so rotating never moves the
+page. A click on a tab plays that slide from the start; the pause button
+stops rotation.
+
+To add an audience, add an entry to `liveExamples`. Its events must be ones a
+Sidekick can be started by, as the help center's Triggers and schedules page
+lists them; a tool read on a schedule (Google Drive, Calendar) is labelled
+as the schedule.
+
+### Explorable figures
+
+Figures 2 and 4 draw any state from scratch from one input, a time `t` or a
+head count, so playing, scrubbing and reduced motion are the same code.
+Their SVG is rendered at build time from `explorable-figures.ts`, which owns
+every coordinate; the client only moves a pulse along a path, sets
+transforms and opacity, and toggles classes. Figure 2 plays while on screen
+until the reader touches it. On a phone a figure keeps a minimum width and
+scrolls sideways rather than shrinking its labels. Figure numbers are a CSS
+counter, so moving or reusing a figure never leaves a stale number.
 
 ### Motion
 
@@ -215,8 +259,10 @@ in light and dark, before a change ships, as the repository's rule on visible ch
 stylesheet now sets a new system: warm paper and ink in light and dark
 themes, Instrument Serif, Geist and Geist Mono, a single ultramarine accent
 for Rally and a colour for each person. The home page leads with an animated
-live Canvas as Figure 1, leads with live artifacts (Canvases a Sidekick
-updates from activity in connected tools) and follows with multiplayer;
+carousel of seven live artifacts, one per audience, each building to a
+payoff, explains the mechanism with scrubbable figures, leads with live
+artifacts (Canvases a Sidekick updates from activity in connected tools) and
+follows with multiplayer;
 `/canvases/` and `/sidekicks/` were added; the blog, comparison and Trust
 Center pages took on the same system.
 
