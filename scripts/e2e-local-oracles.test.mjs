@@ -3,9 +3,12 @@ import { test } from "node:test";
 
 import {
   TERMINAL_STATES,
+  artifactGateDecision,
+  artifactOutcomeOracle,
   buildPlan,
   modelGateDecision,
   runOutcomeOracle,
+  uuidV7,
 } from "./e2e-local.mjs";
 
 // The oracles are the part of the e2e lane that can rot silently: a driver
@@ -54,4 +57,28 @@ test("a missing model key refuses the lane unless degradation is chosen", () => 
   const degraded = modelGateDecision(false, true);
   assert.equal(degraded.run, true);
   assert.equal(degraded.degraded, true);
+});
+
+test("the artifact scenario runs only with a model and a Terminal, and says why otherwise", () => {
+  assert.deepEqual(artifactGateDecision(true, "supported"), { run: true });
+  const noModel = artifactGateDecision(false, "supported");
+  assert.equal(noModel.run, false);
+  assert.match(noModel.reason, /no model/);
+  const noTerminal = artifactGateDecision(true, "unsupported");
+  assert.equal(noTerminal.run, false);
+  assert.match(noTerminal.reason, /Terminal is unsupported/);
+  assert.match(artifactGateDecision(true, undefined).reason, /Terminal is unknown/);
+});
+
+test("a publish counts only when the Canvas lists a versioned artifact", () => {
+  assert.equal(artifactOutcomeOracle({ artifacts: [] }).ok, false);
+  assert.equal(artifactOutcomeOracle(null).ok, false, "an unreadable Canvas is not a publish");
+  assert.equal(artifactOutcomeOracle({ artifacts: [{ resourceId: "r", version: 1 }] }).ok, true);
+  assert.equal(artifactOutcomeOracle({ artifacts: [{ resourceId: "r", version: 0 }] }).ok, false);
+});
+
+test("the lane mints UUIDv7 ids, which the telemetry contract on operationId requires", () => {
+  const id = uuidV7(0x0190_0000_0001);
+  assert.match(id, /^01900000-0001-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+  assert.notEqual(uuidV7(0x0190_0000_0001), id);
 });

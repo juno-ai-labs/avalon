@@ -220,20 +220,18 @@ describe("the automations plugin", () => {
   it("preserves the existing Sidekick scope while explaining its authority", () => {
     const { systemMessage } = createAutomationsPlugin(host());
 
-    // The three scopes, and what each one means for who can manage the result.
-    expect(systemMessage).toContain("personal");
-    expect(systemMessage).toContain("workspace");
-    expect(systemMessage).toContain("workstream");
+    // The two scopes, and what each one means for who can manage the result.
+    expect(systemMessage).toContain('- "personal" belongs to the requester.');
+    expect(systemMessage).toContain('- "workspace" belongs to the Organization and is managed by its admins.');
+    // A Thread no longer owns a Sidekick, so the prompt offers no room scope.
+    expect(systemMessage).not.toContain('"workstream"');
     expect(systemMessage).toContain("Published scope cannot change");
     expect(systemMessage).toContain("Use the scope already selected");
     expect(systemMessage).toContain("Every scope can use eligible delegates' personal connections");
     expect(systemMessage).toContain("Eligible delegates can use");
     expect(systemMessage).not.toContain("Only the run-as person can use");
     expect(systemMessage).toContain("Do not ask participants to choose it again");
-    // The room an automation belongs to is the one it was written in, so an
-    // agent offering to deliver somewhere else is offering something that does
-    // not exist.
-    expect(systemMessage).toContain("Scheduled result delivery to a workstream is limited to the owning workstream");
+    expect(systemMessage).not.toContain("owning workstream");
   });
 
   it("stages a scheduled self-review and tells it to report to the absent owner", () => {
@@ -266,10 +264,13 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("3. Act on the plan");
     expect(systemMessage).toContain("Never add a connector,\nplugin, delivery destination, trigger or capability; never enrol a delegate");
     expect(systemMessage).toContain("never submit\nready=false");
-    // The publication to the people the Sidekick works for, and only on a change.
-    expect(systemMessage).toContain("4. If you saved a change and the notice names where to announce it, post one message there\nwith conversation_post, passing that conversation");
-    expect(systemMessage).toContain("Post\nnothing when nothing changed");
-    expect(systemMessage).toContain("5. End with one short report here for the owner, who was not present");
+    // The review runs in the Sidekick's shared conversation, so its report is
+    // the announcement: a second post there would say the same thing twice.
+    expect(systemMessage).toContain("4. End with one short report here, for the owner, who was not present, and for everyone\nthe Sidekick is shared with");
+    expect(systemMessage).toContain("This report is the announcement, so post nothing with conversation_post.");
+    expect(systemMessage).not.toContain("5. End with");
+    // A run's report in Rally is its final message on its row; a post would double it.
+    expect(systemMessage).toContain("save no\nconversation_post step for it, which would post the same report there a second time.");
   });
 
   it("publishes ready submissions without a separate activation tool", () => {

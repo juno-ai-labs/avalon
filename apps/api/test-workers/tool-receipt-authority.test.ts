@@ -20,7 +20,7 @@ import { withToolPagination } from "../src/services/tool-pagination";
 import { z } from "zod";
 
 import { conversationObjectName } from "../src/durable-objects/names";
-import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import { WorkstreamToolReceiptStorage } from "../src/durable-objects/workstream-tool-receipt-storage";
 import type { Env } from "../src/env";
 import { createToolReceiptObjectPort } from "../src/runtime/tool-receipt-port";
@@ -818,7 +818,7 @@ describe("tool-receipt authority on real workerd", () => {
     });
 
     const afterReceipt = await runInDurableObject(stub, async (instance, state) => {
-      await (instance as SubstreamAgent).executeToolReceiptOperation({
+      await (instance as AgentLoopDO).executeToolReceiptOperation({
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
         operation: "admit",
@@ -842,7 +842,7 @@ describe("tool-receipt authority on real workerd", () => {
       now: 1_000,
     });
     const afterTerminal = await runInDurableObject(stub, async (instance, state) => {
-      await (instance as SubstreamAgent).executeTerminalOperation({
+      await (instance as AgentLoopDO).executeTerminalOperation({
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
         operation: "attachProviderSandbox",

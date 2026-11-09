@@ -1,11 +1,11 @@
 import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual';
-import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
-import { ConversationCard } from '@rally/ui/components/conversation-card';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { AttachmentPreview } from './attachments';
 import type { CitationContext } from './markdown-citations';
-import type { Message, MessageMergedInto } from '../lib/types';
-import { MessageBlock, type MessageMergeAction, type RowDisclosure } from './workstream-blocks';
+import { formatDayLabel } from '../lib/format';
+import type { Message } from '../lib/types';
+import { RelativeTime } from './relative-time';
+import { MessageBlock, type RowDisclosure } from './workstream-blocks';
 
 /**
  * The ordered feed both conversation surfaces render.
@@ -44,28 +44,9 @@ interface MessageFeedProps {
   liveMessageIds?: ReadonlySet<string>;
   onAnswerElicitation: (elicitationId: string, answer: string | string[] | null, customResponse?: string) => Promise<void>;
   onOpenAttachment?: (preview: AttachmentPreview) => void;
-  onStartSubstream?: (throughTurnId: string) => void;
-  /** The host's Merge action on settled messages; see `MessageBlock`. */
-  merge?: MessageMergeAction;
-  /** Opens a Breakout a merge names. */
-  onOpenBreakout?: (breakoutId: string) => void;
-  /** Opens the merge a source's Merged chip names, where it landed. */
-  onOpenMerge?: (merge: MessageMergedInto) => void;
   /**
-   * The Breakouts started from each turn, drawn as cards under the last row of
-   * that turn. Absent on a surface that has no Breakouts of its own.
-   */
-  breakoutCards?: {
-    byTurn: ReadonlyMap<string, BreakoutMark[]>;
-    openSubstreamId: string | null;
-    onOpen: (substreamId: string) => void;
-    /** Who started each one and when, as the host can name them. */
-    renderMeta?: (breakout: BreakoutMark) => React.ReactNode;
-  };
-  /**
-   * What the host draws under the last row of a turn besides its Breakout
-   * cards: a conversation suggestion, or the merge response card opened from
-   * that turn. Keyed by transcript turn id.
+   * What the host draws under the last row of a turn. Keyed by transcript
+   * turn id.
    */
   afterTurn?: ReadonlyMap<string, React.ReactNode>;
   /** Creates the automation a proposal card names; see its card. */
@@ -195,11 +176,6 @@ export function MessageFeed({
   liveMessageIds,
   onAnswerElicitation,
   onOpenAttachment,
-  onStartSubstream,
-  merge,
-  onOpenBreakout,
-  onOpenMerge,
-  breakoutCards,
   onAcceptDraft,
   acceptingDraftFor,
   acceptDraftFailureFor,
@@ -282,36 +258,25 @@ export function MessageFeed({
   // cards belong after the last of them, where the turn ends.
   const lastRowOfTurn = useMemo(() => {
     const last = new Map<string, number>();
-    const tracked = (turnId: string): boolean => Boolean(breakoutCards?.byTurn.has(turnId)) || Boolean(afterTurn?.has(turnId));
-    if (!(breakoutCards && breakoutCards.byTurn.size > 0) && !(afterTurn && afterTurn.size > 0)) return last;
+    if (!afterTurn || afterTurn.size === 0) return last;
     messages.forEach((message, index) => {
-      if (message.transcriptTurnId && tracked(message.transcriptTurnId)) {
+      if (message.transcriptTurnId && afterTurn.has(message.transcriptTurnId)) {
         last.set(message.transcriptTurnId, index);
       }
     });
     return last;
-  }, [afterTurn, breakoutCards, messages]);
+  }, [afterTurn, messages]);
   const cardsAfter = (message: Message, index: number): React.JSX.Element | null => {
     const turnId = message.transcriptTurnId;
     if (!turnId || lastRowOfTurn.get(turnId) !== index) return null;
-    const breakouts = breakoutCards?.byTurn.get(turnId) ?? [];
     const hostContent = afterTurn?.get(turnId) ?? null;
-    if (breakouts.length === 0 && !hostContent) return null;
-    return <>
-      {breakouts.length > 0 && breakoutCards && <div aria-label="Breakouts from this message" className="breakout-card-list" role="group">
-        {breakouts.map((breakout) => <ConversationCard
-          conversation={breakout}
-          key={breakout.substreamId}
-          meta={breakoutCards.renderMeta?.(breakout)}
-          onOpen={() => breakoutCards.onOpen(breakout.substreamId)}
-          open={breakout.substreamId === breakoutCards.openSubstreamId}
-        />)}
-      </div>}
-      {hostContent && <div className="turn-host-content">{hostContent}</div>}
-    </>;
+    return hostContent ? <div className="turn-host-content">{hostContent}</div> : null;
   };
   const row = (message: Message, index: number): React.JSX.Element => (
     <div className="message-arrival-layer" data-arrival-id={message.id} data-arrival-kind={message.messageType}>
+      {startsDay(messages[index - 1], message) && (
+        <div className="day-divider" role="separator"><RelativeTime format={formatDayLabel} value={message.createdAt} /></div>
+      )}
       {index === firstUnreadIndex && (
         <div className="unread-divider" role="separator"><span>Unread messages</span></div>
       )}
@@ -329,10 +294,6 @@ export function MessageFeed({
           message={message}
           onAnswerElicitation={onAnswerElicitation}
           onOpenAttachment={onOpenAttachment}
-          onStartSubstream={onStartSubstream}
-          {...(merge ? { merge } : {})}
-          {...(onOpenBreakout ? { onOpenBreakout } : {})}
-          {...(onOpenMerge ? { onOpenMerge } : {})}
           rowDisclosure={rowDisclosure}
           {...(onAcceptDraft ? { onAcceptDraft } : {})}
           acceptingDraftFor={acceptingDraftFor ?? null}
@@ -390,4 +351,16 @@ export function MessageFeed({
       })}
     </div>
   );
+}
+
+/**
+ * Whether a row is the first of its local day, so the feed names the day above
+ * it ("Today", "Yesterday", a weekday, a date) and each byline carries only the
+ * clock time, as design.html §2 draws the transcript.
+ */
+function startsDay(previous: Message | undefined, message: Message): boolean {
+  if (!previous) return true;
+  const a = new Date(previous.createdAt);
+  const b = new Date(message.createdAt);
+  return a.getFullYear() !== b.getFullYear() || a.getMonth() !== b.getMonth() || a.getDate() !== b.getDate();
 }

@@ -43,14 +43,14 @@ and API before releasing the desktop client; existing accounts are exempted by
 the identity migration, with no feature flag.
 The journey owns setup stage and revision. Creators proceed through personal
 appearance, then invitations; members finish after personal appearance.
-Finishing saves `complete` and then leaves for the first work stream through
-`useOpenFirstWorkstream` — the composer only when the workspace is empty, as a
-creator's is. No workstream or
+Finishing saves `complete` and then leaves for the Canvases home through
+`useOpenLanding`, replacing the journey's entry. No Canvas, conversation or
 agent run is created by onboarding. The unshipped starter columns and removed first-task stages are not part of the schema.
 
-Joining an organization, as its creator or an invited member, makes the person
-a participant of General and gives them their own Personal Channel; see
-[the Personal Channel](spaces.md#the-personal-channel).
+Joining an organization, as its creator or an invited member, seats the person
+nowhere: General and the Personal Channel went with Channels. The journey ends
+on the Canvases home, whose empty state is **Start from a prompt**, and a
+person's first Canvas is the one they start there.
 
 Creating an organization prefills its name. `GET /onboarding/organization-suggestion`
 takes the domain of the signed-in person's email and fetches `https://<domain>/`,
@@ -132,7 +132,9 @@ introduction and resume their workspace journey when account details arrive. Wor
 progress also loads without replacing the app with a loading screen; only known
 unfinished setup or a journey failure interrupts the workspace. While either
 lookup is pending, nested conversation-admission providers keep warmed feeds
-speculative and message sending disabled. Completion releases admission without
+speculative, message sending disabled, and the landing's `last-route` restore
+held on an opening state ([`desktop-shell.md`](desktop-shell.md#the-landing-and-the-routes)).
+Completion releases admission without
 reconnecting; an unfinished result replaces the workspace without first marking
 its conversations opened.
 Background refetch failures keep cached onboarding state. Unsent invitation
@@ -352,7 +354,7 @@ Finishing used to set the hash to `/workstreams/new`. It now leaves through
 the first sidebar work stream, so a member joining a workspace that already
 has conversations enters one rather than an empty draft; a creator's empty
 workspace still opens the composer. The rule and the reason are in
-[`workstream-pinning.md`](workstream-pinning.md#leaving-for-the-first-work-stream).
+[`pinning.md`](pinning.md#2026-09-09--every-leaving-screen-opens-the-first-work-stream).
 
 ### 2026-09-08 — Save profile changes immediately and move personal appearance to Account
 

@@ -29,15 +29,15 @@ describe('allowlisted API operation telemetry', () => {
     const app = new Hono<HonoAppEnv>();
     app.use('*', async (c, next) => { c.set('auth', auth); await next(); });
     app.use('*', apiOperationTelemetry({ emit, now: sequentialClock(0, 1_200) }));
-    app.post('/workstreams', (c) => c.json({ private: 'never copied' }, 201));
+    app.post('/canvases', (c) => c.json({ private: 'never copied' }, 201));
 
-    const response = await app.request('https://api.example.com/workstreams?secret=value', {
+    const response = await app.request('https://api.example.com/canvases?secret=value', {
       method: 'POST', headers: { authorization: 'Bearer private' }, body: 'customer content',
     }, createTestEnv({ AVALON_REGION: 'global' }));
     expect(response.status).toBe(201);
     await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce());
     expect(emit).toHaveBeenCalledWith(expect.anything(), auth, {
-      operation: 'workstream_create', result: 'success', duration: '1s_5s',
+      operation: 'canvas_create', result: 'success', duration: '1s_5s',
     });
     expect(JSON.stringify(emit.mock.calls)).not.toContain('secret');
     expect(JSON.stringify(emit.mock.calls)).not.toContain('customer content');
@@ -65,16 +65,16 @@ describe('allowlisted API operation telemetry', () => {
     const app = new Hono<HonoAppEnv>();
     app.use('*', async (c, next) => { c.set('auth', auth); await next(); });
     app.use('*', apiOperationTelemetry({ emit, now: sequentialClock(0, 20) }));
-    app.post('/workstreams', (c) => c.json({ ok: true }, 201));
+    app.post('/canvases', (c) => c.json({ ok: true }, 201));
     const operationId = '018f22f2-4c22-7abc-8def-0123456789ab';
 
-    const response = await app.request('/workstreams', {
+    const response = await app.request('/canvases', {
       method: 'POST', headers: { 'x-rally-operation-id': operationId },
     }, createTestEnv({ AVALON_REGION: 'global' }));
 
     expect(response.status).toBe(201);
     await vi.waitFor(() => expect(emit).toHaveBeenCalledWith(expect.anything(), auth, {
-      operation: 'workstream_create',
+      operation: 'canvas_create',
       result: 'success',
       duration: 'lt_100ms',
       correlationOperationId: operationId,
@@ -86,17 +86,17 @@ describe('allowlisted API operation telemetry', () => {
     const app = new Hono<HonoAppEnv>();
     app.use('*', async (c, next) => { c.set('auth', auth); await next(); });
     app.use('*', apiOperationTelemetry({ emit, now: sequentialClock(0, 20) }));
-    app.post('/workstreams', () => {
+    app.post('/canvases', () => {
       throw new ApiError(409, 'workstream_conflict', 'The work stream already exists');
     });
     app.onError((error, c) => c.json({ error: 'handled' }, error instanceof ApiError ? error.status : 500));
 
-    const response = await app.request('/workstreams', { method: 'POST' },
+    const response = await app.request('/canvases', { method: 'POST' },
       createTestEnv({ AVALON_REGION: 'global' }));
 
     expect(response.status).toBe(409);
     await vi.waitFor(() => expect(emit).toHaveBeenCalledWith(expect.anything(), auth, {
-      operation: 'workstream_create',
+      operation: 'canvas_create',
       result: 'conflict',
       duration: 'lt_100ms',
     }));
@@ -113,10 +113,10 @@ describe('allowlisted API operation telemetry', () => {
 
     const protectedApi = new Hono<HonoAppEnv>();
     protectedApi.use('*', async (c, next) => { c.set('auth', auth); await next(); });
-    protectedApi.post('/workstreams', (c) => c.json({ ok: true }, 201));
+    protectedApi.post('/canvases', (c) => c.json({ ok: true }, 201));
     app.route('/', protectedApi);
 
-    const response = await app.request('/workstreams', { method: 'POST' },
+    const response = await app.request('/canvases', { method: 'POST' },
       createTestEnv({ AVALON_REGION: 'global' }));
 
     expect(response.status).toBe(201);
@@ -132,14 +132,14 @@ describe('allowlisted API operation telemetry', () => {
       ALLOWED_ORIGINS: 'app://avalon', DB: createTestD1Database({ prepare: () => statement }),
     });
 
-    const response = await createApp().request('https://api.example.com/workstreams', {
+    const response = await createApp().request('https://api.example.com/canvases', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         'x-rally-dev-user-id': '00000000-0000-7000-8000-0000000000e1',
         'x-rally-dev-workspace-id': '00000000-0000-7000-8000-0000000000e2',
       },
-      body: '{}',
+      body: '{"title":5}',
     }, env);
 
     expect(response.status).toBe(400);
@@ -149,7 +149,7 @@ describe('allowlisted API operation telemetry', () => {
     expect(batch.events[0]).toMatchObject({
       name: 'api_operation_outcome',
       // The duration bucket depends on how fast the runner is; sequentialClock tests above pin the buckets.
-      properties: { operation: 'workstream_create', result: 'validation_error', duration: expect.any(String) },
+      properties: { operation: 'canvas_create', result: 'validation_error', duration: expect.any(String) },
     });
   });
 });

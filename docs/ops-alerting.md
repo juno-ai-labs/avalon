@@ -18,7 +18,7 @@ contain, or changing how the channel is reached.
 | `apps/api/src/observability/ops-slack-notifier.ts` | `notifyOps`: the one place a notice is rendered and posted. The single source. |
 | `apps/api/src/env.ts` | `OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID`, the optional per-region pair. |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `reportScheduledAlarmAttempt`: the one policy for a gated alarm entry — which attempt warns, errors, and notifies — and `scheduledAlarmErrorCode`, which reduces a thrown error to what may leave. |
-| `apps/api/src/durable-objects/workspace-do.ts`, `workstream-do.ts`, `substream-agent.ts` | The failure and stall hooks, each reporting through that policy with its own identity fields. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `agent-loop-do.ts` | The failure and stall hooks, each reporting through that policy with its own identity fields. |
 | `apps/api/src/services/slack-agent-service.ts` | The exhausted-ingress-job notice, in `processQueuedIngress`. |
 | `apps/api/src/routes/health.ts` | `opsNotifications` — configured, half configured, or not, never required. |
 | `scripts/sync-dev-env.mjs`, `.env.example` | How the secret reaches a local `.dev.vars.*` file. |
@@ -55,7 +55,7 @@ The events that notify today:
 
 | `event` | Posted from | When |
 | --- | --- | --- |
-| `workspace_scheduled_alarm_failed`, `workspace_scheduled_alarm_stalled`, and the `workstream_object_` and `substream_` forms | the three objects' `onScheduledAlarmFailure` and `onScheduledAlarmStalled` hooks, through `reportScheduledAlarmAttempt` | An alarm entry is on its third consecutive attempt without progress — it threw, or ran and came back due at the same instant, and the gate in [`durable-object-alarms.md`](durable-object-alarms.md) has held it across a couple of minutes of growing backoff. The counter is shared, so the notice fires at exactly attempt three whichever hook sees it: once per episode. Every attempt writes a log row, at `warn` for the first two and `error` from the third. |
+| `workspace_scheduled_alarm_failed`, `workspace_scheduled_alarm_stalled`, and the `substream_` forms (from `AgentLoopDO`) | the two objects' `onScheduledAlarmFailure` and `onScheduledAlarmStalled` hooks, through `reportScheduledAlarmAttempt` | An alarm entry is on its third consecutive attempt without progress — it threw, or ran and came back due at the same instant, and the gate in [`durable-object-alarms.md`](durable-object-alarms.md) has held it across a couple of minutes of growing backoff. The counter is shared, so the notice fires at exactly attempt three whichever hook sees it: once per episode. Every attempt writes a log row, at `warn` for the first two and `error` from the third. |
 | `slack_ingress_job_exhausted` | `SlackAgentService.processQueuedIngress` | A Slack ingress job has reached the 20-attempt ceiling, by a non-retryable error or by its twentieth attempt. The claim refuses a job at the ceiling, so a Queue redelivery cannot run, pin, or report it again; only the reauthorization re-drive, which resets the count, brings it back. The `error` row of the same name is written for every job; the notice is one per installation and error code within an hour, because a broken installation fails every event the same way and a notice per job would track the channel's message volume. |
 
 ## Invariants
@@ -158,10 +158,9 @@ Cloudflare administration credentials never become Worker variables
   thrown message that is not a code reaches the channel as the error's class,
   and a handler's own schema rejection reaches it naming the field and not
   the value.
-- `apps/api/test/slack-workspace-assignment.test.ts` ("Slack ingress jobs given
-  up on") — the exhausted-job notice is posted once at the ceiling, a Queue
-  redelivery of the dead job posts nothing, and a failure the queue will retry
-  posts nothing.
+- The exhausted-ingress-job notice in `processQueuedIngress` lost its test when
+  `apps/api/test/slack-workspace-assignment.test.ts` was deleted in plan step
+  C-2; nothing now proves it posts once at the ceiling and not on a redelivery.
 - Fixture token: `xoxb-ops-test`. Gitleaks runs its default Slack token rules,
   which want digit groups, over the commits a pull request adds; a
   realistic-looking token in a test trips the gate on the pull request that adds
@@ -183,6 +182,8 @@ pnpm exec dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler secret 
 ```bash
 pnpm exec dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler secret put OPS_SLACK_CHANNEL_ID --config wrangler.global.jsonc
 ```
+
+## Changelog
 
 ### 2026-08-22 — Created
 

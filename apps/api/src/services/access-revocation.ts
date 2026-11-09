@@ -44,7 +44,7 @@ const RevocationTargetSchema = z.discriminatedUnion("scope", [
    * It holds no sockets of its own — its role refuses a client upgrade — so
    * this hop exists only to name its children. That is the whole reason it is
    * a hop rather than nothing: the Space's hidden main conversation is an
-   * ordinary `SubstreamAgent`, it *does* hold whatever was opened against it,
+   * ordinary `AgentLoopDO`, it *does* hold whatever was opened against it,
    * and only the Space knows which conversations it has.
    */
   z.strictObject({ scope: z.literal("space"), spaceId: IdSchema }),
@@ -161,7 +161,7 @@ export type SocketAccessRevocation = z.infer<typeof SocketAccessRevocationSchema
  * Whether one socket belongs to the revocation being applied.
  *
  * Single-sourced because the four socket roles disagree about their own
- * attachments and a divergence here is silent: `SubstreamAgent` alone makes
+ * attachments and a divergence here is silent: `AgentLoopDO` alone makes
  * `sessionId` optional — a socket accepted before the command gateway carries
  * none — while the other three require it. Written inline, the natural
  * `attachment.sessionId !== request.sessionId` reads as "skip" for `undefined`,

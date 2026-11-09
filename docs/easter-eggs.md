@@ -56,7 +56,9 @@ state, or a workspace activation fails. It says two things:
   sign-in, for example).
 
 Both offer **Sign out** and **Try again**. The screen names no region, endpoint
-or configuration file: the person who sees it cannot act on those.
+or configuration file: the person who sees it cannot act on those. It fills the
+pane it sits in, the browser's conversation row included
+(`apps/browser/src/styles.css`), so its card is centred in the window.
 
 ## Invariants
 
@@ -67,7 +69,7 @@ or configuration file: the person who sees it cannot act on those.
 - **An egg is client-only and visual.** No egg calls the API, a tool, or the
   main process, and none stores anything. Hidden code that reaches a server is
   hidden attack surface; one that only draws is not. No automated guard.
-- **Pong takes Escape from the window.** Settings and the Sidekicks window close
+- **Pong takes Escape from the window.** Settings closes
   on Escape from a bubble-phase `window` listener installed before Pong mounts
   (`lib/window-escape.ts`). Pong listens in the capture phase so it runs first,
   and calls `preventDefault()`, which that hook honours, so Escape ends the game
@@ -83,10 +85,9 @@ or configuration file: the person who sees it cannot act on those.
 - **The Konami lap respects reduced motion.** Under
   `prefers-reduced-motion: reduce` no avatar laps, so the code does nothing.
 - **The flag comes down when the laps end.** Left up, an avatar that mounts
-  later (a new message, a switched Channel) would lap on arrival. The egg
+  later (a new message, a switched Canvas) would lap on arrival. The egg
   waits on the laps' own animations rather than a timer, so the duration lives
   in the stylesheet alone. Verified visually, no automated guard.
-  Verified visually, no automated guard.
 
 ## Boundary
 

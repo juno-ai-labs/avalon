@@ -43,7 +43,9 @@ The field shows only the authored comment; selected words appear in the composer
 chip after confirmation. Enter or Send keeps a nonempty comment and adds the pin
 to the composer. Confirmed comments stay visible beside their selected elements,
 including after leaving Comment mode or starting another pin. They follow scroll
-and resize; clicking a comment reopens its editor, and × removes it. Empty and
+and resize; clicking a comment reopens its editor, and × removes it. The open
+editor follows its selection too when the document reflows under it, such as
+the panel expanding, and its field does not resize. Empty and
 whitespace-only comments stay in the editor, and typing alone never adds a pin
 to the message. Dismissing an unfinished comment or starting another selection
 discards that pending pin. Accepting a message also clears unfinished selections,
@@ -223,7 +225,7 @@ Historical sites read frozen manifest assets without running the old worker.
 ## Draft restoration and new revisions
 
 Confirmed comments restore into their originating conversation, including its
-breakout identity. The cache preserves original evidence and a separately resolved
+substream. The cache preserves original evidence and a separately resolved
 annotation. The provider checks restored selections, visible artifact revision
 changes, window focus, and submission against the latest resource revision.
 
@@ -278,7 +280,7 @@ owned by [authorization](authorization.md), uploaded bytes and model image
 hydration by [agent attachments](agent-attachments.md), ordinary draft
 persistence by [composer drafts](composer-drafts.md), and site publication by
 [live web artifacts](live-web-artifacts.md). It adds no editing tool, approvals,
-artifact comment records or iOS surface.
+or artifact comment records.
 
 ## Failure modes and limits
 
@@ -414,7 +416,6 @@ removed comments. Revision checking remains client-side so ambiguous feedback ne
 reaches the model; shared reads reduce its cost without removing that guarantee.
 
 PR #1360.
-
 
 ### 2026-10-19 — Confirm comments before adding composer pins
 

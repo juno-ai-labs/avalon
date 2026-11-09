@@ -31,7 +31,7 @@ import type { RegionalTelemetryBridgeRpcBinding } from "./telemetry/regional-bri
 import type { GlobalTelemetryControlRpcBinding } from "./telemetry/control";
 import type { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
 import type { ArtifactHostDO } from "./durable-objects/artifact-host-do";
-import type { SubstreamAgent } from "./durable-objects/substream-agent";
+import type { AgentLoopDO } from "./durable-objects/agent-loop-do";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
 import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
@@ -74,7 +74,7 @@ export interface Env {
   // throws `Binding FLAGS needs to be run remotely`, so readers must handle
   // both. Either way they fall back to the model variables below.
   FLAGS?: Flagship;
-  SUBSTREAM_AGENTS: DurableObjectNamespace<SubstreamAgent>;
+  SUBSTREAM_AGENTS: DurableObjectNamespace<AgentLoopDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   /** One supervisor per live web artifact, named by the artifact's own id. */
@@ -121,12 +121,6 @@ export interface Env {
   WEB_PUSH_SUBJECT?: string;
   CONNECTOR_POLL_WORKFLOW: Workflow;
   CONNECTOR_EVENT_WORKFLOW: Workflow;
-  WORK_OPPORTUNITY_WORKFLOW: Workflow;
-  /** Global-only: the demo preparation driver. Absent, the demo write routes
-   * answer 503 (`demo_preparation_unavailable`) and nothing else changes — it
-   * is not in the boot contract on purpose, because a demo tool's binding must
-   * never take a region offline. regional binds nothing; its demo routes refuse. */
-  DEMO_PREPARATION_WORKFLOW?: Workflow;
   [binding: `REGION_${string}_IDENTITY_BRIDGE`]: RegionalIdentityBridgeRpcBinding | undefined;
   [binding: `REGION_${string}_GITHUB_BRIDGE`]: GitHubRegionalBridgeRpcBinding | undefined;
   [binding: `REGION_${string}_INBOUND_EMAIL_BRIDGE`]: InboundEmailRegionalRpcBinding | undefined;
@@ -262,7 +256,9 @@ export interface Env {
    * surface. Stored as a JSON map from opaque bearer token to fixed principal. */
   TELEMETRY_OPERATORS_JSON?: string;
   /** Per-region operator credentials for the surfaces Ace calls — workspace
-   * retirement, and demo preparation — in the `demos` role. The same map
+   * retirement, access, and connector maintenance — in the `demos` role. Both
+   * names are stored ones kept from the retired demo feature
+   * (`docs/rally-rebrand-inventory.md`). The same map
    * shape as `TELEMETRY_OPERATORS_JSON`, kept as its own secret so the two
    * are set and rotated independently (`telemetry/operator-auth.ts`). */
   DEMO_OPERATORS_JSON?: string;
@@ -297,7 +293,6 @@ export interface Env {
   WEBHOOK_REPLAY_WINDOW_SECONDS: string;
   PROVIDER_WEBHOOK_MAX_BYTES?: string;
   INBOUND_EMAIL_MAX_BYTES?: string;
-  INBOUND_EMAIL_PROCESSING_LEASE_SECONDS?: string;
   LOG_LEVEL: "debug" | "info" | "warn" | "error";
 }
 
@@ -317,12 +312,7 @@ export interface IdentityAuthContext {
    * by the Worker on the very message being delivered — and `sessionId` is a
    * correlation value only, not a row anywhere. The objects verify a connector
    * principal against current workspace membership instead of `sessions`;
-   * see `SubstreamAgent.connectorPrincipalAuth`.
-   *
-   * `"demo_seed"` is the same kind of authority for the demo seeder: it acts
-   * as a cast member who never signs in, on a workspace the seeder is
-   * preparing, and the objects verify that member's current membership the
-   * same way (`docs/demo-workspaces.md`).
+   * see `AgentLoopDO.connectorPrincipalAuth`.
    *
    * The Space cutover's driver is the third construction of `"connector"`, and
    * for the same reason: it runs with nobody signed in, so its `sessionId` is a
@@ -346,7 +336,7 @@ export interface IdentityAuthContext {
    * context from verified token claims and never sets it, so a client cannot
    * claim a non-session path from outside.
    */
-  principal?: "connector" | "demo_seed" | "impersonation" | "resource_authorization" | "engineering";
+  principal?: "connector" | "impersonation" | "resource_authorization" | "engineering";
   /**
    * Set on a support session: the Rally staff member actually acting as
    * `userId`, read from `sessions.impersonator_user_id` with the same query that
@@ -464,7 +454,7 @@ const EnvContractSchema = z.object({
   DOCUMENT_PROCESSOR: binding<DocumentProcessingRpcBinding>().optional(),
   TERMINAL_PROVIDER: binding<TerminalProviderRpcBinding>().optional(),
   TELEMETRY_DELIVERY: binding<TelemetryDeliveryRpcBinding>().optional(),
-  SUBSTREAM_AGENTS: binding<DurableObjectNamespace<SubstreamAgent>>(),
+  SUBSTREAM_AGENTS: binding<DurableObjectNamespace<AgentLoopDO>>(),
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   ARTIFACT_HOSTS: binding<DurableObjectNamespace<ArtifactHostDO>>(),
@@ -481,8 +471,6 @@ const EnvContractSchema = z.object({
   ANALYTICS_LAKEHOUSE: binding<Pipeline>().optional(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
   CONNECTOR_EVENT_WORKFLOW: binding<Workflow>(),
-  WORK_OPPORTUNITY_WORKFLOW: binding<Workflow>(),
-  DEMO_PREPARATION_WORKFLOW: binding<Workflow>().optional(),
 
   APP_ENV: z.enum(["development", "test", "staging", "production"]),
   AVALON_REGION: RegionSchema.refine(isConfiguredRegion),
@@ -539,7 +527,6 @@ const EnvContractSchema = z.object({
   CONNECTOR_POLL_TIMEOUT_MS: numericString.optional(),
   PROVIDER_WEBHOOK_MAX_BYTES: numericString.optional(),
   INBOUND_EMAIL_MAX_BYTES: numericString.optional(),
-  INBOUND_EMAIL_PROCESSING_LEASE_SECONDS: numericString.optional(),
 
 
   GITHUB_INGRESS_BASE_URL: HttpUrlSchema.optional(),
@@ -606,8 +593,6 @@ const productionOnlyBindings = [
   { key: "ANALYTICS_LAKEHOUSE", regions: configuredRegions },
   { key: "USAGE_QUEUE", regions: configuredRegions },
   { key: "USAGE_LAKEHOUSE", regions: configuredRegions },
-  // `DEMO_PREPARATION_WORKFLOW` is deliberately absent: it drives an operator
-  // tool, and a missing binding is that tool's 503, not a region-wide fault.
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 /**
@@ -733,8 +718,7 @@ export function numericEnv(
     | "MAX_ATTACHMENT_BYTES"
     | "WEBHOOK_REPLAY_WINDOW_SECONDS"
     | "PROVIDER_WEBHOOK_MAX_BYTES"
-    | "INBOUND_EMAIL_MAX_BYTES"
-    | "INBOUND_EMAIL_PROCESSING_LEASE_SECONDS",
+    | "INBOUND_EMAIL_MAX_BYTES",
   fallback: number,
 ): number {
   const parsed = Number.parseInt(env[key] ?? "", 10);

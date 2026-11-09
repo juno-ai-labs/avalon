@@ -18,7 +18,6 @@ import {
   WorkspaceInvitationPreviewSchema,
 } from "@rally/contracts";
 import { HttpOrDesktopDeepLinkUrlSchema } from "@rally/contracts/url-schemas";
-import { SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -28,7 +27,7 @@ import { previewInvitation } from "../services/workspace-service";
 import { SupportAccessService } from "../services/support-access";
 
 const startBody = z.object({
-  returnUri: z.union([HttpOrDesktopDeepLinkUrlSchema, z.literal(SIDELINE_AUTH_CALLBACK_URI)]).optional(),
+  returnUri: HttpOrDesktopDeepLinkUrlSchema.optional(),
   signupFlowId: UuidV7Schema.optional(),
   desktopAttemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
   desktopCodeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),

@@ -1,18 +1,17 @@
 import { annotationDraftKeyForScope } from '../common/draft-keys';
 import { createElectronFetch } from '@rally/electron-network';
-import { artifactWindowActionRequest, artifactWindowSessionMatches } from './artifact-window-actions';
+import { artifactWindowActionRequest, artifactWindowCanvasLink, artifactWindowSessionMatches } from './artifact-window-actions';
 import { AnnotationCommentPinsSchema, AnnotationSchema, AnnotationSelectionSchema } from "@rally/contracts";
 import { startCanvaConnection } from './canva-loopback';
 import { clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
 import { macosMajorVersion } from './macos-version';
 import { EmbeddedBrowser, isEmbeddedBrowserWebContents } from './embedded-browser';
 import { EmbeddedBrowserBoundsSchema, EmbeddedBrowserCommandSchema, type EmbeddedBrowserCommand } from '../common/embedded-browser';
-import { BrowserImportContextSchema, BrowserImportedBreakoutIdSchema, BrowserImportedWorkstreamIdSchema, BrowserImportProgressSchema, type BrowserImportContext, type BrowserImportProgress } from '../common/browser-import';
 import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
 import { ArtifactPinListSchema } from '@rally/contracts';
-import { spaceDeepLink, workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
+import { canvasDeepLink, sidekickDeepLink } from '@rally/contracts/links';
 import { z, type ZodType } from 'zod';
 import {
   ActivateWorkspaceRequestSchema,
@@ -37,14 +36,10 @@ import {
   type WorkspaceAttention,
   type WorkspaceDeparture,
   AccountOnboardingSchema,
-  ActivityPageSchema,
   OrganizationNameSuggestionSchema,
   UpdateAccountOnboardingSchema,
 } from '@rally/contracts';
-import {
-  DESKTOP_DEEP_LINK_PROTOCOL,
-  DESKTOP_DEEP_LINK_PROTOCOLS,
-} from '@rally/contracts/desktop-deep-link';
+import { DESKTOP_DEEP_LINK_PROTOCOLS } from '@rally/contracts/desktop-deep-link';
 import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from '@rally/contracts/http-headers';
 import { APNS_TOPICS } from '@rally/contracts/push-notifications';
 import type { Region } from "@rally/contracts/regions";
@@ -115,10 +110,9 @@ import {
 import type { DesktopSettingsSection } from '../common/settings';
 import { parseDesktopSettingsSection } from '../common/settings';
 import { WORKSPACE_SYNC_RELAY_IPC_CHANNELS } from '../common/workspace-sync-relay';
-import type { SidekicksWindowTarget } from '../common/sidekicks';
-import { parseSidekicksWindowTarget } from '../common/sidekicks';
-import { parseThreadId } from '../common/open-thread';
+import { parseRouteId } from '../common/route-id';
 import { fontScheme } from '../common/theme-assets';
+import { repaintWindowBackgrounds } from './window-background';
 import {
   defaultThemeChoice,
   parseThemeChoice,
@@ -177,7 +171,9 @@ import { DebugSettingsController } from './debug-settings';
 import {
   acceptedDeepLink,
   shouldDeliverConnectorResultToSettings,
-  workstreamHttpsDeepLink,
+  httpsLinkDeepLink,
+  isRetiredDeepLink,
+  RETIRED_LINK_MESSAGE,
 } from "./deep-links";
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { DeveloperSettingsFlagController } from './developer-settings-flag';
@@ -195,13 +191,12 @@ import {
   allowsTrustedAudioCapture,
 } from './media-permission';
 import { MenuBarController, type MenuBarTray } from './menu-bar';
-import { ActivityFeedWatch } from './activity-feed-watch';
 import { menuBarContent } from './menu-bar-content';
 import {
   MENU_BAR_SECTION_LIMIT,
   supportsSectionHeaders,
 } from './menu-bar-menu';
-import { ChannelDirectoryWatch } from './channel-directory-watch';
+import { SidebarListsWatch } from './sidebar-lists-watch';
 import { MenuBarOpenObserver } from './menu-bar-open-observer';
 import {
   isMessageExportUrl,
@@ -334,7 +329,6 @@ const allowedExternalProtocols = new Set(['https:', 'http:']);
  * trimmed rather than restated — a second literal here is exactly the copy
  * that would be missed when the legacy scheme is finally dropped.
  */
-const customProtocol = DESKTOP_DEEP_LINK_PROTOCOL.replace(/:$/u, '');
 const deepLinkProtocols: readonly string[] = DESKTOP_DEEP_LINK_PROTOCOLS
   .map((scheme) => scheme.replace(/:$/u, ''));
 const rendererProtocol = 'app';
@@ -530,18 +524,6 @@ const rendererCrashRecovery = new RendererCrashRecovery({
   onError: (error) => logError('rally', 'renderer crash recovery failed', error),
 });
 let settingsWindow: BrowserWindow | null = null;
-let sidekicksWindow: BrowserWindow | null = null;
-/** The one window that imports a signed-in Claude or ChatGPT conversation. */
-let browserImportWindow: BrowserWindow | null = null;
-/** The Spaces the main window offered when it opened the import window. */
-let browserImportContext: BrowserImportContext | null = null;
-/**
- * The Channel the import window has announced and not yet settled. Closing the
- * window mid-create ends it as failed, so no pending row is left unsettled.
- */
-let browserImportInFlight: string | null = null;
-/** The Organization whose Spaces the import window offers. */
-let browserImportWorkspaceId: string | null = null;
 /**
  * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
  * docs/adding-security-defensive-and-other-limits.md.
@@ -602,14 +584,11 @@ let developmentDockIconUsesAppearancePreview = false;
 const realtimeSocketBroker = new RealtimeSocketBroker(createNodeRealtimeSocketFactory(
   (url) => electronSession.defaultSession.resolveProxy(url),
 ));
-// The main window's Organization socket, relayed to the Settings and Sidekicks
-// windows so neither holds a socket of its own while there is one to relay. A
-// hidden prewarmed window receives it too: its reads are mounted and must stay
-// fresh.
+// The main window's Organization socket, relayed to the Settings window so it
+// holds no socket of its own while there is one to relay. A hidden prewarmed
+// window receives it too: its reads are mounted and must stay fresh.
 const workspaceSyncRelay = new WorkspaceSyncRelay((event) => {
-  for (const target of [settingsWindow, sidekicksWindow]) {
-    if (target && !target.isDestroyed()) target.webContents.send(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, event);
-  }
+  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, event);
 });
 let telemetryIdentity: TelemetryIdentity | null = null;
 let telemetryRoute: ResolvedTelemetryRoute = {
@@ -769,7 +748,7 @@ async function reportJavascriptErrorCandidate(
 }
 
 function rallyWindows(): BrowserWindow[] {
-  return availableRendererWindows([mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow, browserImportWindow]);
+  return availableRendererWindows([mainWindow, settingsWindow, deepLinkErrorWindow]);
 }
 
 protocol.registerSchemesAsPrivileged([{
@@ -920,9 +899,6 @@ function broadcastSessionChanged(value: WireSession | null): void {
   closeEmbeddedBrowsersOutsideUser(value?.user.id ?? null);
   // The import window offers one Organization's Spaces; another Organization's
   // session would place an import in a Space it does not have.
-  if (browserImportWindow && !browserImportWindow.isDestroyed() && (value?.workspace?.id ?? null) !== browserImportWorkspaceId) {
-    browserImportWindow.close();
-  }
   if (value) desktopPush.sessionChanged();
   const exposed = value ? publicSession(value) : null;
   for (const window of rallyWindows()) window.webContents.send('session:changed', exposed);
@@ -1332,11 +1308,11 @@ function logMenuBarSocketDiagnostic(diagnostic: ReachWatchDiagnostic): void {
 }
 
 /**
- * The Channel rows behind the menu bar, held over a workspace socket of the
- * main process's own so the count beside the status item is the sidebar's
- * count whether or not a window exists. See `docs/menu-bar.md`.
+ * The Canvases and Sidekicks lists behind the menu bar, held over a workspace
+ * socket of the main process's own so the count beside the status item is the
+ * rail's count whether or not a window exists. See `docs/menu-bar.md`.
  */
-const channelDirectoryWatch = new ChannelDirectoryWatch({
+const sidebarListsWatch = new SidebarListsWatch({
   socket: (handlers) => watchWorkspaceSocket({
     ticket: async (signal) => SocketTicketSchema.parse(await rallyApiRequest('/workspace/socket', undefined, signal)),
     open: (url, ticket) => reachSocketFromRealtimeClient(menuBarSocketFactory(url, socketTicketProtocols(ticket))),
@@ -1351,32 +1327,17 @@ const channelDirectoryWatch = new ChannelDirectoryWatch({
     },
   }),
   onChange: () => menuBarController.refresh(),
-  // Activity is not a list the socket carries; the socket only says when it
-  // may have moved, which is when the sidebar's Activity tab reads it again.
-  // After a failed read, any sync is reason enough to try again.
-  onSync: (topics) => {
-    if (topics.includes('activity') || activityFeedWatch.missedLastRead()) activityFeedWatch.refresh();
-  },
-  requestId: uuidV7,
   logWarning: (message, error) => logWarn('rally', message, error),
 });
 
-/** The first page of Activity behind the menu bar's Needs attention. See `docs/menu-bar.md`. */
-const activityFeedWatch = new ActivityFeedWatch({
-  fetchPage: async () => ActivityPageSchema.parse(await rallyApiRequest('/navigation/activity')),
-  onChange: () => menuBarController.refresh(),
-  logWarning: (message, error) => logWarn('rally', message, error),
-});
-
-/** Closes the menu bar's socket and forgets everything both lists held. */
+/** Closes the menu bar's socket and forgets both lists. */
 function stopMenuBarDirectory(): void {
-  channelDirectoryWatch.stop();
-  activityFeedWatch.stop();
+  sidebarListsWatch.stop();
 }
 
 /** Which account and Organization the socket serves; a token renewal keeps it. */
 let menuBarDirectoryIdentity: string | null = null;
-/** A guest is signed in but refused the Channel list: nothing will load, so the menu must not say it is loading. */
+/** A guest gets no menu bar socket: nothing will load, so the menu must not say it is loading. */
 let menuBarDirectoryUnavailable = false;
 let menuBarDirectorySync: Promise<void> = Promise.resolve();
 
@@ -1387,8 +1348,8 @@ let menuBarDirectorySync: Promise<void> = Promise.resolve();
  * preference moves, and at launch. Read from storage rather than
  * `inMemorySession`, which a login launch has not set when the status item
  * first needs content. Serialized, so two quick changes cannot open two
- * sockets. A guest is refused the Channel list, so it gets no socket; a
- * preference that is off, or a platform with no menu bar, gets none either.
+ * sockets. A guest gets no socket; a preference that is off, or a platform
+ * with no menu bar, gets none either.
  */
 function syncMenuBarDirectory(): void {
   menuBarDirectorySync = menuBarDirectorySync.then(async () => {
@@ -1403,11 +1364,11 @@ function syncMenuBarDirectory(): void {
     const identity = live
       ? `${active.binding.userId}:${active.binding.region}:${active.binding.workspaceId}`
       : null;
-    const runningAsIdentified = (identity !== null) === channelDirectoryWatch.running();
+    const runningAsIdentified = (identity !== null) === sidebarListsWatch.running();
     if (identity === menuBarDirectoryIdentity && runningAsIdentified) return;
     menuBarDirectoryIdentity = identity;
     stopMenuBarDirectory();
-    if (identity !== null) channelDirectoryWatch.start();
+    if (identity !== null) sidebarListsWatch.start();
   }).catch((error: unknown) => {
     logWarn('rally', 'could not open the menu bar workspace socket', error);
   });
@@ -1465,11 +1426,10 @@ const menuBarController = new MenuBarController({
   createTray: createMenuBarTray,
   content: () => {
     // A guest has no socket, so nothing will load: say "nothing" rather than "loading".
-    const directory = channelDirectoryWatch.snapshot();
-    const activity = activityFeedWatch.snapshot();
-    return menuBarDirectoryUnavailable
-      ? menuBarContent({ ...directory, complete: true }, { ...activity, complete: true })
-      : menuBarContent(directory, activity);
+    const lists = sidebarListsWatch.snapshot();
+    return menuBarContent(menuBarDirectoryUnavailable
+      ? { canvases: lists.canvases ?? [], sidekicks: lists.sidekicks ?? [] }
+      : lists);
   },
   // The in-memory credential rather than a live session: this is read while the
   // menu is being built, and it only decides which empty state to show.
@@ -1477,25 +1437,18 @@ const menuBarController = new MenuBarController({
   sectionHeaders: supportsSectionHeaders(process.getSystemVersion()),
   actions: {
     selected: (action) => { void telemetryReporter?.menuBarActionSelected(action); },
-    openConversation: (workstreamId, substreamId) => {
+    open: (row) => {
       activateFromMenuBar();
-      emitDeepLink(
-        `${customProtocol}://workstreams/${workstreamId}${substreamId === null ? '' : `/substreams/${substreamId}`}`,
-        'menu_bar',
-      );
-    },
-    openChannel: (channelId) => {
-      activateFromMenuBar();
-      // A Channel link names its Organization: the one the menu is showing.
+      // A Canvas or a Sidekick link names its Organization: the one the menu
+      // is showing.
       void loadStoredAuthSet().then((authSet) => {
         const active = authSet ? activeStoredCredential(authSet) : null;
         if (!active?.binding.workspaceId) return;
-        emitDeepLink(spaceDeepLink({ region: active.binding.region, workspaceId: active.binding.workspaceId, spaceId: channelId }), 'menu_bar');
+        const organization = { region: active.binding.region, workspaceId: active.binding.workspaceId };
+        emitDeepLink(row.kind === 'canvas'
+          ? canvasDeepLink({ ...organization, canvasId: row.id })
+          : sidekickDeepLink({ ...organization, sidekickId: row.id }), 'menu_bar');
       });
-    },
-    openAccessRequest: (requestId) => {
-      activateFromMenuBar();
-      emitDeepLink(`${customProtocol}://access-requests/${requestId}`, 'menu_bar');
     },
     openRally: openMainWindowFromMenuBar,
     quit: () => app.quit(),
@@ -1528,7 +1481,7 @@ const desktopPush = new DesktopPushNotifications({
   clicked: (url) => {
     if (applicationLaunchObserved) applicationOpenObserver.opened('push_notification');
     else prelaunchPushObserved = true;
-    const link = url ? workstreamHttpsDeepLink(url) : null;
+    const link = url ? httpsLinkDeepLink(url) : null;
     if (link) sendDeepLink(link, 'notification');
     else if (app.isReady()) void createMainWindow();
   },
@@ -1896,7 +1849,6 @@ async function endAccountSession(rejected?: StoredAuth): Promise<void> {
     try {
       await clearStoredSessionUnlocked();
       settingsWindow?.close();
-      sidekicksWindow?.close();
     } finally {
       loggingOut = false;
     }
@@ -3222,7 +3174,6 @@ async function logout(): Promise<void> {
       failures.push(error);
     }
     settingsWindow?.close();
-    sidekicksWindow?.close();
     if (stored) {
       try { failures.push(...await revokeStoredCredentials(stored)); }
       catch (error) { failures.push(error); }
@@ -3308,20 +3259,20 @@ function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): vo
   revealWindow(targetWindow);
 }
 
-/**
- * Tell the main window about the import window's create. Dropped when the main
- * window is not up: it has listed nothing, and the deep link that follows a
- * success opens the Channel once it is.
- */
-function relayBrowserImportProgress(progress: BrowserImportProgress): void {
-  browserImportInFlight = progress.phase === 'importing' ? progress.workstreamId : null;
-  if (!mainWindow || mainWindow.isDestroyed() || !rendererReady) return;
-  mainWindow.webContents.send('browser-import:progress', progress);
-}
-
 function emitDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint = 'deep_link'): boolean {
   const deepLink = acceptedDeepLink(rawUrl);
-  if (!deepLink) return false;
+  if (!deepLink) {
+    // A Space or Breakout link opens nothing now (a Thread's own deep link
+    // was accepted above, as its Canvas); say so, as
+    // the site's handoff page and the web app do, rather than drop it. It can
+    // arrive before `ready` on a cold launch, and a window cannot open before.
+    if (isRetiredDeepLink(rawUrl)) {
+      void app.whenReady()
+        .then(() => createDeepLinkErrorWindow(RETIRED_LINK_MESSAGE))
+        .catch((error: unknown) => logWarn('rally', 'could not show the retired-link notice', error));
+    }
+    return false;
+  }
   sendDeepLink(deepLink, entrypoint);
   return true;
 }
@@ -3388,17 +3339,9 @@ function closeEmbeddedBrowsersOutsideUser(userId: string | null): void {
     if (entry.userId === userId && !window.isDestroyed()) continue;
     entry.browser.dispose();
     embeddedBrowsers.delete(window);
-    // The import window exists only to show its browser; without that
-    // account's browser it has nothing left to import from.
-    if (window === browserImportWindow && !window.isDestroyed()) window.close();
   }
 }
 
-/**
- * The Rally window whose browser a request addresses: the main window's right
- * rail or the import window. Each has its own tabs over the account's shared
- * partition, so neither can drive the other's pages.
- */
 /**
  * A browser request's input, or an error naming the field and issue it failed
  * on — never the rejected value. These callers are Rally's own renderers.
@@ -3411,10 +3354,9 @@ function parseBrowserIpc<T>(schema: ZodType<T>, raw: unknown, label: string): T 
 
 function embeddedBrowserHost(event: IpcMainInvokeEvent): BrowserWindow {
   assertTrustedIpcSender(event);
-  const window = event.sender === mainWindow?.webContents ? mainWindow
-    : event.sender === browserImportWindow?.webContents ? browserImportWindow : null;
-  if (!window) throw new Error('Only the main Rally window and the import window can use the browser');
-  return window;
+  // The main window's right rail is the one browser host.
+  if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Only the main Rally window can use the browser');
+  return mainWindow;
 }
 
 function embeddedBrowserFor(window: BrowserWindow): EmbeddedBrowser {
@@ -3430,7 +3372,7 @@ function embeddedBrowserFor(window: BrowserWindow): EmbeddedBrowser {
     if (window.isDestroyed()) return;
     window.webContents.focus();
     window.webContents.send('embedded-browser:host-request', request);
-  }, window === browserImportWindow);
+  }, false);
   embeddedBrowsers.set(window, { userId, browser });
   window.once('closed', () => embeddedBrowsers.delete(window));
   return browser;
@@ -3790,9 +3732,7 @@ function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const sender = event.sender;
   const belongsToRallyWindow = sender === mainWindow?.webContents
     || sender === settingsWindow?.webContents
-    || sender === sidekicksWindow?.webContents
-    || sender === deepLinkErrorWindow?.webContents
-    || sender === browserImportWindow?.webContents;
+    || sender === deepLinkErrorWindow?.webContents;
   if (!belongsToRallyWindow || !event.senderFrame || !rendererNavigationAllowed(event.senderFrame.url)) {
     throw new Error('Blocked IPC request from untrusted content');
   }
@@ -3809,13 +3749,6 @@ function assertDeepLinkErrorIpcSender(event: IpcMainInvokeEvent): void {
   assertTrustedIpcSender(event);
   if (!deepLinkErrorWindow || event.sender !== deepLinkErrorWindow.webContents) {
     throw new Error('Only the deep-link failure window can read or dismiss its message');
-  }
-}
-
-function assertBrowserImportIpcSender(event: IpcMainInvokeEvent): void {
-  assertTrustedIpcSender(event);
-  if (!browserImportWindow || event.sender !== browserImportWindow.webContents) {
-    throw new Error('Only the import window can complete an import');
   }
 }
 
@@ -3844,11 +3777,8 @@ function registerIpc(): void {
     apiBaseUrls: Object.values(runtimeConfig().api),
     assertSender: (event) => {
       assertTrustedIpcSender(event);
-      // The import window holds its import agent's conversation socket: the
-      // agent's browser actions arrive on it and are answered from it.
-      if (event.sender !== mainWindow?.webContents && event.sender !== sidekicksWindow?.webContents
-        && event.sender !== browserImportWindow?.webContents) {
-        throw new Error('Only Rally conversation windows can open realtime sockets');
+      if (event.sender !== mainWindow?.webContents) {
+        throw new Error('Only the main Rally window can open realtime sockets');
       }
     },
     broker: realtimeSocketBroker,
@@ -3863,7 +3793,7 @@ function registerIpc(): void {
     ipc: ipcMain,
     mainWindowContents: () => mainWindow?.webContents,
     relay: workspaceSyncRelay,
-    consumerWindowContents: () => [settingsWindow?.webContents, sidekicksWindow?.webContents],
+    consumerWindowContents: () => [settingsWindow?.webContents],
   });
   ipcMain.handle('embedded-browser:state', (event) => embeddedBrowserFor(embeddedBrowserHost(event)).state());
   ipcMain.handle('embedded-browser:command', async (event, raw: unknown) => {
@@ -3878,34 +3808,6 @@ function registerIpc(): void {
     const host = embeddedBrowserHost(event);
     if (typeof raw !== 'boolean') throw new Error('Browser visibility must be a boolean');
     embeddedBrowserFor(host).setVisible(raw);
-  });
-  ipcMain.handle('browser-import:open', async (event, raw: unknown) => {
-    assertMainWindowIpcSender(event, 'open the import window');
-    await openBrowserImportWindow(parseBrowserIpc(BrowserImportContextSchema, raw, 'browser_import_context'));
-  });
-  ipcMain.handle('browser-import:context', (event) => {
-    assertBrowserImportIpcSender(event);
-    return browserImportContext;
-  });
-  ipcMain.handle('browser-import:progress', (event, raw: unknown) => {
-    assertBrowserImportIpcSender(event);
-    // `imported` normally arrives through `browser-import:imported`, which also
-    // opens the Channel; here it only settles the row when that hand-off failed.
-    relayBrowserImportProgress(parseBrowserIpc(BrowserImportProgressSchema, raw, 'browser_import_progress'));
-  });
-  ipcMain.handle('browser-import:imported', (event, raw: unknown, rawSubstream: unknown) => {
-    assertBrowserImportIpcSender(event);
-    const workstreamId = parseBrowserIpc(BrowserImportedWorkstreamIdSchema, raw, 'browser_import_workstream');
-    const substreamId = rawSubstream === undefined || rawSubstream === null
-      ? null
-      : parseBrowserIpc(BrowserImportedBreakoutIdSchema, rawSubstream, 'browser_import_breakout');
-    // Before the deep link, so the row is confirmed by the time the route opens
-    // it. A Breakout's thread was never a pending row, so it has none to confirm.
-    if (!substreamId) relayBrowserImportProgress({ phase: 'imported', workstreamId });
-    // The same route a menu-bar pick takes, so the main window opens the new
-    // Channel or Breakout whether or not it was ready, and is brought forward to show it.
-    emitDeepLink(`${customProtocol}://workstreams/${workstreamId}${substreamId ? `/substreams/${substreamId}` : ''}`, 'in_app_link');
-    browserImportWindow?.close();
   });
   ipcMain.handle('application:foreground-get', (event) => {
     assertTrustedIpcSender(event);
@@ -4060,7 +3962,13 @@ function registerIpc(): void {
     for (const window of [...rallyWindows(),...poppedOutArtifacts.keys()]) {
       if (window.webContents !== event.sender) window.webContents.send('theme:changed', parsed);
     }
+    // The documents repaint themselves; the native backgrounds under them do not.
+    repaintWindowBackgrounds([...rallyWindows(), ...poppedOutArtifacts.keys()], windowThemeChoice, nativeTheme.shouldUseDarkColors);
     await updateStoredApplicationSettings(userDataDirectory(), { themeChoice: parsed });
+  });
+  // Under System the Mac's own change moves the appearance with no choice made here.
+  nativeTheme.on('updated', () => {
+    repaintWindowBackgrounds([...rallyWindows(), ...poppedOutArtifacts.keys()], windowThemeChoice, nativeTheme.shouldUseDarkColors);
   });
   ipcMain.handle('session:get', async (event) => {
     assertTrustedIpcSender(event);
@@ -4354,6 +4262,7 @@ function registerIpc(): void {
       const record = poppedOutArtifacts.get(window)!;
       const command = artifactWindowActionRequest(record.request, raw);
       const session = inMemorySession;
+      if ('canvasId' in command) return artifactWindowCanvasLink(runtimeConfig().webBaseUrl, record, command.canvasId);
       const assertSession = (): void => {
         assertArtifactRenderer(event);
         if (!session || !artifactWindowSessionMatches(record, { userId: inMemorySession?.user.id ?? null, workspaceId: inMemorySession?.workspace?.id ?? null, region: inMemorySession?.workspace?.region ?? null })) throw new Error('The Rally session changed');
@@ -4394,15 +4303,6 @@ function registerIpc(): void {
         saveArtifactWindowStates();
       }
       if (action.type === 'pin-state') return ArtifactPinListSchema.parse(result).some((pin) => pin.id === record.resourceId);
-      if (action.type === 'link') {
-        const { spaceIds } = z.object({ spaceIds: z.array(IdSchema) }).parse(result);
-        const workspace = session?.workspace;
-        if (!workspace || !spaceIds[0]) throw new Error('This artifact has no linkable Channel');
-        return workstreamCanonicalUrl(runtimeConfig().webBaseUrl, {
-          region: workspace.region, workspaceId: workspace.id, spaceId: spaceIds[0],
-          workstreamId: record.request.annotationScope!.split(':')[0]!, artifactId: record.resourceId,
-        });
-      }
       return result;
     } catch (error) {
       const diagnostic = zodDiagnosticCode(error, 'artifact_window_response');
@@ -4491,19 +4391,15 @@ function registerIpc(): void {
     if (!request || (request.kind === 'site' && !isArtifactUrl(request.url, artifactServingDomain()))) return false;
     return await updatePoppedOutArtifact(request);
   });
-  ipcMain.handle('system:open-sidekicks', async (event, rawTarget: unknown) => {
+  ipcMain.handle('system:open-sidekick', (event, rawSidekickId: unknown) => {
     assertTrustedIpcSender(event);
-    const target = rawTarget === undefined ? undefined : parseSidekicksWindowTarget(rawTarget);
-    if (rawTarget !== undefined && !target) throw new Error('Invalid Sidekicks window target');
-    await createSidekicksWindow(target ?? undefined);
-  });
-  ipcMain.handle('system:open-thread', (event, rawWorkstreamId: unknown) => {
-    assertTrustedIpcSender(event);
-    const workstreamId = parseThreadId(rawWorkstreamId);
-    if (!workstreamId) throw new Error('Invalid thread id');
-    // The route a menu-bar pick or a finished import takes, so the main window
-    // opens the Thread whether or not it was up, and comes forward to show it.
-    emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'in_app_link');
+    const sidekickId = parseRouteId(rawSidekickId);
+    const workspace = inMemorySession?.workspace;
+    if (!sidekickId) throw new Error('Invalid Sidekick id');
+    if (!workspace) throw new Error('Sign in before opening a Sidekick');
+    // A Sidekick opens in the main window, as a route; this is how a window
+    // with no router of its own, such as Settings, asks for one.
+    emitDeepLink(sidekickDeepLink({ region: workspace.region, workspaceId: workspace.id, sidekickId }), 'in_app_link');
   });
   ipcMain.handle('system:open-settings', async (event, rawSection: unknown) => {
     assertTrustedIpcSender(event);
@@ -4743,11 +4639,11 @@ function createMenuBarTray(): MenuBarTray {
   const tray = new Tray(icon);
   tray.setToolTip(app.name);
   tray.setIgnoreDoubleClickEvents(true);
-  // The drop-down opens from what the main process already holds (the socket's
-  // Channel rows and the last Activity page), so a click costs no request:
-  // freshness arrives as socket pushes and the reads they trigger.
+  // The drop-down opens from what the main process already holds (the
+  // socket's Canvases and Sidekicks lists), so a click costs no request:
+  // freshness arrives as socket pushes.
   const openObserver = new MenuBarOpenObserver(() => {
-    const content = menuBarContent(channelDirectoryWatch.snapshot(), activityFeedWatch.snapshot());
+    const content = menuBarContent(sidebarListsWatch.snapshot());
     void telemetryReporter?.menuBarOpened({
       signedIn: Boolean(inMemoryAuthSet),
       recentCount: Math.min(content.recents.length, MENU_BAR_SECTION_LIMIT),
@@ -4927,7 +4823,7 @@ function preloadPath(): string {
 
 function installWindowDiagnostics(
   window: BrowserWindow,
-  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error' | 'browser-import',
+  surface: 'main' | 'settings' | 'deep-link-error',
 ): void {
   window.webContents.on('preload-error', (_event, _scriptPath, error) => {
     logError('rally', `${surface} preload failed to initialize`, {
@@ -4988,7 +4884,7 @@ function installWindowDiagnostics(
 async function loadRenderer(
   window: BrowserWindow,
   url: string,
-  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error' | 'browser-import',
+  surface: 'main' | 'settings' | 'deep-link-error',
 ): Promise<void> {
   try {
     await window.loadURL(url);
@@ -5000,7 +4896,7 @@ async function loadRenderer(
 }
 
 function rendererUrl(
-  surface?: 'settings' | 'sidekicks' | 'deep-link-error' | 'browser-import' | 'artifact-preview',
+  surface?: 'settings' | 'deep-link-error' | 'artifact-preview',
   settingsSection?: DesktopSettingsSection,
 ): string {
   const target = rendererDevelopmentUrl
@@ -5009,9 +4905,7 @@ function rendererUrl(
   if (surface) target.searchParams.set('surface', surface);
   if (settingsSection) target.searchParams.set('settingsSection', settingsSection);
   if (surface === 'settings') target.hash = '/settings';
-  if (surface === 'sidekicks') target.hash = '/sidekicks';
   if (surface === 'deep-link-error') target.hash = '/deep-link-error';
-  if (surface === 'browser-import') target.hash = '/browser-import';
 
   return target.toString();
 }
@@ -5214,116 +5108,6 @@ function revealedSettingsWindow(): BrowserWindow | null {
   return settingsWindowController.isRevealRequested() ? settingsWindow : null;
 }
 
-/** The branded type is the guarantee: only a parsed target can reach the hash. */
-async function createSidekicksWindow(requestedTarget?: SidekicksWindowTarget): Promise<void> {
-  const target = new URL(rendererUrl('sidekicks'));
-  if (requestedTarget) target.hash = `/sidekicks/${requestedTarget}`;
-  if (sidekicksWindow && !sidekicksWindow.isDestroyed()) {
-    if (sidekicksWindow.webContents.getURL() !== target.toString()) await loadRenderer(sidekicksWindow, target.toString(), 'sidekicks');
-    if (sidekicksWindow.isMinimized()) sidekicksWindow.restore();
-    sidekicksWindow.show();
-    sidekicksWindow.focus();
-    return;
-  }
-
-  sidekicksWindow = new BrowserWindow({
-    width: 960,
-    height: 720,
-    minWidth: 720,
-    minHeight: 560,
-    show: false,
-    backgroundColor: windowBackgroundColor(),
-    title: 'Rally Sidekicks',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 18, y: 17 },
-    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
-    webPreferences: {
-      preload: preloadPath(),
-      contextIsolation: true,
-      devTools: !app.isPackaged,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: true,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-    },
-  });
-
-  const sidekicksWebContentsId = sidekicksWindow.webContents.id;
-  installEditableTextMenu(sidekicksWindow);
-  sidekicksWindow.webContents.on('render-process-gone', () => realtimeSocketBroker.closeOwner(sidekicksWebContentsId));
-  sidekicksWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
-    if (isMainFrame && !isInPlace) realtimeSocketBroker.closeOwner(sidekicksWebContentsId);
-  });
-  installWindowDiagnostics(sidekicksWindow, 'sidekicks');
-  sidekicksWindow.setMenuBarVisibility(false);
-  sidekicksWindow.once('ready-to-show', () => sidekicksWindow?.show());
-  sidekicksWindow.on('closed', () => {
-    realtimeSocketBroker.closeOwner(sidekicksWebContentsId);
-    sidekicksWindow = null;
-  });
-  await loadRenderer(sidekicksWindow, target.toString(), 'sidekicks');
-}
-
-/**
- * A window around the account's local browser, for finding and importing one
- * signed-in Claude or ChatGPT conversation. It is a Rally renderer surface
- * with its own browser, so the page is not squeezed into the Channel rail and
- * the import controls sit outside the visited site.
- */
-async function openBrowserImportWindow(context: BrowserImportContext): Promise<void> {
-  browserImportContext = context;
-  browserImportWorkspaceId = inMemorySession?.workspace?.id ?? null;
-  if (browserImportWindow && !browserImportWindow.isDestroyed()) {
-    browserImportWindow.webContents.send('browser-import:context-changed');
-    revealWindow(browserImportWindow);
-    return;
-  }
-  const window = new BrowserWindow({
-    width: 1120,
-    height: 820,
-    minWidth: 720,
-    minHeight: 560,
-    show: false,
-    backgroundColor: windowBackgroundColor(),
-    title: 'Import Thread',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 18, y: 17 },
-    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
-    webPreferences: {
-      preload: preloadPath(),
-      contextIsolation: true,
-      devTools: !app.isPackaged,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: true,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-    },
-  });
-  browserImportWindow = window;
-  const importWebContentsId = window.webContents.id;
-  window.webContents.on('render-process-gone', () => realtimeSocketBroker.closeOwner(importWebContentsId));
-  window.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
-    if (isMainFrame && !isInPlace) realtimeSocketBroker.closeOwner(importWebContentsId);
-  });
-  // The renderer document is titled "Rally"; this window is named for its job.
-  window.on('page-title-updated', (event) => event.preventDefault());
-  installEditableTextMenu(window);
-  installWindowDiagnostics(window, 'browser-import');
-  window.setMenuBarVisibility(false);
-  window.once('ready-to-show', () => window.show());
-  window.on('closed', () => {
-    realtimeSocketBroker.closeOwner(importWebContentsId);
-    if (browserImportWindow !== window) return;
-    if (browserImportInFlight) relayBrowserImportProgress({ phase: 'failed', workstreamId: browserImportInFlight });
-    browserImportWindow = null;
-    browserImportContext = null;
-    browserImportWorkspaceId = null;
-  });
-  await loadRenderer(window, rendererUrl('browser-import'), 'browser-import');
-}
-
 function installApplicationMenu(): void {
   const template = applicationMenuTemplate({
     appName: app.name,
@@ -5438,7 +5222,7 @@ async function createMainWindow(): Promise<void> {
   });
   mainWindow.on('closed', () => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
-    // The Settings and Sidekicks windows may outlive this one, and each dials
+    // The Settings window may outlive this one, and dials
     // its own socket the moment it hears there is nothing left to relay.
     workspaceSyncRelay.release();
     rendererReady = false;
@@ -5504,7 +5288,6 @@ function installContentSecurityPolicy(): void {
       mediaTypes: 'mediaTypes' in details ? details.mediaTypes ?? [] : [],
       permission,
       requestingContents: webContents,
-      sidekicksWindowContents: sidekicksWindow?.webContents,
       trustedRenderer,
     }));
   });
@@ -5515,7 +5298,6 @@ function installContentSecurityPolicy(): void {
       mediaTypes: details.mediaType ? [details.mediaType] : [],
       permission,
       requestingContents: webContents,
-      sidekicksWindowContents: sidekicksWindow?.webContents,
       trustedRenderer,
     });
   });
@@ -5540,7 +5322,7 @@ if (!singleInstanceLock) {
 
   app.on('continue-activity', (event, type, _userInfo, details) => {
     if (type !== 'NSUserActivityTypeBrowsingWeb' || !details.webpageURL) return;
-    const link = workstreamHttpsDeepLink(details.webpageURL);
+    const link = httpsLinkDeepLink(details.webpageURL);
     if (!link) return;
     event.preventDefault();
     observeAcceptedDeepLinkOpen();

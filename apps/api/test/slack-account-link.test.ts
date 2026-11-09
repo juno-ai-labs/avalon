@@ -37,7 +37,6 @@ describe("Slack account linking", () => {
     const service = new SlackAgentService(environment(database, {
       WORKSPACE_DOS: testWorkspaceObjectBinding(instance, [
         ...SLACK_WORKSPACE_OBJECT_METHODS,
-        "recentWorkstreamDirectory",
         "listAutomationDirectory",
       ]),
     }));
@@ -213,6 +212,34 @@ describe("Slack account linking", () => {
     }
   });
 
+  it("opens nothing for App Home's retired Start a task button, and the task modal only for a shortcut", async () => {
+    // App Home no longer carries the button, but a view published before the
+    // deploy still does until the member next opens Home. Its click must not
+    // fall through to the shortcut path's task modal. It is acknowledged
+    // before the installation is read, so a service with no installation at
+    // all answers it.
+    for (const actionId of ["rally_start_task", "avalon_start_task"]) {
+      const slack = stubSlack();
+      await expect(new SlackAgentService(createTestEnv({ AVALON_REGION: "global" })).processInteraction({
+        ...connectClick(),
+        actions: [{ action_id: actionId, type: "button" }],
+      }, `retired-${actionId}`)).resolves.toEqual({});
+      expect(slack.calls).toEqual([]);
+    }
+
+    const database = await seededDatabase();
+    const slack = stubSlack();
+    await expect(new SlackAgentService(environment(database)).processInteraction({
+      type: "shortcut",
+      callback_id: "rally_start_task",
+      team: { id: "T123" },
+      user: { id: "U456" },
+      trigger_id: "trigger-1",
+    }, "shortcut-hash")).resolves.toEqual({});
+    expect(slack.calls.map((call) => [call.method, (call.body.view as { callback_id?: string } | undefined)?.callback_id]))
+      .toEqual([["views.open", "rally_start_task_submit"]]);
+  });
+
   it("matches a button on its action id, not the view it was raised from", async () => {
     // The rule this protects outlived the button that first needed it. A block
     // action raised inside a view carries that view's `callback_id`, and
@@ -310,7 +337,6 @@ describe("Slack account linking", () => {
     const service = new SlackAgentService(environment(database, {
       WORKSPACE_DOS: testWorkspaceObjectBinding(instance, [
         ...SLACK_WORKSPACE_OBJECT_METHODS,
-        "recentWorkstreamDirectory",
         "listAutomationDirectory",
       ]),
     }));

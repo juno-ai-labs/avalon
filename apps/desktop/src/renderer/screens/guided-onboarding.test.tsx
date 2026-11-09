@@ -72,7 +72,7 @@ describe('new-account learning paths', () => {
     expect(await screen.findByText('Ordinary organization')).toBeInTheDocument();
     expect(state.journey).not.toHaveBeenCalled();
   });
-  it('sends members directly to personal setup and saves their chosen appearance before opening the first channel', async () => {
+  it('sends members directly to personal setup and saves their chosen appearance before opening the Canvases home', async () => {
     state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'rose', avatar: 'circle', revision: 1 } });
     state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] });
     show(); await screen.findByRole('heading', { name: 'This is you in Rally' });
@@ -90,13 +90,8 @@ describe('new-account learning paths', () => {
     // as `POP /onboarding` under a loaded machine. This still fails if the
     // journey pushes instead of replacing, or never leaves at all.
     //
-    // Anchored, because `toHaveTextContent` matches a string as a substring:
-    // "REPLACE /workstreams/x" would satisfy the bare "REPLACE /". Today
-    // `useOpenFirstWorkstream` always navigates to `WORKSTREAM_LANDING_ROUTE`
-    // and the landing resolves the stream to open within that route, so no
-    // such pathname can reach here — the anchor is what keeps that true if the
-    // landing ever redirects instead.
-    await waitFor(() => expect(screen.getByTestId('route')).toHaveTextContent(/^REPLACE \/$/u));
+    // Anchored, because `toHaveTextContent` matches a string as a substring.
+    await waitFor(() => expect(screen.getByTestId('route')).toHaveTextContent(/^REPLACE \/canvases$/u));
   });
   it('starts personal setup on a random color when the account has no saved look', async () => {
     const random = vi.spyOn(Math, 'random').mockReturnValue(0.3);

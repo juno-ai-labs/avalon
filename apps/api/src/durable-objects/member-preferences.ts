@@ -1,5 +1,4 @@
 import {
-  DEFAULT_MEMBER_PREFERENCES,
   DEFAULT_NOTIFICATION_CHANNELS,
   DEFAULT_PUSH_PREFERENCES,
   IdSchema,
@@ -14,6 +13,7 @@ import {
   type NotificationChannel,
   type NotificationChannels,
   type NotificationKind,
+  type OfferedNotificationKind,
   type PushPreferences,
 } from "@rally/contracts";
 import { PushNotificationDataSchema, type PushNotificationData } from "@rally/contracts/push-notifications";
@@ -54,28 +54,36 @@ export const WORKSPACE_MEMBER_NOTIFY_PREFERENCES_MIGRATION: readonly string[] = 
 
 /**
  * The push switch each kind of channel list mirrors for an older client. A
- * kind newer than the switches (`merges`) has none: an older client never
- * shows it, and its channels read from the default until the person sets them.
+ * kind newer than the switches has none: its channels read from the default
+ * until the person sets them.
  */
 const PUSH_SWITCH: Partial<Record<NotificationKind, keyof PushPreferences>> = {
   mentions: "mentions",
   added: "added",
-  newThreads: "newThreads",
-  newBreakouts: "newBreakouts",
   runFinished: "runFinished",
 };
 const KINDS = NotificationKindSchema.options;
 
-/** The kind of channel list a pushed notification of this kind reads. */
-export const NOTIFICATION_KIND_FOR_PUSH: Record<PushNotificationData["kind"], NotificationKind> = {
+/**
+ * The kind of channel list a pushed notification of this kind reads. Only
+ * the kinds a producer records are here: `thread_started`,
+ * `breakout_started` and `merged` had their producers deleted with Threads,
+ * so a notification of those kinds is allowed nowhere.
+ */
+export const NOTIFICATION_KIND_FOR_PUSH: Partial<Record<PushNotificationData["kind"], OfferedNotificationKind>> = {
   mention: "mentions",
   new_message: "newMessages",
   participant_added: "added",
-  thread_started: "newThreads",
-  breakout_started: "newBreakouts",
   run_finished: "runFinished",
-  merged: "merges",
   artifact_updated: "artifactUpdates",
+  // A run waiting on input is the other half of "Sidekick runs" in Settings:
+  // one choice covers both, rather than a second row for one notice.
+  needs_input: "runFinished",
+  access_request: "accessRequests",
+  // Being let into a Canvas you asked for is being added to it.
+  access_granted: "added",
+  // Being declined is the answer to your own access request.
+  access_denied: "accessRequests",
 };
 
 /** `changes` over `base`, switch by switch; a switch `changes` does not name keeps its value. */
@@ -126,23 +134,28 @@ export function storedMemberPreferences(row: {
   push_json: string;
   notify_json: string;
 } | undefined): MemberPreferences {
-  if (!row) return { ...DEFAULT_MEMBER_PREFERENCES };
-  const legacy = storedPushPreferences(row.push_json);
-  const chosen = storedNotify(row.notify_json);
+  // No row reads through the same shaping as an empty one, so a person who
+  // never saved gets the same record as one who did.
+  const stored = row ?? { show_agent_work: 1, push_json: "{}", notify_json: "{}" };
+  const legacy = storedPushPreferences(stored.push_json);
+  const chosen = storedNotify(stored.notify_json);
+  // Each kind reads as chosen, else its default with an old push switch applied.
   const notify = Object.fromEntries(KINDS.map((kind) => {
+    const defaults = DEFAULT_NOTIFICATION_CHANNELS[kind];
     const legacySwitch = PUSH_SWITCH[kind];
-    return [kind, chosen[kind] ?? (legacySwitch === undefined ? [...DEFAULT_NOTIFICATION_CHANNELS[kind]]
-      : withPush(DEFAULT_NOTIFICATION_CHANNELS[kind], DEFAULT_NOTIFICATION_CHANNELS[kind].includes("push") && legacy[legacySwitch]))];
+    return [kind, chosen[kind] ?? (legacySwitch === undefined ? [...defaults]
+      : withPush(defaults, defaults.includes("push") && legacy[legacySwitch]))];
   })) as NotificationChannels;
-  return { showAgentWork: row.show_agent_work === 1, push: mirroredPush(legacy, notify), notify };
+  return { showAgentWork: stored.show_agent_work === 1, push: mirroredPush(legacy, notify), notify };
 }
 
-/** The push switches an older client reads: each kind's from its channels. */
+/** The push switches an older client reads: each kind's from its channels, where the record has them. */
 function mirroredPush(legacy: PushPreferences, notify: NotificationChannels): PushPreferences {
   const push = { ...legacy };
   for (const kind of KINDS) {
     const legacySwitch = PUSH_SWITCH[kind];
-    if (legacySwitch !== undefined) push[legacySwitch] = notify[kind].includes("push");
+    const channels = notify[kind];
+    if (legacySwitch !== undefined && channels !== undefined) push[legacySwitch] = channels.includes("push");
   }
   return push;
 }
@@ -162,7 +175,7 @@ export function savedNotify(
   for (const kind of KINDS) {
     const legacySwitch = PUSH_SWITCH[kind];
     const switched = legacySwitch === undefined ? undefined : update.push?.[legacySwitch];
-    if (switched !== undefined) next[kind] = withPush(next[kind] ?? current[kind], switched);
+    if (switched !== undefined) next[kind] = withPush(next[kind] ?? current[kind] ?? [], switched);
     const channels = update.notify?.[kind];
     if (channels !== undefined) next[kind] = channels;
   }
@@ -175,7 +188,21 @@ export function notificationAllows(
   kind: PushNotificationData["kind"],
   channel: NotificationChannel,
 ): boolean {
-  return notify[NOTIFICATION_KIND_FOR_PUSH[kind]].includes(channel);
+  const chosen = NOTIFICATION_KIND_FOR_PUSH[kind];
+  return chosen !== undefined && notify[chosen].includes(channel);
+}
+
+/**
+ * The channels this person chose for a notice of this kind, read from the
+ * object's own row: what a producer recording a notice queues it for
+ * (`enqueueNotice`).
+ */
+export function chosenChannels(sql: SqlStorage, userId: string, kind: PushNotificationData["kind"]): NotificationChannel[] {
+  const row = sql.exec<{ show_agent_work: number; push_json: string; notify_json: string }>(
+    `SELECT show_agent_work, push_json, notify_json FROM member_preferences WHERE user_id = ?`, userId,
+  ).toArray()[0];
+  const notify = storedMemberPreferences(row).notify;
+  return NotificationChannelSchema.options.filter((channel) => notificationAllows(notify, kind, channel));
 }
 
 export const MemberPreferencesReadRequestSchema = z.strictObject({

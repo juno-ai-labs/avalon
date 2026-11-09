@@ -130,7 +130,7 @@ describe('showing a live artifact in the rail', () => {
     }
     async function framedSite() {
       const result = setup({surface:surface({framed:true})});
-      const frame = await screen.findByTitle('Offsite RSVP') as HTMLIFrameElement;
+      const frame = await within(await screen.findByTestId('site-preview-pane')).findByTitle('Offsite RSVP') as HTMLIFrameElement;
       const posted = vi.spyOn(frame.contentWindow!, 'postMessage');
       return { ...result, frame, posted };
     }
@@ -427,7 +427,7 @@ describe('showing a live artifact in the rail', () => {
 
   it('frames the artifact in a browser host instead of asking a main process to composite it', async () => {
     const { props } = setup({ surface: surface({ framed: true }) }, { strict: true });
-    const frame = await screen.findByTitle('Offsite RSVP');
+    const frame = await within(await screen.findByTestId('site-preview-pane')).findByTitle('Offsite RSVP');
     expect(frame.tagName).toBe('IFRAME');
     expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
     expect(frame.getAttribute('src')).toMatch(/__rally\/open#code-\d+$/u);
@@ -464,7 +464,7 @@ describe('showing a live artifact in the rail', () => {
     // The frame first holds the bootstrap, which has an "Opening…" of its own.
     // Its `load` is the site's: the bootstrap is replaced before it fires one.
     setup({ surface: surface({ framed: true }) });
-    const frame = await screen.findByTitle('Offsite RSVP');
+    const frame = await within(await screen.findByTestId('site-preview-pane')).findByTitle('Offsite RSVP');
     expect(frame).toHaveAttribute('data-loading');
     expect(screen.getByText('Opening…')).toBeInTheDocument();
     fireEvent.load(frame);

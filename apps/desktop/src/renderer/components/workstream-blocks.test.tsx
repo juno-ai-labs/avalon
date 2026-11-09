@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,6 +11,8 @@ import { EmailMentionContext, emailMentionDirectory } from '../lib/workspace-inv
 import { SidekickMentionContext, sidekickMentionDirectory } from '../lib/sidekick-mentions';
 import * as connectorMentions from './connector-mentions';
 import type { ElicitationData, Message } from '../lib/types';
+import { normalizeElicitation } from '../lib/elicitation';
+import { ElicitationSchema } from '@rally/contracts';
 import { applyTheme } from '../lib/theme';
 import {
   createConnectorMentionToken,
@@ -244,6 +247,33 @@ describe('ElicitationPanel', () => {
     expect(screen.queryByText(skipDiagnostic)).not.toBeInTheDocument();
   });
 
+  it('offers only the options and no Skip when the question allows neither, as the connection question does', () => {
+    // The wire question as the server sends a connection question, through the
+    // same normalization a transcript block takes.
+    const wire = ElicitationSchema.parse({
+      id: '01960000-0000-7000-8000-0000000000e1', workstreamId: '01960000-0000-7000-8000-0000000000e2',
+      harnessRunId: '01960000-0000-7000-8000-0000000000e3', prompt: 'Approve the export?', responseType: 'radio',
+      options: [
+        { value: 'continue', label: 'Continue', description: null },
+        { value: 'decline', label: 'Decline', description: null },
+      ],
+      minimumSelections: 1, maximumSelections: 1, targetUserId: null, status: 'open', answer: null,
+      answeredByUserId: null, createdAt: '2026-11-08T10:00:00.000Z', answeredAt: null,
+      allowOther: false, allowSkip: false,
+    });
+    const { unmount } = render(<ElicitationPanel elicitation={normalizeElicitation(wire)} onAnswer={vi.fn(async () => undefined)} />);
+    expect(screen.getAllByRole('radio').map((radio) => radio.closest('label')?.textContent)).toEqual(['ContinueA', 'DeclineB']);
+    expect(screen.queryByRole('radio', { name: 'Other' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Skip' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Submit/u })).toBeVisible();
+    unmount();
+
+    // A question that says nothing keeps both, as every other question does.
+    render(<ElicitationPanel elicitation={singleSelectElicitation} onAnswer={vi.fn(async () => undefined)} />);
+    expect(screen.getByRole('radio', { name: 'Other' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Skip' })).toBeVisible();
+  });
+
   it('repairs TeX in the question and in the option labels beside it', () => {
     // The options come from the same model call as the question: a repaired
     // heading above an unrepaired option reads as a bug in the repair itself.
@@ -399,14 +429,13 @@ describe('MessageBlock human identity', () => {
     const otherAccent = other.style.getPropertyValue('--person-accent');
     expect(own).toHaveAttribute('data-profile-color', 'violet');
     expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-sys-color-project-violet)');
-    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--personal-ink-light)');
-    // `violet` takes white ink and `lime` black, so the repaint has to move the
-    // foreground as well as the fill. A pair on the same side of PALETTE_INK
-    // would let a bubble that never re-inked pass this.
+    // The bubble is the hue's pastel pair, so a repaint moves both its fill and its ink.
+    expect(own.style.getPropertyValue('--av-cmp-bubble-human-background')).toBe('var(--av-sys-color-project-tint-violet)');
+    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--av-sys-color-project-ink-violet)');
     view.rerender(<MemberPresentationContext.Provider value={new Map([['user-adam', { ...profile, color: 'lime', revision: 2 }]])}>{rows}</MemberPresentationContext.Provider>);
     expect(screen.getByLabelText('Message from Alex Rivera')).toBe(own);
     expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-sys-color-project-lime)');
-    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--personal-ink-dark)');
+    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--av-sys-color-project-ink-lime)');
     expect(other.style.getPropertyValue('--person-accent')).toBe(otherAccent);
     expect(other).not.toHaveAttribute('data-profile-color');
   });
@@ -441,6 +470,8 @@ describe('MessageBlock human identity', () => {
     // answer included.
     expect(response.querySelector('.message-author')).toHaveTextContent('Adam');
     expect(response.querySelector('time')).toBeInTheDocument();
+    // The reader's own answer, like their own turn, carries no avatar and no dot.
+    expect(response.querySelector('.message-author-avatar, .message-author-dot')).toBeNull();
     // And it carries the accent its dot is drawn with. The dot's background
     // resolves through `--person-accent`; a row that does not state it paints a
     // transparent dot, which is half a byline.
@@ -478,6 +509,29 @@ describe('MessageBlock human identity', () => {
     expect(screen.queryByText('Organization member')).not.toBeInTheDocument();
   });
 
+  it('keeps the question an answer replied to, as the asker\'s turn above it', () => {
+    const asked: Message = {
+      ...baseMessage,
+      id: 'elicitation-question',
+      authorType: 'agent',
+      author: undefined,
+      messageType: 'elicitation',
+      text: '',
+      elicitation: { ...singleSelectElicitation, status: 'answered', answer: 'compare' },
+    };
+    // Before the answer's own turn lands: the question, then the answer.
+    const { unmount } = render(<MessageBlock {...actions} currentUserId="user-adam" currentUserName="Adam" message={asked} />);
+    const question = screen.getByRole('article', { name: 'Question from Rally' });
+    expect(question).toHaveTextContent(singleSelectElicitation.prompt);
+    expect(question.querySelector('.message-author')).toHaveTextContent('Rally');
+    expect(question.compareDocumentPosition(screen.getByLabelText('Your elicitation response')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    unmount();
+    // Once it has: the question alone, the answer being its own row.
+    render(<MessageBlock {...actions} currentUserId="user-adam" message={{ ...asked, elicitationAnswerFollows: true }} />);
+    expect(screen.getByRole('article', { name: 'Question from Rally' })).toHaveTextContent(singleSelectElicitation.prompt);
+    expect(screen.queryByLabelText('Your elicitation response')).toBeNull();
+  });
+
   it('keeps a coworker visible on their elicitation response', () => {
     const elicitationMessage: Message = {
       ...baseMessage,
@@ -491,8 +545,13 @@ describe('MessageBlock human identity', () => {
 
     render(<MessageBlock {...actions} currentUserId="user-adam" message={elicitationMessage} />);
 
-    expect(screen.getByLabelText('Response from Sam')).toHaveClass('coworker-message');
+    const response = screen.getByLabelText('Response from Sam');
+    expect(response).toHaveClass('coworker-message');
     expect(screen.getByText('Sam')).toBeInTheDocument();
+    // A colleague's answer reads as their turn does: name first, under their avatar.
+    const header = response.querySelector('header')!;
+    expect(header.firstElementChild).toHaveClass('message-author');
+    expect(header.querySelector('.message-author-avatar')).toHaveTextContent('S');
   });
 
   it('renders an in-flight turn as the bubble it is about to become', () => {
@@ -584,8 +643,9 @@ describe('MessageBlock human identity', () => {
     // The same three parts a coworker's turn carries, in the same order: the
     // reader's own messages are not the one row in the feed with no time
     // against them.
-    expect(screen.getByText('Adam')).toHaveClass('message-author');
-    expect(own.querySelector('.message-author-dot')).toBeInTheDocument();
+    expect(screen.getByText('Adam').closest('.message-author')).toBeInTheDocument();
+    // design.html §2: the reader's own turn carries no avatar; its bubble is theirs.
+    expect(own.querySelector('.message-author-avatar')).toBeNull();
     expect(own.querySelector('time')).toHaveAttribute('dateTime', baseMessage.createdAt);
   });
 
@@ -605,8 +665,7 @@ describe('MessageBlock human identity', () => {
     expect(screen.getByText('Expanded by Rally from suggested work'))
       .toHaveClass('message-context-label');
     expect(screen.getByLabelText('Message from Adam')).toHaveClass('own-human-message');
-    expect(screen.getByText('Adam')).toHaveClass('message-author');
-    expect(document.querySelector('.message-author-dot')).toBeInTheDocument();
+    expect(screen.getByText('Adam').closest('.message-author')).toBeInTheDocument();
   });
 
   it('shows compact identity for a coworker prompt', () => {
@@ -617,9 +676,13 @@ describe('MessageBlock human identity', () => {
     };
     render(<MessageBlock {...actions} currentUserId="user-adam" message={coworkerMessage} />);
 
-    expect(screen.getByLabelText('Message from Sam')).toHaveClass('coworker-message');
-    expect(screen.getByText('Sam')).toHaveClass('message-author');
-    expect(document.querySelector('.message-author-dot')).toBeInTheDocument();
+    const row = screen.getByLabelText('Message from Sam');
+    expect(row).toHaveClass('coworker-message');
+    // A colleague leads with their avatar, on the leading edge (design.html §2).
+    const header = row.querySelector('header')!;
+    expect(header.firstElementChild).toHaveClass('message-author');
+    expect(header.querySelector('.message-author-avatar')).toHaveTextContent('S');
+    expect(screen.getByText('Sam')).toHaveClass('message-author-name');
   });
 
   it('shows an externally attributed Slack member as a coworker rather than Rally', () => {
@@ -639,7 +702,7 @@ describe('MessageBlock human identity', () => {
     render(<MessageBlock {...actions} currentUserId="user-adam" message={externalMessage} />);
 
     expect(screen.getByLabelText('Message from Taylor · Slack')).toHaveClass('coworker-message');
-    expect(screen.getByText('Taylor · Slack')).toHaveClass('message-author');
+    expect(screen.getByText('Taylor · Slack')).toHaveClass('message-author-name');
     expect(screen.queryByText('Rally')).not.toBeInTheDocument();
   });
 
@@ -652,13 +715,10 @@ describe('MessageBlock human identity', () => {
     expect(attachment?.nextElementSibling).toHaveClass('message-actions');
   });
 
-  it('ends human identity headers with the author after optional context', () => {
-    render(<MessageBlock {...actions} message={{ ...baseMessage, contextLabel: 'Expanded by Rally' }} />);
+  it('ends the reader\'s own identity header with the author after optional context', () => {
+    render(<MessageBlock {...actions} currentUserId="user-adam" message={{ ...baseMessage, contextLabel: 'Expanded by Rally' }} />);
     const header = screen.getByLabelText('Message from Adam').querySelector('header')!;
     expect(header.lastElementChild).toHaveClass('message-author');
-    // The dot travels inside the name rather than beside it, so the pair reads
-    // as one part and cannot be separated by the context label.
-    expect(header.querySelector('.message-author')?.firstElementChild).toHaveClass('message-author-dot');
     expect(header.querySelector('.message-context-label')?.nextElementSibling).toBe(header.lastElementChild);
   });
 
@@ -718,6 +778,29 @@ describe('MessageBlock markdown', () => {
       kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
       resourceId: message.id, workstreamId: message.workstreamId,
     });
+  });
+
+  it("names a copied assistant reply by its turn, not by its rendered block", async () => {
+    copyText.mockReset().mockResolvedValue(undefined);
+    reportTelemetryProductIntent.mockReset().mockResolvedValue(undefined);
+    const turn = 'workstream:00000000-0000-4000-8000-000000000302:substream:0:loop:turn:4';
+    const message: Message = {
+      ...baseMessage,
+      id: `${turn}:text:0`,
+      transcriptTurnId: turn,
+      workstreamId: '00000000-0000-4000-8000-000000000302',
+      authorType: 'agent',
+      author: undefined,
+      text: 'The bounded response.',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy response' }));
+
+    await waitFor(() => expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
+      resourceId: turn, workstreamId: message.workstreamId,
+    }));
   });
 
   it('renders person links as non-navigating chips resolved from mention metadata', () => {
@@ -2065,7 +2148,6 @@ describe('MessageBlock action tooltips', () => {
         <MessageBlock
           {...actions}
           message={{ ...baseMessage, id: 'message-agent-tips', authorType: 'agent', author: undefined, text: 'The settled answer.', transcriptTurnId: 'turn-7' }}
-          onStartSubstream={vi.fn()}
         />
       </SpeechPlaybackProvider>,
     );
@@ -2073,7 +2155,7 @@ describe('MessageBlock action tooltips', () => {
     const row = container.querySelector('.message-actions');
     const controls = [...row!.querySelectorAll('button')];
     expect(controls.map((control) => control.textContent?.trim()))
-      .toEqual(['New breakout', 'Copy', 'Speak', 'Image', 'PDF']);
+      .toEqual(['Copy', 'Speak', 'Image', 'PDF']);
 
     for (const control of controls) {
       const sentence = control.getAttribute('aria-label');
@@ -2086,19 +2168,6 @@ describe('MessageBlock action tooltips', () => {
     }
   });
 
-  it('gives the one action under a person’s bubble the same', async () => {
-    render(
-      <MessageBlock
-        {...actions}
-        message={{ ...baseMessage, transcriptTurnId: 'turn-4' }}
-        onStartSubstream={vi.fn()}
-      />,
-    );
-
-    const control = screen.getByRole('button', { name: 'New breakout from this message' });
-
-    expect(await hoverTooltip(control)).toHaveTextContent('New breakout from this message');
-  });
 });
 
 describe('MessageBlock system rows', () => {
@@ -2728,6 +2797,27 @@ describe('a Sidekick result in the room', () => {
     expect(article.textContent).not.toContain('Rally');
   });
 
+  it("draws a run's row in its Sidekick's conversation collapsed, opening into the run", () => {
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/sidekicks/00000000-0000-7000-8000-0000000000aa']}><MessageBlock {...actions} collapseHeadings message={{
+      ...activation,
+      automationActivation: {
+        automationId: '00000000-0000-7000-8000-0000000000aa',
+        automationName: 'Incident triage',
+        runId: '00000000-0000-7000-8000-0000000000bb',
+        trigger: 'external_event',
+        run: { state: 'completed', stepCount: 4, reply: 'Should the update go to #status or the status page?' },
+      },
+    }} /></MemoryRouter></QueryClientProvider>);
+
+    const row = screen.getByRole('article', { name: 'Incident triage run' });
+    expect(row.querySelector('.sidekick-run-row-summary')).toHaveTextContent('Run · Event · Done · 4 steps');
+    // Collapsed, the reply is a preview; the run's own work stays in its conversation.
+    expect(row.querySelector('.sidekick-run-row-preview')).toHaveTextContent('Should the update go to #status or the status page?');
+    expect(within(row).getByRole('link', { name: 'Open run', hidden: true }))
+      .toHaveAttribute('href', '/sidekicks/00000000-0000-7000-8000-0000000000aa?run=00000000-0000-7000-8000-0000000000bb');
+    expect(row.querySelector('.message-author')).toBeNull();
+  });
+
   it('gets the feed treatment every other message gets', () => {
     const { container } = render(
       <MessageBlock {...actions} collapseHeadings message={activation} />,
@@ -2754,7 +2844,7 @@ describe('the card proposing an automation drafted in this room', () => {
       automationName: 'Weekly changelog',
       description: 'Summarize what shipped each week.',
       triggerSummaries: ['Every Monday at 9:00 AM'],
-      suggestedScope: 'workstream' as const,
+      suggestedScope: 'workspace' as const,
       ready: true,
     },
   };
@@ -2773,7 +2863,7 @@ describe('the card proposing an automation drafted in this room', () => {
 
   it('says who will be able to manage it, which acceptance freezes', () => {
     render(<MessageBlock {...actions} message={proposal} />);
-    expect(screen.getByRole('group').textContent).toContain('This thread can manage it');
+    expect(screen.getByRole('group').textContent).toContain('The organization can manage it');
 
     const personal = { ...proposal, draftProposed: { ...proposal.draftProposed, suggestedScope: 'personal' as const } };
     const { unmount } = render(<MessageBlock {...actions} message={personal} />);
@@ -2824,266 +2914,3 @@ describe('the card proposing an automation drafted in this room', () => {
   });
 });
 
-describe('MessageBlock breakout cutoff', () => {
-  const onStartSubstream = vi.fn();
-
-  beforeEach(() => {
-    onStartSubstream.mockReset();
-    desktopServicesAvailable.mockReturnValue(true);
-  });
-
-  const settledAgentTurn: Message = {
-    ...baseMessage,
-    id: 'message-agent-cutoff',
-    authorType: 'agent',
-    author: undefined,
-    text: 'The settled answer.',
-    transcriptTurnId: 'turn-9',
-  };
-
-  it('closes the agent action row rather than crowding the identity line', () => {
-    const { container } = render(
-      <MessageBlock {...actions} message={settledAgentTurn} onStartSubstream={onStartSubstream} />,
-    );
-
-    const control = screen.getByRole('button', { name: 'New breakout from this message' });
-    // The visible words are inside the accessible name, so voice control can
-    // reach the control by what it says.
-    expect(control).toHaveAccessibleName(expect.stringContaining('New breakout'));
-    expect(control.textContent?.trim()).toBe('New breakout');
-    const row = container.querySelector('.message-actions');
-    expect(row).toContainElement(control);
-    expect(container.querySelector('header')).not.toContainElement(control);
-    // First, ahead of Merge and the rest: the row reads branch, then the
-    // actions on these words. Speak needs a playback provider this render does
-    // not mount.
-    expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['New breakout', 'Copy', 'Image', 'PDF']);
-
-    fireEvent.click(control);
-
-    expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-9');
-  });
-
-  it('sits under a person’s own bubble, the one action their turn has', () => {
-    const { container } = render(
-      <MessageBlock
-        {...actions}
-        message={{ ...baseMessage, transcriptTurnId: 'turn-4' }}
-        onStartSubstream={onStartSubstream}
-      />,
-    );
-
-    const control = screen.getByRole('button', { name: 'New breakout from this message' });
-    expect(container.querySelector('.message-actions')).toContainElement(control);
-    expect(container.querySelector('header')).not.toContainElement(control);
-    expect(container.querySelector('.human-message-bubble')?.compareDocumentPosition(control))
-      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-
-    fireEvent.click(control);
-
-    expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-4');
-  });
-
-  it('keeps the action slot under a person’s turn that cannot start a breakout', () => {
-    // The slot is what the one-unit turn gap relies on to keep the next turn
-    // off this bubble, so it is laid out whether or not there is a control to
-    // put in it: an automation's conversation, a substream other than the
-    // main one, and the launch provenance all render the turn without a
-    // handler, and an answered elicitation is a person's turn with none.
-    const { container, rerender } = render(
-      <MessageBlock {...actions} message={{ ...baseMessage, transcriptTurnId: 'turn-4' }} />,
-    );
-
-    const slot = container.querySelector('.message-actions');
-    expect(slot).not.toBeNull();
-    expect(slot!.querySelector('button')).toBeNull();
-    expect(container.querySelector('.human-message-bubble')?.compareDocumentPosition(slot!))
-      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-
-    rerender(
-      <MessageBlock
-        {...actions}
-        currentUserId="user-adam"
-        message={{ ...baseMessage, messageType: 'elicitation', text: '', elicitation: { ...singleSelectElicitation, status: 'answered', answer: 'compare' } }}
-      />,
-    );
-
-    const response = screen.getByLabelText('Your elicitation response');
-    expect(response.querySelector('.message-actions')).not.toBeNull();
-    expect(response.querySelector('.message-actions button')).toBeNull();
-  });
-
-  it('keeps the cutoff on a settled turn that carries no prose, without the actions that need it', () => {
-    // An attachment-only turn is still a place to branch from, but there is
-    // nothing to copy, read aloud, or render to a card.
-    const { container } = render(
-      <MessageBlock
-        {...actions}
-        message={{ ...settledAgentTurn, text: '' }}
-        onStartSubstream={onStartSubstream}
-      />,
-    );
-
-    const row = container.querySelector('.message-actions');
-    expect(row).not.toBeNull();
-    expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['New breakout']);
-
-    fireEvent.click(screen.getByRole('button', { name: 'New breakout from this message' }));
-
-    expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-9');
-  });
-
-  it('offers no cutoff on a turn that has not settled', () => {
-    // A streaming turn has no fixed end to freeze, and an undelivered one is
-    // not in the transcript the capture reads.
-    // A human turn for the streaming arm on purpose: the assistant row refuses
-    // to render at all while `streaming`, so an agent turn here would assert on
-    // that gate and pass with the predicate's own `!message.streaming` deleted.
-    const { rerender } = render(
-      <MessageBlock
-        {...actions}
-        message={{ ...baseMessage, transcriptTurnId: 'turn-4', streaming: true }}
-        onStartSubstream={onStartSubstream}
-      />,
-    );
-    expect(screen.queryByRole('button', { name: 'New breakout from this message' })).toBeNull();
-
-    rerender(
-      <MessageBlock
-        {...actions}
-        message={{ ...baseMessage, transcriptTurnId: 'turn-4', deliveryState: 'sending' }}
-        onStartSubstream={onStartSubstream}
-      />,
-    );
-    expect(screen.queryByRole('button', { name: 'New breakout from this message' })).toBeNull();
-
-    // The other two arms of the same predicate: a turn the transcript has no id
-    // for cannot be named as the cutoff, and a row that is not something said
-    // is not a place to cut. An elicitation row without its question renders
-    // the same article a text turn does, so only the predicate keeps the
-    // control off it.
-    rerender(
-      <MessageBlock {...actions} message={{ ...settledAgentTurn, transcriptTurnId: undefined }} onStartSubstream={onStartSubstream} />,
-    );
-    expect(screen.queryByRole('button', { name: 'New breakout from this message' })).toBeNull();
-
-    rerender(
-      <MessageBlock {...actions} message={{ ...settledAgentTurn, messageType: 'elicitation' }} onStartSubstream={onStartSubstream} />,
-    );
-    expect(screen.getByText('The settled answer.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'New breakout from this message' })).toBeNull();
-  });
-
-  it('offers a cutoff on a Sidekick result, which the capture keeps', () => {
-    render(
-      <MessageBlock {...actions} message={{ ...settledAgentTurn, messageType: 'automation_activation' }} onStartSubstream={onStartSubstream} />,
-    );
-    expect(screen.getByText('Sidekick')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'New breakout from this message' }));
-    expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-9');
-  });
-});
-
-describe('MessageBlock merge-back', () => {
-  const onMerge = vi.fn();
-
-  beforeEach(() => {
-    onMerge.mockReset();
-    desktopServicesAvailable.mockReturnValue(true);
-  });
-
-  const settledAgentTurn: Message = {
-    ...baseMessage,
-    id: 'message-agent-merge',
-    authorType: 'agent',
-    author: undefined,
-    text: 'Sequence B is ready.',
-    transcriptTurnId: 'turn-12',
-  };
-
-  it('puts Merge after New breakout in Rally’s hover row and hands it the message’s words', () => {
-    const { container } = render(
-      <MessageBlock {...actions} merge={{ label: 'Merge to thread', onMerge }} message={settledAgentTurn} onStartSubstream={vi.fn()} />,
-    );
-    const row = container.querySelector('.message-actions');
-    expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['New breakout', 'Merge to thread', 'Copy', 'Image', 'PDF']);
-    fireEvent.click(screen.getByRole('button', { name: 'Merge to thread' }));
-    // The turn travels with the words so the host can open the response card under it.
-    expect(onMerge).toHaveBeenCalledExactlyOnceWith('Sequence B is ready.', 'turn-12');
-  });
-
-  it('puts Merge after New breakout under a person’s own message too', () => {
-    const { container } = render(
-      <MessageBlock
-        {...actions}
-        merge={{ label: 'Merge to GTM', onMerge }}
-        message={{ ...baseMessage, transcriptTurnId: 'turn-4' }}
-        onStartSubstream={vi.fn()}
-      />,
-    );
-    const row = container.querySelector('.message-actions');
-    expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['New breakout', 'Merge to GTM']);
-  });
-
-  it('draws a source’s merge marker as a chip that opens the merge where it landed', () => {
-    const onOpenMerge = vi.fn();
-    const mergedInto = { kind: 'channel' as const, id: 'space-general', title: 'General', messageId: 'channel-message-1', mergedByUserId: 'user-alex', actingAgent: false };
-    render(<MessageBlock {...actions} message={{
-      ...baseMessage, id: 'marker-1', authorType: 'system', author: undefined, messageType: 'system',
-      text: 'Merged into General', mergedInto,
-    }} onOpenMerge={onOpenMerge} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Merged into General. Open the merge' }));
-    expect(onOpenMerge).toHaveBeenCalledExactlyOnceWith(mergedInto);
-  });
-
-  it('names Rally on a merge it made for someone', () => {
-    render(<MessageBlock {...actions} message={{
-      ...baseMessage, id: 'marker-2', authorType: 'system', author: undefined, messageType: 'system',
-      text: 'Merged into General',
-      mergedInto: { kind: 'channel', id: 'space-general', title: 'General', messageId: 'channel-message-1', mergedByUserId: 'user-alex', actingAgent: true },
-    }} onOpenMerge={vi.fn()} />);
-    expect(screen.getByRole('button', { name: 'Merged into General. Open the merge' }).textContent)
-      .toContain('Rally merged this into');
-  });
-
-  it('offers no Merge on a message still being sent', () => {
-    render(<MessageBlock {...actions} merge={{ label: 'Merge to thread', onMerge }}
-      message={{ ...baseMessage, deliveryState: 'sending' }} />);
-    expect(screen.queryByRole('button', { name: 'Merge to thread' })).toBeNull();
-  });
-
-  it('draws a merge as the shared merge block: its Breakout, who merged it, and a link to open it', () => {
-    const onOpenBreakout = vi.fn();
-    render(
-      <MessageBlock
-        {...actions}
-        message={{
-          ...baseMessage,
-          text: 'Approved **Sequence B**.',
-          transcriptTurnId: 'merged-result-turn',
-          mergedFrom: { breakoutId: 'breakout-b', title: 'Sequence B', actingAgent: true },
-        }}
-        onOpenBreakout={onOpenBreakout}
-        merge={{ label: 'Merge to General', onMerge }}
-      />,
-    );
-    // The shared merge block, not a person's bubble: the same one a Channel draws.
-    const merge = screen.getByRole('article', { name: 'Sequence B, merged by Adam' });
-    expect(merge).toHaveClass('merge-message');
-    expect(merge).toHaveTextContent(/Sequence B\s*· merged by.*Rally for .*Adam/u);
-    // A merge renders as markdown, which a typed message's verbatim body does not.
-    expect(screen.getByText('Sequence B', { selector: 'strong' })).toBeVisible();
-    fireEvent.click(within(merge).getByRole('button', { name: 'Copy response' }));
-    expect(copyText).toHaveBeenCalledWith('Approved **Sequence B**.');
-    expect(within(merge).getByRole('button', { name: 'Save response as an image' })).toBeInTheDocument();
-    expect(within(merge).getByRole('button', { name: 'Save response as a PDF' })).toBeInTheDocument();
-    fireEvent.click(within(merge).getByRole('button', { name: 'Merge to General' }));
-    expect(onMerge).toHaveBeenCalledWith('Approved **Sequence B**.', 'merged-result-turn');
-    fireEvent.click(screen.getByRole('button', { name: 'Sequence B' }));
-    expect(onOpenBreakout).toHaveBeenCalledExactlyOnceWith('breakout-b');
-  });
-});

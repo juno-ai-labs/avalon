@@ -539,38 +539,6 @@ export function instrumentConnectorAdapter(
         );
       },
     } : {}),
-    ...(adapter.origin ? {
-      origin: {
-        ...adapter.origin,
-        describe(locator) {
-          return observeSync(
-            observer,
-            connectorType,
-            "origin_describe",
-            { locator_kind: locator.kind },
-            () => adapter.origin!.describe(locator),
-            (origin) => ({ outcome: origin === null ? "unavailable" : "described" }),
-          );
-        },
-        ...(adapter.origin.resolveCanonicalUrl ? {
-          resolveCanonicalUrl(connection, origin, signal) {
-            registerConnectionObservation(connection, connectorType, observer);
-            return observeAsync(
-              observer,
-              connectorType,
-              "origin_url_resolve",
-              {
-                ...connectionFields(connection),
-                resource_type: origin.resourceType,
-                provider_resource_id: origin.providerResourceId,
-              },
-              () => adapter.origin!.resolveCanonicalUrl!(connection, origin, signal),
-              (url) => ({ outcome: url === null ? "unavailable" : "resolved" }),
-            );
-          },
-        } : {}),
-      },
-    } : {}),
     ...(adapter.validateToolInput ? {
       validateToolInput(name, args) {
         return observeSync(

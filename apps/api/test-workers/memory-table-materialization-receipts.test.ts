@@ -139,7 +139,7 @@ beforeEach(async () => {
     kind: "sidekick", ownerId: AUTOMATION_ID, at: AT,
   });
   await workspace().sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID,
-    authorUserId: USER_ID, scope: "personal", owningWorkstreamId: null, owningSubstreamId: "0", authorityGeneration: 1,
+    authorUserId: USER_ID, scope: "personal", authorityGeneration: 1,
   });
   for (let revision = 1; revision <= REVISION; revision += 1) await submit();
 });

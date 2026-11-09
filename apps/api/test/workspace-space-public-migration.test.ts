@@ -9,9 +9,6 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
-import { WorkspaceSpaceStorage } from "../src/durable-objects/workspace-space-storage";
-import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
-import { createTestSqlStorage } from "./helpers/sql-storage";
 
 const PUBLIC_MIGRATION_VERSION = 94;
 const GENERAL = "00000000-0000-7000-8000-000000000931";
@@ -151,29 +148,4 @@ describe("WorkspaceDO migration 94", () => {
     expect(waterline(database)).toBe(before);
   });
 
-  it("keeps a Space Organization-wide when a stale directory effect still says personal", () => {
-    const database = openDatabase();
-    apply(database, PUBLIC_MIGRATION_VERSION);
-    seedSpace(database, { spaceId: PRIVATE, scope: "workspace" });
-    const storage = new WorkspaceSpaceStorage(createCloudflareTestBinding<DurableObjectStorage>({
-      transactionSync: (body: () => unknown) => body(),
-      sql: createTestSqlStorage(database),
-    }));
-
-    expect(storage.applyDirectoryProjection({
-      spaceId: PRIVATE,
-      authorityGeneration: 1,
-      sourceVersion: 2,
-      payloadHash: "renamed",
-      title: "Renamed",
-      scope: "personal",
-      appearance: null,
-      createdByUserId: CREATOR,
-      sourceCreatedAt: 1,
-      sourceUpdatedAt: 2,
-    })).toBe(true);
-
-    expect(database.prepare("SELECT title, scope FROM spaces WHERE space_id = ?").get(PRIVATE))
-      .toEqual({ title: "Renamed", scope: "workspace" });
-  });
 });

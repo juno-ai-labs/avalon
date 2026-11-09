@@ -1,5 +1,4 @@
 import { createTestWorkspaceDO, testWorkspaceObjectBinding } from "./helpers/workspace-object-rpcs";
-import { resolveConnectorAudience } from "../src/services/connector-workstream-audience";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -258,7 +257,7 @@ function seededDatabase(): DatabaseSync {
 }
 
 
-it("attributes verified guests without admitting them as connector participants", async () => {
+it("attributes verified guests", async () => {
   const database = migratedSqliteDatabase();
   databases.push(database);
   database.exec(`INSERT INTO users (id,email,name,created_at,updated_at)
@@ -274,8 +273,4 @@ it("attributes verified guests without admitting them as connector participants"
   const actor = { provider: "linear", providerAccountId: "org", providerUserId: "external", displayName: "Guest", avatarUrl: null };
   expect(await resolveConnectorActorIdentity(env, "00000000-0000-4000-8000-000000000071", actor, "guest@example.test"))
     .toEqual({ userId: "guest", verification: "verified_email", accessClass: "guest" });
-  expect(await resolveConnectorAudience(env, "00000000-0000-4000-8000-000000000071", [
-    { actor, verifiedEmail: "guest@example.test" },
-    { actor: { ...actor, providerUserId: "member" }, verifiedEmail: "member@example.test" },
-  ])).toEqual({ userIds: ["member"], unresolved: 1, unresolvedIndexes: [0] });
 });

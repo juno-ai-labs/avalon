@@ -1,5 +1,5 @@
 import type { ImportedMessageProvenance } from "@rally/contracts";
-import type { WorkstreamAppearance } from '@rally/contracts';
+import type { ConnectorConnectionCardInput, WorkstreamAppearance } from '@rally/contracts';
 import type {
   AgentModelOverride,
   AutomationDraft as ContractAutomationDraft,
@@ -15,6 +15,8 @@ import type {
   WorkstreamTranscriptSnapshot,
   ResourceDirection,
   ResourceRelationshipType,
+  CanvasSummary,
+  SidekickAudience,
 } from '@rally/contracts';
 import type { PluginGroupIcon } from './plugin-groups';
 
@@ -89,11 +91,8 @@ export interface PendingWorkspaceInvitation extends WorkspaceInvitationPreview {
   invitedByName: string;
 }
 
-/**
- * Who can see an automation and who may change it, in the words the UI uses.
- * `workstream` is the room that owns it, which `Scope` has no value for.
- */
-export type AutomationScope = 'you' | 'workspace' | 'workstream';
+/** Who can see an automation and who may change it, in the words the UI uses. */
+export type AutomationScope = 'you' | 'workspace';
 
 export interface AutomationSummary {
   loadable?: boolean;
@@ -108,27 +107,28 @@ export interface AutomationSummary {
   description: string;
   emailAddress?: string;
   scope: AutomationScope;
-  /** The room that owns a `workstream`-scoped automation. */
-  owningWorkstreamId?: string;
-  /**
-   * That room's name and glyph, when the server named it: only to a reader
-   * who is in it. Absent otherwise, and the label falls back to "Thread".
-   */
-  owningThread?: { id: string; title: string; appearance?: WorkstreamAppearance };
   status: AutomationStatus;
   nextRunAt?: string;
   lastRunAt?: string;
   /** Last time the automation itself changed — a draft's only activity. */
   updatedAt: string;
+  /** Sidebar rows only: unread in its shared conversation, waiting on input, and its place in the Pinned group. */
+  unread?: boolean;
+  needsInput?: boolean;
+  pinnedPosition?: number | null;
+  /** Who it is shared with; absent from a server that predates it. */
+  audience?: SidekickAudience;
+  /** Its newest run's live state, when one is live; absent from a server that predates it. */
+  runState?: 'working' | 'needs_input' | null;
+  /** Any of its runs is working now, whichever is newest; absent from a server that predates it. */
+  running?: boolean;
+  /** The question a run waiting on input asked; absent when none waits. */
+  pendingQuestion?: string | null;
+  /** What wakes it, each kind once in definition order; absent from a server that predates it. */
+  triggerKinds?: Array<'manual' | 'schedule' | 'external_event' | 'inbound_email'>;
+  /** The IANA zone `nextRunAt` is read in (its schedule's); absent for an interval, no schedule, or an older server. */
+  scheduleTimeZone?: string;
 }
-
-/**
- * One automation in a work stream's context rail.
- *
- * The sidebar summary without its scope and owner: every row in that rail
- * belongs to the work stream showing it.
- */
-export type WorkstreamAutomationSummary = Omit<AutomationSummary, 'scope' | 'owningWorkstreamId' | 'owningThread'>;
 
 export interface WorkstreamSummary {
   resolved?: boolean;
@@ -193,24 +193,6 @@ export interface WorkstreamSummary {
    * same work stream is pinned for one member and not for another.
    */
   pinPosition: number | null;
-  /** Pin positions scoped to the Space placements that own them. */
-  spacePins?: Array<{ spaceId: string; position: number }>;
-  /**
-   * Every Space this Channel currently sits in.
-   *
-   * A Channel belongs to at least one Space and may belong to several. Each id
-   * is a *placement* of this same row rather than a copy of it, so the sidebar
-   * draws one entry per id under the Space it names and all of them open the
-   * same Channel. The row itself — its unread, its running state, its title —
-   * is one record whatever it is listed under.
-   */
-  spaceIds: string[];
-  /** First conversation this viewer may open when Main itself is not shared. */
-  associativeSubstreamId?: string;
-  /** Breakouts under this Channel that currently need this viewer. */
-  breakoutAttentionCount?: number;
-  /** This viewer reaches the Channel only through a Breakout; Main is not theirs. */
-  mainWithheld?: true;
   /**
    * Client only, never sent by the server: this window has asked for this
    * Channel under its final id and the create has not answered yet. The row
@@ -234,25 +216,6 @@ export interface WorkstreamSummary {
    * `confirmPendingWorkstream`.
    */
   pendingListed?: true;
-}
-
-/**
- * One row on a Space dashboard: a Channel, or one of a Channel's breakouts.
- *
- * Both draw as the same row — one status dot, one title, one activity time —
- * so they are one type with a discriminator rather than two the screen has to
- * branch on everywhere. `breakoutOf` is what the breakout row adds: the
- * destination it links to, and the parent Channel's name it prints under its
- * own so a breakout called "Pricing" says where it lives.
- */
-export interface SpaceConversationSummary extends WorkstreamSummary {
-  kind: 'channel' | 'breakout';
-  breakoutOf: {
-    workstreamId: string;
-    substreamId: string;
-    title: string;
-    appearance?: WorkstreamAppearance;
-  } | null;
 }
 
 export interface Participant extends WorkspaceMember {
@@ -297,6 +260,8 @@ export interface ResourceVersion {
   version: number;
   capturedAt: string;
   author: ResourceVersionAuthor | null;
+  /** The name the server resolved for a member or a connector author, when it has one. */
+  authorName: string | null;
   cause: ResourceVersionCause | null;
   contentAvailable: boolean;
   /** The title and type this version held, which a later one may have changed. */
@@ -471,11 +436,15 @@ export interface ElicitationData {
   minimumSelections?: number;
   maximumSelections?: number;
   allowOther?: boolean;
+  /** Whether Skip is offered; absent reads as true. */
+  allowSkip?: boolean;
   targetUserId?: string;
   status: 'open' | 'answered' | 'cancelled';
   answer?: unknown;
   answeredByName?: string;
   createdAt?: string;
+  /** A question a connection answers: the panel shows the card that makes it. */
+  connection?: ConnectorConnectionCardInput;
 }
 
 /** A thread's opening message before the room has it; see `pendingOpening`. */
@@ -633,7 +602,7 @@ export interface Message {
     automationName: string;
     description: string;
     triggerSummaries: string[];
-    suggestedScope: 'personal' | 'workspace' | 'workstream';
+    suggestedScope: 'personal' | 'workspace';
     ready: boolean;
   };
   /**
@@ -641,25 +610,25 @@ export interface Message {
    * name frozen at delivery. The author slot reads it instead of the generic
    * 'Sidekick' label.
    */
-  /**
-   * Set on a Breakout's merged result in its Thread: which Breakout, under
-   * the title frozen at merge time, and whether Rally merged it for the
-   * author. Server-written; see docs/conversation-merge.md.
-   */
-  mergedFrom?: {
-    breakoutId: string;
-    title: string;
-    actingAgent: boolean;
-  };
-  /**
-   * Set on the marker a merge leaves in its source: where the result went
-   * (a Thread, or a Channel), the merge there, and who merged it.
-   * Server-written; see docs/conversation-merge.md.
-   */
-  mergedInto?: MessageMergedInto;
   automationActivation?: {
     automationId: string;
     automationName: string;
+    /** The run behind it, which is also its substream under the Sidekick. */
+    runId?: string;
+    trigger?: 'manual' | 'schedule' | 'external_event' | 'inbound_email';
+    /** Present on a run's own row in its Sidekick's shared conversation: the run as it stands. */
+    run?: {
+      state: 'pending' | 'running' | 'needs_input' | 'completed' | 'failed' | 'stopped';
+      stepCount: number;
+      reply: string | null;
+    };
+    /**
+     * Who started the run (null for a trigger's) and its ordinal among its
+     * Sidekick's runs (null until numbered), from the row's block
+     * (`sidekickRun`); absent from a server that predates them.
+     */
+    requesterUserId?: string | null;
+    runNumber?: number | null;
   };
   /**
    * Durable Object events and D1 transcript rows have independent sequence
@@ -726,6 +695,13 @@ export interface Message {
    */
   workAccordion?: WorkTotal & { rows: Message[] };
   elicitation?: ElicitationData;
+  /**
+   * On an answered question's own row (the asker's turn): the person's answer
+   * has its own row after it, so this row draws the question alone. Without
+   * it, until the answer's turn lands, the row draws the answer under the
+   * question.
+   */
+  elicitationAnswerFollows?: boolean;
 }
 
 export interface BackgroundTask {
@@ -799,38 +775,8 @@ export interface WorkstreamBoot extends WorkstreamDetail {
   transcript: WorkstreamTranscriptSnapshot;
 }
 
-export interface CreatedWorkstream {
-  workstream: WorkstreamSummary;
-  /** Canonical identity of the opening conversation turn. */
-  turnId: string;
-  clientMessageId: string;
-  createdAt: string;
-  /**
-   * The run the opening turn started. Seeded into the work stream's detail so
-   * the work timer the launch surface started keeps counting across the
-   * navigation instead of disappearing until the first refetch answers.
-   */
-  harnessRunId: string | null;
-}
-
-export interface WorkOpportunity {
-  id: string;
-  version: number;
-  displayPrompt: string;
-  icon: 'brand-github' | 'brand-google' | 'brand-google-drive' | 'brand-notion' | 'brand-slack' | 'linear' | 'plug' | 'webhook' | 'world-search';
-  sourceLabel: string;
-}
-
 /** Every run always lands in Rally; these are the extra frozen destinations. */
 export type AutomationDeliveryTargetType = 'slack_agent_dm' | 'email';
-/**
- * A connector delivery surface, named and tied to its connector for when no
- * connection offers it to this person (they have not linked their account).
- */
-export const UNLINKED_DELIVERY_TARGETS: Partial<Record<AutomationDeliveryTargetType, { label: string; connectorType: string }>> = {
-  slack_agent_dm: { label: 'Slack', connectorType: 'slack' },
-};
-
 export interface AutomationDetail extends AutomationSummary {
   lifecycle: AutomationLifecycleState;
   authorUserId: string;
@@ -846,6 +792,10 @@ export interface AutomationDetail extends AutomationSummary {
   /** One line per trigger of the current definition, or empty before one exists. */
   triggerSummaries: string[];
   recentRuns: AutomationRun[];
+  /** The people a `people` Sidekick is shared with besides its author; empty otherwise. */
+  sharedWithUserIds?: string[];
+  /** The Canvases it writes that this reader may open, most recently active first. */
+  canvases?: CanvasSummary[];
 }
 
 export interface SocketTicket {
@@ -868,40 +818,4 @@ export interface SocketTicket {
   subscriptionBootstrap?: boolean;
 }
 
-/** One person's scheduled digest: which days, what times, and where it goes. */
-export interface DigestSchedule {
-  id: string;
-  enabled: boolean;
-  /** Sunday is 0, matching `Date#getDay`. */
-  days: number[];
-  /** Local wall-clock minutes past midnight in `timezone`. */
-  times: number[];
-  timezone: string;
-  deliveryTargets: DigestDeliveryTarget[];
-  nextRunAt: string | null;
-  lastDeliveredAt: string | null;
-}
 
-/** Where a digest goes: the person's own Personal Channel, or any automation destination. */
-export type DigestDeliveryTargetType = 'personal_channel' | AutomationDeliveryTargetType;
-
-export interface DigestDeliveryTarget {
-  type: DigestDeliveryTargetType;
-  connectionId: string | null;
-  displayName: string;
-  status: 'active' | 'needs_input' | 'disabled';
-  lastDeliveredAt: string | null;
-}
-
-/** Where a source's result was merged, and the merge there to open. */
-export interface MessageMergedInto {
-  kind: 'thread' | 'channel';
-  /** The Thread's id, or the Channel's (the storage Space's) id. */
-  id: string;
-  title: string;
-  /** The merge in the target: a Thread's transcript turn, or a Channel message. */
-  messageId: string;
-  mergedByUserId: string;
-  /** Rally merged it, at this person's request. */
-  actingAgent: boolean;
-}

@@ -8,7 +8,7 @@
 > to [Apple push notifications](../2026-09-11_apple-push-notifications/prd.md),
 > which creates the App ID capability and provisioning profile this depends on;
 > sequenced after its desktop phase. Read alongside
-> [`workstream-links.md`](../../workstream-links.md), which owns the link, and
+> [`links.md`](../../links.md), which owns the link, and
 > [`domain-migration.md`](../../domain-migration.md), which owns the hostnames
 > and the deep-link scheme. Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
@@ -67,7 +67,7 @@ association per app id and the site already declares it.
    Mac without Rally and for every other platform. Rejected.
 3. **Universal links for anything other than work-stream links.** Settings,
    automation, and connector-completion deep links have no canonical https
-   form ([`workstream-links.md`](../../workstream-links.md#deep-links-that-have-no-canonical-form)).
+   form ([`links.md`](../../links.md#deep-links-that-have-no-canonical-form)).
    Deferred until one exists.
 4. **Handoff on Windows or Linux.** Neither has an equivalent Rally supports
    today. Deferred.
@@ -198,7 +198,7 @@ back to the handoff page at its next refresh.
    hosts and require the app id, the two path families, JSON content type, and
    no redirect. Update [`domain-migration.md`](../../domain-migration.md) with
    the association as a fourth thing that moves with a hostname, and
-   [`workstream-links.md`](../../workstream-links.md) with the universal-link
+   [`links.md`](../../links.md) with the universal-link
    reader.
 2. **Desktop.** `continue-activity` handler for `NSUserActivityTypeBrowsingWeb`
    reading `details.webpageURL`, the adapter from `parseWorkstreamLinkTarget`

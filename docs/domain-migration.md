@@ -9,7 +9,7 @@ what has to be true before an Avalon hostname can be switched off.
 Read it before adding a public hostname, changing one a caller was given, or
 retiring an Avalon one. Two things that look like domains ride along with the
 rename and are covered here because they fail the same way: the desktop
-deep-link scheme, and the work-stream email domain.
+deep-link scheme, and the conversation email domain.
 
 ## Where the code lives
 
@@ -36,14 +36,14 @@ deep-link scheme, and the work-stream email domain.
 
 | Canonical hostname | Serves | Superseded hostname, still served |
 | --- | --- | --- |
-| `rallywith.ai` | Public marketing and legal site; `PUBLIC_WEB_BASE_URL`; the origin every canonical work-stream link is minted on | `with-avalon.com` |
+| `rallywith.ai` | Public marketing and legal site; `PUBLIC_WEB_BASE_URL`; the origin every canonical conversation link is minted on | `with-avalon.com` |
 | `www.rallywith.ai` | Second custom domain on the same site Worker | `www.with-avalon.com` |
 | `api.rallywith.ai` | Global regional API; packaged desktop default; site telemetry ingest; sandbox allowlist | `api.with-avalon.com` |
 | `github.rallywith.ai` | GitHub App smart ingress — `/ingest/github` and the setup URL | `github.with-avalon.com` |
 | `linear.rallywith.ai` | Linear webhook ingress | `linear.with-avalon.com` |
 | `notion.rallywith.ai` | Notion callback and webhook, answering for configured deployments | `notion.with-avalon.com` |
 | `slack.rallywith.ai` | Slack events, interactivity, commands | `slack.with-avalon.com` |
-| `automation.rallywith.ai` | Inbound work-stream and automation mail (Resend MX) | `automation.with-avalon.com` |
+| `automation.rallywith.ai` | Inbound conversation and automation mail (Resend MX) | `automation.with-avalon.com` |
 | `downloads.rallywith.ai` | R2 custom domain for desktop installers and the update feed | `downloads.with-avalon.com` |
 
 Seven are attached to a Worker by a `routes` entry, listing the Rally pattern
@@ -118,7 +118,7 @@ distinction decides two paths that look alike:
 
 The versioned path has host `workspace`; builds released before workspace
 addressing do not recognize it and fail closed. This cannot be a query pair on a
-known host: the previous work-stream reader accepted extra query fields but
+known host: the previous conversation reader accepted extra query fields but
 ignored them, which would turn an addressed link into an active-workspace link.
 
 That constant is the single place this migration writes a superseded value on
@@ -142,12 +142,12 @@ party to keep working. The distinction is the useful one to carry: a scheme
 needs a compatibility window exactly when something outside this process
 remembers it.
 
-### The work-stream email domain
+### The conversation email domain
 
 New addresses are minted on `automation.rallywith.ai`. Mail to
 `automation.with-avalon.com` is still routed.
 
-A work-stream address is **stored, not derived** — one row per work stream in
+A conversation address is **stored, not derived** — one row per conversation in
 the Global `workstream_email_routes` ledger — so renaming the domain does not
 move the addresses already issued. Those are printed in mail clients, saved in
 contacts, and forwarded to by rules nobody here can see. Routing is keyed by
@@ -156,7 +156,7 @@ namespaces even when a local part repeats. The accepted-domain set decides which
 recipients may be looked up; it does not disappear from the lookup key.
 
 The domain a message *arrived on* is carried through to the region rather than
-replaced with the canonical one, so the address attached to the work stream is
+replaced with the canonical one, so the address attached to the conversation is
 the address the sender actually used.
 
 Minting and accepting are guarded separately. `configuredEmailDomain` requires
@@ -201,9 +201,8 @@ configured deployments and a connection completes on whichever origin the client
   compiled into every shipped DMG, so binaries in the field poll it forever. It
   outlives every other Avalon hostname.
 - **Every origin a live client sends appears in `ALLOWED_ORIGINS`.** That is the
-  four site origins, the browser app origin, both renderer origins, and
-  Sideline's `app://sideline`, which its main process presents on the workspace
-  socket. An origin the browser actually
+  four site origins, the browser app origin, and both renderer origins. An
+  origin the browser actually
   used but the Worker does not list is rejected by Chromium before any route
   code runs — the renderer sees a transport failure and no API request is
   logged, so the failure is invisible from the server side.
@@ -232,7 +231,7 @@ not own what any individual host does: [`regionalization.md`](regionalization.md
 owns the configured deployment split and the shared ingress design,
 [`provider-apps.md`](provider-apps.md) owns the registrations,
 [`workstream-email-addresses.md`](workstream-email-addresses.md) owns the
-address format and allocator, [`workstream-links.md`](workstream-links.md) owns
+address format and allocator, [`links.md`](links.md) owns
 the canonical link shape, and [`security.md`](security.md) owns the origin
 policy. Certificate and DNS procedure is in [`runbook.md`](runbook.md).
 
@@ -262,7 +261,7 @@ compatibility window — nothing outside a build reads either.
 
 No automated test covers the site's route list, CSP, canonical tags, sitemap or
 deep-link hostnames. Those are deploy configuration, and the deploy is their
-test ([`testing.md`](testing.md#what-to-test-and-what-not-to)). `packages/contracts/src/workstream-links.test.ts` covers
+test ([`testing.md`](testing.md#what-to-test-and-what-not-to)). `packages/contracts/src/links.test.ts` covers
 minting the new scheme and reading the old, including a test that asserts the
 *writing* side alone: parsing accepts both, so minting the wrong scheme would
 otherwise still round-trip and no other test would notice.
@@ -280,7 +279,7 @@ The Apple association is another hostname-coupled release surface. Only
 `rallywith.ai` and `www.rallywith.ai` appear in desktop associated-domain
 entitlements. Moving either requires serving the association on the new host
 before releasing the corresponding entitlement; legacy origins remain browser
-handoffs. See [work-stream links](workstream-links.md#apple-universal-links).
+handoffs. See [links](links.md#apple-universal-links).
 
 ## Changelog
 

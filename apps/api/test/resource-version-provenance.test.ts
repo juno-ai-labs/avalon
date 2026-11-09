@@ -43,6 +43,10 @@ function fixture(stored = new Map<string, string>()): { database: DatabaseSync; 
   open.push(regional);
   regional.exec(`CREATE TABLE workspace_members(workspace_id TEXT, user_id TEXT, status TEXT, access_class TEXT DEFAULT 'member')`);
   regional.prepare("INSERT INTO workspace_members(workspace_id,user_id,status) VALUES (?, ?, 'active')").run(workspaceId, userId);
+  // A version's `authorName` is its member's name, read from the regional
+  // `users` row joined to their membership.
+  regional.exec(`CREATE TABLE users(id TEXT PRIMARY KEY, name TEXT)`);
+  regional.prepare("INSERT INTO users(id, name) VALUES (?, 'Morgan Ellis')").run(userId);
   // A real WorkspaceDO over its own ledger schema: the swap sites are typed
   // methods on the object, and the capture their writes drive is its triggers.
   const workspaceObject = createTestWorkspaceDO({
@@ -206,7 +210,7 @@ describe("resource version provenance", () => {
     const service = new ResourceService(env, auth);
 
     await expect(service.versions(resourceId)).resolves.toMatchObject([
-      { version: 2, title: "Kickoff notes", author: { kind: "member", userId }, cause: null },
+      { version: 2, title: "Kickoff notes", author: { kind: "member", userId }, authorName: "Morgan Ellis", cause: null },
       { version: 1, cause: "created" },
     ]);
   });

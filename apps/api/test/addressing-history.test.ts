@@ -22,7 +22,7 @@ it("selects the latest ten turns with text before the current message, skipping 
     const store = new WorkstreamObjectStore(storage, "addressing-history", "global");
     store.ensureIdentity({
       workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000001"),
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: asWorkstreamId("00000000-0000-7000-8000-000000000002"),
     }, "global");
     const authorId = "00000000-0000-7000-8000-000000000003";

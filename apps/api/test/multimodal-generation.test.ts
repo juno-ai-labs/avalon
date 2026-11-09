@@ -51,7 +51,7 @@ const context: HarnessToolContext = {
 const workflowInput: WorkstreamWorkflowInput = {
   region: "global",
   workspaceId: WORKSPACE_ID,
-  parentKind: "workstream",
+  parentKind: "canvas",
   parentId: WORKSTREAM_ID,
   loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
   harnessRunId: RUN_ID,

@@ -19,7 +19,7 @@ mechanism. The product requirements are in
 | `apps/api/src/services/terminal/instruction-files.ts` | The Terminal kind's discovery primitives: the candidate chain from a set of touched paths, and the probe script a sandbox command carries. |
 | `apps/api/src/services/terminal/instructions.ts` | The Terminal plugin's glue over the port: build a probe fragment from the known-resident set, split and sanitize the trailer, record. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` (`settlePendingSteersAtStep`, `commitBindCompaction`, `bindMessagePositionsBySourceKind`) | Derived inputs appended at the settled step in the same commit that closes them; the compaction commit that carries the ledger's transitions; the positions the summariser must not see. |
-| `apps/api/src/durable-objects/substream-agent.ts` (`persistentLoopRuntime`, `settlePersistentLoopStep`) | Drains pending deliveries into the settled step, serves `renderResidentContext` and `prepareResidentContextCompaction`, applies the compaction transitions inside the checkpoint's transaction. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` (`persistentLoopRuntime`, `settlePersistentLoopStep`) | Drains pending deliveries into the settled step, serves `renderResidentContext` and `prepareResidentContextCompaction`, applies the compaction transitions inside the checkpoint's transaction. |
 | `packages/agent-harness/src/index.ts` (`HarnessResidentContext`), `bind-runtime.ts` | The host port: `render()` placed last in the stable system prompt; `prepareCompaction()` before the summary turn, whose answer shapes the compacted system message and the summariser's input. |
 
 ## How it works

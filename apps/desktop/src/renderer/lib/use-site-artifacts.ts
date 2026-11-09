@@ -4,24 +4,26 @@ import { useMemo } from 'react';
 import type { RallyApi } from './api';
 import { useShellCapabilities } from './collaboration-session';
 import { desktopBridge } from './platform';
-import { useClientFeatureFlags } from './use-client-feature-flags';
 
 /**
  * Everything the live-artifact detail needs, or `undefined`: one builder for
  * every surface that opens an artifact panel, a thread's and a Channel's.
  *
- * `undefined` is how the feature is off — the rail then renders a site as the
- * ordinary resource card, which still lists, versions, and removes it. The
- * flag gates presentation only: an artifact's authorization is structural and
- * holds whether or not this is passed.
+ * Always on: a Canvas is built on these surfaces, so there is no flag that
+ * hides them. `undefined` means only that this surface cannot host them — no
+ * API session to mint access, or no bridge to present through — and the rail
+ * then renders a site as the ordinary resource card, which still lists,
+ * versions, and removes it.
  */
-export function useSiteArtifacts(api: RallyApi | null) {
+/** The three reads a site surface needs: access, its data shape, and a table. */
+export type SiteArtifactsApi = Pick<RallyApi, 'openArtifact' | 'describeArtifactData' | 'readArtifactTable'>;
+
+export function useSiteArtifacts(api: SiteArtifactsApi | null) {
   const annotationDraft = useAnnotationDraft();
   const { host } = useShellCapabilities();
-  const featureFlags = useClientFeatureFlags(api);
   const browserHost = host === 'browser';
   return useMemo(() => {
-    if (!api || featureFlags.data?.liveArtifactsEnabled !== true) return undefined;
+    if (!api) return undefined;
     const bridge = window.rally ?? (browserHost ? desktopBridge() : undefined);
     if (!bridge) return undefined;
     return {
@@ -47,5 +49,5 @@ export function useSiteArtifacts(api: RallyApi | null) {
         ...(browserHost ? { framed: true as const } : {}),
       },
     };
-  }, [browserHost, api, featureFlags.data?.liveArtifactsEnabled, annotationDraft?.scopeKey]);
+  }, [browserHost, api, annotationDraft?.scopeKey]);
 }

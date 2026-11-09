@@ -1,4 +1,5 @@
 import { useReportMessageIssue } from './message-issue-dialog';
+import { primaryShortcutLabel } from '../lib/shortcut-label';
 import { MessageAnnotations } from './artifact-annotations';
 import { rehypeAnnotationSource } from '../lib/annotation-source';
 import clsx from 'clsx';
@@ -11,8 +12,6 @@ import {
   IconImageGeneration,
   IconAlertTriangle,
   IconCircleCheck,
-  IconCornerDownRight,
-  IconCornerUpLeft,
   IconKeyframes,
   IconMailAi,
   IconPlug,
@@ -21,7 +20,8 @@ import {
   IconWorldSearch,
   type TablerIcon,
 } from '@tabler/icons-react';
-import type { AutomationPluginActivity } from '@rally/contracts';
+import { CONNECTION_QUESTION_CONTINUE_ANSWER, personalColorKey, type AutomationPluginActivity } from '@rally/contracts';
+import { markColors } from '@rally/ui/lib/project-palette';
 import {
   Check,
   ChevronDown,
@@ -86,13 +86,14 @@ import { useCopy } from '../lib/use-copy';
 import { useEmailMentionTarget } from '../lib/workspace-invitees';
 import { SidekickMentionContext, useSidekickMentions } from '../lib/sidekick-mentions';
 import { AutomationGlyph } from './workstream-glyph';
+import { SidekickRunRow } from './sidekick-run-row';
 import { bareAddressAutolink, EMAIL_MENTION, EMAIL_MENTION_AT } from '@rally/contracts/email-mentions';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { httpHostname, useHostFavicon } from '../lib/host-favicon';
 import { isThinkingEvent, thoughtVerb } from '../lib/transcript';
-import type { ElicitationData, Message, MessageAttachment, MessageMention, MessageMergedInto, WorkTotal } from '../lib/types';
+import type { ElicitationData, Message, MessageAttachment, MessageMention, WorkTotal } from '../lib/types';
 import { useTextClamped } from '../lib/use-text-clamped';
 import { AgentWorkTiming } from './agent-work-timing';
 import { MessageByline } from './message-byline';
@@ -119,9 +120,7 @@ import {
   type CitationRender,
 } from './markdown-citations';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
-import { MergedIntoDivider, MergeMessage } from '@rally/ui/components/merge-message';
-import { Avatar, Button, ConnectorMark, ErrorNotice, RallyAvatar, RallyMark, Tip, TipGroup } from './primitives';
-import { RelativeTime } from './relative-time';
+import { Button, ConnectorMark, ErrorNotice, RallyMark, Tip, TipGroup } from './primitives';
 import { useSpeechPlayback } from './speech-playback';
 
 /**
@@ -149,6 +148,11 @@ function personAccent(id: string): string {
  */
 function turnAccent(message: Message): string {
   return personAccent(message.author?.id ?? message.externalActor?.providerUserId ?? message.id);
+}
+
+/** The letter a byline's avatar holds: the first of the name, as design.html §2 draws M, T and R. */
+function initialOf(name: string): string {
+  return Array.from(name.trim())[0]?.toLocaleUpperCase() ?? '?';
 }
 
 function safeJson(value: unknown): string {
@@ -247,9 +251,17 @@ function codeLanguageLabel(normalizedLanguage: string, requestedLanguage: string
 }
 
 interface MessageCopyTelemetry {
-  turnId?: string;
+  turnId?: string | undefined;
   messageId: string;
   workstreamId: string;
+}
+
+/**
+ * The message a copy names: its transcript turn, which is what `content_copied`
+ * admits, rather than the rendered block (`<turn>:text:0`), which it does not.
+ */
+export function copiedMessageId(telemetry: { messageId: string; turnId?: string | undefined }): string {
+  return telemetry.turnId ?? telemetry.messageId;
 }
 
 function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry, annotationRange }: {
@@ -280,7 +292,7 @@ function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry, 
     onCopied: () => {
       if (telemetry) reportTelemetryProductIntent({
         kind: 'content_copied', contentType: 'code_block', resourceType: 'message',
-        resourceId: telemetry.messageId, workstreamId: telemetry.workstreamId,
+        resourceId: copiedMessageId(telemetry), workstreamId: telemetry.workstreamId,
       });
     },
   });
@@ -1334,6 +1346,7 @@ export function MarkdownBody({
   const linked = withAuthoritativeMentionLinks(children, stableMentions, token);
   const markdown = verbatim ? linked : normalizeModelMarkdown(linked);
   const messageId = telemetry?.messageId;
+  const turnId = telemetry?.turnId;
   const workstreamId = telemetry?.workstreamId;
   // Footnote ids are namespaced per mounted body. GFM writes the same
   // `fn-1`/`fnref-1` into every message otherwise, and a transcript is dozens
@@ -1377,7 +1390,7 @@ export function MarkdownBody({
       // asynchronous parse cannot be cancelled. Render once the turn is
       // complete; glances and saved stills deliberately keep source code.
       renderDiagrams={!glance && !still && !streaming}
-      telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId } : undefined}
+      telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId, turnId } : undefined}
     />
   ); }, [glance, messageId, still, streaming, workstreamId,sourcePositions,annotationSource]);
   // Stable across commits that change nothing they depend on, for two reasons:
@@ -1735,59 +1748,11 @@ function MessageAction({ children, description, ...props }: PropsWithChildren<
 }
 
 /**
- * Branch a private conversation off the turn this sits under, with that turn as
- * the cutoff. It reads as one of the turn's actions rather than as part of its
- * identity line, so it is rendered in the same row as copy and the exports —
- * both the agent's row and the shorter one a person's own message gets.
- */
-function StartSubstreamButton({ onStart }: { onStart: () => void }): React.JSX.Element {
-  return (
-    <MessageAction
-      className="message-start-substream"
-      // The visible words have to appear in the accessible name, or a person
-      // driving by voice cannot say what they can see ("click New substream")
-      // and reach it. The name extends the label rather than replacing it,
-      // which is what every button beside it does — Copy is "Copy response",
-      // PDF is "Save response as a PDF" — and the arrow is decorative, so it
-      // stays out of both the name and the announcement.
-      description="New breakout from this message"
-      onClick={onStart}
-    ><IconCornerDownRight aria-hidden="true" size={12} stroke={1.9} /> New breakout</MessageAction>
-  );
-}
-
-/**
- * Merge this message's words back up: a Breakout's into its Thread, a
- * Thread's into one of its Channels. Second in the row, after New breakout:
- * the two actions that move work between levels lead it. The icon is the breakout mark rotated
- * 180°: work goes down into a Breakout and comes back up.
- */
-function MergeButton({ merge, text }: { merge: MessageMergeAction; text: string }): React.JSX.Element {
-  return (
-    <MessageAction className="message-merge" description={merge.label} onClick={() => merge.onMerge(text)}>
-      <IconCornerUpLeft aria-hidden="true" size={12} stroke={1.9} /> {merge.label}
-    </MessageAction>
-  );
-}
-
-/**
- * Where a message's Merge action goes, as its host names it ("Merge to thread",
- * "Merge to GTM"). The turn is named so the host can open the response card
- * under the message the merge was asked from.
- */
-export interface MessageMergeAction {
-  label: string;
-  onMerge: (text: string, turnId?: string) => void;
-}
-
-/**
  * The hover row under a message: the one row every surface that shows messages
  * draws, so a Channel, a Thread and a Breakout offer the same actions in the
  * same order with the same metrics. The host says what it can offer; the row
  * decides how it is drawn, revealed and announced.
  *
- * - `onStartSubstream` and `onMerge` are the host's, because only it knows
- *   whether this message can be a cutoff or has somewhere to merge to.
  * - `textActions` (copy, speech, the two exports) default on. A person's own
  *   turn in a Thread turns them off, as it always has: the row under a bubble
  *   is for moving work between levels, not for taking a person's words back.
@@ -1806,8 +1771,6 @@ export interface MessageMergeAction {
 export function MessageActions({
   citations,
   mentions = NO_MENTIONS,
-  onMerge,
-  onStartSubstream,
   rendered,
   subject = 'response',
   telemetry,
@@ -1817,8 +1780,6 @@ export function MessageActions({
 }: {
   citations?: CitationContext;
   mentions?: MessageMention[];
-  onMerge?: MessageMergeAction;
-  onStartSubstream?: () => void;
   rendered?: { text: string; mentions: MessageMention[] };
   subject?: 'response' | 'message';
   /** A Channel's own message is in no Thread, so it reports no `workstreamId`. */
@@ -1842,7 +1803,7 @@ export function MessageActions({
     await desktopBridge().copyText(text);
     if (telemetry) reportTelemetryProductIntent({
       kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
-      resourceId: telemetry.messageId,
+      resourceId: copiedMessageId(telemetry),
       ...(telemetry.workstreamId ? { workstreamId: telemetry.workstreamId } : {}),
     });
   };
@@ -1903,9 +1864,10 @@ export function MessageActions({
         // sitting under a turn the next day reads as a broken feature rather than
         // as one attempt that did not work.
       >
-        {onStartSubstream && <StartSubstreamButton onStart={onStartSubstream} />}
-        {hasText && onMerge && <MergeButton merge={onMerge} text={text} />}
-        {reportIssue && telemetry && <MessageAction description="Oopsie" onClick={() => reportIssue(telemetry.turnId ?? telemetry.messageId, telemetry.messageId)}>
+        {/* "Oopsie" is the feature's visible name; the name a screen reader and
+            the tip give says what it does, and keeps the visible word first so
+            a voice command that says what it sees still finds it. */}
+        {reportIssue && telemetry && <MessageAction description="Oopsie: report a problem with this message" onClick={() => reportIssue(telemetry.turnId ?? telemetry.messageId, telemetry.messageId)}>
           <IconBug aria-hidden="true" size={12} /> Oopsie
         </MessageAction>}
         {offersText && (
@@ -1965,8 +1927,6 @@ export function AssistantMessageContent({
   // The hoisted constant, not `= []`: a per-render array here would feed
   // MarkdownBody an always-new `mentions` and defeat its streaming memo.
   mentions = NO_MENTIONS,
-  onMerge,
-  onStartSubstream,
   showCopy = true,
   streaming = false,
   text,
@@ -1976,8 +1936,6 @@ export function AssistantMessageContent({
   citations?: CitationContext;
   collapseHeadings?: boolean;
   mentions?: MessageMention[];
-  onMerge?: MessageMergeAction;
-  onStartSubstream?: () => void;
   showCopy?: boolean;
   streaming?: boolean;
   text: string;
@@ -1990,12 +1948,10 @@ export function AssistantMessageContent({
         <MarkdownBody citations={citations} collapseHeadings={collapseHeadings} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody>
       ) : null}
       {afterText}
-      {showCopy && !streaming && (text !== '' || onStartSubstream !== undefined || (reportIssue !== null && telemetry !== undefined)) && (
+      {showCopy && !streaming && (text !== '' || (reportIssue !== null && telemetry !== undefined)) && (
         <MessageActions
           citations={citations}
           mentions={mentions}
-          onMerge={onMerge}
-          onStartSubstream={onStartSubstream}
           telemetry={telemetry}
           text={text}
         />
@@ -2032,7 +1988,7 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
         {tool.input !== undefined && <div><h4>Input</h4><pre>{safeJson(tool.input)}</pre></div>}
         {tool.output !== undefined && <div><h4>Result</h4><pre>{safeJson(tool.output)}</pre></div>}
         {tool.input === undefined && tool.output === undefined && tool.summary && (
-          <div><h4>Activity</h4><p>{normalizeModelText(tool.summary)}</p></div>
+          <div><h4>Summary</h4><p>{normalizeModelText(tool.summary)}</p></div>
         )}
         {tool.status === 'ambiguous' && <p className="tool-warning">Rally could not confirm whether this external action completed. It will not retry automatically.</p>}
       </div>
@@ -2183,9 +2139,7 @@ function DraftProposedCard({
   accepting?: boolean;
   failed?: boolean | undefined;
 }): React.JSX.Element {
-  const scope = detail.suggestedScope === 'workstream'
-    ? 'This thread'
-    : detail.suggestedScope === 'workspace' ? 'The organization' : 'You';
+  const scope = detail.suggestedScope === 'workspace' ? 'The organization' : 'You';
   return (
     <div className="system-message automation-draft-card" id={`message-${messageId}`} role="group">
       <span aria-hidden="true" className="system-message-dot" />
@@ -2563,6 +2517,7 @@ export function ElicitationPanel({
   const isMulti = elicitation.responseType === 'multi_select';
   const isText = elicitation.responseType === 'text';
   const allowOther = elicitation.allowOther ?? true;
+  const allowSkip = elicitation.allowSkip ?? true;
   const minimumSelections = isText ? 1 : Math.max(1, elicitation.minimumSelections ?? 1);
   const maximumSelections = isMulti ? elicitation.maximumSelections : 1;
   const selectionCount = selected.length + (allowOther && customSelected && text.trim() ? 1 : 0);
@@ -2712,6 +2667,19 @@ export function ElicitationPanel({
           </button>
         </div>
       </header>
+      {elicitation.connection && (
+        // A question a connection answers: connecting here answers it for the
+        // person, so the run resumes without a second step. Choosing Continue
+        // below is the same answer for a connection made elsewhere.
+        <ConnectorConnectionCard
+          request={elicitation.connection}
+          {...(options.some((option) => option.value === CONNECTION_QUESTION_CONTINUE_ANSWER)
+            ? { onNewlyConnected: () => { void onAnswer(CONNECTION_QUESTION_CONTINUE_ANSWER).catch(() => {
+              setError('Your response couldn’t be saved. Try again.');
+            }); } }
+            : {})}
+        />
+      )}
       {isText ? (
         <textarea
           aria-label="Response"
@@ -2737,7 +2705,7 @@ export function ElicitationPanel({
               <kbd aria-hidden="true">{index < 26 ? String.fromCharCode(65 + index) : index + 1}</kbd>
               {isMulti ? (
                 <span aria-hidden="true" className="elicitation-checkbox">{selected.includes(option.value) && <Check size={12} strokeWidth={3} />}</span>
-              ) : null}
+              ) : <span aria-hidden="true" className="elicitation-chosen">{selected.includes(option.value) && <Check size={15} strokeWidth={1.9} />}</span>}
             </label>
           ))}
           {allowOther && (
@@ -2773,7 +2741,7 @@ export function ElicitationPanel({
               <kbd aria-hidden="true">{options.length < 26 ? String.fromCharCode(65 + options.length) : options.length + 1}</kbd>
               {isMulti ? (
                 <span aria-hidden="true" className="elicitation-checkbox">{customSelected && <Check size={12} strokeWidth={3} />}</span>
-              ) : null}
+              ) : <span aria-hidden="true" className="elicitation-chosen">{customSelected && <Check size={15} strokeWidth={1.9} />}</span>}
             </div>
           )}
         </fieldset>
@@ -2781,10 +2749,10 @@ export function ElicitationPanel({
       {!isAnswered && (
         <div className="elicitation-actions">
           {error && <ErrorNotice>{error}</ErrorNotice>}
-          <Button className="elicitation-skip" disabled={submitting} onClick={() => void skip()}>Skip</Button>
+          {allowSkip && <Button className="elicitation-skip" disabled={submitting} onClick={() => void skip()}>Skip</Button>}
           <Button className="elicitation-submit" disabled={!canSubmit || submitting} onClick={() => void submit()}>
             {submitting ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
-            Submit <kbd aria-hidden="true">⌘↵</kbd>
+            Submit <kbd aria-hidden="true">{primaryShortcutLabel({ apple: '↵', other: 'Enter' })}</kbd>
           </Button>
         </div>
       )}
@@ -2793,13 +2761,6 @@ export function ElicitationPanel({
 }
 
 interface MessageBlockProps {
-  onStartSubstream?: (throughTurnId: string) => void;
-  /** The host's Merge action, offered on every settled text message; absent where nothing can merge. */
-  merge?: MessageMergeAction;
-  /** Opens a Breakout a merge names. */
-  onOpenBreakout?: (breakoutId: string) => void;
-  /** Opens the merge a source's Merged chip names, where it landed. */
-  onOpenMerge?: (merge: MessageMergedInto) => void;
   /**
    * How this transcript resolves and opens a citation. Absent on a surface
    * without a work stream behind it, which is exactly when every citation in a
@@ -2837,10 +2798,6 @@ interface MessageBlockProps {
 }
 
 export function MessageBlock({
-  onStartSubstream,
-  merge,
-  onOpenBreakout,
-  onOpenMerge,
   citations,
   collapseHeadings = false,
   currentUserId,
@@ -2874,10 +2831,14 @@ export function MessageBlock({
     // by hand, had already drifted from it, and could not survive the accent set
     // changing. The accent *is* a palette colour now, so there is nothing left
     // to indirect through.
+    // The bubble is the person's pastel pair (`markColors`), themed per
+    // appearance, as design.html §2 and §5 draw the reader's own turn: the
+    // saturated hue under white ink read 3.58:1 on rose.
     ...(profile ? {
       '--person-dot': personalColor(profile.color),
-      '--av-cmp-bubble-human-background': personalColor(profile.color),
-      '--av-cmp-bubble-human-foreground': personalColorInk(profile.color),
+      '--person-ink': personalColorInk(profile.color),
+      '--av-cmp-bubble-human-background': markColors(personalColorKey(profile.color)).tint,
+      '--av-cmp-bubble-human-foreground': markColors(personalColorKey(profile.color)).ink,
     } : {}),
   } as React.CSSProperties;
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
@@ -2940,20 +2901,48 @@ export function MessageBlock({
         : profile?.displayName ?? message.author?.name
           ?? (ownHumanResponse ? currentUserName : undefined)
           ?? 'Organization member';
-      return (
+      // The asker's own row keeps the question, as the asker's turn (design
+      // §4 draws the question and the answer beside it). Its answer is the
+      // next row once that turn lands; until then, and in a feed that never
+      // gets one (the builder's), the answer is drawn under it here.
+      const askerRow = message.authorType === 'agent';
+      const prompt = askerRow ? (
+        <article
+          aria-label="Question from Rally"
+          className="message-block agent-message elicitation-prompt-message"
+          id={`message-${message.id}`}
+        >
+          <MessageByline align="start" author="Rally" createdAt={message.createdAt} dot={false} initial="R" />
+          <AssistantMessageContent
+            showCopy={false}
+            text={message.elicitation.prompt}
+            telemetry={{ messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId }}
+          />
+          {/* The clearance every turn ends with, as on the answer below. */}
+          <footer className="message-actions" />
+        </article>
+      ) : null;
+      if (prompt && message.elicitationAnswerFollows) return prompt;
+      const response = (
         <article
           aria-label={ownHumanResponse ? 'Your elicitation response' : `Response from ${responseAuthor}`}
           className={clsx(
             'message-block human-message elicitation-response-message',
             ownHumanResponse ? 'own-human-message' : 'coworker-message',
           )}
-          id={`message-${message.id}`}
+          id={prompt ? undefined : `message-${message.id}`}
           data-profile-color={profile?.color}
           style={personStyle}
         >
           {/* The same identity line every human turn carries, the reader's own
               included — see the header on the ordinary authored row below. */}
-          <MessageByline align="end" author={responseAuthor} createdAt={message.createdAt} dot />
+          <MessageByline
+            align={ownHumanResponse ? 'end' : 'start'}
+            author={responseAuthor}
+            createdAt={message.createdAt}
+            dot={false}
+            initial={ownHumanResponse ? undefined : initialOf(responseAuthor)}
+          />
           <div className="human-message-content">
             <ElicitationPanel
               elicitation={message.elicitation}
@@ -2966,6 +2955,7 @@ export function MessageBlock({
           </div>
         </article>
       );
+      return prompt ? <>{prompt}{response}</> : response;
     }
     return <div className="transcript-event" id={`message-${message.id}`}><ElicitationPanel elicitation={message.elicitation} onAnswer={(answer, customResponse) => onAnswerElicitation(message.elicitation!.id, answer, customResponse)} /></div>;
   }
@@ -2974,6 +2964,10 @@ export function MessageBlock({
   // with a machine author and would otherwise fall into the row that means
   // "Rally is noting something that happened *to* this work stream". It is not
   // that. It is what an automation found, for the people in the room to read.
+  // A run's own row in its Sidekick's shared conversation: collapsed to the
+  // run's state and reply, ahead of the authored row an activation otherwise
+  // draws, since the run's work lives in its own conversation.
+  if (message.automationActivation?.run) return <SidekickRunRow message={message} />;
   // Ahead of the system branch for the same reason as the card below: a
   // clamped paragraph would bury what the room is being asked to decide.
   if (message.draftProposed) {
@@ -2993,22 +2987,6 @@ export function MessageBlock({
   // label rather than showing a blank author.
   const automationName = message.automationActivation?.automationName;
   const automationAuthor = automationName ?? 'Sidekick';
-  // A merge's mark in its source: a divider whose line opens the merge where
-  // it landed, ahead of the system branch it would otherwise read as a note in.
-  const mergedInto = message.mergedInto;
-  if (mergedInto) {
-    const merger = presentations.get(mergedInto.mergedByUserId)?.displayName;
-    return (
-      <MergedIntoDivider
-        byRally={mergedInto.actingAgent}
-        id={`message-${message.id}`}
-        mergedBy={merger}
-        onOpen={onOpenMerge ? () => onOpenMerge(mergedInto) : undefined}
-        target={mergedInto.title || (mergedInto.kind === 'thread' ? 'the thread' : 'the channel')}
-        time={<RelativeTime value={message.createdAt} />}
-      />
-    );
-  }
   if (!automation && (message.authorType === 'system' || message.messageType === 'system')) {
     return <SystemMessageBlock disclosure={rowDisclosure} message={message} />;
   }
@@ -3034,64 +3012,6 @@ export function MessageBlock({
   // Every queued message says the same thing, whatever will deliver it: Rally
   // has not read it yet.
   const pendingLabel = pending ? 'Unseen' : null;
-  // Only a settled turn of what was said can be a cutoff: text, or a
-  // Sidekick's result, which the capture keeps. A streaming or undelivered one
-  // has no fixed end to freeze. The id is read into a local so the callback
-  // closes over the value the condition checked rather than re-asserting it.
-  const cutoffTurnId = message.transcriptTurnId;
-  const startSubstream = onStartSubstream && cutoffTurnId !== undefined
-    && (message.messageType === 'text' || message.messageType === 'automation_activation')
-    && !message.streaming && !message.deliveryState
-    ? () => onStartSubstream(cutoffTurnId)
-    : undefined;
-  // The same settled-text rule: a merge carries words that are done.
-  const mergeAction: MessageMergeAction | undefined = merge && message.text && message.messageType === 'text'
-    && !message.streaming && !message.deliveryState
-    ? { label: merge.label, onMerge: (text) => merge.onMerge(text, cutoffTurnId) }
-    : undefined;
-  const mergedFrom = message.mergedFrom;
-  if (mergedFrom && message.text) {
-    // A merged result reads as one, on the leading side, in the same block a
-    // Channel draws a thread's merge with; see `MergeMessage`.
-    const author = message.author;
-    return (
-      <MergeMessage
-        actions={<MessageActions
-          citations={citations}
-          mentions={message.mentions}
-          onMerge={mergeAction}
-          onStartSubstream={startSubstream}
-          telemetry={{ messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId }}
-          text={message.text}
-        />}
-        className="message-block"
-        id={`message-${message.id}`}
-        label={`${mergedFrom.title || 'A breakout'}, merged by ${humanAuthorName}`}
-        mergedBy={<>
-          {/* Rally merged on this person's request: both, Rally first. */}
-          {mergedFrom.actingAgent && <><RallyAvatar size="small" />Rally<span className="merge-message-for"> for </span></>}
-          {author && <Avatar member={{ id: author.id, name: author.name, email: author.email ?? '', timezone: author.timezone ?? 'UTC', ...(author.avatarUrl ? { avatarUrl: author.avatarUrl } : {}) }} size="small" title={null} />}
-          {humanAuthorName}
-        </>}
-        source={{
-          mark: <IconCornerDownRight size={10} stroke={2} />,
-          title: mergedFrom.title || 'A breakout',
-          onOpen: onOpenBreakout ? () => onOpenBreakout(mergedFrom.breakoutId) : undefined,
-        }}
-        time={<RelativeTime value={message.createdAt} />}
-      >
-        {/* A merge is written to be read as a result: its markdown and its
-            `resource://` embeds render, which a typed message's verbatim
-            body does not. */}
-        <MarkdownBody
-          citations={citations}
-          mentions={message.mentions}
-          speechKind="message"
-          telemetry={{ messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId }}
-        >{message.text}</MarkdownBody>
-      </MergeMessage>
-    );
-  }
   const article = (
     <article
       aria-label={sending ? 'Sending message' : pending && pendingLabel
@@ -3118,12 +3038,15 @@ export function MessageBlock({
           turn that answers it only for other people makes the reader's own
           messages the one thing on screen with no time against it. */}
       <MessageByline
-        align={human ? 'end' : 'start'}
+        // design.html §2: only the reader's own turn sits on the trailing edge;
+        // a colleague's and Rally's lead with their avatar.
+        align={ownHumanMessage ? 'end' : 'start'}
+        initial={ownHumanMessage ? undefined : human ? initialOf(humanAuthorName) : automation || message.importProvenance ? undefined : 'R'}
         author={human ? humanAuthorName : message.importProvenance ? importedProvider : automation ? automationAuthor : 'Rally'}
         importedBy={message.importProvenance?.importedByName}
         contextLabel={message.importProvenance?.supersedesTurnId ? 'Updated source message' : message.contextLabel}
         createdAt={message.createdAt}
-        dot={human}
+        dot={false}
         workSummary={message.workSummary ? workSummaryLabel(message.workSummary) : undefined}
       />
       {human ? (
@@ -3149,8 +3072,6 @@ export function MessageBlock({
               and so does a turn that is not yet a cutoff; leaving the slot out
               there handed the next turn a 4px clearance on the bubble itself. */}
           <MessageActions
-            onMerge={mergeAction}
-            onStartSubstream={startSubstream}
             telemetry={!message.streaming && !message.deliveryState ? { messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId } : undefined}
             text={message.text ?? ''}
             textActions={false}
@@ -3165,8 +3086,6 @@ export function MessageBlock({
             citations={citations}
             collapseHeadings={collapseHeadings}
             mentions={message.mentions}
-            onMerge={mergeAction}
-            onStartSubstream={startSubstream}
             streaming={message.streaming}
             text={message.text ?? ''}
             telemetry={{ messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId }}

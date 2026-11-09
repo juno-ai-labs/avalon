@@ -108,7 +108,6 @@ async function activate(definition: AutomationDraft): Promise<void> {
     workspaceId: WORKSPACE_ID,
     authorUserId: AUTHOR_ID,
     scope: "workspace",
-    owningWorkstreamId: null,
     automationId: AUTOMATION_ID,
   });
   expect(created.created).toBe(true);

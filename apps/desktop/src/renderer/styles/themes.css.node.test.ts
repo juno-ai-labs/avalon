@@ -182,9 +182,6 @@ describe('token references', () => {
     // arithmetic shared by the dock, the capsule and the dividers.
     '--composer-dock-gap', '--composer-capsule-height',
     '--panel-divider-inset-top', '--panel-divider-inset-bottom',
-    // The count wheel reverses its travel when the value decreases. This is
-    // local animation geometry, independent of the selected theme.
-    '--wheel-travel',
     // The phone layout's sheet header and top-bar heights and sheet motion:
     // geometry and timing of one responsive block, the same in every theme.
     '--phone-sheet-header-height', '--phone-top-bar-height', '--phone-sheet-duration', '--phone-sheet-motion',
@@ -208,7 +205,10 @@ describe('token references', () => {
     '--navigation-rail-width',
     // The ring behind a tile's badge, set by each sidebar row to its own
     // background so the badge reads as cut out of the tile.
-    '--tile-ring'];
+    '--tile-ring',
+    // A Sidekick's details column, which its header also keeps clear of:
+    // layout, the same in every theme.
+    '--sidekick-details-width'];
 
   // Set at runtime rather than in CSS: some by components as inline styles,
   // three by libraries on their own elements. They cannot be checked from this
@@ -216,6 +216,9 @@ describe('token references', () => {
   const RUNTIME = [
     // Trusted SVG cursor shared by annotation preview transports.
     '--annotation-cursor', '--rail-width', '--person-accent', '--person-dot',
+    // The ink on a person's byline avatar, set per turn from PALETTE_INK
+    // beside `--person-dot`, which is its fill.
+    '--person-ink',
     // Set per glyph from PALETTE_INK, which is a decision about a fill rather
     // than about the appearance, so it cannot be a theme token.
     '--glyph-ink',
@@ -225,9 +228,6 @@ describe('token references', () => {
     // The open Breakout's pane width, set by SplitConversationLayout from the
     // width the reader dragged it to.
     '--split-breakout-width',
-    // How far a pane slides when it takes the whole width or gives it back,
-    // measured by SplitConversationLayout at the step.
-    '--split-motion-from',
     // How far back an origin-context message sits, set per row by BreakoutOrigin.
     '--origin-step',
     // A picker swatch's ink dot, set per swatch from markColors().

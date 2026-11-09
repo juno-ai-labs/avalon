@@ -6,9 +6,20 @@ follow the member across devices. Two kinds today:
 - **Show agent work** (Settings → Account → Agent), which decides whether the
   transcript shows the agent's thinking and its tool and plugin calls.
 - **Channels per kind** (Settings → Notifications → Notify me about), which
-  decide how each kind of Activity row reaches this person: push, email, or a
-  connector surface such as Slack. How they are enforced is
+  decide how each kind of Activity row reaches this person: push or email.
+  How they are enforced is
   [`push-notifications.md`](push-notifications.md#what-each-person-chooses).
+  The kinds offered are exactly those a producer records
+  (`OFFERED_NOTIFICATION_KINDS`): **Mentions** (`mentions`), **New messages**
+  (`newMessages`), **Being added** (`added`, which also covers being let into
+  a Canvas you asked for), **Sidekick runs** (`runFinished`, both run
+  notices), **Pinned Canvas updates** (`artifactUpdates`) and **Access
+  requests** (`accessRequests`, for whoever decides on a Canvas's people).
+  In the client, each kind's picker offers **Push** (only where this
+  deployment can push, though a stored `push` stays in a save) and **Email**,
+  the same two for every kind (`NotificationChannelSettings`); a stored
+  `slack_agent_dm` is dropped by the contract's lenient channel list on read,
+  so it is never drawn and a save of that kind never sends it back.
 
 ## Where the code lives
 
@@ -23,11 +34,21 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
    `notify_json` (migration 107), holding only the kinds the member has set; a
    kind not named reads from the push switch in `push_json` (migration 106)
    someone may have turned off before channels existed, then from
-   `DEFAULT_NOTIFICATION_CHANNELS` (`storedMemberPreferences`). `push` in the
+   `DEFAULT_NOTIFICATION_CHANNELS` (`storedMemberPreferences`), which is push
+   alone for every kind. A channel this build does not know is dropped from a
+   stored list as it is read; `slack_agent_dm`, no longer a channel, reads that
+   way, so a stored Slack choice is read as absent and never consulted (and a
+   save naming it is dropped the same way). `push` in the
    record is derived from the channels, for clients older than them. A kind
-   newer than the push switches (`merges`) has no switch: it reads from its
-   default until set, and `NotificationChannelsSchema` defaults it so a client
-   reading an older server's record still parses.
+   newer than the push switches has no switch: it reads from its default until
+   set, and `NotificationChannelsSchema` defaults it so a client reading an
+   older server's record still parses. The Thread-era kinds `newThreads`,
+   `newBreakouts` and `merges` are not kinds any more: a stored record naming
+   them is read without them, a save naming them is stripped of them, and
+   their old push switches carry into nothing. No served desktop requires them,
+   since a build from before the Canvases and Sidekicks pivot is refused the
+   workspace socket (`MINIMUM_SERVED_CLIENT_CONTRACT`,
+   [`realtime-sockets.md`](realtime-sockets.md#failure-modes-and-limits)).
 2. **First paint.** The WorkspaceDO's answer to a workspace socket `subscribe`
    carries `viewerPreferences` beside `featureFlags`. The renderer writes it to
    `['member-preferences', workspaceId]`, so the first frame already honours it
@@ -75,19 +96,60 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
 Human replies have their own `newMessages` delivery setting, defaulting to push
 independently of explicit mentions and Rally completions.
 
-The desktop and browser renderers honour the preference. iOS does not yet. A new
+The desktop and browser renderers honour the preference. A new
 display preference is a column in `member_preferences`, a field in
 `MemberPreferencesSchema` with a default, and a setting definition. A new kind
-is a value in `NotificationKindSchema` with a default in
-`DEFAULT_NOTIFICATION_CHANNELS` and an entry in `NOTIFICATION_KIND_FOR_PUSH`;
-it needs no migration. A new channel needs no change here at all.
+is a value in `NotificationKindSchema` and `OFFERED_NOTIFICATION_KINDS`
+with a default in `DEFAULT_NOTIFICATION_CHANNELS` and the push kinds that
+read it in `NOTIFICATION_KIND_FOR_PUSH`; it needs no migration. A push kind
+with no entry there is allowed on no channel. A new channel is a value in
+`NotificationChannelSchema` and a sink
+([`push-notifications.md`](push-notifications.md#sinks)); nothing here changes.
 
 ## Failure modes and limits
 
 Before the socket answers or REST returns, the defaults render. A server that
 predates the field sends no `viewerPreferences`, which also reads as defaults.
 
+## Testing
+
+`apps/api/test/member-preferences-kinds.test.ts` covers the record's kinds
+(the offered six defaulted, a stored Thread-era kind dropped) and which choice
+each pushed kind reads.
+`apps/api/test-workers/member-push-preferences-migration.test.ts` covers
+migrations 106 and 107 over populated rows.
+
 ## Changelog
+
+### 2026-11-09 — Notifications go by push and email only, and Settings offers only kinds a producer records
+
+**What changed:** `NotificationChannelSchema` is `push` and `email`; a stored
+`slack_agent_dm` is dropped as the list is read, and the mention and add
+defaults are push alone. `NotificationKindSchema` gains `accessRequests`, which
+a denial to the requester also reads, and loses `newThreads`, `newBreakouts` and
+`merges`. `OFFERED_NOTIFICATION_KINDS` names the six kinds Settings offers,
+which are now every kind, and `chosenChannels` reads a person's choice for a
+producer queueing its notice.
+
+**Why:** The owner, 2026-11-08: "Remove Slack but email should support all
+notifications", and Settings should offer only kinds a real producer creates;
+**New messages** and **Pinned artifact updates** were offered with no producer,
+and each now has one. The Thread-era kinds were first emitted for one release
+for the previous desktop, but raising `MINIMUM_SERVED_CLIENT_CONTRACT` refuses
+that desktop the socket, so nothing served reads them.
+
+**Considered and rejected:** Defaulting email on in Slack's place, which would
+start mailing everyone who never chose it; that is the owner's call. A migration
+rewriting stored `notify_json`, when the object schema strips retired keys on
+read. Keeping compatibility kinds for a client that can no longer connect.
+
+**Consequences:** A channel or kind removed from the schema is read as absent,
+never as an error, since the record's schemas are not strict; a kind is deleted,
+not retired, once no served client reads it. A stored choice that was Slack
+alone now reads as `[]` and silences that kind rather than falling back to its
+default; whether it should fall back is open to the owner.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-15 — Channels per kind replace the push switches
 

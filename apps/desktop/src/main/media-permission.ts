@@ -3,14 +3,10 @@ export function allowsTrustedAudioCapture(input: {
   mediaTypes: readonly string[];
   permission: string;
   requestingContents: object | null | undefined;
-  sidekicksWindowContents: object | null | undefined;
   trustedRenderer: boolean;
 }): boolean {
   const isAudioCaptureWindow = input.requestingContents != null
-    && (
-      input.requestingContents === input.mainWindowContents
-      || input.requestingContents === input.sidekicksWindowContents
-    );
+    && input.requestingContents === input.mainWindowContents;
   return isAudioCaptureWindow
     && input.trustedRenderer
     && input.permission === 'media'

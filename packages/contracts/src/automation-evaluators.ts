@@ -341,8 +341,9 @@ export type ExternalEventDestination = z.infer<typeof ExternalEventDestinationSc
 export const ExternalEventRegistrationProjectionV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   workspaceId: IdSchema.brand<"WorkspaceId">(),
-  destination: ExternalEventDestinationSchema,
-  sourceGeneration: z.number().int().nonnegative().optional(),
+  // A Sidekick is the only writer; a `workstream_resource_update` destination
+  // survives only on rows a Thread registered, which the matcher still reads.
+  destination: z.strictObject({ kind: z.literal("automation"), automationId: IdSchema }),
   evaluators: z.array(ExternalEventEvaluatorV1Schema),
 });
 

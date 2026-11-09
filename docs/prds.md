@@ -45,7 +45,8 @@ several folders that link to each other, not several PRDs in one folder.
 **Where a PRD has got to is recorded in `state.md`, not in the folder name.**
 Every PRD folder has one. It opens with this checklist — these three lines, in
 this order, worded this way — and the only thing that may follow is a short note
-beneath it. There are two kinds: the supersession note described under
+beneath it. There are three kinds: the supersession or abandonment note and
+the partial note, both described under
 [Abandoned and superseded PRDs](#abandoned-and-superseded-prds), and the
 standing-contract note that says the freeze rule does not apply, which only [the
 implementation brief](PRDs/2026-08-05_avalon-implementation-brief/state.md)
@@ -106,6 +107,11 @@ Design only — no code shipped. Do not build against this PRD.
 That line is what stands between a future reader and a design that was
 deliberately abandoned, so make it unambiguous. The successor's own PRD should
 point back at what it replaced.
+
+A PRD only part of which was replaced or deleted, whether it is completed or
+still `in progress`, gets the same kind of note. The note names the goals that
+still hold, says what went and which PRD took it, and links the document that
+owns what survives, so a reader knows which half to trust.
 
 ## Completed PRDs are frozen
 
@@ -197,7 +203,7 @@ PRD is `in progress`.
 
 3. **Goals** — What the change must achieve, as a numbered list of outcomes, not
    tasks. Each one should be specific enough that you could later say plainly
-   whether it happened. "Participants can silence a work stream for a fixed
+   whether it happened. "Participants can silence a conversation for a fixed
    period without leaving it" is a goal; "add a mute table" is a task.
 
 4. **Non-goals** — What this change explicitly does *not* cover, numbered the
@@ -211,7 +217,7 @@ PRD is `in progress`.
    against: what the user does, what the surface shows, and how it behaves in
    each state — empty, loading, populated, error, and offline. Name the real
    surfaces (the sidebar, the transcript, the composer, the contextual right
-   rail) and the real vocabulary (work stream, participant, automation,
+   rail) and the real vocabulary (conversation, participant, automation,
    subscription, activity, elicitation), so the PRD and the product use the same
    words. Where behavior is conditional, give the condition. Where a mock or a
    screenshot settles it faster than prose, link the image.
@@ -220,7 +226,7 @@ PRD is `in progress`.
    implementation brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md).
    Most PRDs write "none — this refines behavior within the existing contract",
    and that one line is the point: it forces the author to check. If the change
-   *does* alter the contract — what a work stream is, whether viewing implies
+   *does* alter the contract — what a conversation is, whether viewing implies
    participation, what the agent is allowed to do, the absence of channels, a
    global inbox, or global search — say exactly which clause moves and why. That
    is a bigger conversation than the feature, and it belongs at the top of it.
@@ -419,7 +425,7 @@ document per [`module-documents.md`](module-documents.md) and register it in
 - Markdown `##` per section; `###` beneath only when a section genuinely has
   parts. Numbered lists for goals, non-goals, and decisions, so a reviewer can
   cite "non-goal 3" and be understood.
-- Present tense for proposed behavior ("a participant mutes a work stream…"),
+- Present tense for proposed behavior ("a participant mutes a conversation…"),
   not future or conditional. A PRD describes the product it is asking for as
   though it exists.
 - Refer to surfaces, tables, tools, and flags by their real names so a reader
@@ -475,9 +481,6 @@ document per [`module-documents.md`](module-documents.md) and register it in
 - **A subsystem document may cite a PRD** for the reasoning behind a decision.
   Link to the folder's `prd.md` by its full path; the path is stable for the life
   of the PRD, so such a link does not need revisiting when the PRD advances.
-- **[`implementation-plan.md`](implementation-plan.md)** remains the phased
-  checklist for the product build as a whole. A PRD's own `plan.md` covers only
-  that PRD.
 - **A pull request implementing a PRD** links to it from the **Motivation**
   section of its description, per [`pull-requests.md`](pull-requests.md).
 

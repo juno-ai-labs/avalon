@@ -93,7 +93,9 @@ describe("WorkspaceDO alarm instrumentation", () => {
   });
 
   it("collapses an unrecognized stored kind to a bounded value", () => {
-    expect(observableWorkspaceScheduledAlarmKind("maintenance")).toBe("maintenance");
-    expect(observableWorkspaceScheduledAlarmKind("user-controlled-kind")).toBe("unknown");
+    const dispatched = new Set(["maintenance", "sidekick_run_notice"]);
+    expect(observableWorkspaceScheduledAlarmKind("maintenance", dispatched)).toBe("maintenance");
+    expect(observableWorkspaceScheduledAlarmKind("sidekick_run_notice", dispatched)).toBe("sidekick_run_notice");
+    expect(observableWorkspaceScheduledAlarmKind("user-controlled-kind", dispatched)).toBe("unknown");
   });
 });

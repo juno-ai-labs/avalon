@@ -1,7 +1,7 @@
 # Branded identifiers
 
 Rally's entity identifiers are UUID strings, so the type system on its own
-treats a workspace id, a work-stream id, a run id, and a user id as freely
+treats a workspace id, a conversation id, a run id, and a user id as freely
 interchangeable. Transcript turn IDs are the deliberate exception: participant
 turns currently use UUIDs, while assistant turns derive an opaque stable key
 from the durable loop and turn ordinal. `TranscriptTurnIdSchema` owns that
@@ -21,7 +21,7 @@ confusions, found one at a time in production.
 | Type | Cast | Meaning |
 | --- | --- | --- |
 | `WorkspaceId` | `asWorkspaceId` | A workspace's id |
-| `WorkstreamId` | `asWorkstreamId` | A work stream's id |
+| `WorkstreamId` | `asWorkstreamId` | A conversation's id |
 | `HarnessRunId` | `asHarnessRunId` | A harness run's id |
 | `UserId` | `asUserId` | A user's id |
 | `SubstreamId` | `asSubstreamId` | `"0"` or a child substream id |
@@ -58,6 +58,8 @@ between them. Fan-in plumbing helpers with broad mixed-provenance call sets
 (`publishWorkstreamEvent`, the runtime database routers) cast once internally
 — a deliberate compromise recorded here so a later pass can push the brands
 through their callers.
+
+## Changelog
 
 ### 2026-08-29 — Transcript turn identity is explicitly opaque
 

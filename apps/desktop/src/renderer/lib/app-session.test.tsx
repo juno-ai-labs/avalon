@@ -17,7 +17,7 @@ import type {
   RuntimeConfig,
 } from '../../common/desktop';
 import { accountReconnectRequiredFailure, workspaceActivationFailure } from '../../common/workspace-activation-error';
-import { sidekickDeepLink } from '@rally/contracts/workstream-links';
+import { canvasDeepLink, sidekickDeepLink } from '@rally/contracts/links';
 import {
   AccountSignInFailedError,
   AccountSignInSupersededError,
@@ -38,14 +38,12 @@ import { accountOnboardingQueryKey } from './account-onboarding-query';
 import { readDevicePreferences } from './device-preferences';
 import { useUiStore } from './ui-store';
 import {
-  consumeSurfaceEntrypoint,
   markWorkstreamFeedOpenStarted,
   workstreamFeedOpenAttemptId,
 } from './telemetry';
 
 let deepLinkListener: ((navigation: DesktopDeepLinkNavigation) => void) | null = null;
 let sessionListener: ((session: DesktopSession | null) => void) | null = null;
-let observedCreateSidekick: (() => Promise<void>) | null = null;
 let observedApi: RallyApi | null = null;
 let observedSignOutIfCleared: (() => Promise<void>) | null = null;
 let observedReconnectAccount: (() => Promise<void>) | null = null;
@@ -71,6 +69,7 @@ const bridge = vi.hoisted(() => ({
   declineInvitation: vi.fn(),
   exchangeDesktopTicket: vi.fn(),
   getOnboardingState: vi.fn(),
+  getWorkspaceAttention: vi.fn(),
   getAccountOnboarding: vi.fn(),
   updateAccountOnboarding: vi.fn(),
   getOrganizationNameSuggestion: vi.fn(),
@@ -82,7 +81,7 @@ const bridge = vi.hoisted(() => ({
   onDeepLink: vi.fn(),
   onSessionChanged: vi.fn(),
   openExternal: vi.fn(),
-  openSidekicks: vi.fn().mockResolvedValue(undefined),
+  openSidekick: vi.fn().mockResolvedValue(undefined),
   openSettings: vi.fn(),
   refreshSession: vi.fn(),
   reselectActiveWorkspace: vi.fn(),
@@ -94,10 +93,8 @@ const bridge = vi.hoisted(() => ({
   endSupportSession: vi.fn(),
   reportTelemetryProductIntent: vi.fn(),
 }) satisfies AppSessionDesktopBridge & Pick<RallyDesktopBridge, 'reportTelemetryProductIntent'>);
-const markDeepLinkWorkstreamNavigation = vi.hoisted(() => vi.fn());
 
 vi.mock('./platform', () => ({ desktopBridge: () => bridge }));
-vi.mock('./deep-link-navigation', () => ({ markDeepLinkWorkstreamNavigation }));
 
 const futureExpiry = new Date(Date.now() + 60 * 60_000).toISOString();
 
@@ -140,7 +137,6 @@ const expiredIdentitySession: DesktopSession = {
 function SessionProbe(): React.JSX.Element {
   const context = useAppSession();
   const collaboration = useCollaborationSession();
-  observedCreateSidekick = collaboration.createSidekick;
   const { api, booting, deepLinkError, invitationApi, pendingInvitation, region, session } = context;
   observedApi = api;
   observedSignOutIfCleared = context.signOutIfCredentialCleared;
@@ -178,6 +174,15 @@ function DeepLinkHistoryProbe(): React.JSX.Element {
     <TitlePillHeader current={{ key: 'current', title: 'Thread', icon: <IconCircle />, label: 'Thread menu' }} />
     <output data-testid="history-route">{location.pathname}</output>
     <button onClick={() => void navigate('/workstreams/ordinary-visit')}>Visit another thread</button>
+  </>;
+}
+
+/** Where a link put the router, and the route state it carried. */
+function ArtifactLinkProbe(): React.JSX.Element {
+  const location = useLocation();
+  return <>
+    <output data-testid="artifact-link-route">{`${location.pathname}${location.search}`}</output>
+    <output data-testid="artifact-link-state">{location.state === null ? 'none' : JSON.stringify(location.state)}</output>
   </>;
 }
 
@@ -317,9 +322,6 @@ describe('single-platform desktop identity routing', () => {
     }));
     expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
     expect(screen.getByTestId('collaboration-context')).toHaveTextContent('shared');
-    expect(observedCreateSidekick).not.toBeNull();
-    await observedCreateSidekick?.();
-    expect(bridge.openSidekicks).toHaveBeenCalledWith('new');
     expect(readDevicePreferences().selectedRegion).toBe('global');
     expect(window.localStorage.getItem('rally:selected-region')).toBeNull();
   });
@@ -601,7 +603,7 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
-    await dispatchDeepLink(`rallywithai://workspace/global/${workspaceGlobal}/workstreams/00000000-0000-7000-8000-000000000031`);
+    await dispatchDeepLink(canvasDeepLink({ region: 'global', workspaceId: workspaceGlobal, canvasId: '00000000-0000-7000-8000-000000000031' }));
     await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledOnce());
     expect(bridge.showDeepLinkError).not.toHaveBeenCalled();
     expect(window.location.hash).toBe('');
@@ -610,7 +612,7 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink(ticketCallback);
 
     await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000031'));
+    await waitFor(() => expect(window.location.hash).toBe('#/canvases/00000000-0000-7000-8000-000000000031'));
     expect(await screen.findByText('global:Global Studio')).toBeVisible();
     expect(bridge.showDeepLinkError).not.toHaveBeenCalled();
   });
@@ -695,21 +697,17 @@ describe('single-platform desktop identity routing', () => {
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('workspace'));
   });
 
-  it.each([
-    { width: 1280, sheetOpen: false },
-    { width: 390, sheetOpen: true },
-  ])('opens the sidebar on Activity from the digest\'s link at $width px, opening the sheet only at phone width', async ({ width, sheetOpen }) => {
-    const innerWidth = window.innerWidth;
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
-    useUiStore.setState({ sidebarSection: 'channels', sidebarOpen: false });
+  it('opens the Activity section from its link, leaving the pane to the section', async () => {
+    useUiStore.setState({ sidebarSection: 'sidekicks', sidebarOpen: false });
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
+    const before = window.location.hash;
 
     await dispatchDeepLink('rallywithai://activity');
 
-    expect(useUiStore.getState()).toMatchObject({ sidebarSection: 'activity', sidebarOpen: sheetOpen });
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: innerWidth });
+    await waitFor(() => expect(useUiStore.getState().sidebarSection).toBe('activity'));
+    expect(window.location.hash).toBe(before);
   });
 
   it('does not drain a cold-start OAuth callback until runtime endpoints are loaded', async () => {
@@ -1389,10 +1387,14 @@ describe('single-platform desktop identity routing', () => {
 
   it.each([
     {
-      name: 'work-stream',
-      url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/workstreams/00000000-0000-7000-8000-000000000031',
+      name: 'Canvas',
+      url: canvasDeepLink({
+        region: 'enterprise',
+        workspaceId: '00000000-0000-7000-8000-000000000030',
+        canvasId: '00000000-0000-7000-8000-000000000031',
+      }),
       assertDestination: async () => expect(window.location.hash)
-        .toBe('#/workstreams/00000000-0000-7000-8000-000000000031'),
+        .toBe('#/canvases/00000000-0000-7000-8000-000000000031'),
     },
     {
       name: 'settings',
@@ -1410,26 +1412,20 @@ describe('single-platform desktop identity routing', () => {
       assertDestination: async () => expect(window.location.hash).toBe('#/'),
     },
     {
-      name: 'Activity',
-      url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/activity',
-      // A changed organization parks the pane on `/opening`; Activity names no
-      // route of its own, so it must leave for the default landing.
-      assertDestination: async () => {
-        await waitFor(() => expect(window.location.hash).toBe('#/'));
-        expect(useUiStore.getState().sidebarSection).toBe('activity');
-      },
+      name: 'Organization home',
+      url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/home',
+      // `#/`, as the web app's Organization URL lands: the landing route then
+      // restores what this device last had open.
+      assertDestination: async () => waitFor(() => expect(window.location.hash).toBe('#/')),
     },
     {
-      name: 'Activity at phone width',
+      name: 'Activity',
       url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/activity',
-      width: 390,
-      // The sidebar resets the sheet when the switch remounts it and moves the
-      // route, so the link leaves the opening to that reset.
+      // Opens the section on the landing a launch has, never left parked on
+      // `/opening`; the sidebar then replaces it with the top row.
       assertDestination: async () => {
-        await waitFor(() => expect(window.location.hash).toBe('#/'));
-        expect(useUiStore.getState()).toMatchObject({
-          sidebarSection: 'activity', sidebarOpen: false, sheetAfterNavigation: true,
-        });
+        await waitFor(() => expect(window.location.hash).toBe('#/canvases'));
+        expect(useUiStore.getState().sidebarSection).toBe('activity');
       },
     },
     {
@@ -1451,7 +1447,7 @@ describe('single-platform desktop identity routing', () => {
     const { url, assertDestination } = testCase;
     const innerWidth = window.innerWidth;
     if ('width' in testCase) Object.defineProperty(window, 'innerWidth', { configurable: true, value: testCase.width });
-    useUiStore.setState({ sidebarSection: 'channels', sidebarOpen: false, sheetAfterNavigation: false });
+    useUiStore.setState({ sidebarSection: 'sidekicks', sidebarOpen: false, sheetAfterNavigation: false });
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000030';
     bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValue({
@@ -1464,6 +1460,7 @@ describe('single-platform desktop identity routing', () => {
         role: 'member',
       },
     });
+    useUiStore.setState({ sidebarSection: 'canvases' });
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
 
@@ -1500,10 +1497,10 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${workspaceId}/workstreams/${firstWorkstreamId}`,
+      canvasDeepLink({ region: 'global', workspaceId: workspaceId, canvasId: firstWorkstreamId }),
     );
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${workspaceId}/workstreams/${secondWorkstreamId}`,
+      canvasDeepLink({ region: 'global', workspaceId: workspaceId, canvasId: secondWorkstreamId }),
     );
 
     // The second link waits behind the first's activation rather than running
@@ -1512,7 +1509,7 @@ describe('single-platform desktop identity routing', () => {
     expect(window.location.hash).not.toContain(secondWorkstreamId);
     mainActiveSession = activated;
     activations[0]!.resolve(activated);
-    await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${secondWorkstreamId}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/canvases/${secondWorkstreamId}`));
     // By the time the second link ran, its workspace was the active one, so
     // main answered the claim and it opened without a second activation. Had
     // the second link run before the first resolved, the claim would have
@@ -1521,7 +1518,7 @@ describe('single-platform desktop identity routing', () => {
     expect(bridge.reselectActiveWorkspace).toHaveBeenCalledTimes(2);
   });
 
-  it('preserves a child destination after serialized organization activation', async () => {
+  it('opens an artifact link\'s Canvas after serialized organization activation', async () => {
     const workspaceId = '00000000-0000-7000-8000-000000000033';
     const firstWorkstreamId = '00000000-0000-7000-8000-000000000034';
     const secondWorkstreamId = '00000000-0000-7000-8000-000000000035';
@@ -1544,10 +1541,10 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${workspaceId}/workstreams/${firstWorkstreamId}`,
+      canvasDeepLink({ region: 'global', workspaceId: workspaceId, canvasId: firstWorkstreamId }),
     );
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${workspaceId}/workstreams/${secondWorkstreamId}/substreams/${childId}`,
+      canvasDeepLink({ region: 'global', workspaceId: workspaceId, canvasId: secondWorkstreamId, artifactId: childId }),
     );
 
     // The second link waits behind the first's activation rather than running
@@ -1556,7 +1553,7 @@ describe('single-platform desktop identity routing', () => {
     expect(window.location.hash).not.toContain(secondWorkstreamId);
     mainActiveSession = activated;
     activations[0]!.resolve(activated);
-    await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${secondWorkstreamId}?substream=${childId}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/canvases/${secondWorkstreamId}?artifact=${childId}`));
     // By the time the second link ran, its workspace was the active one, so
     // main answered the claim and it opened without a second activation. Had
     // the second link run before the first resolved, the claim would have
@@ -1566,17 +1563,16 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('continues serialized deep-link delivery after one action rejects', async () => {
-    const workstreamId = '00000000-0000-7000-8000-000000000036';
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.openSettings.mockRejectedValueOnce(new Error('Settings could not be opened'));
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
+    useUiStore.setState({ sidebarSection: 'canvases' });
     await dispatchDeepLink('rallywithai://settings/connections');
-    await dispatchDeepLink(`rallywithai://workstreams/${workstreamId}`);
+    await dispatchDeepLink('rallywithai://activity');
 
-    await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${workstreamId}`));
-    expect(markDeepLinkWorkstreamNavigation).toHaveBeenCalledWith(workstreamId);
+    await waitFor(() => expect(useUiStore.getState().sidebarSection).toBe('activity'));
   });
 
   it('does not apply a connector result when its organization cannot be activated', async () => {
@@ -1597,7 +1593,7 @@ describe('single-platform desktop identity routing', () => {
     invalidate.mockRestore();
   });
 
-  it('does not navigate when an organization-addressed channel link cannot be activated', async () => {
+  it('does not navigate when an organization-addressed Canvas link cannot be activated', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000020';
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockRejectedValueOnce(workspaceActivationFailure('workspace_access_denied'));
@@ -1606,7 +1602,7 @@ describe('single-platform desktop identity routing', () => {
     const before = window.location.hash;
 
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${targetWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000021`,
+      canvasDeepLink({ region: 'global', workspaceId: targetWorkspaceId, canvasId: '00000000-0000-7000-8000-000000000021' }),
     );
 
     await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledWith({
@@ -1939,7 +1935,7 @@ describe('single-platform desktop identity routing', () => {
     const before = window.location.hash;
 
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${targetWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000039`,
+      canvasDeepLink({ region: 'global', workspaceId: targetWorkspaceId, canvasId: '00000000-0000-7000-8000-000000000039' }),
     );
 
     await waitFor(() => expect(lastDeepLinkFailure()).toContain('Check your connection'));
@@ -1966,10 +1962,10 @@ describe('single-platform desktop identity routing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Visit another thread' }));
 
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${activeWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000042`,
+      canvasDeepLink({ region: 'global', workspaceId: activeWorkspaceId, canvasId: '00000000-0000-7000-8000-000000000042' }),
     );
 
-    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000042'));
+    await waitFor(() => expect(window.location.hash).toBe('#/canvases/00000000-0000-7000-8000-000000000042'));
     // Straight to the work stream: main answered with the session in use, no
     // platform round trip, and the shell keeps what it had loaded rather than
     // reloading behind the link.
@@ -1983,13 +1979,36 @@ describe('single-platform desktop identity routing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/workstreams/ordinary-visit'));
     fireEvent.click(screen.getByRole('button', { name: 'Forward' }));
-    await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/workstreams/00000000-0000-7000-8000-000000000042'));
+    await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/canvases/00000000-0000-7000-8000-000000000042'));
     // A new deep link from an earlier visit discards the old forward branch.
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/workstreams/ordinary-visit'));
-    await dispatchDeepLink(`rallywithai://workspace/global/${activeWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000043`);
-    await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/workstreams/00000000-0000-7000-8000-000000000043'));
+    await dispatchDeepLink(canvasDeepLink({ region: 'global', workspaceId: activeWorkspaceId, canvasId: '00000000-0000-7000-8000-000000000043' }));
+    await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/canvases/00000000-0000-7000-8000-000000000043'));
     expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled();
+  });
+
+  it('lands a link onto an artifact as `?artifact=`, the route the browser shell writes', async () => {
+    const workspaceId = '00000000-0000-7000-8000-000000000040';
+    const canvasId = '00000000-0000-7000-8000-000000000042';
+    const artifactId = '00000000-0000-7000-8000-000000000047';
+    const activeSession: DesktopSession = {
+      ...globalIdentitySession,
+      workspace: { id: workspaceId, name: 'Juno Labs', region: 'global', role: 'member' },
+    };
+    bridge.getSession.mockResolvedValueOnce(activeSession);
+    bridge.reselectActiveWorkspace.mockResolvedValue(activeSession);
+    renderProvider(<HashRouter><AppRouteNavigation /><ArtifactLinkProbe /></HashRouter>);
+    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+
+    await dispatchDeepLink(canvasDeepLink({ region: 'global', workspaceId, canvasId, artifactId }));
+
+    // The Canvas screen opens the artifact from this query on both hosts
+    // (`screens/canvas.test.tsx`), so the link hands it nothing else.
+    await waitFor(() => expect(screen.getByTestId('artifact-link-route'))
+      .toHaveTextContent(`/canvases/${canvasId}?artifact=${artifactId}`));
+    expect(screen.getByTestId('artifact-link-state')).toHaveTextContent('none');
+    expect(lastDeepLinkFailure()).toBeNull();
   });
 
   it('activates an organization that is not the active one, even when its credential is stored', async () => {
@@ -2004,10 +2023,10 @@ describe('single-platform desktop identity routing', () => {
     client.setQueryData(['members'], ['from-enterprise']);
 
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${targetWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000046`,
+      canvasDeepLink({ region: 'global', workspaceId: targetWorkspaceId, canvasId: '00000000-0000-7000-8000-000000000046' }),
     );
 
-    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000046'));
+    await waitFor(() => expect(window.location.hash).toBe('#/canvases/00000000-0000-7000-8000-000000000046'));
     // Main declined the local claim, so the platform revalidated the
     // membership before the window moved.
     expect(bridge.reselectActiveWorkspace).toHaveBeenCalledWith({ region: 'global', workspaceId: targetWorkspaceId });
@@ -2104,28 +2123,6 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink('rallywithai://notes/not-a-note');
 
     await waitFor(() => expect(lastDeepLinkFailure()).toBe('Rally could not open that note link.'));
-    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
-  });
-
-  it('opens the app for a new-channel link, which names no Space to start in', async () => {
-    bridge.getSession.mockResolvedValueOnce({
-      ...globalIdentitySession,
-      workspace: {
-        id: '7d7a69ac-59ef-4fc2-a022-f9629e631878',
-        name: 'Juno Labs',
-        region: 'global',
-        role: 'owner',
-      },
-    });
-    renderProvider();
-    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
-
-    await dispatchDeepLink('rallywithai://workstreams/new', 'menu_bar');
-
-    // `/new` has to be read before the identifier branch, which would otherwise
-    // measure it against the UUID pattern and reject it.
-    await waitFor(() => expect(window.location.hash).toBe('#/'));
-    expect(consumeSurfaceEntrypoint()).toBe('menu_bar');
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 

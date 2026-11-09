@@ -51,9 +51,9 @@ describe("custom MCP connections", () => {
       displayName: "Rally Engineering", scope: "workspace", serverUrl: SERVER_URL,
       requestHeaders: { "X-Api-Key": "secret-value" }, toolPolicy: "all_tools",
     });
-    const input = { ...catalogWorkflowInput(), parentKind: "automation" as const };
+    const input = { ...catalogWorkflowInput(), parentKind: "automation" as const, sidekickWizard: true as const };
     await workspace.instance.sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: input.parentId,
-      authorUserId: USER_ID, scope: "personal", owningWorkstreamId: null, authorityGeneration: 1 });
+      authorUserId: USER_ID, scope: "personal", authorityGeneration: 1 });
     const saved: AutomationDraft = {
       definitionVersion: 2, name: "Engineering", description: "Inspect Rally", overview: "Inspect Rally",
       instructions: "Inspect the selected Thread.", triggers: [{ type: "manual" }], requiredCapabilities: [],
@@ -174,7 +174,7 @@ describe("custom MCP connections", () => {
       connections.push(connection);
     }
     const input: WorkstreamWorkflowInput = {
-      region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream",
+      region: "global", workspaceId: WORKSPACE_ID, parentKind: "canvas",
       parentId: asWorkstreamId("00000000-0000-4000-8000-000000000004"),
       loopId: "custom-mcp-named-catalog", harnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000005"),
       triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: USER_ID }, reason: "test",
@@ -573,7 +573,7 @@ function stubMcpServer(
 }
 
 function catalogWorkflowInput(): WorkstreamWorkflowInput {
-  return { region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream",
+  return { region: "global", workspaceId: WORKSPACE_ID, parentKind: "canvas",
     parentId: asWorkstreamId("00000000-0000-4000-8000-000000000004"), loopId: "custom-mcp-metadata",
     harnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000005"),
     triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: USER_ID }, reason: "test" };

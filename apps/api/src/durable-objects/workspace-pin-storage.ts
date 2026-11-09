@@ -1,4 +1,3 @@
-import type { Pin, PinKind } from "@rally/contracts";
 
 /**
  * Migration 97: one table for everything a person pins, and the indexes the
@@ -12,7 +11,7 @@ import type { Pin, PinKind } from "@rally/contracts";
  * a thread pinned in two Spaces is one pin now, placed by All's order where the
  * person had arranged it and by its earliest Space position after that. The old
  * tables stay, and the old routes keep writing them, so a Worker from before
- * this migration still reads what it wrote; see `docs/workstream-pinning.md`.
+ * this migration still reads what it wrote; see `docs/pinning.md`.
  *
  * No foreign key to `channels` or `spaces`, for the reason `space_invitees`
  * gives: a key would make a future rebuild of either cascade here. A pin whose
@@ -118,11 +117,20 @@ export const WORKSPACE_ARTIFACT_PINS_MIGRATION: readonly string[] = [
  * test for a version already drained, where the push starts.
  */
 export function artifactUpdateSql(version: string, pin: string): string {
+  return artifactNewsSql(version, `${pin}.user_id`, `${pin}.created_at`);
+}
+
+/**
+ * {@link artifactUpdateSql} for any reader and any moment: `userId` and
+ * `since` (epoch milliseconds) are SQL expressions in scope. A Canvas's row
+ * asks it of its viewer and their last read of the Chat.
+ */
+export function artifactNewsSql(version: string, userId: string, since: string): string {
   return `${version}.version > 1
     AND ${version}.cause IN ('published', 'replaced')
-    AND (${version}.author_user_id IS NULL OR ${version}.author_user_id <> ${pin}.user_id)
-    AND (${version}.on_behalf_of_user_id IS NULL OR ${version}.on_behalf_of_user_id <> ${pin}.user_id)
-    AND CAST(unixepoch(${version}.captured_at, 'subsec') * 1000 AS INTEGER) > ${pin}.created_at`;
+    AND (${version}.author_user_id IS NULL OR ${version}.author_user_id <> ${userId})
+    AND (${version}.on_behalf_of_user_id IS NULL OR ${version}.on_behalf_of_user_id <> ${userId})
+    AND CAST(unixepoch(${version}.captured_at, 'subsec') * 1000 AS INTEGER) > ${since}`;
 }
 
 /** Whether a drained version's cause can be news to a pinner, as {@link artifactUpdateSql} decides. */
@@ -171,22 +179,12 @@ export const WORKSPACE_ARTIFACT_UPDATES_MIGRATION: readonly string[] = [
 ];
 
 /**
- * Every kind the table stores. `artifact` is not a `PinKind`: it travels in a
- * list of its own (`ArtifactPinSchema` says why), so `list` never returns it.
+ * The kinds this repository writes now: a Canvas's and a Sidekick's pins, each
+ * read back on its own sidebar row as `pinnedPosition`. The table's CHECK still
+ * admits the retired Thread, Channel, Breakout and artifact kinds, whose rows
+ * nothing reads (`docs/pinning.md`).
  */
-export type StoredPinKind = PinKind | "artifact";
-
-/** One stored artifact pin: the resource and the thread it was generated in. */
-export interface StoredArtifactPin {
-  itemId: string;
-  threadId: string;
-}
-
-interface PinRow extends Record<string, SqlStorageValue> {
-  item_kind: PinKind;
-  item_id: string;
-  parent_id: string | null;
-}
+export type StoredPinKind = "canvas" | "sidekick";
 
 /**
  * Synchronous repository for one Organization's pins. Visibility of the item is
@@ -202,60 +200,20 @@ export class WorkspacePinStorage {
     ).toArray().length === 1;
   }
 
-  /** Every thread, Channel and breakout pin this person has, kind by kind, each in their order. */
-  list(userId: string): Pin[] {
-    if (!this.ready()) return [];
-    return this.storage.sql.exec<PinRow>(
-      `SELECT item_kind, item_id, parent_id FROM workspace_pins
-        WHERE user_id = ? AND item_kind != 'artifact' ORDER BY item_kind, position, item_id`,
-      userId,
-    ).toArray().map((row) => ({
-      kind: row.item_kind,
-      id: row.item_id,
-      parentId: row.parent_id,
-    }) as Pin);
-  }
-
-  /** Everyone who pinned this artifact, and the thread each pinned it under. */
-  artifactPinners(resourceId: string): Array<{ userId: string; threadId: string }> {
-    return this.storage.sql.exec<{ user_id: string; parent_id: string }>(
-      `SELECT user_id, parent_id FROM workspace_pins WHERE item_kind = 'artifact' AND item_id = ?`,
-      resourceId,
-    ).toArray().map((row) => ({ userId: row.user_id, threadId: row.parent_id }));
-  }
-
-  /** This person's artifact pins in their order, whether or not the artifact is still visible. */
-  listArtifacts(userId: string): StoredArtifactPin[] {
-    if (!this.ready()) return [];
-    return this.storage.sql.exec<{ item_id: string; parent_id: string }>(
-      `SELECT item_id, parent_id FROM workspace_pins
-        WHERE user_id = ? AND item_kind = 'artifact' ORDER BY position, item_id`,
-      userId,
-    ).toArray().map((row) => ({ itemId: row.item_id, threadId: row.parent_id }));
-  }
-
-  count(userId: string): number {
-    return this.storage.sql.exec<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM workspace_pins WHERE user_id = ?`,
-      userId,
-    ).one().count;
-  }
-
   /** Pin at the end of the person's list of that kind. True when it was not pinned before. */
-  pin(userId: string, kind: StoredPinKind, itemId: string, parentId: string | null, now: number): boolean {
+  pin(userId: string, kind: StoredPinKind, itemId: string, now: number): boolean {
     return this.storage.sql.exec<{ item_id: string }>(
       `INSERT INTO workspace_pins
          (user_id, item_kind, item_id, parent_id, position, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4,
+       VALUES (?1, ?2, ?3, NULL,
                COALESCE((SELECT MAX(position) + 1 FROM workspace_pins
                           WHERE user_id = ?1 AND item_kind = ?2), 0),
-               ?5, ?5)
+               ?4, ?4)
        ON CONFLICT(user_id, item_kind, item_id) DO NOTHING
        RETURNING item_id`,
       userId,
       kind,
       itemId,
-      parentId,
       now,
     ).toArray().length === 1;
   }

@@ -101,7 +101,7 @@ async function env(localDb: DatabaseSync): Promise<Env> {
     incarnation: "catalog-member", revision: 1,
   } });
   await workspace.instance.sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: WORKSTREAM_ID, authorUserId: USER_ID,
-    scope: "workspace", owningWorkstreamId: null, authorityGeneration: 1,
+    scope: "workspace", authorityGeneration: 1,
   });
   if (!active) await workspace.instance.applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: false, relationship: {
     workspaceId: WORKSPACE_ID, userId: USER_ID, accessClass: "member", role: "owner", status: "suspended",
@@ -139,6 +139,8 @@ function workflowInput(): WorkstreamWorkflowInput {
     activityId: null,
     executionPrincipal: { type: "user", userId: USER_ID },
     reason: "Automation catalog test",
+    // The authoring tools are the wizard's turn's, in the shared conversation.
+    sidekickWizard: true,
   };
 }
 

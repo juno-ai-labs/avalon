@@ -1,7 +1,7 @@
 import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
 
 import { conversationObjectName } from "../durable-objects/names";
-import type { SubstreamAgent } from "../durable-objects/substream-agent";
+import type { AgentLoopDO } from "../durable-objects/agent-loop-do";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { DurableObjectRpcResult } from "../durable-objects/rpc-result";
 import type { ObjectPortOf } from "../durable-objects/object-port-protocol";
@@ -23,7 +23,7 @@ export interface ObjectPortContract<TStorage, TOperation extends keyof TStorage 
    * agent's own signature instead of reaching through a string index.
    */
   dispatch: (
-    stub: DurableObjectStub<SubstreamAgent>,
+    stub: DurableObjectStub<AgentLoopDO>,
     request: {
       workspaceId: string;
       workstreamId: string;
@@ -49,7 +49,7 @@ export interface ObjectPortContract<TStorage, TOperation extends keyof TStorage 
 /**
  * A Worker-side handle on one conversation's object-local state.
  *
- * Each method is one round trip to the owning SubstreamAgent, where the whole
+ * Each method is one round trip to the owning AgentLoopDO, where the whole
  * operation — its fences and its writes — runs synchronously against the
  * object's SQLite. Callers never see SQL, a table name, or a database handle.
  *

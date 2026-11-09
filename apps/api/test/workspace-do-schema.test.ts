@@ -11,6 +11,7 @@ import { asWorkspaceId } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
+import { durableObjectMigrationHash } from "../src/durable-objects/sqlite-migrations";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000a1");
@@ -26,6 +27,8 @@ const OPENROUTER_MEMORY_EMBEDDING_VERSION = 23;
 const ARTIFACT_REGISTRY_VERSION = 28;
 const ARTIFACT_HOSTNAME_VERSION = 29;
 const RANKING_PENDING_DUE_VERSION = 30;
+/** The Thread-owned (`workstream`) Sidekick scope is retired. */
+const SIDEKICK_SCOPE_RETIREMENT_VERSION = 136;
 
 /** Apply the ledger's versions in `(after, through]`, the way a deploy does. */
 function apply(database: DatabaseSync, through: number, after = 0): void {
@@ -890,5 +893,149 @@ describe("the WorkspaceDO hosted-Sidekick migration", () => {
     expect(database.prepare(`SELECT automation_id, title, region FROM automation_directory`).all()).toEqual([
       { automation_id: "00000000-0000-7000-8000-0000000000c1", title: "Morning briefing", region: "global" },
     ]);
+  });
+
+  it("keeps a Thread-owned Sidekick's audience: Organization-wide owners stay Organization, personal ones share with their viewers", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, SIDEKICK_SCOPE_RETIREMENT_VERSION - 1);
+    seedIdentity(database);
+    const author = "00000000-0000-7000-8000-0000000000c3";
+    const viewer = "00000000-0000-7000-8000-0000000000e1";
+    const breakoutViewer = "00000000-0000-7000-8000-0000000000e2";
+    const openThread = "00000000-0000-7000-8000-0000000000d1";
+    const privateThread = "00000000-0000-7000-8000-0000000000d3";
+    const insertThread = database.prepare(`INSERT INTO channels (
+        workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview, scope,
+        exact_state, origin_type, title_status, latest_attention_ordinal, unread_tracking_start_ordinal, last_activity_at,
+        source_created_at, source_updated_at, projected_at)
+      VALUES (?, 1, 1, ?, 'hash', 'Thread', '', '', ?, 'idle', 'ad_hoc', 'settled', 0, 0, 1, 1, 1, 1)`);
+    insertThread.run(openThread, "event-open", "workspace");
+    insertThread.run(privateThread, "event-private", "personal");
+    const insertViewer = database.prepare(`INSERT INTO channel_viewers (
+        workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant, unread_count,
+        you_are_mentioned, listable, seen_attention_ordinal, manual_unread_generation, latest_mention_attention_ordinal,
+        projected_at, participant_added_at)
+      VALUES (?, ?, 1, 1, ?, 'hash', 1, 0, 0, 1, 0, 0, 0, 30, ?)`);
+    insertViewer.run(privateThread, author, "viewer-author", 20);
+    insertViewer.run(privateThread, viewer, "viewer-one", 25);
+    insertViewer.run(openThread, viewer, "viewer-open", 25);
+    database.prepare(`INSERT INTO breakouts (
+        workstream_id, substream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, scope,
+        exact_state, title_status, last_activity_at, latest_attention_ordinal, unread_tracking_start_ordinal,
+        source_created_at, source_updated_at, projected_at)
+      VALUES (?, ?, 1, 1, 'breakout-event', 'hash', 'Breakout', '', 'personal', 'idle', 'settled', 1, 0, 0, 1, 1, 1)`)
+      .run(openThread, "00000000-0000-7000-8000-0000000000d2");
+    database.prepare(`INSERT INTO breakout_viewers (
+        workstream_id, substream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
+        unread_count, you_are_mentioned, unseen, listable, seen_attention_ordinal, manual_unread_generation,
+        latest_mention_attention_ordinal, projected_at)
+      VALUES (?, ?, ?, 1, 1, 'breakout-viewer', 'hash', 1, 0, 0, 0, 1, 0, 0, 0, 40)`)
+      .run(openThread, "00000000-0000-7000-8000-0000000000d2", breakoutViewer);
+    const insert = database.prepare(
+      `INSERT INTO automation_directory
+         (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, paused_by, scope,
+          owning_workstream_id, owning_substream_id, owning_room_archived_at, title, description, next_run_at,
+          projected_at, region)
+       VALUES (?, ?, ?, 1, 'h', ?, ?, ?, ?, ?, ?, ?, '', NULL, 1, 'global')`,
+    );
+    insert.run("00000000-0000-7000-8000-0000000000c1", WORKSPACE_ID, author, "active", null, "workstream",
+      openThread, "0", null, "Open Thread helper");
+    insert.run("00000000-0000-7000-8000-0000000000c2", WORKSPACE_ID, author, "paused", "room_archive", "workstream",
+      openThread, "0", 5, "Archived with its room");
+    insert.run("00000000-0000-7000-8000-0000000000c4", WORKSPACE_ID, author, "active", null, "personal",
+      null, "0", null, "Mine");
+    insert.run("00000000-0000-7000-8000-0000000000c5", WORKSPACE_ID, author, "active", null, "workstream",
+      privateThread, "0", null, "Private Thread helper");
+    insert.run("00000000-0000-7000-8000-0000000000c6", WORKSPACE_ID, author, "active", null, "workstream",
+      openThread, "00000000-0000-7000-8000-0000000000d2", null, "Private Breakout helper");
+    insert.run("00000000-0000-7000-8000-0000000000c7", WORKSPACE_ID, author, "active", null, "workstream",
+      "00000000-0000-7000-8000-0000000000d9", "0", null, "Owner gone");
+
+    apply(database, SIDEKICK_SCOPE_RETIREMENT_VERSION, SIDEKICK_SCOPE_RETIREMENT_VERSION - 1);
+
+    expect(database.prepare(
+      `SELECT title, lifecycle, paused_by, scope, owning_workstream_id, owning_substream_id
+         FROM automation_directory ORDER BY automation_id`,
+    ).all()).toEqual([
+      { title: "Open Thread helper", lifecycle: "active", paused_by: null, scope: "workspace", owning_workstream_id: null, owning_substream_id: "0" },
+      { title: "Archived with its room", lifecycle: "deleted", paused_by: null, scope: "workspace", owning_workstream_id: null, owning_substream_id: "0" },
+      { title: "Mine", lifecycle: "active", paused_by: null, scope: "personal", owning_workstream_id: null, owning_substream_id: "0" },
+      { title: "Private Thread helper", lifecycle: "active", paused_by: null, scope: "personal", owning_workstream_id: null, owning_substream_id: "0" },
+      { title: "Private Breakout helper", lifecycle: "active", paused_by: null, scope: "personal", owning_workstream_id: null, owning_substream_id: "0" },
+      { title: "Owner gone", lifecycle: "active", paused_by: null, scope: "personal", owning_workstream_id: null, owning_substream_id: "0" },
+    ]);
+    // The private owners' viewers, never the author, and nobody for an
+    // Organization-wide owner or one that is gone.
+    expect(database.prepare(`SELECT sidekick_id, user_id, added_at FROM sidekick_audience ORDER BY sidekick_id, user_id`).all()).toEqual([
+      { sidekick_id: "00000000-0000-7000-8000-0000000000c5", user_id: viewer, added_at: 25 },
+      { sidekick_id: "00000000-0000-7000-8000-0000000000c6", user_id: breakoutViewer, added_at: 40 },
+    ]);
+    expect(database.prepare(`SELECT name FROM sqlite_master WHERE name = 'channel_rail_sidekick_owner_update'`).all()).toEqual([]);
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+});
+
+describe("the WorkspaceDO migration ledger", () => {
+  // Version 135 is the last one main shipped (2026-11-09, a47746dbc); every
+  // Organization object already holds a receipt for each of these, so none
+  // may change. Versions above it are unshipped until this branch deploys.
+  it("keeps every shipped migration fingerprint through v135 immutable", () => {
+    expect(WORKSPACE_DO_SCHEMA_MIGRATIONS
+      .filter((migration) => migration.version <= 135)
+      .map((migration) => [migration.version, durableObjectMigrationHash(migration)]))
+      .toEqual([
+        [1, "fnv1a64:e9ab4e8aef8cdca6"], [2, "fnv1a64:3e3fba9e408f99fe"], [3, "fnv1a64:afd5eb5841d15b82"],
+        [4, "fnv1a64:b1421579c08beaf8"], [5, "fnv1a64:cdd31f98c145d214"], [6, "fnv1a64:533604cf17839cf3"],
+        [7, "fnv1a64:570239e3f5dc34e0"], [8, "fnv1a64:d8ada5b6fbd6a4a5"], [9, "fnv1a64:3efd758d55b196d8"],
+        [10, "fnv1a64:201c6dea45a32971"], [11, "fnv1a64:fcec86cf3bc315e7"], [12, "fnv1a64:aa12afdf6dbbca18"],
+        [13, "fnv1a64:f7f2e2eb01244f9a"], [14, "fnv1a64:e503628c45b96839"], [15, "fnv1a64:e2849eef96d4d530"],
+        [16, "fnv1a64:689c6e3383049c8a"], [17, "fnv1a64:a5e3d3830bce6927"], [18, "fnv1a64:4995d6a315e97c58"],
+        [19, "fnv1a64:71c58b6c187bf832"], [20, "fnv1a64:02e80259edb639a7"], [21, "fnv1a64:fc29f22b926039ea"],
+        [22, "fnv1a64:243de4c435234765"], [23, "fnv1a64:67a13012beb19e9c"], [24, "fnv1a64:ec0656a31aafc687"],
+        [25, "fnv1a64:8c49cd26e656dbcf"], [26, "fnv1a64:247ef722b92c6204"], [27, "fnv1a64:f00e440851a58b13"],
+        [28, "fnv1a64:b5da9a0c5912e2a1"], [29, "fnv1a64:8fa1c5289f934b6c"], [30, "fnv1a64:979fe51baed2fdbe"],
+        [31, "fnv1a64:4e623c3a9e042063"], [32, "fnv1a64:8869484c34f051be"], [33, "fnv1a64:4468d9f88ccef101"],
+        [34, "fnv1a64:7cccec88150563d1"], [35, "fnv1a64:a1fff72bf7df0d61"], [36, "fnv1a64:f1fd1404a0419094"],
+        [37, "fnv1a64:65d7e43da0730488"], [38, "fnv1a64:c54a24ba7ec9ede0"], [39, "fnv1a64:2be47a8be58b6e2d"],
+        [40, "fnv1a64:9e746597720c0a5e"], [41, "fnv1a64:3563684105b4e07d"], [42, "fnv1a64:2d01e881a48e89ba"],
+        [43, "fnv1a64:a43109cf34ba76db"], [44, "fnv1a64:2d789daea84f6be5"], [45, "fnv1a64:684e9751df84008b"],
+        [46, "fnv1a64:2ff789898af1db34"], [47, "fnv1a64:bc12c517b36a44cd"], [48, "fnv1a64:c37fb12bff5170cd"],
+        [49, "fnv1a64:8e256886adc5f04b"], [50, "fnv1a64:8c864b4efec8f5e6"], [51, "fnv1a64:8a1ec0592938b876"],
+        [52, "fnv1a64:080fc712646d6207"], [53, "fnv1a64:8c8bd54d82dff703"], [54, "fnv1a64:c22a8b7a3f0beaec"],
+        [55, "fnv1a64:7112c7b69921b9d7"], [56, "fnv1a64:456c5704d7453251"], [57, "fnv1a64:a1ed504fe08c5794"],
+        [58, "fnv1a64:678baee87234ad0a"], [59, "fnv1a64:465e0361c3903892"], [60, "fnv1a64:12695113fc214166"],
+        [61, "fnv1a64:e9c49492803a42bd"], [62, "fnv1a64:6695976bd48afda1"], [63, "fnv1a64:1c7e80632c4dbdd6"],
+        [64, "fnv1a64:727fbab9d52d6bfe"], [65, "fnv1a64:a6961b4dd8f4a34e"], [66, "fnv1a64:637dd063b804bf39"],
+        [67, "fnv1a64:12f04920d155612e"], [68, "fnv1a64:4e255eff27650a63"], [69, "fnv1a64:67815210c00b8e9b"],
+        [70, "fnv1a64:a7574dab0f80e5f6"], [71, "fnv1a64:3b504b4dd02b315c"], [72, "fnv1a64:ac4b1a200b9bb654"],
+        [73, "fnv1a64:8353a6de2b43f352"], [74, "fnv1a64:9e2b842dccd98ced"], [75, "fnv1a64:7853db9967271ad1"],
+        [76, "fnv1a64:db89a773211c77f9"], [77, "fnv1a64:508e3a4a38336056"], [78, "fnv1a64:1eb73ad7db9308e9"],
+        [79, "fnv1a64:39b77864e961e783"], [80, "fnv1a64:3e800c3d0523bc8f"], [81, "fnv1a64:9e6f1bcd4fec2551"],
+        [82, "fnv1a64:a6d63dc8ad6de2af"], [83, "fnv1a64:03613d8e95e16d74"], [84, "fnv1a64:810a0bef8839528e"],
+        [85, "fnv1a64:c8f18c9d35ccecfe"], [86, "fnv1a64:b1a9415baaa8091e"], [87, "fnv1a64:24e96aadc1713e0e"],
+        [88, "fnv1a64:7dcd44e9be368b4f"], [89, "fnv1a64:8b2f3a2d251615bf"], [90, "fnv1a64:ad77e1918a590ef8"],
+        [91, "fnv1a64:c6eeabefee84adf1"], [92, "fnv1a64:ae190887c9003f73"], [93, "fnv1a64:b162988cc98332bf"],
+        [94, "fnv1a64:831d5f4a6578f650"], [95, "fnv1a64:686fefa5f8fd87ea"], [96, "fnv1a64:fc15cd4e15d75e20"],
+        [97, "fnv1a64:4866244ce5b8e3d6"], [98, "fnv1a64:7a7da03f200e4bb9"], [99, "fnv1a64:bb1487b0d34fd876"],
+        [100, "fnv1a64:fd37b737caae20d9"], [101, "fnv1a64:3022c41d4e16eb5d"], [102, "fnv1a64:9390dc1a196286ba"],
+        [103, "fnv1a64:f02733587a0be77b"], [104, "fnv1a64:6c2975f37fb7861c"], [105, "fnv1a64:bc1df7bfdec981c4"],
+        [106, "fnv1a64:2c4f9970a373b4a9"], [107, "fnv1a64:fdf9a6ce8319e9fc"], [108, "fnv1a64:d8845c9fbbeba86d"],
+        [109, "fnv1a64:ea1fbc23919d5646"], [110, "fnv1a64:5cdfceaaf5a1bf13"], [111, "fnv1a64:fb896ff620d82d53"],
+        [112, "fnv1a64:f9d992df1960f25c"], [113, "fnv1a64:c95fd402a01cd916"], [114, "fnv1a64:a3161b4bac666781"],
+        [115, "fnv1a64:1dad7e1c4b819ecd"], [116, "fnv1a64:93248191bf8bc275"], [117, "fnv1a64:49827207b0cf4aa5"],
+        [118, "fnv1a64:4e3ea9b904155b35"], [119, "fnv1a64:ff2daf58933364ef"], [120, "fnv1a64:8c94a8828abc5570"],
+        [121, "fnv1a64:bec590e15fc1952b"], [122, "fnv1a64:cf31e397c9ebd9ba"], [123, "fnv1a64:219655ba50c444ce"],
+        [124, "fnv1a64:e18ab6507f02c29f"], [125, "fnv1a64:5a6ad6a77d56fbee"], [126, "fnv1a64:f84a2b10cac157de"],
+        [127, "fnv1a64:9f3ad595ab1fc371"], [128, "fnv1a64:35b8f81a850d140d"], [129, "fnv1a64:00c6839e8f9b941e"],
+        [130, "fnv1a64:4fa6093296666607"], [131, "fnv1a64:a18c87740266b6dc"], [132, "fnv1a64:9444eeec188cccbb"],
+        [133, "fnv1a64:2cfaa8d846ead288"], [134, "fnv1a64:a194ecef7441448b"],
+        [135, "fnv1a64:b86ab74741d1ec2c"],
+      ]);
+  });
+
+  it("numbers its versions 1 to N without a gap", () => {
+    expect(WORKSPACE_DO_SCHEMA_MIGRATIONS.map((migration) => migration.version))
+      .toEqual(WORKSPACE_DO_SCHEMA_MIGRATIONS.map((_, index) => index + 1));
   });
 });

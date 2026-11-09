@@ -3,7 +3,7 @@ import { AccountProfileEditor, nameInitials } from '../lib/account-profile-edito
 import { settings } from '../settings/registry';
 import { SettingLabel } from '../settings/setting-label';
 import { MemberPresentationContext } from '../lib/member-presentation';
-import { useOpenFirstWorkstream } from '../lib/workstream-landing';
+import { useOpenLanding } from '../lib/landing';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check } from 'lucide-react';
@@ -193,7 +193,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   // The journey sets up an Organization; a guest has none of theirs to set up.
   const eligible = Boolean(account?.eligible) && !guest;
   const queryClient = useQueryClient();
-  const openFirstWorkstream = useOpenFirstWorkstream();
+  const openLanding = useOpenLanding();
   const key = ['onboarding-journey', workspace?.region, workspace?.id, workspace?.currentUser.id];
   const journey = useQuery({ queryKey: key, queryFn: () => api!.getOnboardingJourney(), enabled: Boolean(api && workspace && eligible) });
   const [busy, setBusy] = useState(false);
@@ -223,11 +223,10 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   if (state.stage === 'complete') return content(true);
   const finishOnboarding = async (): Promise<void> => {
     await advance('complete');
-    // A creator's workspace is empty and lands on the composer anyway; a
-    // member joining one that already has work streams enters the first.
-    // Through the hook, so the finished journey is replaced rather than left
-    // behind for Back.
-    openFirstWorkstream();
+    // Everyone lands on the Canvases home, whose empty state offers "Start
+    // from a prompt". Through the hook, so the finished journey is replaced
+    // rather than left behind for Back.
+    openLanding();
   };
   if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally"><PersonalSetup onSaved={() => state.path === 'creator' ? advance('people') : finishOnboarding()} /></OnboardingPage>;
   const inviteAddresses = invite.addresses;

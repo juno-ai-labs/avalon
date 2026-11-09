@@ -14,8 +14,8 @@ and maximized state. This document owns the persistence and restore contract.
 ## How it works
 
 Before constructing `BrowserWindow`, main reads `main-window-state.json` from
-Electron's `userData` directory. A valid version-1 record has integer `x`, `y`,
-`width`, and `height` fields and a boolean `maximized` field. Main selects the
+Electron's `userData` directory. A valid version-1 record has a `bounds` object of integer `x`,
+`y`, `width`, and `height` and a boolean `maximized` field. Main selects the
 display whose work area overlaps the saved rectangle most, preferring the primary
 display if none overlaps. It constrains the rectangle to that work area where
 the native minimum size permits, then supplies the bounds to the constructor.

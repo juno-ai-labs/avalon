@@ -4,7 +4,6 @@ import { WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE } from "./index";
 import {
   WORKSPACE_SOCKET_HEARTBEAT_MS,
   WORKSPACE_SOCKET_PONG_TIMEOUT_MS,
-  watchWorkspaceReach,
   watchWorkspaceSocket,
   type ReachSocket,
   type WorkspaceSocketConnection,
@@ -45,7 +44,7 @@ const subscribeAnswer = {
   eventId: "01920000-0000-7000-8000-000000000001",
   waterline: 3,
   occurredAt: "2026-09-24T00:00:00.000Z",
-  topics: ["workstream_directory"],
+  topics: ["automations"],
   reason: "initial",
   sidebar: {},
 };
@@ -54,27 +53,22 @@ const broadcast = {
   eventId: "01920000-0000-7000-8000-000000000002",
   waterline: 4,
   occurredAt: "2026-09-24T00:00:01.000Z",
-  topics: ["activity"],
+  topics: ["resources"],
   reason: "change",
-};
-const reachChanged = {
-  type: "workspace_reach_changed",
-  occurredAt: "2026-09-24T00:00:01.000Z",
-  userIds: ["00000000-0000-7000-8000-00000000e001"],
 };
 
 function harness(options: { ticket?: () => Promise<{ url: string; ticket: string }>; open?: () => FakeSocket } = {}) {
   const sockets: FakeSocket[] = [];
   const onStale = vi.fn();
   const diagnostics: ReachWatchDiagnostic[] = [];
-  const stop = watchWorkspaceReach({
+  const stop = watchWorkspaceSocket({
     ticket: options.ticket ?? (async () => ({ url: "wss://api.example/socket/workspaces/w", ticket: "t" })),
     open: options.open ?? (() => {
       const socket = new FakeSocket();
       sockets.push(socket);
       return socket;
     }),
-    onStale,
+    onSubscribed: () => onStale(),
     onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
   });
   /** Let the pending ticket promise settle, then open the newest socket. */
@@ -90,7 +84,7 @@ function harness(options: { ticket?: () => Promise<{ url: string; ticket: string
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
-describe("watchWorkspaceReach", () => {
+describe("watchWorkspaceSocket reconnection", () => {
   it.each(["open", "sync"] as const)("replaces a stalled %s without depending on close", async (phase) => {
     vi.spyOn(Math, "random").mockReturnValue(0);
     const {sockets, diagnostics} = harness();
@@ -138,7 +132,7 @@ describe("watchWorkspaceReach", () => {
     expect(sockets).toHaveLength(2);
   });
 
-  it("subscribes, and reports the first subscribe answer and a reach change, but not a broadcast", async () => {
+  it("subscribes, and reports the subscribe answer but not a broadcast", async () => {
     const { onStale, opened } = harness();
     const socket = await opened();
 
@@ -149,11 +143,8 @@ describe("watchWorkspaceReach", () => {
     expect(onStale).toHaveBeenCalledTimes(1);
 
     socket.message(broadcast);
-    socket.message({ type: "workspace_presence", occurredAt: reachChanged.occurredAt, workstreamId: null, userIds: [] });
+    socket.message({ type: "workspace_presence", occurredAt: broadcast.occurredAt, workstreamId: null, userIds: [] });
     expect(onStale).toHaveBeenCalledTimes(1);
-
-    socket.message(reachChanged);
-    expect(onStale).toHaveBeenCalledTimes(2);
   });
 
   it("recognizes a subscribe answer carrying a field this build does not know", async () => {
@@ -184,7 +175,7 @@ describe("watchWorkspaceReach", () => {
     await vi.advanceTimersByTimeAsync(1_500);
     await opened();
 
-    first.message(reachChanged);
+    first.message(subscribeAnswer);
     expect(onStale).not.toHaveBeenCalled();
   });
 

@@ -43,7 +43,7 @@ enthusiastic artist rather than a fast one, so give it a moment.
 
 ## Editing a picture you attach
 
-Attach an image (see [Attaching files](../02-working-in-a-channel/02-attaching-files.md))
+Attach an image (see [Attaching files](../02-canvases/03-attaching-files.md))
 and say what to change: "Make the sky a sunset", "Remove the coffee cup from
 the desk", "Turn this photo into a pencil sketch". The row says **Editing an
 image**.
@@ -86,14 +86,14 @@ parts.
 ### Not the same as Speak
 
 This is different from the **Speak** button under a message, from
-[Reading Rally's answers](../02-working-in-a-channel/04-reading-rallys-answers.md).
+[Reading Rally's answers](../02-canvases/05-reading-rallys-answers.md).
 **Speak** reads a message aloud to you, there and then, and leaves nothing
 behind. A voice recording is a file you keep, play again, download and share.
 
 ## Where the results go
 
-Pictures and recordings are saved as files in the Thread, the same as any
-other file Rally makes, so everyone in the Thread can open them. To preview,
+Pictures and recordings are saved as files in the Canvas, the same as any
+other file Rally makes, so everyone in the Canvas can open them. To preview,
 keep one open beside the chat, or save it to your Mac, see
 [Opening, docking and downloading](../06-things-rally-makes/02-opening-and-downloading.md).
 

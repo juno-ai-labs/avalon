@@ -63,7 +63,7 @@ export function migrationCommandDispatchers(env: Env): Record<
   (objectId: string, command: DurableObjectMigrationCommand) => Promise<ForcedMigrationOutcome>
 > {
   return {
-    SubstreamAgent: (objectId, command) =>
+    AgentLoopDO: (objectId, command) =>
       durableObjectStubById(env, env.SUBSTREAM_AGENTS, objectId).forceMigration(command),
     WorkspaceDO: (objectId, command) =>
       durableObjectStubById(env, env.WORKSPACE_DOS, objectId).forceMigration(command),
@@ -87,7 +87,7 @@ const DELETED_MIGRATION_CLASSES: ReadonlySet<string> = new Set(["WorkstreamDO", 
  * below able to fire at all.
  */
 export const MIGRATION_COMMAND_HEADS: Readonly<Record<string, number>> = {
-  SubstreamAgent: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
+  AgentLoopDO: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
   WorkspaceDO: latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS),
 };
 
@@ -117,11 +117,21 @@ export function migrationShortfall(
   return outcome.schemaVersion < head ? head : null;
 }
 
+/**
+ * Classes renamed by a Wrangler `renamed_classes` tag: a command a tracker
+ * queued under the old name before the rename reaches the same objects under
+ * the new one, rather than dead-lettering as an unknown class. Delete an entry
+ * once no tracker build can still queue the old name.
+ */
+const RENAMED_MIGRATION_CLASSES: Readonly<Record<string, string>> = { SubstreamAgent: "AgentLoopDO" };
+
 /** Carry one forced migration to one object and read back where it landed. */
 export async function applyMigrationCommand(
   env: Env,
-  command: DurableObjectMigrationCommand,
+  queued: DurableObjectMigrationCommand,
 ): Promise<ForcedMigrationOutcome> {
+  const command = Object.hasOwn(RENAMED_MIGRATION_CLASSES, queued.className)
+    ? { ...queued, className: RENAMED_MIGRATION_CLASSES[queued.className]! } : queued;
   const dispatchers = migrationCommandDispatchers(env);
   // `Object.hasOwn`, not a truthiness check on the lookup. `className` is an
   // identifier as far as the contract is concerned, and `constructor`,

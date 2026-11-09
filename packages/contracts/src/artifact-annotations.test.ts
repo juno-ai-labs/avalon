@@ -1,16 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { AnnotationSchema, AnnotatedMessageContentSchema, AnnotationsSchema, MESSAGE_MAX_CHARACTERS, isHtmlResource, CreateMessageRequestSchema, CreateWorkstreamRequestSchema, annotationAllowedForResource, buildAnnotation, renderAnnotations, type Annotation } from './index';
+import { AnnotationSchema, AnnotatedMessageContentSchema, AnnotationsSchema, MESSAGE_MAX_CHARACTERS, isHtmlResource, CreateMessageRequestSchema, annotationAllowedForResource, buildAnnotation, renderAnnotations, type Annotation } from './index';
 const resourceId = '00000000-0000-7000-8000-0000000000a1';
 const pin = () => buildAnnotation({ target: { resourceId, version: 4, locator: { type: 'markdown', start: 9, end: 15, headingPath: ['Plans'] } }, content: { exact: '**$12**', source: 'exact', before: 'Starter: ', after: ' yearly', truncated: false }, comment: 'Make this monthly' });
 describe('artifact annotations', () => {
   it('admits annotation-only messages with a comment, and refuses empty requests', () => {
     expect(CreateMessageRequestSchema.parse({ text: '', clientMessageId: 'annotated', annotations: [pin()] }).annotations?.[0]?.content.exact).toBe('**$12**');
     expect(CreateMessageRequestSchema.safeParse({ text:'',clientMessageId:'empty',annotations:[{ ...pin(),comment:' ' }] }).success).toBe(false);
-  });
-  it('admits commented pins when starting a thread and validates its crop references',()=>{
-    const input={openingMessage:'',clientMessageId:'new-annotated-thread',annotations:[pin()]};
-    expect(CreateWorkstreamRequestSchema.parse(input).annotations?.[0]?.target.version).toBe(4);
-    expect(CreateWorkstreamRequestSchema.safeParse({...input,annotations:[{...pin(),content:{...pin().content,imageAttachmentId:'00000000-0000-7000-8000-0000000000a2'}}]}).success).toBe(false);
   });
   it('requires crop references to be sent as owned draft attachments', () => {
     const imageAttachmentId = '00000000-0000-7000-8000-0000000000a2';

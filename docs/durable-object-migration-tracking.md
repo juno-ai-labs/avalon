@@ -1,10 +1,10 @@
 # Durable Object migration tracking
 
 Rally runs two migrated Durable Object classes across two regional Workers,
-`SubstreamAgent` and `WorkspaceDO`, and each object applies its own SQLite
+`AgentLoopDO` and `WorkspaceDO`, and each object applies its own SQLite
 migration history in its constructor. The legacy `WorkstreamDO`, `SpaceDO` and
-`SidekickDO` were tracked here too until each class was deleted; Channel, Space
-and Sidekick parents now live in `WorkspaceDO`
+`SidekickDO` were tracked here too until each class was deleted; Canvas and
+Sidekick parents live in `WorkspaceDO`
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). Nothing in
 Cloudflare's account model can answer the question that follows from that:
 **which objects are on which schema version, and which of them are broken?** A
@@ -56,7 +56,7 @@ keep their last labels; new sweeps and commands name only live classes.
 | `apps/migration-tracker/src/app.ts`, `views.ts` | The Hono application and the server-rendered site. |
 | `apps/migration-tracker/wrangler.jsonc` | The deployment: the custom domain, the Access variables, the cron trigger, and the two regional command-queue producer bindings. |
 | `scripts/ensure-cloudflare-queues.mjs` | The deployment preflight that reads every Wrangler file and creates each queue it declares that the account does not hold, so the configuration stays the single source of truth and no queue is made by hand. |
-| `scripts/force-substream-agent-migrations.mjs` | The explicit one-off fleet wake for `SubstreamAgent`: inventories stored IDs, classifies their encoded jurisdiction, sends only region-addressable IDs through the existing command queues, and verifies queue drain without a new dead letter. |
+| `scripts/force-substream-agent-migrations.mjs` | The explicit one-off fleet wake for `AgentLoopDO`: inventories stored IDs, classifies their encoded jurisdiction, sends only region-addressable IDs through the existing command queues, and verifies queue drain without a new dead letter. |
 | `scripts/substream-agent-jurisdiction-probe/` | A remote-development-only Worker that parses enumerated IDs through unrestricted external bindings and returns their encoded jurisdiction without opening an object. |
 
 ### The report
@@ -65,7 +65,7 @@ keep their last labels; new sweeps and commands name only live classes.
 constructors. It reads the object's version from the runner's own
 `_sql_schema_migrations` ledger before and after the call, so it works
 identically at the sites that call the runner directly and at
-`SubstreamAgent`, which reaches it through `WorkstreamObjectStore`'s constructor.
+`AgentLoopDO`, which reaches it through `WorkstreamObjectStore`'s constructor.
 
 Three outcomes reach the tracker:
 
@@ -349,7 +349,7 @@ The link runs through the objects, which is the only place the tracker's two
 halves meet — a sweep gives an object its namespace, a report gives it its
 component and region — and that is what makes the marker per region. The same
 classes are deployed in both Workers, so asking whether any namespace for
-`SubstreamAgent` is still live would leave a component looking live in the
+`AgentLoopDO` is still live would leave a component looking live in the
 region it was deleted from because the other region still runs it. A retired component and a retired namespace both
 stay in their tables, dimmed and sorted last — what used to be deployed is
 exactly what somebody wants to see when a class disappeared and its objects went
@@ -735,7 +735,7 @@ goes through `hono/html` escaping.
   the deployment preflight creates if it is absent.
   [`runbook.md`](runbook.md#the-durable-object-migration-tracker) has the
   provisioning steps.
-- The explicit `SubstreamAgent` fleet wake is for a coordinated release that
+- The explicit `AgentLoopDO` fleet wake is for a coordinated release that
   needs every currently addressable object constructed immediately rather than
   waiting for ordinary traffic. Start its local jurisdiction classifier in one
   terminal, using credentials from a trusted checkout rather than copying them:
@@ -798,6 +798,37 @@ a few tens of registry writes, not a few hundred.
 The run cap of 5,000 is not a capacity estimate; it is a guard on the blast
 radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
+
+## Changelog
+
+### 2026-11-09 — `SubstreamAgent` is tracked as `AgentLoopDO`
+
+**What changed:** The conversation class was renamed `AgentLoopDO` (Wrangler tag
+v15). `REPORTING_CLASSES`, the API's forced-migration dispatchers and heads name
+it; registry migration v6 rewrites `class_name` from `SubstreamAgent` in the
+live rows, the report log, the heads, the namespaces and the run log. A report
+still carrying the old name is filed under the new one (`RENAMED_CLASS_FROM`),
+and a forced-migration command queued under it is dispatched to the renamed
+class (`RENAMED_MIGRATION_CLASSES`). The component key stays
+`substream_agent_do`.
+
+**Why:** The pivot's decision to rename the class. The two Workers deploy
+independently, so for a while the outgoing API build reports under the old name
+and an older tracker may queue commands under it; without the translations those
+reports would refile objects under a second class and those commands would
+dead-letter as unknown, filling the queue this platform reads as its signal for
+stuck migrations.
+
+**Considered and rejected:** The Sidekick rename's staged dual-export release,
+which existed because that class's objects moved under a compatibility export;
+this rename is one `renamed_classes` tag on one namespace. Renaming the
+component key: the schema did not change, so its history should not split.
+
+**Consequences:** Delete both translations, and their tests, once no deployed
+build of either Worker carries the old name.
+
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-06 — SidekickDO leaves the tracked fleet
 

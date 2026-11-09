@@ -8,8 +8,6 @@ import {
 import {
   AutomationEmailAddressClaimSchema,
   AutomationEmailRouteInputSchema,
-  WorkstreamEmailAddressClaimSchema,
-  WorkstreamEmailRouteInputSchema,
   parseRpcInput,
   rpcBatch,
 } from "./lib/rpc-contracts";
@@ -18,24 +16,6 @@ import {
 export class WorkstreamEmailRoutingBridge extends WorkerEntrypoint<Env> {
   ping() {
     return rpcResult(() => new WorkstreamEmailRoutingService(this.env).pingGlobalRegistry());
-  }
-
-  reserve(input: unknown) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).reserveInGlobalRegistry(
-      parseRpcInput(WorkstreamEmailRouteInputSchema, input, "reserve"),
-    ));
-  }
-
-  reserveMany(inputs: unknown) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).reserveManyInGlobalRegistry(
-      parseRpcInput(rpcBatch(WorkstreamEmailRouteInputSchema), inputs, "reserveMany"),
-    ));
-  }
-
-  claim(input: unknown) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).claimInGlobalRegistry(
-      parseRpcInput(WorkstreamEmailAddressClaimSchema, input, "claim"),
-    ));
   }
 
   reserveAutomation(input: unknown) {

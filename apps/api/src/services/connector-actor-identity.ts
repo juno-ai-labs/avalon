@@ -197,10 +197,10 @@ export async function resolveConnectorActorIdentities(
 }
 
 /**
- * `external_user_identities` predates this resolver and has other writers:
- * `syncVerifiedIdentityDirectory` records `personal_connector_oauth` and
- * `slack_user_link`. Map every vocabulary onto the strengths above so a stored
- * row is read back at the confidence it was recorded with, whoever wrote it.
+ * `external_user_identities` predates this resolver, and rows written by
+ * Suggested Work's identity sync (retired) carry `personal_connector_oauth`
+ * and `slack_user_link`. Map every vocabulary onto the strengths above so a
+ * stored row is read back at the confidence it was recorded with.
  */
 function storedVerification(source: string): ConnectorActorVerification {
   if (source === "verified_email") return "verified_email";

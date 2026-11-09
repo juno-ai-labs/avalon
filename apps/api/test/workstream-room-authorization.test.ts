@@ -1,11 +1,10 @@
-import { ParticipantAuthorityTransferStorage } from "../src/durable-objects/participant-authority-transfer";
 import "../../../tests/isolated-region";
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SubstreamAgent, type SubstreamProductRequest } from "../src/durable-objects/substream-agent";
+import { AgentLoopDO, type SubstreamProductRequest } from "../src/durable-objects/agent-loop-do";
 import { rpcResultBody } from "../src/durable-objects/rpc-result";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -18,7 +17,6 @@ import { createTestSqlStorage } from "./helpers/sql-storage";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
-  seedProjectedParticipants,
   testWorkstreamObjectStore,
 } from "./helpers/durable-authority";
 import { createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
@@ -57,9 +55,9 @@ beforeEach(() => {
   });
 });
 
-const productDatabases = new WeakMap<SubstreamAgent, DatabaseSync>();
+const productDatabases = new WeakMap<AgentLoopDO, DatabaseSync>();
 
-function productDatabase(room: SubstreamAgent): DatabaseSync {
+function productDatabase(room: AgentLoopDO): DatabaseSync {
   const database = productDatabases.get(room);
   if (!database) throw new Error("room_product_database_missing");
   return database;
@@ -166,13 +164,15 @@ function roomFor(
   database: DatabaseSync,
   sockets: FakeSocket[] = [],
   region: string = "global",
-): SubstreamAgent {
+): AgentLoopDO {
   const storage = new Map<string, unknown>([
     ["roomIdentity", { workspaceId: WORKSPACE, workstreamId: WORKSTREAM }],
   ]);
   const objectDatabase = testWorkstreamObjectStore();
   databases.push(objectDatabase);
   seedWorkstreamObjectRoot(objectDatabase, { workspaceId: WORKSPACE, workstreamId: WORKSTREAM });
+  // A conversation is a Canvas's or a Sidekick's; a stored Thread kind is refused on open.
+  objectDatabase.prepare("UPDATE workstream SET parent_kind = 'canvas' WHERE id = 1").run();
   const source = database.prepare(
     "SELECT scope FROM workstreams WHERE id = ? AND workspace_id = ?",
   ).get(WORKSTREAM, WORKSPACE) as { scope: string };
@@ -237,8 +237,7 @@ function roomFor(
       }),
     },
   });
-  seedProjectedParticipants(state.storage);
-  const room = new SubstreamAgent(
+  const room = new AgentLoopDO(
     state,
     createTestEnv({ DB: sqliteD1(database), AVALON_REGION: region, APP_ENV: "test" }),
   );
@@ -246,41 +245,7 @@ function roomFor(
   return room;
 }
 
-describe("message commands over the SubstreamAgent socket", () => {
-  it("admits a participant write through the identity already attached to the room socket", async () => {
-    const socket = fakeSocket(PARTICIPANT);
-    const operationId = "00000000-0000-7000-8000-0000000000c7";
-    const clientMessageId = "socket-client-message";
-    const room = roomFor(seededDatabase(), [socket]);
-
-    await room.webSocketMessage(socket as unknown as WebSocket, JSON.stringify({
-      type: "create_message",
-      operationId,
-      payload: {
-        text: "Continue",
-        clientMessageId,
-        mentions: [],
-        confirmedParticipantUserIds: [],
-        attachmentIds: [],
-      },
-    }));
-
-    // Admission can be followed by live run-status frames before this await
-    // returns. The command receipt, not the last transport frame, proves it.
-    expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(expect.objectContaining({
-      type: "client_command_succeeded",
-      command: "create_message",
-      clientMessageId,
-      turn: expect.objectContaining({
-        clientMessageId,
-        turnId: expect.any(String),
-      }),
-    }));
-    expect(socket.closes).toEqual([]);
-  });
-});
-
-function publish(room: SubstreamAgent, event: Record<string, unknown>): Promise<Response> {
+function publish(room: AgentLoopDO, event: Record<string, unknown>): Promise<Response> {
   return room.fetch(new Request("https://room.internal/internal/events", {
     method: "POST",
     headers: {
@@ -301,7 +266,7 @@ function publish(room: SubstreamAgent, event: Record<string, unknown>): Promise<
  * step later, and the difference between "refused at the gate" and "let
  * through" is legible as 403 against 401.
  */
-function connectAs(room: SubstreamAgent, userId: string): Promise<Response> {
+function connectAs(room: AgentLoopDO, userId: string): Promise<Response> {
   const sessionId = userId === MEMBER ? MEMBER_SESSION : SESSION;
   return room.fetch(new Request("https://room.internal/socket", {
     headers: {
@@ -333,16 +298,6 @@ describe("who the work-stream room lets connect", () => {
     const response = await connectAs(roomFor(seededDatabase()), OUTSIDER);
 
     expect(response.status).toBe(403);
-  });
-
-  it("lets that same member in once the work stream is open to the workspace", async () => {
-    const database = seededDatabase();
-    database.exec(`UPDATE workstreams SET scope = 'workspace' WHERE id = '${WORKSTREAM}'`);
-
-    const response = await connectAs(roomFor(database), MEMBER);
-
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "socket_ticket_replayed" });
   });
 
   it("refuses an internal event that cannot pin the room identity", async () => {
@@ -489,11 +444,7 @@ describe("who the work-stream room disconnects", () => {
     const removed = fakeSocket(PARTICIPANT);
     const room = roomFor(database, [removed]);
     const sql = createTestSqlStorage(productDatabase(room));
-    const projections = new ParticipantAuthorityTransferStorage(createCloudflareTestBinding<DurableObjectStorage>({
-      sql, transactionSync: <T,>(body: () => T) => body(),
-    }));
-    const current = projections.projectionForUser(PARTICIPANT)!;
-    projections.applyProjection({ ...current, active: false, revision: current.revision + 1, changedAt: Date.now() });
+    sql.exec("UPDATE participants SET status = 'removed', removed_at = ? WHERE user_id = ?", Date.now(), PARTICIPANT);
 
     const response = await publish(room, { type: "participant_removed", userId: PARTICIPANT });
 
@@ -571,14 +522,14 @@ describe("what authority the product API accepts", () => {
     { operation: "search_turns" as const, turnIds: ["private-turn"] },
     { operation: "search_link" as const, turnId: "private-turn", linkId: "private-link" },
   ])("refuses revoked sessions for $operation", async (operation) => {
-    const result = await roomFor(seededDatabase()).handleProductRequest({ ...operation, auth: productAuth() });
+    const result = await roomFor(seededDatabase()).handleProductRequest({ ...operation, parentKind: "canvas" as const, auth: productAuth() });
     expect(result.status).toBe(401);
     expect(rpcResultBody(result)).toEqual(sessionRefusal);
   });
 
   it("still refuses a synthesized session id that claims no principal", async () => {
     const result = await roomFor(seededDatabase())
-      .handleProductRequest({ operation: "get", auth: productAuth() });
+      .handleProductRequest({ operation: "get", parentKind: "canvas" as const, auth: productAuth() });
 
     expect(result.status).toBe(401);
     expect(rpcResultBody(result)).toEqual(sessionRefusal);
@@ -586,65 +537,10 @@ describe("what authority the product API accepts", () => {
 
   it("runs a connector-principal request as the member the ingress verified", async () => {
     const result = await roomFor(seededDatabase())
-      .handleProductRequest({ operation: "get", auth: productAuth({ principal: "connector" }) });
+      .handleProductRequest({ operation: "get", parentKind: "canvas" as const, auth: productAuth({ principal: "connector" }) });
 
     expect(result.status).toBe(200);
     expect(rpcResultBody(result)).toMatchObject({ id: WORKSTREAM });
-  });
-
-  it("returns pins only for active, readable Space placements", async () => {
-    const database = seededDatabase();
-    const visibleSpace = "00000000-0000-7000-8000-0000000000d1";
-    const archivedSpace = "00000000-0000-7000-8000-0000000000d2";
-    const privateSpace = "00000000-0000-7000-8000-0000000000d3";
-    const inactiveSpace = "00000000-0000-7000-8000-0000000000d4";
-    database.prepare(
-      `INSERT INTO channels
-         (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
-          title, description, preview, scope, exact_state, system_kind, last_activity_at,
-          completed_at, archived_at, email_address, origin_type, origin_label,
-          created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
-          title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
-          next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
-          source_created_at, source_updated_at, projected_at)
-       VALUES (?, 1, 1, 'pin-projection-event', 'pin-projection-hash',
-               'Compensation review', '', '', 'personal', 'idle', NULL, 1,
-               NULL, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
-               'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
-    ).run(WORKSTREAM, PARTICIPANT);
-    for (const [spaceId, scope, archivedAt, membershipState] of [
-      [visibleSpace, "workspace", null, "active"],
-      [archivedSpace, "workspace", 1, "active"],
-      [privateSpace, "personal", null, "active"],
-      [inactiveSpace, "workspace", null, "removed"],
-    ] as const) {
-      database.prepare(
-        `INSERT INTO spaces
-           (space_id, title, scope, appearance_json, archived_at, created_by_user_id,
-            system_role, authority_generation, source_version, payload_hash, revision,
-            created_at, updated_at, source_created_at, source_updated_at)
-         VALUES (?, 'Pin projection', ?, NULL, ?, ?, NULL, 1, 1, ?, 1, 1, 1, 1, 1)`,
-      ).run(spaceId, scope, archivedAt, PARTICIPANT, `pin-projection-${spaceId}`);
-      database.prepare(
-        `INSERT INTO space_channel_memberships
-           (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
-         VALUES (?, ?, ?, 1, 1, 1, NULL)`,
-      ).run(spaceId, WORKSTREAM, membershipState);
-      database.prepare(
-        `INSERT INTO workspace_workstream_pins
-           (user_id, space_id, workstream_id, position, created_at, updated_at)
-         VALUES (?, ?, ?, 0, 1, 1)`,
-      ).run(PARTICIPANT, spaceId, WORKSTREAM);
-    }
-
-    const result = await roomFor(database)
-      .handleProductRequest({ operation: "get", auth: productAuth({ principal: "connector" }) });
-
-    expect(result.status).toBe(200);
-    expect(rpcResultBody(result)).toMatchObject({
-      id: WORKSTREAM,
-      spacePins: [{ spaceId: visibleSpace, position: 0 }],
-    });
   });
 
   it("refuses a connector principal for somebody who is not an active member", async () => {
@@ -655,7 +551,7 @@ describe("what authority the product API accepts", () => {
     );
 
     const result = await roomFor(database)
-      .handleProductRequest({ operation: "get", auth: productAuth({ principal: "connector" }) });
+      .handleProductRequest({ operation: "get", parentKind: "canvas" as const, auth: productAuth({ principal: "connector" }) });
 
     expect(result.status).toBe(401);
     expect(rpcResultBody(result)).toEqual(connectorRefusal);
@@ -664,7 +560,7 @@ describe("what authority the product API accepts", () => {
   it("refuses a connector principal whose asserted role has gone stale", async () => {
     const result = await roomFor(seededDatabase()).handleProductRequest({
       operation: "get",
-      auth: productAuth({ principal: "connector", role: "member" }),
+      parentKind: "canvas" as const, auth: productAuth({ principal: "connector", role: "member" }),
     });
 
     expect(result.status).toBe(401);
@@ -681,7 +577,7 @@ describe("what authority the product API accepts", () => {
     // row alone would admit this request and the equality check would pass.
     const result = await roomFor(seededDatabase(), [], "enterprise").handleProductRequest({
       operation: "get",
-      auth: productAuth({ principal: "connector", region: "enterprise" }),
+      parentKind: "canvas" as const, auth: productAuth({ principal: "connector", region: "enterprise" }),
     });
 
     expect(result.status).toBe(401);
@@ -691,7 +587,7 @@ describe("what authority the product API accepts", () => {
   it("refuses a connector principal that asserts another region", async () => {
     const result = await roomFor(seededDatabase()).handleProductRequest({
       operation: "get",
-      auth: productAuth({ principal: "connector", region: "enterprise" }),
+      parentKind: "canvas" as const, auth: productAuth({ principal: "connector", region: "enterprise" }),
     });
 
     expect(result.status).toBe(401);
@@ -727,7 +623,7 @@ describe("what authority the product API accepts", () => {
       workspaceId: asWorkspaceId(WORKSPACE),
       region: "global",
       role: "owner",
-    }, WORKSTREAM);
+    }, WORKSTREAM, "0", false, "canvas");
 
     await expect(client.get()).rejects.toMatchObject({ code: "session_revoked" });
 

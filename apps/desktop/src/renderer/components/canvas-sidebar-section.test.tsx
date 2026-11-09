@@ -1,0 +1,193 @@
+import { asUserId } from '@rally/contracts';
+import type { CanvasSidebarRow } from '@rally/contracts';
+import * as Tooltip from '@radix-ui/react-tooltip';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { createRef } from 'react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { canvasRenameRequested, canvasShareRequested } from '../lib/canvases';
+import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
+import { CanvasesSection } from './canvas-sidebar-section';
+
+const ME = asUserId('00000000-0000-7000-8000-0000000000a1');
+const MAYA = asUserId('00000000-0000-7000-8000-0000000000a2');
+const setCanvasPinned = vi.hoisted(() => vi.fn());
+const getWorkspaceMembers = vi.hoisted(() => vi.fn());
+const socket = vi.hoisted(() => ({ current: null as null | { state: string; retry: () => void } }));
+vi.mock('../lib/workspace-socket', () => ({ useOptionalWorkspaceSocket: () => socket.current }));
+vi.mock('../lib/collaboration-session', () => ({
+  useCollaborationSession: () => ({ api: { setCanvasPinned, getWorkspaceMembers }, session: { user: { id: ME }, workspace: { id: 'workspace-1', region: 'global' } } }),
+}));
+
+function canvas(id: string, title: string, overrides: Partial<CanvasSidebarRow> = {}): CanvasSidebarRow {
+  return {
+    id, title, createdByUserId: ME, createdAt: '2026-11-07T09:00:00.000Z', updatedAt: '2026-11-07T09:00:00.000Z',
+    lastEditor: null, writerSidekickId: null, visibility: 'creator', artifactKind: null, unread: false,
+    presentUserIds: [], pinnedPosition: null, sharedWithMe: false, ...overrides,
+  } as CanvasSidebarRow;
+}
+
+function renderSection(rows: CanvasSidebarRow[] | null, at = '/'): QueryClient {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (rows) applyVersionedSidebarList(client, 'canvases', 1, rows);
+  render(<QueryClientProvider client={client}><Tooltip.Provider><MemoryRouter initialEntries={[at]}>
+    <CanvasesSection scroll={createRef()} />
+  </MemoryRouter></Tooltip.Provider></QueryClientProvider>);
+  return client;
+}
+
+beforeEach(() => {
+  socket.current = null;
+  setCanvasPinned.mockReset().mockResolvedValue(undefined);
+  getWorkspaceMembers.mockReset().mockResolvedValue([{ id: MAYA, name: 'Maya Lin', email: 'maya@example.test', timezone: 'UTC' }]);
+});
+
+describe('CanvasesSection', () => {
+  it('draws Pinned first in pinned order, then every other Canvas by recency', async () => {
+    renderSection([
+      canvas('00000000-0000-7000-8000-0000000000c1', 'Acme follow-up', { unread: true }),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'Launch plan', { pinnedPosition: 1, lastEditor: { kind: 'rally', id: null } }),
+      canvas('00000000-0000-7000-8000-0000000000c3', 'Q4 revenue review', { pinnedPosition: 0, presentUserIds: [MAYA] }),
+    ], '/canvases/00000000-0000-7000-8000-0000000000c1');
+    const pinned = screen.getByRole('region', { name: 'Pinned Canvases' });
+    expect(within(pinned).getAllByRole('link').map((link) => link.textContent)).toEqual([
+      expect.stringContaining('Q4 revenue review'), expect.stringContaining('Launch plan'),
+    ]);
+    expect(await within(pinned).findByText('Maya is here')).toBeInTheDocument();
+    expect(within(pinned).getByRole('img', { name: 'People are here' })).toBeInTheDocument();
+    expect(within(pinned).getByText('Edited by Rally')).toBeInTheDocument();
+    const all = screen.getByRole('region', { name: 'All canvases' });
+    const row = within(all).getByRole('link', { name: /Acme follow-up/ });
+    expect(row).toHaveAttribute('href', '/canvases/00000000-0000-7000-8000-0000000000c1');
+    expect(row).toHaveAttribute('aria-current', 'page');
+    expect(row).toHaveClass('is-unread');
+    expect(within(row).getByRole('img', { name: 'Unread' })).toBeInTheDocument();
+    expect(within(row).getByText('Made by you')).toBeInTheDocument();
+  });
+
+  it('sorts All canvases by name when asked, and by recent activity otherwise', () => {
+    renderSection([
+      canvas('00000000-0000-7000-8000-0000000000c1', 'Q4 revenue review'),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'Acme follow-up'),
+    ]);
+    const all = screen.getByRole('region', { name: 'All canvases' });
+    const titles = (): string[] => within(all).getAllByRole('link').map((link) => link.textContent ?? '');
+    expect(titles()).toEqual([expect.stringContaining('Q4 revenue review'), expect.stringContaining('Acme follow-up')]);
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Sort Canvases' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Name' }));
+
+    expect(titles()).toEqual([expect.stringContaining('Acme follow-up'), expect.stringContaining('Q4 revenue review')]);
+  });
+
+  it('says the list waits on a connection that could not open, rather than drawing placeholders for ever', () => {
+    socket.current = { state: 'unavailable', retry: vi.fn() };
+    renderSection(null);
+    expect(screen.getByRole('status')).toHaveTextContent('Rally can’t reach the server right now. Your Canvases appear when Rally reconnects.');
+    expect(screen.getByRole('region', { name: 'Pinned Canvases' })).not.toHaveAttribute('aria-busy');
+
+    socket.current = { state: 'connecting', retry: vi.fn() };
+    cleanup();
+    renderSection(null);
+    expect(screen.queryByText(/Rally can’t reach/)).toBeNull();
+  });
+
+  it('pins a Canvas dragged into Pinned', async () => {
+    renderSection([canvas('00000000-0000-7000-8000-0000000000c1', 'Acme follow-up')]);
+    const row = screen.getByRole('link', { name: /Acme follow-up/ });
+    const target = screen.getByRole('region', { name: 'Pinned Canvases' });
+    const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };
+    fireEvent.dragStart(row, { dataTransfer });
+    const over = createEvent.dragOver(target, { dataTransfer });
+    fireEvent(target, over);
+    expect(over.defaultPrevented).toBe(true);
+    fireEvent.drop(target, { dataTransfer });
+    await waitFor(() => expect(setCanvasPinned).toHaveBeenCalledWith('00000000-0000-7000-8000-0000000000c1', true));
+  });
+
+  it('unpins from a pinned row’s menu', async () => {
+    renderSection([canvas('00000000-0000-7000-8000-0000000000c1', 'Launch plan', { pinnedPosition: 0 })]);
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Launch plan/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
+    expect(setCanvasPinned).toHaveBeenCalledWith('00000000-0000-7000-8000-0000000000c1', false);
+  });
+
+  it('opens the Canvas with its title being renamed from a row’s Rename…', async () => {
+    const opened = vi.fn();
+    function Opened(): null {
+      const location = useLocation();
+      opened(location.pathname, canvasRenameRequested(location.state));
+      return null;
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    applyVersionedSidebarList(client, 'canvases', 1, [canvas('00000000-0000-7000-8000-0000000000c1', 'Launch plan')]);
+    render(<QueryClientProvider client={client}><Tooltip.Provider><MemoryRouter initialEntries={['/']}>
+      <CanvasesSection scroll={createRef()} />
+      <Routes><Route element={<Opened />} path="/canvases/:id" /><Route element={null} path="/" /></Routes>
+    </MemoryRouter></Tooltip.Provider></QueryClientProvider>);
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Launch plan/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename…' }));
+    await waitFor(() => expect(opened).toHaveBeenLastCalledWith('/canvases/00000000-0000-7000-8000-0000000000c1', true));
+  });
+
+  it('offers the pill menu\'s Share… from a row, opening the Canvas on its Share panel', async () => {
+    const opened = vi.fn();
+    function Opened(): null {
+      const location = useLocation();
+      opened(location.pathname, canvasShareRequested(location.state));
+      return null;
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    applyVersionedSidebarList(client, 'canvases', 1, [canvas('00000000-0000-7000-8000-0000000000c1', 'Launch plan')]);
+    render(<QueryClientProvider client={client}><Tooltip.Provider><MemoryRouter initialEntries={['/']}>
+      <CanvasesSection scroll={createRef()} />
+      <Routes><Route element={<Opened />} path="/canvases/:id" /><Route element={null} path="/" /></Routes>
+    </MemoryRouter></Tooltip.Provider></QueryClientProvider>);
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Launch plan/ }));
+    expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['Pin', 'Rename…', 'Share…', 'Copy link']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Share…' }));
+    await waitFor(() => expect(opened).toHaveBeenLastCalledWith('/canvases/00000000-0000-7000-8000-0000000000c1', true));
+  });
+
+  it('marks a row that arrives after the list did, so it slides in, and not the rows that were there', async () => {
+    const client = renderSection([canvas('00000000-0000-7000-8000-0000000000c1', 'Launch plan')]);
+    expect(screen.getByRole('link', { name: /Launch plan/ })).not.toHaveAttribute('data-motion-insert');
+    act(() => {
+      applyVersionedSidebarList(client, 'canvases', 2, [
+        canvas('00000000-0000-7000-8000-0000000000c2', 'Fresh one'),
+        canvas('00000000-0000-7000-8000-0000000000c1', 'Launch plan'),
+      ]);
+    });
+    expect(await screen.findByRole('link', { name: /Fresh one/ })).toHaveAttribute('data-motion-insert');
+    expect(screen.getByRole('link', { name: /Launch plan/ })).not.toHaveAttribute('data-motion-insert');
+  });
+
+  it('draws a row in the icon and colour chosen for its Canvas, and an unchosen one in its kind and own hue', () => {
+    renderSection([
+      canvas('00000000-0000-7000-8000-0000000000c1', 'Chosen', { artifactKind: 'file', appearance: { icon: 'flag', color: 'orange' } }),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'Unchosen', { artifactKind: 'site', appearance: { icon: null, color: null } }),
+    ]);
+    const shape = (title: string): HTMLElement => within(screen.getByRole('link', { name: new RegExp(title) }))
+      .getByText((_content, element) => element?.classList.contains('identity-tile-shape') ?? false);
+    expect(shape('Chosen')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-orange)' });
+    expect(shape('Chosen').querySelector('svg')).toHaveClass('lucide-flag');
+    // The default: its newest artifact's kind, in the hue its id gives it.
+    expect(shape('Unchosen').querySelector('svg')).toHaveClass('lucide-globe');
+    expect(shape('Unchosen')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-emerald)' });
+  });
+
+  it('draws a placeholder for the name of a Canvas Rally is still naming', () => {
+    renderSection([canvas('00000000-0000-7000-8000-0000000000c1', 'Untitled Canvas', { titleStatus: 'naming' })]);
+    const row = screen.getByRole('link', { name: /Rally is choosing a name/ });
+    expect(row.querySelector('.title-skeleton')).not.toBeNull();
+    expect(screen.queryByText('Untitled Canvas')).toBeNull();
+  });
+
+  it('draws the sidebar skeleton until the list arrives', () => {
+    renderSection(null);
+    expect(screen.getByRole('region', { name: 'Pinned Canvases' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByText('No Canvases yet.')).toBeNull();
+  });
+});

@@ -1,3 +1,4 @@
+import { isRetiredLinkPath } from '@rally/contracts/links';
 import { TELEMETRY_ENVELOPE_SCHEMA } from '@rally/contracts/telemetry';
 import { reportXIntent } from './x-pixel-loader';
 import type {
@@ -235,22 +236,31 @@ function report<TName extends TelemetryEventName>(
 
 export function normalizedTelemetryPathname(pathname: string): string {
   const path = pathname.toLowerCase().slice(0, 160);
-  if (/^\/app\/[^/]+\/[^/]+\/s\/[^/]+\/c\/[^/]+\/b\/[^/]+\/?$/u.test(path)) {
-    return '/app/:region/:organization/s/:space/c/:channel/b/:breakout';
+  if (/^\/app\/[^/]+\/[^/]+\/cv\/[^/]+\/a\/[^/]+\/?$/u.test(path)) {
+    return '/app/:region/:organization/cv/:canvas/a/:artifact';
   }
-  if (/^\/app\/[^/]+\/[^/]+\/s\/[^/]+\/c\/[^/]+\/?$/u.test(path)) {
-    return '/app/:region/:organization/s/:space/c/:channel';
-  }
-  if (/^\/app\/[^/]+\/[^/]+\/s\/[^/]+\/?$/u.test(path)) {
-    return '/app/:region/:organization/s/:space';
+  if (/^\/app\/[^/]+\/[^/]+\/cv\/[^/]+\/?$/u.test(path)) {
+    return '/app/:region/:organization/cv/:canvas';
   }
   if (/^\/app\/[^/]+\/[^/]+\/sk\/[^/]+\/?$/u.test(path)) {
     return '/app/:region/:organization/sk/:sidekick';
   }
-  if (path.startsWith('/app/workspaces/')) {
-    return '/app/workspaces/:region/:workspace/workstreams/:id';
+  // A Thread's links, which the handoff page opens as the Canvas of the
+  // Thread's id. Shape only, as above: this path is lowercased, so its Base58
+  // segments cannot be decoded here.
+  if (/^\/app\/[^/]+\/[^/]+\/s\/[^/]+\/c\/[^/]+(?:\/a\/[^/]+)?\/?$/u.test(path)) {
+    return '/app/:region/:organization/s/:space/c/:thread';
   }
-  if (path.startsWith('/app/workstreams/')) return '/app/workstreams/:id';
+  if (/^\/app\/workspaces\/[^/]+\/[^/]+\/workstreams\/[^/]+\/?$/u.test(path)) {
+    return '/app/workspaces/:region/:organization/workstreams/:thread';
+  }
+  // The Space, Breakout and other retired forms, which the handoff page now
+  // answers as gone. Still counted, so how often a retired link is followed
+  // stays visible, but as one path: which of them it was no longer matters.
+  // The same test the handoff page answers with, so the two cannot disagree.
+  if (isRetiredLinkPath(path)) {
+    return '/app/:retired';
+  }
   if (path.startsWith('/app/')) return '/app/:unrecognized';
   return /^\/[a-z0-9_:/.-]*$/u.test(path) ? path : '/';
 }

@@ -23,7 +23,8 @@ export interface Env extends AccessEnvironment {
   /**
    * The regional API Workers Ace's operator pages call, and the operator
    * token presented to each. One token per region, held by that
-   * region's operator configuration in the `demos` role and by nobody else's:
+   * region's operator configuration in the `demos` role (the stored name of
+   * Ace's operator role) and by nobody else's:
    * an operator credential never crosses regions, so a leak of one is
    * destructive authority in one jurisdiction rather than both. The base URLs
    * are configuration, never derived from a request. See `docs/ace.md`.

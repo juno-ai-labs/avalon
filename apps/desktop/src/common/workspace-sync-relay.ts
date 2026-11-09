@@ -3,8 +3,8 @@ import type { WorkspaceConversationViewEvent } from '@rally/contracts/conversati
 
 /**
  * The Organization-sync relay: what the main window's workspace socket learns,
- * handed on by main to the Settings and Sidekicks windows so neither holds a
- * second socket to the same room. `docs/websocket-architecture.md` owns the mechanism.
+ * handed on by main to the Settings window so it holds no second socket to
+ * the same room. `docs/websocket-architecture.md` owns the mechanism.
  *
  * Main parses what the main window sends (`main/workspace-sync-relay.ts`); that
  * is the one untrusted edge. What main sends on is built from that parse, so
@@ -23,7 +23,12 @@ export const WORKSPACE_SYNC_RELAY_IPC_CHANNELS = {
   conversationView: 'workspace-sync:conversation-view',
 } as const;
 
-export type WorkspaceSyncConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
+/**
+ * `update_required`: the server refused this build the socket ticket with 426
+ * `client_update_required` (`MINIMUM_SERVED_CLIENT_CONTRACT`). Permanent for
+ * this build; nothing dials again until it is replaced.
+ */
+export type WorkspaceSyncConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'unavailable' | 'update_required';
 
 /**
  * Which Organization a socket serves. Workspace UUIDs are unique only within a

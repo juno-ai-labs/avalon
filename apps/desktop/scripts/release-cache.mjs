@@ -25,26 +25,6 @@ export async function purgeCloudflareUrls({
   });
 }
 
-export async function purgeCloudflarePrefix({
-  apiToken,
-  fetchImplementation = fetch,
-  prefixUrl,
-  zoneId,
-}) {
-  const url = new URL(prefixUrl);
-  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash
-    || !url.pathname.endsWith('/') || url.pathname === '/') {
-    throw new Error('Cloudflare prefix purge requires a non-root HTTPS directory URL');
-  }
-  await confirmedCloudflarePurge({
-    apiToken,
-    fetchImplementation,
-    label: 'Cloudflare prefix purge',
-    payload: { prefixes: [`${url.host}${url.pathname}`] },
-    zoneId,
-  });
-}
-
 async function confirmedCloudflarePurge({ apiToken, fetchImplementation, label, payload, zoneId }) {
   let response;
   try {

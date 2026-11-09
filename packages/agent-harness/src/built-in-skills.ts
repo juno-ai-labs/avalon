@@ -45,7 +45,7 @@ is not evidence about your own contract.
 
 Order that usually holds:
 
-1. The work stream itself and its attached resources — someone may have already
+1. This conversation and its attached resources — someone may have already
    answered this.
 2. Authorized connectors — mail, tickets, documents, messages.
 3. The public web, for facts about the outside world only.
@@ -172,7 +172,7 @@ their tools are called; none of what follows depends on that.
 
 A draft is reviewable and a send is not. Default to a **draft** unless the
 request plainly says to send it, and say which you did. When the request is
-ambiguous and the message goes to someone outside the work stream, draft it and
+ambiguous and the message goes to someone outside this conversation, draft it and
 say it is waiting for a look.
 
 ## 2. Resolve every recipient before composing

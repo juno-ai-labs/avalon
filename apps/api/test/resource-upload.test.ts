@@ -71,8 +71,6 @@ function fixture(payloads: Parameters<typeof createCloudflareTestBinding<R2Bucke
   });
   const rpcs = workspaceObjectRpcs(workspaceObject.instance, [
     "resourceExists",
-    "resourceAccess",
-    "listWorkstreams",
     "createUploadDraftResource",
     "deleteUploadDraftResource",
     "refreshResourceHydration",

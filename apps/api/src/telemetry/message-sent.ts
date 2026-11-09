@@ -23,7 +23,7 @@ const count = (value: number): number => Math.min(100, Math.max(0, Math.trunc(va
  * API rather than a client so the desktop app and the browser are counted by
  * the same code, and a retried send is one event: the id derives from the
  * message. Only a person's own session counts; a connector, a support session,
- * a demo seed, or a resource-authorization callback writes as someone without
+ * or a resource-authorization callback writes as someone without
  * that person sending anything.
  */
 export function recordMessageSentTelemetry(

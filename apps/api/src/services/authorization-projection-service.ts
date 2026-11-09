@@ -1,4 +1,4 @@
-import { ConversationParentKindSchema } from '@rally/contracts/conversation-parent';
+import { hostedConversationParentKind } from '../durable-objects/workstream-object-storage';
 import type { Env } from '../env';
 import type { AuthorizationProjectionJob } from '../durable-objects/authorization-projection';
 import { authorizationWorkspace } from './authorization-service';
@@ -10,14 +10,8 @@ export async function projectAuthorization(env: Env, job: AuthorizationProjectio
   if (job.region !== env.AVALON_REGION) throw new Error('authorization_projection_region_mismatch');
   const workspace = await authorizationWorkspace(env, job.workspaceId);
   {
-    // The Organization object hosts every Channel and Space parent and knows
-    // which kind this id is without creating anything to find out. A parent
-    // job for a hosted Channel is registered by that object when it enqueues
-    // one, so a Channel parent reaches here only when its legacy import was
-    // still pending, from a job queued before that change, or as a
-    // conversation job whose conversation is not registered yet.
-    const resolved = await workspace.resolveHostedParent({ workspaceId: job.workspaceId, parentId: job.parentId });
-    if (resolved.kind === 'space') throw new Error('authorization_projection_space_parent_unsupported');
+    // The Organization object hosts every Canvas and Sidekick parent; one it
+    // does not host (a retired Thread) answers no children.
     const request = { workspaceId: job.workspaceId, parentId: job.parentId };
     // The Organization answers a Sidekick's children here too.
     const { substreamIds } = await workspace.listAuthorizationChildren(request);
@@ -30,20 +24,11 @@ export async function projectAuthorization(env: Env, job: AuthorizationProjectio
   const identity = await createIdentityObjectPort(env, job.workspaceId, job.parentId, undefined, job.substreamId).identity();
   if (!identity) throw new Error('authorization_projection_conversation_not_ready');
   const facts = await createResourceObjectPort(env, job.workspaceId, job.parentId, undefined, job.substreamId).readAuthorizationFacts();
-  // The stored kind, parsed rather than collapsed. This read used to be
-  // `=== 'automation' ? 'automation' : 'workstream'`, which had no third case
-  // to be wrong about; a Space's hidden conversation would now take the `else`
-  // and be recorded as a Channel in the authorization universe — the one place
-  // it must never appear, since that universe is what a search result and a
+  // The stored kind, parsed rather than collapsed: a Thread's or Space's
+  // conversation is refused by name (`conversation_parent_kind_retired:<kind>`),
+  // never recorded in the authorization universe a search result and a
   // resource grant are decided from.
-  const parentKind = ConversationParentKindSchema.parse(identity.parent_kind);
-  if (parentKind === 'space') {
-    // Phase 3 of the Spaces work decides what a Space's resource authority
-    // projects and widens `AuthorizationLocationSchema` with it. Until then
-    // this is refused by name rather than guessed at: the message retries and
-    // then dead-letters, which says exactly what is missing.
-    throw new Error('authorization_projection_space_parent_unsupported');
-  }
+  const parentKind = hostedConversationParentKind(identity.parent_kind);
   await workspace.applyAuthorizationLocations({ workspaceId: job.workspaceId, parentId: job.parentId, substreamId: job.substreamId,
     ...(job.mutationAt === undefined ? {} : { mutationAt: job.mutationAt }),
     parentKind, ...facts });

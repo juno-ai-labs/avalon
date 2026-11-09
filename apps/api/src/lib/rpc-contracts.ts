@@ -152,14 +152,6 @@ export const ResendRegionalEmailInputSchema = z.object({
   emailAddress: z.string().email().max(254),
 });
 
-export const WorkstreamEmailRouteInputSchema = z.object({
-  region: RegionSchema,
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-});
-export const WorkstreamEmailAddressClaimSchema = WorkstreamEmailRouteInputSchema.extend({
-  emailAddress: z.string().email().max(254),
-});
 export const AutomationEmailRouteInputSchema = z.object({
   region: RegionSchema,
   workspaceId: IdSchema,

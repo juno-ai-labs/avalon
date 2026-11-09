@@ -83,13 +83,13 @@ context, and restores the button.
 This module owns on-demand playback of an existing assistant message. It does
 not create a durable audio resource; the agent's `generate_audio` tool and
 resource lifecycle are documented in [`agent-attachments.md`](agent-attachments.md).
-It borrows the plain-text Markdown reduction owned by the digest/email renderer
-([`digests.md`](digests.md)), asking it to drop link addresses, but neither
+It borrows the plain-text Markdown reduction of the email renderer
+(`markdownToEmailText` in `apps/api/src/services/email-markdown.ts`), asking it to drop link addresses, but neither
 changes stored markdown nor owns how it is displayed; that remains
 [`markdown-rendering.md`](markdown-rendering.md).
 
 The route is REST because a person explicitly requests one potentially large
-response body. It does not join the work-stream socket or Durable Object path;
+response body. It does not join the conversation socket or Durable Object path;
 [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) owns that transport
 decision.
 
@@ -174,6 +174,8 @@ prefetched provider promise. That prefetch can synthesize one chunk a person
 later stops before hearing; prefetching the entire response was rejected because
 its abandoned cost grows with message length.
 
+## Changelog
+
 ### 2026-10-17 — Speak reads a link's name and not its address
 
 **What changed:** The speech service asks the shared plain-text reducer for
@@ -213,8 +215,7 @@ Any scheme other than `http(s)` is read as written too. The domain honours the
 Public Suffix List's private section, unlike the favicon and network-policy
 callers, so `rally.github.io` is heard as the site and not as `github.io`. An image with no alt text is spoken as
 *image*, as a screen reader names an unlabelled graphic; its address was all it
-had. The iOS client's Speak hands the raw message text to the system
-synthesizer and is not on this path.
+had.
 
 Shipped in [#1278](https://github.com/juno-ai-labs/avalon/pull/1278).
 

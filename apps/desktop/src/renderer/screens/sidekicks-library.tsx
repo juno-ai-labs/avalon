@@ -1,47 +1,111 @@
-import { ChevronRight, Plus, X } from 'lucide-react';
-import { AutomationScreen } from './automation';
-import { SpeechPlaybackProvider } from '../components/speech-playback';
-import { useEscapeClosesWindow } from '../lib/window-escape';
+import { ChevronRight, Plus } from 'lucide-react';
 import { AutomationGlyph } from '../components/workstream-glyph';
-import { OwningThreadLabel } from '../components/owning-thread-label';
 import { SidebarSearch } from '../components/sidebar-search';
-import { desktopBridge } from '../lib/platform';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { HashRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
-import { useOpenFirstWorkstream } from '../lib/workstream-landing';
-import { useCloseWindowSurface } from '../lib/window-surface';
+import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
+import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
+import { PushedListPending } from '../components/pushed-list-pending';
+import { sidekickNext, sidekickStatus, sidekickWorking, type SidekickStatus } from '../lib/sidekick-status';
+import type { AutomationSummary } from '../lib/types';
+import { useDocumentTitle } from '../lib/document-title';
 
+type SidekickFilter = 'all' | 'you' | 'workspace' | 'paused';
+
+const FILTERS: ReadonlyArray<readonly [SidekickFilter, string]> = [
+  ['all', 'Everyone'],
+  ['you', 'Only you'],
+  ['workspace', 'Organization'],
+  ['paused', 'Paused'],
+];
+
+function matchesFilter(item: AutomationSummary, filter: SidekickFilter): boolean {
+  switch (filter) {
+    case 'all': return true;
+    // A Sidekick shared with named people is stored personal, but it is not only its author's.
+    case 'you': return item.scope === 'you' && item.audience !== 'people';
+    case 'workspace': return item.scope === 'workspace';
+    case 'paused': return item.status === 'paused';
+  }
+}
+
+/**
+ * The Status column's pill, as design.html §3 colours it. Waiting on someone is
+ * the badge beside the name, so that row's pill says what it is otherwise.
+ */
+const STATUS_PILL: Record<Exclude<SidekickStatus, 'needs_input'>, string> = {
+  working: 'Working',
+  paused: 'Paused',
+  draft: 'Draft',
+  active: 'Active',
+};
+
+function StatusPill({ item }: { item: AutomationSummary }): React.JSX.Element {
+  // Waiting on someone is the badge's to say; the pill keeps the run and the
+  // lifecycle, so a paused Sidekick whose delegation needs attention reads
+  // Paused beside the badge, and one with a run working and another waiting
+  // reads Working beside it: neither hides the other.
+  const status = sidekickStatus({ status: item.status, running: sidekickWorking(item) });
+  const tone = status === 'needs_input' ? 'active' : status;
+  return <span className={`sidekick-status-pill is-${tone}`}>
+    {tone === 'working' && <span aria-hidden="true" className="sidekick-working-dot" />}
+    {STATUS_PILL[tone]}
+  </span>;
+}
+
+function sharedWithLabel(item: AutomationSummary): string {
+  if (item.audience === 'people') return 'Named people';
+  return item.scope === 'you' ? 'Only you' : 'Organization';
+}
+
+/**
+ * `/sidekicks`: every Sidekick this person can open, as rows saying where it
+ * stands, who it is shared with and when it next wakes, with the ownership
+ * chips and a search. It renders in the main window on both hosts.
+ */
 export function SidekicksLibraryScreen(): React.JSX.Element {
   const { api } = useAppSession();
   const [search, setSearch] = useState('');
-  const [scope, setScope] = useState('all');
-  const query = useQuery({ queryKey: ['sidekicks-library'], queryFn: ({ signal }) => api!.getSidekicks(signal), enabled: Boolean(api) });
+  const [filter, setFilter] = useState<SidekickFilter>('all');
+  // The main window reads the list the workspace socket keeps: only its rows
+  // carry the viewer's `needsInput` and `unread`, which `GET /sidekicks` never
+  // does. REST remains only for a tree with no workspace socket mounted.
+  const socket = useOptionalWorkspaceSocket();
+  const pushed = useSocketOwnedList<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations);
+  const fetched = useQuery({ queryKey: ['sidekicks-library'], queryFn: ({ signal }) => api!.getSidekicks(signal), enabled: Boolean(api) && !socket });
+  const query = socket
+    ? { data: pushed.data, isLoading: pushed.data === undefined, isSuccess: pushed.data !== undefined, error: null }
+    : fetched;
   const items = (query.data ?? []).filter((item) =>
-    (scope === 'all' || item.scope === scope)
+    matchesFilter(item, filter)
     && `${item.name} ${item.description}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
   );
+  const newSidekick = <Link className="button button-primary window-no-drag" to="/sidekicks/new"><Plus aria-hidden="true" size={16} />New Sidekick</Link>;
   return <main className="sidekicks-library">
-    <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1><p>A little help that knows how you work.</p></div><div className="sidekicks-library-actions"><Link className="button button-primary window-no-drag" to="/sidekicks/new"><Plus aria-hidden="true" size={16} />New Sidekick</Link><CloseInTab /></div></header>
+    <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1><p>AI teammates your whole team can talk to.</p></div><div className="sidekicks-library-actions">{newSidekick}</div></header>
     <div className="sidekicks-library-controls">
       <SidebarSearch mode="input" aria-label="Search Sidekicks" placeholder="Search Sidekicks" value={search} onChange={(event) => setSearch(event.target.value)} />
     </div>
     <div className="sidekick-filters" role="group" aria-label="Sidekick ownership">
-      {([['all', 'Everyone'], ['you', 'Only you'], ['workspace', 'Organization'], ['workstream', 'Threads']] as const).map(([value, label]) =>
-        <button key={value} type="button" aria-pressed={scope === value} onClick={() => setScope(value)}>{label}</button>)}
+      {FILTERS.map(([value, label]) =>
+        <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}
     </div>
     <section aria-labelledby="sidekick-results-title">
-    <div className="sidekick-results-heading"><h2 id="sidekick-results-title">{search ? 'Search results' : 'Your Sidekicks'}</h2><span role="status" aria-label="Sidekick count">{query.isSuccess ? `${items.length} Sidekicks` : ''}</span></div>
-    {query.isLoading ? <OpeningState label="Loading Sidekicks…" /> : query.error ? <ErrorNotice occurrence={query.error}>{query.error.message}</ErrorNotice> : items.length === 0 ? <EmptyState title={query.data?.length ? "No matching Sidekicks" : "No Sidekicks yet"} description={query.data?.length ? "Try a different search or ownership filter." : "Describe what you would like to delegate to create one."} /> :
-      // The row's link is its title, stretched over the whole card in CSS, so
-      // the owning Thread's button can sit in the row without nesting a button
-      // inside a link.
-      <ul className="sidekicks-library-list">{items.map((item) => <li key={item.id}>
+    <div className="sidekick-results-heading"><h2 id="sidekick-results-title">{search ? 'Search results' : 'Your Sidekicks'}</h2><span role="status" aria-label="Sidekick count">{query.isSuccess ? `${items.length} ${items.length === 1 ? 'Sidekick' : 'Sidekicks'}` : ''}</span></div>
+    {query.isLoading ? (socket ? <PushedListPending label="Loading Sidekicks…" noun="Sidekicks" /> : <OpeningState label="Loading Sidekicks…" />) : query.error ? <ErrorNotice occurrence={query.error}>{query.error.message}</ErrorNotice> : items.length === 0 ? <EmptyState action={query.data?.length ? undefined : newSidekick} title={query.data?.length ? "No matching Sidekicks" : "No Sidekicks yet"} description={query.data?.length ? "Try a different search or ownership filter." : "Describe what you would like to delegate to create one."} /> :
+      // The row's link is its title, stretched over the whole card in CSS.
+      <ul className="sidekicks-library-list sidekicks-library-rows">{items.map((item) => <li key={item.id}>
         <span className="sidekick-list-glyph"><AutomationGlyph {...(item.appearance ? { appearance: item.appearance } : {})} id={item.id} /></span>
-        <div className="sidekick-list-copy"><h3><Link className="sidekick-list-link" to={`/sidekicks/${item.id}`}>{item.name}</Link></h3><p>{item.description}</p><small>{item.status === 'draft' ? 'Draft' : item.status === 'paused' ? 'Paused' : item.loadable ? 'Available in conversations' : 'Delegated work'} · {item.scope === 'you' ? 'Only you' : item.scope === 'workspace' ? 'Organization' : <OwningThreadLabel thread={item.owningThread} />}</small></div>
+        <div className="sidekick-list-copy"><h3><Link className="sidekick-list-link" to={`/sidekicks/${item.id}`}>{item.name}</Link>{sidekickStatus(item) === 'needs_input' && <span className="sidekick-needs-input-badge">Needs input</span>}</h3><p>{item.description}</p></div>
+        <dl className="sidekick-list-facts">
+          <div><dt>Status</dt><dd><StatusPill item={item} /></dd></div>
+          <div className="sidekick-list-shared"><dt>Shared with</dt><dd>{sharedWithLabel(item)}</dd></div>
+          <div><dt>Next</dt><dd>{sidekickNext(item)}</dd></div>
+        </dl>
         <ChevronRight className="sidekick-list-chevron" aria-hidden="true" size={18} />
       </li>)}</ul>}
     </section>
@@ -50,73 +114,14 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
 
 function GuestSidekicksLibrary(): React.JSX.Element {
   return <main className="sidekicks-library">
-    <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1></div><CloseInTab /></header>
+    <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1></div></header>
     <EmptyState title="Sidekicks open from conversations" description="Open a Sidekick from a conversation shared with you to see it here." />
   </main>;
 }
 
-/**
- * The way out of the library in a browser tab, where it is a route with no
- * window chrome to close. The Mac app's window has its own.
- */
-function CloseInTab(): React.JSX.Element | null {
-  const { host } = useShellCapabilities();
-  const close = useCloseWindowSurface();
-  if (host !== 'browser') return null;
-  return <button aria-label="Close Sidekicks" className="settings-close window-no-drag" onClick={close} type="button"><X aria-hidden="true" size={18} /></button>;
-}
-
-/**
- * The main window's `/sidekicks`. A browser tab shows the library here, as a
- * window surface (`lib/window-surface.ts`); the Mac app hands it to the
- * Sidekicks window.
- */
+/** The main window's `/sidekicks`, on both hosts. */
 export function SidekicksLibraryRoute(): React.JSX.Element {
-  const { host, guest } = useShellCapabilities();
-  if (host !== 'browser') return <SidekicksWindowRedirect />;
-  return guest ? <GuestSidekicksLibrary /> : <SidekicksLibraryScreen />;
-}
-
-/** Retained main-window links hand library navigation to its dedicated window. */
-function SidekicksWindowRedirect(): React.JSX.Element {
-  const openFirstWorkstream = useOpenFirstWorkstream();
-  useEffect(() => {
-    void desktopBridge().openSidekicks().then(() => openFirstWorkstream());
-  }, [openFirstWorkstream]);
-  return <OpeningState label="Opening Sidekicks…" />;
-}
-
-/**
- * The Sidekicks window's own routes.
- *
- * Here rather than beside the other surfaces in `App`, because the gesture below
- * only makes sense against these screens and is worth a test that renders them.
- *
- * Nothing is swept for unsaved text. The one writing surface in here is a
- * Sidekick's conversation composer, and its text and attachments are cached on
- * the device and restored on the next visit, so closing the window costs no
- * sentence; a sweep would only leave Escape dead in every Sidekick that holds a
- * draft. The library's search box still holds the keystroke while it has text,
- * where Escape clears the filter first.
- */
-export function SidekicksWindow(): React.JSX.Element {
-  const { api } = useAppSession();
-  // A guest opens the Sidekicks a conversation offers them, one at a time. The
-  // library lists the Organization's and creation makes one there; both routes
-  // refuse a guest, so this window offers neither.
   const { guest } = useShellCapabilities();
-  useEscapeClosesWindow();
-  return (
-    <SpeechPlaybackProvider api={api!}>
-      <HashRouter useTransitions={false}>
-        <Routes>
-          <Route element={guest ? <GuestSidekicksLibrary /> : <SidekicksLibraryScreen />} path="/sidekicks" />
-          {guest && <Route element={<Navigate replace to="/sidekicks" />} path="/sidekicks/new" />}
-          <Route element={<AutomationScreen />} path="/sidekicks/:id" />
-          <Route element={<AutomationScreen />} path="/automations/:id" />
-          <Route element={<Navigate replace to="/sidekicks" />} path="*" />
-        </Routes>
-      </HashRouter>
-    </SpeechPlaybackProvider>
-  );
+  useDocumentTitle('Sidekicks');
+  return guest ? <GuestSidekicksLibrary /> : <SidekicksLibraryScreen />;
 }

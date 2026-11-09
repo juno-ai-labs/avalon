@@ -1,0 +1,397 @@
+import type { ActivityItem, ActivityKind, ActivityParentKind } from "@rally/contracts";
+import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
+import { PUSH_BODY_PREVIEW_CHARACTERS } from "@rally/contracts/push-notifications";
+
+/**
+ * WorkspaceDO migration 140: each person's Activity, one row per event per
+ * recipient, and the one row per person that Mark all seen moves.
+ *
+ * A row is written by the code that records the event's notification intent,
+ * in that intent's transaction (`recordPersonNotificationIntent`,
+ * `recordSidekickRunNotices`, `recordParentNotice`), and carries the intent's
+ * id as its own, so a replayed effect or a retried alarm converges on one
+ * row. The intents' reaper never touches it. Its kinds are the intents' own
+ * (migration 138); `subject_id` names what a row is about beyond its parent:
+ * an artifact's resource id for `artifact_updated`, or the access request's
+ * id for the three access kinds.
+ *
+ * Seen is derived, never written per row: a row is seen once the recipient's
+ * read cursor on its parent (`sidekick_viewer_reads`, the same projection the
+ * Canvas and Sidekick rows read unread from) has passed `attention_ordinal`,
+ * or once `workspace_activity_seen.seen_through` is at or after `created_at`.
+ * Titles are read from `canvas_directory` and `automation_directory` at list
+ * time, not copied here. Times are integer milliseconds, as the Canvas tables
+ * keep them. `docs/activity.md` owns all of it.
+ *
+ * This runs after migration 139, which drops the Thread-era
+ * `workspace_activity_seen`; the table made here is a new one under the same
+ * name. The sidebar-list waterline's CHECK already admits `activity`
+ * (migration 137), so only its row is inserted.
+ */
+export const WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS: readonly string[] = [
+  `CREATE TABLE workspace_activity_items (
+    item_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    recipient_user_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('mention', 'participant_added', 'needs_input', 'run_finished',
+      'new_message', 'artifact_updated', 'access_request', 'access_granted', 'access_denied')),
+    parent_kind TEXT NOT NULL CHECK (parent_kind IN ('canvas', 'automation')),
+    parent_id TEXT NOT NULL,
+    substream_id TEXT,
+    message_id TEXT,
+    message_sequence INTEGER CHECK (message_sequence IS NULL OR message_sequence > 0),
+    run_id TEXT,
+    actor_kind TEXT NOT NULL CHECK (actor_kind IN ('person', 'rally', 'sidekick')),
+    actor_id TEXT,
+    preview TEXT,
+    attention_ordinal INTEGER CHECK (attention_ordinal IS NULL OR attention_ordinal >= 0),
+    created_at INTEGER NOT NULL CHECK (created_at >= 0),
+    subject_id TEXT
+  ) STRICT`,
+  `CREATE INDEX workspace_activity_items_recipient_idx
+    ON workspace_activity_items(recipient_user_id, created_at DESC)`,
+  // Every accepted read report asks whether its reader has Activity about
+  // that parent (`hasActivityFor`), so the question is a seek.
+  `CREATE INDEX workspace_activity_items_parent_idx
+    ON workspace_activity_items(recipient_user_id, parent_id)`,
+  `CREATE TABLE workspace_activity_seen (
+    user_id TEXT PRIMARY KEY,
+    seen_through INTEGER NOT NULL CHECK (seen_through >= 0)
+  ) STRICT`,
+  `INSERT INTO workspace_sidebar_list_state (list, waterline) VALUES ('activity', 0)`,
+];
+
+/** One event for one recipient, as its recorder knows it. */
+export interface ActivityItemInput {
+  itemId: string;
+  workspaceId: string;
+  recipientUserId: string;
+  kind: ActivityKind;
+  parentKind: ActivityParentKind;
+  parentId: string;
+  substreamId: string | null;
+  messageId: string | null;
+  /** The message's transcript sequence, where the event carries one. */
+  messageSequence?: number | null;
+  runId: string | null;
+  actorKind: "person" | "rally" | "sidekick";
+  actorId: string | null;
+  /** The push body's source text; reduced here exactly as the push reduces it. */
+  text: string | null;
+  /**
+   * The ordinal the recipient's read cursor must reach: the mentioning
+   * message's own for a mention. `undefined` reads the parent's latest at
+   * write time, for the kinds whose event names no message of its own.
+   */
+  attentionOrdinal?: number | null;
+  /** What the row is about beyond its parent: an artifact's resource id, an access request's id. */
+  subjectId?: string | null;
+}
+
+/** Called once per row actually written, inside the recorder's transaction. */
+export type NoteActivity = (recipientUserId: string) => void;
+
+/** The push body's own text: plain, and the push's preview length with an ellipsis when shortened. */
+function previewText(text: string | null): string | null {
+  if (text === null) return null;
+  const characters = Array.from(rewriteMessageAsPlainText(text, { sources: "none" }));
+  if (characters.length === 0) return null;
+  return characters.length > PUSH_BODY_PREVIEW_CHARACTERS
+    ? `${characters.slice(0, PUSH_BODY_PREVIEW_CHARACTERS).join("")}…`
+    : characters.join("");
+}
+
+/**
+ * Write one Activity row unless it is already there. The caller holds the
+ * transaction its intent is written in. The insert's returned id is the
+ * witness that this call wrote it, and only then is the recipient noted.
+ *
+ * Where the event names no message of its own, the ordinal is the parent's
+ * shared conversation's latest attention ordinal at this moment
+ * (`latestAttentionOrdinal` of its `"0"` projection): neither the add's
+ * effect nor the run's notice carries a better one. Such a row clears only
+ * on a read report accepted after it was written (see `ACTIVITY_SEEN_SQL`),
+ * so a reader who had already read that far does not see it arrive seen.
+ */
+export function recordActivityItem(sql: SqlStorage, item: ActivityItemInput, now: number, noteActivity: NoteActivity): void {
+  const written = sql.exec<{ item_id: string }>(
+    `INSERT INTO workspace_activity_items
+       (item_id, workspace_id, recipient_user_id, kind, parent_kind, parent_id, substream_id, message_id, run_id,
+        actor_kind, actor_id, preview, attention_ordinal, created_at, message_sequence, subject_id)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+       ${ORDINAL_SQL},
+       ?15, ?16, ?17)
+     ON CONFLICT(item_id) DO NOTHING
+     RETURNING item_id`,
+    ...itemBindings(item, now),
+  ).toArray();
+  if (written.length === 1) noteActivity(item.recipientUserId);
+}
+
+/**
+ * The ordinal a row stores: the one given (`?13 = 1`, `?14`), else its
+ * parent's shared conversation's latest now (`?6` the parent).
+ */
+const ORDINAL_SQL = `CASE WHEN ?13 = 1 THEN ?14 ELSE COALESCE((
+         SELECT json_extract(chat.effect_json, '$.latestAttentionOrdinal') FROM sidekick_child_projections chat
+          WHERE chat.sidekick_id = ?6 AND chat.substream_id = '0'), 0) END`;
+
+/** `?1` … `?17` for `recordActivityItem`'s and `recordCollapsedActivityItem`'s statements. */
+function itemBindings(item: ActivityItemInput, now: number): SqlStorageValue[] {
+  return [
+    item.itemId, item.workspaceId, item.recipientUserId, item.kind, item.parentKind, item.parentId, item.substreamId,
+    item.messageId, item.runId, item.actorKind, item.actorId, previewText(item.text),
+    item.attentionOrdinal === undefined ? 0 : 1, item.attentionOrdinal ?? null, now, item.messageSequence ?? null,
+    item.subjectId ?? null,
+  ];
+}
+
+/**
+ * Write one row of a kind that collapses: while the recipient has an unseen
+ * row of the same kind about the same conversation (`parent_id` and
+ * `substream_id`), that row is brought up to this event — its message, who
+ * acted, its preview, its ordinal, what it is about and its time — and keeps
+ * its id; once it is seen, the next event is a new row. A reply in a
+ * conversation and a new version in a pinned Canvas collapse this way, so a
+ * busy Chat is one row, not one per message. Seen here is `ACTIVITY_SEEN_SQL`,
+ * the page's own expression. The caller holds the transaction, and calls this
+ * only for an intent it has just written, so a replay moves nothing.
+ */
+export function recordCollapsedActivityItem(sql: SqlStorage, item: ActivityItemInput, now: number, noteActivity: NoteActivity): void {
+  const unseen = sql.exec<{ item_id: string }>(
+    `SELECT item.item_id FROM workspace_activity_items item
+       LEFT JOIN sidekick_viewer_reads reads ON reads.sidekick_id = item.parent_id AND reads.user_id = item.recipient_user_id
+       LEFT JOIN workspace_activity_seen marked ON marked.user_id = item.recipient_user_id
+      WHERE item.recipient_user_id = ? AND item.kind = ? AND item.parent_id = ? AND item.substream_id IS ?
+        AND NOT ${ACTIVITY_SEEN_SQL}
+      ORDER BY item.created_at DESC LIMIT 1`,
+    item.recipientUserId, item.kind, item.parentId, item.substreamId,
+  ).toArray()[0];
+  if (!unseen) {
+    recordActivityItem(sql, item, now, noteActivity);
+    return;
+  }
+  sql.exec(
+    `UPDATE workspace_activity_items
+        SET message_id = ?8, message_sequence = ?16, actor_kind = ?10, actor_id = ?11, preview = ?12,
+            attention_ordinal = ${ORDINAL_SQL}, created_at = MAX(created_at, ?15), subject_id = ?17
+      WHERE item_id = ?18`,
+    ...itemBindings(item, now), unseen.item_id,
+  );
+  noteActivity(item.recipientUserId);
+}
+
+/**
+ * Whether row `item` is seen by its recipient, given `reads` (their
+ * `sidekick_viewer_reads` row for its parent) and `marked` (their
+ * `workspace_activity_seen` row). A mention clears when the cursor reaches
+ * its message; any other kind when the cursor is at or past the ordinal it
+ * was written at and that read was reported after it was written. A Needs
+ * input row also clears once its run has left `needs_input`: it asked for an
+ * answer, the answer came, and the run's own view where it is answered reads
+ * the run's conversation, not `"0"`, so no read report would clear it. A
+ * reply (`new_message`) clears as a mention does: its ordinal is its own
+ * message's, which nobody read before it existed. A pinned Canvas's new
+ * version (`artifact_updated`) clears on any read of the Chat after it, the
+ * rule the Canvas row's own artifact news takes. A request to open a Canvas
+ * (`access_request`) stores no ordinal, so no read clears it: it is seen once
+ * it is settled, by anyone. A declined request (`access_denied`) is seen
+ * once its requester asks again: they have read the answer and acted on it.
+ * Any row clears when Mark all seen came after it. One expression for the page
+ * and the count, so the two cannot disagree.
+ */
+const ACTIVITY_SEEN_SQL = `(
+  (marked.seen_through IS NOT NULL AND marked.seen_through >= item.created_at)
+  OR (item.kind = 'needs_input' AND item.parent_kind = 'automation' AND EXISTS (
+      SELECT 1 FROM sidekick_runs run
+       WHERE run.sidekick_id = item.parent_id AND run.run_id = item.run_id AND run.state <> 'needs_input'))
+  OR (item.kind = 'artifact_updated' AND reads.user_id IS NOT NULL AND reads.updated_at >= item.created_at)
+  OR (item.kind = 'access_request' AND EXISTS (
+      SELECT 1 FROM canvas_access_requests request WHERE request.request_id = item.subject_id AND request.state <> 'pending'))
+  OR (item.kind = 'access_denied' AND EXISTS (
+      SELECT 1 FROM canvas_access_requests later WHERE later.canvas_id = item.parent_id
+         AND later.user_id = item.recipient_user_id AND later.created_at > item.created_at))
+  OR (item.attention_ordinal IS NOT NULL AND reads.user_id IS NOT NULL
+      AND reads.seen_attention_ordinal >= item.attention_ordinal
+      AND (item.kind IN ('mention', 'new_message') OR reads.updated_at >= item.created_at))
+)`;
+
+interface ActivityRow extends Record<string, SqlStorageValue> {
+  item_id: string; kind: ActivityKind; parent_kind: ActivityParentKind; parent_id: string;
+  substream_id: string | null; message_id: string | null; message_sequence: number | null; run_id: string | null;
+  actor_kind: "person" | "rally" | "sidekick"; actor_id: string | null; preview: string | null;
+  created_at: number; seen: number; unseen_count: number;
+  parent_title: string | null; subject_id: string | null; artifact_title: string | null;
+  request_state: "pending" | "approved" | "denied" | null; request_decided_by_name: string | null;
+  request_decided_by_user_id: string | null;
+}
+
+/** Who a page is read for: their id, their Organization, and whether they are a member rather than a guest. */
+export interface ActivityViewer {
+  userId: string;
+  workspaceId: string;
+  member: boolean;
+}
+
+/**
+ * The rows this viewer may open the parent of, with whether each is seen: the
+ * one filter the page and the counts read, so they cannot disagree. Binds
+ * `?1` the user, `?2` the Organization, `?3` member (1) or guest (0) and `?5`
+ * the admitting writer Sidekicks (JSON).
+ */
+function listedSql(sidekickListedSql: string): string {
+  return `WITH mine AS (
+       SELECT item.*, ${ACTIVITY_SEEN_SQL} AS seen
+         FROM workspace_activity_items item
+         LEFT JOIN sidekick_viewer_reads reads ON reads.sidekick_id = item.parent_id AND reads.user_id = item.recipient_user_id
+         LEFT JOIN workspace_activity_seen marked ON marked.user_id = item.recipient_user_id
+        WHERE item.recipient_user_id = ?1
+     ), listed AS (
+       SELECT mine.*, CASE WHEN mine.kind = 'access_denied' THEN NULL ELSE COALESCE(canvas.title, directory.title) END AS parent_title
+         FROM mine
+         LEFT JOIN canvas_directory canvas ON mine.parent_kind = 'canvas' AND canvas.canvas_id = mine.parent_id
+         LEFT JOIN canvas_participants participant ON participant.canvas_id = canvas.canvas_id AND participant.user_id = ?1
+         LEFT JOIN automation_directory directory ON mine.parent_kind = 'automation' AND directory.automation_id = mine.parent_id
+        WHERE CASE
+                -- A declined request is about a Canvas its recipient may not
+                -- open: it lists while the Canvas exists, naming it by id only.
+                WHEN mine.kind = 'access_denied' THEN canvas.canvas_id IS NOT NULL
+                WHEN canvas.canvas_id IS NOT NULL THEN (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
+                  OR (?3 = 1 AND canvas.visibility = 'workspace')
+                  -- An owner or administrator may open every Canvas, so a row
+                  -- about any lists for them: a request they decide on, or a
+                  -- mention in a Canvas they were never in. Their role is the
+                  -- relationship the object keeps (\`workspace_member_status\`).
+                  OR (?3 = 1 AND EXISTS (SELECT 1 FROM workspace_member_status status WHERE status.user_id = ?1 AND status.active = 1
+                    AND json_extract(status.relationship_json, '$.role') IN ('owner', 'admin')))
+                  OR canvas.writer_sidekick_id IN (SELECT value FROM json_each(?5)))
+                WHEN directory.automation_id IS NOT NULL THEN ?3 = 1 AND ${sidekickListedSql}
+                ELSE 0 END
+     )`;
+}
+
+/** Writer Sidekicks whose audience admits this viewer to the Canvases they write (`writerAdmits`, asked once per writer). */
+function admittingWriters(sql: SqlStorage, writerAdmits: (sidekickId: string) => boolean): string[] {
+  return sql.exec<{ writer_sidekick_id: string }>(
+    `SELECT DISTINCT writer_sidekick_id FROM canvas_directory WHERE writer_sidekick_id IS NOT NULL`,
+  ).toArray().map((row) => row.writer_sidekick_id).filter((sidekickId) => writerAdmits(sidekickId));
+}
+
+/**
+ * One person's newest `limit` items that they may open the parent of, and how
+ * many of those are unseen, in one statement: the count is a window over every
+ * listed row before the page's `LIMIT`. Whether the viewer may open a parent
+ * is decided in the same statement by the rules `canvasSidebarRows` and the
+ * Sidekick list read (`sidekickListedSql`, which binds `?1` the user and `?2`
+ * the Organization), and it is a filter, not a redaction: a row about a parent
+ * they cannot open sends nothing, not its preview, message or ids, and counts
+ * toward nothing. The row stays stored, so it lists once access arrives. The
+ * one rule SQL does not express, a Canvas a Sidekick writes admitting that
+ * Sidekick's audience, is `writerAdmits`, asked once per Sidekick that
+ * writes a Canvas, before the page is read: bounded by those Sidekicks, not
+ * by the person's rows.
+ */
+export function activityPage(
+  sql: SqlStorage,
+  viewer: ActivityViewer,
+  limit: number,
+  sidekickListedSql: string,
+  writerAdmits: (sidekickId: string) => boolean,
+): { unseenCount: number; items: ActivityItem[] } {
+  const writers = admittingWriters(sql, writerAdmits);
+  const rows = sql.exec<ActivityRow>(
+    `${listedSql(sidekickListedSql)}
+     SELECT listed.item_id, listed.kind, listed.parent_kind, listed.parent_id, listed.substream_id, listed.message_id,
+            listed.message_sequence, listed.run_id,
+            listed.actor_kind, listed.actor_id, listed.preview, listed.created_at, listed.seen,
+            SUM(1 - listed.seen) OVER () AS unseen_count, listed.parent_title, listed.subject_id,
+            artifact.title AS artifact_title, request.state AS request_state, request.decided_by_name AS request_decided_by_name,
+            request.decided_by_user_id AS request_decided_by_user_id
+       FROM listed
+       LEFT JOIN resources artifact ON listed.kind = 'artifact_updated' AND artifact.id = listed.subject_id
+       LEFT JOIN canvas_access_requests request ON listed.kind IN ('access_request', 'access_denied') AND request.request_id = listed.subject_id
+      ORDER BY listed.created_at DESC, listed.item_id DESC
+      LIMIT ?4`,
+    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit, JSON.stringify(writers),
+  ).toArray();
+  return {
+    unseenCount: rows[0]?.unseen_count ?? 0,
+    items: rows.map((row) => ({
+      id: row.item_id,
+      kind: row.kind,
+      parentKind: row.parent_kind,
+      parentId: row.parent_id,
+      parentTitle: row.parent_title,
+      substreamId: row.substream_id,
+      messageId: row.message_id,
+      messageSequence: row.message_sequence,
+      runId: row.run_id,
+      actor: { kind: row.actor_kind, id: row.actor_id },
+      preview: row.preview,
+      createdAt: new Date(row.created_at).toISOString(),
+      seen: row.seen === 1,
+      ...(row.kind === "artifact_updated"
+        ? { artifact: row.subject_id !== null && row.artifact_title !== null ? { resourceId: row.subject_id, title: row.artifact_title } : null }
+        : {}),
+      ...(row.kind === "access_request" || row.kind === "access_denied"
+        ? { accessRequest: row.request_state === null ? null : {
+            state: row.request_state, decidedByName: row.request_decided_by_name, decidedByUserId: row.request_decided_by_user_id,
+          } }
+        : {}),
+    } as ActivityItem)),
+  };
+}
+
+/**
+ * How many of this person's listed rows are unseen, how many of those are a
+ * run waiting on them (`needs_input`), and how many mention them: the page's own filter and seen rule
+ * (`listedSql`), so the Organization's attention and the push badge are the
+ * number the Activity rail shows.
+ */
+export function activityCounts(
+  sql: SqlStorage,
+  viewer: ActivityViewer,
+  sidekickListedSql: string,
+  writerAdmits: (sidekickId: string) => boolean,
+): { unseen: number; unseenNeedsInput: number; unseenMentions: number } {
+  const row = sql.exec<{ unseen: number | null; unseen_needs_input: number | null; unseen_mentions: number | null }>(
+    `${listedSql(sidekickListedSql)}
+     SELECT SUM(1 - seen) AS unseen, SUM(CASE WHEN kind = 'needs_input' THEN 1 - seen ELSE 0 END) AS unseen_needs_input,
+            SUM(CASE WHEN kind = 'mention' THEN 1 - seen ELSE 0 END) AS unseen_mentions
+       FROM listed`,
+    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, null, JSON.stringify(admittingWriters(sql, writerAdmits)),
+  ).toArray()[0];
+  return { unseen: row?.unseen ?? 0, unseenNeedsInput: row?.unseen_needs_input ?? 0, unseenMentions: row?.unseen_mentions ?? 0 };
+}
+
+/** Whether this person has Activity about this parent, so a read of a parent with none republishes nothing. */
+export function hasActivityFor(sql: SqlStorage, recipientUserId: string, parentId: string): boolean {
+  return sql.exec(
+    `SELECT 1 FROM workspace_activity_items WHERE recipient_user_id = ? AND parent_id = ? LIMIT 1`,
+    recipientUserId, parentId,
+  ).toArray().length > 0;
+}
+
+/** Mark all seen: everything recorded until `now` is seen. Never moves back. */
+export function markAllActivitySeen(sql: SqlStorage, userId: string, now: number): void {
+  sql.exec(
+    `INSERT INTO workspace_activity_seen (user_id, seen_through) VALUES (?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET seen_through = MAX(seen_through, excluded.seen_through)`,
+    userId, now,
+  );
+}
+
+/**
+ * Who has a Needs input row about a run of this Sidekick that is waiting now,
+ * `runId` alone when given: whose Activity to send again when it stops
+ * waiting, since `ACTIVITY_SEEN_SQL` then reads the row as seen.
+ */
+export function waitingRunActivityRecipients(sql: SqlStorage, sidekickId: string, runId?: string): string[] {
+  return sql.exec<{ recipient_user_id: string }>(
+    `SELECT DISTINCT item.recipient_user_id FROM workspace_activity_items item
+       JOIN sidekick_runs run ON run.sidekick_id = item.parent_id AND run.run_id = item.run_id
+      WHERE item.kind = 'needs_input' AND item.parent_kind = 'automation' AND item.parent_id = ?1
+        AND run.state = 'needs_input' AND (?2 IS NULL OR run.run_id = ?2)`,
+    sidekickId, runId ?? null,
+  ).toArray().map((row) => row.recipient_user_id);
+}

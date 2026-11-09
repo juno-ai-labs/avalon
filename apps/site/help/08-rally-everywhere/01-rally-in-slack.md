@@ -1,13 +1,13 @@
 ---
 title: Rally in Slack
-description: Install Rally in your Slack workspace and start work from a DM, a mention, /rally or a shortcut.
+description: Install Rally in your Slack workspace, link your account, and let your Sidekicks listen and post there.
 ---
 
-If your team lives in Slack, Rally can live there too. Once it is installed,
-anyone can hand Rally a job without leaving Slack: send it a direct message,
-mention it in a channel, type `/rally`, or use a shortcut on a message. Rally
-does the work in your Organization and posts the finished answer back in the
-same Slack thread, with a link to the full Thread in Rally.
+If your team lives in Slack, your Sidekicks can work there too. Once Rally is
+installed, a Sidekick can watch Slack channels for the messages it cares
+about, post its results where your team already looks, and pick up replies in
+the Slack thread under its message. Rally in a Canvas can also search and read
+Slack for you.
 
 ## Before you start
 
@@ -21,8 +21,8 @@ Rally Organization. After the install, your Slack workspace has a new member: a
 bot called **Rally**.
 
 **Each person links their Slack account to their Rally account.** This is how
-Rally knows that the Slack person typing is you, so it can work with your own
-access and your own connected tools, and show the work under your name.
+Rally knows that the Slack person replying to a Sidekick is you, and where to
+send the direct messages your Sidekicks write to you.
 
 ### Linking your Slack account with Connect Rally
 
@@ -37,9 +37,6 @@ Rally may then carry straight on and ask you to approve your own Slack
 connection as well. That part is optional and is explained on the
 [next page](02-more-from-slack.md#your-own-slack-connection).
 
-Rally can also send you a private prompt with the same button, when a task
-needs your Rally account to continue.
-
 A few things about the link:
 
 - It works once and expires after 15 minutes. If it has expired, or you
@@ -53,168 +50,96 @@ A few things about the link:
 - Linking is per Slack workspace. If you belong to two Slack workspaces that
   both have Rally, you link twice.
 
-You can use Rally in Slack without linking, too. You will get the
-Organization's shared tools only, not your personal ones (your Gmail, your
-calendar), and the work is credited to your Slack name rather than your Rally
-account.
+Without linking, a Sidekick cannot send you a direct message, and a reply you
+write under a Sidekick's message is credited to your Slack name rather than
+your Rally account.
 
-## Four ways to start work
+## What Rally does in Slack
 
-### Send Rally a direct message
+Rally in Slack works through your Sidekicks. Mentioning **@Rally** in a Slack
+channel or sending it a direct message does not start a conversation in Rally
+by itself. Instead:
 
-Open the Rally app in Slack, go to its **Messages** tab and type what you want.
-Slack offers a few starter ideas, such as **Morning email briefing**, **Analyze a
-business idea** and **Investigate an issue**.
+- **A Sidekick can listen.** Give a Sidekick a Slack trigger ("whenever someone
+  posts in #support", "when Rally is mentioned in #incidents") and each
+  matching message starts a run. See
+  [Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md#events-in-your-other-tools).
+- **A Sidekick can post.** A run can send its results to a Slack channel, or
+  to you as a direct message from the Rally bot. See
+  [Where a Sidekick's results go](../03-sidekicks/07-where-results-go.md#delivering-to-slack).
+- **People can reply.** Reply in the Slack thread under a Sidekick's message
+  and the same run carries on with your reply, as the
+  [next page](02-more-from-slack.md#talking-back-to-a-sidekick-in-slack)
+  explains.
+- **Rally can use Slack as a tool.** In a Canvas or a Sidekick run, Rally can
+  search, read and post in Slack, within what the bot or your own connection
+  can see.
 
-Rally starts the task and replies in a thread under your message. To keep
-going, reply in that thread. No need to mention Rally again.
+If your team got used to mentioning @Rally in a channel to hand it a job, make
+a Sidekick that watches that channel for mentions. It does the same job, and
+everyone it is shared with can see its runs in one place.
 
-- If a task is still running and you send a new message at the top level, Rally
-  does not start a second job. It asks you, once, to reply in the thread of your
-  original request, and gives you a link to it. Once the first request is
-  finished, a new top-level message starts fresh work.
-- Send the word `help` on its own and Rally replies with a short how-to.
+## Watching a Sidekick work
 
-### Mention @Rally in a channel
-
-Type **@Rally** and your request in any Slack channel, private channel or group
-message that Rally has been invited to. Rally replies in a thread under your
-message, and that whole thread becomes one task. Anyone in the thread can carry
-on without another mention, so the whole team sees the work and the result.
-
-- Rally reads the threads it is part of and ignores the rest of the channel.
-- Each message runs with the access of the person who sent it. Linked members
-  work as themselves; everyone else gets the Organization's shared tools.
-- If Rally asks a question of one particular person, only that person can
-  answer it.
-- Who can see the task in Rally follows the Slack room. A public Slack channel
-  makes a public Thread in Rally. A private channel, direct message or group
-  message makes a private Thread for the people in that conversation.
-
-If Rally refuses to start, for example because it could not tell whether the
-Slack channel is public or private, or because its Slack permissions need
-updating, it says so in the thread. Once the problem is fixed, reply **try
-again** in the thread. Rally keeps your request for up to a day.
-
-### Type /rally
-
-`/rally` works in any Slack message box. Type it with your request after it:
-
-```text
-/rally summarize the launch thread
-```
-
-Or type `/rally` on its own and a pop-up called **Start a Rally task** asks
-**What should Rally do?**. Type your request and click **Start**.
-
-Either way, Slack shows you a private note, "Rally queued your request. I'll
-continue in your Agent conversation.", and the work continues in your direct
-messages with Rally, not in the channel where you typed the command. Use
-`/rally` when you want Rally's help without an audience.
-
-### Use a shortcut
-
-Rally adds two shortcuts to Slack.
-
-- **Start a Rally task** opens the same pop-up as `/rally`. Find it in the
-  shortcuts menu (the lightning bolt) in Slack's message box.
-- **Work on this with Rally** sits on every message. Hover over a message, open
-  its **More actions** menu (the three dots) and choose it. The pop-up opens
-  with that message already filled in. Add what you want done and click
-  **Start**.
-
-The second one turns a bug report or a customer question into a job for Rally
-in two clicks, and nobody retypes anything.
-
-## Watching Rally work
-
-Rally does not type its answer into Slack word by word. It puts a single emoji
-on the message that started the task, and changes it as the work
+When a Sidekick is working on a Slack message, Rally does not type its answer
+word by word. It puts a single emoji on the message, and changes it as the work
 moves along.
 
 | Emoji | Meaning |
 | --- | --- |
-| Eyes (`:eyes:`) | Rally has picked up your request. |
-| Brain, magnifying glass, writing hand and gear, taking turns | Rally is working. |
+| Eyes (`:eyes:`) | Rally has picked up the message. |
+| Brain, magnifying glass, writing hand and gear, taking turns | The run is working. |
 | Green tick (`:white_check_mark:`) | Done. The answer is in the thread. |
-| Question mark (`:question:`) | Rally needs your input. |
-| Warning sign (`:warning:`) | The task failed. |
-| Stop sign (`:octagonal_sign:`) | The task was stopped. |
+| Question mark (`:question:`) | The run needs input. |
+| Warning sign (`:warning:`) | The run failed. |
+| Stop sign (`:octagonal_sign:`) | The run was stopped, or the Sidekick is paused. |
 
 Rally keeps one of its own emoji on a message at a time, and it never touches
-yours. When you send a new request in the same thread, the emoji moves to that
-message. It is, in effect, a tiny progress bar that went to art school.
+yours. It is, in effect, a tiny progress bar that went to art school.
 
 When the answer is ready, Rally posts it in the thread in one go. A long
 answer is split over several messages, breaking between paragraphs and keeping
-code blocks whole. Each answer has two buttons, **Open task** to see the full
-Thread in Rally, and **Give feedback** to tell the team whether it helped. A
-note under it reminds everyone that the answer was generated by AI, so check
-important facts and actions before relying on them.
+code blocks whole. A note under it reminds everyone that the answer was
+generated by AI, so check important facts and actions before relying on them.
+The same run also appears as a row in the Sidekick's conversation in Rally.
 
 ## The Home tab
 
-Rally's **Home** tab in Slack is your own small dashboard.
+Rally's **Home** tab in Slack is your own small corner of Rally in Slack.
 
-- Before you link, it says **Meet Rally**, with the **Connect Rally** button
-  and some example requests.
-- After you link, it says **Welcome** and your name, with three buttons:
-  **Start a task** (opens the task pop-up), **Create automation** and
-  **Notifications**. Below them, **Needs attention & recent tasks** lists your
-  running tasks and anything waiting on you, and **Automations** lists your
-  scheduled helpers with their next run time.
+- Before you link, it says **Meet Rally**, with the **Connect Rally** button.
+- After you link, it welcomes you by name and lists your Sidekicks with their
+  next run time.
 - Owners and administrators also see a **Workspace administration** card
   showing whether the Slack connection is healthy, with a **Manage** button that
   opens **Settings → Connections** in the Mac app.
 
 > [!NOTE]
-> The Home tab still uses the old word: an "automation" here is a
-> [Sidekick](../07-sidekicks/01-what-a-sidekick-is.md). **Create automation**
-> opens Rally on your Mac so you can make one, and the **Automations** list
-> shows your Sidekicks.
-
-The **Notifications** button opens a pop-up with **Notify me in Slack** choices.
-How Rally tells you about mentions and new Threads is covered properly in
-[Notifications](04-notifications.md).
+> The Home tab may still use the old word: an "automation" there is a
+> [Sidekick](../03-sidekicks/01-what-a-sidekick-is.md).
 
 ## Inviting Rally into a Slack channel
 
-Rally's bot does not wander into Slack channels on its own. To use **@Rally** in
-a channel, invite it first, with `/invite @Rally` or from the channel's
-settings (**Integrations → Add apps**).
+Rally's bot does not wander into Slack channels on its own. For a Sidekick to
+read or post in a private channel, invite the bot first, with `/invite @Rally`
+or from the channel's settings (**Integrations → Add apps**). When a Sidekick
+watches a public channel, the bot joins it by itself so it can hear what is
+said there.
 
-When Rally joins, it creates a matching [Channel](../03-spaces-and-breakouts/01-spaces.md)
-in your Organization for that Slack room, and posts one line: "Rally is here.
-Mention @Rally in a Slack thread to start work on it; each Slack thread becomes
-its own Rally thread in the Rally channel linked to this conversation." From then on, every Slack thread where
-someone mentions Rally becomes its own Thread inside that Channel, one Thread
-per job.
+Inviting the bot creates nothing in Rally. It only lets your Sidekicks, and
+Rally in your Canvases, see and post in that channel.
 
-- A public Slack channel makes a public Channel everyone in the Organization can
-  see. A private Slack channel or group message makes a private Channel for the
-  people in it whom Rally can match to Rally accounts. [Who can see
-  what](../03-spaces-and-breakouts/04-who-can-see-what.md) explains the
-  difference.
-- If a linked Slack channel later becomes private, Rally refuses new threads
-  there with a notice, rather than letting them land in a Channel the whole
-  Organization can see.
-- If Rally is removed from the Slack channel, or the channel is archived, the
-  link is paused. Invite Rally again, or mention it, to bring the link back.
-  Unarchiving the Slack channel on its own is not enough.
-- If the Channel in Rally has been archived, Rally does not start work in that
-  Slack room and says so. Restore the Channel from **Archived** at the bottom of
-  the Channels list to bring the link back.
+## When a Sidekick goes quiet in Slack
 
-## When Rally stops answering in Slack
-
-Work through this list, which is also on Rally's [Slack support
-page](https://rallywith.ai/support/connectors/slack/):
+Work through this list:
 
 1. Open **Settings → Connections** in the Mac app and find the Slack row.
 2. If its status says **Reconnect required**, ask an owner or administrator to
    click **Refresh** and approve Rally in Slack again.
 3. Open Rally's **Home** tab in Slack and check that your account is linked.
-4. Try your mention, command or shortcut again.
+4. Open the Sidekick in Rally and check that it is **Active**, that its latest
+   run row did not fail or ask for input, and that the bot is in the channel it
+   should read or post in.
 
 There is a public overview of all this at
 [rallywith.ai/slack](https://rallywith.ai/slack/). Send it to a Slack

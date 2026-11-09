@@ -42,7 +42,7 @@ export interface AuthoredToolSchema {
 
 const workflowInput = (): WorkstreamWorkflowInput => ({
   workspaceId: "00000000-0000-4000-8000-000000000001",
-  parentKind: "workstream",
+  parentKind: "canvas",
   parentId: "00000000-0000-4000-8000-000000000002",
   loopId: "workstream:00000000-0000-4000-8000-000000000002:substream:0:loop",
   harnessRunId: "00000000-0000-4000-8000-000000000003",
@@ -112,11 +112,13 @@ export function everyAuthoredToolSchema(): AuthoredToolSchema[] {
   });
   const multimodal = (createAvalonMultimodalGenerationPlugin(multimodalEnv, workflowInput())?.tools ?? [])
     .map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
-  // Built for a Sidekick's configuration conversation, the one scope offering
-  // all four tools; pre-pagination, so `read` and `list` carry their private
-  // cursor exactly as the wrapper receives them.
+  // Built for a manager's wizard turn in a Sidekick's configuration
+  // conversation, the one scope offering all four tools (attach and post are
+  // given only to a turn the claim marked `sidekickWizard`); pre-pagination, so
+  // `read` and `list` carry their private cursor exactly as the wrapper
+  // receives them.
   const conversations = (createConversationsPlugin(
-    { ...workflowInput(), parentKind: "automation", parentId: "00000000-0000-4000-8000-00000000000a" },
+    { ...workflowInput(), parentKind: "automation", parentId: "00000000-0000-4000-8000-00000000000a", sidekickWizard: true },
     conversationToolPorts(env, workflowInput()),
     (tool) => [tool],
   )?.tools ?? []).map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));

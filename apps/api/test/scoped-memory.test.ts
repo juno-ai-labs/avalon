@@ -298,7 +298,7 @@ function input(
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
-    parentKind: "workstream",
+    parentKind: "canvas",
     parentId: owner ? WORKSTREAM_ONE : WORKSTREAM_TWO,
     loopId: `workstream:${owner ? WORKSTREAM_ONE : WORKSTREAM_TWO}:substream:0:loop`,
     harnessRunId: owner ? RUN_ONE : RUN_TWO,

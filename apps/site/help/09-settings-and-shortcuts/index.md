@@ -11,8 +11,8 @@ them ended with an appendix of key commands printed on a card you could tear out
 and prop against the monitor. By that point in the book you had stopped learning
 what the program did and started wanting it to do it faster.
 
-You have reached that point with Rally. You can start a Thread, branch a
-Breakout, hand work to the agent, connect your tools and leave a Sidekick
+You have reached that point with Rally. You can start a Canvas, ask Rally for
+the next version, connect your tools and leave a Sidekick
 running overnight. This chapter is about the last stretch: making Rally look and
 behave the way you like, and getting it to answer to your fingers instead of
 your mouse.

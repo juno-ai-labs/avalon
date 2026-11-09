@@ -29,6 +29,18 @@ function renderInput(props: Partial<ComponentProps<typeof ComposerInput>> = {}):
   );
 }
 
+describe('ComposerInput errors', () => {
+  it('titles a send error with what happened when the host says it', () => {
+    renderInput({ error: 'This message is over 100,000 characters, please shorten it.', errorTitle: 'Message too long' });
+    expect(screen.getByRole('alertdialog', { name: 'Message too long' })).toHaveTextContent('This message is over 100,000 characters');
+  });
+
+  it('keeps the generic title for an error the host does not name', () => {
+    renderInput({ error: 'The message couldn’t be sent. Try again.' });
+    expect(screen.getByRole('alertdialog', { name: 'Something went wrong' })).toBeInTheDocument();
+  });
+});
+
 describe('ComposerInput IME composition guard', () => {
   it('does not submit an Enter that is still committing an IME composition', () => {
     const onSubmit = vi.fn();

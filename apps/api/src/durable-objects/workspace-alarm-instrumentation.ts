@@ -7,65 +7,27 @@ export type WorkspaceScheduledAlarmPhase =
   | "recovery_rearm"
   | "authority_check"
   | "stored_target"
-  | "activity_reap"
   | "connector_event_reap"
-  | "space_default_publish"
-  | "space_intent_resume"
-  | "space_bootstrap"
-  | "channel_color_sync"
-  | "thread_backfill"
-  | "import_reservation_reclaim"
   | "memory_digest_sync"
   | "schedule_reconcile"
   | "parent_outbox"
-  | "parent_breakouts"
   | "directory_followup"
   | "final_rearm";
 
-export type ObservableWorkspaceScheduledAlarmKind =
-  | "product"
-  | "schedule_bootstrap"
-  | "personal_channel_backfill"
-  | "schedule"
-  | "watch"
-  | "maintenance"
-  | "terminal"
-  | "parent_participant_projection"
-  | "parent_participant_migration"
-  | "parent_invitation_delivery"
-  | "automation_schedule"
-  | "automation_run"
-  | "sidekick_memory_tables"
-  | "sidekick_delegation_migration"
-  | "sidekick_delegation_sources"
-  | "sidekick_review"
-  | "unknown";
-
-const OBSERVABLE_ALARM_KINDS = new Set<ObservableWorkspaceScheduledAlarmKind>([
-  "product",
-  "schedule_bootstrap",
-  "personal_channel_backfill",
-  "schedule",
-  "watch",
-  "maintenance",
-  "terminal",
-  "parent_participant_projection",
-  "parent_participant_migration",
-  "parent_invitation_delivery",
-  "automation_schedule",
-  "automation_run",
-  "sidekick_memory_tables",
-  "sidekick_delegation_migration",
-  "sidekick_delegation_sources",
-  "sidekick_review",
-]);
+/**
+ * A stored alarm kind as a log may carry it: one of the kinds the object's
+ * dispatcher handles, or `unknown`. The kinds are the dispatcher's own
+ * constants, so the bound is the set it is handed (`WORKSPACE_DISPATCHED_ALARM_KINDS`)
+ * rather than a second list here: a hand-kept copy fell behind, and every
+ * Sidekick run notice and run row logged its phase lines as `unknown`.
+ */
+export type ObservableWorkspaceScheduledAlarmKind = string;
 
 export function observableWorkspaceScheduledAlarmKind(
   kind: string,
+  dispatched: ReadonlySet<string>,
 ): ObservableWorkspaceScheduledAlarmKind {
-  return OBSERVABLE_ALARM_KINDS.has(kind as ObservableWorkspaceScheduledAlarmKind)
-    ? kind as ObservableWorkspaceScheduledAlarmKind
-    : "unknown";
+  return dispatched.has(kind) ? kind : "unknown";
 }
 
 interface WorkspaceScheduledAlarmPhaseSample {

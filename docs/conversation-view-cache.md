@@ -2,7 +2,7 @@
 
 WorkspaceDO keeps a compact display projection of its conversations. A client
 opening a conversation requests its compact feed over the Organization socket
-it already holds, while the authoritative SubstreamAgent socket connects.
+it already holds, while the authoritative `AgentLoopDO` socket connects.
 The preview is read-only and the live snapshot replaces it unconditionally.
 
 ## Where the code lives
@@ -11,7 +11,7 @@ The preview is read-only and the live snapshot replaces it unconditionally.
 | --- | --- |
 | `packages/contracts/src/conversation-view.ts` | Display allowlist, projection function, request and response contracts. |
 | `apps/api/src/durable-objects/conversation-view-projection.ts` | Source change ledger, SQL triggers, migration 78, and reference-only Queue publication. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Reloads current source content for delivery and schedules publication through its existing alarm coordinator. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | Reloads current source content for delivery and schedules publication through its existing alarm coordinator. |
 | `apps/api/src/durable-objects/workspace-conversation-view.ts` | Destination tables, migration 124, version fences, and opening-page reads. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Admits each socket request through the conversation's own viewer authorization. |
 | `apps/api/src/queues/activity-consumer.ts` | Reloads the source and commits the projection before acknowledging delivery. |
@@ -23,7 +23,7 @@ The preview is read-only and the live snapshot replaces it unconditionally.
 Source triggers record changed turns in `conversation_view_changes`, under a
 monotonic conversation clock. Text, block, activity, interval, and header
 changes are covered, including attachment link renames/removals and mention
-edits. Header and block triggers ignore unrelated workstream fields and
+edits. Header and block triggers ignore unrelated conversation-header fields and
 tool-only block changes. Activity triggers walk upward to the assistant turn; they
 do not copy a tool's arguments or results. Repeated mutations coalesce into one
 pending reference per turn. A deletion keeps a small reference so its destination
@@ -34,12 +34,12 @@ using its existing 100-message batch size and five-second dispatch retry.
 Recent edits and the newest historical turns publish first, so opening does
 not wait for the oldest history. Only one page per conversation has an unexpired
 delivery claim. The consumer reloads current
-content from SubstreamAgent, applies it to WorkspaceDO, then confirms the
+content from AgentLoopDO, applies it to WorkspaceDO, then confirms the
 claimed revision at the source before acknowledging. That confirmation releases
 the next page; edits newer than the delivered snapshot remain pending. Queue
 acceptance alone does not release a page. A failed destination write retries through
 the Queue with exponential backoff. Claims also carry a durable retry gate using
-the existing scheduled-alarm backoff, as the thread backfill lane does. If a
+the existing scheduled-alarm backoff, as the retired thread backfill lane did. If a
 delivery or acknowledgement is lost, the source alarm reclaims and republishes
 pending rows without waiting for another conversation edit. Neither publication
 nor destination delivery gates the agent loop.
@@ -105,36 +105,21 @@ navigation is ignored, and any live conversation snapshot replaces the seed.
 
 ### Backfill and rollout
 
-SubstreamAgent migration 78 queues every historical turn and the conversation
-header. WorkspaceDO migration 124 also fills the existing
-[`thread_backfill`](thread-backfill.md) lane from `parent_children` and
-`sidekick_children`, plus `channels`, `spaces`, and `parent_metadata`
-for legacy parents without a materialized Main child. Work lookup supplies
-the implicit Main, matching the hosted parent registry. Its `conversation_view`
-job includes Channel, Thread, Breakout, and Sidekick conversations, including
-archived conversations. Unlike
-the older summary jobs, this job does not use the open-thread directory as its
-universe.
+`AgentLoopDO` migration 78 queues every historical turn and the conversation
+header. The WorkspaceDO lane that woke each historical conversation
+(`thread_backfill`, filled by migration 124) is retired: WorkspaceDO migration
+139 dropped it, and the name survives only as a migration-history `INSERT`
+(`workspace-conversation-view.ts`) and a parse-only job value in
+`activity-consumer.ts`.
 
-Each backfill delivery wakes a listed SubstreamAgent and arms any pending
-projection work seeded by migration 78. It does not re-mark delivered history.
-The parent remains claimed and later children wait until the current source
-has confirmed delivery of its pending rows to WorkspaceDO; the next pass
-resumes at that child, and a pass covers only children registered before the
-backfill first reached the parent
-([`thread-backfill.md`](thread-backfill.md#how-it-works)).
-A registered child whose source object is absent, preparing, quarantined, or
-has no active authority generation reports `missing`, so it cannot hold later
-children behind an undeliverable migration header. Projection publication and
-queued reads use the same authority fence. Pending rows are retained; activating
-the source through runtime bootstrap arms the ordinary projection lane again.
-The source drains pages through the delivery-confirmed path above.
-A repeated backfill is harmless.
+Nothing wakes a historical conversation now. Its pending rows are retained,
+and activating the source through runtime bootstrap arms the ordinary
+projection lane, which drains them through the delivery-confirmed path above.
 
 After deploying, force the WorkspaceDO fleet through the
 [migration tracker](durable-object-migration-tracking.md), as for other
-workspace backfills. This wakes Organizations that have no current users;
-their work lists then wake their existing conversations. These code migrations
+workspace backfills. This wakes Organizations that have no current users; their
+conversations then wait for their own next activation. These code migrations
 do not themselves deploy a release or force a production fleet.
 
 ## Invariants
@@ -146,8 +131,8 @@ do not themselves deploy a release or force a production fleet.
   an older, still-needed delivery for another.
 - Deletion fences survive content removal. Dropping them would permit delayed
   writes to resurrect deleted messages.
-- Every read is authorized for its exact conversation. Sidebar visibility is
-  insufficient for a private Breakout.
+- Every read is authorized for its exact conversation, by its Canvas's or
+  Sidekick's audience. A sidebar row is not an authorization.
 - The cache marker never becomes a live snapshot marker. Otherwise the preview
   could enable writes or prevent the authoritative snapshot from applying.
 
@@ -156,7 +141,7 @@ these boundaries.
 
 ## Boundary
 
-This is a disposable display projection. SubstreamAgent retains transcript and
+This is a disposable display projection. AgentLoopDO retains transcript and
 execution authority. WorkspaceDO retains relationship and viewer admission
 authority. The cache supplies an opening view; it does not supply tool details,
 editing, history paging, inherited-context hydration, or realtime resume.
@@ -186,8 +171,6 @@ retention policy or a different storage boundary is required.
   projection, plugin timing, deletion and generation fences, Queue publication,
   historical upgrades, fenced-source backfill/activation recovery, and complete
   opening feeds across plugin-only turns within the realtime frame budget.
-- `apps/api/test-workers/thread-backfill.test.ts`: the Queue consumer keeps a
-  backfill claimed until the source projection reaches WorkspaceDO.
 - `apps/api/test-workers/workspace-socket-fanout.test.ts`: cached reads over a
   real socket, private-child admission, and membership removal.
 - `apps/desktop/src/renderer/lib/conversation-cache.test.ts` and

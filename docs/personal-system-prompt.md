@@ -16,7 +16,6 @@ envelope strings in `packages/contracts/src/text.ts`, which also owns
 `stripPersonalSystemPrompt`, shared by desktop transcript display (settled and
 queued messages), outbound message reduction, and Activity/mention effect
 producers before their excerpt limit.
-The iOS `FeedProjection` applies the same display rule.
 
 ## How it works
 
@@ -67,8 +66,7 @@ has refreshed since the first attempt.
   push, mention email, Slack delivery and conversation previews. Activity and
   mention effect producers remove it before truncation, so even long instructions
   cannot consume an excerpt or leave a partial envelope. Activity reads also
-  filter complete envelopes on older rows. Digest entries contain names, titles
-  and links.
+  filter complete envelopes on older rows.
   XML examples in the message body remain visible. Instruction text is
   XML-escaped so it cannot close the envelope.
 - **Blank instructions add nothing.** Attachment parts remain intact after the
@@ -96,11 +94,12 @@ effect as saving it in settings.
 ## Testing
 
 `message-to-output-pipeline.test.ts` proves admission refresh, retry stability and
-durable user-role history. Desktop transcript and iOS feed tests cover display
+durable user-role history. Desktop transcript tests cover display
 filtering; harness prompt tests cover XML formatting, escaping and compatibility
 with the shared display filter.
-`citations.test.ts`, `mention-email.test.ts`, `slack-notification-service.test.ts`,
-`push-delivery.test.ts` and `activity-push.test.ts` cover notification reduction.
+`packages/contracts` `citations.test.ts`, and the API's
+`test-workers/notice-email-sink.test.ts` and `test-workers/push-delivery.test.ts`,
+cover notification reduction.
 The admission/history pipeline test uses instructions longer than the outbound
 excerpt budget and checks that Activity receives the ordinary message.
 

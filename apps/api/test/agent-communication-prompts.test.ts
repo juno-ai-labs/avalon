@@ -6,7 +6,7 @@ import { renderAgentMessage } from "../src/services/agent-message-content";
 import { createAgentCommunicationPlugin, type AgentCommunicationTools } from "../src/services/agent-communication-plugin";
 
 describe('agent coordination role guidance', () => {
-  it.each(['workstream', 'automation'] as const)('identifies a worker under %s as background rather than a participant coordinator', parentKind => {
+  it.each(['canvas', 'automation'] as const)('identifies a worker under %s as background rather than a participant coordinator', parentKind => {
     const guidance = agentCoordinationRoleGuidance({ parentKind, backgroundAgent: true });
     expect(guidance).toContain('You are a background agent');
     expect(guidance).toContain('Execute the assignment directly');
@@ -16,17 +16,17 @@ describe('agent coordination role guidance', () => {
   });
 
   it.each([
-    { parentKind: 'workstream' as const },
+    { parentKind: 'canvas' as const },
     { parentKind: 'automation' as const },
-    { parentKind: 'workstream' as const, backgroundAgent: true },
+    { parentKind: 'canvas' as const, backgroundAgent: true },
   ])('tells every role that ending the turn is the wait and a wake-up is a deadline (%o)', (input) => {
     const guidance = agentCoordinationRoleGuidance(input);
     expect(guidance).toContain('The reply arrives as a message and wakes this conversation. Do not poll for it and do not resend the assignment.');
     expect(guidance).toContain('schedule one wake-up for that time, not a repeating one');
   });
 
-  it('reserves participant responsiveness for foreground workstreams', () => {
-    expect(agentCoordinationRoleGuidance({ parentKind: 'workstream' })).toContain('Stay available to participants');
+  it('asks no foreground conversation to stay available: that was a Thread room', () => {
+    expect(agentCoordinationRoleGuidance({ parentKind: 'canvas' })).not.toContain('Stay available to participants');
     expect(agentCoordinationRoleGuidance({ parentKind: 'automation' })).not.toContain('Stay available to participants');
   });
 });
@@ -76,8 +76,8 @@ describe("the agents plugin", () => {
   const sidekickId = "00000000-0000-4000-8000-000000000001";
   const unused = async (): Promise<never> => { throw new Error("not called"); };
   const service = {
-    sidekicks: async () => ({ sidekicks: [{ sidekickId, name: "Monitor", description: "", scope: "workstream" as const,
-      ownedByThisWorkstream: true, isCurrentSidekick: false, canEdit: true, status: "draft" as const, nextRunAt: null, lastRunAt: null, agentId: `automation/${sidekickId}/0` as never }] }),
+    sidekicks: async () => ({ sidekicks: [{ sidekickId, name: "Monitor", description: "", scope: "workspace" as const,
+      isCurrentSidekick: false, canEdit: true, status: "draft" as const, nextRunAt: null, lastRunAt: null, agentId: `automation/${sidekickId}/0` as never }] }),
     send: async (input) => ({ messageId: sidekickId, next: "agentId" in input ? input.agentId : "" }),
     findSidekick: unused, createSidekick: unused, attachSidekickResource: unused, start: unused, list: unused, stop: unused,
     requestSidekickChange: async (changes) => ({ messageId: sidekickId, next: changes }),
@@ -95,11 +95,10 @@ describe("the agents plugin", () => {
       .resolves.toMatchObject({ output: { next: `automation/${sidekickId}/0` } });
   });
 
-  it("keeps the rule that a thread changes only Sidekicks it may edit", () => {
-    // The incident behind this line: a thread rewrote another thread's draft.
+  it("keeps the rule that a conversation changes only Sidekicks it may edit", () => {
+    // The incident behind this line: one conversation rewrote another's Sidekick draft.
     expect(plugin.systemMessage).toContain("Use find_sidekick only when the person explicitly names an existing Sidekick to edit; never silently replace a named target.");
-    expect(tool("sidekicks_list").definition.description).toContain("editable Sidekicks owned by this thread");
-    expect(tool("sidekicks_list").definition.description).toContain("the current Sidekick, marked isCurrentSidekick: true");
+    expect(tool("sidekicks_list").definition.description).toContain("the Sidekick this conversation belongs to, marked isCurrentSidekick: true; a Canvas's Chat belongs to none");
   });
 });
 
@@ -123,6 +122,10 @@ describe("a Sidekick run asking its wizard for a change", () => {
 
     const run = createAgentCommunicationPlugin(service, "", { sidekickRun: true });
     expect(run.systemMessage).toContain("You are executing one run of a Sidekick.");
+    // The tie-break with the conversations plugin's "never post that reply
+    // there again": an answer for someone who wrote in Rally is the final message.
+    expect(run.systemMessage).toContain("If they wrote in Rally, in this run or this Sidekick's own conversation, your final message is the reply they read: put the answer there and post nothing.");
+    expect(run.systemMessage).toContain("If they wrote outside Rally, in the Slack thread they replied in, post the answer in that thread");
     const tool = run.tools.find((candidate) => candidate.definition.name === "request_sidekick_change")!;
     expect(tool.definition.mode).toBe("write");
     await expect(tool.execute({ changes: "  Add a weekly totals row.  " }, context))

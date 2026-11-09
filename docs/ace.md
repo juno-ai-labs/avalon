@@ -1,12 +1,14 @@
 # Ace internal administration
 
-Ace is Avalon's internal administration Worker at
+Ace is Rally's internal administration Worker at
 `https://ace.internal.rallywith.ai`. Its feature-flag surface manages
 Boolean product flags in Cloudflare Flagship: presentation controls for
-Electron and operational controls for scheduled digest and Apple push delivery. Its Queues
+Electron and the operational control for Apple push delivery. Its Queues
 surface lists every actively configured Cloudflare dead-letter queue, its live
 backlog, and a non-consuming peek at its messages. Its Models surface manages
 the primary model and ordered fallback array for every model-using agent role.
+Its Workspaces page sets the plan of, or retires, any workspace, by relaying
+to the regional API.
 New internal tools extend the same Hono application and Ace-owned component
 library instead of creating another operator site or visual language.
 
@@ -18,7 +20,7 @@ membership. It sends no invitation email yet. [Private access](private-access.md
 owns that lifecycle and the remaining distribution work.
 
 Timed links use an operator-chosen local date/time and permit repeat downloads
-until that deadline. Both generation actions share the current lifetime choice, defaulting to timed mode. Requests and grant history are searched server-side and paged in groups of 50. Access-protected same-origin actions revoke grants and relay acknowledgement recovery to the Global operator API. The existing `demos` role also authorizes these acquisition recovery actions; it does not authorize telemetry administration. The same regional credential also authorizes the reviewed connector-maintenance command described in [connector installation lifecycle](connector-installation-lifecycle.md#operator-maintenance); telemetry and read-only engineering credentials cannot use it.
+until that deadline. Both generation actions share the current lifetime choice, defaulting to timed mode. Requests and grant history are searched server-side and paged in groups of 50. Access-protected same-origin actions revoke grants and relay acknowledgement recovery to the Global operator API. The existing Ace operator role (stored as `demos`) also authorizes these acquisition recovery actions; it does not authorize telemetry administration. The same regional credential also authorizes the reviewed connector-maintenance command described in [connector installation lifecycle](connector-installation-lifecycle.md#operator-maintenance); telemetry and read-only engineering credentials cannot use it.
 
 ## Where the code lives
 
@@ -26,21 +28,22 @@ until that deadline. Both generation actions share the current lifetime choice, 
 | --- | --- |
 | `apps/ace/src/index.ts` | Hono routes, Access admission, same-origin writes, and static assets. |
 | `apps/ace/src/access.ts` | Reuses the migration tracker's signed Cloudflare Access assertion verifier. |
-| `apps/ace/src/protocol.ts` | The managed flags, safe targeting attributes, all Flagship operators, and Flagship's request limits. |
+| `apps/ace/src/private-access.ts`, `apps/ace/src/client/private-access.tsx` | The Access page: request review, download-grant issuance and revocation, and acknowledgement recovery. |
+| `apps/ace/src/protocol.ts` | The managed flags, the ranked model-role catalog and its Azure-only Sol policy, safe targeting attributes, all Flagship operators, and Flagship's request limits. |
 | `apps/ace/src/client/models.tsx` | The model-role catalog UI, free-text model inputs, and ordered fallback editor. |
 | `apps/ace/src/openrouter.ts` | Exact model-id and live-route validation against OpenRouter's public endpoints API. |
 | `apps/ace/src/directory.ts` | Read-only user and workspace search across both regional D1 databases. |
 | `apps/ace/src/regional-api.ts` | The client for the regional API's operator routes, over the operator credential; every answer parsed with the shared contract. |
-| `apps/ace/src/demos.ts` | The demo preparation routes on that client: list, template, start, read, retry, abandon. |
-| `apps/ace/src/client/demos.tsx` | The Demos page: every preparation and its phases from real receipts, **New demo**, retry and abandon. |
 | `apps/ace/src/client/workspaces.tsx` | The workspaces tab: find any workspace, set its plan, and retire it behind a typed-id confirmation. |
 | `apps/ace/src/flagship.ts` | Flagship reads and writes plus the post-write change notification. |
 | `apps/ace/src/flag-administration.ts` | The `FlagAdministration` RPC entrypoint the engineering MCP's flag tools call; the same catalogs and write functions as the pages. See [`engineering-mcp.md`](engineering-mcp.md#feature-and-model-flags). |
 | `apps/ace/src/cloudflare-queue-admin.ts` | Active dead-letter discovery, realtime backlog metrics, and non-consuming message peeks through Cloudflare's REST API. |
+| `apps/ace/src/client/queues.tsx` | The Queues page: dead-letter backlogs and the peeked batch. |
 | `apps/ace/src/queues.ts` | Account-wide workspace enumeration and regional fan-out. |
 | `apps/ace/src/client/components/ui.tsx` | Ace's shared controls and panels; future pages extend these components. |
 | `apps/ace/src/client/main.tsx`, `styles.css` | Feature-flag application and responsive visual system. |
-| `apps/ace/scripts/deploy.mjs` | Idempotent Access, flag, Worker, asset, and secret provisioning. |
+| `apps/ace/scripts/deploy.mjs` | Idempotent Access, flag, Worker, asset, and secret provisioning, and the `retireFlag` list that deletes the keys of retired flags and model roles. |
+| `apps/ace/scripts/runtime-token-permissions.mjs` | The deploy-time proof that the runtime token can list Queues and peek one. |
 | `.github/workflows/deploy-ace.yml` | The complete merge-to-main release transaction. |
 
 ## How it works
@@ -52,8 +55,11 @@ Ace-specific Access application by copying the migration site's policies and
 identity-provider settings. Ace therefore follows the same employee rule while
 keeping a distinct audience.
 
-`GET /api/flags` reads `meeting-recording-enabled`, `suggested-work-enabled`,
-and `multiple-workspaces-enabled`. The editor exposes enabled/paused state, default Boolean
+`GET /api/flags` reads `suggested-work-enabled`, `multiple-workspaces-enabled`
+and `push-notifications-enabled`. `suggested-work-enabled` is still provisioned
+and editable, but the Suggested Work surfaces it gated are deleted and no client
+reads it; retiring it is one more `retireFlag` call
+([`feature-flags.md`](feature-flags.md)). The editor exposes enabled/paused state, default Boolean
 value, ordered first-match rules, all eleven operators, nested AND/OR groups,
 and sticky percentage rollouts. A rule is reordered by dragging its handle
 onto another or, from that same handle, ArrowUp/ArrowDown. A person search
@@ -75,64 +81,25 @@ complete client flag contract per connected user and privately sends the values
 to that user's sockets. A subscribe response performs the same evaluation, so
 reconnect is the reconciliation path.
 
-**Demos.** `GET /api/demos` and `GET /api/demos/template` relay the Global
-regional API's `/internal/demos` routes over the operator credential, and
-`POST /api/demos`, `/api/demos/:id/retry` and `/api/demos/:id/abandon` relay
-the writes, same-origin. Ace holds no demo state and reads no demo table: the
-page shows each operation's phase from the receipts the regional API returns —
-Checking template, Creating workspace, Copying connections, Seeding
-conversations with confirmed-of-total, Waiting for workspace with the readiness
-gaps by name — and a failed operation with its phase, reason and operation id
-beside **Retry** and **Abandon**. There is no estimated time and no percentage;
-a running phase shows when it started, and a wait that failed keeps the gaps
-its last round named. **Retry** is offered for a failed preparation and for a
-running one that has stopped moving — the regional API starts the next
-attempt either way — and a retried operation is read by its current attempt:
-an earlier attempt's phase rows are shown as that attempt's receipts, never
-as the new driver's state. **Abandon** retires the candidate workspace, so it
-asks for the operation id to be typed, sends what was typed, and the regional
-API refuses without it; an abandoned operation says whether its candidate was
-closed, was never created, or was never allocated. Every gap the readiness
-check reports names the viewer it was read as. While anything is running, and
-for as long as the page is offline, it re-reads every five seconds; when a
-read fails, the last known state stays on screen dated by its last successful
-read until the next read succeeds, and **Refresh** asks now. There is no
-per-operation read: the list is the read, and selecting a row selects from
-it. The template is read before the page judges it: "reading" first, then
-either the form, the regional API's own reason it could not be read, or — when
-the template seats nobody to present, or the company has fewer people than the
-pack has parts — a sentence saying so rather than a form that cannot be
-submitted. **New demo** takes a company name, the presenter (chosen from the
-template's members, because they are handed its connections), and a colleague
-for every other pack role: one dropdown per part, labelled with what that part
-is — **Product**, **Sales**, **Legal** for the pack in service — listing
-everyone with a `@rallywith.ai` account who has signed in, by name and address
-([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)). They open uncast: a
-default here would seat a real person because nobody looked, and the form says
-how many parts are still empty rather than leaving **Start preparation** dead
-with nothing to read. It refuses to start while a part is uncast, one person is
-in two parts, or two of them share a display name, and mints one operation id
-per form so a second click resolves to the same preparation.
-**Retry** is offered while a preparation is failed and disabled while it is
-running; a running one that has stopped moving is abandoned rather than raced. A Ready demo names the workspace and where
-the presenter finds it — the account menu at the foot of Rally's sidebar,
-which lists workspaces only while their `multiple-workspaces-enabled` flag is
-on, set from the Feature flags tab; the desktop's deep-link contract has no
-home-screen destination, so there is no link to fabricate
-([`demo-workspaces.md`](demo-workspaces.md#open-questions)). A regional refusal
-reaches the page as the API's own code and message, and a response the shared
-contract cannot parse is named as a contract mismatch rather than an outage.
-
 **Workspaces.** The tab searches configured deployments' directories and retires the
 selected workspace in the region that owns it, through
 `POST /api/workspaces/:id/retire`, which relays to the regional API's
-`/internal/workspaces/:id/retire` over that region's operator credential,
+`/internal/workspaces/:id/retire` over that region's operator credential
+(code-facing `requireAceOperator` and `ACE_OPERATOR_ROLE`; stored as the secret
+`DEMO_OPERATORS_JSON` and the role `demos`, names kept from the removed Demos
+tab because renaming them is a secret rotation in every region),
 same-origin. The confirmation is the operator typing or pasting the workspace
 id — the button stays disabled until it matches — and the id travels with the
 request, where Ace and the regional API each refuse a confirmation that names
-another workspace. The receipt says what closed, what stayed in an outbox, and
+another workspace. The form says every Canvas, Sidekick and socket in the
+workspace closes. The receipt says what closed, what stayed in an outbox, and
 what remains when the walk could not finish, which a second retirement returns
-to; an incomplete pass keeps the typed id and the button armed, under the
+to. It counts the parents as Canvases, Sidekicks, Channels and Threads and
+names each failed node by the label for its recorded kind (`canvas`,
+`automation`, `space`, `workstream`): the last two stay because the walk also
+closes what the retired surfaces left in the `spaces` and `workstream`
+storage, which held Channels and Threads
+([`workspace-retirement.md`](workspace-retirement.md)). An incomplete pass keeps the typed id and the button armed, under the
 counts and the failed nodes, so the next click returns to what remains. A
 failed directory search is shown as a failure, never as "no matches"; a region
 whose directory did not answer is named beside the rows the other returned;
@@ -165,12 +132,27 @@ not invent one. Peek does not lease, acknowledge, retry, or remove a message.
 Ace deliberately discards Cloudflare's returned purge reference, so this first
 Queues surface has no delete capability.
 
-`GET /api/models` reads the managed `agent-model-*` JSON flags, including the
-Sidekick wizard's independent `agent-model-sidekick-authoring` Sol route. Ace hard-codes
+`GET /api/models` reads the five managed `agent-model-*` JSON flags, one per
+role in `AGENT_MODEL_ROLES`, in rank order: the main agent run of a Canvas's
+Chat or a Sidekick's conversation (`workstream`, labelled Conversation agent;
+the role and its key keep their storage name), the delegated inline subagent
+(`inline_child`), pasted-text naming (`workstream_naming`, labelled Pasted-text
+naming, which titles a long pasted text so its attachment chip has a name, and
+keeps its Thread-era key because the key is what Flagship stores), the memory sweep (`memory_sweep`), and the Sidekick wizard's
+independent `agent-model-sidekick-authoring` route. The roles that served
+retired surfaces — work-stream description, suggestion draft, suggested-work
+admission and ranking, and conversation import — are not in the catalog, and
+`apps/ace/scripts/deploy.mjs` deletes their keys
+(`agent-model-workstream-description`, `agent-model-suggestion-draft`,
+`agent-model-work-opportunity-admission`,
+`agent-model-work-opportunity-ranking`, `agent-model-session-import`) on every
+deploy with the other retired flags, so no route a rollout could still target
+survives in Flagship. Ace hard-codes
 the role catalog because Flagship knows only opaque keys: each entry explains
 the code path the model serves and carries the same checked-in route the API
 Worker uses when Flagship is unavailable. The suggested model list combines
-the reviewed work-stream pin choices with the classifier model used only by
+the reviewed pin choices (`AGENT_MODEL_OVERRIDES`, today the models a Sidekick
+can be pinned to) with the classifier model used only by
 fleet routing; either a primary or fallback input may also carry an arbitrary
 OpenRouter model id entered as free text. GPT-5.6 Sol is the exception: Ace suggests
 and accepts it only for `inline_child`, whose complete execution path receives
@@ -185,10 +167,10 @@ the PUT schema before either the public lookup or Flagship I/O. Bind remains the
 owner of the Azure-only runtime provider fence.
 
 The sidebar is an explicit stack rank, not alphabetical order. It weights a
-role's product criticality first and its execution frequency second: main runs,
-message admission, and delegated work lead; per-run descriptions and creation
-helpers follow; narrower meeting, activity, suggested-work, and dashboard paths
-come after them. Each row shows its numeric rank and the usage reason behind it.
+role's product criticality first and its execution frequency second: main runs
+and delegated work lead; pasted-text naming, which runs on each paste that
+becomes an attachment, follows; the background memory sweep and the on-demand
+Sidekick wizard come last. Each row shows its numeric rank and the usage reason behind it.
 The rank lives beside the hard-coded role explanation so adding a role requires
 making its operational importance explicit rather than letting insertion order
 decide where operators see it.
@@ -243,7 +225,7 @@ overlap.
   default-route editor for agent models, from its pages and from the
   engineering MCP, which writes only through Ace's `FlagAdministration`
   entrypoint. Direct product-flag dashboard or
-  Wrangler edits do not emit Avalon's Queue notification and leave connected
+  Wrangler edits do not emit Ace's Queue notification and leave connected
   clients stale until reconnect. Model changes need no notification because
   agents re-evaluate their flag on each run.
 - Access policy lives in Cloudflare Access. Ace verifies provenance and does not
@@ -269,6 +251,11 @@ operator authentication and same-origin write boundary. Regional API Workers own
 their Durable Object namespaces and the socket protocol.
 
 ## Failure modes and limits
+
+- Ace is laid out for a desktop operator's window. At phone width (390px) its
+  navigation strip and the Workspaces search results overflow sideways; this
+  is known and not fixed, since no operator runs Ace on a phone (the round-5
+  visual check, F13).
 
 - Missing or invalid Access configuration returns 403. The development bypass
   works only with `APP_ENV=development` and `ACE_DEV_AUTH=true`.
@@ -305,14 +292,12 @@ Flagship-and-Queue write contract, the safe attribute vocabulary, operators,
 nested targeting, regional fan-out, the ranked model-role catalog, live exact-match
 OpenRouter validation, invalid free-text rejection, ordered fallbacks, and
 preservation of staged model variations and rules. The operator pages have a
-Worker suite and a page suite each: `demos.test.ts` and `workspaces.test.ts`
-prove the relay — the operator credential presented, a regional refusal
-relayed by its own code, an outage answered as unavailable rather than as an
-empty page, the typed confirmation forwarded — and `demos-client.test.tsx` and
-`workspaces-client.test.tsx` prove the pages against a fetch double: phases
-from receipts, a retried operation read by its current attempt, the offline
-banner and the polling that keeps it honest, a template too small to cast,
-the typed-id ceremony, an incomplete retirement kept armed. `directory.test.ts`
+Worker suite and a page suite: `workspaces.test.ts` proves the relay — the
+operator credential presented, a regional refusal relayed by its own code, an
+outage answered as unavailable rather than as an empty page, the typed
+confirmation forwarded — and `workspaces-client.test.tsx` proves the page
+against a fetch double: the typed-id ceremony and an incomplete retirement
+kept armed. `directory.test.ts`
 proves the two-region search against real SQLite, one region down included.
 `pnpm --filter @rally/ace typecheck`
 checks both browser and Worker programs; `pnpm --filter @rally/ace build`
@@ -333,7 +318,6 @@ fixtures when visually exercising the component library.
 
 ## Regional impact
 
-Demos are prepared in Global, and the Demos page talks to the Global API only.
 The workspaces tab retires in the region that owns the workspace, through that
 region's API, so no retirement crosses a region; the directory search that
 finds the workspace is the existing cross-regional lookup described above.
@@ -392,6 +376,8 @@ Shared DB runtime sources and package exports are deployment inputs alongside
 contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only changes
 do not publish a new Ace bundle.
 
+## Changelog
+
 ### 2026-10-16 — Ace stops managing `digests-enabled`
 
 **What changed:** `digests-enabled` left `MANAGED_FLAGS`, and the deploy
@@ -401,7 +387,7 @@ way its catalog row says, with no digest exception.
 **Why:** It was the kill switch for the agent-run digest the 2026-10-15
 rewrite replaced, and its live default had drifted to `off`, hiding the Daily
 digest settings and stopping delivery for everyone. See
-[`digests.md`](digests.md) for the full entry.
+`digests.md` (retired) for the full entry.
 
 **Consequences:** A flag removed from the catalog must also move to a
 `retireFlag` call in the same change, or the key stays in Flagship where a
@@ -467,7 +453,7 @@ carrying a copy of it. A template that reads fine but has nobody to cast is its
 own state rather than the "could not be read" one, because Refresh is not the
 remedy for it. What the page refuses, the regional API refuses again: the
 dropdown is a convenience, not the boundary
-([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)).
+(`demo-workspaces.md`).
 
 Shipped in #664.
 
@@ -503,7 +489,7 @@ while an operation is running.
 **Why:** Casting from the template's members put Rally's own staff, under
 their work addresses, in the demo shown to a customer, and capped the cast at
 the template's size; the regional API mints a persona per name now
-([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)). Retry on a
+(`demo-workspaces.md`). Retry on a
 running operation was offered for a driver that had died silently, which is
 rare, reads as "start again" to whoever is watching a preparation work, and
 costs a duplicated attempt when it is pressed; the API still allows it, so

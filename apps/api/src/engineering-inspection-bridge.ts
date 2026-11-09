@@ -1,66 +1,61 @@
 import { RegionSchema } from "@rally/contracts/regions";
-import { asArtifactId, asSubstreamId, asWorkspaceId, SpaceDirectorySchema, SpaceChannelPageSchema, type SpaceDirectory, type SpaceChannelPage } from "@rally/contracts";
+import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
   ArtifactInspectionInputSchema,
   ArtifactSqlInspectionInputSchema,
   D1SqlInspectionInputSchema,
   SendEngineeringMessageInputSchema,
   SendEngineeringMessageResultSchema,
-  ReadEngineeringChannelInputSchema,
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
-  ListEngineeringUserChannelsInputSchema,
-  ListEngineeringUserConversationsInputSchema,
   type SendEngineeringMessageResult,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
   type SetEngineeringSidekickPausedResult,
+  ThreadRetirementOperationInputSchema,
+  type ThreadRetirementOperationInput,
+  DumpThreadTranscriptsResultSchema,
+  type DumpThreadTranscriptsResult,
+  RetireThreadsResultSchema,
+  type RetireThreadsResult,
+  ConvertThreadsToCanvasesInputSchema,
+  ConvertThreadsToCanvasesResultSchema,
+  type ConvertThreadsToCanvasesResult,
   RetireEngineeringOrgInputSchema,
   RetireEngineeringOrgResultSchema,
   type RetireEngineeringOrgResult,
   type EngineeringTextResult,
   CreateEngineeringOrgInputSchema,
   CreateEngineeringOrgResultSchema,
-  CreateEngineeringChannelInputSchema,
-  CreateEngineeringChannelResultSchema,
-  CreateEngineeringThreadInputSchema,
-  CreateEngineeringThreadResultSchema,
   type CreateEngineeringOrgResult,
-  type CreateEngineeringChannelResult,
-  type CreateEngineeringThreadResult,
   EngineeringArtifactListLookupSchema,
   EngineeringOperatorSchema,
   EngineeringArtifactTargetLookupSchema,
   EngineeringD1SqlResultSchema,
   EngineeringSidekickListLookupSchema,
   EngineeringSqlLookupSchema,
-  EngineeringSubstreamTargetLookupSchema,
-  EngineeringSubstreamListLookupSchema,
+  EngineeringConversationTargetLookupSchema,
   EngineeringWorkspaceTargetLookupSchema,
-  EngineeringWorkstreamListLookupSchema,
+  EngineeringCanvasListLookupSchema,
   ListEngineeringWorkspacesInputSchema,
   ListEngineeringWorkspacesResultSchema,
   SearchEngineeringOrganizationsInputSchema,
   SearchEngineeringOrganizationsResultSchema,
   SearchEngineeringUsersInputSchema,
   SearchEngineeringUsersResultSchema,
-  EngineeringSpaceListLookupSchema,
-  SubstreamSqlInspectionInputSchema,
-  SubstreamInspectionInputSchema,
+  ConversationSqlInspectionInputSchema,
+  ConversationInspectionInputSchema,
   WorkspaceInspectionInputSchema,
   WorkspaceSqlInspectionInputSchema,
-  WorkstreamInspectionInputSchema,
   type EngineeringInspectionRpcBinding,
   type EngineeringArtifactListLookup,
   type EngineeringArtifactTargetLookup,
   type EngineeringD1SqlResult,
   type EngineeringSidekickListLookup,
-  type EngineeringSpaceListLookup,
   type EngineeringSqlLookup,
-  type EngineeringSubstreamListLookup,
-  type EngineeringSubstreamTargetLookup,
+  type EngineeringConversationTargetLookup,
   type EngineeringWorkspaceTargetLookup,
-  type EngineeringWorkstreamListLookup,
+  type EngineeringCanvasListLookup,
   type ListEngineeringWorkspacesResult,
   type SearchEngineeringOrganizationsResult,
   type SearchEngineeringUsersResult,
@@ -91,12 +86,14 @@ import {
   workspacePlacementAffinity,
 } from "./lib/durable-object-namespace";
 import { parseRpcInput } from "./lib/rpc-contracts";
-import { asApiError } from "./lib/api-error";
+import { ApiError, asApiError } from "./lib/api-error";
 import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-authority";
-import { createEngineeringOrg, createEngineeringChannel, createEngineeringThread } from "./services/engineering-creation";
-import { sendEngineeringMessage, readEngineeringChannel, readEngineeringConversation, listEngineeringUserChannels, listEngineeringUserConversations } from "./services/engineering-messages";
+import { createEngineeringOrg } from "./services/engineering-creation";
+import { sendEngineeringMessage, readEngineeringConversation } from "./services/engineering-messages";
 import { auditedEngineeringWrite } from "./services/engineering-audit";
 import { setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
+import { dumpThreadTranscripts, retireThreads } from "./services/thread-retirement-service";
+import { convertThreadsToCanvases } from "./services/thread-conversion-service";
 import { retireWorkspaceForOperator } from "./services/workspace-retirement-service";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
@@ -108,18 +105,13 @@ const WorkspaceInventoryRowSchema = z.strictObject({
   authority_state: z.string().nullable(),
 });
 
-const WorkstreamDirectoryRowSchema = z.strictObject({
-  workstream_id: z.string(),
+const CanvasDirectoryRowSchema = z.strictObject({
+  canvas_id: z.string(),
   title: z.string(),
-  scope: z.string(),
-  exact_state: z.string(),
-  system_kind: z.string().nullable(),
-  last_activity_at: z.number().int().nonnegative(),
-  archived_at: z.number().int().nonnegative().nullable(),
-});
-
-const SubstreamDirectoryRowSchema = z.strictObject({
-  substream_id: z.string(),
+  visibility: z.string(),
+  created_by_user_id: z.string(),
+  created_at: z.number().int().nonnegative(),
+  updated_at: z.number().int().nonnegative(),
 });
 
 const ArtifactRegistryRowSchema = z.strictObject({
@@ -131,14 +123,6 @@ const ArtifactRegistryRowSchema = z.strictObject({
   current_version: z.number().int().positive(),
   hostname_stub: z.string().nullable(),
   updated_at: z.number().int().nonnegative(),
-});
-
-const SpaceDirectoryRowSchema = z.strictObject({
-  space_id: z.string(),
-  title: z.string(),
-  scope: z.string(),
-  system_role: z.string().nullable(),
-  archived_at: z.number().int().nonnegative().nullable(),
 });
 
 const SidekickDirectoryRowSchema = z.strictObject({
@@ -168,29 +152,28 @@ async function workspaceStub(env: Env, workspaceId: string) {
   );
 }
 
-async function resolveInspectionSubstreamRoute(
+/**
+ * A Canvas's or Sidekick's conversation, by the parent's id, in this
+ * workspace. A route becomes active only after the parent's anchor and its
+ * main conversation exist, and a child is reached only once its parent has
+ * registered it, so this check cannot materialize an absent object.
+ */
+async function resolveInspectionConversationRoute(
   env: Env,
-  input: { workspaceId: string; workstreamId: string; substreamId: string },
+  input: { workspaceId: string; conversationId: string; substreamId?: string | undefined },
   expectedGeneration?: number,
 ): Promise<InspectionWorkstreamRoute | null> {
-  const route = await resolveInspectionWorkstreamRoute(
-    env,
-    input.workstreamId,
-    expectedGeneration,
-  );
+  const route = await resolveInspectionWorkstreamRoute(env, input.conversationId, expectedGeneration);
   if (!route || route.workspace_id !== input.workspaceId) return null;
-  if (input.substreamId === "0") {
-    // A route becomes active only after creation/import has initialized the
-    // main substream, so this check cannot materialize a previously absent DO.
-    return route;
-  }
+  const substreamId = input.substreamId ?? "0";
+  if (substreamId === "0") return route;
   const known = await inspectionSubstreamIds(env, route);
-  return known.includes(input.substreamId) ? route : null;
+  return known.includes(substreamId) ? route : null;
 }
 
 /**
  * Every conversation a parent hosted by the Organization object has heard
- * from: a Channel's in the shared parent tables, a moved Sidekick's in its own.
+ * from: a Canvas's in the shared parent tables, a Sidekick's in its own.
  */
 async function inspectionSubstreamIds(env: Env, route: InspectionWorkstreamRoute): Promise<string[]> {
   const workspace = await workspaceStub(env, route.workspace_id);
@@ -257,24 +240,13 @@ async function resolveInspectionArtifactRoute(
  */
 export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
   implements EngineeringInspectionRpcBinding {
-  async listUserChannels(input: unknown): Promise<SpaceDirectory> {
-    return this.productOperation("listUserChannels", async () => SpaceDirectorySchema.parse(
-      await listEngineeringUserChannels(this.env, ListEngineeringUserChannelsInputSchema.parse(input)),
-    ));
-  }
 
-  async listUserConversations(input: unknown): Promise<SpaceChannelPage> {
-    return this.productOperation("listUserConversations", async () => SpaceChannelPageSchema.parse(
-      await listEngineeringUserConversations(this.env, ListEngineeringUserConversationsInputSchema.parse(input)),
-    ));
-  }
   async sendMessage(input: unknown, operator: unknown): Promise<SendEngineeringMessageResult> {
     return this.productOperation("sendMessage", async () => {
       const request = SendEngineeringMessageInputSchema.parse(input);
       return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
         action: "send_message", orgId: request.orgId, representedUserId: request.userId,
-        operationId: request.operationId, threadId: request.threadId,
-        ...(request.breakoutId === undefined ? {} : { breakoutId: request.breakoutId }),
+        operationId: request.operationId, conversationId: request.conversationId,
       }, async () => SendEngineeringMessageResultSchema.parse(await sendEngineeringMessage(this.env, request)),
       (result) => ({ turnId: result.receipt.turn.turnId, deliveryState: result.receipt.deliveryState }));
     });
@@ -293,12 +265,93 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
+  /**
+   * B-7a: every Thread, Breakout and Channel conversation of one Organization
+   * written to R2 as text, before any is retired. Resumable: a rerun writes
+   * only what the last pass did not.
+   */
+  async dumpThreadTranscripts(input: unknown, operator: unknown): Promise<DumpThreadTranscriptsResult> {
+    return this.productOperation("dumpThreadTranscripts", async () => {
+      const request = await this.confirmedThreadRetirement(input);
+      const trusted = EngineeringOperatorSchema.parse(operator);
+      const operationId = crypto.randomUUID();
+      return auditedEngineeringWrite(this.env, trusted, {
+        action: "dump_thread_transcripts", orgId: request.orgId, operationId,
+      }, async () => DumpThreadTranscriptsResultSchema.parse(await dumpThreadTranscripts(this.env, {
+        workspaceId: request.orgId, operationId, operatorSubject: trusted.subject,
+      })), (result) => ({ conversations: result.conversations, dumped: result.dumped, skipped: result.skipped,
+        failed: result.failed.length }));
+    });
+  }
+
+  /**
+   * B-7: every Thread, Breakout and Channel of one Organization retired,
+   * refused until the dump covers each of their conversations. Canvases,
+   * Sidekicks and resources stay. Resumable, and a no-op once done.
+   */
+  async retireThreads(input: unknown, operator: unknown): Promise<RetireThreadsResult> {
+    return this.productOperation("retireThreads", async () => {
+      const request = await this.confirmedThreadRetirement(input);
+      const trusted = EngineeringOperatorSchema.parse(operator);
+      const operationId = crypto.randomUUID();
+      return auditedEngineeringWrite(this.env, trusted, {
+        action: "retire_threads", orgId: request.orgId, operationId,
+      }, async () => RetireThreadsResultSchema.parse(await retireThreads(this.env, {
+        workspaceId: request.orgId, operationId, operatorSubject: trusted.subject,
+      })), (result) => ({ parents: result.parents, retiredParents: result.retiredParents,
+        retiredConversations: result.retiredConversations, failed: result.failed.length }));
+    });
+  }
+
+  /**
+   * Every Thread of one Organization that has an artifact, made a Canvas in
+   * place with the same id; refused, as the retirement is, until the dump
+   * covers each of their conversations. A dry run (the default) lists them
+   * and changes nothing, so it needs no confirmation and writes no audit row.
+   */
+  async convertThreadsToCanvases(input: unknown, operator: unknown): Promise<ConvertThreadsToCanvasesResult> {
+    return this.productOperation("convertThreadsToCanvases", async () => {
+      const parsed = ConvertThreadsToCanvasesInputSchema.parse(input);
+      const trusted = EngineeringOperatorSchema.parse(operator);
+      const operationId = crypto.randomUUID();
+      const run = () => convertThreadsToCanvases(this.env, {
+        workspaceId: parsed.orgId, dryRun: parsed.dryRun, operationId, operatorSubject: trusted.subject,
+      }).then((result) => ConvertThreadsToCanvasesResultSchema.parse(result));
+      if (parsed.dryRun) {
+        await this.confirmedThreadRetirement({ orgId: parsed.orgId, confirm: parsed.orgId });
+        return run();
+      }
+      const request = await this.confirmedThreadRetirement({ orgId: parsed.orgId, confirm: parsed.confirm ?? "" });
+      return auditedEngineeringWrite(this.env, trusted, {
+        action: "convert_threads_to_canvases", orgId: request.orgId, operationId,
+      }, run, (result) => ({ candidates: result.candidates.length, converted: result.converted,
+        alreadyConverted: result.alreadyConverted, failed: result.failed.length,
+        artifactsWithoutThread: result.artifactsWithoutThread }));
+    });
+  }
+
+  /**
+   * The confirmation the operator typed must name the Organization, and the
+   * Organization must be this region's: an id another region owns would read
+   * as an Organization with no Threads, and a pass over it would report done.
+   */
+  private async confirmedThreadRetirement(input: unknown): Promise<ThreadRetirementOperationInput> {
+    const request = ThreadRetirementOperationInputSchema.parse(input);
+    if (request.confirm !== request.orgId) {
+      throw new ApiError(409, "thread_retirement_unconfirmed", "The confirmation does not name this Organization");
+    }
+    if (!await resolveInspectionWorkspaceRoute(this.env, request.orgId)) {
+      throw new ApiError(404, "workspace_not_found", "No Organization with this id in this region");
+    }
+    return request;
+  }
+
   async retireOrg(input: unknown, operator: unknown): Promise<RetireEngineeringOrgResult> {
     return this.productOperation("retireOrg", async () => {
       const request = RetireEngineeringOrgInputSchema.parse(input);
       const trusted = EngineeringOperatorSchema.parse(operator);
-      // Ace's own door, so the D1 fence, the graph walk and the demo register
-      // stamp are the same; no user is represented, since an operator closes it.
+      // Ace's own door, so the D1 fence and the graph walk are the same; no
+      // user is represented, since an operator closes it.
       // A pass is resumable rather than idempotent: a fresh ID pairs this
       // call's audit rows, and the walk resumes from what it recorded.
       return auditedEngineeringWrite(this.env, trusted, {
@@ -309,12 +362,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         ...await retireWorkspaceForOperator(this.env, request.orgId, { operatorId: trusted.subject }),
       }), (result) => ({ complete: result.complete, remaining: result.remaining }));
     });
-  }
-
-  async readChannel(input: unknown): Promise<EngineeringTextResult> {
-    return this.productOperation("readChannel", async () => EngineeringTextResultSchema.parse(
-      await readEngineeringChannel(this.env, ReadEngineeringChannelInputSchema.parse(input)),
-    ));
   }
 
   async readConversation(input: unknown): Promise<EngineeringTextResult> {
@@ -345,30 +392,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         operationId: request.operationId,
       }, async () => CreateEngineeringOrgResultSchema.parse(await createEngineeringOrg(this.env, request)),
       (result) => ({ orgId: result.orgId }));
-    });
-  }
-
-  async createChannel(input: unknown, operator: unknown): Promise<CreateEngineeringChannelResult> {
-    return this.productOperation("createChannel", async () => {
-      const request = CreateEngineeringChannelInputSchema.parse(input);
-      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
-        action: "create_channel", orgId: request.orgId, representedUserId: request.creatorUserId,
-        operationId: request.operationId,
-      }, async () => CreateEngineeringChannelResultSchema.parse(
-        await createEngineeringChannel(this.env, request, (work) => this.ctx.waitUntil(work))),
-      (result) => ({ channelId: result.channelId }));
-    });
-  }
-
-  async createThread(input: unknown, operator: unknown): Promise<CreateEngineeringThreadResult> {
-    return this.productOperation("createThread", async () => {
-      const request = CreateEngineeringThreadInputSchema.parse(input);
-      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
-        action: "create_thread", orgId: request.orgId, representedUserId: request.creatorUserId,
-        operationId: request.operationId, threadId: request.operationId,
-      }, async () => CreateEngineeringThreadResultSchema.parse(
-        await createEngineeringThread(this.env, request, (work) => this.ctx.waitUntil(work))),
-      (result) => ({ threadId: result.threadId, turnId: result.turnId, harnessRunId: result.harnessRunId }));
     });
   }
 
@@ -472,56 +495,33 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
-  async listWorkstreams(input: unknown): Promise<EngineeringWorkstreamListLookup> {
-    const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "listWorkstreams");
+  async listCanvases(input: unknown): Promise<EngineeringCanvasListLookup> {
+    const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "listCanvases");
     if (!await resolveInspectionWorkspaceRoute(this.env, request.workspaceId)) {
       return { found: false };
     }
     const workspace = await workspaceStub(this.env, request.workspaceId);
     const result = await workspace.runInspectionSql({
-      sql: `SELECT workstream_id, title, scope, exact_state, system_kind,
-                   last_activity_at, archived_at
-              FROM channels
-             ORDER BY last_activity_at DESC, workstream_id`,
-      bindings: [],
+      sql: `SELECT canvas_id, title, visibility, created_by_user_id, created_at, updated_at
+              FROM canvas_directory
+             WHERE workspace_id = ?
+             ORDER BY updated_at DESC, canvas_id`,
+      bindings: [request.workspaceId],
     });
-    return EngineeringWorkstreamListLookupSchema.parse({
+    return EngineeringCanvasListLookupSchema.parse({
       found: true,
       value: {
         region: this.env.AVALON_REGION,
         workspaceId: request.workspaceId,
-        items: z.array(WorkstreamDirectoryRowSchema).parse(result.rows).map((row) => ({
+        items: z.array(CanvasDirectoryRowSchema).parse(result.rows).map((row) => ({
           workspaceId: request.workspaceId,
-          workstreamId: row.workstream_id,
+          canvasId: row.canvas_id,
           region: this.env.AVALON_REGION,
           title: row.title,
-          scope: row.scope,
-          state: row.exact_state,
-          systemKind: row.system_kind,
-          lastActivityAt: row.last_activity_at,
-          archivedAt: row.archived_at,
-        })),
-      },
-    });
-  }
-
-  async listSubstreams(input: unknown): Promise<EngineeringSubstreamListLookup> {
-    const request = parseRpcInput(WorkstreamInspectionInputSchema, input, "listSubstreams");
-    const route = await resolveInspectionWorkstreamRoute(this.env, request.workstreamId);
-    if (!route) return { found: false };
-    const substreamIds = [...new Set(["0", ...await inspectionSubstreamIds(this.env, route)])].sort();
-    return EngineeringSubstreamListLookupSchema.parse({
-      found: true,
-      value: {
-        region: this.env.AVALON_REGION,
-        workspaceId: route.workspace_id,
-        workstreamId: route.workstream_id,
-        items: z.array(SubstreamDirectoryRowSchema).parse(substreamIds.map((substreamId) => ({ substream_id: substreamId })))
-          .map((row) => ({
-          workspaceId: route.workspace_id,
-          workstreamId: route.workstream_id,
-          substreamId: row.substream_id,
-          region: this.env.AVALON_REGION,
+          visibility: row.visibility,
+          createdByUserId: row.created_by_user_id,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
         })),
       },
     });
@@ -558,45 +558,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
           title: row.title,
           nextRunAt: row.next_run_at,
           projectedAt: row.projected_at,
-        })),
-      },
-    });
-  }
-
-  /**
-   * Every Space in a workspace, archived ones included.
-   *
-   * Read from `spaces` the way `listSidekicks` reads
-   * `automation_directory`: the Organization's projection is what says a Space
-   * exists, and an archived Space is a common inspection target even though no
-   * product list shows it.
-   */
-  async listSpaces(input: unknown): Promise<EngineeringSpaceListLookup> {
-    const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "listSpaces");
-    if (!await resolveInspectionWorkspaceRoute(this.env, request.workspaceId)) {
-      return { found: false };
-    }
-    const workspace = await workspaceStub(this.env, request.workspaceId);
-    const result = await workspace.runInspectionSql({
-      sql: `SELECT space_id, title, scope, system_role, archived_at
-              FROM spaces
-             ORDER BY created_at, space_id`,
-      bindings: [],
-    });
-    return EngineeringSpaceListLookupSchema.parse({
-      found: true,
-      value: {
-        region: this.env.AVALON_REGION,
-        workspaceId: request.workspaceId,
-        items: z.array(SpaceDirectoryRowSchema).parse(result.rows).map((row) => ({
-          workspaceId: request.workspaceId,
-          spaceId: row.space_id,
-          region: this.env.AVALON_REGION,
-          name: row.title,
-          scope: row.scope,
-          status: row.archived_at === null ? "active" : "archived",
-          systemRole: row.system_role,
-          archivedAt: row.archived_at,
         })),
       },
     });
@@ -651,17 +612,16 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
-  async resolveSubstream(input: unknown): Promise<EngineeringSubstreamTargetLookup> {
-    const request = parseRpcInput(SubstreamInspectionInputSchema, input, "resolveSubstream");
-    const route = await resolveInspectionSubstreamRoute(this.env, request);
+  async resolveConversation(input: unknown): Promise<EngineeringConversationTargetLookup> {
+    const request = parseRpcInput(ConversationInspectionInputSchema, input, "resolveConversation");
+    const route = await resolveInspectionConversationRoute(this.env, request);
     if (!route) return { found: false };
-    return EngineeringSubstreamTargetLookupSchema.parse({
+    return EngineeringConversationTargetLookupSchema.parse({
       found: true,
       value: {
         region: this.env.AVALON_REGION,
         workspaceId: request.workspaceId,
-        workstreamId: request.workstreamId,
-        substreamId: request.substreamId,
+        conversationId: request.conversationId,
         authorityGeneration: route.authority_generation,
       },
     });
@@ -702,33 +662,27 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
-  async runSubstreamSql(input: unknown): Promise<EngineeringSqlLookup> {
-    const request = parseRpcInput(SubstreamSqlInspectionInputSchema, input, "runSubstreamSql");
-    const route = await resolveInspectionSubstreamRoute(
-      this.env,
-      request,
-      request.authorityGeneration,
-    );
+  /** A Canvas's or Sidekick's main conversation object, named by the parent's id. */
+  async runConversationSql(input: unknown): Promise<EngineeringSqlLookup> {
+    const request = parseRpcInput(ConversationSqlInspectionInputSchema, input, "runConversationSql");
+    const route = await resolveInspectionConversationRoute(this.env, request, request.authorityGeneration);
     if (!route) return { found: false };
-    const substream = await durableObjectStubForWorkspace(
+    const conversation = await durableObjectStubForWorkspace(
       this.env,
       this.env.SUBSTREAM_AGENTS,
       request.workspaceId,
-      conversationObjectName(
-        this.env.AVALON_REGION,
-        request.workspaceId,
-        request.workstreamId,
-        asSubstreamId(request.substreamId),
-      ),
+      conversationObjectName(this.env.AVALON_REGION, request.workspaceId, request.conversationId,
+        asSubstreamId(request.substreamId ?? "0")),
     );
     return EngineeringSqlLookupSchema.parse({
       found: true,
       value: {
         region: this.env.AVALON_REGION,
         workspaceId: request.workspaceId,
-        workstreamId: request.workstreamId,
-        substreamId: request.substreamId,
-        result: await substream.runInspectionSql(request.query),
+        // The storage names of a conversation's address: its parent's id and Main.
+        workstreamId: request.conversationId,
+        substreamId: request.substreamId ?? "0",
+        result: await conversation.runInspectionSql(request.query),
       },
     });
   }

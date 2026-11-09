@@ -49,10 +49,11 @@ function splitFileName(fileName: string): { base: string; suffix: string } {
   return { base: fileName.slice(0, lastDot), suffix: fileName.slice(lastDot) };
 }
 
+/** "28 B", "4.2 kB", "12 MB": a number and its unit are spaced, as SI writes them. */
 function formatAttachmentSize(bytes: number): string {
-  if (bytes < 1_000) return `${bytes}B`;
-  if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(bytes < 10_000 ? 1 : 0)}kB`;
-  return `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ? 1 : 0)}MB`;
+  if (bytes < 1_000) return `${bytes} B`;
+  if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(bytes < 10_000 ? 1 : 0)} kB`;
+  return `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ? 1 : 0)} MB`;
 }
 
 function pendingFileKind(mimeType: string, fileName: string): 'audio' | 'pdf' | 'markdown' | 'spreadsheet' | 'text' | 'generic' {

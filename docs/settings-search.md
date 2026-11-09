@@ -81,11 +81,10 @@ lands on Connections once the list has loaded.
 
 A section's id is its deep link, so it outlives the label. The **Security** page
 keeps the id `internet-access` from when it was called Internet access. A page
-that is folded into another keeps its old id as an alias: the digest settings are
-the **Daily digest** group inside `notifications` (**Start of day**, **End of
-day**, **Send to**, **Days**), and `parseDesktopSettingsSection` still reads
-`digest` as `notifications`, because digest emails already sent and older builds
-link to it. Search
+that is removed or folded into another keeps its old id as an alias:
+`parseDesktopSettingsSection` still reads `digest` as `notifications`, because
+digest emails already sent and older builds link to it, though the digest
+settings themselves are gone. Search
 indexes the id, not the label, so a renamed page carries its visible name as an
 alias on its definitions.
 
@@ -103,7 +102,7 @@ request, leaving its section, a failed destination read, or further user interac
 results; Enter activates a result; Escape clears search before closing a window.
 
 Setup fields such as MCP authorization or webhook signing secrets point to their
-provider's setup entry point. The reader must choose personal/workspace scope
+provider's setup entry point. The reader must choose personal or Organization scope
 and start setup themselves. Search never creates a connection merely to show a
 field whose value only exists after creation. A visible explanation describes
 this handoff. Conditional network-domain and repository-default controls show
@@ -114,10 +113,10 @@ or error log. Connection status remains on the cards, and setup dialogs retain
 their own validation feedback.
 
 Ashby setup exposes the exact labels **Connect for me** and
-**Connect for workspace**; the latter requires workspace administration. Exact
+**Connect for organization**; the latter requires Organization administration. Exact
 searches for either label filter by the available scope. API-key searches reveal the setup entry point rather than creating a connection.
-Workspace setup has no event selection: Rally manages Ashby subscriptions
-automatically, while automations choose which event types they use.
+Organization setup has no event selection: Rally manages Ashby subscriptions
+automatically, while Sidekicks choose which event types they use.
 Personal owners can refresh their own OAuth connection. Administrators manage
 Ashby installations through **Manage events** on the connection's page; no
 other connector's page offers it. The main view shows

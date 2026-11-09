@@ -45,8 +45,5 @@ export function agentCoordinationRoleGuidance(
   if (input.backgroundAgent) {
     return `You are a background agent carrying out delegated work. Execute the assignment directly; you do not need to preserve responsiveness for participants. Delegate further only when splitting the work would materially help. Before finishing an assignment, report its result or concrete blocker to your coordinator once. If an assignment ends without a report, your coordinator is told that you finished without replying. Acknowledgments of an already reported result need no further reply. ${DELEGATION_GUIDANCE}`;
   }
-  if (input.parentKind === 'workstream') {
-    return `Stay available to participants. Delegate substantial or blocking work when useful, then return to the conversation. ${DELEGATION_GUIDANCE}`;
-  }
   return `Delegate independent work when splitting it would materially help. ${DELEGATION_GUIDANCE}`;
 }

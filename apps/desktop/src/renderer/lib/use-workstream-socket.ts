@@ -1,12 +1,9 @@
 import { useOptionalWorkspaceSocket } from './workspace-socket';
 import type { Annotation } from '@rally/contracts';
 import { useConversationAdmission } from './conversation-admission';
-import { mainReachable, useConversationDirectory } from './conversation-directory';
-import { useCachedWorkstreamSummary } from './use-workstreams-query';
 import { safeParseSocketEvent } from "@rally/contracts";
-import type { WorkstreamAppearancePatch } from '@rally/contracts';
+import type { SidekickMessageIntent } from '@rally/contracts';
 import {
-  type ConversationSuggestion,
   ServerSocketEventSchema,
   WorkstreamSocketCommandResultSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
@@ -23,8 +20,6 @@ import {
   type TranscriptRange,
   type TranscriptRangeResult,
 } from '@rally/contracts';
-import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
-import { SubstreamInitialContextSchema, type SubstreamInitialContext } from '@rally/contracts/substream-creation';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { retainQueryData } from './retain-query-data';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -82,13 +77,8 @@ import {
   upsertTranscriptMessage,
 } from './transcript';
 import type { HarnessStatus, Message, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from './types';
-import { withDerivedUnread } from './workstream-state-store';
-import { evictCachedSubstream, patchCachedGeneratedIcon, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, workstreamDetailQueryKey } from './workstreams-cache';
+import { evictCachedSubstream, patchCachedWorkstream, workstreamDetailQueryKey } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
-import {
-  applyBreakoutAppearanceReceipt,
-  captureBreakoutAppearanceUpdate,
-} from './channel-viewer-state';
 import {
   conversationSeededFromLocalCache,
   hydrateConversation,
@@ -127,6 +117,7 @@ export interface CreateWorkstreamMessageInput {
   confirmedParticipantUserIds?: string[];
   attachmentIds?: string[];
   runMode?: WorkstreamMessageDeliveryMode;
+  intent?: SidekickMessageIntent;
 }
 
 export interface WorkstreamSocketConnection {
@@ -142,8 +133,6 @@ export interface WorkstreamSocketConnection {
   workspaceSocketState: 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
   activeInferenceDelays: InferenceDelayState[];
   activeCompaction: AgentCompactionState | null;
-  /** The open conversation suggestions, as the room last published them; the surface decides which are visible. */
-  suggestions: ConversationSuggestion[];
   createMessage(input: CreateWorkstreamMessageInput): Promise<AcceptedWorkstreamTurn>;
   answerElicitation(
     elicitationId: string,
@@ -152,7 +141,6 @@ export interface WorkstreamSocketConnection {
   ): Promise<void>;
   reorderPendingInputs(inputIds: string[]): Promise<{ pendingInputs: PendingTranscriptInput[] }>;
   stopHarness(): Promise<void>;
-  setAppearance(appearance: WorkstreamAppearancePatch): Promise<void>;
   retryHarness(): Promise<{ harnessRunId: string }>;
   loadTranscriptRange(input: {
     snapshotId: string;
@@ -542,11 +530,6 @@ export function applyHarnessStatus(
     current && current.harnessStatus !== harnessStatus
       ? { ...current, harnessStatus, stopRequested: false }
       : current);
-  if (substreamId !== '0') return;
-  setCachedWorkstreams(queryClient, (current) =>
-    current?.map((workstream) => workstream.id === workstreamId && workstream.harnessStatus !== harnessStatus
-      ? { ...workstream, harnessStatus }
-      : workstream));
 }
 
 /**
@@ -588,6 +571,15 @@ export function applyHarnessStatus(
  *
  * `viewerUserId` is null before sign-in, when nothing is anybody's own message.
  */
+/** A row's unread state, derived from its waterlines and the reader's own mark. */
+function withDerivedUnread<T extends WorkstreamSummary>(workstream: T): T {
+  const manual = workstream.manualUnreadFromSequenceNumber;
+  const seen = workstream.readThroughSequenceNumber;
+  const latest = workstream.latestAttentionSequenceNumber;
+  const firstUnread = manual ?? (latest > seen ? Math.min(latest, seen + 1) : null);
+  return { ...workstream, hasUnread: firstUnread !== null, firstUnreadSequenceNumber: firstUnread };
+}
+
 function advanceWorkstreamAttention<T extends WorkstreamSummary>(
   workstream: T,
   message: Message,
@@ -600,7 +592,16 @@ function advanceWorkstreamAttention<T extends WorkstreamSummary>(
     workstream.latestAttentionSequenceNumber,
     message.attentionSequenceNumber,
   );
-  const ownTurn = viewerUserId !== null && message.author?.id === viewerUserId;
+  // The viewer's own run, while it is starting or working, is not news to
+  // them: the room seats its requester at the row when they had read
+  // everything before it, and a client that waited for the detail's refetch
+  // flashed an unread divider and dot over the run they had just started.
+  const activation = message.automationActivation;
+  const seatedAtOwnRun = viewerUserId !== null
+    && activation?.requesterUserId === viewerUserId
+    && (activation.run?.state === 'pending' || activation.run?.state === 'running')
+    && workstream.readThroughSequenceNumber >= message.attentionSequenceNumber - 1;
+  const ownTurn = (viewerUserId !== null && message.author?.id === viewerUserId) || seatedAtOwnRun;
   const readThroughSequenceNumber = ownTurn
     ? Math.max(workstream.readThroughSequenceNumber, message.attentionSequenceNumber)
     : workstream.readThroughSequenceNumber;
@@ -739,17 +740,8 @@ export function useWorkstreamSocket(
   socketLeaseId?: string,
   openCommitted = true,
   substreamId = '0',
-  parentKind: ConversationParentKind = 'workstream',
   active = openCommitted,
 ): WorkstreamSocketConnection {
-  // Main of a Channel this person reaches only through some of its
-  // conversations is not theirs to open; every Main feed, pooled or direct,
-  // passes here.
-  const row = useCachedWorkstreamSummary(parentId);
-  const conversationDirectory = useConversationDirectory();
-  const mainOutOfReach = parentKind === 'workstream' && substreamId === '0'
-    && mainReachable(row, conversationDirectory, parentId) === false;
-  enabled = enabled && !mainOutOfReach;
   const admissionAllowed = useConversationAdmission();
   const localCacheScope = useLocalCacheScope();
   const requestConversationView = useOptionalWorkspaceSocket()?.requestConversationView;
@@ -778,7 +770,6 @@ export function useWorkstreamSocket(
   const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
   // From the resume state: a remount that resumes after the cursor replays no
   // snapshot, and the open chips must not vanish until a forced one.
-  const [suggestions, setSuggestions] = useState<ConversationSuggestion[]>(resumeState.suggestions);
   const attempts = useRef(0);
   const reconnectRef = useRef<(() => void) | null>(null);
   const retryOpening = useCallback((): void => {
@@ -786,7 +777,7 @@ export function useWorkstreamSocket(
   }, []);
   const createMessageRef = useRef<(input: CreateWorkstreamMessageInput) => Promise<AcceptedWorkstreamTurn>>(
     () => Promise.reject(new ApiError(
-      'The thread is not ready to receive messages.',
+      'The conversation is not ready to receive messages.',
       409,
       'workstream_socket_unavailable',
     )),
@@ -797,7 +788,7 @@ export function useWorkstreamSocket(
   );
   const answerElicitationRef = useRef<WorkstreamSocketConnection['answerElicitation']>(
     () => Promise.reject(new ApiError(
-      'The breakout is not ready to answer questions.',
+      'The conversation is not ready to answer questions.',
       409,
       'workstream_socket_unavailable',
     )),
@@ -808,7 +799,7 @@ export function useWorkstreamSocket(
   );
   const reorderPendingInputsRef = useRef<WorkstreamSocketConnection['reorderPendingInputs']>(
     () => Promise.reject(new ApiError(
-      'The breakout is not ready to reorder queued messages.',
+      'The conversation is not ready to reorder queued messages.',
       409,
       'workstream_socket_unavailable',
     )),
@@ -817,11 +808,9 @@ export function useWorkstreamSocket(
     (inputIds) => reorderPendingInputsRef.current(inputIds),
     [],
   );
-  const setAppearanceRef = useRef<WorkstreamSocketConnection['setAppearance']>(() => Promise.reject(new Error('Thread is not connected')));
-  const setAppearance = useCallback<WorkstreamSocketConnection['setAppearance']>((appearance) => setAppearanceRef.current(appearance), []);
   const stopHarnessRef = useRef<WorkstreamSocketConnection['stopHarness']>(
     () => Promise.reject(new ApiError(
-      'The breakout is not ready to stop.',
+      'The conversation is not ready to stop.',
       409,
       'workstream_socket_unavailable',
     )),
@@ -832,7 +821,7 @@ export function useWorkstreamSocket(
   );
   const retryHarnessRef = useRef<WorkstreamSocketConnection['retryHarness']>(
     () => Promise.reject(new ApiError(
-      'The breakout is not ready to retry.',
+      'The conversation is not ready to retry.',
       409,
       'workstream_socket_unavailable',
     )),
@@ -846,7 +835,7 @@ export function useWorkstreamSocket(
     range: TranscriptRange;
     resumeAfterEventSequence: number;
   }) => Promise<TranscriptRangeResult>>(() => Promise.reject(new ApiError(
-    'The thread is not ready to load transcript ranges.',
+    'The conversation is not ready to load transcript ranges.',
     409,
     'workstream_socket_unavailable',
   )));
@@ -872,25 +861,24 @@ export function useWorkstreamSocket(
       setSendReady(false);
       requestSnapshotRef.current = () => undefined;
       createMessageRef.current = () => Promise.reject(new ApiError(
-        'The thread is not ready to receive messages.',
+        'The conversation is not ready to receive messages.',
         409,
         'workstream_socket_unavailable',
       ));
       answerElicitationRef.current = () => Promise.reject(new ApiError(
-        'The breakout is not ready to answer questions.', 409, 'workstream_socket_unavailable',
+        'The conversation is not ready to answer questions.', 409, 'workstream_socket_unavailable',
       ));
       reorderPendingInputsRef.current = () => Promise.reject(new ApiError(
-        'The breakout is not ready to reorder queued messages.', 409, 'workstream_socket_unavailable',
+        'The conversation is not ready to reorder queued messages.', 409, 'workstream_socket_unavailable',
       ));
-      setAppearanceRef.current = () => Promise.reject(new ApiError('The thread is not connected.', 409, 'workstream_socket_unavailable'));
       stopHarnessRef.current = () => Promise.reject(new ApiError(
-        'The breakout is not ready to stop.', 409, 'workstream_socket_unavailable',
+        'The conversation is not ready to stop.', 409, 'workstream_socket_unavailable',
       ));
       retryHarnessRef.current = () => Promise.reject(new ApiError(
-        'The breakout is not ready to retry.', 409, 'workstream_socket_unavailable',
+        'The conversation is not ready to retry.', 409, 'workstream_socket_unavailable',
       ));
       loadTranscriptRangeRef.current = () => Promise.reject(new ApiError(
-        'The thread is not ready to load transcript ranges.',
+        'The conversation is not ready to load transcript ranges.',
         409,
         'workstream_socket_unavailable',
       ));
@@ -977,14 +965,14 @@ export function useWorkstreamSocket(
     ): Promise<SuccessfulSubstreamMutation> => {
       if (accessRevoked) {
         return Promise.reject(new ApiError(
-          'You can no longer access this thread.',
+          'You can no longer access this conversation.',
           403,
           'workstream_access_revoked',
         ));
       }
       if (openingTerminal) {
         return Promise.reject(new ApiError(
-          'The live connection timed out before the breakout command could be sent.',
+          'The live connection timed out before the command could be sent.',
           408,
           'workstream_socket_open_timeout',
         ));
@@ -1039,12 +1027,6 @@ export function useWorkstreamSocket(
      * first will already carry.
      */
     let snapshotRequestInFlight = false;
-    let initialContextSnapshot: {
-      snapshotId: string;
-      sequence: number;
-      chunkCount: number;
-      chunks: Map<number, string>;
-    } | null = null;
     let pendingInputSnapshot: {
       snapshotId: string;
       sequence: number;
@@ -1172,7 +1154,7 @@ export function useWorkstreamSocket(
         ));
         if (closedByEffect || accessRevoked) {
           throw new ApiError(
-            'The thread is no longer available.',
+            'The conversation is no longer available.',
             409,
             'workstream_socket_unavailable',
           );
@@ -1189,6 +1171,7 @@ export function useWorkstreamSocket(
             confirmedParticipantUserIds: input.confirmedParticipantUserIds ?? [],
             attachmentIds: input.attachmentIds ?? [],
             ...(input.runMode ? { runMode: input.runMode } : {}),
+            ...(input.intent ? { intent: input.intent } : {}),
           },
         };
         const result = await trace.step('command_round_trip', () => submitSubstreamCommand(command));
@@ -1220,48 +1203,6 @@ export function useWorkstreamSocket(
       if (result.command !== 'reorder_pending_inputs') throw new Error('substream_command_receipt_mismatch');
       return { pendingInputs: result.pendingInputs };
     };
-    // Keep queued choices bound to this addressed connection, even if the
-    // header unmounts or the direct hook is later reused for another room.
-    let appearanceQueue = Promise.resolve();
-    setAppearanceRef.current = (appearance) => {
-      const command = { type: 'set_workstream_appearance' as const, operationId: uuidV7(), appearance };
-      const result = appearanceQueue.then(async () => {
-        if (closedByEffect) throw new ApiError('The thread is no longer available.', 409, 'workstream_socket_unavailable');
-        const breakoutUpdate = substreamId === '0'
-          ? null
-          : captureBreakoutAppearanceUpdate(queryClient, parentId, substreamId, appearance);
-        const submitted = submitSubstreamCommand(command);
-        // Read after the submit, which starts a connection attempt when none is
-        // open and bumps the generation as it does.
-        const sentOnGeneration = connectGeneration;
-        const receipt = await submitted;
-        if (receipt.command !== 'set_workstream_appearance') throw new Error('substream_command_receipt_mismatch');
-        // The sidebar row has no preview of its own and the projection that
-        // would update it is several hops away; the header keeps the picker's
-        // preview, so only the row is written. The receipt is the commit —
-        // on the connection that carried the command. A receipt that arrives
-        // after a reconnect answers a resend, and the room answers a resend of
-        // an already committed operation from its receipt without publishing
-        // anything, so it may describe a value another client has since
-        // replaced and whose newer state this client already holds. The
-        // reconnect's snapshot carries the current value, so the patch is
-        // simply not needed there, and applying it could put the older choice
-        // back with nothing left to correct it.
-        if (sentOnGeneration === connectGeneration) {
-          if (substreamId === '0') {
-            patchCachedWorkstreamAppearance(queryClient, parentId, appearance);
-          } else {
-            // A Breakout is listed by its parent rather than in the top-level
-            // Channel directory. The receipt is its durable commit, so move
-            // that one row immediately while the child-to-parent projection
-            // follows and eventually replaces the whole versioned roster.
-            applyBreakoutAppearanceReceipt(queryClient, parentId, substreamId, breakoutUpdate!);
-          }
-        }
-      });
-      appearanceQueue = result.catch(() => undefined);
-      return result;
-    };
     stopHarnessRef.current = async (): Promise<void> => {
       const result = await submitSubstreamCommand({ type: 'stop_harness', operationId: uuidV7() });
       if (result.command !== 'stop_harness') throw new Error('substream_command_receipt_mismatch');
@@ -1279,7 +1220,7 @@ export function useWorkstreamSocket(
     loadTranscriptRangeRef.current = (input): Promise<TranscriptRangeResult> => {
       if (closedByEffect || accessRevoked || socket?.readyState !== WebSocket.OPEN) {
         return Promise.reject(new ApiError(
-          'The thread connection is not ready to load transcript ranges.',
+          'The conversation connection is not ready to load transcript ranges.',
           409,
           'workstream_socket_unavailable',
         ));
@@ -1306,7 +1247,7 @@ export function useWorkstreamSocket(
           window.clearTimeout(timeout);
           pendingTranscriptRanges.delete(requestId);
           reject(new ApiError(
-            'The thread connection could not send the transcript range request.',
+            'The conversation connection could not send the transcript range request.',
             409,
             'workstream_socket_unavailable',
             error,
@@ -1346,41 +1287,6 @@ export function useWorkstreamSocket(
     requestSnapshotRef.current = requestCanonicalSnapshot;
 
     const applyEvent = (event: ServerSocketEvent): void => {
-      if (event.type === 'initial_context_snapshot_chunk') {
-        const assembly = initialContextSnapshot;
-        if (!assembly || assembly.snapshotId !== event.snapshotId || assembly.sequence !== event.sequence) return;
-        if (assembly.chunkCount !== event.chunkCount || event.chunkIndex >= event.chunkCount
-          || assembly.chunks.has(event.chunkIndex)) {
-          initialContextSnapshot = null;
-          queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
-          setSendReady(false);
-          requestCanonicalSnapshot();
-          return;
-        }
-        assembly.chunks.set(event.chunkIndex, event.json);
-        if (assembly.chunks.size !== assembly.chunkCount) return;
-        try {
-          const json = Array.from(
-            { length: assembly.chunkCount },
-            (_, index) => assembly.chunks.get(index)!,
-          ).join('');
-          const parsedContext = safeParseSocketEvent(SubstreamInitialContextSchema, JSON.parse(json));
-          if (!parsedContext.success) throw parsedContext.error;
-          const context = parsedContext.data;
-          if (context.source.workstreamId !== parentId || context.source.substreamId !== '0') {
-            throw new Error('substream_initial_context_identity_mismatch');
-          }
-          queryClient.setQueryData<SubstreamInitialContext | null>(contextQueryKey, context);
-          initialContextSnapshot = null;
-          setSendReady(canonicalCachesAvailable());
-        } catch {
-          initialContextSnapshot = null;
-          queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
-          setSendReady(false);
-          requestCanonicalSnapshot();
-        }
-        return;
-      }
       if (event.type === 'pending_inputs_snapshot_chunk') {
         const assembly = pendingInputSnapshot;
         if (!assembly
@@ -1430,15 +1336,13 @@ export function useWorkstreamSocket(
         return;
       }
       if (event.type === 'resync_required') {
-        initialContextSnapshot = null;
-        queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
         pendingInputSnapshot = null;
         setSendReady(false);
         // Range replies are correlated to this exact admitted socket and its
         // snapshot fence. A reconnect cannot answer them, so release callers
         // immediately into their existing retry-after-reconnect path.
         rejectPendingTranscriptRanges(
-          'The thread resynchronized while loading transcript ranges.',
+          'The conversation resynchronized while loading transcript ranges.',
         );
         setActiveCompaction(event.activeCompaction);
         updateInferenceDelays(event.activeInferenceDelays);
@@ -1604,23 +1508,16 @@ export function useWorkstreamSocket(
           chunkCount: event.pendingInputChunkCount,
           chunks: new Map(),
         };
-        const contextChunkCount = event.initialContextChunkCount ?? 0;
-        initialContextSnapshot = contextChunkCount === 0 ? null : {
-          snapshotId: event.transcript.snapshotId, sequence: event.sequence,
-          chunkCount: contextChunkCount, chunks: new Map(),
-        };
-        if (contextChunkCount === 0) queryClient.setQueryData(contextQueryKey, null);
-        else queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
+        // A Canvas's and a Sidekick's conversation inherit no context.
+        queryClient.setQueryData(contextQueryKey, null);
         setActiveCompaction(event.activeCompaction);
         updateInferenceDelays(event.activeInferenceDelays);
-        resumeState.suggestions = event.suggestions ?? [];
-        setSuggestions(resumeState.suggestions);
         queryClient.setQueryData<number>(
           workstreamSocketSnapshotGenerationQueryKey(parentId, substreamId),
           (current) => (current ?? 0) + 1,
         );
         queryClient.setQueryData(workstreamFeedSourceQueryKey(parentId, substreamId), 'socket_snapshot');
-        setSendReady(contextChunkCount === 0);
+        setSendReady(true);
         const detail = mapWorkstreamDetail(event.workstream);
         queryClient.setQueryData(detailQueryKey, detail);
         // Only a reconciliation requested on this still-contiguous socket can
@@ -1714,10 +1611,6 @@ export function useWorkstreamSocket(
             );
           queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
             current ? advance(current) : current);
-          if (substreamId === '0') {
-            setCachedWorkstreams(queryClient, (current) => current?.map((workstream) =>
-              workstream.id === parentId ? advance(workstream) : workstream));
-          }
         }
       } else if (event.type === 'transcript_activity_upserted') {
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
@@ -1745,19 +1638,6 @@ export function useWorkstreamSocket(
         // `settled` when nothing will change it again; the event says which,
         // and neither is a reason to keep waiting.
         patchCachedWorkstream(queryClient, parentId, { title: event.title, titleStatus: event.titleStatus }, substreamId);
-        // A naming pass also chooses the icon, and only where nobody has, so
-        // the event carries one exactly when the server wrote one. The sidebar
-        // row takes it if it has no icon of its own; the header waits for the
-        // versioned projection. Both conditions are the writer's, and
-        // `patchCachedGeneratedIcon` holds the reasons for each.
-        if (event.icon && substreamId === '0') patchCachedGeneratedIcon(queryClient, parentId, event.icon);
-      } else if (event.type === 'conversation_suggestion_changed') {
-        // The row's whole state each time: replace what is held for that id,
-        // and drop it once it is no longer open. The newest-three rule that
-        // hides a line is the surface's to apply against the feed it holds.
-        const others = resumeState.suggestions.filter((suggestion) => suggestion.suggestionId !== event.suggestion.suggestionId);
-        resumeState.suggestions = event.suggestion.status === 'open' ? [...others, event.suggestion] : others;
-        setSuggestions(resumeState.suggestions);
       } else if (event.type === 'workstream_scope_changed') {
         // Whoever this change excluded has already been disconnected by the
         // room, so everyone still here may read it and only needs the lock on
@@ -1945,7 +1825,7 @@ export function useWorkstreamSocket(
     };
 
     const completeOpeningFromCanonicalCaches = (): boolean => {
-      if (!canonicalCachesAvailable() || initialContextSnapshot !== null || pendingInputSnapshot !== null) return false;
+      if (!canonicalCachesAvailable() || pendingInputSnapshot !== null) return false;
       clearOpeningTimer();
       openingCompleted = true;
       hasOpenedCanonically = true;
@@ -1964,11 +1844,7 @@ export function useWorkstreamSocket(
     };
 
     const abandonSnapshotAssembly = (): void => {
-      const incomplete = initialContextSnapshot !== null || pendingInputSnapshot !== null;
-      if (initialContextSnapshot !== null) {
-        queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
-      }
-      initialContextSnapshot = null;
+      const incomplete = pendingInputSnapshot !== null;
       pendingInputSnapshot = null;
       if (incomplete) {
         // Chunks share the baseline's sequence and are not replayable after it.
@@ -1986,7 +1862,7 @@ export function useWorkstreamSocket(
       clearOpeningTimer();
       const retired = socket;
       socket = null;
-      rejectPendingTranscriptRanges('The thread connection is restarting.');
+      rejectPendingTranscriptRanges('The conversation connection is restarting.');
       abandonSnapshotAssembly();
       try { retired?.close(); } catch { /* The old transport no longer owns this feed. */ }
     };
@@ -2123,7 +1999,7 @@ export function useWorkstreamSocket(
           // subscription needs a snapshot fallback, with the same time budget.
           if (openingCompleted && transportProbed && socket?.readyState === REALTIME_SOCKET_OPEN
             && !snapshotFallbackRequested && !snapshotRequestInFlight
-            && initialContextSnapshot === null && pendingInputSnapshot === null) {
+            && pendingInputSnapshot === null) {
             snapshotFallbackRequested = true;
             requestCanonicalSnapshot();
             openingTimer = window.setTimeout(openingTimedOut, timeoutMs);
@@ -2163,7 +2039,7 @@ export function useWorkstreamSocket(
             openingTerminal = true;
             stopConversationView();
             rejectPendingSubstreamCommands(new ApiError(
-              'The live connection timed out before the breakout command completed.',
+              'The live connection timed out before the command completed.',
               408,
               'workstream_socket_open_timeout',
             ));
@@ -2310,7 +2186,7 @@ export function useWorkstreamSocket(
               if (commandResult.data.type === 'client_command_succeeded') {
                 if (pending.command.type !== commandResult.data.command) {
                   pending.reject(new ApiError(
-                    'The breakout returned a receipt for a different command.',
+                    'The conversation returned a receipt for a different command.',
                     500,
                     'substream_command_receipt_mismatch',
                   ));
@@ -2342,7 +2218,6 @@ export function useWorkstreamSocket(
               applyEvent(event.data);
               const completedFromFrame = (
                 event.data.type === 'snapshot'
-                || event.data.type === 'initial_context_snapshot_chunk'
                 || event.data.type === 'pending_inputs_snapshot_chunk'
                 || (openingCompleted && event.data.type !== 'error'
                   && resumeState.lastSequence > sequenceBeforeFrame)
@@ -2388,7 +2263,7 @@ export function useWorkstreamSocket(
           clearHeartbeat();
           clearStabilityTimer();
           rejectPendingTranscriptRanges(
-            'The thread connection closed while loading transcript ranges.',
+            'The conversation connection closed while loading transcript ranges.',
           );
           abandonSnapshotAssembly();
           socket = null;
@@ -2399,7 +2274,7 @@ export function useWorkstreamSocket(
               cause: 'access_revoked',
             });
             rejectPendingSubstreamCommands(new ApiError(
-              'You can no longer access this thread.',
+              'You can no longer access this conversation.',
               403,
               'workstream_access_revoked',
             ));
@@ -2576,31 +2451,30 @@ export function useWorkstreamSocket(
       openTrace?.end({ outcome: 'unmounted' });
       openTrace = null;
       createMessageRef.current = () => Promise.reject(new ApiError(
-        'The thread is no longer available.',
+        'The conversation is no longer available.',
         409,
         'workstream_socket_unavailable',
       ));
       answerElicitationRef.current = () => Promise.reject(new ApiError(
-        'The breakout is no longer available.', 409, 'workstream_socket_unavailable',
+        'The conversation is no longer available.', 409, 'workstream_socket_unavailable',
       ));
       reorderPendingInputsRef.current = () => Promise.reject(new ApiError(
-        'The breakout is no longer available.', 409, 'workstream_socket_unavailable',
+        'The conversation is no longer available.', 409, 'workstream_socket_unavailable',
       ));
-      setAppearanceRef.current = () => Promise.reject(new ApiError('The thread is not connected.', 409, 'workstream_socket_unavailable'));
       stopHarnessRef.current = () => Promise.reject(new ApiError(
-        'The breakout is no longer available.', 409, 'workstream_socket_unavailable',
+        'The conversation is no longer available.', 409, 'workstream_socket_unavailable',
       ));
       retryHarnessRef.current = () => Promise.reject(new ApiError(
-        'The breakout is no longer available.', 409, 'workstream_socket_unavailable',
+        'The conversation is no longer available.', 409, 'workstream_socket_unavailable',
       ));
       loadTranscriptRangeRef.current = () => Promise.reject(new ApiError(
-        'The thread is no longer available.',
+        'The conversation is no longer available.',
         409,
         'workstream_socket_unavailable',
       ));
-      rejectPendingTranscriptRanges('The thread changed while loading transcript ranges.');
+      rejectPendingTranscriptRanges('The conversation changed while loading transcript ranges.');
       rejectPendingSubstreamCommands(new ApiError(
-        'The breakout changed while sending a command.',
+        'The conversation changed while sending a command.',
         409,
         'workstream_socket_unavailable',
       ));
@@ -2645,7 +2519,6 @@ export function useWorkstreamSocket(
       workspaceSocketState,
       activeCompaction,
       activeInferenceDelays,
-      suggestions,
       answerElicitation,
       createMessage,
       loadTranscriptRange,
@@ -2653,13 +2526,11 @@ export function useWorkstreamSocket(
       reorderPendingInputs,
       retryHarness,
       stopHarness,
-      setAppearance,
     }),
     [
       admissionAllowed,
       activeCompaction,
       activeInferenceDelays,
-      suggestions,
       answerElicitation,
       createMessage,
       loadTranscriptRange,
@@ -2671,7 +2542,6 @@ export function useWorkstreamSocket(
       sendReady,
       state,
       stopHarness,
-      setAppearance,
       workspaceSocketState,
     ],
   );

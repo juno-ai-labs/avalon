@@ -193,8 +193,8 @@ receipts, or execution policy, which are the connection service, the
 credential door, and the harness exactly as they are for every other connector.
 
 It deliberately does not ingest activity: a configured server has no webhook, no
-poll, and no activity types, so nothing here reaches digests, automations,
-watches, or work-stream origins.
+poll, and no activity types, so nothing here reaches Sidekick triggers or
+watches.
 
 ## Failure modes and limits
 

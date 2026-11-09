@@ -1,3 +1,0 @@
-app_identifier("ai.rallywith.ios")
-apple_id(ENV["FASTLANE_APPLE_ID"])
-team_id("7ZLT6A8W25")

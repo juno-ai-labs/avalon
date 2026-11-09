@@ -8,10 +8,11 @@
 //
 // The walk respects the remaining trigger-enforced state machine production
 // used: phases advance one step at a time, and this script explicitly creates
-// the seed work streams' routing rows now that migration 0090
-// has removed the completed one-time import-population triggers.
-// After the ledger opens, the development-only HTTP seed route writes
-// seed-product.json into the objects. No product row is read from D1; this is
+// routing rows for any conversation D1 already anchors now that migration 0090
+// has removed the completed one-time import-population triggers. A fresh seed
+// anchors none: after the ledger opens, the development-only HTTP seed route
+// makes seed-product.json's Canvases and Sidekick through the Worker's own
+// creation paths, which anchor and route them as they would in production. No product row is read from D1; this is
 // why the script is local bootstrap rather than an operational import tool.
 //
 // Idempotent: a stack already at `durable_object_open` is left untouched.
@@ -143,8 +144,8 @@ async function openRegion(region) {
   await importSeeds(region, target);
 }
 
-// Imports the seeded work streams into their objects, through the Worker's own
-// dev-gated import route, so the smoke check's fixtures survive the walk. The
+// Seeds the product fixtures — two Canvases and a Sidekick — through the
+// Worker's own dev-gated seed route. The
 // Worker may not be running when the walk is performed; say so rather than
 // half-succeeding.
 async function importSeeds(region, target) {
@@ -171,7 +172,10 @@ async function importSeeds(region, target) {
   if (!response.ok) {
     throw new Error(`${region} product seed failed: ${JSON.stringify(body).slice(0, 300)}`);
   }
-  for (const entry of body.workstreams ?? []) {
-    console.log(`Seeded ${region} ${entry.workstreamId}: ${JSON.stringify(entry.copied)}`);
+  for (const entry of body.canvases ?? []) {
+    console.log(`Seeded ${region} Canvas ${entry.canvasId}: ${JSON.stringify(entry.copied)}`);
+  }
+  for (const entry of body.automations ?? []) {
+    console.log(`Seeded ${region} Sidekick ${entry.automationId}: ${entry.lifecycle}`);
   }
 }

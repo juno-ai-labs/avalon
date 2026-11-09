@@ -80,21 +80,6 @@ it("preserves 10,000 people through canonical admission, an ID-only Queue handof
     expect(state.storage.sql.exec("SELECT external_people_json FROM workspace_connector_events WHERE event_id = ?", EVENT).one()).toEqual({ external_people_json: "[]" });
     expect(() => state.storage.sql.exec("INSERT INTO workspace_connector_event_people VALUES (?, 10000, '{}')", EVENT)).toThrow(/CHECK/u);
   });
-  await workspace().persistOpportunity({
-    workspaceId: WORKSPACE, audience: { scope: "workspace", userId: null },
-    proposedId: "00000000-0000-7000-8000-00000000f9e5", existingTargetId: null,
-    sourceFingerprint: "b".repeat(64), displayPrompt: "Follow up", executionPrompt: "Follow up on the meeting",
-    admissionReasoning: "Meeting follow-up", providerIcon: "google", sourceLabel: "Meeting",
-    displayPromptHash: "c".repeat(64), executionPromptHash: "d".repeat(64),
-    expiresAt: "2099-01-01T00:00:00.000Z", rankDueAt: "2099-01-01T00:00:00.000Z",
-    sources: [{ id: EVENT, kind: "activity", provider: "google", providerTenantId: "account", connectionId: CONNECTION,
-      title: "Meeting", summary: "", text: "Meeting details", actor: {}, subject: {}, externalPeople: stored!.activity.externalPeople!,
-      entityKeys: [], canonicalUrl: null, workstreamId: null, occurredAt: "2026-10-19T00:00:00.000Z" }],
-    links: [], rankUserIds: [], eagerUserIds: [],
-  });
-  await runInDurableObject(workspace(), (_instance, state) => {
-    expect(state.storage.sql.exec("SELECT COUNT(*) AS count FROM opportunity_provenance_nodes WHERE node_kind = 'external_person'").one()).toEqual({ count: 10_000 });
-  });
   // Large handoffs keep only canonical pointers in the Queue and create no
   // second retained copy of provider content in R2.
   expect((await env.PAYLOADS.list({ prefix: `global/connector-queue/${WORKSPACE}/` })).objects).toEqual([]);

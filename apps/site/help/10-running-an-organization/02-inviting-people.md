@@ -14,11 +14,11 @@ Only owners and administrators can invite people. Members do not see the
 > [!NOTE]
 > This page is about bringing someone into the whole Organization. To let a
 > client into one conversation and nothing else, share that conversation with
-> them instead, as described in [Sharing with people outside your Organization](../03-spaces-and-breakouts/05-sharing-with-guests.md).
+> them instead, as described in [Sharing with people outside your Organization](../02-canvases/09-sharing-with-guests.md).
 
 ## Send an invitation
 
-1. Open **Settings → Organization** and scroll to **Invitations**. The heading
+1. Open **Settings → Members** and scroll to **Invitations**. The heading
    reminds you: **Invite teammates by email. Links expire after seven days.**
 2. Type the person's address in **Email address**.
 3. Choose a **Role**: **Member** or **Administrator**. If you are not sure,
@@ -33,6 +33,15 @@ yourself as well, say in a chat message to someone who never reads email.
 
 If Rally shows **Invite link ready** instead, the email was not sent. Copy the
 link and pass it on yourself.
+
+### Several at once
+
+For a handful of teammates, open the account menu (your avatar at the bottom
+of the rail) and choose **Add new member**. In the **Add new members** dialog,
+type or paste addresses into
+**Email addresses**, separated by spaces, commas or semicolons, and click
+**Invite 3 teammates** (the number counts the addresses). Everyone invited
+this way joins as a **Member**.
 
 ## What the invitation email says
 

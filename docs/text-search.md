@@ -32,10 +32,10 @@ before a search needs it.
 - `apps/api/src/services/workspace-search-service.ts` and `routes/search.ts`: member
   source selection, current authorization, canonical excerpts, and the protected API.
 - `apps/api/src/durable-objects/search-projection-outbox.ts`,
-  `resource-search-projection.ts`, `channel-message-search-projection.ts` and
+  `resource-search-projection.ts` and
   `conversation-link-search.ts`: transactional indexing intent, Queue dispatch,
   and asynchronous Browser Run capture.
-- `apps/desktop/src/renderer/components/search-modal.tsx`: the member UI: five content tabs, plus Channels and Spaces tabs it answers itself.
+- `apps/desktop/src/renderer/components/search-modal.tsx`: the member UI: five content tabs (All, Messages, Links, Artifacts, Files).
 - `apps/api/test/text-search.test.ts`: source grant and canonical loading tests.
 
 ## How it works
@@ -119,23 +119,9 @@ private conversations before claiming the percentile targets are met.
 
 A resource's source delivery indexes it in place: one `prepareResourceSearch`
 call returns its three category documents (at most one live, the others
-tombstones), and one more call confirms nothing changed. A Channel message
-(`space_messages`: Rally's posts in a Channel and the results threads merge
-into it) is indexed the same way from WorkspaceDO: migration 120's
-`channel_message_search_versions` holds each message's revision and its
-Channel, triggers on every writer bump it, the
-`channel_message_search` alarm lane publishes references on its own pace (at
-the resource lane's interval), and `prepareChannelMessageSearch` returns one
-`channel_messages` document or its deletion watermark. Each reference goes
-out as a document-phase job (`search_embedding_batch_v1`) rather than a
-message type of its own, so a consumer on an older build retries it instead of
-acknowledging it as unknown. The lane is null for an Organization held below
-migration 120, which has no table. Its audience is the
-Channel's `space:<id>` group, which every reader of the Channel already holds,
-and its title is the Channel's name when it was indexed, never the merged
-thread's; a rename does not rewrite it, since nothing reads it. Only the agent's
-`conversation_search` reads that source today; the member search modal does
-not offer it yet. A turn's source
+tombstones), and one more call confirms nothing changed. Channel messages are no longer indexed: Channels are retired, and a queued
+`channel_message_search_projection_v1` reference is acknowledged with no
+documents (see the 2026-11-07 changelog entry). A turn's source
 delivery discovers canonical document IDs without loading bodies and publishes
 document-phase jobs; turn discovery reconciles link metadata and selects only
 IDs, including retained deletions. Each document delivery captures only its selected page (when needed), writes
@@ -380,7 +366,7 @@ reloaded from a canonical source.
 ## Invariants
 
 - Search scope enumeration includes archived and system conversations and has its own complete-list contract. Sidebar visibility is not search readability.
-- The searcher's audience groups decide which rows member search returns: a row is a candidate only when its `audience` shares one of them. This reverses the earlier rule that an index attribute never grants access, deliberately and only for search (see the 2026-09-28 changelog entry). The groups are computed live on every search by `readSearchAudience`, the only code that computes them. It decides each conversation through its parent's own `readableSubstreams`, and each Sidekick and connection through the predicates canonical authorization shares (`sidekickAdmitsMember`, `owningChannelAdmitsMember`, `connectionAdmits`). A Sidekick homed in a Breakout goes to whoever reads that Breakout, the audience its viewer admission uses. A Channel's `space:<id>` group goes to whoever reaches that Channel (`WorkspaceSpaceStorage.reach`), the rule the resource check applies to what a merge shared with it. Search adds two narrowings of its own (a guest never holds a workspace connection, and reaches a Channel-owned Sidekick only through management access) and skips archived Channels and Spaces, whose rows member search never returns. The attribute still grants nothing beyond the excerpt: opening a row keeps its own canonical check. Scope prefilters remain an optimization, and `connection_id` grants nothing.
+- The searcher's audience groups decide which rows member search returns: a row is a candidate only when its `audience` shares one of them. This reverses the earlier rule that an index attribute never grants access, deliberately and only for search (see the 2026-09-28 changelog entry). The groups are computed live on every search by `readSearchAudience`, the only code that computes them. It decides each Sidekick and connection through the predicates canonical authorization shares (`sidekickAdmits`, `connectionAdmits`): a Sidekick's group goes to its author, the person it runs as, the people it is shared with, and for an Organization Sidekick every member, its viewer admission's rule. A Canvas's Chat group, `conversation:<canvasId>/0`, goes to whoever `canvasReaderAllows` lets open the Canvas. Search adds one narrowing of its own (a guest never holds a workspace connection). The attribute still grants nothing beyond the excerpt: opening a row keeps its own canonical check. Scope prefilters remain an optimization, and `connection_id` grants nothing.
 - The response never reports what it omitted. A failed group read fails the search (the route's 503); it never returns an unfiltered page.
 - A row without its display attributes, or with `archived` set, is never returned. Member retrieval filters on `archived Eq false`, which a null attribute does not match, so neither kind consumes a candidate page; the read path checks the same value again on every row it renders. Omission is the safe failure; nothing falls back to a canonical reload.
 - Every writer of a conversation's display writes the current state it reads beside the text: the producer at upsert time, the patch job when it runs. A display job names the conversation and never carries a title, so a delayed or redelivered job cannot write an old one; the pipeline's post-write fence retries an upsert whose display changed underneath it, and the patch job re-reads the display after patching and retries when it changed, so two overlapping deliveries for one conversation converge on the newest state rather than the last to run.
@@ -396,7 +382,7 @@ reloaded from a canonical source.
 - Each request reads the searcher's groups again, so a revocation takes effect on the next search; a request already past its group read may still finish with the old groups. A repeat served from the desktop's 30-second window is not a new request and readmits nothing, so that window is how long a revoked excerpt can stay on screen. The window runs from the first page's admission, not from the last continuation, because the pages of one query share a single freshness stamp and paging would otherwise renew a page nobody had readmitted. For two of the three row kinds what it exposes is the excerpt, because opening the row is its own authorized read: a message row hydrates its canonical transcript, a file row goes through `/search/resources/:id/preview`. A **link** row is the exception, and the exception is not only about the excerpt. Opening one hands `location.url` straight to the browser and asks nobody, and that URL is never rendered — the row shows the excerpt and the source label — so it is content behind the row rather than something the reader had already seen. The window therefore extends by up to 30 seconds the period in which a revoked link can be opened without a check. Re-deriving a link on click, the way the other two kinds are, is the fix if that is not acceptable; it needs an endpoint that does not exist, and would change link-opening on every path rather than only the cached one. Signing out, surrendering the active workspace, or losing the stored credential all clear the client (`queryClient.clear()`), and changing workspace or member is a different key, so none of those carry the window across.
 - Namespace identity includes the embedding model and dimensions. Mixing spaces
   makes vector distances meaningless.
-- A row's `audience` names where it lives (its conversation, Sidekick, connection, uploader and, for a resource, the conversations it is attached in and the Channels a merge shared it with, `space:<id>`), never the people who may read it. A person's access changes must never require rewriting rows; a row is rewritten only when its own location changes. An empty or absent audience admits nobody: organization-wide readability is the explicit `members` group. Every group becomes a UUID only through `searchAudienceGroupId`.
+- A row's `audience` names where it lives (its conversation, Sidekick, connection, uploader and, for a resource, the conversations it is attached in), never the people who may read it. A person's access changes must never require rewriting rows; a row is rewritten only when its own location changes. An empty or absent audience admits nobody: organization-wide readability is the explicit `members` group. Every group becomes a UUID only through `searchAudienceGroupId`.
 - Deleted revisions win against replayed upserts at the same revision. Removing
   a tombstone prematurely can allow an old write to resurrect a document.
 - Keys remain server secrets; callers cannot select credentials or a namespace.
@@ -412,17 +398,22 @@ All, Messages, Links, Artifacts, and Files tabs use literal case-insensitive
 substring retrieval. BM25 and ANN are available at the shared boundary but are
 not yet exposed through this member endpoint.
 
-The modal's Channels and Spaces tabs, and the places All lists above content,
-never reach this endpoint: they match names in the lists the desktop already
-holds. No tab searches until the query is three characters long
-(`SEARCH_MIN_CHARACTERS`, a number the team set).
+No tab searches until the query is three characters long
+(`SEARCH_MIN_CHARACTERS`, a number the team set). The Channels and Spaces
+tabs, which matched names in lists the desktop held, went with those lists.
 
 Admission is the `audience` clause (see Invariants); loaders only render and
 never read an owner. The route revalidates the workspace session before
 returning. The index returns candidate identifiers, the canonical text and the
 display attributes the owning object wrote beside it. Excerpts
 contain UTF-16 source ranges and excerpt-relative highlight ranges; React renders
-matching spans as text. Selecting a message hydrates its canonical sequence and
+matching spans as text. A message result's location names its parent's kind
+(`parentKind`, `canvas` or `automation`): the index keeps none, so the route
+reads it from the searcher's own groups, where a parent whose `sidekick:<id>`
+group the searcher holds is a Sidekick and any other is a Canvas (the two
+kinds' ids never collide). A Canvas hit opens the Canvas at the turn; a
+Sidekick hit opens the Sidekick on the conversation it was said in (`?run=`
+for a run's). Selecting a message hydrates its canonical sequence and
 positions the transcript. Selecting a file opens `/search/resources/:id/preview`, which repeats attachment
 authority and session checks after loading, and refuses a changed source. That
 preview does not yet scroll to the matching range.
@@ -447,7 +438,7 @@ dead-letters leaves a conversation's previous title, or an archived conversation
 rows, visible to admitted readers until it is redriven; a text rewrite that
 dead-letters leaves its row omitted, because a row carries no display until it is
 rewritten. The display rewrite itself is lazy: migration 52 requeues a
-conversation's turns when its SubstreamAgent next wakes, and WorkspaceDO
+conversation's turns when its AgentLoopDO next wakes, and WorkspaceDO
 migration 47 a workspace's resources when that object does, so a conversation
 nobody opens and no alarm reaches keeps rows with no display, which search omits
 with no error and no dead letter. The patch job cannot repair those rows either,
@@ -566,15 +557,13 @@ migration-51 and migration-53 re-projections against a cleared watermark and a
 drained outbox row; `test/search-document.test.ts` covers the contract accepting
 a document from a build ahead of it and naming the keys it dropped;
 `test-workers/search-audience-person.test.ts` proves the person side against the
-design's rule table; `test-workers/conversation-parent-contract.test.ts` proves
-the index returns only what a reader's groups admit, including after revocation;
+design's rule table;
 `test/search-route.test.ts` proves the HTTP boundary fails closed;
 `test/scoped-memory.test.ts` proves the typed tables check each run canonically,
 and ask the WorkspaceDO for each scope once per isolate while deciding
 writability per call; `test-workers/workspace-memory-search-key-purge-migration.test.ts`
 proves WorkspaceDO migration 84 removes memory search's keys and nothing else.
-The executor's group is proved in `automation-directory.test.ts` and
-`automation-do.test.ts`. The old store's suites remain until phase 4 deletes it.
+The executor's group is proved in `automation-directory.test.ts`. The old store's suites remain until phase 4 deletes it.
 A disposable live namespace in gcp-us-west1 verified on 2026-09-28 that
 `ContainsAny` over a `[]uuid` attribute returns exactly the rows sharing a group,
 that a row with an empty or absent audience never matches, and that the clause
@@ -590,25 +579,25 @@ search verification.
 ## Operations
 
 WorkspaceDO migration 33 creates `resource_search_versions`, installs resource
-write triggers, and queues existing resources. SubstreamAgent migration 42 adds
+write triggers, and queues existing resources. AgentLoopDO migration 42 adds
 `conversation_search_links`, transcript write triggers, and backfills existing
 participant turns into `durable_outbox` under `search_projection_v1`. Both use
 existing regional `ACTIVITY_QUEUE` transport with reference-only messages. The
 consumer reloads current source state and conditionally writes its revision.
 Resource watermarks survive deletion; transcript deletes publish tombstones.
-SubstreamAgent migration 52 installs the `workstream` title/archive trigger behind
+AgentLoopDO migration 52 installs the `workstream` title/archive trigger behind
 the `search_conversation_v1` channel and requeues every committed turn once so its
 lexical row is rewritten with the display attributes; WorkspaceDO migration 47
 marks every resource pending for the same rewrite. A row is omitted from results
 until its rewrite lands, so a workspace's search fills in as its objects wake and
-the Queue drains. WorkspaceDO migration 51 and SubstreamAgent migration 53 run
+the Queue drains. WorkspaceDO migration 51 and AgentLoopDO migration 53 run
 those two passes a second time, to rewrite the rows whose jobs the 2026-09-10
 version skew dead-lettered; the retry log carries no resource or turn id, so
 the affected rows could not be listed and the whole fleet re-projects instead.
 Both migrations are lazy in the same way as 47 and 52: use **Force a
 migration** for both classes in each region to make the pass complete, then
 watch the regional activity Queue drain and its dead-letter queue stay empty.
-WorkspaceDO migration 77 and SubstreamAgent migration 70 run the same two
+WorkspaceDO migration 77 and AgentLoopDO migration 70 run the same two
 passes a third time, so every lexical row written before migration 76 is
 rewritten with its `audience`. Existing semantic chunk rows keep no audience
 (see the changelog). Force both classes in each region, then confirm with a
@@ -654,13 +643,13 @@ Deploy both API Workers with their `BROWSER` binding and production Turbopuffer
 secret before running backfill. The 512/128-token policy ships with the code.
 `pnpm env:sync` forwards the development key from `.env.local`; it never copies the production key into
 development Workers. Use the existing migration tracker's **Force a
-migration** action for WorkspaceDO and SubstreamAgent in each region to wake
+migration** action for WorkspaceDO and AgentLoopDO in each region to wake
 stored objects; an untouched object does not migrate just because code deployed.
 See [Durable Object migration tracking](durable-object-migration-tracking.md).
 Verify migration reports, regional activity Queue drain and dead letters, then
 perform member searches and revocation checks. A current schema report proves
 schema application, not successful indexing. For this change the forced wake is
-what turns the display rewrite from lazy into complete: a SubstreamAgent that
+what turns the display rewrite from lazy into complete: a AgentLoopDO that
 never wakes never requeues its turns, and its conversation stays out of search.
 These deployment and fleet-backfill steps have not been run for this change.
 
@@ -717,6 +706,44 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-11-09 — Search groups follow a Canvas's and a Sidekick's own audiences
+
+**What changed:** `readSearchAudience` gives each person the
+`conversation:<canvasId>/0` group of every Canvas `canvasReaderAllows` lets them
+open, and a Sidekick's `sidekick:<id>` group to whoever `sidekickAdmits` admits.
+The projection universe registers a Canvas's audience instead of a Channel's
+viewers. The owning Channel's and Breakout's audiences, a guest's management
+path to a Channel-owned Sidekick, the `space:<id>` group and Channel-message
+indexing are gone. A message result's location carries `parentKind`, derived
+from the searcher's groups. The index namespace is not bumped.
+
+**Why:** Plan steps A-4 and C-6 of the pivot: a Sidekick's audience became its
+own share list and search groups follow canonical admission. A Canvas's Chat
+turns were already indexed under `conversation:<canvasId>/0`, but no person held
+that group, so no Canvas message reached member search, and a Sidekick hit
+opened as a missing Canvas because the client routed every message hit to a
+Canvas. The person side is read on every search, so granting it needs no row
+rewritten.
+
+**Considered and rejected:** Bumping `rally-search-v3` to a new namespace:
+composed with the re-projection passes it would re-embed every row of every
+Organization, with search empty until they land, for a change that alters no
+row's shape. Writing `parentKind` to the index, which would need every committed
+turn re-projected before old rows carried it.
+
+**Consequences:** A Sidekick's and a Canvas's group are computed by the same
+predicate as their viewer admission, never a search-only rule. Channel, Thread
+and Breakout rows stay in the namespace, unreadable because nobody holds their
+groups, and nothing deletes them. A stale `conversation:<threadId>/0` row stays
+unreachable only because D1 `workstreams` still anchors every Thread id and
+`CanvasService.create` refuses an anchored id, so a cleanup that drops Thread
+rows from `workstreams` must bump the namespace first. The authorization
+projection's snapshots do not follow audience changes; member search computes
+the audience live, which is what makes that safe.
+
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-19 — A Channel's own messages are indexed
 

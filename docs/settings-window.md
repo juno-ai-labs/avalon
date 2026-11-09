@@ -128,7 +128,7 @@ when a person actually looks at it belongs behind the same signal.
 ### The screen draws on the session, not on a round trip
 
 Every surface hangs below one `GET /workspace`, and until it landed `WorkspaceApp`
-rendered `Opening workspace…` for the whole tree. Settings therefore had not
+rendered `Opening organization…` for the whole tree. Settings therefore had not
 mounted, and none of its own reads had started, until a round trip had returned
 a profile the desktop already held: `stored-session.ts` requires both timezones
 and the member role, which with the id, name and region is every field the
@@ -259,8 +259,8 @@ screen. It does not own:
   click but does not reduce it. See [Open questions](#open-questions).
 
 `workspaceFromSession` lives in the renderer's shared `lib/` rather than beside
-the settings screen, because `WorkspaceApp` is shared: the main, sidekicks and
-meeting surfaces mount on the same placeholder.
+the settings screen, because `WorkspaceApp` is shared: the main surface mounts on
+the same placeholder.
 
 ## Failure modes and limits
 

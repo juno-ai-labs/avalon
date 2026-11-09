@@ -1,10 +1,10 @@
 import { AutomationDeliveryTargetTypeSchema } from "./index";
+import { IdSchema } from "./identifiers";
 import { RegionSchema } from "./regions";
 import { z } from "zod";
 import { HttpsUrlSchema } from "./url-schemas";
 
-// Product decision in the Apple push PRD; byte fitting is separate.
-export const PUSH_BODY_PREVIEW_CHARACTERS = 1000;
+export { PUSH_BODY_PREVIEW_CHARACTERS } from "./notification-text";
 export const APNS_TOPICS = {
   macos: "ai.rallywith.desktop",
   ios: "ai.rallywith.ios",
@@ -75,28 +75,58 @@ const PushDeliveryAddressSchema = z.object({
   recipientUserId: z.string(),
 });
 /**
- * What the push queue carries: who, and a pointer to what. A mention or an
- * add names its notification intent; every other Activity row names the row
- * itself, which the consumer reads back through the Activity feed. Neither
- * carries the notification's text.
+ * What the notification queue carries: who, and a pointer to what. Every
+ * notice names its notification intent and the sink it is for: `channel`
+ * absent is the person's devices (push), `email` their inbox. Neither carries
+ * the notification's text; the consumer renders the intent once and hands it
+ * to that sink.
  *
- * An Activity row carries `channel` when it goes somewhere other than the
- * person's devices: an email, or a connector's delivery surface. Without it,
- * the message is a push.
+ * The `activityItemId` form is from before the Activity feed was retired and
+ * is only acknowledged: nothing queues it now.
  */
 export const PushDeliveryMessageSchema = z.union([
-  PushDeliveryAddressSchema.extend({ intentId: z.string() }).strict(),
+  PushDeliveryAddressSchema.extend({ intentId: z.string(), channel: z.literal("email").optional() }).strict(),
   PushDeliveryAddressSchema.extend({
     activityItemId: z.string().min(1).max(400),
     channel: AutomationDeliveryTargetTypeSchema.optional(),
   }).strict(),
 ]);
 export type PushDeliveryMessage = z.infer<typeof PushDeliveryMessageSchema>;
+/**
+ * What a push carries for the client that opens it. `url` is the canonical
+ * link it opens: for a `mention` or a `new_message`, the Canvas link with the
+ * message's position (`?turn=<id>&sequence=<n>`, `canvasCanonicalUrl`).
+ * `turnId` and `sequence` repeat that position for a client that routes
+ * without reading the link; `badge` is the count the alert sets on the app
+ * icon (the person's unseen Activity in the Organization, after this notice
+ * was recorded). All three are optional: absent from a server older than them.
+ */
 export const PushNotificationDataSchema = z.object({
   v: z.literal(1),
-  kind: z.enum(["mention", "new_message", "participant_added", "thread_started", "breakout_started", "run_finished", "merged", "artifact_updated"]),
+  kind: z.enum(["mention", "new_message", "participant_added", "thread_started", "breakout_started", "run_finished", "merged", "artifact_updated", "needs_input", "access_request", "access_granted", "access_denied"]),
   url: HttpsUrlSchema,
   workspaceId: z.string(),
   region: RegionSchema,
+  turnId: IdSchema.optional(),
+  sequence: z.number().int().positive().optional(),
+  badge: z.number().int().nonnegative().optional(),
 });
 export type PushNotificationData = z.infer<typeof PushNotificationDataSchema>;
+
+/**
+ * What a Sidekick run's notification intent stores: the run, the Sidekick's
+ * name and the run's reply when the run reached the state the notice is
+ * about. `needs_input` is a run waiting on a person; `run_finished` is a run
+ * that completed, failed or stopped. The push renders from these alone, so a
+ * later rename or a newer reply does not rewrite a notice already queued.
+ */
+export const SidekickRunNotificationSchema = z.strictObject({
+  kind: z.enum(["needs_input", "run_finished"]),
+  sidekickId: z.string().min(1),
+  runId: z.string().min(1),
+  sidekickName: z.string(),
+  state: z.enum(["needs_input", "completed", "failed", "stopped"]),
+  reply: z.string().nullable(),
+  occurredAt: z.number().int().nonnegative(),
+});
+export type SidekickRunNotification = z.infer<typeof SidekickRunNotificationSchema>;

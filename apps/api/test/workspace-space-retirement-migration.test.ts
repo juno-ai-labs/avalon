@@ -203,11 +203,28 @@ describe("the activity Queue's Project tombstone", () => {
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
     expect(info).toHaveBeenCalledWith(expect.objectContaining({
-      event: "project_default_delivery_terminal",
+      event: "retired_queue_message_terminal",
       workspace_id: WORKSPACE_ID,
-      workstream_id: CHANNEL_ID,
+      message_type: "project_default_resource",
       outcome: "skipped",
-      reason: "projects_retired",
+      reason: "project_default_resource_retired",
+    }));
+  });
+
+  it.each([
+    ["thread_backfill", { job: "description_summary", workstreamId: CHANNEL_ID, attempt: 0 }],
+    ["channel_color_sync", { workstreamId: CHANNEL_ID, revision: 2 }],
+  ])("acknowledges a %s message published before its lane was retired", async (type, fields) => {
+    const env: Env = createTestEnv({ AVALON_REGION: "global", APP_ENV: "test" });
+    const { batch, ack, retry } = queued({ type, region: "global", workspaceId: WORKSPACE_ID, ...fields });
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await consumeActivityQueue(batch, env);
+
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "retired_queue_message_terminal", message_type: type, reason: `${type}_retired`,
     }));
   });
 });

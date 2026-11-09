@@ -6,7 +6,7 @@
     "bindings": [
       {
         "name": "GLOBAL_SUBSTREAM_AGENTS",
-        "class_name": "SubstreamAgent",
+        "class_name": "AgentLoopDO",
         "script_name": "avalon-api-global"
       }
     ]

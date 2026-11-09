@@ -1,24 +1,15 @@
-import { asSpaceId, type WorkstreamBatchFilter } from '@rally/contracts';
-
-import { groupActivityItems, hourInMilliseconds, workstreamRecencyAt, type RecencyGroup } from '../../common/recency-groups';
-
-import type { HarnessStatus, WorkstreamSummary } from './types';
-
-export {
-  groupActivityItems,
-  nextRecencyBoundary,
-  recencyTimestamp,
-  workstreamRecencyAt,
-  type RecencyGroup,
-} from '../../common/recency-groups';
 
 const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const shortTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 
-export function compareWorkstreamRecency(left: WorkstreamSummary, right: WorkstreamSummary): number {
-  return Date.parse(workstreamRecencyAt(right)) - Date.parse(workstreamRecencyAt(left))
-    || left.id.localeCompare(right.id);
+/**
+ * Whole units elapsed, counted down as `formatSidebarActivityTime` counts
+ * them: a run 4.9 hours old is "4 hours ago" beside the row's "4h", not
+ * "5 hours ago". Toward zero either side of now, so the future reads the same.
+ */
+function wholeUnits(delta: number, unit: number): number {
+  return Math.trunc(delta / unit) || 0;
 }
 
 export function formatRelative(value: string, now = new Date()): string {
@@ -27,9 +18,9 @@ export function formatRelative(value: string, now = new Date()): string {
   const absolute = Math.abs(delta);
   if (!Number.isFinite(delta)) return 'Unknown time';
   if (absolute < 60_000) return 'just now';
-  if (absolute < 3_600_000) return relativeTime.format(Math.round(delta / 60_000), 'minute');
-  if (absolute < 86_400_000) return relativeTime.format(Math.round(delta / 3_600_000), 'hour');
-  if (absolute < 604_800_000) return relativeTime.format(Math.round(delta / 86_400_000), 'day');
+  if (absolute < 3_600_000) return relativeTime.format(wholeUnits(delta, 60_000), 'minute');
+  if (absolute < 86_400_000) return relativeTime.format(wholeUnits(delta, 3_600_000), 'hour');
+  if (absolute < 604_800_000) return relativeTime.format(wholeUnits(delta, 86_400_000), 'day');
   return dateTime.format(date);
 }
 
@@ -73,8 +64,8 @@ export function formatSparseRelativeDate(value: string, now = new Date()): Spars
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
   const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
-  // Sunday-start, same as `groupActivityItems` below. `getDay()` is 0 on
-  // Sunday; a Monday-start locale would shift every week bucket by a day.
+  // Sunday-start. `getDay()` is 0 on Sunday; a Monday-start locale would
+  // shift every week bucket by a day.
   const startOfWeek = new Date(
     now.getFullYear(),
     now.getMonth(),
@@ -101,13 +92,23 @@ export function formatSparseRelativeDate(value: string, now = new Date()): Spars
   return `${month} ${date.getFullYear()}`;
 }
 
+const shortWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
+const shortMonthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
 /**
- * A sidebar row's activity time: the time today, then the day as
- * `formatDayLabel` names it. The attention menu uses it too.
+ * A list row's age, in design.html §1's words: "now", "2m", "1h", then the
+ * weekday ("Tue") within the week and the date beyond it. Short because it
+ * sits beside a title in a 340px column, where a clock time cut the title.
  */
 export function formatSidebarActivityTime(value: string, now = new Date()): string {
-  const label = formatDayLabel(value, now);
-  return label === 'Today' ? formatTime(value) : label;
+  const date = new Date(value);
+  const elapsed = now.getTime() - date.getTime();
+  if (!Number.isFinite(elapsed)) return 'Unknown time';
+  if (elapsed < 60_000) return 'now';
+  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)}m`;
+  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)}h`;
+  if (elapsed < 7 * 86_400_000) return shortWeekday.format(date);
+  return shortMonthDay.format(date);
 }
 
 export function formatDuration(milliseconds?: number): string | undefined {
@@ -122,81 +123,3 @@ export function formatDuration(milliseconds?: number): string | undefined {
 }
 
 export { formatDayLabel, statusLabel, statusDescription, harnessMarkerStatus, type WorkstreamMarkerStatus } from '@rally/ui/lib/format';
-import { formatDayLabel, harnessMarkerStatus, type WorkstreamMarkerStatus } from '@rally/ui/lib/format';
-import { MARKER_PRECEDENCE } from './attention-ranking';
-
-export { markerRank, readerMarkerStatus, type ReaderMarkerStatus } from './attention-ranking';
-
-/**
- * The marker a work stream shows this viewer.
- *
- * The single answer every surface asks for, so the sidebar and the home screen
- * cannot disagree about which of a work stream's states is the one worth
- * showing. Surfaces may omit that result: the sidebar hides `completed`. The
- * run's own status arrives through `harnessMarkerStatus`, so `scheduled` is
- * ranked as `running` and never reaches the list under its own name.
- */
-export function workstreamMarkerStatus(
-  workstream: { harnessStatus: HarnessStatus; hasUnread?: boolean; unseen?: boolean; youAreMentioned?: boolean },
-): WorkstreamMarkerStatus {
-  const own = harnessMarkerStatus(workstream.harnessStatus);
-  const active = new Set<WorkstreamMarkerStatus>([own]);
-  if (workstream.unseen === true) active.add('unseen');
-  if (workstream.youAreMentioned === true) active.add('mentioned');
-  if (workstream.hasUnread === true) active.add('unread');
-  // The fallback is unreachable — `scheduled` was the only member of the union
-  // outside the ranking, and it cannot reach here now — but `find` is typed
-  // `| undefined`, so the arm has to say something.
-  return MARKER_PRECEDENCE.find((status) => active.has(status)) ?? own;
-}
-
-/** The server-side range that describes one visible recency heading. */
-export function recencyGroupBatchFilter(
-  label: RecencyGroup,
-  now = new Date(),
-  spaceId?: string,
-): WorkstreamBatchFilter {
-  const nowTimestamp = now.getTime();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
-  const startOfWeek = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() - now.getDay(),
-  ).getTime();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-  const range = (() => {
-    switch (label) {
-      case 'Last hour': return { atOrAfter: new Date(nowTimestamp - hourInMilliseconds).toISOString() };
-      case 'Today': return {
-        atOrAfter: new Date(startOfToday).toISOString(),
-        before: new Date(nowTimestamp - hourInMilliseconds).toISOString(),
-      };
-      case 'Yesterday': return {
-        atOrAfter: new Date(startOfYesterday).toISOString(),
-        before: new Date(startOfToday).toISOString(),
-      };
-      case 'This week': return {
-        atOrAfter: new Date(startOfWeek).toISOString(),
-        before: new Date(startOfYesterday).toISOString(),
-      };
-      case 'This month': return {
-        atOrAfter: new Date(startOfMonth).toISOString(),
-        before: new Date(startOfWeek).toISOString(),
-      };
-      case 'Before this month': return { before: new Date(startOfMonth).toISOString() };
-    }
-  })();
-  return {
-    lastActivityAt: range,
-    ...(spaceId === undefined ? {} : { pinned: false, spaceId: asSpaceId(spaceId) }),
-    includeSystem: false,
-  };
-}
-
-export function groupWorkstreams(
-  streams: WorkstreamSummary[],
-  now = new Date(),
-): Array<{ label: RecencyGroup; streams: WorkstreamSummary[] }> {
-  return groupActivityItems(streams, now);
-}

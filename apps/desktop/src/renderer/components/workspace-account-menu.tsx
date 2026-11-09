@@ -2,8 +2,10 @@ import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { MenuActionItem } from '@rally/ui/components/menu-action-item';
-import { IconDeviceDesktopDown, IconHexagons, IconLogout, IconSettings, IconUserPlus, IconUsers } from '@tabler/icons-react';
+import { IconDeviceDesktopDown, IconHexagon, IconLogout, IconSettings, IconUserPlus, IconUsers } from '@tabler/icons-react';
 import { desktopBridge } from '../lib/platform';
+import { navigateAppRoute } from '../lib/app-navigation';
+import { useUiStore } from '../lib/ui-store';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import type { SupportPerson, SupportWorkspace, WorkspaceAttention } from '@rally/contracts';
 import { Check, LoaderCircle, Plus } from 'lucide-react';
@@ -78,27 +80,35 @@ export interface WorkspaceAccountMenuProps {
 const ADD_MEMBERS_DISABLED_REASON = 'Only administrators can add members.';
 const SIDEKICKS_DISABLED_REASON = 'Guests use the Sidekicks a conversation offers.';
 
+/** The Sidekicks home, in the main window, with its section open in the sidebar. */
+function openSidekicksHome(): void {
+  useUiStore.getState().setSidebarSection('sidekicks');
+  navigateAppRoute('/sidekicks');
+}
+
 /** Deployment tags disambiguate workspaces when multiple deployments are configured. */
 function regionLabel(region: RallyRegion): string {
   return region;
 }
 
 /**
- * A background row's count is `readerAttentionCount`: the conversations unread,
- * unseen or mentioning this person, the same number as that Organization's
- * attention menu and dock badge. Zero shows nothing. When some of them are
- * waiting on this person, the strongest reason, in the order WorkspaceDO ranks
- * them, is the badge's tooltip and part of the row's accessible name.
+ * A background row's count is `readerAttentionCount`: that Organization's
+ * unseen Activity, the number its Activity rail badge and its push badge show.
+ * Zero shows nothing. When some of those rows are Sidekick runs waiting on
+ * this person (`waitingForYou`, the unseen `needs_input` rows), or the
+ * strongest reason WorkspaceDO ranks is a mention, that is the badge's tooltip
+ * and part of the row's accessible name.
  */
 function waitingLabel(attention: WorkspaceAttention): string | null {
   const count = attention.waitingForYou;
+  // The server ranks an unseen mention as the reason only while no run
+  // waits, so `waitingForYou` is zero then and the mention is named alone.
+  if (attention.waitingReason === 'mentioned') return 'You were mentioned';
   if (count === 0) return null;
   const plural = count === 1 ? '' : 's';
-  return attention.waitingReason === 'mentioned'
-    ? `${count} mention${plural} waiting for you`
-    : attention.waitingReason === 'needs_input'
-      ? `${count} thread${plural} waiting for your input`
-      : `${count} new thread${plural} you have not opened`;
+  return attention.waitingReason === 'needs_input'
+    ? `${count} Sidekick run${plural} waiting for your input`
+    : `${count} new in Activity you have not seen`;
 }
 
 function IndicatorTooltip({ children, label }: { children: React.ReactElement; label: string }): React.JSX.Element {
@@ -179,7 +189,7 @@ export function WorkspaceAccountMenu({
   // and the rows agree.
   const counted = backgroundAttention.filter((value) => value.readerAttentionCount > 0);
   const backgroundHasAttention = counted.length > 0;
-  const backgroundAttentionDescription = counted.some((value) => value.waitingForYou > 0)
+  const backgroundAttentionDescription = counted.some((value) => value.waitingForYou > 0 || value.waitingReason === 'mentioned')
     ? 'attention in another organization'
     : backgroundHasAttention ? 'unread activity in another organization' : null;
   const multipleRegions = new Set(workspaces.map((workspace) => workspace.region)).size > 1;
@@ -286,8 +296,8 @@ export function WorkspaceAccountMenu({
                   <span>Members</span>
                 </DropdownMenu.Item>
                 <MenuActionItem className="menu-item account-menu-item" disabled={guest}
-                  disabledReason={SIDEKICKS_DISABLED_REASON} onSelect={() => void desktopBridge().openSidekicks()} tooltipSide="right">
-                  <IconHexagons aria-hidden="true" />
+                  disabledReason={SIDEKICKS_DISABLED_REASON} onSelect={openSidekicksHome} tooltipSide="right">
+                  <IconHexagon aria-hidden="true" />
                   <span>Sidekicks</span>
                 </MenuActionItem>
                 <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onOpenSettings}>
@@ -429,7 +439,7 @@ export function WorkspaceAccountMenu({
                   <button onClick={() => void desktopBridge().openSettings('members')} type="button">Members</button>
                 </DropdownMenu.Item>
                 <MenuActionItem disabled={guest} disabledReason={SIDEKICKS_DISABLED_REASON}
-                  onSelect={() => void desktopBridge().openSidekicks()} tooltipSide="right">
+                  onSelect={openSidekicksHome} tooltipSide="right">
                   Sidekicks
                 </MenuActionItem>
                 <DropdownMenu.Item asChild className="menu-item">

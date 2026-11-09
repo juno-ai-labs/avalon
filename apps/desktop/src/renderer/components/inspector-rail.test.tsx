@@ -60,7 +60,6 @@ const workstream: WorkstreamDetail = {
   pinPosition: null,
   participantUserIds: [],
   participantExtraCount: 0,
-  spaceIds: [],
   createdAt: '2026-07-31T20:00:00.000Z',
   participants: [],
   viewers: [],
@@ -261,7 +260,7 @@ describe('InspectorRail details', () => {
     const emailAddress = 'luminous-tidal-structured-curie@automation.rallywith.ai';
     expect(screen.getByText(emailAddress)).toBeVisible();
 
-    const copyButton = screen.getByRole('button', { name: 'Copy thread email address' });
+    const copyButton = screen.getByRole('button', { name: 'Copy email address' });
     fireEvent.click(copyButton);
 
     expect(copyText).toHaveBeenCalledWith(emailAddress);
@@ -279,7 +278,7 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Copy thread email address' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy email address' }));
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Copy failed — click to retry' })).toBeEnabled();
     });
@@ -364,7 +363,7 @@ describe('InspectorRail details', () => {
     expect(screen.getByText('Needs attention')).toBeVisible();
   });
 
-  const historyEntry = { title: 'Linear issue create: AVA-9', mimeType: 'text/markdown', contentAvailable: true };
+  const historyEntry = { title: 'Linear issue create: AVA-9', mimeType: 'text/markdown', contentAvailable: true, authorName: null };
   const history: ResourceVersion[] = [
     { ...historyEntry, version: 3, capturedAt: '2026-07-31T14:14:00.000Z', author: { kind: 'agent', runId: 'run-1' }, cause: 'published' },
     { ...historyEntry, version: 2, capturedAt: '2026-07-31T13:40:00.000Z', author: { kind: 'connector', connectionId: 'connection-1' }, cause: 'refetched' },
@@ -408,6 +407,28 @@ describe('InspectorRail details', () => {
     // title is hidden from the accessibility tree without leaving the DOM.
     expect(document.querySelector('.inspector-detail')).not.toBeNull();
     expect(screen.getByRole('heading', { hidden: true, name: watched.title })).toBeInTheDocument();
+  });
+
+  it('names the current version and who made it beside when it was last updated, preferring the server\'s name', () => {
+    const named: ResourceVersion[] = [
+      { ...historyEntry, version: 2, capturedAt: '2026-07-31T14:14:00.000Z', author: { kind: 'member', userId: 'user-1' }, authorName: 'Maya Lin', cause: 'published' },
+      { ...historyEntry, version: 1, capturedAt: '2026-07-31T11:02:00.000Z', author: { kind: 'agent', runId: 'run-1' }, cause: 'created' },
+    ];
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          resourceVersions={named}
+          workstream={{
+            ...workstream,
+            participants: [{ id: 'user-1', name: 'Alex', email: 'alex@example.test', timezone: 'UTC' }],
+            resources: [{ ...watched, currentVersion: 2, updatedAt: '2026-07-31T14:14:00.000Z' }],
+          }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+
+    expect(document.querySelector('.inspector-detail-updated')).toHaveTextContent(/· version 2 · Maya Lin$/u);
   });
 
   it('marks the newest version current even when the detail has not caught up', () => {
@@ -648,7 +669,7 @@ describe('InspectorRail details', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Archive this resource?' });
-    expect(dialog).toHaveAccessibleDescription(/will leave this thread/u);
+    expect(dialog).toHaveAccessibleDescription(/will be removed/u);
     expect(within(dialog).getByText(new RegExp(watched.title, 'u'))).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(onDetachResource).not.toHaveBeenCalled();
@@ -826,7 +847,7 @@ describe('resource detail content preview', () => {
 
   it('offers the resource panel actions from its title pill menu', async () => {
     const onOpenResourceVersion = vi.fn();
-    const version: ResourceVersion = { version: 1, title: note.title, mimeType: 'text/markdown', capturedAt: '2026-10-01T00:00:00.000Z', author: null, cause: null, contentAvailable: true };
+    const version: ResourceVersion = { version: 1, title: note.title, mimeType: 'text/markdown', capturedAt: '2026-10-01T00:00:00.000Z', author: null, authorName: null, cause: null, contentAvailable: true };
     render(
       <Tooltip.Provider>
         <InspectorRail
@@ -1062,6 +1083,19 @@ describe('resource detail content preview', () => {
       title: note.title,
     }));
     expect(loadResourceContent).toHaveBeenCalledWith(note.id, expect.any(AbortSignal));
+  });
+
+  it('says an artifact whose content was never stored has nothing to show, rather than drawing a blank pane', async () => {
+    openDetail(note, vi.fn(async () => { throw new ApiError('Resource content has not been hydrated', 404, 'resource_content_unavailable'); }));
+    expect(await screen.findByText('Nothing to show yet')).toBeInTheDocument();
+    expect(screen.getByText(/Its content was never stored/u)).toBeInTheDocument();
+  });
+
+  it('says so without asking for bytes when the artifact reports no stored content', async () => {
+    const loadResourceContent = vi.fn(async () => new Blob(['never read']));
+    openDetail({ ...note, contentAvailable: false }, loadResourceContent);
+    expect(await screen.findByText('Nothing to show yet')).toBeInTheDocument();
+    expect(loadResourceContent).not.toHaveBeenCalled();
   });
 
   it('does not offer Open in a new window for a source resource', () => {
@@ -1544,37 +1578,5 @@ describe('resource detail content preview', () => {
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Extracted' })).toBeInTheDocument());
     expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith(note.id, expect.anything());
-  });
-});
-
-describe('a channel’s Sidekicks in the main workstream rail', () => {
-  beforeEach(() => {
-    useUiStore.setState({ railOpen: true, railVariant: 'context', railWidth: 360, inspector: null });
-  });
-  it('keeps the Sidekicks heading for an empty answer and a pending one', () => {
-    const { rerender } = render(<Tooltip.Provider><InspectorRail workstream={workstream} sidekicks={[]} /></Tooltip.Provider>);
-    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeVisible();
-    rerender(<Tooltip.Provider><InspectorRail workstream={workstream} /></Tooltip.Provider>);
-    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeVisible();
-  });
-  it('shows the room’s Sidekicks and removes the one that offers it', () => {
-    const onRemove = vi.fn();
-    render(<Tooltip.Provider><InspectorRail workstream={workstream} sidekicks={[
-      { id: 'sidekick-1', name: 'Editorial guidance', description: 'Write clearly.', onRemove },
-    ]} /></Tooltip.Provider>);
-    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeVisible();
-    // The rail's own tooltip carries the name, so the row takes no `title`:
-    // the platform's draws in the desktop's type and never for a keyboard.
-    expect(screen.getByRole('button', { name: 'Editorial guidance' })).not.toHaveAttribute('title');
-    expect(screen.getByText('Write clearly.')).toBeVisible();
-    fireEvent.contextMenu(screen.getByRole('button', { name: 'Editorial guidance' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from this breakout' }));
-    expect(onRemove).toHaveBeenCalledOnce();
-  });
-  it('keeps an authorized unavailable attachment visible', () => {
-    render(<Tooltip.Provider><InspectorRail workstream={workstream} sidekicks={[
-      { id: 'sidekick-1', name: 'Editorial guidance', description: 'Write clearly.', note: 'Unavailable' },
-    ]} /></Tooltip.Provider>);
-    expect(screen.getByText('Unavailable · Write clearly.')).toBeVisible();
   });
 });

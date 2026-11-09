@@ -282,6 +282,8 @@ Two traps:
   both read it on mount, and a mock that only exports `desktopBridge` throws
   there.
 
+## Changelog
+
 ### 2026-08-30 — Mermaid diagrams save as source
 
 **What changed:** A `mermaid` fence remains the ordinary highlighted code block

@@ -9,6 +9,13 @@ import { DragHint } from './primitives';
 const RAIL_EDGE_GAP = 0;
 const KEYBOARD_STEP = 16;
 
+/**
+ * A rail width change. `remember: false` is a drag's step, applied but not
+ * saved: saving measures the pane and writes `localStorage`, which a drag
+ * would otherwise do on every pointer move. The drag saves once, at its end.
+ */
+export type RailResize = (width: number, options?: { remember?: boolean }) => void;
+
 function widthUnderPointer(clientX: number): number {
   return window.innerWidth - clientX - RAIL_EDGE_GAP;
 }
@@ -29,7 +36,7 @@ export function RailResizeHandle({
   label: string;
   /** The sidebar's current width — what the keyboard steps from. */
   width: number;
-  onResize: (width: number) => void;
+  onResize: RailResize;
 }): React.JSX.Element {
   const [resizing, setResizing] = useState(false);
   const limitRef = useRef<HTMLSpanElement>(null);
@@ -50,9 +57,13 @@ export function RailResizeHandle({
   // under the pointer is not the sidebar's width. Holding the difference from
   // the moment of the grab keeps the sidebar from jumping to meet the pointer.
   const grabOffsetRef = useRef(0);
+  const draggedWidthRef = useRef<number | null>(null);
 
   const finishDrag = (element?: HTMLDivElement): void => {
     if (pointerRef.current === null) return;
+    const dragged = draggedWidthRef.current;
+    draggedWidthRef.current = null;
+    if (dragged !== null) onResize(dragged);
     if (element?.hasPointerCapture?.(pointerRef.current)) element.releasePointerCapture(pointerRef.current);
     pointerRef.current = null;
     setResizing(false);
@@ -109,7 +120,9 @@ export function RailResizeHandle({
         }}
         onPointerMove={(event) => {
           if (event.pointerId !== pointerRef.current) return;
-          onResize(clamp(widthUnderPointer(event.clientX) - grabOffsetRef.current));
+          const next = clamp(widthUnderPointer(event.clientX) - grabOffsetRef.current);
+          draggedWidthRef.current = next;
+          onResize(next, { remember: false });
         }}
         onPointerUp={(event) => {
           if (event.pointerId === pointerRef.current) finishDrag(event.currentTarget);

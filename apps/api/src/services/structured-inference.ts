@@ -36,20 +36,14 @@ export function isMemoryEmbeddingModel(model: string): boolean {
 type StructuredInferenceRole = Extract<
   AgentModelRole,
   | "workstream"
-  | "work_opportunity_admission"
-  | "work_opportunity_ranking"
-  | "workstream_description"
   | "workstream_naming"
-  | "suggestion_draft"
   | "memory_sweep"
 >;
 
-type StructuredInferenceSource = StructuredInferenceRole | "substream_context_summary";
+type StructuredInferenceSource = StructuredInferenceRole;
 
 function structuredInferenceFeature(source: StructuredInferenceSource): string {
-  return source === "substream_context_summary"
-    ? "substream-context-summary-policy"
-    : AGENT_MODEL_FLAG_KEYS[source];
+  return AGENT_MODEL_FLAG_KEYS[source];
 }
 
 export async function runEmbeddingInference(
@@ -192,7 +186,8 @@ export async function runStructuredInference<T>(
     defer?: WorkDeferral;
     /** What this call is metered as. See docs/usage-metering.md. */
     activity: MeteredActivity;
-  } & ({ role: StructuredInferenceRole } | { role: "substream_context_summary"; routing: AgentModelRouting }),
+    role: StructuredInferenceRole;
+  },
 ): Promise<{
   result: T;
   model: string;
@@ -203,7 +198,7 @@ export async function runStructuredInference<T>(
 }> {
   const routing = input.routing
     ? AgentModelRoutingSchema.parse(input.routing)
-    : await resolveAgentModelRouting(env, input.role as StructuredInferenceRole, input.context);
+    : await resolveAgentModelRouting(env, input.role, input.context);
   const feature = structuredInferenceFeature(input.role);
   const substreamId = input.context.workstreamId
     ? input.context.substreamId ?? "0"
