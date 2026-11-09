@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES,
+  PUBLICATION_BUILD_HOLDER,
   TerminalSandboxCoordinator,
   terminalSandboxStableName,
   type TerminalClock,
@@ -226,21 +227,42 @@ describe("Terminal sandbox coordinator", () => {
     });
   });
 
-  it("destroys and reprovisions before reuse when execution authority changes", async () => {
-    const { database, env, objectStore, provider, clock } = fixture();
+  it("keeps a Canvas's one sandbox, files and all, whoever acts in it", async () => {
+    const { env, objectStore, provider, clock } = fixture();
     const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
-    database.exec(`
-      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
-      VALUES ('other-user', 'other-terminal-user', 'other@example.com', 'Other', '2026-08-13', '2026-08-13');
-    `);
+    await coordinator.release(context());
 
     await expect(coordinator.acquire(context(asUserId("00000000-0000-4000-8000-000000000005")))).resolves.toMatchObject({
-      providerSandboxId: "sandbox-2",
-      generation: 2,
+      providerSandboxId: "sandbox-1",
+      generation: 1,
     });
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("moves a Canvas sandbox made under its owner's identity to the Canvas's without replacing it, and replaces another's once", async () => {
+    const { env, objectStore, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    await coordinator.release(context());
+    // What the sandbox held before a Canvas's sandbox was the Canvas's: the
+    // identity of the person who last used it.
+    const ownersIdentity = await sha256(JSON.stringify({ principal: `user:${USER_ID}`, repository: "scratch" }));
+    const canvasIdentity = workstreamObjectGet(objectStore, "SELECT authority_fingerprint FROM terminal_workspace WHERE id = 1");
+    workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET authority_fingerprint = ? WHERE id = 1", ownersIdentity);
+
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT authority_fingerprint FROM terminal_workspace WHERE id = 1")).toEqual(canvasIdentity);
+    await coordinator.release(context());
+
+    // A sandbox still under someone else's identity cannot be told apart from
+    // theirs alone, so it is replaced, once; after that it is the Canvas's.
+    const othersIdentity = await sha256(JSON.stringify({ principal: "user:00000000-0000-4000-8000-0000000000ef", repository: "scratch" }));
+    workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET authority_fingerprint = ? WHERE id = 1", othersIdentity);
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-2", generation: 2 });
     expect(provider.deleteSandbox).toHaveBeenCalledWith("sandbox-1");
-    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
   });
 
   it("starts stopped sandboxes and refreshes lifecycle deadlines without polling", async () => {
@@ -1132,7 +1154,7 @@ describe("Terminal sandbox coordinator", () => {
     info.mockRestore();
   });
 
-  it("refuses a background agent whose authority differs from its owner's sandbox rather than replacing it", async () => {
+  it("lets a background agent acting for someone else share its Canvas's sandbox", async () => {
     const { objectStore, env, provider, clock } = fixture();
     const worker = "00000000-0000-4000-8000-000000000088";
     const workerRun = "00000000-0000-4000-8000-000000000089";
@@ -1156,14 +1178,33 @@ describe("Terminal sandbox coordinator", () => {
       { parentKind: "canvas", backgroundAgent: true, runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
     );
 
-    // An agent under another principal would, as an ordinary run, destroy
-    // and reprovision the sandbox; it is the owner's checkout, so it refuses.
     await expect(agent.acquire({ ...context(otherUser), harnessRunId: workerRun, toolCallId: "worker-call" }))
-      .rejects.toMatchObject({ code: "sandbox_authority_mismatch" });
+      .resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
     expect(provider.createSandbox).toHaveBeenCalledOnce();
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
-    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
-      .toEqual({ generation: 1, sandbox_id: "sandbox-1" });
+  });
+
+  it("holds a publication build's lease against an agent run until it expires, though no run backs it", async () => {
+    const { objectStore, env, provider, clock, advance } = fixture();
+    const buildId = "00000000-0000-4000-8000-0000000000b1";
+    const runsPort = () => testHarnessRunPort(objectStore);
+    const builder = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { parentKind: "canvas", backgroundAgent: false, runSubstreamId: PUBLICATION_BUILD_HOLDER, authoritySubstreamId: "0", runsPort },
+    );
+    const owner = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { parentKind: "canvas", backgroundAgent: false, runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
+    );
+    await expect(builder.acquire({ ...context(), harnessRunId: buildId, toolCallId: buildId }))
+      .resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+
+    // No run row exists for the build; that is not the build having finished.
+    await expect(owner.acquire(context())).rejects.toMatchObject({ code: "sandbox_busy" });
+    advance(TERMINAL_OPERATION_LEASE_MS / 60_000 + 1);
+    await expect(owner.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
   });
 
   it.each([false, true])("retains pre-delegation Sidekick files for another eligible coordinator (background=%s)", async (backgroundAgent) => {

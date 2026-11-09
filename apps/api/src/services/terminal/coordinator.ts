@@ -134,6 +134,15 @@ export interface TerminalSandboxScope extends TerminalRunScope {
 const YIELDED_RUN_STATUSES = new Set<string>(TERMINAL_YIELDED_RUN_STATUS_LIST);
 
 /**
+ * The lease holder's conversation when the holder is not a run at all but a
+ * person's publication build (`services/canvas-build/canvas-build-service.ts`).
+ * It is held as a foreign holder is, which the storage keeps live until the
+ * lease expires; no run row exists to ask about, so nothing reads its absence
+ * as the holder having yielded. `docs/rally-mcp.md#building`.
+ */
+export const PUBLICATION_BUILD_HOLDER = "publication-build";
+
+/**
  * The Daytona name a conversation's sandbox is created under.
  *
  * The main conversation keeps the derivation every deployed sandbox was
@@ -278,17 +287,39 @@ export class TerminalSandboxCoordinator {
   }
 
   /**
-   * Ordinary conversations freeze files to their execution principal. A
-   * Sidekick retains its original file identity across eligible coordinators;
-   * the plugin checks live delegation separately before every operation.
+   * Whose files a sandbox holds. A Canvas has one sandbox, shared by
+   * everyone and everything acting in it (each person's runs, Rally's own,
+   * its background agents, a person's publication build), so its identity is
+   * the Canvas and its selected repository: who is acting never replaces it.
+   * A Sidekick retains its original file identity across eligible
+   * coordinators; the plugin checks live delegation separately before every
+   * operation.
    */
   private authorityFingerprint(
     context: HarnessToolContext,
     repositoryAuthority: RepositoryAuthorityRow | null,
   ): Promise<string> {
     return sha256(JSON.stringify({
-      principal: this.scope.parentKind === "automation" && this.scope.sharedFileUserId
-        ? `user:${this.scope.sharedFileUserId}` : executionPrincipalKey(context.executionPrincipal),
+      principal: this.scope.parentKind === "automation"
+        ? this.scope.sharedFileUserId ? `user:${this.scope.sharedFileUserId}` : executionPrincipalKey(context.executionPrincipal)
+        : `canvas:${context.workstreamId}`,
+      repository: repositoryAuthority ?? "scratch",
+    }));
+  }
+
+  /**
+   * A Canvas sandbox's identity before it was the Canvas's: the person who
+   * last used it. A sandbox still holding the acting person's old identity
+   * moves to the Canvas's without being replaced, so the deploy that made the
+   * sandbox shared does not discard its files; one holding someone else's is
+   * replaced once, as it would have been before.
+   */
+  private legacyCanvasFingerprint(
+    context: HarnessToolContext,
+    repositoryAuthority: RepositoryAuthorityRow | null,
+  ): Promise<string> {
+    return sha256(JSON.stringify({
+      principal: executionPrincipalKey(context.executionPrincipal),
       repository: repositoryAuthority ?? "scratch",
     }));
   }
@@ -525,6 +556,16 @@ export class TerminalSandboxCoordinator {
     } else {
       const importedResourceRevoked = await this.hasRevokedImportedResource(context, row);
       if (
+        row.authorityFingerprint !== authorityFingerprint
+        && !importedResourceRevoked
+        && this.scope.parentKind === "canvas"
+        && row.authorityFingerprint === await this.legacyCanvasFingerprint(context, repositoryAuthority)
+      ) {
+        row = await this.terminal(context).adoptAuthorityFingerprint({
+          generation: row.generation, from: row.authorityFingerprint, to: authorityFingerprint, now,
+        }) ?? row;
+      }
+      if (
         (row.authorityFingerprint !== authorityFingerprint || importedResourceRevoked)
         && this.scope.backgroundAgent
       ) {
@@ -696,6 +737,8 @@ export class TerminalSandboxCoordinator {
       !row.operationRunId
       || !row.operationRunSubstreamId
       || row.operationRunId === context.harnessRunId
+      // A build is live until its lease expires; it has no run to have yielded.
+      || row.operationRunSubstreamId === PUBLICATION_BUILD_HOLDER
     ) return null;
     const holder = await this.scope
       .runsPort(context.workspaceId, context.workstreamId, row.operationRunSubstreamId)
