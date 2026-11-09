@@ -16,27 +16,33 @@ in the Technology section is [`landing-technology-schematic.md`](landing-technol
 
 ## The brief
 
-The redesign was run as an agency would run it, from the brand outwards.
+The redesign was run as an agency would run it, from the brand outwards, and
+started from a blank page rather than from any earlier look.
 
 1. **Audit.** The old site set everything in uppercase Barlow Semi Condensed
-   on near-black with a sunrise photo, and its home page still told the
-   Channel and Thread story in places. Rally's launch films and X ads
-   (`.agents/skills/rally-motion/`) had meanwhile settled a different, stronger
-   look through review: Inter Tight set big and tight, a warm off-white, one
-   volt accent, and a recurring cast with named cursors. The site and the ads
-   read as two companies.
-2. **Strategy.** One brand across film and web. The site adopts the motion
-   system's colours, type and cast rather than inventing a third look, so an
-   ad's viewer lands on a page that is visibly the same product.
-3. **Positioning.** Every other AI tool is built for one person in one chat;
-   Rally is for the team. The hero line is the approved end-card line of the
-   films, "One place for you, your coworkers, and AI." The closing line is the
-   films' hook, "Work isn't single-player."
-4. **Story order.** After the pivot the product is two things, so the home
+   on near-black, and its home page still told the Channel and Thread story in
+   places. Dark, neon-accented, all-caps pages are also what most AI products
+   look like in 2026, so the old look did not set Rally apart.
+2. **Concept: the shared page.** Rally is where a team and AI work on the same
+   page, so the site is designed as one: warm paper, ink, column guides, ruled
+   index lines, figures with captions. The multiplayer idea is shown in the
+   material itself: people's selections and name flags sit on the words, the
+   way they do in a shared editor.
+3. **Three voices, three faces.** A serif (Instrument Serif) for the human
+   voice and every headline; a precise grotesk (Geist) for the product and
+   body text; a mono (Geist Mono) for labels, numbers and anything a machine
+   would say.
+4. **One accent, owned by Rally.** Signal ultramarine marks Rally and the one
+   thing to act on. People never wear it: Maya, Theo and Priya each have
+   their own colour for cursors, bubbles and selections.
+5. **Positioning.** Every other AI tool is built for one person in one chat;
+   Rally is for the team. The hero says "One place for you, your coworkers,
+   and AI." and the page closes on "Work isn't single-player."
+6. **Story order.** After the pivot the product is two things, so the home
    page says that plainly ("Two parts. That's the whole product.") and then
    explains each: Canvases, then Sidekicks, then the proof (pricing,
    technology, team, comparisons).
-5. **Show, don't claim.** The hero is a working Canvas, not a picture: people
+7. **Show, don't claim.** Figure 1 is a working Canvas, not a picture: people
    ask, Rally reads their tools, the artifact appears, a teammate comments, and
    Rally publishes a second version.
 
@@ -53,35 +59,54 @@ The redesign was run as an agency would run it, from the brand outwards.
 | `apps/site/canvases/index.html`, `apps/site/sidekicks/index.html` | The two product pages |
 | `apps/site/src/site-motion.ts` | The demo's timeline and the scroll reveals |
 | `apps/site/src/site-chrome.ts` | The header nav, the footer, and the `<!-- rally:… -->` markers that stitch shared markup into pages |
-| `apps/site/src/fonts/` | Inter, Inter Tight and Geist Mono, latin, variable weight |
-| `apps/site/public/brand/rally-mark-volt.svg` | The mark in volt, for pages on the dark system |
+| `apps/site/src/fonts/` | Instrument Serif (roman and italic), Geist and Geist Mono, latin |
+| `apps/site/public/brand/rally-mark-paper.svg` | The mark in paper, drawn on the accent (Rally's avatar, the Sidekick hexagon) |
 
 ## How it works
 
 ### Tokens
 
-Colour is near-black ground (`--ink #070707`, raised surfaces `--raised`,
-`--panel`), warm paper type (`--paper #f0efe8`, with `--soft`, `--muted` and
-`--faint` as its opacities), and one accent, `--volt #ccff00`, with
-`--volt-ink` for text on it. The cast colours, `--blue` (Maya), `--orange`
-(Theo) and `--grey` (Priya), mark people only: bubbles, faces, cursors.
-`--green` and `--magenta` survive as aliases so older rules keep resolving.
+Every colour is a token on `:root`, with a light set (the default) and a dark
+set under `prefers-color-scheme: dark`; a rule never names a colour itself.
 
-Type is three faces. `--display-font` (Inter Tight, weight 650 to 800,
-tracking about -0.045em) for headlines; `--body-font` (Inter) for reading;
-`--mono` (Geist Mono) for labels, numbers and anything that reads as
-machine output. A headline is two lines in two tones: the claim in paper,
-then a second line in `.display em`, dimmed, or volt where it is the page's
-one accent.
+| Token | Light | Dark | Use |
+| --- | --- | --- | --- |
+| `--bg` | `#f3f0e8` | `#121210` | The page |
+| `--surface`, `--card`, `--page` | warm greys to near-white | lifted greys | Sunken panels, cards, a document's page |
+| `--text`, `--text-2` to `--text-4` | ink `#15140f` and its opacities | paper `#eeebe2` and its opacities | Type, from headline to faint label |
+| `--rule`, `--rule-2` | ink at 12% and 24% | paper at 11% and 22% | Hairlines and stronger lines |
+| `--accent` | `#3341ff` | `#7d87ff` | Rally, links, the one thing to act on |
+| `--maya`, `--theo`, `--priya` | vermilion, moss, ochre | same | A person's cursor, bubble and selection |
+| `--plate`, `--on-plate` | ink panel, paper type | paper panel, ink type | The inverted closing band and featured price |
+
+`--ink`, `--paper`, `--muted`, `--hairline`, `--green`, `--volt` and the other
+older names are aliases of these, kept so `trust.css` and the comparison pages
+resolve; new rules use the semantic names.
+
+Type is three faces: `--display-font` (Instrument Serif, roman and italic,
+tracking about -0.03em) for headlines; `--body-font` (Geist, variable) for
+reading and interface; `--mono` (Geist Mono) for labels and captions. A
+headline is a roman claim and an italic turn; the italic takes the accent
+only in the hero, the product-page heroes and the closing band.
+
+The Technology figure is always a dark plate, in both themes, because the
+three.js scene draws light points that disappear on paper.
 
 ### Page architecture
 
-A page is a header, a hero, then **bands**: `.band` sections at the shared
-max width, each opening with an `.eyebrow` (a volt dot, a two-digit number,
-a name) and a two-tone `.display` headline in `.band-head`. Content inside a
-band is cards on `--raised` with hairline borders and a 20px radius. Every
-marketing page ends with the `.closer` band and the footer, whose oversized
-outlined wordmark closes the page.
+A page is a header, a hero, then **bands**. Each `.band` opens on a ruled
+index line (`.band-head`): the `.eyebrow` (a two-digit number and a name, in
+mono) sits in the left margin, three twelfths wide, and the serif headline and
+lede sit in the text column beside it. Content inside a band is cards on
+`--card` with hairline borders and a 14px radius. The home hero sets its
+headline across faint twelve-column guides, then puts the introduction and
+the actions on a ruled line below it, then Figure 1. Every marketing page
+ends with the `.closer` plate and the footer, whose oversized italic
+wordmark closes the page.
+
+A **highlight** (`<mark class="hl hl-maya" data-name="Maya">`) is a person's
+selection: their colour behind the words, a bar at the start and their name
+flag above, drawn from `data-name`. The "Why Rally" statement uses three.
 
 Shared markup is never copied between pages. A page holds a marker such as
 `<!-- rally:canvas-demo -->` and `renderSiteChrome` in `site-chrome.ts`
@@ -105,9 +130,11 @@ and nothing reveals or drifts.
 
 ## Invariants
 
-- **One volt idea per view.** Volt marks the one thing to look at: the main
-  button, the hero's last line, the live state. Two volt headlines on one
-  screen means one of them is wrong (the motion films' rule, kept here).
+- **The accent is Rally's.** Ultramarine marks Rally, links and the one thing
+  to act on. People are never drawn in it, and Rally is never drawn in a
+  person's colour.
+- **Both themes, from tokens.** A colour written into a rule instead of a
+  token breaks one of the two themes; check both before shipping.
 - **Product truth.** Every claim on these pages must be something the
   product does, in the product's words. The demo shows people present, a
   comment on a line and a published version, all of which ship; it does not
@@ -128,14 +155,15 @@ and nothing reveals or drifts.
 
 This system styles the marketing pages only. The help center keeps its own
 tokens, and the social cards drawn at build time (`social-cards.ts`) still
-set Barlow from the `@fontsource` packages: moving them to Inter Tight means
+set Barlow from the `@fontsource` packages: moving them to Instrument Serif and Geist means
 shipping WOFF copies of these faces, since `opentype.js` cannot read WOFF2.
 The download, Slack and 404 pages still use `styles.css`.
 
 ## Failure modes and limits
 
-- **Fonts load late.** All three faces use `font-display: swap`; a slow
-  connection shows the system sans first. The three files total about 125 KB.
+- **Fonts load late.** Every face uses `font-display: swap`; a slow
+  connection shows the system serif and sans first. The four files total
+  about 96 KB.
 - **The demo at mid widths.** Cursors are placed in percent of the demo body,
   so they drift off their targets as the body changes shape; below 1100px
   they are hidden and below 860px the demo stacks.
@@ -146,25 +174,29 @@ The download, Slack and 404 pages still use `styles.css`.
 
 `apps/site/test/site.test.ts` checks the header's links, that every tracked
 id is on the home page, and the footer columns. The look itself has no
-automated test: it is checked in a real browser at desktop and phone widths
-before a change ships, as the repository's rule on visible changes requires.
+automated test: it is checked in a real browser at desktop and phone widths,
+in light and dark, before a change ships, as the repository's rule on visible changes requires.
 
 ## Changelog
 
-### 2026-11-09 — The site adopts the motion films' brand and tells the two-part product
+### 2026-11-09 — The site becomes "the shared page" and tells the two-part product
 
-**What changed:** The marketing site was redesigned from the ground up. One
-stylesheet now sets the system the launch films use (Inter Tight, Inter and
-Geist Mono; near-black, paper and one volt accent; the Maya, Theo and Priya
-cast), the home page leads with an animated Canvas and is organised around
-Canvases and Sidekicks, `/canvases/` and `/sidekicks/` were added, and the
-blog, comparison and Trust Center pages took on the same system.
+**What changed:** The marketing site was redesigned from a blank page. One
+stylesheet now sets a new system: warm paper and ink in light and dark
+themes, Instrument Serif, Geist and Geist Mono, a single ultramarine accent
+for Rally and a colour for each person. The home page leads with an animated
+Canvas as Figure 1 and is organised around Canvases and Sidekicks;
+`/canvases/` and `/sidekicks/` were added; the blog, comparison and Trust
+Center pages took on the same system.
 
 **Why:** The pivot to Canvases and Sidekicks left the home page telling an
-older story, and the site's uppercase Barlow look no longer matched the ads
-that send people to it. The rejected alternative was a fresh visual identity
-for the site alone, which would have left film and web as two brands.
+older story, and the dark, uppercase look matched most other AI products
+rather than setting Rally apart. A first pass on this branch borrowed the
+launch films' dark and volt style; it was set aside for a system designed
+for the site on its own terms, so the films may follow the site rather than
+the other way round.
 
-**Respect:** Keep the CSP rules (no inline style or script), the tracked
-link ids, and product truth in the demo. A new marketing page starts from
-`landing.css` and the band pattern rather than a stylesheet of its own.
+**Respect:** Keep every colour in a token and check both themes, keep the CSP
+rules (no inline style or script), the tracked link ids, and product truth in
+the demo. A new marketing page starts from `landing.css` and the band pattern
+rather than a stylesheet of its own.
