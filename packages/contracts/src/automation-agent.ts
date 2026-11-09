@@ -24,12 +24,16 @@ export const AutomationScopeSchema = z.enum(["personal", "workspace"]);
 export type AutomationScope = z.infer<typeof AutomationScopeSchema>;
 /**
  * A scope as stored before the `workstream` (Thread-owned) scope was retired:
- * `workstream` reads as `workspace`, the conversion WorkspaceDO migration 137
- * made to every directory row. For stored drafts and transcript rows, which
- * no migration rewrites; anything written now uses `AutomationScopeSchema`.
+ * `workstream` reads as `personal`. For stored drafts and transcript rows,
+ * which no migration rewrites; anything written now uses
+ * `AutomationScopeSchema`. Fail closed: the stored value does not say whether
+ * its Thread was private or Organization-wide, and a draft's definition
+ * writes its suggested scope on every submission, so reading it as the
+ * Organization would widen a private Thread's Sidekick past what the
+ * directory migration kept. A manager widens it explicitly if they mean to.
  */
 export const StoredAutomationScopeSchema = z.enum(["personal", "workspace", "workstream"])
-  .transform((scope): AutomationScope => scope === "workstream" ? "workspace" : scope);
+  .transform((scope): AutomationScope => scope === "workstream" ? "personal" : scope);
 
 /**
  * Who a Sidekick is shared with: its author alone (`personal`), every member
