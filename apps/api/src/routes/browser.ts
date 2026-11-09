@@ -1,4 +1,7 @@
 import { UuidV7Schema } from '@rally/contracts/telemetry';
+import { McpAuthorizationApprovalSchema, McpAuthorizationDescriptionSchema, McpAuthorizationRedirectSchema,
+  McpAuthorizationRequestSchema } from "@rally/contracts/mcp-oauth";
+import { McpOAuthError, McpOAuthService } from "../services/mcp-oauth-service";
 import { observeSignup, observeSignupProgress } from '../telemetry/signup';
 import { authBodyLimit } from "../middleware/auth-body-limit";
 import { Hono, type Context } from "hono";
@@ -266,6 +269,30 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     const session = BrowserSessionSchema.parse(await service.select(credential(c),c.req.valid("json").workspaceId));
     observeSignupProgress(c.env, session.user.id, 'signup_organization_ready', 'existing_organization', 'browser');
     return c.json(BrowserSessionSchema.parse(session));
+  });
+
+  // The consent half of Rally's MCP authorization server (`docs/rally-mcp.md`):
+  // the page at `/oauth/authorize` reads who is asking, then approves for one
+  // Organization or declines. The signed-in person is this browser's.
+  const mcpConsent = async <T>(operation: () => Promise<T>): Promise<T> => {
+    try { return await operation(); } catch (error) {
+      if (error instanceof McpOAuthError) throw new ApiError(400,`mcp_oauth_${error.error}`,error.description);
+      throw error;
+    }
+  };
+  routes.get("/oauth/authorization",zValidator("query",McpAuthorizationRequestSchema),async (c) => {
+    await new BrowserSessionService(c.env).read(credential(c));
+    return c.json(McpAuthorizationDescriptionSchema.parse(await mcpConsent(() => new McpOAuthService(c.env).describe(c.req.valid("query")))));
+  });
+  routes.post("/oauth/approve",authBodyLimit,zValidator("json",McpAuthorizationApprovalSchema),async (c) => {
+    const identity = await new BrowserSessionService(c.env).read(credential(c));
+    const redirectUrl = await mcpConsent(() => new McpOAuthService(c.env).approve(identity,c.req.valid("json")));
+    return c.json(McpAuthorizationRedirectSchema.parse({ redirectUrl }));
+  });
+  routes.post("/oauth/deny",authBodyLimit,zValidator("json",McpAuthorizationRequestSchema),async (c) => {
+    await new BrowserSessionService(c.env).read(credential(c));
+    const redirectUrl = await mcpConsent(() => new McpOAuthService(c.env).deny(c.req.valid("json")));
+    return c.json(McpAuthorizationRedirectSchema.parse({ redirectUrl }));
   });
 
   // Rally staff acting in an Organization that granted Rally access

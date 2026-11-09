@@ -2328,6 +2328,11 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .support-access-controls { align-items: center; display: flex; flex-shrink: 0; gap: 12px; }
 .support-access-remaining { color: var(--av-sys-color-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .settings-row-value strong { font-size: 11.5px; }
+/* Connected apps (docs/rally-mcp.md): a row per MCP app, its self-chosen
+   name marked as such. */
+.connected-app-name-note { color: var(--av-sys-color-text-muted); font-size: 11px; margin-left: 8px; }
+.connected-apps-empty { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 0; padding: 12px 14px; }
+.connected-apps .center-state { height: auto; padding: 12px 14px; }
 .workspace-settings-screen .settings-profile-card strong,
 .workspace-settings-screen .settings-member-row strong,
 .workspace-settings-screen .settings-row-value strong { font-size: 13px; font-weight: 400; }

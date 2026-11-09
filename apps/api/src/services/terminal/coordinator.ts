@@ -86,6 +86,20 @@ export interface TerminalClock {
 
 const systemClock: TerminalClock = { now: () => new Date() };
 
+/**
+ * Removes every `http.<url>.extraheader` from the checkout's own Git config,
+ * where repository bootstrap writes the GitHub authorization, and fails
+ * unless none is left. A sandbox without a checkout has nothing to remove.
+ */
+const CLEAR_CHECKOUT_AUTHORIZATION_COMMAND = [
+  "if [ -e /workspace/.git ]; then",
+  "  for key in $(git config --local --name-only --get-regexp '^http\\..*\\.extraheader$' || true); do",
+  "    git config --local --unset-all \"$key\" || exit 1",
+  "  done",
+  "  if git config --local --get-regexp '^http\\..*\\.extraheader$' >/dev/null; then exit 1; fi",
+  "fi",
+].join("\n");
+
 interface RepositoryAuthorityRow {
   connection_id: string;
   repository_full_name: string;
@@ -132,6 +146,15 @@ export interface TerminalSandboxScope extends TerminalRunScope {
 }
 
 const YIELDED_RUN_STATUSES = new Set<string>(TERMINAL_YIELDED_RUN_STATUS_LIST);
+
+/**
+ * The lease holder's conversation when the holder is not a run at all but a
+ * person's publication build (`services/canvas-build/canvas-build-service.ts`).
+ * It is held as a foreign holder is, which the storage keeps live until the
+ * lease expires; no run row exists to ask about, so nothing reads its absence
+ * as the holder having yielded. `docs/rally-mcp.md#building`.
+ */
+export const PUBLICATION_BUILD_HOLDER = "publication-build";
 
 /**
  * The Daytona name a conversation's sandbox is created under.
@@ -278,20 +301,26 @@ export class TerminalSandboxCoordinator {
   }
 
   /**
-   * Ordinary conversations freeze files to their execution principal. A
-   * Sidekick retains its original file identity across eligible coordinators;
-   * the plugin checks live delegation separately before every operation.
+   * Whose files a sandbox holds. A Canvas has one sandbox, shared by
+   * everyone and everything acting in it (each person's runs, Rally's own,
+   * its background agents, a person's publication build), so its identity is
+   * the Canvas and its selected repository: who is acting never replaces it.
+   * A Sidekick retains its original file identity across eligible
+   * coordinators; the plugin checks live delegation separately before every
+   * operation.
    */
   private authorityFingerprint(
     context: HarnessToolContext,
     repositoryAuthority: RepositoryAuthorityRow | null,
   ): Promise<string> {
     return sha256(JSON.stringify({
-      principal: this.scope.parentKind === "automation" && this.scope.sharedFileUserId
-        ? `user:${this.scope.sharedFileUserId}` : executionPrincipalKey(context.executionPrincipal),
+      principal: this.scope.parentKind === "automation"
+        ? this.scope.sharedFileUserId ? `user:${this.scope.sharedFileUserId}` : executionPrincipalKey(context.executionPrincipal)
+        : `canvas:${context.workstreamId}`,
       repository: repositoryAuthority ?? "scratch",
     }));
   }
+
 
   /**
    * Take the operation lease for one tool call on a sandbox this run already
@@ -305,7 +334,8 @@ export class TerminalSandboxCoordinator {
    * stopped it, or the policy moved it — and the caller then runs readiness
    * again, which re-claims by the same run id and transitions under the lease
    * this call may already hold. A lease someone else holds is `sandbox_busy`,
-   * as in `acquire`.
+   * as in `acquire`. So is a Canvas sandbox holding another principal's
+   * GitHub credentials: readiness clears them before this call runs anything.
    */
   async claimForOperation(
     context: HarnessToolContext,
@@ -320,6 +350,7 @@ export class TerminalSandboxCoordinator {
     return claimed.lifecycleState === "running"
       && claimed.sandboxId === sandbox.providerSandboxId
       && claimed.appliedNetworkRevision === sandbox.networkRevision
+      && !this.holdsAnotherPrincipalsCredentials(context, claimed)
       ? "held"
       : "stale";
   }
@@ -571,6 +602,10 @@ export class TerminalSandboxCoordinator {
       }
     }
 
+    if (this.holdsAnotherPrincipalsCredentials(context, row)) {
+      await this.clearAnotherPrincipalsCredentials(context, row);
+    }
+
     const currentPolicy = await this.loadOrCreatePolicy(context.workspaceId, nowIso);
     if (currentPolicy.verificationState !== "verified" || currentPolicy.revision !== policy.revision) {
       if (row.sandboxId) await this.provider.stopSandbox(row.sandboxId).catch(() => undefined);
@@ -597,6 +632,90 @@ export class TerminalSandboxCoordinator {
       authorityFingerprint,
       networkRevision: policy.revision,
     };
+  }
+
+  /**
+   * Whether this Canvas sandbox may hold GitHub credentials mounted for a
+   * principal other than the one acting.
+   *
+   * A Canvas's sandbox is shared by everyone acting in it, but the credentials
+   * bootstrap and the typed publisher mount in it are one principal's: the
+   * read token, `GH_TOKEN`, and the write token publication leaves in place.
+   * Left there, another participant's run, a guest's included, could use them
+   * with an ordinary command. The same principal acting again is not a
+   * change and costs nothing. A Sidekick keeps its own rule: its delegates
+   * share the Sidekick's credentials (`docs/terminal-workspaces.md`).
+   */
+  private holdsAnotherPrincipalsCredentials(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+  ): boolean {
+    return this.scope.parentKind !== "automation"
+      && row.credentialPrincipalKey !== null
+      && row.credentialPrincipalKey !== executionPrincipalKey(context.executionPrincipal);
+  }
+
+  /**
+   * Clear another principal's GitHub credentials from the running sandbox,
+   * under the lease and before the acting principal's operation runs.
+   *
+   * Two places hold them: the host-scoped Daytona secrets behind
+   * `GITHUB_READ_BASIC` and `GH_TOKEN`, and the checkout's
+   * `http.<url>.extraheader`, which names the first. Both are cleared, then
+   * the slot is handed to the acting principal, fenced on the generation and
+   * on the attribution that was cleared; that also drops the cached token
+   * expiry, so the acting principal's own bootstrap mints and mounts their
+   * grant, if the existing rules give them one, before their command. If
+   * either clear fails the operation is refused rather than run beside the
+   * old credentials, and the attribution stays so the next operation retries.
+   */
+  private async clearAnotherPrincipalsCredentials(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+  ): Promise<void> {
+    const refuse = (reason: string): TerminalToolError => {
+      logStructuredEvent(this.env, "warn", "terminal_credentials_clear_failed", {
+        workspace_id: context.workspaceId,
+        workstream_id: context.workstreamId,
+        substream_id: this.scope.runSubstreamId,
+        terminal_substream_id: this.scope.authoritySubstreamId,
+        harness_run_id: context.harnessRunId,
+        sandbox_generation: row.generation,
+        reason,
+      });
+      return new TerminalToolError(
+        "repository_credentials_not_cleared",
+        "Rally could not remove the previous person's GitHub credentials from this Canvas's workspace, so it did not run this operation. Retry the tool.",
+        { retryAfterMs: 5_000, reason: `Retry once; clearing the earlier credentials failed (${reason}).` },
+      );
+    };
+    const sandboxId = row.sandboxId!;
+    try {
+      await this.provider.clearGitHubReadAccess(sandboxId);
+    } catch (error) {
+      throw refuse(diagnosticErrorCode(error, "provider_clear_failed"));
+    }
+    let header: { exitCode: number };
+    try {
+      header = await this.provider.runUtilityCommand(sandboxId, {
+        operation: "repository.credentials.clear",
+        command: CLEAR_CHECKOUT_AUTHORIZATION_COMMAND,
+        cwd: "/workspace",
+        // A few `git config` calls on one file finish in well under a second;
+        // this only bounds a hung provider call. Not measured: the team's to change.
+        timeoutMs: 30_000,
+      });
+    } catch (error) {
+      throw refuse(diagnosticErrorCode(error, "checkout_header_clear_failed"));
+    }
+    if (header.exitCode !== 0) throw refuse("checkout_header_clear_failed");
+    const handed = await this.terminal(context).recordCredentialsCleared({
+      generation: row.generation,
+      fromPrincipalKey: row.credentialPrincipalKey!,
+      toPrincipalKey: executionPrincipalKey(context.executionPrincipal),
+      now: this.clock.now().getTime(),
+    });
+    if (!handed) throw refuse("credential_attribution_moved");
   }
 
   /**
@@ -696,6 +815,8 @@ export class TerminalSandboxCoordinator {
       !row.operationRunId
       || !row.operationRunSubstreamId
       || row.operationRunId === context.harnessRunId
+      // A build is live until its lease expires; it has no run to have yielded.
+      || row.operationRunSubstreamId === PUBLICATION_BUILD_HOLDER
     ) return null;
     const holder = await this.scope
       .runsPort(context.workspaceId, context.workstreamId, row.operationRunSubstreamId)

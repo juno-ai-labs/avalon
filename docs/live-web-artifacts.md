@@ -46,6 +46,13 @@ exists.
 
 ### Publishing
 
+A person can also publish a static site into a Canvas, from Claude, ChatGPT
+or OpenCode through `POST /canvases/:id/artifacts`: the same version write,
+hostname, registry and host pointer as below, in the same order, with the
+person as the revision's author, and never an active site
+([`rally-mcp.md`](rally-mcp.md#publishing)). The row writes both publishers
+share live in `services/resource-publication.ts`.
+
 `publish_resource` accepts a directory. It gains no parameter for what
 to do with one: **the kind is resolved from the directory's root entry**, because
 a parameter restating what the files already say is a parameter that can disagree
@@ -749,6 +756,27 @@ shows its saved quote and image. The script and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-09 — A site version is claimed before it is written, and serving never moves back
+
+**What changed:** A site publish claims its next version with a create-once R2
+object (`claimArtifactVersion`, `artifact/<id>/v<n>/claim`, `If-None-Match: *`)
+before any of its files are written, moving to the next number if the claim
+is taken. `registerArtifact` and `ArtifactHostDO.recordPublish` refuse a lower
+version than the one they hold (an upsert fenced on `current_version`, its
+returned row the witness) and say whether they moved.
+
+**Why:** A person's publish into a Canvas (`docs/rally-mcp.md#publishing`)
+made concurrent publishes of one name possible from outside a run: both read
+the same version, wrote the same R2 keys, mixed each other's files, and the
+loser of the resource row's swap still pointed the host at its manifest. A
+retry finishing a half-done publish could also move serving back over a newer
+one. A reservation column in `artifact_registry` was rejected because it needs
+a migration; conditional puts on every asset were rejected because they cannot
+tell a call's own retried upload from a rival's. Version numbers may now have
+gaps where a claim's publish failed; nothing reads them as contiguous. Rally's
+own terminal publish (`publishSiteResource`) claims the same way, and its
+loser answers `resource_publish_conflict` rather than activating.
 
 ### 2026-11-03 — Per-viewer rows, sign-in from a site's link, public submissions
 

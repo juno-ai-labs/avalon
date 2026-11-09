@@ -219,6 +219,13 @@ export async function bootstrapTerminalRepository(
   if (!credentialFresh) {
     token = await gateway.mintRepositoryToken(selection, remoteAccess, context.signal);
     await gateway.verifyRepositoryIdentity(selection, token.accessToken, context.signal);
+    // Attributed before the mount, so a mount that fails part-way is still
+    // cleared before another principal's operation in a shared Canvas sandbox.
+    await terminalPortFactory(context.workspaceId, context.workstreamId).recordCredentialMount({
+      generation: sandbox.generation,
+      principalKey: executionPrincipalKey(context.executionPrincipal),
+      now: Date.now(),
+    });
     await provider.configureGitHubReadAccess(sandbox.providerSandboxId, {
       gitBasicCredential: btoa(`x-access-token:${token.accessToken}`),
       ghToken: token.accessToken,
@@ -542,7 +549,15 @@ export function createTerminalRepositoryPublisher(
       // Publication is the one point in a run that must guarantee the mounted
       // Git credential remains valid for the complete remote mutation. Reuse
       // the freshly minted publication token instead of rechecking or rotating
-      // the sandbox credential before every ordinary Terminal operation.
+      // the sandbox credential before every ordinary Terminal operation. The
+      // token stays mounted until another principal acts in a Canvas's shared
+      // sandbox, whose readiness clears it first; it is attributed here,
+      // before the mount, for that check.
+      await terminal.recordCredentialMount({
+        generation: sandbox.generation,
+        principalKey: executionPrincipalKey(context.executionPrincipal),
+        now: Date.now(),
+      });
       await provider.configureGitHubReadAccess(sandbox.providerSandboxId, {
         gitBasicCredential: btoa(`x-access-token:${token.accessToken}`),
         ghToken: token.accessToken,

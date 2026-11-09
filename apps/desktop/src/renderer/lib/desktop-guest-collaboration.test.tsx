@@ -27,10 +27,11 @@ const directory: DesktopWorkspaceOnboardingState = {
 
 /**
  * The route families that refuse a guest: everything under `requireAuth` in
- * the API, less the Organization profile, roster and socket ticket under `/workspace`,
+ * the API, less the Organization profile, roster, socket ticket and the person's own
+ * device timezone and connected apps under `/workspace`,
  * and the Sidekick library and creation, which refuse a guest per route.
  */
-const MEMBER_ONLY = /^\/(workspace\/(?!socket$|members$|me\/device-timezone$)|workspaces|workstreams|work-opportunities|projects|spaces(?!\/[^/]+\/channels)|digest|connections|favicons|realtime|(sidekicks|automations)\/?$)/u;
+const MEMBER_ONLY = /^\/(workspace\/(?!socket$|members$|me\/device-timezone$|me\/connected-apps$)|workspaces|workstreams|work-opportunities|projects|spaces(?!\/[^/]+\/channels)|digest|connections|favicons|realtime|(sidekicks|automations)\/?$)/u;
 
 const spaceId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 
@@ -83,6 +84,7 @@ beforeEach(() => {
     if (path === '/navigation/threads') return Response.json({ items: [], pinned: [], nextCursor: null });
     if (path === '/feature-flags') return Response.json({ multipleWorkspacesEnabled: true });
     if (path === '/sharing/navigation') return Response.json({ spaces: [], workstreams: [] });
+    if (path === '/workspace/me/connected-apps') return Response.json({ apps: [] });
     return Response.json({ error: { message: `Unexpected request: ${path}` } }, { status: 404 });
   }));
 });

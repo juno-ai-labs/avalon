@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
-import { terminalSandboxStableName } from "../src/services/terminal/coordinator";
+import { PUBLICATION_BUILD_HOLDER, terminalSandboxStableName } from "../src/services/terminal/coordinator";
 import { reconcileDueTerminalSandbox } from "../src/services/terminal/lifecycle";
 import { preRetirementProductSqliteDatabase } from "./helpers/sqlite-d1";
 import {
@@ -85,6 +85,23 @@ describe("Terminal scheduled lifecycle", () => {
     expect(provider.stopSandbox).toHaveBeenCalledOnce();
     expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, idle_expires_at FROM terminal_workspace WHERE id = 1"))
       .toEqual({ lifecycle_state: "stopped", idle_expires_at: null });
+  });
+
+  it("does not stop a sandbox a publication build holds, though no run backs it, until its lease expires", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    // A build started ten minutes ago: past the warm window, inside its lease.
+    workstreamObjectRun(objectStore, `UPDATE terminal_workspace SET operation_run_id = 'build-1', operation_run_substream_id = ?,
+      operation_lease_expires_at = ?, last_command_at = ? WHERE id = 1`,
+    PUBLICATION_BUILD_HOLDER, NOW.getTime() + 6 * 60_000, NOW.getTime() - 10 * 60_000);
+
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .resolves.toEqual({ transition: "deferred" });
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    const later = new Date(NOW.getTime() + 7 * 60_000);
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, later))
+      .resolves.toEqual({ transition: "stopped" });
   });
 
   it("drops a row a side thread reserved under the main conversation's name without touching its sandbox", async () => {
