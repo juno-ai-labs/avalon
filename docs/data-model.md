@@ -1152,7 +1152,7 @@ subscription's, by its CHECK. A Thread's `authorization_locations` and
 tables and D1 `workstreams` are unchanged: Canvas and Sidekick creation read
 them.
 
-Shipped in juno-ai-labs/avalon#TBD. Design:
+Shipped in juno-ai-labs/avalon#1494. Design:
 `docs/PRDs/2026-11-06_canvases-and-sidekicks/plan.md`.
 
 ### 2026-11-09 — The Thread, Channel, Thread-era Activity and demo storage loses its code; what is dropped and what waits
