@@ -3921,14 +3921,18 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       // conversation, and its row here carries the reply. Whatever activates here past this
       // point is the wizard's, and only such a turn loads the authoring tools.
       const sharedSidekickConversation = identity.parentKind === "automation" && externalSubstreamId === "0" && !background;
-      // Another agent's message there starts a wizard turn, with the
-      // authoring tools, so it is taken only when the person that agent acts
-      // for manages the Sidekick, as where it was sent (`authorizeWizardTurn`).
-      // Rally's own input (the review notice) carries no agent exchange.
-      if (sharedSidekickConversation && pending.actor === "system" && authorization.agentExchange) {
-        const agentSender = continuationSender(pending, JSON.parse(pending.authorization_json));
-        const manages = agentSender.kind === "person" && await personManagesSidekick(this.env, {
-          workspaceId: identity.workspaceId, automationId: identity.parentId, userId: agentSender.userId,
+      // Anything else that activates there is a wizard turn, with the
+      // authoring tools (`sidekickWizard` below): another agent's message,
+      // Rally's own review notice, any future input. It is taken only when
+      // the principal it would run as manages the Sidekick, the rule a
+      // person's message meets when it is routed below and an agent's where
+      // it was sent (`authorizeWizardTurn`). A review runs as a managing
+      // delegate, so it passes. Refused by name otherwise.
+      if (sharedSidekickConversation && pending.actor !== "human") {
+        const principal = z.looseObject({ type: z.literal("user"), userId: z.string().min(1) })
+          .safeParse(authorization.executionPrincipal);
+        const manages = principal.success && await personManagesSidekick(this.env, {
+          workspaceId: identity.workspaceId, automationId: identity.parentId, userId: principal.data.userId,
         });
         const current = this.loop.loop();
         if (!current || current.status !== "idle" || current.revision !== loop.revision

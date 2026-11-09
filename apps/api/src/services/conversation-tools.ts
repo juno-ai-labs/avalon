@@ -95,9 +95,10 @@ export interface ConversationToolAccess {
 /**
  * Which scope and which tools a loop gets, or null for none.
  *
- * - A Sidekick's configuration conversation (substream "0", no run): the
- *   Sidekick's own conversation, the Canvases it writes and the Canvases
- *   attached to it, every tool.
+ * - A Sidekick's configuration conversation (substream "0", no run), for a
+ *   turn the claim marked as its wizard's (`sidekickWizard`, a manager's
+ *   only): the Sidekick's own conversation, the Canvases it writes and the
+ *   Canvases attached to it, every tool.
  * - A Sidekick run (`automationRun` present): the same conversations, without
  *   attach, so a run cannot widen its own reach.
  *
@@ -115,6 +116,10 @@ export function conversationToolAccess(input: WorkstreamWorkflowInput): Conversa
       tools: ["list", "read", "search", "post"], actingUserId };
   }
   if (substreamId !== "0") return null;
+  // Attach widens what every later run reaches, and post speaks as the
+  // Sidekick, so only a turn the claim marked as the wizard's, which it does
+  // only for a principal who manages the Sidekick, gets them.
+  if (input.sidekickWizard !== true) return null;
   return { scope: { kind: "sidekick", automationId: input.parentId, authoring: true },
     tools: ["list", "read", "search", "post", "attach"], actingUserId };
 }
