@@ -827,8 +827,8 @@ waiting state is new:
 - **A capability the run does not hold** (no Terminal, no file publication)
   is not asked for: no person can grant a capability from a question, so the
   run still ends `completed` with a final message saying what it could not do
-  ("No Canvas note was published because this run has no Terminal or file
-  publication tools"). It reads to a person much as a blocked run did; that
+  (such as "No Canvas note was published because this run has no Terminal or
+  file publication tools"). It reads to a person much as a blocked run did; that
   is known, and a question here would only wait for something no answer gives.
 
 While it waits, the run's row shows the question, the Sidekick's list row reads

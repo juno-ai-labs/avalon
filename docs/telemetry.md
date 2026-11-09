@@ -838,6 +838,27 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-11-08 — A run's question reaches telemetry
+
+**What changed:** `elicitation_presented` is built in
+`apps/api/src/telemetry/elicitation.ts`. Its event id is the question id's
+UUIDv7 projection, `resourceTelemetryEventId(elicitationId, 1)`, and its
+operation id is the run's through `runTelemetryOperationId`. The properties
+are unchanged.
+
+**Why:** A run's question has a deterministic UUIDv5 id, derived from its
+tool call's receipt key so a replay converges on one question. The envelope's
+`eventId` admits only UUIDv7, so every question's event was refused as
+`product_usage_telemetry_failed:eventId:custom` and no question ever reached
+PostHog; the round-5 end-to-end pass found it. Generating a random v7 id per
+send was rejected: a replayed question would then count twice, which the
+deterministic id exists to prevent.
+
+**Consequences:** A deterministic resource id is projected into the event id
+and never sent raw, the rule the other producers (`message_sent`,
+`tool_usage`, the run outcome) already follow; namespace 1 on an elicitation
+id belongs to this producer alone.
+
 ### 2026-11-03 — A new account's signup flow merges into its person
 
 **What changed:** Account creation queues an `epoch_transition` profile job
