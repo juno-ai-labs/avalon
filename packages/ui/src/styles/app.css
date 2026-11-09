@@ -2725,7 +2725,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .settings-theme-status { color: var(--av-sys-color-text-muted); font-size: 12px; grid-column: 1 / -1; margin: 0; }
 
 .settings-app-icon-card {
-  background: var(--av-sys-color-surface-subtle);
+  background: var(--av-ref-color-neutral-3);
   border-radius: var(--av-sys-size-radius-xl);
   margin-top: 12px;
   overflow: hidden;
