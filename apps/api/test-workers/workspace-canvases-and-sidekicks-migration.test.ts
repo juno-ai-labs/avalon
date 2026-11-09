@@ -1,8 +1,8 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * WorkspaceDO migrations 135 to 139, the Canvases and Sidekicks schema, on an
- * object populated at version 134, the last one main shipped.
+ * WorkspaceDO migrations 136 to 140, the Canvases and Sidekicks schema, on an
+ * object populated at version 135, the last one main shipped.
  *
  * On real workerd because every Organization object takes these five in one
  * construction, and the claims are about workerd's SQLite: the in-place
@@ -24,7 +24,7 @@ import { describe, expect, it } from "vitest";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
-const LAST_SHIPPED = 134;
+const LAST_SHIPPED = 135;
 const COMPONENT = "workspace_do";
 const WORKSPACE = "00000000-0000-7000-8000-000000000135";
 
@@ -32,8 +32,8 @@ const columns = (sql: SqlStorage, table: string): string[] =>
   sql.exec<{ name: string }>(`SELECT name FROM pragma_table_info('${table}') ORDER BY cid`).toArray().map((row) => row.name);
 
 describe("the WorkspaceDO Canvases and Sidekicks migrations on workerd", () => {
-  it("given an object populated at v134, when 135 to 139 apply, then every copied row, run and trigger remains", async () => {
-    const stub = env.MIGRATION_PROBE_DO!.getByName("workspace-canvases-and-sidekicks-v134");
+  it("given an object populated at v135, when 136 to 140 apply, then every copied row, run and trigger remains", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("workspace-canvases-and-sidekicks-v135");
     await stub.ping();
 
     await runInDurableObject(stub, (_instance, state) => {
@@ -55,6 +55,8 @@ describe("the WorkspaceDO Canvases and Sidekicks migrations on workerd", () => {
       sql.exec(`INSERT INTO sidekick_conversation_attachments VALUES ('sidekick-one', 'workstream', 'thread-one', '0', 'user-one', 5)`);
       sql.exec(`INSERT INTO workspace_pins VALUES ('user-one', 'thread', 'thread-one', NULL, 0, 1, 2)`);
       sql.exec(`INSERT INTO workspace_retirement_graph VALUES ('automation', 'sidekick-one', 10, 20)`);
+      // Main's 135: a conversation the retirement walk already closed.
+      sql.exec(`INSERT INTO workspace_retirement_children VALUES ('sidekick-one', '0', 15)`);
       sql.exec(`INSERT INTO memory_digest_holders VALUES ('sidekick-conversation', 'automation', 'sidekick-one', '0', 7)`);
       sql.exec(`INSERT INTO memory_digest_holder_facts VALUES ('sidekick-conversation', 'user:one', 'fact-one')`);
       sql.exec(`INSERT INTO workstream_notification_intents
@@ -77,7 +79,7 @@ describe("the WorkspaceDO Canvases and Sidekicks migrations on workerd", () => {
       const sql = state.storage.sql;
       expect(sql.exec<{ version: number }>(
         "SELECT version FROM _sql_schema_migrations WHERE version > ? ORDER BY version", LAST_SHIPPED,
-      ).toArray().map((row) => row.version)).toEqual([135, 136, 137, 138, 139]);
+      ).toArray().map((row) => row.version)).toEqual([136, 137, 138, 139, 140]);
 
       expect(columns(sql, "sidekick_runs")).not.toContain("seed_json");
       expect(columns(sql, "sidekick_runs")).toEqual(expect.arrayContaining(["step_count", "requester_user_id"]));
@@ -94,10 +96,13 @@ describe("the WorkspaceDO Canvases and Sidekicks migrations on workerd", () => {
       ]);
       expect(sql.exec("SELECT parent_kind, parent_id, attached_at FROM sidekick_conversation_attachments").toArray())
         .toEqual([{ parent_kind: "workstream", parent_id: "thread-one", attached_at: 5 }]);
-      // Migration 138 deletes the retired pin kinds; the copy kept them until then.
+      // Migration 139 deletes the retired pin kinds; the copy kept them until then.
       expect(sql.exec("SELECT COUNT(*) AS count FROM workspace_pins").one()).toEqual({ count: 0 });
       expect(sql.exec("SELECT parent_kind, parent_id, retired_at FROM workspace_retirement_graph").toArray())
         .toEqual([{ parent_kind: "automation", parent_id: "sidekick-one", retired_at: 20 }]);
+      // Neither the graph copy nor the Thread-era drop touches the child receipts.
+      expect(sql.exec("SELECT parent_id, substream_id, retired_at FROM workspace_retirement_children").toArray())
+        .toEqual([{ parent_id: "sidekick-one", substream_id: "0", retired_at: 15 }]);
       expect(sql.exec("SELECT conversation, parent_kind FROM memory_digest_holders").toArray())
         .toEqual([{ conversation: "sidekick-conversation", parent_kind: "automation" }]);
       expect(sql.exec("SELECT fact_id FROM memory_digest_holder_facts").toArray()).toEqual([{ fact_id: "fact-one" }]);

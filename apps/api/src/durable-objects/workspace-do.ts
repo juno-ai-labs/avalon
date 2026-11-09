@@ -64,7 +64,7 @@ import type {
  * One object the retirement walk has to close before this workspace can report
  * complete: a Canvas, a Sidekick, or a Thread or Channel still awaiting the
  * Thread retirement operation. `workspace_retirement_graph`'s CHECK admits all
- * four kinds from migration 136.
+ * four kinds from migration 137.
  */
 interface RetirementGraphNode {
   parentKind: RetirementParentKind;
@@ -4288,12 +4288,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     ) STRICT`,
   ],
 }, {
-  // Versions 135 to 139 are the Canvases and Sidekicks pivot's schema, one
+  // Versions 136 to 140 are the Canvases and Sidekicks pivot's schema, one
   // migration per subsystem: each table it creates is created in its final
   // shape and each table it widens is copied once. None shipped before they
   // were folded; docs/workstream-durable-object.md#sql-only-schema-migration
   // records the fold.
-  version: 135,
+  version: 136,
   description: "the Sidekick schema for Canvases and Sidekicks: run rows in the shared conversation, run requesters, audiences and viewer reads; the demo seed column retires, and a Thread-owned Sidekick keeps its owner's audience",
   // See SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS,
   // SIDEKICK_RUN_SEED_DROP_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS and
@@ -4361,7 +4361,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHERE scope = 'workstream'`,
   ],
 }, {
-  version: 136,
+  version: 137,
   description: "the Canvas schema: directory, participants, access requests and artifacts; pins, Sidekick attachments, the retirement graph and memory digest holders admit a Canvas",
   // See CANVAS_SCHEMA_STATEMENTS and docs/canvases.md#data-model,
   // CANVAS_ACCESS_REQUESTS_STATEMENTS and docs/canvas-access-requests.md,
@@ -4378,17 +4378,17 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     ...MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION,
   ],
 }, {
-  version: 137,
+  version: 138,
   description: "admit the Sidekick run, reply, pinned-Canvas version and access-request notices among the notification intents",
   // See NOTIFICATION_INTENTS_CANVAS_SIDEKICK_KINDS_MIGRATION and docs/push-notifications.md.
   statements: NOTIFICATION_INTENTS_CANVAS_SIDEKICK_KINDS_MIGRATION,
 }, {
-  version: 138,
+  version: 139,
   description: "drop the Thread-era tables nothing reads, and the Thread rows of the shared tables",
   // See THREAD_ERA_TABLES_DROP_MIGRATION and docs/workspace-retirement.md.
   statements: THREAD_ERA_TABLES_DROP_MIGRATION,
 }, {
-  version: 139,
+  version: 140,
   description: "record each person's Activity: one row per notice they were sent",
   // See WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS and docs/activity.md.
   statements: WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS,
@@ -5319,9 +5319,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * retired: its directory row and viewer rows (and a Thread's Breakout
    * directory), and its parent state in every table
    * `HOSTED_PARENT_STATE_TABLES` names that the schema still holds, so a table
-   * phase C drops first is skipped. A Thread's resource links, which 138
+   * phase C drops first is skipped. A Thread's resource links, which 139
    * keeps for the Thread conversion, and a Sidekick's attachment to one of
-   * its conversations go with it; the pin and access tables 138 dropped no
+   * its conversations go with it; the pin and access tables 139 dropped no
    * longer reference them. Idempotent: a second call finds nothing to
    * delete.
    *

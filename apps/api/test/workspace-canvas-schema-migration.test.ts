@@ -1,5 +1,5 @@
 /**
- * WorkspaceDO migration 136 is the Canvas schema in one migration. It creates
+ * WorkspaceDO migration 137 is the Canvas schema in one migration. It creates
  * the Canvas tables in their final shape, and copies five shipped tables so
  * their CHECKs admit a Canvas: the sidebar-list waterlines, a Sidekick's
  * conversation attachments, the pins, the retirement graph and the memory
@@ -15,7 +15,7 @@ import { recordMemoryDigestHolder } from "../src/durable-objects/memory-digest-s
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import { ApiError } from "../src/lib/api-error";
 
-const VERSION = 136;
+const VERSION = 137;
 const openDatabases: DatabaseSync[] = [];
 
 function openDatabase(): DatabaseSync {
@@ -46,7 +46,7 @@ const insertRequest = (database: DatabaseSync, requestId: string, state: string,
   canvas_access_requests (request_id, canvas_id, user_id, requester_name, message, state, created_at, decided_at)
   VALUES (?, 'canvas-one', 'asker', 'Robin', NULL, ?, 20, ?)`).run(requestId, state, decidedAt);
 
-/** One row in every table 136 copies, in the shape the last shipped version (134) and 135 left it. */
+/** One row in every table 137 copies, in the shape the last shipped version (135) and 136 left it. */
 function seedShippedRows(database: DatabaseSync): void {
   database.exec(`
     UPDATE workspace_sidebar_list_state SET waterline = 41 WHERE list = 'automations';
@@ -65,7 +65,7 @@ afterEach(() => {
   while (openDatabases.length > 0) openDatabases.pop()?.close();
 });
 
-describe("WorkspaceDO migration 136", () => {
+describe("WorkspaceDO migration 137", () => {
   it("keeps every row of the tables it copies, with their indexes and triggers, and admits a Canvas in each", () => {
     const database = openDatabase();
     apply(database, VERSION - 1);

@@ -987,7 +987,7 @@ describe("Rally in a Canvas's Chat", () => {
     });
     expect(call.toolNames).toEqual(expect.arrayContaining(["list_resources", "read_resource"]));
     // The run read its memory digest, so the Organization records the Chat as
-    // a holder of a copy; a `canvas` holder is admitted (WorkspaceDO migration 136).
+    // a holder of a copy; a `canvas` holder is admitted (WorkspaceDO migration 137).
     await expect.poll(() => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
       "SELECT parent_kind, parent_id, substream_id FROM memory_digest_holders WHERE parent_id = ?", canvasId,
     ).toArray()), { timeout: waitBudget() }).toEqual([{ parent_kind: "canvas", parent_id: canvasId, substream_id: "0" }]);

@@ -130,9 +130,9 @@ describe("WorkspaceDO migration 85", () => {
     // The key the migration wrote is the key the storage reads: a reply in
     // the old thread delivers to its Channel, and the room itself is unbound.
     // The storage is today's, so the object is brought to the last schema
-    // that still holds a Thread binding (migration 138 deletes them with the
+    // that still holds a Thread binding (migration 139 deletes them with the
     // Thread retirement) before the storage reads it.
-    apply(database, 137, BINDING_MIGRATION_VERSION);
+    apply(database, 138, BINDING_MIGRATION_VERSION);
     const bindings = storageOver(database);
     expect(bindings.resolve({
       installationId: "slack:T1",

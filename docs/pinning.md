@@ -21,7 +21,7 @@ list row's `pinnedPosition`, so nothing else answers the question.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/workspace-pin-storage.ts` | `workspace_pins` and `WorkspacePinStorage`: one person's pins of one kind and their order. Visibility of the item is the caller's question. |
-| `apps/api/src/durable-objects/canvas-schema.ts` | WorkspaceDO migration 136, which admits `canvas` and `sidekick` in `workspace_pins.item_kind`. |
+| `apps/api/src/durable-objects/canvas-schema.ts` | WorkspaceDO migration 137, which admits `canvas` and `sidekick` in `workspace_pins.item_kind`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `setSidebarPin` and `reorderSidebarPins`, the visibility check on a pin, and the republish of the pinner's list. |
 | `apps/api/src/routes/canvases.ts`, `apps/api/src/routes/automations.ts` | `POST /canvases/:id/pin` and `POST /sidekicks/:id/pin` (`{pinned}`; `/automations/:id/pin` is the same route under the storage name). Both are mounted on `identityApi`, so a guest pins as a member does. |
 | `apps/api/src/routes/workspace.ts` | `PUT /workspace/pinned-order` (`{kind, itemIds}`): one person's order for one list's Pinned group. |
@@ -38,7 +38,7 @@ list row's `pinnedPosition`, so nothing else answers the question.
 `workspace_pins(user_id, item_kind, item_id, parent_id, position, …)` is
 keyed `(user_id, item_kind, item_id)`. A Canvas or a Sidekick names no parent.
 The shipped CHECK still admits the retired kinds (`thread`, `channel`,
-`breakout`, `artifact`); WorkspaceDO migration 138 deleted every such row, and
+`breakout`, `artifact`); WorkspaceDO migration 139 deleted every such row, and
 nothing writes one.
 
 - **Pin and unpin.** `POST /canvases/:id/pin` and `POST /sidekicks/:id/pin`
@@ -137,7 +137,7 @@ event needs a small stub rather than `new DataTransfer()`.
 
 ## Data model
 
-`WorkspaceDO.workspace_pins` (migration 97, rebuilt by 110 and 136) is keyed
+`WorkspaceDO.workspace_pins` (migration 97, rebuilt by 110 and 137) is keyed
 `(user_id, item_kind, item_id)`, with `parent_id` set exactly when `item_kind`
 is `breakout` or `artifact`, ordered by `workspace_pins_order_idx (user_id,
 item_kind, position, item_id)` and indexed by item for removal
@@ -145,13 +145,13 @@ item_kind, position, item_id)` and indexed by item for removal
 `space_invitees` gave: a key would make a rebuild of the item table cascade
 here. A pin whose item is gone is dropped where it is read. The older per-Space
 `workspace_workstream_pins` and `workspace_pinned_order` tables and the Thread
-recency table `workspace_workstream_access` were dropped by migration 138.
+recency table `workspace_workstream_access` were dropped by migration 139.
 
 ## Changelog
 
 ### 2026-11-07 — A Canvas and a Sidekick are what a person pins; Thread, Channel, Breakout and artifact pins are removed
 
-**What changed:** WorkspaceDO migration 136 admits `canvas` and `sidekick` in
+**What changed:** WorkspaceDO migration 137 admits `canvas` and `sidekick` in
 `workspace_pins.item_kind`. `setSidebarPin` and `reorderSidebarPins` pin and
 order them in their lists' Pinned groups (`POST /canvases/:id/pin`,
 `POST /sidekicks/:id/pin`, `PUT /workspace/pinned-order`), and each list's

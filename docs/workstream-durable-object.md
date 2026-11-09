@@ -96,7 +96,7 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `apps/api/src/durable-objects/names.ts` | The only constructors for deterministic workspace, automation, and conversation object names: `conversationObjectName(region, workspaceId, parentId, substreamId)` for an `AgentLoopDO` of either parent kind, and `substreamLoopId(parentId, substreamId)` for its loop. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Authoritative workspace product database, the Canvas and Sidekick directories, hibernating synchronization/command socket, typed product SQL RPC, local product alarm, bounded topic replay, and one-time workspace-ticket receipts. |
 | `apps/api/src/queues/access-revocation-consumer.ts`, `apps/api/src/services/access-revocation.ts` | The only way an open socket is closed for lost access: a queue message per object, and the `revokeSocketAccess` walk it drives. Owned by [`access-revocation.md`](access-revocation.md). |
-| `apps/api/src/durable-objects/workspace-product-schema.ts` | The shipped statements of the Activity and suggested-work migration, kept because the migration list spreads it; WorkspaceDO migration 138 dropped every table it creates. |
+| `apps/api/src/durable-objects/workspace-product-schema.ts` | The shipped statements of the Activity and suggested-work migration, kept because the migration list spreads it; WorkspaceDO migration 139 dropped every table it creates. |
 | `apps/api/src/durable-objects/workspace-domain-schema.ts`, `workspace-runtime-sql.ts` | Strict schemas for connector/Terminal/automation/resource/note/memory/delivery domains and the transactionally executed trusted SQL RPC. |
 | `apps/api/src/durable-objects/workspace-notification-intent-protocol.ts`, `workspace-notification-intent-storage.ts` | Runtime-validated notification claim/transition/maintenance RPC contract and the private WorkspaceDO SQL state machine behind it. |
 | `apps/api/src/services/workspace-runtime-database.ts` | Allowlisted D1-compatible adapter: WorkspaceDO tables use native RPC, underlying control tables use D1, and mixed-authority transactions fail closed. |
@@ -136,7 +136,7 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `scripts/eslint-rules/durable-object-sync-transaction.mjs` | Rejects explicit or type-resolvable Promise-returning callbacks passed to `transactionSync`, `commitRuntimeMutation`, or `commitWithRegionalEffects`. |
 | `packages/db/migrations/0043_hypersight.sql`, `0078_rename_hypersight_to_block_dashboard.sql` | Immutable historical migrations retained byte-for-byte after feature removal. They are migration ledger, not live product authority. |
 | `packages/db/migrations/0079_workstream_do_authority_cutover.sql` | Maintenance control, routes, import receipts, identity anchors, and permanent legacy-product/pin writer fences. |
-| `packages/db/migrations/0080_workstream_do_regional_effects.sql` | Legacy causally fenced notification-intent shells. A mention's replay receipt is the hosted parent's `sidekick_child_receipts` row, never a D1 row; `workspace_workstream_effect_receipts` is unwritten since 2026-11-07; migration 138 left it in place and no later migration drops it. |
+| `packages/db/migrations/0080_workstream_do_regional_effects.sql` | Legacy causally fenced notification-intent shells. A mention's replay receipt is the hosted parent's `sidekick_child_receipts` row, never a D1 row; `workspace_workstream_effect_receipts` is unwritten since 2026-11-07; migration 139 left it in place and no later migration drops it. |
 | `packages/db/migrations/0081_workstream_do_full_serving.sql` | Serving-contract attestation and idempotent creation receipts (`workstream_create_receipts`, which Canvas and Sidekick creation still read); it intentionally creates no directory projection tables. |
 | `packages/db/migrations/0082_workspace_durable_object_placement_affinity.sql` | Immutable Global/regional workspace affinity projection and migration/background fallbacks. |
 | `packages/db/migrations/0083_workspace_product_do_authority.sql` | Per-workspace product import routes plus permanent D1 writer fences for the migrated activity and opportunity families. |
@@ -1283,7 +1283,7 @@ a dependency.
 
 Which versions have shipped is a fact about `main`, and the fingerprint tests
 pin it: every `AgentLoopDO` version through 81 and every `WorkspaceDO` version
-through 134 (`main` at 910d94dc4, 2026-11-09) is hashed into a deployed
+through 135 (`main` at a47746dbc, 2026-11-09) is hashed into a deployed
 object's receipt, and `workstream-object-schema.test.ts` and
 `workspace-do-schema.test.ts` assert each of those hashes literally. Versions
 above the shipped line belong to the branch that adds them until it deploys,
@@ -1291,12 +1291,12 @@ and may be folded: the Canvases and Sidekicks branch carried 27 unshipped
 versions and folded them to eight before shipping. `AgentLoopDO` 82 creates
 `sidekick_run_rows` with its later columns, 83 admits a Canvas parent, and 84
 drops every deleted Thread-era mechanism's tables in one step. `WorkspaceDO`
-has one migration per subsystem, in the order their data depends on: 135 the
+has one migration per subsystem, in the order their data depends on: 136 the
 Sidekick schema (run rows, requesters, audiences, the seed column and the
-Thread-owned scope), 136 the Canvas schema (every Canvas table in its final
-shape, and the five shipped tables copied once to admit a Canvas), 137 the
-notification intents rebuilt once for every new kind, 138 the Thread-era drop,
-and 139 Activity, after 138 because 138 drops the Thread-era table of the
+Thread-owned scope), 137 the Canvas schema (every Canvas table in its final
+shape, and the five shipped tables copied once to admit a Canvas), 138 the
+notification intents rebuilt once for every new kind, 139 the Thread-era drop,
+and 140 Activity, after 139 because 139 drops the Thread-era table of the
 same name. Every Organization's first wake after the deploy runs all five on
 the object's single thread, so a table is created in its final shape rather
 than altered, and copied at most once. A fold changes no final schema: the
@@ -1546,7 +1546,7 @@ already have committed across the object boundary.
 | `workspace_socket_ticket_receipts` | One consumed workspace-scoped ticket including user, expiry, and consumption time; its expiry index supports bounded cleanup. |
 | `workspace_sync_events` | Monotonic `waterline`, UUIDv7 `event_id`, JSON topic set, the audience a per-person event was sent to (`audience_json`, `NULL` for the whole Organization; replay honours it), and occurrence time for the bounded 1,024-event reconciliation window. Rows are invalidations only, never workspace data copies. |
 | `object_retirement` | Singleton (`id = 1`): the retirement tombstone — instant, operation, actor, reason. Present in all four object classes from one shared constant; migration 40 here. [`workspace-retirement.md`](workspace-retirement.md). |
-| `workspace_retirement_graph` | `(parent_kind, parent_id)`: one row per conversation parent recorded before the tombstone, with a nullable `retired_at` receipt the walk writes. Migration 41; migration 136 admits `canvas`. |
+| `workspace_retirement_graph` | `(parent_kind, parent_id)`: one row per conversation parent recorded before the tombstone, with a nullable `retired_at` receipt the walk writes. Migration 41; migration 137 admits `canvas`. |
 | `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and processing claim/terminal state. It is never shared with another workspace. A `processed` row is deleted 90 days after `received_at` by the alarm's `connector_event_reap` phase, 50 rows a pass; the alarm is due at the oldest processed row's `received_at` plus 90 days, so it re-arms at once while a backlog remains, and `settleConnectorEvent` brings it forward to that time when it marks a row processed. Pending, processing and failed rows never age out. Deleting a row removes its two unique keys, so a provider redelivery older than 90 days is processed again. |
 | `workspace_connector_event_ingress_receipts` | One ingress UUID/content-hash to canonical-event mapping. It makes provider replay and at-least-once Queue delivery idempotent even when a second delivery used a different UUIDv7; ingest opportunistically reaps the oldest receipts after 30 days while the provider/dedupe keys continue to resolve the canonical event. |
 | `connector_connections`, `external_user_identities` | Workspace connector credentials, cursor/configuration/health, model plugin identity, refresh lease, and verified provider-user mappings. Global/provider ingress routes retain only the opaque fields needed to find this object. |
@@ -1555,7 +1555,7 @@ already have committed across the object boundary.
 | `canvas_directory`, `canvas_participants`, `canvas_artifacts` | One row per Canvas, its participants and the resources its Chat generated; [`canvases.md`](canvases.md#data-model). |
 | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts`, `sidekick_viewer_reads` | The hosted-conversation tables, keyed by the parent id (a Sidekick's or a Canvas's) in `sidekick_id`. |
 | `automation_directory`, `workspace_external_event_registrations` | The workspace's whole automation surface: one row per Sidekick, which since migration 91 is its definition row too (lifecycle, scope, title, accepted revision, bindings, appearance, email address); and the typed external-event registration index, replaced whole per destination with the `effective_after_event_sequence` cutoff. A Sidekick's revisions, runs, schedules and receipts are the `sidekick_*` tables beside it; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick). Migration 31 dropped the delivery ledger, the creation claims, the cutover campaign, and the template tables. |
-| `schedules`, `digest_schedules` | The canonical due-work index for connector polling — automations left `schedules` in the durable-lifecycle cutover and keep their own `sidekick_schedules` entries. This object's own alarm reads it directly and mirrors each due time into `_internal_durable_alarms`; see [`durable-object-alarms.md`](durable-object-alarms.md). `digest_schedules` is kept, emptied, because a foreign key on `schedules` names it; migration 138 dropped the rest of the digest tables. |
+| `schedules`, `digest_schedules` | The canonical due-work index for connector polling — automations left `schedules` in the durable-lifecycle cutover and keep their own `sidekick_schedules` entries. This object's own alarm reads it directly and mirrors each due time into `_internal_durable_alarms`; see [`durable-object-alarms.md`](durable-object-alarms.md). `digest_schedules` is kept, emptied, because a foreign key on `schedules` names it; migration 139 dropped the rest of the digest tables. |
 | `resources`, `resource_versions`, `resource_watches` | Workspace resource metadata, monotonic semantic history, and workspace-level attachment/watch relationships. Every numbered version retains its original and derivative regional R2 refs; each AgentLoopDO separately owns its resource links and resource inventory revision. |
 | `resource_object_deletion_outbox`, `note_resource_deletion_outbox` | Durable lifecycle ownership for original, derivative, receipt, and note-linked R2 refs. Deletion bytes is a regional side effect performed only after an object-owned outbox claim. |
 | `notes`, `note_transcript_segments`, `note_privacy_change_outbox` | Note authority, transcript segments and privacy-delivery intent. A note's linked resource is a real local foreign key. |
@@ -1565,10 +1565,10 @@ already have committed across the object boundary.
 
 | `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds — the signed ticket's external contract and the one departure from the object's unix-ms rule — so the columns carry the unit (`*_s`); the import maps the unitless D1 names over. |
 | `workspace_sidebar_list_state` | The `automations` and `canvases` list waterlines each list push carries. |
-| `workspace_workstream_effect_receipts` | The Thread host's regional effect receipts, unwritten and unread since 2026-11-07; migration 138 did not drop it. A conversation's effects are receipted in `sidekick_child_receipts`. |
-| `channels`, `channel_viewers`, `spaces`, `space_viewers`, `breakouts`, `breakout_viewers`, `parent_*` | The retired Thread, Channel and Breakout directory and parent state, kept by migration 138 because the Thread retirement's inventory reads them; nothing else does, and they go once `retire_threads` has run in every Organization ([`workspace-retirement.md`](workspace-retirement.md)). |
+| `workspace_workstream_effect_receipts` | The Thread host's regional effect receipts, unwritten and unread since 2026-11-07; migration 139 did not drop it. A conversation's effects are receipted in `sidekick_child_receipts`. |
+| `channels`, `channel_viewers`, `spaces`, `space_viewers`, `breakouts`, `breakout_viewers`, `parent_*` | The retired Thread, Channel and Breakout directory and parent state, kept by migration 139 because the Thread retirement's inventory reads them; nothing else does, and they go once `retire_threads` has run in every Organization ([`workspace-retirement.md`](workspace-retirement.md)). |
 
-WorkspaceDO migration 138 dropped the Activity, suggested-work, digest,
+WorkspaceDO migration 139 dropped the Activity, suggested-work, digest,
 Space-ledger, Thread pin, order, access, resource-link and batch-dispatch
 tables with the Channel-rail and Channel-colour triggers; their statements
 live byte for byte in `retired-workspace-schema.ts`.
@@ -1964,7 +1964,7 @@ The branch's unshipped conversation migrations were folded before it
 shipped: 82 creates `sidekick_run_rows` with `requester_user_id` and
 `run_number` (an intermediate 87 added them and numbered the rows), and 84
 holds every drop below (once 84, 85 and 86). The `WorkspaceDO` versions the
-branch added, 135 to 155, became 135 to 139, one per subsystem
+branch added, 135 to 155, became 136 to 140 (main's 135 came first), one per subsystem
 ([SQL-only schema migration](#sql-only-schema-migration)). The pressure was
 the first wake: every Organization object and every conversation runs the
 whole tail on its single thread before it answers, and the unfolded list

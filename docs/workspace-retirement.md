@@ -97,7 +97,7 @@ Retirement runs in this order, and the order is the design:
 2. **Enumerate, then close, in one call.** `beginWorkspaceRetirement` reads the
    Canvas, Sidekick, work-stream and Space directories while they still
    answer, writes each parent into `workspace_retirement_graph` under its kind
-   (`canvas` from migration 136; a Canvas's Chat is its child `0`),
+   (`canvas` from migration 137; a Canvas's Chat is its child `0`),
    and writes the tombstone. The kinds are `RetirementParentKindSchema` in
    `@rally/contracts`, wider than the hosted `ConversationParentKindSchema`
    because the walk still closes Thread and Space objects. Doing this in one call is what leaves no window in
@@ -332,12 +332,12 @@ rows in one transaction:
 - a Thread's `channels`, `channel_viewers`, `breakouts` and `breakout_viewers`
   rows, its `workspace_workstream_resource_links` rows and a Sidekick's
   attachment to any of its conversations, or a Channel's `spaces` and
-  `space_viewers` rows. Nothing else references them since migration 138
+  `space_viewers` rows. Nothing else references them since migration 139
   dropped the pin and access tables.
 
 What it leaves: the Organization object, untombstoned,
 Canvases, Sidekicks, resources, and memory. The other Thread- and
-Channel-keyed tables are gone already: WorkspaceDO migration 138
+Channel-keyed tables are gone already: WorkspaceDO migration 139
 (`THREAD_ERA_TABLES_DROP_MIGRATION` in `retired-workspace-schema.ts`) drops
 every Thread-era table nothing reads, and the Thread rows of the shared tables
 (memory digest holders, Thread and artifact pins, room bindings). It
@@ -461,7 +461,7 @@ were indexed under `conversation:<id>/0`, the group a Canvas's Chat carries,
 which every person who can open the Canvas now holds; its Breakouts' groups
 stay unheld. The unread state of the Canvas list starts empty (the hosted
 parent has no reader rows until a reader's next read reports one), and its
-recency is the Thread's last activity. No pin survives migration 138, and the
+recency is the Thread's last activity. No pin survives migration 139, and the
 per-conversation `sidekick_attachments` table was dropped by the object's
 migration 84.
 
@@ -810,62 +810,6 @@ one pass, not the whole retirement. Anything that lists a
 parent's children for retirement now sees only the open ones. Nothing re-invokes
 an interrupted walk yet, and two overlapping passes still duplicate work.
 
-### 2026-11-07 — Drop the Thread-era tables nothing reads, keeping what the Thread retirement reads
-
-**What changed:** WorkspaceDO migration 147 drops 49 tables (Activity, digests
-except `digest_schedules`, suggested work, a Channel's own ledgers, Thread pins
-and order, Thread access and resource links, batch dispatches, the Thread
-backfill, the import-reservation reclaim, `workstream_email_receipts`), the
-Channel-rail and Channel-colour triggers on the tables that survive, and the
-Thread rows of the shared tables. AgentLoopDO migration 86 drops the
-per-conversation `sidekick_attachments`. The memory digest sync settles a
-Thread's or a Channel's holder as dead, the workspace attention summary and
-the Terminal schedule targets stop reading `channels`, and the dead
-`isWorkstreamParticipant` is deleted.
-
-**Why:** Plan step C-7. Each table had lost its last reader in phase C, and a
-trigger left writing a dropped table would fail the write it fires on.
-`digest_schedules` stays, emptied, because `schedules` names it in a foreign
-key and SQLite refuses every insert into a child whose parent table is gone.
-The attention summary counted frozen Thread state, so a retired Thread's
-unread would have held the Organization and push badges up for good. The
-alternative of dropping `channels` and `spaces` too was rejected: in an
-Organization where `retire_threads` has not run, they are the only record of
-which conversation objects to dump and close.
-
-**Consequences:** The Thread directory tables, their viewers, the Breakout
-directory and the `parent_*` tables are dropped by a later migration, after
-the operator has run `dump_thread_transcripts` and `retire_threads` in every
-Organization. The D1 tables `workstream_authority_control`,
-`workstream_authority_routes` and `workstream_create_receipts` are not
-dropped: Canvas and Sidekick creation still read the authority gate and the
-create receipts. `workspace-thread-era-drop-migration.test.ts` checks that no
-trigger or foreign key names a missing table after the drop, and failed with
-the Channel rail's resource triggers left in place.
-
-### 2026-11-07 — Retiring an Organization closes its Canvases' Chats
-
-**What changed:** WorkspaceDO migration 146 copies
-`workspace_retirement_graph` so its CHECK admits `canvas`, and
-`beginWorkspaceRetirement` records every `canvas_directory` row. The walk asks
-the Canvas for its children through the hosted-parent path it already uses for
-a Sidekick, so each Canvas's Chat object is tombstoned with the Organization.
-Ace's abandon confirmation says again that every Canvas and Sidekick in the
-workspace closes.
-
-**Why:** Plan step C-7. The graph's CHECK predated Canvases, so the recorder
-never named one, and retiring an Organization left every Canvas Chat object
-open and answering. `workspace-retirement-graph.test.ts` failed with the
-recorder unchanged.
-
-**Consequences:** `thread-retirement-service.ts` and the
-`dump_thread_transcripts` and `retire_threads` operations stay until the
-operator has run them in every Organization; only then can the Thread,
-Channel and Space tables and this recorder's `channels` and `spaces` reads be
-dropped.
-
-### 2026-11-07 — Retire an Organization's Threads, Breakouts and Channels, after dumping their transcripts
-
 ### 2026-11-08 — The walk no longer writes the demo register
 
 **What changed:** `retireWorkspaceGraph` no longer reads `demo_operations` to
@@ -898,7 +842,7 @@ artifact a Canvas with the same id: the Canvas's rows from the Thread's
 `canvas` (`AgentLoopDO.convertParentKind`), each Breakout's attachments of the
 Canvas's artifacts carried into the Chat so every Canvas reader opens them,
 the Breakouts retired and the Thread's rows deleted. It runs between the dump and the retirement, behind the
-same dump guard. Migration 138, not yet shipped, now keeps
+same dump guard. Migration 139, not yet shipped, now keeps
 `workspace_workstream_resource_links` and Thread-kind Sidekick attachments for
 it; `deleteRetiredThreadParent` deletes both with the Thread.
 
@@ -951,12 +895,12 @@ formatted by `conversationAsText`), with the R2 object as its receipt.
 each conversation object through `retireObject` and then deletes the parent's
 rows (`WorkspaceDO.deleteRetiredThreadParent`), leaving the Organization open.
 
-Plan step C-7. WorkspaceDO migration 136 copies `workspace_retirement_graph`
+Plan step C-7. WorkspaceDO migration 137 copies `workspace_retirement_graph`
 so its CHECK admits `canvas`, and `beginWorkspaceRetirement` records every
 `canvas_directory` row; the walk asks the Canvas for its children through the
 hosted-parent path it already uses for a Sidekick, so each Canvas's Chat
 object is tombstoned with the Organization, and Ace's abandon confirmation
-says every Canvas and Sidekick closes. WorkspaceDO migration 138 drops 48
+says every Canvas and Sidekick closes. WorkspaceDO migration 139 drops 48
 tables (Activity, digests except `digest_schedules`, suggested work, a
 Channel's own ledgers, Thread pins and order, Thread access (the resource
 links stay, for the conversion of 2026-11-08), batch dispatches, the Thread backfill, the import-reservation reclaim,
