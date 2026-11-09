@@ -15,7 +15,7 @@ require explicit policy and browser-origin configuration before they are usable.
 | `apps/api/src/routes/auth.ts` | POST start/redeem endpoints and scanner-safe GET rejection. |
 | `apps/api/src/worker-events.ts` | Scheduled delivery recovery and expired-proof cleanup. |
 | `packages/db/migrations/0111_email_login_challenges.sql` | Challenge, delivery and redemption receipt storage. |
-| `packages/db/migrations/0126_email_delivery_receipts.sql` | Shared opaque send claims and completion receipts. |
+| `packages/db/migrations/0127_email_delivery_receipts.sql` | Shared opaque send claims and completion receipts. |
 
 ## How it works
 
@@ -153,7 +153,7 @@ challenge alone lets an HTTP request and scheduled recovery send simultaneously.
 **Considered and rejected:** Retrying every unsent challenge after a lost provider
 response can repeatedly send a proof Cloudflare already accepted.
 
-**Consequences:** Deploy migration 0126 before the Worker. Operators reconcile
+**Consequences:** Deploy migration 0127 before the Worker. Operators reconcile
 parked claims before reissuing; challenge payloads and credentials remain encrypted.
 
 ### 2026-10-07 — The emailed sign-in link returns to the shared link

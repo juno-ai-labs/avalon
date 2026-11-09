@@ -589,7 +589,7 @@ which replaced the retired per-kind email services. A single transport preserves
 one template and one notification policy across every kind.
 
 **Consequences:** Production needs the `EMAIL` binding and
-`EMAIL_NOTIFICATION_FROM` (or its transactional fallback), with migration 0126
+`EMAIL_NOTIFICATION_FROM` (or its transactional fallback), with migration 0127
 applied before the Worker. Correlation headers
 do not provide provider deduplication; the acceptance/settlement gap remains an
 explicit at-least-once delivery limitation.

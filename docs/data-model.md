@@ -12,7 +12,7 @@ dictation socket admission, and every Canvas's and Sidekick's
 conversation-parent state, keyed by parent id
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)).
 
-D1 migration `0126_email_delivery_receipts.sql` adds opaque sending references,
+D1 migration `0127_email_delivery_receipts.sql` adds opaque sending references,
 state, attempt tokens, diagnostic codes and timestamps. It stores no recipient
 addresses or message content. The shared sender uses it for transactional claims
 and notice completion receipts; encrypted sign-in and invitation payloads remain
@@ -1129,7 +1129,7 @@ The dedicated stores are unchanged; no applied migration is rewritten.
 
 ### 2026-11-09 — Persist opaque Cloudflare sending claims in D1
 
-**What changed:** Migration 0126 adds `email_delivery_receipts` with delivery
+**What changed:** Migration 0127 adds `email_delivery_receipts` with delivery
 reference, state, attempt token, diagnostic code and update time. The shared
 sender uses it to claim transactional mail and suppress completed notice sends.
 
