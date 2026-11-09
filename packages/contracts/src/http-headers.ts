@@ -67,8 +67,8 @@ export const CLIENT_CONTRACT_VERSION = 13;
 /**
  * First client contract that opens a guest relationship. A desktop before it
  * asks member-only routes for every stored workspace, so it is not offered one.
- * Read by platform discovery, which an outdated desktop still reaches to be
- * told to update; every other feature contract is at or below
+ * Read by platform discovery, which is not behind the socket ticket's gate
+ * and so still answers an outdated desktop; every other feature contract is at or below
  * {@link MINIMUM_SERVED_CLIENT_CONTRACT} and so needs no gate of its own.
  */
 export const GUEST_WORKSPACES_CLIENT_CONTRACT = 4;
