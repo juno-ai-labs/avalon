@@ -34,11 +34,6 @@ import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
 import { isCodeShaped, isDiagnosticCode, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import {
-  ManagedFlagUpdateSchema,
-  ManagedModelUpdateSchema,
-  type FlagAdministrationResult,
-} from "../../ace/src/protocol";
 import type { AccessPrincipal } from "./access";
 import type { Env } from "./env";
 import { CloudflareQueryError } from "./cloudflare-api";
@@ -165,12 +160,6 @@ async function tool(
   }
 }
 
-/** Ace's answer, or the refusal it named, under Ace's code. */
-function administered<T>(result: FlagAdministrationResult<T>): T {
-  if (!result.ok) throw new InspectionRefusal(result.code, result.message);
-  return result.value;
-}
-
 const sqlInputSchema = {
   sql: z.string().min(1).describe(
     "SQLite statement or semicolon-separated statements. This may read or mutate the target database.",
@@ -184,7 +173,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   const server = new McpServer({
     name: "Rally engineering",
     version: "1.0.0",
-    description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and send messages as a selected Rally user.",
+    description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; create organizations and send messages as a selected Rally user.",
   }, {
     instructions: [
       "Use these tools for Rally engineering investigations and requested administration.",
@@ -440,40 +429,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
       return EngineeringD1SqlResultSchema.parse(await binding.runD1Sql({ database, query: { sql, bindings } }));
     },
   ));
-
-  server.registerTool("list_feature_flags", {
-    description: "List every product feature flag Ace manages, with what it controls, its provisioned default, and its live Cloudflare Flagship definition (enabled state, default variation, and ordered targeting rules).",
-    inputSchema: {},
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  }, () => tool(principal, "list_feature_flags", {}, async () =>
-    administered(await env.FLAG_ADMINISTRATION.listProductFlags())));
-
-  server.registerTool("update_feature_flag", {
-    description: "Replace a managed product feature flag's whole Flagship definition: description, enabled state, default variation, and ordered targeting rules. Rules and fields left out are removed, so read the flag with list_feature_flags first and send it back with your change. Connected desktop clients are notified after Flagship's propagation window. Changes production for every user the rules reach.",
-    inputSchema: ManagedFlagUpdateSchema.shape,
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, (update) => tool(principal, "update_feature_flag", { flag_key: update.key }, async () =>
-    administered(await env.FLAG_ADMINISTRATION.updateProductFlag({
-      actor: { subject: principal.subject },
-      update,
-    }))));
-
-  server.registerTool("list_model_flags", {
-    description: "List every agent model-routing flag Ace manages: the agent role, what it runs, its checked-in default route, and its live Flagship definition. A role's served route is the value of the flag's default variation unless a targeting rule picks another.",
-    inputSchema: {},
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  }, () => tool(principal, "list_model_flags", {}, async () =>
-    administered(await env.FLAG_ADMINISTRATION.listModelFlags())));
-
-  server.registerTool("update_model_flag", {
-    description: "Replace the route plan (primary OpenRouter model, ordered fallbacks, and optional reasoningEffort: low, medium, or high) in an agent role's model flag's default variation. Omit reasoningEffort to use each selected model's configured default; an explicit effort applies to the whole route. Every model id is checked against OpenRouter first; targeting rules and other variations are kept. New runs pick up the change on their next evaluation.",
-    inputSchema: ManagedModelUpdateSchema.shape,
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
-  }, (update) => tool(principal, "update_model_flag", { agent_role: update.role }, async () =>
-    administered(await env.FLAG_ADMINISTRATION.updateModelRouting({
-      actor: { subject: principal.subject },
-      update,
-    }))));
 
   server.registerTool("query_data_lake", {
     title: "Query Data Lake",

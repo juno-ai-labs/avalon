@@ -203,7 +203,6 @@ import {
 } from "./agent-inference-logging";
 import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 import {
-  AGENT_MODEL_FLAG_KEYS,
   conversationModelContext,
   conversationModelRole,
   resolveAgentModelRouting,
@@ -3935,7 +3934,7 @@ export async function runWorkstreamHarness(
       executionPrincipal: input.executionPrincipal,
       traceContext: {
         source: "workstream",
-        feature: AGENT_MODEL_FLAG_KEYS[modelRole],
+        feature: `agent-model-${modelRole.replaceAll("_", "-")}`,
         workspaceId: input.workspaceId,
         workstreamId: input.parentId,
         substreamId: input.substreamId ?? "0",

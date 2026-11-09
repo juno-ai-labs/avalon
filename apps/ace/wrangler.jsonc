@@ -13,7 +13,6 @@
     // migration tracker. Empty fails closed until the application is created.
     "ACCESS_APPLICATION_AUD": "injected-by-automated-deploy",
     "CLOUDFLARE_ACCOUNT_ID": "53b7fc25c8df9aa77cf183853cb2ce43",
-    "FLAGSHIP_APP_ID": "bec01d3a-d6b6-4d8c-b89a-37440ed63b8c",
     "RALLY_API_BASE_URL": "https://api.rallywith.ai"
   },
   "routes": [{ "pattern": "ace.internal.rallywith.ai", "custom_domain": true }],
@@ -26,18 +25,5 @@
   "d1_databases": [
     { "binding": "GLOBAL_DB", "database_name": "avalon-global", "database_id": "3802fdab-e21c-4313-beb2-c1defb37f253", "remote": true }
   ],
-  "queues": {
-    "producers": [
-      { "binding": "PRODUCT_FLAG_CHANGE_QUEUE", "queue": "avalon-product-feature-flag-changes" },
-      { "binding": "GLOBAL_PRODUCT_FLAG_QUEUE", "queue": "avalon-global-product-feature-flags" }
-    ],
-    "consumers": [{
-      "queue": "avalon-product-feature-flag-changes",
-      "max_batch_size": 10,
-      "max_batch_timeout": 1,
-      "max_retries": 5,
-      "dead_letter_queue": "avalon-product-feature-flag-changes-dead-letter"
-    }]
-  },
   "observability": { "enabled": true, "head_sampling_rate": 1 }
 }

@@ -15,7 +15,7 @@ import type { Region } from "@rally/contracts/regions";
  *
  * **Its waistline is the point.** It holds the Worker Loader, the region's
  * payload bucket, the artifact Durable Object namespace, and the content-free
- * shared D1 route index. No regional product D1, provider secrets, Flagship, or
+ * shared D1 route index. No regional product D1, provider secrets or
  * queues. A compromise of artifact code is contained by the isolate; a
  * compromise of this Worker exposes artifact content and viewer sessions, not
  * workspace authority.

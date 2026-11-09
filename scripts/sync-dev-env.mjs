@@ -21,10 +21,13 @@ const workerKeys = [
   "OPENROUTER_API_KEY",
   "TYPESAFE_API_KEY",
   "TURBO_PUFFER_DEV_API_KEY",
+  "FEATURE_FLAG_DEVELOPER_SETTINGS",
+  "FEATURE_FLAG_MULTIPLE_WORKSPACES_ENABLED",
+  "FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED",
+  "AGENT_MODEL_ROUTING_JSON",
   "OPENROUTER_PRIMARY_MODEL",
   "OPENROUTER_FALLBACK_MODELS",
   "OPENROUTER_CLASSIFIER_MODEL",
-  "OPENROUTER_STRUCTURED_MODEL",
   "AZURE_OPENAI_ENDPOINT",
   "AZURE_OPENAI_API_KEY",
   "AZURE_OPENAI_REALTIME_DEPLOYMENT",
@@ -156,10 +159,6 @@ const safeDefaults = {
   DESKTOP_DEEP_LINK_URI: "rallywithai://auth/complete",
   TERMINAL_REGION_CAPABILITY: "unsupported",
   TERMINAL_EMERGENCY_DISABLED: "false",
-  OPENROUTER_PRIMARY_MODEL: "openai/gpt-6.1-sol",
-  OPENROUTER_FALLBACK_MODELS: "google/gemini-3.8-flash",
-  OPENROUTER_CLASSIFIER_MODEL: "openai/gpt-5.6-terra",
-  OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
   EMAIL_FROM: "Rally <invites@rallywith.ai>",
   EMAIL_NOTIFICATION_FROM: "Rally <notifications@rallywith.ai>",
   LINEAR_NATIVE_AGENT_ENABLED: "false",
@@ -258,9 +257,15 @@ for (const region of configuredRegions) {
     ...local,
     AVALON_REGION: region,
     PUBLIC_API_BASE_URL: local[`PUBLIC_API_BASE_URL_${regions[region].bindingPrefix}`]
-      || regions[region].localApiUrl,
-    OPENROUTER_FALLBACK_MODELS: safeDefaults.OPENROUTER_FALLBACK_MODELS
+      || regions[region].localApiUrl
   };
+  // Generated files must not pin an old default after the code changes.
+  for (const key of workerKeys.filter((key) => key.startsWith("FEATURE_FLAG_")
+    || key === "AGENT_MODEL_ROUTING_JSON"
+    || /^OPENROUTER_(PRIMARY_MODEL|FALLBACK_MODELS|CLASSIFIER_MODEL)$/.test(key))) {
+    delete regional[key];
+    if (typeof local[key] === "string") regional[key] = local[key];
+  }
   for (const key of regionalizableKeys) {
     const regionalKey = `${key}_${regions[region].bindingPrefix}`;
     if (!key.startsWith("GITHUB_") && !key.startsWith("LINEAR_") && typeof local[regionalKey] === "string") {
@@ -290,7 +295,7 @@ for (const region of configuredRegions) {
   const serialized = workerKeys
     .filter((key) => (region === "global" || !globalOnlyKeys.has(key))
       && typeof regional[key] === "string"
-      && regional[key].length > 0)
+      && (regional[key].length > 0 || key === "OPENROUTER_FALLBACK_MODELS"))
     .map((key) => `${key}=${workerEnvValue(key, regional[key])}`)
     .join("\n");
   await writeFile(regionalTargetPaths[region], `${serialized}\n`, { mode: 0o600 });

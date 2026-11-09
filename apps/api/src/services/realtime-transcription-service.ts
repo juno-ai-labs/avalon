@@ -1,3 +1,4 @@
+import { REALTIME_TRANSCRIPTION_MODEL_ENV_KEY } from "@rally/contracts/runtime-config";
 import { z } from "zod";
 import { isUnknownSocketEvent } from "@rally/contracts";
 import type { AuthContext, Env } from "../env";
@@ -48,7 +49,7 @@ function configuredAzureRealtime(env: Env): {
 } {
   const endpoint = env.AZURE_OPENAI_ENDPOINT?.trim();
   const apiKey = env.AZURE_OPENAI_API_KEY?.trim();
-  const deployment = env.AZURE_OPENAI_REALTIME_DEPLOYMENT?.trim();
+  const deployment = env[REALTIME_TRANSCRIPTION_MODEL_ENV_KEY]?.trim();
   if (!endpoint || !apiKey || !deployment) {
     throw new ApiError(
       503,

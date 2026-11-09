@@ -6,7 +6,7 @@ import { createTestEnv } from './helpers/cloudflare-test';
 function env(): Env {
   return createTestEnv({
     CLOUDFLARE_ACCOUNT_ID: 'account/id',
-    CLOUDFLARE_FLAGSHIP_API_TOKEN: 'ace-secret',
+    CLOUDFLARE_QUEUES_API_TOKEN: 'ace-secret',
   });
 }
 
@@ -37,6 +37,16 @@ const accountQueues = [
 
 describe('Cloudflare dead-letter Queue administration', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('keeps Queue reads working while the runtime secret name is migrated', async () => {
+    const cloudflareFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(cloudflare([]));
+    const legacyEnv = createTestEnv({ CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_FLAGSHIP_API_TOKEN: 'legacy-queue-secret' });
+    await expect(listDeadLetterQueues(legacyEnv)).resolves.toEqual([]);
+    expect(cloudflareFetch).toHaveBeenCalledWith(
+      'https://api.cloudflare.com/client/v4/accounts/account/queues?page=1&per_page=100',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer legacy-queue-secret' }) }),
+    );
+  });
 
   it('finds active dead-letter relationships and reads their realtime backlog metrics', async () => {
     const cloudflareFetch = vi.spyOn(globalThis, 'fetch')

@@ -55,7 +55,6 @@ type CloudflareBinding =
   | Env["ARTIFACT_HOSTS"]
   | DurableObjectState
   | DurableObjectStorage
-  | Flagship
   | ImagesBinding
   | Env["ANALYTICS_LAKEHOUSE"]
   | Env["INFERENCE_LAKEHOUSE"]
