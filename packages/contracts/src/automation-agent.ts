@@ -176,10 +176,11 @@ export const SidekickReviewNoticeV1Schema = z.strictObject({
   since: z.string().datetime({ offset: true }).nullable(),
   until: z.string().datetime({ offset: true }),
   /**
-   * The Sidekick's own shared conversation. Nothing reads it and nothing
-   * writes it any more: the review runs in that conversation and its report
-   * is the announcement. Optional so a notice written before the writer
-   * stopped still parses; it leaves the schema once those have drained.
+   * The Sidekick's own shared conversation. Nothing reads it: the review runs
+   * in that conversation and its report is the announcement. Optional first,
+   * while the host still writes it, so a Worker from before this change can
+   * still parse what a newer one writes; the write stops a deploy later, and
+   * the field leaves once notices carrying it have drained.
    */
   announceTo: z.string().min(1).nullable().optional(),
   /** Runs that finished in the window, by the state they finished in; `needsInput` is runs waiting, not finishes. */
