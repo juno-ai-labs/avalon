@@ -103,6 +103,7 @@ const DISPATCHED_OPERATIONS = [
   "refreshDeadlines",
   "setAppliedNetworkRevision",
   "replaceGeneration",
+  "adoptAuthorityFingerprint",
   "resetSandbox",
   "claimLifecycleTransition",
   "failLifecycleClaim",

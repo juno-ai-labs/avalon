@@ -1007,6 +1007,27 @@ export class WorkstreamTerminalStorage {
   }
 
   /**
+   * Move the current generation to another authority fingerprint without
+   * replacing it, fenced on the fingerprint it holds now. Used when a Canvas's
+   * sandbox moves from the identity of the person who last used it to the
+   * Canvas's own, so the files that person made survive the move
+   * (`TerminalSandboxCoordinator.authorityFingerprint`).
+   */
+  adoptAuthorityFingerprint(input: { generation: number; from: string; to: string; now: number }): TerminalSandboxRecord | null {
+    const adopted = first<{ id: number }>(this.sql.exec(
+      `UPDATE terminal_workspace
+          SET authority_fingerprint = ?, version = version + 1, updated_at = ?
+        WHERE id = 1 AND generation = ? AND authority_fingerprint = ?
+        RETURNING id`,
+      input.to,
+      input.now,
+      input.generation,
+      input.from,
+    ));
+    return adopted ? this.sandbox() : null;
+  }
+
+  /**
    * Advance to a fresh generation under a new authority fingerprint.
    *
    * The imported-resource provenance of the retired generation goes with it:

@@ -522,7 +522,7 @@ describe("Daytona Terminal runtime", () => {
     await expect(read).resolves.toEqual(new TextEncoder().encode("hello\n"));
   });
 
-  it("does not let a read use a sandbox made under another principal", async () => {
+  it("lets another person read the files of their Canvas's one sandbox", async () => {
     const { provider, runtime, objectStore } = fixture();
     await runtime.writeFile(context, "src/file.txt", new TextEncoder().encode("mine\n"));
     const otherPrincipal = {
@@ -532,11 +532,9 @@ describe("Daytona Terminal runtime", () => {
     };
 
     await runtime.readFile(otherPrincipal, "src/file.txt");
-    // Replaced before it was read, not read: the generation's files were
-    // another principal's, and a read skips the lease but not that check.
-    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
+    expect(provider.createSandbox).toHaveBeenCalledTimes(1);
     expect(workstreamObjectGet(objectStore, "SELECT generation FROM terminal_workspace WHERE id = 1"))
-      .toEqual({ generation: 2 });
+      .toEqual({ generation: 1 });
   });
 
   it("records a background agent's command in its owner's object, which does not hold the agent's run", async () => {

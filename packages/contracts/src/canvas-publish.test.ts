@@ -12,12 +12,12 @@ describe("a publish's paths", () => {
     }
   });
 
-  it("takes a static site with an entry page, and refuses a server module, the reserved directory and a repeated path", () => {
+  it("refuses a site's reserved directory and a repeated path in the request itself", () => {
     const site = (files: Array<{ path: string }>) => CanvasPublishRequestSchema.safeParse({ kind: "site", name: "site",
       files: files.map((file) => ({ ...file, content: page })) });
     expect(site([{ path: "index.html" }, { path: "app.css" }]).success).toBe(true);
-    expect(site([{ path: "about.html" }]).success).toBe(false);
-    expect(site([{ path: "index.html" }, { path: "index.js" }]).success).toBe(false);
+    // A lone component has no index.html; what it is is detection's to decide.
+    expect(site([{ path: "Dashboard.jsx" }]).success).toBe(true);
     expect(site([{ path: "index.html" }, { path: ".rally/preview.png" }]).success).toBe(false);
     expect(site([{ path: "index.html" }, { path: "index.html" }]).success).toBe(false);
   });
