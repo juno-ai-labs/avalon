@@ -29,7 +29,7 @@ the machinery.
 | `apps/site/build/help/plugin.ts` | The Vite plugin: serves pages on request under `vite dev`, and emits every output during `vite build`, linking the `help` entry's hashed script and stylesheet, and naming other entries a page script loads itself (`entryMeta`, the PostHog SDK) in meta tags. |
 | `apps/site/src/help.ts`, `src/help-search.ts` | The browser script: phone menu, copy buttons, the outline's current-section marker, and search. Ranking lives in `help-search.ts` so it can be tested without a DOM. |
 | `apps/site/build/help/og.ts` | Each page's social card: a 1200×630 PNG laid out by Satori and rasterized by resvg (WebAssembly), named by a hash of its words. |
-| `apps/site/public/_redirects` | Sends every retired `/support/...` address, and every help page removed or renamed since, with its `.md` copy, to the page that now covers its subject. |
+| `apps/site/public/_redirects` | Sends every retired `/support/...` address, and the trailing-slash address of each help page renamed since, to the page that now covers its subject. A page for a removed feature, and a removed page's slashless and `.md` copies, answer 404. Wildcard rules go last: Cloudflare counts every rule after the first wildcard against its 100-rule dynamic limit. |
 | `apps/site/src/help.css` | All styling. Colours and type are `--help-*` tokens; the light and dark themes are the only places colours are set. |
 
 ## How it works
@@ -219,6 +219,31 @@ Visual changes are checked in a browser: `pnpm --filter @rally/site build`,
 phone widths.
 
 ## Changelog
+
+### 2026-11-09 — Wildcard redirects go last, and only renamed pages redirect
+
+**What changed:** The nine wildcard rules in `apps/site/public/_redirects`
+moved to the end of the file, and the redirects for help pages retired in the
+Canvases and Sidekicks pivot went from 82 to 15: one per page whose subject
+still exists under a new name, at its trailing-slash address.
+
+**Why:** The site deploy after #1490 failed with Cloudflare code 100324,
+"Maximum number of dynamic _redirects rules limit of 100 exceeded". Cloudflare
+counts every rule after the first wildcard as dynamic (100 allowed) rather than
+static (2,000 allowed), and `/app/*` sat at the top. Reordering alone fixed the
+limit; the cut was the owner's call, because only the trailing-slash form is
+likely to circulate and a removed feature's page sent to a loosely related one
+misleads more than a 404.
+
+**Considered and rejected:** Keeping all 82 rules after the reorder, which
+fits the limit but keeps slashless, `.md` and `llms.txt` copies and pages for
+removed features (iPhone, the digest, email-in).
+
+**Consequences:** New exact rules go above the wildcard block, and the exact
+`/support/...` rules stay above `/support/*`, which they overlap. A renamed
+page gets one trailing-slash redirect; a removed feature's page answers 404.
+
+Shipped in juno-ai-labs/avalon#1493.
 
 ### 2026-10-01 — Help center built from Markdown at /help/
 

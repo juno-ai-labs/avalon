@@ -26,9 +26,11 @@ help/
 - The number only sets the order and never shows up in a URL. Readers see
   chapters counted 1, 2, 3 and pages as 3.1, 3.2, whatever the folder numbers
   are, so leave gaps (`10-`, `20-`) if you expect to slot things in.
-- Renaming a file changes its URL. Do it only when you mean it, and add a 301
-  for the old address (and its `.md` copy) to `apps/site/public/_redirects` in
-  the same change, because old links live on in emails, Slack and search.
+- Renaming a file changes its URL. Do it only when you mean it, and add one
+  301 from the old trailing-slash address to the new page in
+  `apps/site/public/_redirects` in the same change, because old links live on
+  in emails, Slack and search. Put it above the wildcard rules at the end of
+  that file. A page for a feature that was removed gets no redirect.
 
 ## Front matter
 
