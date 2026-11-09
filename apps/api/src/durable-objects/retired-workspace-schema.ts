@@ -1235,8 +1235,6 @@ export const THREAD_ERA_TABLES_DROP_MIGRATION: readonly string[] = [
  *   only the conversion read, and a Sidekick's attachments to a Thread
  *   (`sidekick_conversation_attachments` rows of kind `workstream`), which
  *   every reader already skipped;
- * - `digest_schedules`, empty since migration 139, once `schedules` no longer
- *   names it;
  * - the Slack agent sessions and feedback, the retired projection RPC's
  *   registration fence and a Thread's effect receipts, which nothing has read
  *   since phase C.
@@ -1254,57 +1252,18 @@ export const THREAD_ERA_TABLES_DROP_MIGRATION: readonly string[] = [
  * - a Thread's `authorization_locations` and `conversation_view_*` rows, as
  *   plan section 9 decided.
  *
- * `schedules` is rebuilt first, without `digest_schedule_id`: SQLite cannot
- * drop a column that holds a foreign key, and while it stands the parent
- * cannot go. Nothing references `schedules`, so it is copied, dropped and
- * renamed with enforcement on, and its index and workspace fence triggers are
- * put back, written out here rather than built by `workspaceIdentityFencesFor`
- * so a later change to that helper cannot rewrite shipped SQL. A digest row
- * cannot survive the copy's CHECK; migration 139's delete of
- * `digest_schedules` cascaded every one away, and the copy skips any left.
+ * `schedules` and the empty `digest_schedules` it names stay. The first
+ * version of this migration rebuilt `schedules` without `digest_schedule_id`
+ * from the shape `workspace-domain-schema.ts` declares, and production objects
+ * refused it (`no such column: automation_subscription_id`): their
+ * `schedules` does not have that shape. Rebuilding it waits until its real
+ * columns are known.
  *
  * Every table goes `IF EXISTS`, children before the tables they reference, so
  * an object that never had one, or a retired one, upgrades cleanly; each
- * table's triggers go with it. The `schedules` rebuild is unconditional,
- * because every object has `schedules`.
+ * table's triggers go with it.
  */
 export const THREAD_ERA_PARENTS_DROP_MIGRATION: readonly string[] = [
-  `CREATE TABLE schedules_v141 (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    automation_subscription_id TEXT REFERENCES automation_subscriptions(id) ON DELETE CASCADE,
-    connector_connection_id TEXT,
-    schedule_type TEXT NOT NULL CHECK (schedule_type IN ('calendar', 'interval')),
-    rrule TEXT,
-    interval_seconds INTEGER,
-    timezone TEXT NOT NULL,
-    next_run_at TEXT NOT NULL,
-    last_run_at TEXT,
-    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
-    version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    CHECK ((automation_subscription_id IS NOT NULL) + (connector_connection_id IS NOT NULL) = 1),
-    CHECK ((schedule_type = 'calendar' AND rrule IS NOT NULL)
-      OR (schedule_type = 'interval' AND interval_seconds IS NOT NULL))
-  ) STRICT`,
-  `INSERT INTO schedules_v141
-     (id, workspace_id, automation_subscription_id, connector_connection_id, schedule_type, rrule,
-      interval_seconds, timezone, next_run_at, last_run_at, enabled, version, created_at, updated_at)
-   SELECT id, workspace_id, automation_subscription_id, connector_connection_id, schedule_type, rrule,
-          interval_seconds, timezone, next_run_at, last_run_at, enabled, version, created_at, updated_at
-     FROM schedules WHERE digest_schedule_id IS NULL`,
-  `DROP TABLE schedules`,
-  `ALTER TABLE schedules_v141 RENAME TO schedules`,
-  `CREATE INDEX schedules_due_idx ON schedules(enabled, next_run_at, id)`,
-  `CREATE TRIGGER schedules_workspace_identity_insert
-      BEFORE INSERT ON schedules
-      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
-      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
-  `CREATE TRIGGER schedules_workspace_identity_update
-      BEFORE UPDATE OF workspace_id ON schedules
-      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
-      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
   ...[
     "workspace_workstream_resource_links", "channel_viewers", "channels",
     "breakout_viewers", "breakouts", "space_viewers", "spaces",
@@ -1313,7 +1272,7 @@ export const THREAD_ERA_PARENTS_DROP_MIGRATION: readonly string[] = [
     "parent_child_viewer_projections", "parent_child_receipts", "parent_projection_keys",
     "parent_state_clock", "parent_state_changes", "parent_outbox", "parent_connector_admissions",
     "parent_sidekicks",
-    "digest_schedules", "slack_agent_sessions", "slack_agent_feedback",
+    "slack_agent_sessions", "slack_agent_feedback",
     "external_registration_generations", "workspace_workstream_effect_receipts",
   ].map((table) => `DROP TABLE IF EXISTS ${table}`),
   `DELETE FROM sidekick_conversation_attachments WHERE parent_kind = 'workstream'`,
