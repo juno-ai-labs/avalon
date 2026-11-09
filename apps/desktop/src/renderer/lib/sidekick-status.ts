@@ -28,6 +28,18 @@ export function sidekickRunSearch(runId: string): string {
   return `?run=${encodeURIComponent(runId)}`;
 }
 
+/**
+ * A Sidekick opened on one turn of one of its conversations, as a search
+ * result for a message opens it: its shared conversation (substream `0`) or
+ * the run's own (substream = the run id, `?run=`).
+ */
+export function sidekickTurnRoute(sidekickId: string, substreamId: string, turnId: string, transcriptSequence: number): string {
+  const search = new URLSearchParams(substreamId === '0' ? {} : { run: substreamId });
+  search.set('turn', turnId);
+  search.set('sequence', String(transcriptSequence));
+  return `/sidekicks/${encodeURIComponent(sidekickId)}?${search}`;
+}
+
 const SIX_DAYS_MS = 6 * 86_400_000;
 
 /**
