@@ -425,60 +425,6 @@ generic Electron activation callback rather than also counting a Dock open.
 
 ## Changelog
 
-### 2026-11-08 — The dock badge leaves Needs attention for unseen Activity; the menu bar stays
-
-**What changed:** The dock badge no longer adds up the rail's Canvases and
-Sidekicks counts; it is the unseen Activity count. The menu bar's title and
-Needs attention are unchanged: the Canvases and Sidekicks rows that need
-attention.
-
-**Why:** The owner said "fix this" on 2026-11-08 for the dock badge clearing
-when an alert arrives while Rally is closed. The push badge is now the unseen
-Activity count, so the open app writes the same number, which ends the
-2026-11-07 rule that the menu, the rail and the dock are one number. The menu
-bar lists rows, and its count has to match the rows under it (the 2026-10-13
-rule), so it keeps counting them.
-
-**Considered and rejected:** Moving the menu bar to unseen Activity as well:
-its menu lists Canvases and Sidekicks, not Activity rows, so the title would
-count things the menu does not show.
-
-**Consequences:** The menu bar's title and the dock badge can differ.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — Needs attention is what the rail counts; the Channel and Activity watches are deleted
-
-**What changed:** The menu is built from the Canvases and Sidekicks lists,
-which `SidebarListsWatch` holds over the main process's workspace socket.
-Needs attention, and the number beside the icon, are each Sidekick waiting on
-input or holding something unread and each Canvas holding something unread —
-the rail's `useSectionCounts`. **Most recent** became **Recent Canvases**,
-newest `updatedAt` first. `ChannelDirectoryWatch`, `ActivityFeedWatch` and
-`common/recency-groups.ts` are deleted, and with them the Space walk, the
-Activity REST read and the access-request rows. The socket now sends nothing.
-
-**Why:** The client pivot to two sections (Canvases, Sidekicks) removed
-Channels, Threads, Breakouts, Activity and access requests from the product,
-so neither list the menu read exists in the app any more. The dock badge moved
-to `useSectionCounts` in the same pivot; reading the same two lists here keeps
-the 2026-10-13 rule — a count that matches the rows under it — and extends it
-so the menu, the rail and the dock are one number.
-
-**Considered and rejected:** Retiring the menu bar item with the features it
-listed. It is still the whole application on a login launch, and the two lists
-carry exactly what it needs. Keeping a REST read for either list: both are
-socket-owned and pushed with a waterline, so a read would only add a request
-per change and a second ordering rule.
-
-**Consequences:** `menu_bar_opened.attentionCount` changed meaning again. The
-telemetry action names `attention_conversation` and `recent_workstream` are
-kept for the new rows because the enum is admitted at ingestion. Something that
-should appear in Needs attention must change what the rail counts, and
-`menuBarContent` with it.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-13 — Needs attention is the Activity tab's unread rows
 
 **What changed:** Needs attention, and the number beside the icon, now come

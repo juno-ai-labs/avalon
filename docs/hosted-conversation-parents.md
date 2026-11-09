@@ -197,7 +197,6 @@ migration 92 dropped the ledger. A Sidekick still pending in a retired
 Organization was never imported; the Organization refuses new work, so nothing
 reads it.
 
-
 ## Invariants
 
 - **A hosted parent reads the Organization's tables with `sql.exec`.** Not
@@ -299,160 +298,75 @@ changelog below records why each of its mechanisms was shaped as it was; the
 generation fences and the claim/send/accept publisher survive in the resource
 version ledger.
 
+## Retired documents
+
+**`workstream-creation.md`: Starting a work stream (retired 2026-11-07).** A
+person started a Thread from a Channel's composer, through an optimistic
+pending row and `POST /workstreams`. The composer path went with the client
+cutover, and `workstream-object-creation-service.ts`, the `HostedParent` host
+that committed the directory row, and the Slack and connector paths that
+created Threads on their own are deleted. A conversation now starts as a
+Canvas's Chat or a Sidekick's conversation, created by its parent as this
+document describes; D1 `workstreams` stays as the conversation-parent anchor.
+The document's changelog, recoverable as
+[`architecture.md`](architecture.md#retired-documents) describes, is the record
+of the optimistic hand-off, the rule that everything the response does not
+depend on still waits for it, and the email-address reservation.
+
 ## Changelog
 
-### 2026-11-08 — Retirement record: Starting a work stream
+### 2026-11-09 — One hosting primitive for a Sidekick and a Canvas; the Channel and Space host is deleted
 
-**What changed:** Nothing in the code. `workstream-creation.md`, kept after
-its mechanism was deleted only as a record for its changelog, was removed in
-the documentation audit; its retirement record is below. Its full text and
-changelog is `git show e26aa66:docs/workstream-creation.md`.
-
-**`workstream-creation.md` — Starting a work stream (retired 2026-11-07).** A
-person started a Thread (a stored work stream) from a Channel's composer,
-through an optimistic pending row and `POST /workstreams`. The Canvases and
-Sidekicks pivot removed Threads; the composer path went with the client
-cutover (plan steps B-1 to B-6 and C-1), and step C-2 deleted
-`workstream-object-creation-service.ts`, the `HostedParent` host that
-committed the directory row, and the Slack and connector paths that created
-Threads on their own. A conversation now starts as a Canvas's Chat or a
-Sidekick's conversation, created by its parent as this document describes. D1
-`workstreams` stays as the conversation-parent anchor. Its changelog is the
-record of the optimistic hand-off, the rule that everything the response does
-not depend on still waits for it, and the email-address reservation.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — A hosted parent batches its shared conversation's replies
-
-**What changed:** `applyChildEnvelope` adds a `new_message_notification`
-effect from `"0"` to the parent's `reply_batch` alarm entry, and
-`HostedConversationHost` carries the Organization object's alarm store. The
-entry's handler lives in `conversation-reply-batch.ts` and is dispatched by
-`WorkspaceDO`, beside the Canvas's own entries.
-
-**Why:** Replies notify again (the owner's 2026-11-08 request). The parent is
-where the effect lands with its receipt, so adding it to the batch there is
-what makes a redelivery add nothing; the batch has to outlive the request, so
-it is an alarm entry, as a Sidekick run's notice is.
-
-**Considered and rejected:** Recording the intents as the effect lands, as a
-mention is: a burst of replies would push once per message.
-
-**What a future change must respect:** the reply joins its batch in the
-receipt's transaction, never after it.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — A hosted parent records its conversations' mentions and adds
-
-**What changed:** `HostedConversation.applyChildEnvelope` records a
-`mention_notification` or `participant_notification` effect as a notification
-intent in the transaction that writes its receipt, and `receiveChildEffects`
-answers `{ accepted, notificationIntentIds }`; the activity consumer delivers
-each intent it names. The `parent_effect` apply path the Thread host fed
-(`applyWorkstreamRegionalEffect` in the consumer, the service and `WorkspaceDO`,
-and `workspace-regional-effect-storage.ts`) is deleted: nothing has sent a
-`parent_effect` since the Thread retirement. A late one from a retired Thread
-or Space parent is refused as `conversation_parent_kind_retired:<kind>` and
-dead-letters; one under a current parent kind is acknowledged as
-`parent_effect_producer_retired`. `notificationDirectoryState` reads the
-recipient through `readRelationship`, so a member the Organization object had
-not yet heard of is no longer read as nobody.
-
-**Why:** The [Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-keeps push for a mention in a Canvas's Chat or a Sidekick's conversation.
-`applyChildEnvelope` receipted every kind but applied only the directory ones,
-so no intent was written and nothing was sent; the one path that recorded
-intents was reached only from the Thread host's `parent_outbox`. The delivery
-tests seeded intent rows directly, so none of them saw it. The membership read
-surfaced in the same end-to-end test: a Sidekick's admission never reads the
-relationship, so an Organization-wide Sidekick's mention was skipped as
-`recipient_not_listable`.
-
-**Considered and rejected:** Rerouting the conversation's notification effects
-through a `parent_effect` the parent would publish: a second Queue hop and an
-outbox for a row the parent can write in the transaction it already holds.
-Checking the recipient's membership before recording, as the Thread path did:
-delivery reads it again as it is then, so the first read only decided whether a
-row existed.
-
-**Consequences:** A new hosted kind records mentions without doing anything.
-`workspace_workstream_effect_receipts` is no longer written or read, and can
-be dropped with the other Thread-era tables.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — One hosting primitive for a Sidekick and a Canvas; the Channel and Space host is deleted
-
-**What changed:** The conversation-parent contract a Sidekick answered —
-authority, the viewer check, children, the children's effects and receipts,
-and each reader's read of `"0"` — moved into `HostedConversation`
-(`hosted-conversation.ts`), which `HostedSidekick` and the new `HostedCanvas`
-extend. Its four tables (`sidekick_children`, `sidekick_child_projections`,
-`sidekick_child_receipts`, `sidekick_viewer_reads`) hold either kind of
-parent, keyed by the parent id in the column still called `sidekick_id`, and
-`hostedConversationAuthorizationFacts` answers authorization for either in one
-call. A Sidekick writes a row per run into its shared conversation and keeps
-it current: triggers on `sidekick_runs` arm a `sidekick_run_row` entry on
-every change, and the entry's handler calls `projectSidekickRunRow` on `"0"`
-with the run as it stands. A Sidekick has its own audience, so
-`authorizeViewer` no longer asks a home Channel or Breakout, and it keeps each
-reader's read of `"0"` (`sidekick_viewer_reads`, from `"0"`'s `directory_user`
-effects). Migration 136 gave every Thread-owned Sidekick its owner's audience
-(see [`automation-lifecycle.md`](automation-lifecycle.md#creation-and-ownership)),
-and the Sidekick parent stopped reading `channels` and `breakouts`.
-
-Then `HostedParent` and every RPC, alarm lane, socket route and socket command
-that served a Channel, a Space or a Thread were deleted from `WorkspaceDO`
-(plan step C-2), with the Channel control socket that released desktops (and,
-before `apps/ios` was deleted, the iOS client's child directory) held open.
-The contract resolves only a Sidekick or a Canvas: an id it does not host
-reads as not existing and not authorized, has no children, refuses a
-reservation with `conversation_parent_not_found`, and refuses a child effect
-naming a `workstream` or `space` parent with
-`conversation_parent_kind_retired:<kind>`. Sharing (invitations, grants, their
-alarms) is Canvas-only. The post-write drain that `sql-write-observer.ts`
-schedules covers only the resource version ledger, since the rails it also
-drained are gone.
+**What changed:** The conversation-parent contract a Sidekick answered
+(authority, the viewer check, children, the children's effects and receipts,
+each reader's read of `"0"`) moved into `HostedConversation`, which
+`HostedSidekick` and `HostedCanvas` extend. Its four tables hold either kind,
+keyed by the parent id in the column still called `sidekick_id`, and
+`hostedConversationAuthorizationFacts` answers for either in one call.
+`HostedParent` and every RPC, alarm lane, socket route and command that served a
+Channel, Space or Thread are deleted: an id the contract does not host reads as
+not existing, and a child effect naming a `workstream` or `space` parent is
+refused with `conversation_parent_kind_retired:<kind>`. The parent records a
+conversation's mention and add effects as notification intents in the
+transaction that writes their receipt (`receiveChildEffects` answers the intent
+ids for the consumer to deliver), adds a reply in `"0"` to a `reply_batch` alarm
+entry, and keeps a Sidekick's run rows in `"0"` current through
+`sidekick_run_row` entries that triggers on `sidekick_runs` arm.
 
 **Why:** A Canvas is a shared conversation with children and readers, exactly
-what a Sidekick's parent already hosted (the Canvases and Sidekicks decision
-"one hosting primitive in WorkspaceDO for Canvases and Sidekicks"). Cloning
-`HostedSidekick` would have meant two copies of the receipt, projection and
-read-state logic. The decision log has runs appear as rows in the Sidekick's
-shared conversation, carrying their reply; the parent already holds the
-authoritative run row and hears every run change, so it is the one place a
-projection can be kept from drifting, and arming in the table's own triggers
-means a run writer added later cannot forget it. An audience borrowed from a
-Thread would have outlived the Thread. After the client cutover nothing opens
-a Channel, Space or Thread, and keeping `HostedParent` dormant would have kept
-the second hosting implementation every change to the first had to reason
-about.
+what the Sidekick's parent already hosted (the decision log's "one hosting
+primitive in WorkspaceDO for Canvases and Sidekicks"). Cloning `HostedSidekick`
+would have meant two copies of the receipt, projection and read-state logic, and
+keeping `HostedParent` dormant a second implementation every change had to
+reason about. `applyChildEnvelope` had receipted every effect kind but applied
+only the directory ones, so no mention was ever pushed; the delivery tests
+seeded intent rows by hand and never saw it. Recording where the receipt is
+written makes a redelivery add nothing. The parent holds the authoritative run
+row and hears every change to it, and arming in the table's own triggers means a
+run writer added later cannot forget the row.
 
 **Considered and rejected:** A third `HostedParent` role: Channel code scanned
-the `parent_*` tables across every parent. New `canvas_*` child tables: the
-existing ones are keyed by parent id, and every reader that scans them across
-parents joins its own directory. Answering a retired kind's child effect with
-success and dropping it: a Thread conversation still reporting after its
-retirement is a retirement bug, and a quiet acknowledgement would hide it; the
-dead-letter queue is the monitoring this team has.
+`parent_*` across every parent. Rerouting notification effects through a
+`parent_effect` the parent would publish, a second Queue hop for a row it can
+write in the transaction it already holds. Recording replies as they land, as a
+mention is, which would push once per message of a burst. Acknowledging a
+retired kind's effect and dropping it: a Thread still reporting after its
+retirement is a retirement bug, and the dead-letter queue is the monitoring this
+team has.
 
 **Consequences:** A new hosted kind implements `identity`, `assertParent`,
-`admitsViewer`, `onViewerReadChanged` and `onChildProjection`, and is added to
-`hostedConversationParent`; there is no fallback to fall through to. A
-statement on the four tables names the parent id, whatever its kind. The only
-parent-to-own-conversation write here is an alarm-driven RPC, not an outbox
-row: the write is idempotent and versioned by the run's `updated_at`, so the
-alarm's retry is all the delivery guarantee it needs, and a change that moves
-it onto the Queue must keep the handler reading the run at delivery time. The
-owning columns on `automation_directory` stay as dead columns, since released
-CHECKs name them. WorkspaceDO migration 139 dropped the Thread-era tables but
-kept the `parent_*`, `channels`, `breakouts` and `spaces` rows, which the
-Thread retirement's inventory reads, until the operator has run
-`retire_threads` in every Organization.
+`admitsViewer`, `onViewerReadChanged` and `onChildProjection`, is added to
+`hostedConversationParent`, and records mentions with no further work; there is
+no fallback to fall through to. A statement on the four tables names the parent
+id, whatever its kind. A reply joins its batch in the receipt's transaction,
+never after it. The run-row write is an alarm-driven RPC versioned by the run's
+`updated_at`; moving it onto the Queue must keep the handler reading the run at
+delivery time. The owning columns on `automation_directory` stay as dead
+columns, since released CHECKs name them, and
+`workspace_workstream_effect_receipts` is no longer written.
 
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-23 — Read historical directory projections without retaining obsolete fields
 

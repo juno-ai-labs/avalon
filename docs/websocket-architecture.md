@@ -822,94 +822,44 @@ platform resources.
 
 ## Changelog
 
-### 2026-11-07 — The workspace socket carries only what Canvases and Sidekicks use, and one feed serves the conversation on screen
+### 2026-11-09 — The workspace socket carries only what Canvases and Sidekicks use, and one feed serves the conversation on screen
 
-**What changed:** The subscribe answer's sidebar is the Sidekick and Canvas
-lists: `spaces`, `ordering`, `pinnedOrder`, `pins`, `artifactPins`,
-`channelStats`, `spacesReady` and `channelsBySpace` leave
-`WorkspaceSidebarSchema`, and `accessRequests` leaves the sync event.
-`workstreams` and `notes` went too: a desktop from before the pivot is
-refused the socket ticket (`MINIMUM_SERVED_CLIENT_CONTRACT` 13) rather than
-sent placeholder fields it would reject alongside the changed ones.
-The client commands `list_workstreams`, `channel_rails`, `space_channels` and
-`sidekick_activity`, the sync topics `digest_schedule`, `sidekick_activity`,
-`notes`, `projects`, `activity`, `work_opportunities` and
-`workstream_directory`, and the events `workspace_workstream_page`,
-`workspace_workstream_recency`, `workspace_space_channels`,
-`workspace_channel_rails`, `workspace_space_snapshot`,
-`workspace_navigation_state`, `space_conversations_changed`,
-`workspace_workstream_state`, `workspace_reach_changed`,
-`workspace_sidekick_activity` and the notes sidebar list leave the contract.
-The Channel row's per-viewer fan-out went with its rows: the directory
-follow-up's `channelLosses`, `publishChannelRows` and the per-person row build
-are deleted, and a list push is read per socket instead. On the conversation
-socket, `set_workstream_appearance` and the `initial_context_snapshot_chunk`
-frame (with the snapshot's `initialContextChunkCount`) go. The renderer loses
-the composer's running counts (the `workstream-background-agents` query key
-with them), `watchWorkspaceReach`, `retainConversationChildren` and
-`conversationSidekickMentions`.
-
-The proactive feed swarm is gone: `WorkspaceWorkstreamSockets`, which chose
-every pinned, five recent and every running Thread, and the
-`WorkstreamSocketPool` that kept those feeds warm, retained them for five
-minutes and warmed one on hover, are deleted with the Channel row's client
-writer (`channel-viewer-state.ts`). `ConversationSurface` dials the feed of the
-one conversation it shows, a Canvas's Chat or a Sidekick's conversation. The
-Sidekicks window is gone, so main relays the Organization sync to the Settings
-window alone, and only it may read the source. `apps/ios` and its
-navigation-shaped retain set are deleted. On the server,
+**What changed:** The subscribe answer's sidebar is the Sidekick, Canvas and
+Activity lists. The Space, Channel, Thread, pin-order, note and Breakout fields,
+commands, sync topics and events leave the contract, and a desktop from before
+the pivot is refused the ticket rather than sent placeholders
+([`realtime-sockets.md`](realtime-sockets.md)). The proactive feed swarm is
+deleted: `WorkspaceWorkstreamSockets`, which chose every pinned, five recent and
+every running Thread, and the `WorkstreamSocketPool` that kept those feeds warm.
+`ConversationSurface` dials the feed of the one conversation it shows. Main
+relays the Organization sync to the Settings window alone.
 `workspace_resource_versions` reads which Canvases list a resource from
-`canvas_artifacts` instead of `workspace_workstream_resource_links`,
-`canvasSetAudience` re-broadcasts presence, so someone a narrowed Canvas no
-longer admits stops being shown in it and is backgrounded, and the unused
-`publishNavigationState` (the `workspace_navigation_state` sender) is gone.
+`canvas_artifacts`, and `canvasSetAudience` re-broadcasts presence.
 
-**Why:** Plan steps B-2, B-3, B-9 and C-2 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-retired every producer: the server already sent an empty directory page and
-no Channel rows, and each of these named a Thread, Channel, note, Activity
-item or Breakout. A contract that still admits them invites a new caller to a
-mechanism with no server behind it. The composer counts were deleted rather
-than kept at zero because an indicator that never lights looks like a bug; the
-body records where a running signal would come from. The pool existed to warm
-pinned and recent Threads ahead of a click; with no Thread list there is
-nothing to warm, a Canvas's transcript paints from the local cache before its
-socket answers, and a pool with one caller would be indirection with no second
-implementation. Sidekicks moved into the main window, which holds the socket;
-the relay is kept rather than deleted because Settings still consumes it, and
-deleting it would give the prewarmed Settings window its own socket again for
-the whole session, the cost the 2026-09-26 entry removed. Only the retired
-Thread directory projection wrote `workspace_workstream_resource_links`, so
-after C-2 no Canvas artifact's new version reached an open preview; and
-presence was re-checked only on socket changes and revocations, never on a
-Canvas's audience, so a person removed from a Canvas stayed listed in it. The
-restored runtime tests (`workspace-resource-versions.test.ts`, the presence
-case in `durable-object-runtime.test.ts`) were what showed both.
+**Why:** The pivot retired every producer, and a contract that still admits them
+invites a new caller to a mechanism with no server behind it. The pool existed
+to warm pinned and recent Threads ahead of a click; with no Thread list there is
+nothing to warm, a Canvas's transcript paints from the local cache first, and a
+pool with one caller is indirection. The relay stays because Settings consumes
+it, and deleting it would give that prewarmed window its own socket for the
+whole session. The restored runtime tests showed that only the retired Thread
+projection wrote the resource links a version announcement read, and that a
+person removed from a Canvas stayed listed in it.
 
-**Considered and rejected:** Keeping the pool for Canvases, warming pinned and
-recent ones. No product signal yet says which Canvas a person opens next, and
-[adding proactive coverage](#best-practices-for-adding-proactive-coverage)
-asks for one before any warmth is spent.
+**Considered and rejected:** Keeping the pool for pinned and recent Canvases: no
+product signal yet says which Canvas a person opens next, and [adding proactive
+coverage](#best-practices-for-adding-proactive-coverage) asks for one before any
+warmth is spent.
 
-**Consequences:** A sync event or follow-up WorkspaceDO stored before this
-change can still name a retired topic, so the stored-topic reader drops those
-names (`RETIRED_SYNC_TOPICS`) and still fails on any other unknown topic;
-`workspace-socket-fanout.test.ts` replays such a row, and each drop is logged
-as `workspace_sync_retired_topics_dropped`. A retired command from a desktop
-released before the pivot is an unknown type, which WorkspaceDO ignores under
-the socket's ignore-protocol-additions rule, logging
-`workspace_socket_retired_command_ignored`; refusing would close its socket
-for good; it reaches the socket only with a ticket issued before the
-minimum contract rose, since a new ticket is refused. A click pays a
-cold ticket, handshake and snapshot; the local cache keeps reading off that
-path, sending does not. The relay's consumer list is one window; a second
-secondary window that reads workspace state joins it the way Sidekicks did.
-`/parent-socket`, `WorkstreamControlSocketService` and
-`GET /workstreams/:id/control-socket`, kept partly for iOS and for desktops
-released before the workspace-socket breakout list, went with the Thread host
-in C-2.
+**Consequences:** A stored sync row naming a retired topic is dropped on read
+(`RETIRED_SYNC_TOPICS`, logged `workspace_sync_retired_topics_dropped`), and any
+other unknown topic still fails. A retired command from an old desktop is
+ignored and logged, never refused, since a refusal would close its socket for
+good. A click pays a cold ticket, handshake and snapshot. A second secondary
+window that reads workspace state joins the relay's consumer list.
 
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-21 — Push exact-target Sidekick counts to open composers
 

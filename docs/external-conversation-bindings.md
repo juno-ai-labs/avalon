@@ -230,29 +230,6 @@ cannot widen what the bot joins.
 
 ## Changelog
 
-### 2026-11-07 — A room binding opens nothing, and rooms are no longer linked
-
-**What changed:** `resolve` no longer answers `spawn` (an addressed message
-under a room bound to a Space created a Channel there) and its `none` no
-longer carries `roomBound`. `linkRoom`, `ExternalRoomLinkRequestSchema` and
-`ExternalRoomSpaceMatchRequestSchema` are deleted. WorkspaceDO migration 139
-(plan step C-7) deleted every room row (`target_kind = 'space'`) and every
-binding to a Thread (`parent_kind = 'workstream'`); the CHECK still admits
-both, and no row holds either. A bot joining, leaving or archiving a room now
-changes no row.
-
-**Why:** Plan step C-4 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-Spaces and Channels are retired, the Slack ingress already answered every
-addressed message with where work starts now, and nothing called the link.
-Run-child bindings, the binding that lets a Slack reply continue a Sidekick
-run, are unchanged.
-
-**Consequences:** The only bindings are run threads. The room lifecycle events
-still arrive and are logged; only `channel_id_changed` still moves rows,
-because a run's thread lives under the renumbered room.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-06 — A room's privacy belongs to its Channels, not its Space
 
 **What changed:** `linkExternalRoom` takes no scope or participants: every

@@ -801,35 +801,34 @@ it does not shape the cost of any run somebody means to make.
 
 ## Changelog
 
-### 2026-11-07 — `SubstreamAgent` is tracked as `AgentLoopDO`
+### 2026-11-09 — `SubstreamAgent` is tracked as `AgentLoopDO`
 
-**What changed:** The conversation class was renamed `AgentLoopDO` (Wrangler
-tag v15). `REPORTING_CLASSES`, the API's forced-migration dispatchers and heads
-name it; registry migration v6 rewrites `class_name` from `SubstreamAgent` in
-the live rows, the report log, the heads, the namespaces and the run log; a
-report still carrying the old class name is filed under the new one
-(`RENAMED_CLASS_FROM`), and a forced-migration command queued under it is
-dispatched to the renamed class (`RENAMED_MIGRATION_CLASSES`). The component
-key stays `substream_agent_do`.
+**What changed:** The conversation class was renamed `AgentLoopDO` (Wrangler tag
+v15). `REPORTING_CLASSES`, the API's forced-migration dispatchers and heads name
+it; registry migration v6 rewrites `class_name` from `SubstreamAgent` in the
+live rows, the report log, the heads, the namespaces and the run log. A report
+still carrying the old name is filed under the new one (`RENAMED_CLASS_FROM`),
+and a forced-migration command queued under it is dispatched to the renamed
+class (`RENAMED_MIGRATION_CLASSES`). The component key stays
+`substream_agent_do`.
 
-**Why:** The Canvases and Sidekicks decision to rename the class. The two
-Workers deploy independently, so for a while the outgoing API build reports
-under the old name and an older tracker may queue commands under it; without
-the translations those reports would refile objects under a second class and
-those commands would dead-letter as unknown, filling the queue this platform
-reads as its signal for stuck migrations.
+**Why:** The pivot's decision to rename the class. The two Workers deploy
+independently, so for a while the outgoing API build reports under the old name
+and an older tracker may queue commands under it; without the translations those
+reports would refile objects under a second class and those commands would
+dead-letter as unknown, filling the queue this platform reads as its signal for
+stuck migrations.
 
-**Considered and rejected:** The Sidekick rename's staged dual-export release:
-it existed because that class's objects were moved under a compatibility
-export; this rename is one `renamed_classes` tag on one namespace, and the
-translations cover the overlap. Renaming the component key: the schema did not
-change, so its history should not split.
+**Considered and rejected:** The Sidekick rename's staged dual-export release,
+which existed because that class's objects moved under a compatibility export;
+this rename is one `renamed_classes` tag on one namespace. Renaming the
+component key: the schema did not change, so its history should not split.
 
 **Consequences:** Delete both translations, and their tests, once no deployed
-build of either Worker carries the old name. This section heading was missing;
-the entries below it were already the changelog.
+build of either Worker carries the old name.
 
-Shipped in juno-ai-labs/avalon#1490.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-06 — SidekickDO leaves the tracked fleet
 

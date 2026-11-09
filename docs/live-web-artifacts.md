@@ -120,7 +120,11 @@ identity requires both the original publication conversation and directory path.
 A Sidekick run publishes into the Canvas it was asked to update, or creates a
 new Canvas with the Sidekick as its writer; a Canvas's Chat publishes into its
 own Canvas ([`canvases.md`](canvases.md)). Importing the source does not change
-that target.
+that target. The protected door admits a Canvas's site to the Canvas's audience
+(`canvasAdmits`), and the site surfaces (the rail's site detail, the preview
+pane, the Data view, the artifact window) are on for every signed-in window
+with no flag: `live-artifacts-enabled` is retired and must not be revived as a
+rollout control, since it would now be a kill switch for Canvases.
 
 A run asked to change a site it did not build — or built in a session that has
 since ended — brings the files back first, through `import_resource`
@@ -746,37 +750,6 @@ shows its saved quote and image. The script and trust boundaries are owned by
 
 ## Changelog
 
-### 2026-11-07 — A Canvas's artifact is opened by whoever opens the Canvas, and the site surfaces are no longer flagged
-
-**What changed:** An artifact generated in a Canvas's Chat is admitted at the
-identity door by the Canvas's audience (`canvasAdmits`): its creator,
-participants, writer Sidekick's audience, the Organization when it is open to
-it, and owners and administrators. `artifact_registry.workstream_id` holds the
-Canvas id, which is the conversation's parent id, so no column changes
-meaning. A publish from a Canvas's Chat, or from a Sidekick run into the
-Canvas it writes, keeps the `(conversation, path)` identity with the Canvas as
-the conversation, and tells the Canvas which artifact it made. A Thread's site
-redirect for its own workstream-scoped Sidekick went with that scope.
-`useSiteArtifacts` no longer reads `liveArtifactsEnabled`, and that flag is
-removed (see [`feature-flags.md`](feature-flags.md)): the rail's site detail,
-the preview pane, the Data view and the artifact window appear for every
-signed-in Electron or browser window, and a site falls back to the ordinary
-resource card only where no API session or bridge exists.
-
-**Why:** Plan steps A-7, A-9 and B-14 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
-A Canvas, not a Thread, is each artifact's owner and audience (decision log),
-and a Canvas is opened through these surfaces, so they cannot be off for
-anyone. The flag was always presentation-only — authorization is structural —
-so removing it changes what is drawn and nothing about who may read a site.
-
-**Consequences:** The serving Worker's public-by-default rules are unchanged;
-only the protected door's admission moved. See [`canvases.md`](canvases.md). A
-future change that wants to hide a site surface needs a reason specific to
-that surface, not a product-wide toggle.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-11-03 — Per-viewer rows, sign-in from a site's link, public submissions
 
 **What changed:** A table with a `private_to_viewer` column is private: the
@@ -898,8 +871,6 @@ panel host or duplicating it for detached windows.
 restores the same preview without minting new access. Table selection and CSV
 copy keep using the existing data APIs; authorization and row retrieval are
 unchanged. Wide tables scroll inside the pop-out.
-
-
 
 ### 2026-10-18 — An overlay covers the page instead of blanking it
 

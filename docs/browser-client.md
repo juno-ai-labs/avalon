@@ -405,7 +405,6 @@ organizations is opened, and the lookup is what finds the organization, so a
 site in such a deployment opens only once the browser has opened one of that
 deployment's organizations. The page says so.
 
-
 ### Browser host lifecycle and content boundaries
 
 Chrome cookie-changing requests (renewal, email redemption and logout) use one
@@ -634,85 +633,6 @@ must not close a healthy socket or reject pending command receipts. Identity,
 workspace, role or access-class changes replace the client and re-admit it.
 
 ## Changelog
-
-### 2026-11-08 — Settings and the tab say what the browser shows
-
-**What changed:** This document names the development account that actually
-signs in and the Settings sections a browser actually draws; Settings' copy
-says Organization and Sidekicks rather than "workspace" and "automations" and
-no longer calls the browser "this desktop app"; a phone's Settings header has
-one close.
-
-**Why:** The design inspection found the copy and this page out of step with
-the app (v4-F18, v4-F21, v4-F22, v4-F23, v3-G10). The PRD's names win over
-the storage names the copy had leaked.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — A local browser can use the development account
-
-**What changed:** `GET` and `POST /browser/dev/session`, and the signed-out
-entry's **Use local development account** where the first answers 204. A
-Canvas or Sidekick link's sign-in line names what it opens.
-
-**Why:** A person with only the browser could not sign in locally: Google
-needs credentials, and development sends no email, so the browser tester read
-the code out of D1. The desktop's button already existed against
-`POST /auth/dev/session`, whose bearer tokens the browser does not use; the
-browser route registers the same identity as a cookie session. The flag is
-asked of the API rather than built into the client, because the browser bundle
-is a production Vite build even locally (`import.meta.env.DEV` is false). The
-link line said "Sign in with the email address the link was sent to.", which
-was the invitation's copy and wrong for a link copied from the app.
-
-After the round-5 visual check (F8): the same Organization read "Rally
-Development" in one member's chooser and "Avalon Development" in another's
-Settings. Both read `workspaces.name`, which `createDevelopmentSession`
-rewrote on every call: to "Rally Development" from the desktop's sign-in, and
-to its own default parameter, "Avalon Development", from a `POST
-/auth/dev/session` sent with no name (as the test scripts send it), so it
-flipped with whichever ran last. Local development only; a development
-sign-in now keeps the stored name, which on a seeded stack is the seed's
-"Avalon Studio".
-
-**What a future change must respect:** both routes stay behind
-`APP_ENV=development` and `RALLY_DEV_AUTH=true`; the button's presence is the
-API's answer, never a client build flag.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — The browser opens Canvases and Sidekicks, beside the sidebar, and forwards their routes
-
-**What changed:** The shell mounts the two-section sidebar (Canvases,
-Sidekicks) rather than Channels, Threads and Activity, and a guest's sidebar
-lists what was shared with them there. `#/sidekicks` and each Sidekick render
-beside the sidebar, as they do in the Mac app's main window; only Settings is
-a window surface. `shellLocation` rewrites a Canvas link to `#/canvases/:id`
-(with `?artifact=`) and a Sidekick link to `#/sidekicks/:id`; the Thread,
-Channel and Space branches are gone, and a retired link gets a line on the
-entry screen saying what it named no longer exists. `BROWSER_ROUTE_FAMILIES`
-gains `canvases`, which it lacked, so a browser could not create or open a
-Canvas, and loses `workstreams`, `spaces`, `projects`, `navigation` and
-`work-opportunities`. The Thread header's rename, archive and restore, and the
-Thread and Breakout right-click sharing menus, went with Threads.
-
-**Why:** Plan steps A-13, B-1, B-3 and B-5 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-the Thread and Channel screens are deleted, `App.tsx` redirects their old hash
-routes to the Canvases home (so a link rewritten to `#/workstreams/:id` would
-have lost its target), the Canvas is what a shared link names, and the PRD
-moves Sidekicks into the main window ("Sidekicks home"), so a tab giving them
-the whole window would draw a different product from the Mac app.
-
-**Considered and rejected:** Keeping the retired families forwarded "in case".
-Forwarding is the whole of the browser's reach; a family nothing calls is reach
-nobody needs.
-
-**Consequences:** A route family a later step adds to the shell must be added
-to the list in the same change. The links themselves are
-[`links.md`](links.md)'s.
-
-Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-03 — A protected site's link signs you in and brings you back
 

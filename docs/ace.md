@@ -84,7 +84,10 @@ reconnect is the reconciliation path.
 **Workspaces.** The tab searches configured deployments' directories and retires the
 selected workspace in the region that owns it, through
 `POST /api/workspaces/:id/retire`, which relays to the regional API's
-`/internal/workspaces/:id/retire` over that region's operator credential,
+`/internal/workspaces/:id/retire` over that region's operator credential
+(code-facing `requireAceOperator` and `ACE_OPERATOR_ROLE`; stored as the secret
+`DEMO_OPERATORS_JSON` and the role `demos`, names kept from the removed Demos
+tab because renaming them is a secret rotation in every region),
 same-origin. The confirmation is the operator typing or pasting the workspace
 id — the button stays disabled until it matches — and the id travels with the
 request, where Ace and the regional API each refuse a confirmation that names
@@ -374,61 +377,6 @@ contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only change
 do not publish a new Ace bundle.
 
 ## Changelog
-
-### 2026-11-08 — The Demos page is removed
-
-**What changed:** The Demos tab, its client (`client/demos.tsx`), the relay
-to the regional `/internal/demos` routes (`demos.ts`), Ace's `/api/demos*`
-routes, their two test files and the `.demo-*` styles are deleted. The
-Workspaces tab and the operator credential it uses stay.
-
-**Why:** The owner's instruction of 2026-11-08: "remove the demo
-functionality completely". The regional routes the page relayed to are
-deleted in the same change, so the page could only fail; the retirement
-record of the feature is in [`architecture.md`](architecture.md)'s 2026-11-08
-entry.
-
-**Consequences:** An Organization a demo made is retired from the Workspaces
-tab like any other. The credential keeps its stored names,
-`DEMO_OPERATORS_JSON` and role `demos`, because renaming them is a secret
-rotation in every region; the code calls them `requireAceOperator` and
-`ACE_OPERATOR_ROLE` ([`rally-rebrand-inventory.md`](rally-rebrand-inventory.md)).
-The round-5 visual check found the Workspaces page as documented, with no
-Demos, and Ace overflowing sideways at phone width; that is recorded under
-Failure modes and limits and not fixed, Ace being a desktop operator console.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — The Thread-era, import and suggested-work model roles leave the catalog
-
-**What changed:** The managed model catalog loses five rows — work-stream
-description, suggestion draft, suggested-work admission, suggested-work
-ranking and conversation import — and the deploy retires
-`agent-model-workstream-description`, `agent-model-suggestion-draft`,
-`agent-model-work-opportunity-admission`,
-`agent-model-work-opportunity-ranking` and `agent-model-session-import`
-instead of ensuring them. The remaining five rows are ranked 1 to 5. The
-`workstream_naming` row is relabelled "Pasted-text naming": it now titles
-pasted text (`pasted-text-service.ts`) and keeps its key.
-
-**Why:** The [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-retired every caller. Plan step C-2 deleted the description and
-suggestion-draft roles' callers with Threads; at step B-8, session import had
-made Channels and suggested work had made Threads, both retired, so nothing
-calls those three roles any more. As the 2026-10-16 entry requires, each
-removed row moves to a `retireFlag` call in the same change.
-
-**Considered and rejected:** Renaming the naming role's key to match its new
-job. It is a flag migration with no change in behaviour.
-
-**Consequences:** The catalog holds exactly the roles in `AGENT_MODEL_ROLES`.
-`workstream` and `workstream_naming` keep their storage names, so renaming
-either is a Flagship key migration — a new key ensured and the old one
-retired — not a label edit. Reusing one of the five retired keys for a new
-role means taking it out of the retire list first: the 2026-10-02 entry's rule
-is that a key in both lists is recreated on every deploy.
-
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-16 — Ace stops managing `digests-enabled`
 

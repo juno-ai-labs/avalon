@@ -309,20 +309,6 @@ workspace.
 
 ## Changelog
 
-### 2026-11-08 — The account menu's meter fills in the text colour, not the viewer's accent
-
-**What changed:** The account menu's Quota meter no longer takes the viewer's
-personal colour (`onboarding.css`); it fills like the Settings meter, and the
-warning fill below `LOW_QUOTA_PERCENT` is unchanged.
-
-**Why:** The design inspection (vis2-v3) saw a red bar at 95% beside "95% left
-till Fri 6:00 PM": a red personal colour reads as an allowance nearly used up.
-The low-quota line is the one place the meter changes tone, so the colour of
-the fill is left to say nothing else. The 2026-10 choice of the accent was a
-look, not a signal; its reasoning was not recorded beyond that.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-11-07 — Index the ledger by Sidekick
 
 **What changed:** Migration `0002_usage_events_sidekick.sql` adds a partial

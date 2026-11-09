@@ -374,7 +374,7 @@ registry, and what happens to mail addressed to one. It does not own:
 | For | Read |
 | --- | --- |
 | When a Sidekick is accepted and its address reserved | [`automation-lifecycle.md`](automation-lifecycle.md) |
-| Which connectors can carry a message to a person | [`connectors.md`](connectors.md#delivering-a-digest-to-a-person) |
+| Which connectors can carry a message to a person | [`connectors.md`](connectors.md#delivering-to-a-person) |
 | The configured deployment bridge this registry is reached through | [`regionalization.md`](regionalization.md) |
 | Untrusted-input handling and the spoofing threat model | [`security.md`](security.md) |
 | The Sidekick tables the address and the receipts live in | [`automation-lifecycle.md`](automation-lifecycle.md), [`data-model.md`](data-model.md) |
@@ -450,30 +450,6 @@ Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
 
 ## Changelog
-
-### 2026-11-07 — A Thread's address is a tombstone
-
-**What changed:** The Thread arm of inbound delivery is gone: the Global
-webhook acknowledges mail to a Thread's route as terminal with
-`email_thread_retired` instead of dispatching it, and the region refuses an
-in-flight Thread dispatch with the same code. The work-stream receipt lease
-(`claimInboundEmailReceipt`, its renew/settle/failure RPCs and their storage),
-the `INBOUND_EMAIL_PROCESSING_LEASE_SECONDS` setting, and the routing
-service's Thread reservation, claim and activation (`reserve`, `reserveMany`,
-`claim`, `ensureWorkstreamAddress`, `activateWorkstreamRoute`, with the bridge
-methods) are deleted.
-
-**Why:** Threads were retired by the Canvases-and-Sidekicks pivot
-([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)); nothing opens one, so
-mail attached to one would be read by nobody. The Global route rows stay: they
-are the tombstones that keep an issued address from ever pointing elsewhere.
-
-**Considered and rejected:** Dispatching to the region and letting it answer
-404 as before. That costs a cross-region hop for an answer Global already has
-from the route row. The `workstream_email_receipts` table is dropped with the
-other Thread tables in the WorkspaceDO data migration, not here.
-
-Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-09-03 — One admission call, no screen, no window
 

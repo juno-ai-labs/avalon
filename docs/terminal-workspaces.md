@@ -1095,7 +1095,6 @@ older version stamped into the directory; remove it once this version has run
 in every region for a day, by which time every such entry has come due and been
 corrected.
 
-
 See [`runbook.md`](runbook.md#terminal-provider-activation-and-recovery) for
 activation and recovery. Structured events are
 `terminal_plugin_activation_started` and `terminal_plugin_activation_finished`
@@ -1347,33 +1346,6 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
-
-### 2026-11-08 — The periodic provider check comes back as a conversation alarm entry
-
-**What changed:** A conversation holding a Terminal sandbox arms a
-`terminal_observation` entry at `next_observe_at` and, when it runs, observes
-the sandbox and re-arms; `nextProviderObservationAt` is back in the storage.
-Canvas and Sidekick conversations are observed, at the recorded intervals (60
-seconds working, 10 minutes stopped or archived).
-
-**Why:** The owner, on the check that went with the Thread host (23169936c,
-11e82d0ff): "bring this back as it was". Without it nothing polled a sandbox,
-and a missed Daytona webhook left its state stale until the next acquisition.
-
-**Considered and rejected:** the old derived alarm candidate
-(`nextDerivedAlarmCandidates`), which the brief replaced with an entry in the
-existing `ScheduledAlarmStore` the way `reply_batch` and `sidekick_run_notice`
-work, giving the check its own retry gate; observing from the workspace
-schedule, which would put the deadline back in the directory and make every
-check a directory write. The Thread host observed only Threads ("a Sidekick's
-conversation has never been observed"); a Sidekick's sandbox is now observed
-too, because the owner named both parents.
-
-**Consequences:** The entry is reconciled from the observation row, so any
-writer of that row re-arms the check without knowing the entry exists, and
-deleting the sandbox row removes it.
-
-Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-23 — Retry observation without repeating a Terminal command
 

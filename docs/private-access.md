@@ -212,7 +212,7 @@ losing retries.
 
 The 2026-09-09 early-access security audit recorded unresolved launch controls;
 it is a historical record now, listed in [architecture.md's
-changelog](architecture.md#2026-11-08--retirement-records-spaces-space-access-sources-projects-the-implementation-plan-meeting-notes). Do not treat the open guards or default Cloudflare DDoS protection
+changelog](architecture.md#retired-documents). Do not treat the open guards or default Cloudflare DDoS protection
 as a hardened acquisition system.
 
 ## Operations

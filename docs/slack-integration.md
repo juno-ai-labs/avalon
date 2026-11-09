@@ -747,100 +747,46 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ## Changelog
 
-### 2026-11-08 — App Home shows the product as it is: Sidekicks, what they wait on, and no way to start work
+### 2026-11-09 — Slack starts no conversation and binds no room, and App Home shows Sidekicks and what they wait on
 
-**What changed:** App Home's linked view lost the **Start a task** button, the
-always-empty **Needs attention & recent tasks** header and the **Automations**
-list; the unlinked view lost its "Try now" example prompts and its claim that
-tasks start from Slack. Both now open with one line on what Rally does from
-Slack (a Sidekick can work from Slack for you; a mention or a DM does not start
-work). The linked view lists the person's Sidekicks under **Sidekicks** (name
-linked to the Sidekick, state, last run) and, only when one waits, a **Needs
-input** section with the question its run asked. **Create automation** reads
-**Create Sidekick**, and the Notifications modal's two options name Sidekicks.
-The list is the person's sidebar list rather than their personal Sidekicks
-only, so a Sidekick they made for the Organization, or one shared with them,
-is listed. A block action no branch names is now acknowledged and ignored
-instead of opening the task modal, so a stale view's **Start a task** opens
-nothing; the two manifest shortcuts and a bare `/rally` still open it. That
-acknowledgement is decided before the installation is read. The manifest and
-its scopes are unchanged. Three exports the Slack ingress no longer reaches
-went with it: `slackChannelResolutionDenial` (the copy for a prompt refused on
-channel privacy), `slackEventSearchAuthorization` (the `action_token` reader)
-and WorkspaceDO's `rememberSlackPendingPrompt` with its storage writer and
-request schema; `slack_agent_pending_prompts` and its readers stay until its
-last rows expire.
+**What changed:** A mention, a DM or an App Home prompt is answered with
+`conversation_ingress_retired`'s copy and creates nothing, and a bot joining a
+channel binds no room (`room_bindings_retired`). The non-Rally member's Thread
+service, the unfurl refresh sweep, the Thread delivery path (outcome reactions,
+task controls, the connect prompt) and the session and feedback RPC families
+only it wrote are deleted. The unfurl reads Canvas and Sidekick links once and
+shows the name, and every link Rally posts comes from
+`conversationCanonicalUrl`. App Home lost **Start a task**, the always-empty
+attention list and the example prompts: it says a mention does not start work,
+lists the person's sidebar Sidekicks with state and last run, and shows a
+**Needs input** section with each waiting run's question. A block action no
+branch names is acknowledged and ignored. Slack is no longer a notification
+channel ([`member-preferences.md`](member-preferences.md)).
 
-**Why:** The owner's instruction of 2026-11-08: "fix App Home". The view still
-offered actions Slack now answers with "Rally no longer starts work from
-Slack", a section that could never fill, and the retired word for a Sidekick.
+**Why:** Plan steps B-5 and C-2: a conversation is a Canvas's Chat or a
+Sidekick's run, neither is started from a Slack thread, and a Sidekick with a
+Slack trigger is how work starts there now. The owner's "fix App Home": it still
+offered actions Slack now refuses, a section that could never fill, and the
+retired word for a Sidekick.
 
-**Considered and rejected:** Deleting the task modal with the button. The
-manifest's two shortcuts and a bare `/rally` still open it, and changing the
-manifest was out of scope, so it stays until they go. Keeping the old
-personal-only filter: it left out a Sidekick the person made for the
-Organization, which is theirs in every other surface.
+**Considered and rejected:** Starting a Canvas from a Slack mention: nothing in
+the PRD asks for it, and a Canvas made on someone's behalf would need its own
+audience decision. Answering a mention silently, when a person who hears nothing
+assumes it is broken. Deleting the task modal with the button: the manifest's
+two shortcuts and a bare `/rally` still open it, and changing the manifest was
+out of scope. Keeping App Home's personal-only filter, which left out a Sidekick
+the person made for the Organization.
 
-**Consequences:** `personalAutomationsForHome` became `sidekicksForHome`, and
-`linkedHome` no longer takes a task list or a logger. The Notifications modal
-still writes `slack_delivery_preferences`, which no delivery path reads; what
-it should govern is open.
+**Consequences:** The only reaction Rally writes is the acknowledgement, or the
+stopped emoji for a paused Sidekick, on a reply admitted into a bound run's
+thread; an outcome reaction for Sidekick runs would be new work, not the deleted
+helpers restored. `slack_agent_sessions`, `slack_agent_feedback` and
+`slack_agent_pending_prompts` stay inert until a table drop. The Notifications
+modal still writes `slack_delivery_preferences`, which nothing reads, and the
+retired-ingress copy needs product confirmation.
 
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — Slack starts no conversation, binds no room and refreshes no card; its links name Canvases and Sidekicks
-
-**What changed:** The Thread-creating path is deleted: `startFromPrompt` and
-the event dispatcher answer a mention, a DM or a prompt with
-`conversation_ingress_retired`'s copy and create nothing.
-`slack-workspace-workstream-service.ts` (a non-Rally member's Thread) and the
-room bindings a bot join wrote are deleted; `member_joined_channel` logs
-`room_bindings_retired`. App Home lists Sidekicks only. The unfurl refresh
-sweep (`slack-unfurl-refresh.ts`) and its scheduled task are deleted, and
-`slack-workstream-card.ts` keeps only the one-time unfurl: a title link and an
-**Open in Rally** button. The unfurl reads Canvas and Sidekick links and shows
-the name only; it no longer reads Thread links. Every link Rally posts in
-Slack — App Home rows — comes from
-`conversationCanonicalUrl`, so it names the Canvas or the Sidekick, and a
-message about a Thread is skipped (`conversation_not_linkable`) or sent
-without its button.
-
-**Why:** Plan steps B-5 and C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
-A conversation is a Canvas's chat or a Sidekick's run, and neither is started
-from a Slack thread; a Sidekick with a Slack trigger is how work starts there
-now. Thread surfaces are gone, so a Thread link opens nothing.
-
-**Considered and rejected:** Starting a Canvas from a Slack mention. Nothing in
-the PRD asks for it, and a Canvas made on someone's behalf from a Slack thread
-would need its own audience decision. Answering silently was rejected too: a
-person who mentions Rally and hears nothing will assume it is broken. A status
-badge on a Canvas card: a Canvas has no harness status of its own; its Chat's
-would describe the conversation, not the Canvas.
-
-**Consequences:** The Thread delivery path's last half went with it (11e82d0):
-`deliverWorkstreamOutcome`, the outcome reactions (`applyOutcomeReaction`,
-`settleOutcomeReaction`), the task controls (`responseActionBlocks`), the
-connect prompt (`connectPromptBlocks`) and `slackUserIsLinked`. The only
-reaction Rally still writes is the acknowledgement, or the stopped emoji for a
-paused Sidekick, on a reply admitted into a bound Sidekick run's thread; a
-future outcome reaction for Sidekick runs would be new work, not those helpers
-restored. A posted card keeps the name it was posted with.
-[`links.md`](links.md) owns the card. The session RPC family that only the
-Thread path wrote went with it in plan step B-8: `createSlackSession`,
-`assignSlackSessions`, the four session readers, and the delivery-key, stream
-and reaction setters, with their storage and protocol. Its readers were left
-answering legacy rows: the feedback submit's session check (now refused
-outright), the channel-type hint an event read from a session (now always
-Slack's answer), and the seating a verified-email or explicit link did, whose
-`assigned_user_id` nothing read. With the submit refused, the feedback
-ingress branch, `recordSlackFeedback` and its storage went too.
-`slack_agent_sessions` and `slack_agent_feedback` are kept: dropping a table is
-a migration, and the rows are inert.
-
-**Open:** The retired-ingress copy is the agent's wording and needs product
-confirmation.
-
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-02 — The connector's send tool posts through the `markdown` block
 

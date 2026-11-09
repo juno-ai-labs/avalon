@@ -865,138 +865,47 @@ selection and message protocol.
 
 ## Changelog
 
-### 2026-11-08 — A Sidekick open is laid out as the design and a Canvas are, and only the reader's own turn is a bubble on the right
+### 2026-11-09 — The surface's two hosts are a Canvas's Chat and a Sidekick's conversation; Breakouts, merge-back and suggestions leave it
 
-**What changed:** `SidekickDetailLayout` puts the conversation in the main
-column under one `TitlePillHeader` (Back and Forward, the Sidekick's glyph and
-name in a pill whose menu offers Pin, Run now and Copy link) and the details
-in a right-hand column. It first carried a face pile of who is here, which
-could never fill: the workspace socket records only an open Canvas as
-anyone's foreground (`set_presence`), so the pile was removed rather than
-left as a slot that promised presence. The "‹ Sidekicks"
-crumb, the "Conversation" heading and the Conversation/Details switch row are
-gone; below 900px the header's **Sidekick details** button switches to the
-details under that same header. An open run is a "Run" pill after the
-Sidekick's, which leads back. In the transcript, a colleague's turn sits on
-the leading edge as plain text under their avatar, Rally's turn carries an "R"
-avatar, and the reader's own bubble is their colour's pastel pair rather than
-the saturated hue. The transcript column is the composer's width, where it
-was up to 940px (v4-R2-2, v1-R2-2). An open question's Submit names the
-platform's modifier (`primaryShortcutLabel`: ⌘↵ on a Mac, Ctrl+Enter
-elsewhere, v4-R2-13), and its "Other" field is the form-field well
-(v3-R2-7).
-An answered question keeps its prompt as Rally's turn above
-the person's answer, in a run's view and a Canvas Chat alike.
+**What changed:** `ConversationSurface` hosts a Canvas's Chat (`parentKind:
+"canvas"`) and a Sidekick's conversation. A host can add composer menu entries,
+one of them a mode (`ComposerMenuAction.checked`), which a manager's **Edit
+Sidekick** uses to mark `intent: "edit_sidekick"`. A Sidekick run's row draws
+collapsed and opens the run's own conversation. Every Breakout, merge and
+suggestion prop and the Thread-only behaviour behind them are deleted, and the
+surface dials its conversation socket directly. A Sidekick's page is laid out as
+a Canvas's: the conversation under one `TitlePillHeader`, with the details on
+the right, switched to under the same header below 900px. Only the reader's own
+turn is a bubble on the trailing side, and a question and its answer keep
+separate ids. Each open of a conversation sends one read report at the room's
+cursor.
 
-**Why:** The PRD makes design.html the authority for every screen. Its §4
-draws a Sidekick like a Canvas: conversation as the hero, details on the
-right. The inspection found it mirrored, its name in no header, and at phone
-width three stacked headers (the sheet's, the crumb row and "Conversation")
-that never named the Sidekick. Its §2 right-aligns only the viewer's turn. The
-earlier rule put every person on the right so the transcript read the same
-for everyone; a reader then could not tell their own turn from a colleague's
-by place (v1-F9, v4-F8). The saturated bubble under white ink failed contrast
-on rose, 3.58:1, in both appearances (v3-G3), and the pastel pair is themed
-per appearance. With no panel open the transcript ran 876px under a 480px
-field, so a reply began 200px left of the field and the reader's question
-ended 200px right of it; the design draws both in one column. The browser
-serves Windows and Linux, where the hard-coded ⌘↵ named a key they do not
-have, and the "Other" field drew a raw ramp step, the brightest surface in
-the dark form with a 2.31:1 placeholder.
-A question and its answer were given one id, so the answer
-replaced the question in its slot and an answered elicitation drew only the
-answer bubble: a run's view showed "apple" under nothing (round 2, R2-2),
-where design §4 keeps both.
+**Why:** Plan steps A-12, A-13 and B-3: an open Canvas reuses the conversation
+layout (decision log), and Threads, Breakouts and merge-back are deleted.
+design.html §4 draws a Sidekick like a Canvas, and §2 right-aligns only the
+viewer's turn, where the earlier rule put every person on the right so nobody
+could tell their own turn by place. A question that shared its answer's id was
+replaced by it, so an answered run showed the answer under nothing. A finished
+run's Activity row stayed unseen when the person had read the conversation
+before it finished, because reopening sent no report.
 
-**Considered and rejected:** Rendering the Sidekick's header inside the
-conversation, as a Canvas does: it would vanish with the conversation when the
-details take its place at narrow widths.
+**Considered and rejected:** A tabbed artifact-first pane or any Canvas-specific
+feed component, a second surface with its own composer, annotations and restore.
+A second composer or a per-message prompt for the wizard mark. Rendering the
+Sidekick's header inside the conversation, where it would vanish when the
+details take its place. A read report on every acknowledgement pass, which would
+turn every scroll into a request.
 
-The conversation first waited for the detail read before mounting, though
-the list row already named the Sidekick, so every open paid that request
-before the conversation's own socket started; it now mounts from the row.
-The screen is keyed by the Sidekick, so an error or a pending action from one
-Sidekick does not carry over to the next one opened in its place.
+**Consequences:** The generic capabilities stay, and so do the storage names
+(`WorkstreamDetail`, `useWorkstreamSocket`, `WorkstreamComposer`). A host that
+needs a participant list or a title-pill menu builds it from its own detail. A
+Sidekick's page keeps one header at every width, with the conversation mounted
+behind the details. A turn's side follows `own-human-message`. The read report
+is at most once per open and never below the room's cursor, and it reaches
+Activity only because the server dates a read by the report's own time.
 
-**What a future change must respect:** a Sidekick's page keeps one header at
-every width, and the conversation stays mounted behind the details. A turn's
-side follows `own-human-message`, so the same transcript reads from each
-person's own side.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — Every open of a conversation sends one read report
-
-**What changed:** `conversationReadAcknowledgement` returns a report at the
-room's own cursor the first time it is asked in an open of the conversation,
-where it returned nothing for a cursor nothing on screen moved.
-
-**Why:** The end-to-end pass found a Sidekick's "finished a run" Activity row
-staying unseen when the person had read the conversation before the run
-finished: reopening it sent no report, and that row clears only on a report
-accepted after it was written (`activity.md`). Sending on every
-acknowledgement pass was rejected: it would turn every scroll into a request.
-
-**What a future change must respect:** the report is at most once per open
-(per mount and conversation address) and never reads back below the room's
-cursor. It reaches the Activity row only because the server's
-`directory_user` effect carries the report's time (`lastReadAt`, the server
-fix S10, 695611c): the effect outbox drops an effect identical to its last
-one, which is what every unchanged-cursor report was before it.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — The surface's two hosts are a Canvas's Chat and a Sidekick's conversation; Breakouts, merge-back, suggestions and the Thread branches leave it
-
-**What changed:** `ConversationSurface` hosts a Canvas's Chat
-(`parentKind: "canvas"`) under a Canvas header, with the Canvas's wording in
-its opening, unavailable and ready states and its composer placeholder. A host
-can add entries to the composer's menu (`composerMenuActions`), one of which
-may be a mode (`ComposerMenuAction.checked`), and set its placeholder; a
-Sidekick's screen uses both for a manager's Edit Sidekick, which marks
-messages `intent: "edit_sidekick"`. A Sidekick run's row draws as a collapsed
-run that opens into the run's own conversation. The surface loses every
-Breakout, merge and suggestion prop and the code behind them (the launch
-surface, the origin card, Breakout cards and ticks, the merge response card
-and target pill, the suggestion chips), the Thread-only behaviour (the access
-request on a refused Main, the participant and remove dialogs, the People
-level, rename over the Thread route, artifact pins and Thread links, Activity
-read events, the browser import composer action, the feed-open and send-ready
-telemetry), and the `renderSidebar`, `renderOpeningSidebar`,
-`workstreamContext`, `paneKey`, `parentCrumbs` and `honorsSearchTarget` props.
-`MessageFeed` and `MessageBlock` lose `onStartSubstream`, `merge`,
-`onOpenBreakout`, `onOpenMerge` and `breakoutCards`, and the New breakout and
-Merge hover actions go. The surface dials its conversation socket directly
-(`useWorkstreamSocket`); the `WorkstreamSocketPool` that kept Threads' sockets
-warm is deleted. A read-only conversation takes no dropped or pasted file.
-Only a Canvas's Chat hosts the embedded browser's links.
-
-**Why:** Plan steps A-12, A-13 and B-3 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
-The decision log has an open Canvas reuse the conversation layout: the Chat in
-the main pane, its artifacts in the existing right rail; and Threads,
-Breakouts and merge-back are deleted (2026-11-06). The pool existed to warm
-pinned and recent Threads ahead of a click; with no Thread list there is
-nothing to warm, and a pool wrapper with one caller would be indirection with
-no second implementation. The read-only drop fix is from the review of the run
-view: a run's conversation had no composer, so a dropped file was a silent
-server upload.
-
-**Considered and rejected:** A tabbed artifact-first pane, or any
-Canvas-specific feed component: it would have been a second surface with its
-own composer, annotations and restore, and everything it needed is what this
-surface already does for any parent. For the edit mark, a second composer or a
-per-message prompt: the mark is a mode a manager holds while describing a
-change, and the composer menu already exists to carry it.
-
-**Consequences:** The generic capabilities stay: transcript, composer, drafts,
-attachments, dictation, annotations, elicitation and the right rail. The
-storage names (`WorkstreamDetail`, `workstreamDetailQueryKey`,
-`useWorkstreamSocket`, `WorkstreamComposer`) stay, per the storage-name rule.
-A host that needs a participant list or a title-pill menu builds it from its
-own detail, as the Canvas screen does with its Share dialog.
-
-Shipped in juno-ai-labs/avalon#1490.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-23 — Keep running counts through navigation, discard them on disconnect
 
@@ -1086,8 +995,6 @@ line it made every Channel message about 31px taller at rest.
 **Consequences:** Only accepted sends clear their captured pins. Pending annotation sends and open elicitations cannot silently reuse or omit those pins. See [artifact annotations](artifact-annotations.md).
 
 PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
-
-
 
 ### 2026-10-18 — A long paste attaches as a typed, named file
 
@@ -2549,7 +2456,6 @@ column was fixed at. One with a control spends its label's width out of the text
 column. Both were checked in a real window, on the launcher, an existing work
 stream, and a substream.
 
-
 ### 2026-09-10 — The dividers say what they are, and what a double-click does
 
 **What changed:** Every resize handle in the shell now shows a two-line tooltip
@@ -3253,7 +3159,6 @@ surface's `.human-message`. A CSS invariant test in `app.css.node.test.ts` holds
 both halves — that the bubble, the header and the action row all read the token,
 and that the work-stream theme moves it by the token rather than by a literal.
 
-
 ### 2026-09-09 — The per-message substream cutoff joins the action row
 
 **What changed:** The **New substream** control moved out of the message identity
@@ -3351,7 +3256,6 @@ A visibility context prevents hidden panes from claiming paste or marking reads.
 header-only design left the feed competing with schedules and run history;
 those controls now live entirely outside ConversationSurface. Run history is
 behind More → Run history, while the first view explains how to ask for changes.
-
 
 ### 2026-09-08 — Remove heading-generated document cards
 
@@ -3567,7 +3471,6 @@ authority and video suffixes are shared with staged and sent tiles. An HTML
 preview establishes its network-denying policy before any supplied markup.
 Streaming document sections remain ordinary streaming Markdown until complete,
 so an unfinished Mermaid section is not interpreted as a settled diagram.
-
 
 ### 2026-09-04 — The Grok presentation stays an adapter over the shared conversation foundation
 
@@ -4092,7 +3995,6 @@ and it should read like every other thing they are told.
 and error states, its own answer every time this family changes, and a reason
 for every one of them — to present something a reader already knows how to read.
 The author line does all of the work a bespoke row would have done.
-
 
 ### 2026-09-01 — One feed component, and the draft conversation stops being a second one
 

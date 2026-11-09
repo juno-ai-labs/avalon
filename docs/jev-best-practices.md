@@ -567,7 +567,7 @@ Each is more attractive than it deserves to be.
   the reason a connector author has to think about volume before shipping an
   event type. The retired contextual-routing gate also showed that `digestible`
   encodes three different noes and only one of them is about relevance
-  ([its retirement record](connectors.md#2026-11-08--retirement-records-suggested-context-connector-digestibility)), so a per-instance
+  ([its retirement record](connectors.md#retired-documents)), so a per-instance
   classifier would answer a different question from the field it replaced.
 - **Adding a confidence field to a generative call instead.** Asking an existing
   `runStructuredInference` call for a number alongside its answer and
@@ -627,21 +627,3 @@ customer inputs and production identifiers. A future comparison must rerun the
 versioned evaluator against a fresh authorized export, inspect the protected
 scratch reports, record only content-free aggregates, and delete the scratch
 directory when finished.
-
-## Changelog
-
-### 2026-11-08 — The candidate register folded in
-
-**What changed:** `jev-classifier-opportunities.md` is deleted. Its five-part
-test, its considered-and-rejected list and its order of work for a new
-classifier are the two sections above; its candidate register is gone.
-
-**Why:** every candidate it listed — work-opportunity admission, identity
-resolution inside admission, digest settlement and the suggested-work ranking
-tournament — belonged to a mechanism the Canvases and Sidekicks pivot deleted,
-and the two transport primitives it argued for shipped on 2026-09-18. What was
-left was guidance about designing a JEV request, which is this document's
-subject. The work-stream icon entry was dropped with it: conversation naming no
-longer picks an icon.
-
-Shipped in juno-ai-labs/avalon#1490.

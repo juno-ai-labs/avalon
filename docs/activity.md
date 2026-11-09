@@ -422,188 +422,49 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 
 ## Changelog
 
-### 2026-11-08 — A declined request reaches its requester
+### 2026-11-09 — Document created: Activity is a per-person feed written with the push it mirrors
 
-**What changed:** A new kind, `access_denied`, is written for the requester
-when a decider denies their request to open a Canvas. It is the one row the
-access filter lists although its person cannot open the parent: it lists
-while the Canvas exists, with `parentTitle` always null, no preview, and
-`accessRequest` naming who declined. It stores no ordinal, so no read clears
-it; it is seen once the requester asks again (a later request of theirs on
-that Canvas) or on Mark all seen. Migration 140 makes the table with the kind
-(`docs/canvas-access-requests.md`).
+**What changed:** Activity returns as the rail's third section: one person's
+mentions, adds and Sidekick run notices, replies, pinned-Canvas updates, and
+access requests, grants and denials. WorkspaceDO migration 140 adds
+`workspace_activity_items` and `workspace_activity_seen`. A row is written in
+the transaction of the notification intent it mirrors
+(`recordPersonNotificationIntent`, `recordSidekickRunNotices`,
+`recordParentNotice`); reply and pinned-update rows collapse to one unseen row
+per conversation or Canvas. The workspace socket carries the page and
+`workspace_activity_list`, with `activity_mark_all_seen` its one command. Seen
+is derived, never marked per row: by the read cursor passing a mention's
+ordinal, by a run leaving `needs_input`, by a request being settled, or by Mark
+all seen. The page and its counts are one SQL expression (`listedSql`,
+`ACTIVITY_SEEN_SQL`), which also answers `attention()`'s count behind the
+account menu, the push badge and the dock badge. A row lists only while its
+person may open the parent, with one exception, `access_denied`, which carries
+nothing of the Canvas but its id.
 
-**Why:** The owner's answer of 2026-11-08: "inform the person [of] a
-denial". The row is the answer to their own request and names nothing of the
-Canvas they were refused, so listing it shows them no content.
-
-**Considered and rejected:** Clearing it on a read of the Chat: the requester
-cannot read it. Gating the new enum value by client contract: the Activity
-kinds this round's predecessors added were not gated either, and no released
-desktop parses Activity yet.
-
-On the client the row's lock and a grant's open lock differ only in the
-right shackle leg, which the Canvas badge covered; a badged tile now draws its
-glyph up and to the left (the round-5 visual check, F3). The republish when
-the requester asks again is in `docs/canvas-access-requests.md`'s denial entry.
-
-**What a future change must respect:** the exemption is this kind alone, and
-its row must keep carrying nothing of the Canvas but its id.
-
-**Also this round — the Organization's attention is its unseen Activity.**
-`WorkspaceDO.attention()` answered zeros since the Thread directory it
-summarized was retired; it now counts the person's unseen Activity through
-`activityCounts`, the page's own filter and seen rule (`listedSql`, shared
-with `activityPage`), with the unseen `needs_input` rows as `waitingForYou`.
-Why: the owner's "fix this" for the account menu's other-Organization
-counts reading zero, and for a push clearing the dock badge (its `badge` was
-that zero). Rejected: a second count query beside the page's, which could
-drift from the rail. A future change to what lists or what is seen changes
-`listedSql` or `ACTIVITY_SEEN_SQL` once, for the page, the counts and the
-badge together.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — A needs-input row opens the run that asked, clears when it is answered, rows take the shared layout, and replies return
-
-**What changed (replies):** A person's reply in a Canvas's Chat or a
-Sidekick's shared conversation writes a `new_message` row for everyone else
-in it, through `recordParentNotice` when the conversation's reply batch runs.
-The row collapses: one unseen row per conversation per recipient, brought up
-to the newest reply. It clears as a mention does. Migration 140 admits the
-four kinds a hosted parent records about itself and carries `subject_id`. Client: rows for `new_message` ("<author> in <place>", opens the message via `canvasTurnRoute` or the conversation), `artifact_updated` ("<author> updated <artifact> in <Canvas>", opens `?artifact=`), `access_request` ("<name> asked to open <Canvas>", Approve and Deny under the link in one group through `AccessDecisionActions`, held once answered, named for the requester and the Canvas; settled, "You approved" or "<decider> approved/denied" takes their place at their height, seen) and `access_granted` ("<decider> let you into <Canvas>"), each with its own glyph. The sentence wraps to two lines with its tooltip holding all of it, and a row with no preview keeps its dot on the first line. `ActivityItem.accessRequest` gains an optional `decidedByUserId`, read from `canvas_access_requests.decided_by_user_id`, so the decider is told "You" rather than their own name; optional so an older client parses the page, and the name stays the display for everyone else. Entering the section opens its top row in the pane, and only a rail pick leaves it: the owner, 2026-11-08, "When opening the first activity on top should be auto selected and that should be shown in the panels." and "Stay in activity sidebar." Opening the row reports its read as a click does, so a top row about a message becomes seen when the cursor passes it; that is the existing read rule and is wanted. The first list after entering decides, so a row arriving later never moves the pane.
-
-A new version in a Canvas the person pinned writes an `artifact_updated` row
-the same way, collapsing per Canvas, naming the artifact and clearing on a
-read of the Chat after it.
-
-A request to open a Canvas writes an `access_request` row per decider that
-reads as seen once settled and names who settled it, and an approval an
-`access_granted` row for the requester. An owner's or administrator's page
-lists rows about any Canvas, since they may open every one; before, a
-mention in a creator-only Canvas was pushed to an administrator and left
-out of their page.
-
-**Why (replies):** The owner asked on 2026-11-08 for human replies to produce
-Activity again. A row per message would bury the feed in a busy Chat;
-collapsing while unseen keeps one row that says the newest, and a new row
-after it is seen keeps what the person has already read apart from what is
-new.
-
-**Considered and rejected (replies):** A row per batch: a person who reads
-nothing for an hour would still get a row every 15 seconds of conversation.
-A per-row `seen_at` written when the cursor passes: the collapse reads seen
-through the page's own expression, so the feed and the Canvas row cannot
-disagree.
-
-**What changed:** A `needs_input` row opens the run it is about (`?run=` from
-its `runId`) rather than the Sidekick's shared conversation, and
-`ACTIVITY_SEEN_SQL` counts a Needs input row as seen once its run has left
-`needs_input`; the recipients' Activity is sent again when a run stops
-waiting. Rows take the shared row layout, seen rows recede through text
-colour tokens rather than 45% opacity, and only the rows whose conversation
-and run the route has open are marked open. An open conversation reports a
-read again for each settled change of its turns.
-
-**Client:** The `access_denied` row reads "<decider> declined your request
-to open a Canvas" behind the lock glyph, never naming the Canvas, and opens
-its requestable pane; the dock badge and the installed browser app's badge
-are the live `unseenCount` while Rally is open (`dockBadgeCount`), so they
-agree with the push badge, which counts the same rows. The owner's
-instructions of 2026-11-08: "inform the person [of] a denial", and "fix this"
-for the badge.
-
-**Why:** The run is where the question and its answer form are; the shared
-conversation's composer starts a new run, so a person sent there answered
-nothing. The design is silent on Activity, so this document is the
-authority. The run view reads the run's conversation, never `"0"`, so the
-read-cursor rule could not clear the row: it stayed unseen after the person
-answered (design-conformance review, item 7). The run's own state is what the
-row asked about, and it is already in the same object, so the rule is one
-probe rather than a per-row mark. The 45% opacity left a seen preview at
-1.9:1 in light and 2.45:1 in dark, and opening a Sidekick marked every row
-about it, which read as a multi-selection. A finished run's row still marked
-every finished row of its Sidekick open, because they all open the same shared
-conversation (round-2 review); it is now never marked open. A finished row
-stayed unseen while its requester watched the run finish with the
-conversation open: the row is updated in place, so the cursor did not move and
-the one report an open owes had already been made (round-2 review).
-A seen row's preview and time were dimmed a step further than its title, to
-3.02:1 in light and 4.22:1 in dark, under 4.5:1 at their 12-12.5px; they now
-share the title's token.
-
-**Considered and rejected:** Opening a finished run's row at its run
-(`?run=`), as a Needs input row opens: the highlight would then be one row,
-but the run view reads the run's conversation, and only a read of `"0"` clears
-a finished row, so opening it would leave it unseen. Opening the shared conversation at the run's
-row, which now carries the question too: it reads `"0"` and clears the row,
-but a row could not be scrolled to a run's row without a sequence the item
-does not carry.
-
-**What a future change must respect:** a Needs input row is cleared by the
-run being answered, by `"0"` being read, or by Mark all seen; a seen row's
-colours are tokens chosen for contrast, and dimming a row by opacity is how
-this failed before.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — A row lists only while its person may open the parent, and every read report is heard
-
-**What changed:** `activityPage` filters out, from the page and the unseen
-count, a row about a Canvas or Sidekick its person cannot open, where it only
-withheld the title. A conversation's `directory_user` effect carries the
-report's time (`lastReadAt`), and the parent dates the read by it, so a report
-at an unchanged cursor is a new effect.
-
-**Why:** The end-to-end pass found a confirmed mention in a creator-only
-Canvas sending its preview, message id and sequence to someone who could not
-open it, and a requester who reopened a Sidekick after its run finished, at
-the cursor they had already read, left with the run's row unseen: the report
-was byte-identical to the last, so the outbox reused its message id and the
-parent's receipt fence dropped it.
-
-**Considered and rejected:** Redacting more fields of a row the person cannot
-open: the row's existence is itself the parent's activity. Dating the read by
-its arrival: a report delivered after a run finished would clear the run's row
-for a read that came before it.
-
-**What a future change must respect:** the access filter and the page are one
-statement, and a read is dated by when the person read, never by delivery.
-(Later the same day the filter gained one exemption, `access_denied`; see
-the entry above.)
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — Activity returns as a per-person feed of the four push events
-
-**What changed:** A third rail section, Activity, lists one person's mentions,
-adds and Sidekick run notices. WorkspaceDO migration 140 adds
-`workspace_activity_items` and `workspace_activity_seen` and widens the
-sidebar-list waterline's CHECK to `activity` by copying the table. The workspace
-socket carries the page on subscribe and pushes `workspace_activity_list`;
-`activity_mark_all_seen` is its one command. The `mention_notification` effect
-carries the message's `attentionOrdinal` and `transcriptSequence`, so a
-mention's row clears on the read cursor and opens the Chat at its message.
-
-**Why:** The user asked on 2026-11-08 to bring the Activity section back. The
-Thread-era feed (the Activity tab of `digests.md`, retired with the Thread
-subsystems; its last version is `git show ad8baaa^:docs/digests.md`) was
-deleted at plan step B-3 with the Threads it read. It returns sourced from the
-same four events as push, written in the intent's transaction, so the feed
-cannot drift from what was pushed. Seen is derived from the read cursor that
-already drives every unread, so the feed cannot disagree with the Canvas or
-Sidekick row either (the coordinator's 2026-11-08 amendment).
+**Why:** The owner asked on 2026-11-08 to bring the section back. The Thread-era
+feed, the Activity tab of the retired `digests.md`, was deleted with the Threads
+it read. Writing each row with the intent it mirrors means the feed cannot drift
+from what was pushed, and deriving seen from the read cursor that drives every
+unread means it cannot disagree with the Canvas or Sidekick row. The access
+filter came from the end-to-end pass, which found a mention in a creator-only
+Canvas sending its preview to someone who could not open it. A read is dated by
+the report's own time because an identical report at an unchanged cursor was
+dropped by the outbox's receipt fence, leaving a finished run's row unseen.
 
 **Considered and rejected:** Deriving the feed from each conversation's
-transcript on read, as the old feed derived replies and starts — a fan-out read
-over every conversation on every rail open, against the low-latency goal. A
-`seen_at` column and a per-item mark command: a second read state beside the
-conversation's own. Comparing the read cursor alone for an add or a run notice:
-a requester who had read their own request would get their finished run
-already seen.
+transcript on read, a fan-out over every conversation on every rail open. A
+`seen_at` column or a per-item mark command, a second read state beside the
+conversation's own. A row per reply or per reply batch, which would bury the
+feed. Opening a finished run's row at its run (`?run=`): the run view reads the
+run's conversation, so the row would never clear. Dimming seen rows by opacity,
+which left their previews at 1.9:1.
 
-**Consequences:** A new kind of person-facing event joins Activity by being
-recorded through one of the two recorders, or by calling `recordActivityItem`
-in its own intent's transaction. Retention is undecided and nothing prunes.
+**Consequences:** A new person-facing event joins by being recorded through one
+of the recorders, or by calling `recordActivityItem` in its own intent's
+transaction. A change to what lists or what is seen changes `listedSql` or
+`ACTIVITY_SEEN_SQL` once, for the page, the counts and the badges together. A
+read is dated by when the person read, never by delivery. Nothing prunes either
+table: retention, and the 1,000-character preview the subscribe frame carries,
+are numbers for the team to set.
 
 Shipped in juno-ai-labs/avalon#1490.

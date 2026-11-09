@@ -478,65 +478,6 @@ best-effort remote revocation.
 
 ## Changelog
 
-### 2026-11-08 — The account menu counts each Organization's unseen Activity, in the browser too
-
-**What changed:** The attention read behind a background Organization's row
-(`GET /workspace/attention`, `/browser/workspaces/attention`) answers the
-person's unseen Activity there as `readerAttentionCount` and the unseen runs
-waiting on them as `waitingForYou`, where it answered zeros since Threads
-were retired. The account menu's background rows read
-`readerAttentionCount` as that Organization's unseen Activity and say so ("3
-new in Activity", "2 Sidekick runs waiting for your input"). The app session
-gains `getWorkspaceAttention`: the Mac's bridge with the stored credential, as
-before, and in the browser the identity-cookie read
-`GET /browser/workspaces/attention`, shared by one refresh's asks, so the
-browser's account menu shows counts where it showed none (its bridge refused
-every Organization but the open one).
-
-**Why:** The owner said "fix this" on 2026-11-08 for the account menu's
-other-Organization counts: `attention()` returned zeros once Threads were
-retired, so every row read nothing. The server now counts unseen Activity;
-the client's words still said "conversations with new activity", which no
-longer names what is counted.
-
-**Considered and rejected:** Summing each Canvas's and Sidekick's unread
-messages: a different number from the Activity rail the person sees on
-switching, and a second rule to keep in step. A browser read per Organization:
-the cookie route already answers every membership in one request.
-
-**Consequences:** The count is `activityCounts`, the Activity page's own
-filter and seen rule; a change to that rule changes this number. The browser's onboarding rows count as holding a credential
-(`credentialStored: true`) for the attention gate, since the cookie reads
-them all. A membership whose attention the route leaves out (its read failed)
-keeps its last count under "Counts last updated".
-
-After the round-5 visual check: an unseen mention in another Organization read
-only "1 new in Activity", because `attention()` never ranked `mentioned` and
-the label returned nothing while `waitingForYou` was zero (F7); the server now
-ranks an unseen mention as the reason and the label names it ("You were
-mentioned") with no run waiting. "Counts last updated <when>" broke its time
-onto a second line in the menu label's column (F10); it is one line.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — Discovery withholds nothing, and activation has no preparing state
-
-**What changed:** Regional discovery no longer drops the demo template and
-unpublished demo candidates from a member's list, and activation no longer
-answers `demo_workspace_preparing`. `createWorkspaceForMember` is
-Engineering MCP's alone.
-
-**Why:** The owner's instruction of 2026-11-08: "remove the demo
-functionality completely". Both were the demo feature's only branches in
-discovery and activation, and the read behind them queried `demo_operations`
-on every sign-in.
-
-**What a future change must respect:** the template, `demo-template`, is
-retired before this ships, because without the filter its members would see
-it in their account menus ([`workspace-retirement.md`](workspace-retirement.md#operations)).
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-21 — Initial members through shared Organization creation
 
 **What changed:** The session-less `createWorkspaceForMember` entryway accepts
@@ -553,7 +494,6 @@ that duplicates the membership entrance and can leave partial membership setup.
 
 **Consequences:** Callers retry the original creation and member list. Memberships
 commit together; unfinished Channel seating is resumed rather than re-created.
-
 
 ### 2026-10-12: A retired refresh token lasts until its successor is used
 
@@ -648,7 +588,6 @@ Organization with a non-zero count, so trigger and rows agree. The web
 shell's own account menu still shows no background counts: the browser
 platform refuses attention for any Organization but the active one, and
 moving it onto the new route is a separate change.
-
 
 ### 2026-10-07: Creating an organization takes fewer round trips, and lands like a switch
 

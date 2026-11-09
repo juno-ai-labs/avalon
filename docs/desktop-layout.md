@@ -145,82 +145,6 @@ windows, and checks that rail positions and panels return visibly.
 
 ## Changelog
 
-### 2026-11-08 — A panel's width is saved as its share of the pane
-
-**What changed:** A dragged or reset panel width is saved per conversation as
-its share of the main pane (`rally.rail-share:<scope>`), and a restored panel
-takes that share of the pane it opens in, held between the minimum and the
-width that leaves the conversation its minimum. Pixel widths saved before are
-still read, inside the same bounds.
-
-**Why:** The owner's answer to the follow-up "a panel width stored from a
-narrow window comes back narrow on a wide one" was "do this". The panel opens
-at an even split, which is already a share of the pane, so a share keeps a
-drag and the documented default in one unit; a drag to half a narrow pane now
-means half of any pane.
-
-**Considered and rejected:** Clamping the stored pixels to the pane's current
-minimum and maximum on restore. A width stored narrow is already inside a
-wide window's bounds, so the clamp would leave exactly the reported panel
-narrow. The clamp is kept, as the bound on a share restored into a pane too
-small for it.
-
-**What a future change must respect:** anything that saves a panel width
-must save it through `setRailWidth`, which measures the pane; a pixel width
-written directly is read as the legacy format. A drag saves once, at its end,
-not at each step.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — The panel takes a pane narrower than two conversation minimums, and a closed panel reopens from the Canvas's menus
-
-**What changed:** An open panel fills the pane where the pane, the window less
-the sidebar, is narrower than 848px (twice the conversation's 424px), not
-narrower than 424 + 280px: below 1264px with the default sidebar (1324px at
-its maximum), where it was 1120px. The pane is measured after the sidebar
-gives way in a narrow tab. A Canvas's "⋯" and pill menus gained **Open
-artifact**.
-
-**Why:** The sidebar's default became the rail plus design.html's 340px list,
-416px (desktop-shell.md), which first moved the old rule's crossing from
-1044px to 1120px. The second design inspection (v1-R2-3) then found 1180px
-still splitting a 764px pane into about 400px of Chat beside a 350px panel
-whose artifact pill was clipped at its left edge: the old rule asked only that
-the narrowest panel fit beside the Chat's minimum, but a panel opens at half
-the pane, so a pane that passed it still opened cramped. Keying on the split
-the panel actually opens at fixes that without a new number. v1-R2-4 found no
-way back to a panel once closed short of leaving the Canvas; the menu item
-reuses the arrival's navigation onto the newest artifact, which already opens
-again on each request.
-
-**What a future change must respect:** `railFillsPane` and the shell's
-`--av-cmp-sidebar-width` must agree on the pane; change how the sidebar gives
-way in one and the other moves with it.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — The landing reopens a Canvas or Sidekick, or the Canvases home
-
-**What changed:** `last-route` is written only for Canvas and Sidekick routes
-and either home, and the landing reopens it or opens `/canvases`. The Channel
-fallback chain (first pinned Channel, General, A–Z) and the
-directory-checked restore are gone, and the Threads and Channels sorts and the
-`thread-width` and `breakout-width` keys are no longer read.
-
-**Why:** Plan step B-1 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-Channels, Threads and Breakouts are deleted, so a saved route naming one has
-nothing to reopen, and the pane widths for a thread beside its Channel and a
-Breakout beside its thread describe panes that no longer exist. The restore no
-longer waits on a directory because the Canvas and Sidekick screens each read
-their own subject and show the unavailable state themselves.
-
-**Consequences:** Old keys stay in a device's local storage, unread and
-harmless; nothing removes them. A route added to the shell is restored only
-once `restorableRoute` admits it.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-18 — A restored panel nobody resized opens at the even split
 
 **What changed:** Arriving at a conversation that had a panel open, or
@@ -271,7 +195,6 @@ in the renderer can change it. A panel narrows the conversation, so its width
 is half the pane rather than the conversation's present width. Bringing
 growth back means rebuilding the width bookkeeping that saved state relied on
 to avoid storing a panel's width as the person's choice.
-
 
 ### 2026-10-15 — Panels open 50/50, and every edge is equally easy to grab
 
