@@ -492,7 +492,9 @@ transcript row that says `workstream` reads as `personal`
 (`StoredAutomationScopeSchema`): fail closed, because the value does not say
 whether its Thread was private, and a draft writes its suggested scope on
 every submission, so reading it as the Organization would widen a private
-Thread's Sidekick past what the directory migration kept. The summary and detail no longer carry
+Thread's Sidekick past what the directory migration kept. So an unpublished
+draft that migration 135 kept Organization-wide becomes personal on its next
+wizard submission, and a manager can widen it again. The summary and detail no longer carry
 `owningWorkstreamId` or `owningThread`.
 
 `POST /sidekicks` creates a personal draft and its authoring conversation.

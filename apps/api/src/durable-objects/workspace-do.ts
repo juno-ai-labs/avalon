@@ -4408,6 +4408,15 @@ function conversationToolEntry(conversation: {
   };
 }
 
+/** Send a sidebar list push; a socket closing as it is sent is not a failure, since a reconnect receives the whole list. */
+function sendSidebarListFrame(socket: WebSocket, frame: string): void {
+  try {
+    socket.send(frame);
+  } catch {
+    // Closed or closing: its subscribe payload carries the list on reconnect.
+  }
+}
+
 function conversationToolRefusal(
   code: ConversationToolRefusalCode,
   available: readonly string[],
@@ -5687,13 +5696,28 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed || (!everyone && !readers.has(attachment.userId))) continue;
-      try {
-        socket.send(JSON.stringify(WorkspaceCanvasListEventSchema.parse({
-          type: "workspace_canvas_list", occurredAt, waterline, items: this.canvasList(attachment, present),
-        })));
-      } catch {
-        // A reconnect receives the whole list in the subscribe payload.
-      }
+      const frame = this.sidebarListFrame("workspace_canvas_list", attachment.userId, () => WorkspaceCanvasListEventSchema.parse({
+        type: "workspace_canvas_list", occurredAt, waterline, items: this.canvasList(attachment, present),
+      }));
+      if (frame !== null) sendSidebarListFrame(socket, frame);
+    }
+  }
+
+  /**
+   * One socket's sidebar list push, read and checked, or null after logging
+   * why it could not be built: a list that fails its read or its own schema
+   * is a defect to see, named by the failing field, not a push to drop
+   * silently. The socket keeps its last list; its next push or reconnect
+   * brings the current one.
+   */
+  private sidebarListFrame(event: string, userId: string, build: () => unknown): string | null {
+    try {
+      return JSON.stringify(build());
+    } catch (error) {
+      logWarn(this.env, `${event}_unpublished`, {
+        workspace_id: this.workspaceId(), user_id: userId, code: diagnosticErrorCode(error, `${event}_unbuilt`),
+      });
+      return null;
     }
   }
 
@@ -5743,21 +5767,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.activityRecipientsMoved.clear();
     const occurredAt = new Date().toISOString();
     const waterline = this.activityListWaterline();
-    const lists = new Map<string, ReturnType<WorkspaceDO["activityList"]>>();
+    const lists = new Map<string, string | null>();
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed || !recipients.has(attachment.userId)) continue;
       // One read per person and kind of access, however many sockets they hold.
       const key = `${attachment.userId}:${viewerOf(attachment).accessClass}`;
-      const list = lists.get(key) ?? this.activityList(attachment);
-      lists.set(key, list);
-      try {
-        socket.send(JSON.stringify(WorkspaceActivityListEventSchema.parse({
-          type: "workspace_activity_list", occurredAt, waterline, ...list,
+      if (!lists.has(key)) {
+        lists.set(key, this.sidebarListFrame("workspace_activity_list", attachment.userId, () => WorkspaceActivityListEventSchema.parse({
+          type: "workspace_activity_list", occurredAt, waterline, ...this.activityList(attachment),
         })));
-      } catch {
-        // A reconnect receives the whole list in the subscribe payload.
       }
+      const frame = lists.get(key)!;
+      if (frame !== null) sendSidebarListFrame(socket, frame);
     }
   }
 

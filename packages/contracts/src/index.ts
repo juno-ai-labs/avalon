@@ -1356,7 +1356,7 @@ export const AutomationDraftSchema = z.object({
   /**
    * Who will be able to see and change this automation, asked before it is
    * submitted because it cannot be changed afterwards. A revision stored while
-   * the retired `workstream` scope existed reads as `workspace`.
+   * the retired `workstream` scope existed reads as `personal` (fail closed).
    */
   suggestedScope: StoredAutomationScopeSchema,
   followUpQuestion: z.string().nullable(),
