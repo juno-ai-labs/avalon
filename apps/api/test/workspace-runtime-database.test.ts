@@ -180,12 +180,13 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_workstream_access", // Private WorkspaceDO visit state; no facade callers.
   "onboarding_journeys", // Owned by the typed onboardingJourney RPC only.
   "_internal_durable_alarms",
-  // Retirement's two tables. Both are read and written only by the object
+  // Retirement's tables. All are read and written only by the object
   // itself, through `ctx.storage.sql`, and the gate that reads the tombstone
   // runs before anything the facade could route — including during constructor
   // recovery, when there is no request to route on behalf of.
   "object_retirement",
   "workspace_retirement_graph",
+  "workspace_retirement_children",
   "opportunity_batch_events",
   "opportunity_batch_windows",
   "opportunity_provenance_edges",
