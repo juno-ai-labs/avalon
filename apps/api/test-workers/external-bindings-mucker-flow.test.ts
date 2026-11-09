@@ -242,11 +242,6 @@ async function seedRegionalDatabase(): Promise<void> {
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL
     )`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    )`),
     // The regional route Slack ingress finds an installation's Organization by.
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS slack_installation_routes (
       team_id TEXT PRIMARY KEY, region TEXT NOT NULL, workspace_id TEXT NOT NULL,

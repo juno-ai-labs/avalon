@@ -4,7 +4,7 @@
  * Ordered canonical conversation turns are the work stream's record of what was said and by whom.
  * Members read it through `WorkstreamObjectProductService`, which has always
  * been object-native. This class is the other reader and writer: the harness,
- * the digest, Slack, inbound email, and the automation service, all of which
+ * the digest, Slack, and the automation service, all of which
  * reached the same rows from the Worker by preparing D1-shaped SQL against
  * `_runtime_messages` — a compatibility view whose INSTEAD OF trigger mapped
  * `member` to `human`, the stored payload's content to `text_content`, invented

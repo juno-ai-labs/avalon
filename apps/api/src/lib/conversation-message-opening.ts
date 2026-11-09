@@ -18,7 +18,7 @@ export function conversationMessageOpening(message: {
   authorUserId: string;
   authorName: string | null;
   text: string;
-}): { textContent: string; structuredContent: Record<string, unknown>; resourceId: null } {
+}): { textContent: string; structuredContent: Record<string, unknown> } {
   const name = (message.authorName ?? "").replace(/\s+/gu, " ").trim() || "Somebody";
   const lines = [
     "A message in this Sidekick's conversation started this run.",
@@ -35,6 +35,5 @@ export function conversationMessageOpening(message: {
       turnId: message.messageId,
       authorUserId: message.authorUserId,
     },
-    resourceId: null,
   };
 }

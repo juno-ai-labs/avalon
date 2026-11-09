@@ -1312,14 +1312,6 @@ Shipped in [#1148](https://github.com/juno-ai-labs/avalon/pull/1148).
 
 ### 2026-10-07 — Add people invites guests; Share and the Space header leave the title menu
 
-**What changed:** The People level's search takes email addresses. Enter adds
-anyone already in the Organization and invites any other address as a guest
-of that Channel or Breakout, without closing the menu, and pending invitations
-list beside the participants with **Cancel invite**. The **Share** tile, the
-scope row with **Change**, the Channel menu's **In space** header and **Copy
-channel email address** are gone. The Channel's More gains **Icon and
-color**, as the Breakout's has.
-
 **Why:** Share and Add people were two doors to one job, inviting someone in,
 and Share's dialog closed after each send. Folding the guest invite into the
 People search makes one place to bring anyone in, and keeping the menu open

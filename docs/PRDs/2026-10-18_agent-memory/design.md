@@ -130,7 +130,7 @@ which case that fact is returned with its `revision` unchanged. The source
 conversation is the current one; `about: "me"` requires a user principal and
 is refused for a Sidekick run. `derivedFrom` is not the model's to choose: it
 is the trust class of the input that started the run (`person` for a member's
-message, `external` for a Slack or email trigger, `agent` for an
+message, `external` for a Slack trigger, `agent` for an
 agent-to-agent message), so an external message that talks the model into
 "remembering" something writes a fact that stays out of digests.
 

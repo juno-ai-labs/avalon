@@ -71,7 +71,6 @@ export function automationSummary(
     ...(appearance ? { appearance } : {}),
     name: row.title || "New Sidekick",
     description: row.description,
-    emailAddress: null,
     scope: row.scope,
     status: row.lifecycle,
     nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
@@ -179,13 +178,12 @@ export const AUTOMATION_RUN_STATE_JOINS = `LEFT JOIN sidekick_runs latest_run
  * `schedule`; a connector, semantic, resource-watch or webhook trigger is
  * `external_event`, the run kind each of them starts. Read from the accepted
  * definition, or for a draft the newest one submitted, so the Sidekicks home
- * can say "On alert", "On email" or "On request" where a schedule would say
+ * can say "On alert" or "On request" where a schedule would say
  * when. A trigger type this server does not map is left out.
  */
 export const AUTOMATION_TRIGGER_KINDS_SQL = `(SELECT json_group_array(kind ORDER BY first_named) FROM (
      SELECT CASE json_extract(named.value, '$.type')
               WHEN 'manual' THEN 'manual'
-              WHEN 'inbound_email' THEN 'inbound_email'
               WHEN 'calendar' THEN 'schedule' WHEN 'interval' THEN 'schedule'
               WHEN 'connector_activity' THEN 'external_event' WHEN 'semantic_activity' THEN 'external_event'
               WHEN 'resource_watch' THEN 'external_event' WHEN 'webhook' THEN 'external_event'

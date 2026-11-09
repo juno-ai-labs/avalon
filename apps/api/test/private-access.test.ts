@@ -25,7 +25,7 @@ function submit(email: string, origin = 'https://rallywith.ai') {
 beforeEach(() => {
   sqlite = migratedSqliteDatabase();
   env = createTestEnv({ DB: sqliteD1(sqlite), AVALON_REGION: 'global', APP_ENV: 'production',
-    PUBLIC_API_BASE_URL: 'https://api.rallywith.ai', ALLOWED_ORIGINS: 'https://rallywith.ai', TURNSTILE_SECRET_KEY: 'test-turnstile-key', RESEND_API_KEY: 'test-not-a-key', EMAIL_FROM: 'Rally <test@example.com>' });
+    PUBLIC_API_BASE_URL: 'https://api.rallywith.ai', ALLOWED_ORIGINS: 'https://rallywith.ai', TURNSTILE_SECRET_KEY: 'test-turnstile-key', EMAIL_FROM: 'Rally <test@example.com>' });
   provider = mockAccessMail(env).mockImplementation(async () => ({ messageId: 'test-email' }));
 });
 afterEach(() => { sqlite.close(); Object.assign(accessAcknowledgementContent, originalContent); vi.restoreAllMocks(); });

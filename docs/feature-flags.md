@@ -186,7 +186,7 @@ Thread and Breakout composers that used to carry a pin from the developer model
 selector are retired with them. An automation's pin is the
 `model_override` column on its `automation_directory` row; there is exactly one path
 that creates a run, `provisionSidekickRun`, which serves manual,
-scheduled, connector-event, and inbound-email triggers alike, and it copies
+scheduled and connector-event triggers alike, and it copies
 `model_override` onto the run's child conversation, so a run resolves its model
 from its own row like every other conversation.
 

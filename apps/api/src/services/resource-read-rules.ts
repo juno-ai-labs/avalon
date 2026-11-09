@@ -20,7 +20,7 @@ export function isDraftUpload(row: ResourceReadRow): boolean {
 /**
  * Whether reading needs a readable conversation the resource is attached to.
  * An upload or a generated artifact needs one for everyone but its uploader;
- * an inbound email needs one for everyone. Every other provider is readable by
+ * a historical mail resource needs one for everyone. Every other provider is readable by
  * every member without one.
  */
 export function requiresAttachment(row: ResourceReadRow, owned: boolean): boolean {

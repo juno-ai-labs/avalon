@@ -214,7 +214,7 @@ renderers and asserted to reach the user-role message and never the system one. 
 new renderer that carries outside content belongs in that test.
 
 The five ingress paths whose renderers were deleted — Slack surrounding context,
-inbound email, the external event, a Sidekick result, a trigger activity — build
+the external event, a Sidekick result, a trigger activity — build
 their content at the call site now rather than in a renderer, so the same rule is
 enforced where the content is assembled: `model-protocol-transcript.test.ts`
 ("keeps injection text in the three ingress rows out of any system message")

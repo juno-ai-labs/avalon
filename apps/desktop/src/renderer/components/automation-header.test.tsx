@@ -190,7 +190,6 @@ describe('AutomationHeader', () => {
       currentDefinition: definition,
       currentDefinitionRevision: 1,
       acceptedDefinitionRevision: 1,
-      emailAddress: 'weekly-changelog@automation.rallywith.ai',
     };
     const { unmount } = render(
       <Tooltip.Provider><AutomationHeader automation={active} {...actions()} /></Tooltip.Provider>,
@@ -198,26 +197,10 @@ describe('AutomationHeader', () => {
     expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Wakes on' })).toBeVisible();
-    const email = screen.getByText('weekly-changelog@automation.rallywith.ai');
-    expect(email).not.toBeVisible();
-    fireEvent.click(screen.getByText('Email this Sidekick'));
-    expect(email).toBeVisible();
     unmount();
 
     renderHeader({ ...active, currentDefinitionRevision: 2 });
     expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
-  });
-
-  it('describes legacy inbound email even without explicit trigger summaries', () => {
-    renderHeader({
-      ...draft,
-      lifecycle: 'active',
-      currentDefinition: { ...definition, triggers: [] },
-      emailAddress: 'weekly-changelog@automation.rallywith.ai',
-      runnable: true,
-    });
-    expect(screen.getByRole('list', { name: 'Triggers' })).toHaveTextContent('When an email arrives');
-    expect(screen.getByRole('region', { name: 'Wakes on' })).not.toHaveTextContent('Nothing yet');
   });
 
   it('shows the next scheduled time even without current trigger summaries', () => {

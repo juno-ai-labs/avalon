@@ -442,7 +442,6 @@ reintroducing an optional OR that hides a range from SQLite's planner.
 
 Shipped in [#628](https://github.com/juno-ai-labs/avalon/pull/628).
 
-
 ### 2026-09-03 — Disabling foreign keys for a rebuild does not work
 
 **What changed:** The schema guidance above now tells a new migration not to
@@ -467,8 +466,6 @@ their statements are hashed into every deployed object's receipt.
 not be used again. Any rebuild of a referenced parent needs a populated workerd
 upgrade test that asserts a dependent's rows *survive*, because a fresh-schema
 test passes either way — which is exactly how this was found.
-
-
 
 ### 2026-08-30 — Document the operator-only raw-SQL exception
 

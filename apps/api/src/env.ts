@@ -13,8 +13,6 @@ import type { Region, UserId, WorkspaceId } from "@rally/contracts";
 import type { WorkspaceRelationship } from "@rally/contracts/scope-grants";
 import type { RegionalIdentityBridgeRpcBinding } from "./services/platform-onboarding-service";
 import type { GitHubRegionalBridgeRpcBinding, GlobalGitHubRouterRpcBinding } from "./services/github-routing-service";
-import type { GlobalWorkstreamEmailRouterRpcBinding } from "./services/workstream-email-routing-service";
-import type { InboundEmailRegionalRpcBinding } from "./services/resend-inbound-email-service";
 import type {
   GlobalLinearRouterRpcBinding,
   LinearRegionalBridgeRpcBinding,
@@ -123,13 +121,11 @@ export interface Env {
   CONNECTOR_EVENT_WORKFLOW: Workflow;
   [binding: `REGION_${string}_IDENTITY_BRIDGE`]: RegionalIdentityBridgeRpcBinding | undefined;
   [binding: `REGION_${string}_GITHUB_BRIDGE`]: GitHubRegionalBridgeRpcBinding | undefined;
-  [binding: `REGION_${string}_INBOUND_EMAIL_BRIDGE`]: InboundEmailRegionalRpcBinding | undefined;
   [binding: `REGION_${string}_LINEAR_BRIDGE`]: LinearRegionalBridgeRpcBinding | undefined;
   GLOBAL_ASHBY_ROUTER?: GlobalAshbyRouterRpcBinding;
   [binding: `REGION_${string}_NOTION_BRIDGE`]: NotionRegionalBridgeRpcBinding | undefined;
   [binding: `REGION_${string}_SLACK_BRIDGE`]: SlackRegionalBridgeRpcBinding | undefined;
   [binding: `REGION_${string}_TELEMETRY_BRIDGE`]: RegionalTelemetryBridgeRpcBinding | undefined;
-  GLOBAL_EMAIL_ROUTER?: GlobalWorkstreamEmailRouterRpcBinding;
   GLOBAL_GITHUB_ROUTER?: GlobalGitHubRouterRpcBinding;
   GLOBAL_LINEAR_ROUTER?: GlobalLinearRouterRpcBinding;
   GLOBAL_NOTION_ROUTER?: GlobalNotionRouterRpcBinding;
@@ -203,8 +199,6 @@ export interface Env {
   TURNSTILE_SECRET_KEY?: string;
   /** Native Cloudflare Email Service send binding. */
   EMAIL?: { send(message: EmailMessageBuilder): Promise<EmailSendResult> };
-  /** Legacy receiving only, retained for previously issued automation.* addresses. */
-  RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
   /** Explicit email sign-in policy; unset keeps the new entrypoint unavailable. */
   EMAIL_LOGIN_POLICY_JSON?: string;
@@ -217,11 +211,6 @@ export interface Env {
    */
   MCP_RESOURCE?: string;
   EMAIL_NOTIFICATION_FROM?: string;
-  RESEND_RECEIVING_API_KEY?: string;
-  RESEND_WEBHOOK_SIGNING_SECRET?: string;
-  RESEND_WEBHOOK_SECRET?: string;
-  WORKSTREAM_EMAIL_ADDRESS_KEY?: string;
-  WORKSTREAM_EMAIL_DOMAIN?: string;
 
   /** Global only. `productionOnlySecrets` enforces them there; regional never carries them. */
   GOOGLE_OAUTH_CLIENT_ID?: string;
@@ -301,7 +290,6 @@ export interface Env {
   MAX_ATTACHMENT_BYTES: string;
   WEBHOOK_REPLAY_WINDOW_SECONDS: string;
   PROVIDER_WEBHOOK_MAX_BYTES?: string;
-  INBOUND_EMAIL_MAX_BYTES?: string;
   LOG_LEVEL: "debug" | "info" | "warn" | "error";
 }
 
@@ -530,7 +518,6 @@ const EnvContractSchema = z.object({
   HARNESS_CHILD_MAX_DEPTH: numericString.optional(),
   CONNECTOR_POLL_TIMEOUT_MS: numericString.optional(),
   PROVIDER_WEBHOOK_MAX_BYTES: numericString.optional(),
-  INBOUND_EMAIL_MAX_BYTES: numericString.optional(),
 
 
   GITHUB_INGRESS_BASE_URL: HttpUrlSchema.optional(),
@@ -721,8 +708,7 @@ export function numericEnv(
     | "WEB_FETCH_MAX_BYTES"
     | "MAX_ATTACHMENT_BYTES"
     | "WEBHOOK_REPLAY_WINDOW_SECONDS"
-    | "PROVIDER_WEBHOOK_MAX_BYTES"
-    | "INBOUND_EMAIL_MAX_BYTES",
+    | "PROVIDER_WEBHOOK_MAX_BYTES",
   fallback: number,
 ): number {
   const parsed = Number.parseInt(env[key] ?? "", 10);

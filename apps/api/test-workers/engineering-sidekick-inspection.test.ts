@@ -122,13 +122,6 @@ beforeEach(async () => {
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', ?)`).bind(WORKSPACE_ID, BYSTANDER_ID, NOW),
-    // Publishing reserves the Sidekick's email address.
-    env.DB.prepare(`CREATE TABLE workstream_email_routes (
-      email_address TEXT PRIMARY KEY COLLATE NOCASE, address_source TEXT NOT NULL,
-      region TEXT NOT NULL, workspace_id TEXT NOT NULL, workstream_id TEXT,
-      automation_subscription_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-      UNIQUE (region, workspace_id, workstream_id)
-    )`),
   ]);
 });
 

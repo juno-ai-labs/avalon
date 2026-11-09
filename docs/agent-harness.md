@@ -493,7 +493,7 @@ provenance; the persistent loop keeps the conversation itself and is resumed
 rather than reconstructed from that trigger on every activation.
 
 System producers that already own a canonical trigger—such as an
-automation opening input, activity, or inbound email—may prepare an unlinked
+automation opening input, activity,—may prepare an unlinked
 execution receipt and wake the same loop. `transcriptFenceMessageId` separates
 the trigger's identity from the newest canonical turn that activation may see.
 A retry can therefore preserve what caused the failed activation while moving
@@ -505,7 +505,7 @@ After admission Rally validates the execution principal and records the run scop
 
 ### Context and stable prompts
 
-Context is assembled for the execution principal from the conversation title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. An automation run also receives, from `AutomationDO.readRunDefinition` by its pinned revision, the existing Sidekick ID, definition revision, name, instructions, expected outputs, and default behavior, and `homeConversationId`, which is always null now: no conversation is a Sidekick's home, and the run delivers its result itself. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
+Context is assembled for the execution principal from the conversation title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. An automation run also receives, from `AutomationDO.readRunDefinition` by its pinned revision, the existing Sidekick ID, definition revision, name, instructions, expected outputs, and default behavior, and `homeConversationId`, which is always null now: no conversation is a Sidekick's home, and the run delivers its result itself. A triggering activity is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
 
 Sidekick execution policy identifies this as one activation of an existing
 Sidekick, rather than a request to configure it again. Rally owns future
@@ -542,7 +542,7 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Substantial interactive work starts with a brief approach; updates then focus on changes to participants' expectations or decisions they need to make. Headless runs skip progress narration. Final responses lead with the result and omit padding while retaining requested detail and material caveats. The prompt owns the writing rules; its preference for natural language applies to style only and does not relax platform policy. Private reasoning is never emitted.
 
-The standing prompt names the product as it is: an Organization holds Canvases and Sidekicks, a Canvas's Chat is where its people ask Rally for work, and a Sidekick's shared conversation is where the people it is shared with read its runs and ask for more, each run in a conversation of its own. It names no Channel, Thread, Breakout or Space, and the task context's key for the title and objective is `conversation`. Every Sidekick run that an inbound email did not start runs on the `self_delivery` surface, whose section says what the people in the Sidekick's shared conversation see (the final message is the reply on the run's row there, and nothing sends it anywhere else), that any send to a reader outside Rally is the run's own work, done with its tools, and that it sends nothing when the instructions ask for no delivery; left silent, a run that *describes* emailing a summary has not emailed it. The `rally:conversations` plugin's run instruction says the same about the row and tells the run not to post that reply into the shared conversation again; a post is for another conversation. It says nothing about missing access: the activation section's ask-and-wait rule is the only statement of it, because the plugin's message renders later and an older report-and-finish wording there was the one a model followed. [`conversation-tools.md`](conversation-tools.md) owns the plugin and [`automation-lifecycle.md`](automation-lifecycle.md) the run rows.
+The standing prompt names the product as it is: an Organization holds Canvases and Sidekicks, a Canvas's Chat is where its people ask Rally for work, and a Sidekick's shared conversation is where the people it is shared with read its runs and ask for more, each run in a conversation of its own. It names no Channel, Thread, Breakout or Space, and the task context's key for the title and objective is `conversation`. Every Sidekick run runs on the `self_delivery` surface, whose section says what the people in the Sidekick's shared conversation see (the final message is the reply on the run's row there, and nothing sends it anywhere else), that any send to a reader outside Rally is the run's own work, done with its tools, and that it sends nothing when the instructions ask for no delivery; left silent, a run that *describes* emailing a summary has not emailed it. The `rally:conversations` plugin's run instruction says the same about the row and tells the run not to post that reply into the shared conversation again; a post is for another conversation. It says nothing about missing access: the activation section's ask-and-wait rule is the only statement of it, because the plugin's message renders later and an older report-and-finish wording there was the one a model followed. [`conversation-tools.md`](conversation-tools.md) owns the plugin and [`automation-lifecycle.md`](automation-lifecycle.md) the run rows.
 
 A document-shaped request is written as a Markdown file in the conversation's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the run has no Terminal plugin or the workspace cannot be reached, which outranks a request for a document. A Sidekick run a non-delegate asked for gets no Terminal (`terminal-workspaces.md`), so the standing prompt's calculation rule and the Sites section carry the same no-Terminal alternative beside the rule each excepts. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every conversation run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal conversation rule steers into.
 
@@ -563,10 +563,6 @@ test in `index.test.ts` covers deferred activation and direct execution for
 true, false, and omitted hints.
 
 Every connector adapter supplies a static agent-plugin descriptor whose provider type and code-authored tool order must match its manifest. At run start Rally creates one Bind plugin per eligible installed connection, identified as `connection:<uuid>` with a stable hashed wire prefix. Its tools are narrowed to the connection's frozen grants and run policy:
-
-- Ad-hoc runs may include workspace connections and the initiating user's personal connections that a person has not disabled. A stored `needs_reconnect` no longer removes a connection from a run — see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
-- Sidekick runs include the connections the Sidekick's definition bound at apply time (`readRunDefinition().defaultPluginIds` and `connectorBindings`) and eligible connections attached through the run's resources. Attached connections remain limited to the immutable grants frozen for the run.
-- Inbound-email runs remove external connector writes.
 
 Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `rally_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. An explicit load may run a convergent host-owned `onActivate` preparation hook after reauthorization and dynamic tool loading. Successful preparation is single-flighted for the run, then activation is durably recorded before the plugin's tools or trusted guidance become visible. Failed preparation remains retryable only when the host returns model-safe retry guidance; provider details are not exposed.
 
@@ -850,7 +846,7 @@ and only bounded resource paths travel through the structured failure allowlist.
    on a person. Status cleanup and suppressed-delivery receipts may run without
    one; reply or comment content may not.
 
-Web discovery and page reading are bounded Firecrawl tools. Search returns ranked links and page fetch returns clean markdown. Both are omitted without `FIRECRAWL_API_KEY`; an inbound-email run holds them like any other, per [`security.md`](security.md).
+Web discovery and page reading are bounded Firecrawl tools. Search returns ranked links and page fetch returns clean markdown. Both are omitted without `FIRECRAWL_API_KEY`; all supported run triggers use the same capability checks.
 
 ### Elicitation
 
@@ -1505,12 +1501,12 @@ participants remain deferred product work.
   run was already authorized to read, and a skill naming an owner plugin makes the
   model load it separately rather than activating it — an auto-activation would let
   a document issue a capability grant.
-- **A triggering activity or inbound email is user-role content**, never promoted
+- **A triggering activity is user-role content**, never promoted
   into the system prompt. It carries no trust label of its own. The same holds for
   a naming request and a skill body, which is wrapped in `<skill_content name=…>`
   so the model can tell it from platform policy.
 - **The trigger's two jobs stay separate on a retry.** As *identity* it admits a
-  brief or an inbound email to the model at all; as *bound*
+  brief to the model at all; as *bound*
   (`transcriptFenceMessageId`) it is the newest *turn* the run may see — a turn,
   because the newest one is usually the agent's and an assistant turn's id is
   `<loopId>:turn:<ordinal>` rather than a UUID. The fence
@@ -1548,7 +1544,7 @@ participants remain deferred product work.
   instructions exist only as a transcript `system` row reaches the model with
   nothing but its conversation's objective, because the protocol projector drops
   those rows as UI state; the exceptions are the rows it admits by their
-  structured content's kind (an inbound email, an external event, a Sidekick's
+  structured content's kind (an external event, a Sidekick's
   self-review notice), each through its own renderer.
 - **A cancellation is a durable request, observed by the lease owner**, which alone
   commits the fenced `stopped` transition. Stopping never kills an in-flight
@@ -3244,7 +3240,7 @@ majors along.
 ### 2026-09-11 — Trigger content carries a source label again
 
 **What changed:** The three paths that lost all framing when the trust labels
-came out get a plain source line: `INBOUND EMAIL:`, `SLACK CONTEXT:` and
+came out get a plain source line: `SLACK CONTEXT:` and
 `SIDEKICK TRIGGER:`. The external-event path already kept
 `EVENT THAT STARTED THIS RUN:`, and a Sidekick result already carried its name
 and delivery time.
@@ -3263,7 +3259,7 @@ instruction about how far to believe it.
 
 **What changed:** The five `renderUntrusted*` / `renderTriggerActivityMessage`
 helpers are deleted from `prompts/workstream.ts`. Slack surrounding context, a
-trigger email, an external event, a Sidekick result and a trigger activity are
+an external event, a Sidekick result and a trigger activity are
 projected as plain user-role messages. The prompt-authority invariant above is
 rewritten: the layering by role survives, the trust labelling does not.
 
@@ -3533,27 +3529,6 @@ retired memory rule about "a work stream an automation created" has no subject
 left: a run is a substream under the automation, never a work stream.
 
 ### 2026-09-03 — A run delivers its own result, and no trigger narrows its tools
-
-**What changed:** The `# Result delivery` section of the work-stream system
-prompt has two arms: one names the owning room as the only destination Rally
-posts to and tells the run not to post there itself, the other tells a run with
-an empty `resultDelivery` that nothing sends for it and that any sending its
-instructions ask for is its own work. The list's channel type is `workstream`
-alone. `requestedDelivery` is gone from the submit-draft tool schema and its
-normalizer, and the drafting tool's submission pre-check now applies the same
-`automationDraftAcceptanceBlocker` the object does, phrasing both of its
-refusals for the model. In `apps/api/src/services/integrations.ts` the three
-`inbound_email` tool guards are gone, so a mail-started run holds write-mode
-connector tools and the Firecrawl web tools like any other run.
-
-**Why:** Delivery destinations chosen at creation and sent by a loop after the
-run could not express what instructions can, and their existence let a run read
-silence as "Rally has it covered"; the empty arm is what stops that. The
-inbound-email guards named one trigger of several that carry untrusted content
-and so described a boundary that did not exist. Both decisions and their
-alternatives are recorded in [`automation-lifecycle.md`](automation-lifecycle.md)
-and [`security.md`](security.md); this entry records that the harness body above
-now describes them.
 
 Two corrections landed on review before this merged. `outputSurface` gained a
 fourth value, `self_delivery`, for an automation run no room owns: the
@@ -4029,14 +4004,6 @@ maintenance drain independently from `external_settled_at`, with an eager
 `waitUntil` attempt and alarm recovery. The lane preserves terminal-run order;
 its retry deadline is no longer an executable-loop deadline.
 
-Opening and follow-up composer messages, elicitation answers, non-automation
-inbound email, and Slack opening, follow-up, and elicitation messages no longer
-call `freezeRunMemoryContext` before the first model request. Their immutable
-run scope records a null memory-context hash. The `rally_memory` plugin and
-explicit `memory_search` tool are unchanged. Non-message runs and automation
-executions retain automatic frozen admission recall even when an automation's
-trigger reason is also `inbound_email`.
-
 **Why:** The previous drain awaited every external and cosmetic continuation
 before it promoted the next queued message. A slow connector, classification,
 name generation, or description refresh therefore became time-to-inference even
@@ -4248,7 +4215,7 @@ registry rather than in request code.
 **What changed:** `DOCUMENT_GENERATION_POLICY` moves into the work-stream
 `SYSTEM_PROMPT` alongside the other standing sections. `documentPublishing` and
 `runPublishesDocuments` are gone — every work-stream run sees `# Documents`,
-including automations, digests, inbound email, Slack-origin, HyperSight blocks,
+including automations, digests, Slack-origin, HyperSight blocks,
 and regions without Terminal. The host-side gate tests go with them. A typed
 output surface now follows the standing rule: external deliveries require the
 complete usable body in the final message, and HyperSight blocks require
@@ -4770,7 +4737,7 @@ footnotes into chips and pills, and none of it happens unless a model writes the
 syntax. Two placements were rejected. A skill would pay a load round trip for a
 rule that applies to any run with an attachment. Keeping the *announcement*
 bullet here — where the first draft put it — charged every automation, scheduled
-digest, inbound-email and Slack-origin run to announce documents they were
+digest and Slack-origin run to announce documents they were
 deliberately never told to make; it also left two rules for one act with no
 tie-break, since the document policy already owned announcing.
 
@@ -4791,7 +4758,7 @@ Superseded by the 2026-08-30 standing-policy and output-surface entry above.
 **What changed:** `DOCUMENT_GENERATION_POLICY` joined the work-stream system
 prompt as a `# Documents` section, rendered only when `loadRunPromptContext`
 resolves `documentPublishing` — the region reports Terminal supported, and the
-run is not an automation, a scheduled digest, an inbound email, or
+run is not an automation, a scheduled digest, or
 Slack-originated. It carries the trigger, the write-then-publish procedure, the
 narration discipline, the same-path revision rule, the override, and the inline
 fallback.

@@ -400,7 +400,7 @@ parent hosted in `WorkspaceDO` beside the Canvases: its substream `0` is the
 shared conversation where everyone it is shared with asks it for runs and a
 manager edits it through the wizard, and every run is a child substream under
 it with a row in `0`. Its rows hold the definition revisions, the
-lifecycle, the schedules, the runs, and the inbound-email receipts; a run reads
+lifecycle, the schedules, the runs; a run reads
 its definition from the parent by revision and reports its state through the
 same effect pipeline every conversation uses.
 [`automation-lifecycle.md`](automation-lifecycle.md) owns all of it;

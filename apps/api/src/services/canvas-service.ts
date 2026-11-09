@@ -58,8 +58,6 @@ export async function createCanvas(env: Env, input: {
     participantUserIds: [input.creatorUserId],
     harnessStatus: "idle",
     titleStatus: "settled",
-    emailAddress: null,
-    emailRouteStatus: null,
     systemKind: null,
     modelOverride: null,
     now: Date.now(),

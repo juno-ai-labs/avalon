@@ -1,40 +1,14 @@
 const textEncoder = new TextEncoder();
 
-export const WORKSTREAM_ADDRESS_GENERATION_VERSION = "v1";
+export const FRIENDLY_IDENTIFIER_GENERATION_VERSION = "v1";
 
 /**
- * The domain every work-stream address minted from now on carries.
+ * Frozen vocabulary for v1 friendly identifiers.
  *
- * An address is stored per work stream, not derived on read, so renaming the
- * domain does not move the addresses already issued — and those are printed in
- * mail clients, saved in contacts, and forwarded to by rules nobody here can
- * see. The rename is therefore forward-only: new addresses are minted on
- * `rallywithai.com`, while the Global registry retains the exact old
- * full addresses for inbound lookup.
- *
- * A legacy domain leaves this list only when inbound mail to it has stopped.
+ * Array order is part of the identifier protocol. Do not reorder,
+ * remove, or replace entries after v1 identifiers have been issued.
  */
-export const WORKSTREAM_EMAIL_DOMAIN = "rallywithai.com";
-
-/** Domains still accepted inbound, whose addresses are no longer minted. */
-export const LEGACY_WORKSTREAM_EMAIL_DOMAINS: readonly string[] = Object.freeze([
-  "automation.rallywith.ai",
-  "automation.with-avalon.com",
-]);
-
-/** Every domain an inbound work-stream address may arrive on. */
-export const ACCEPTED_WORKSTREAM_EMAIL_DOMAINS: readonly string[] = Object.freeze([
-  WORKSTREAM_EMAIL_DOMAIN,
-  ...LEGACY_WORKSTREAM_EMAIL_DOMAINS,
-]);
-
-/**
- * Frozen vocabulary for v1 work-stream email addresses.
- *
- * Array order is part of the address-generation protocol. Do not reorder,
- * remove, or replace entries after v1 addresses have been issued.
- */
-export const WORKSTREAM_ADDRESS_ADJECTIVES_V1 = Object.freeze([
+export const FRIENDLY_IDENTIFIER_ADJECTIVES_V1 = Object.freeze([
   "acoustic",
   "adaptive",
   "aerial",
@@ -165,7 +139,7 @@ export const WORKSTREAM_ADDRESS_ADJECTIVES_V1 = Object.freeze([
   "woodland"
 ] as const);
 
-export const WORKSTREAM_ADDRESS_SCIENTIST_SURNAMES_V1 = Object.freeze([
+export const FRIENDLY_IDENTIFIER_SCIENTIST_SURNAMES_V1 = Object.freeze([
   "ampere",
   "lovelace",
   "avogadro",
@@ -424,7 +398,7 @@ export const WORKSTREAM_ADDRESS_SCIENTIST_SURNAMES_V1 = Object.freeze([
   "lyell"
 ] as const);
 
-export const WORKSTREAM_ADDRESS_ANIMALS_V1 = Object.freeze([
+export const FRIENDLY_IDENTIFIER_ANIMALS_V1 = Object.freeze([
   "aardvark",
   "agouti",
   "albatross",
@@ -683,17 +657,17 @@ export const WORKSTREAM_ADDRESS_ANIMALS_V1 = Object.freeze([
   "waxbill"
 ] as const);
 
-export const WORKSTREAM_ADDRESS_NOUNS_V1 = Object.freeze([
-  ...WORKSTREAM_ADDRESS_SCIENTIST_SURNAMES_V1,
-  ...WORKSTREAM_ADDRESS_ANIMALS_V1
+export const FRIENDLY_IDENTIFIER_NOUNS_V1 = Object.freeze([
+  ...FRIENDLY_IDENTIFIER_SCIENTIST_SURNAMES_V1,
+  ...FRIENDLY_IDENTIFIER_ANIMALS_V1
 ] as const);
 
-export const WORKSTREAM_ADDRESS_COMBINATION_COUNT_V1 = 1_048_707_072;
+export const FRIENDLY_IDENTIFIER_COMBINATION_COUNT_V1 = 1_048_707_072;
 
-export interface AllocateWorkstreamEmailAddressCandidateInput {
+export interface FriendlyIdentifierInput {
   /** A server-only secret with at least 256 bits of UTF-8 or binary key material. */
   secretKey: string | Uint8Array;
-  workstreamId: string;
+  id: string;
   attempt?: number;
 }
 
@@ -703,20 +677,20 @@ function copySecretKey(secretKey: string | Uint8Array): Uint8Array<ArrayBuffer> 
     : Uint8Array.from(secretKey);
 
   if (bytes.byteLength < 32) {
-    throw new Error("The work-stream address key must contain at least 32 bytes");
+    throw new Error("The friendly identifier key must contain at least 32 bytes");
   }
 
   return bytes;
 }
 
-function validateInput(input: AllocateWorkstreamEmailAddressCandidateInput): number {
-  if (input.workstreamId.length === 0 || input.workstreamId.includes("\0")) {
-    throw new Error("The work-stream ID must be non-empty and must not contain NUL bytes");
+function validateInput(input: FriendlyIdentifierInput): number {
+  if (input.id.length === 0 || input.id.includes("\0")) {
+    throw new Error("The identifier ID must be non-empty and must not contain NUL bytes");
   }
 
   const attempt = input.attempt ?? 0;
   if (!Number.isSafeInteger(attempt) || attempt < 0) {
-    throw new Error("The work-stream address attempt must be a non-negative safe integer");
+    throw new Error("The friendly identifier attempt must be a non-negative safe integer");
   }
 
   return attempt;
@@ -724,10 +698,10 @@ function validateInput(input: AllocateWorkstreamEmailAddressCandidateInput): num
 
 /**
  * Generates one deterministic candidate. The caller must reserve the returned
- * full address atomically and retry with the next attempt after a collision.
+ * identifier atomically and retry with the next attempt after a collision.
  */
-export async function allocateWorkstreamEmailAddressCandidate(
-  input: AllocateWorkstreamEmailAddressCandidateInput
+export async function friendlyIdentifierCandidate(
+  input: FriendlyIdentifierInput
 ): Promise<string> {
   const attempt = validateInput(input);
   const key = await crypto.subtle.importKey(
@@ -747,7 +721,7 @@ export async function allocateWorkstreamEmailAddressCandidate(
   const nextByte = async (): Promise<number> => {
     if (cursor >= digest.length) {
       const message = textEncoder.encode(
-        `${WORKSTREAM_ADDRESS_GENERATION_VERSION}\0${input.workstreamId}\0${attempt}\0${block}`
+        `${FRIENDLY_IDENTIFIER_GENERATION_VERSION}\0${input.id}\0${attempt}\0${block}`
       );
       digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, message));
       cursor = 0;
@@ -789,23 +763,20 @@ export async function allocateWorkstreamEmailAddressCandidate(
   }
   const nounIndex = await nextBits(9);
 
-  const firstAdjective = WORKSTREAM_ADDRESS_ADJECTIVES_V1[firstAdjectiveIndex];
-  const secondAdjective = WORKSTREAM_ADDRESS_ADJECTIVES_V1[secondAdjectiveIndex];
-  const thirdAdjective = WORKSTREAM_ADDRESS_ADJECTIVES_V1[thirdAdjectiveIndex];
-  const noun = WORKSTREAM_ADDRESS_NOUNS_V1[nounIndex];
+  const firstAdjective = FRIENDLY_IDENTIFIER_ADJECTIVES_V1[firstAdjectiveIndex];
+  const secondAdjective = FRIENDLY_IDENTIFIER_ADJECTIVES_V1[secondAdjectiveIndex];
+  const thirdAdjective = FRIENDLY_IDENTIFIER_ADJECTIVES_V1[thirdAdjectiveIndex];
+  const noun = FRIENDLY_IDENTIFIER_NOUNS_V1[nounIndex];
   if (
     firstAdjective === undefined
     || secondAdjective === undefined
     || thirdAdjective === undefined
     || noun === undefined
   ) {
-    throw new Error("The frozen work-stream address vocabulary does not match its index width");
+    throw new Error("The frozen friendly identifier vocabulary does not match its index width");
   }
 
-  const localPart = `${firstAdjective}-${secondAdjective}-${thirdAdjective}-${noun}`;
-  if (textEncoder.encode(localPart).byteLength > 64) {
-    throw new Error("The generated work-stream address exceeds the email local-part limit");
-  }
+  const identifier = `${firstAdjective}-${secondAdjective}-${thirdAdjective}-${noun}`;
 
-  return localPart;
+  return identifier;
 }

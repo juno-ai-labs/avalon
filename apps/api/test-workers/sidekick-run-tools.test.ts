@@ -72,7 +72,7 @@ async function seedHistory(id = runId(1)) {
   await bootstrapConversationChildRuntime(env, WORKSPACE, "automation", SIDEKICK, id);
   await provisionWorkstreamObject(env, { workspaceId: WORKSPACE, workstreamId: SIDEKICK, substreamId: id,
     title: "Incident report", objective: draft.instructions, scope: "personal", createdByUserId: USER,
-    participantUserIds: [USER], harnessStatus: "idle", emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: 100 });
+    participantUserIds: [USER], harnessStatus: "idle", systemKind: null, modelOverride: null, now: 100 });
   await runInDurableObject(child(id), async (_instance, state) => {
     seedRun(state, ACTIVATION);
     const transcript = new WorkstreamTranscriptStorage(state.storage);
@@ -407,7 +407,7 @@ describe("Sidekick wizard run inspection", () => {
     await bootstrapConversationChildRuntime(env, WORKSPACE, "automation", SIDEKICK, "0");
     await provisionWorkstreamObject(env, { workspaceId: WORKSPACE, workstreamId: SIDEKICK, substreamId: "0",
       title: "Incident report wizard", objective: draft.instructions, scope: "personal", createdByUserId: USER,
-      participantUserIds: [USER], harnessStatus: "idle", emailAddress: null, emailRouteStatus: null,
+      participantUserIds: [USER], harnessStatus: "idle",
       systemKind: null, modelOverride: null, now: 100 });
     const hash = "a".repeat(64);
     await runInDurableObject(workspace(), (_instance, state) => {
@@ -474,7 +474,7 @@ describe("Sidekick wizard run inspection", () => {
     await bootstrapConversationChildRuntime(env, WORKSPACE, "automation", SIDEKICK, "0");
     await provisionWorkstreamObject(env, { workspaceId: WORKSPACE, workstreamId: SIDEKICK, substreamId: "0",
       title: "Incident report", objective: draft.instructions, scope: "personal", createdByUserId: USER,
-      participantUserIds: [USER], harnessStatus: "idle", emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: 100 });
+      participantUserIds: [USER], harnessStatus: "idle", systemKind: null, modelOverride: null, now: 100 });
     const delivered = "00000000-0000-7000-8000-00000000fa40";
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec(

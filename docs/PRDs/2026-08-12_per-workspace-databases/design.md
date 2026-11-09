@@ -61,17 +61,6 @@ tooling](#operator-access) we actually need is small and gets built once.
 exactly as deployed today, holding only what is *about* tenants or *across*
 them:
 
-- Identity and session: `users`, `sessions`, `oauth_states`,
-  `desktop_login_tickets`.
-- The workspace registry: `workspaces`, `workspace_members`,
-  `workspace_invitations` — the rows auth resolves before a tenant database
-  handle exists.
-- Global-only directories (Global control plane only):
-  `platform_workspace_bindings`, `regional_onboarding_operations`,
-  `github_installation_routes`, `linear_organization_routes`,
-  `notion_workspace_routes`, `slack_installation_routes`,
-  `workstream_email_routes`.
-
 This split follows the grain the schema already has: these are precisely the
 tables that either carry a `region` column, exist only in Global, or must be
 readable before the request's workspace is known. The control-plane schema is

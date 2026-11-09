@@ -31,7 +31,6 @@ describe("the event that woke a run, as its opening message", () => {
       occurredAt: Date.parse("2026-09-04T05:00:00.000Z"),
       metadata: { service: "checkout", durationSeconds: 420 },
     });
-    expect(opening.resourceId).toBeNull();
   });
 
   it("leaves out the sections an event does not have", () => {

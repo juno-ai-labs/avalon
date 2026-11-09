@@ -13,7 +13,7 @@ import { nowIso } from "@rally/db";
 
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
-import { allocateWorkstreamEmailAddressCandidate } from "../lib/workstream-email-address";
+import { friendlyIdentifierCandidate } from "../lib/friendly-identifier";
 
 /**
  * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
@@ -41,9 +41,9 @@ export async function artifactHostnameCandidate(
   artifactId: string,
   attempt: number,
 ): Promise<ArtifactHostnameStub> {
-  return ArtifactHostnameStubSchema.parse(await allocateWorkstreamEmailAddressCandidate({
+  return ArtifactHostnameStubSchema.parse(await friendlyIdentifierCandidate({
     secretKey: await hostnameKey(env),
-    workstreamId: `${env.AVALON_REGION}:${workspaceId}:artifact:${artifactId}`,
+    id: `${env.AVALON_REGION}:${workspaceId}:artifact:${artifactId}`,
     attempt,
   }));
 }

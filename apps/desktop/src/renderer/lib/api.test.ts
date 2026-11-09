@@ -44,7 +44,6 @@ const detail = {
   title: 'Investigate ENG-142',
   titleStatus: 'settled' as const,
   objective: 'Find the cause.',
-  emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
   createdByUserId: userId,
   harnessStatus: 'idle' as const,
   lastActivityAt: timestamp,
@@ -143,7 +142,6 @@ const wireAutomationDetail = {
   id: automationId,
   name: 'Blog monitor',
   description: 'Check a blog for new posts.',
-  emailAddress: null,
   scope: 'personal' as const,
   owningWorkstreamId: null,
   status: 'draft' as const,
@@ -491,7 +489,6 @@ describe('Rally API wire adapter', () => {
   it('maps representative channel and resource wire records into renderer models', () => {
     expect(mapWorkstreamDetail(detail)).toMatchObject({
       id: workstreamId,
-      emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
       harnessStatus: 'completed',
       participants: [{ id: userId, role: 'creator' }],
       viewers: [{ id: userId, viewing: true }],

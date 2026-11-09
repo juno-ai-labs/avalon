@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
-import { WORKSTREAM_ADDRESS_ADJECTIVES_V1, WORKSTREAM_ADDRESS_NOUNS_V1 } from "../lib/workstream-email-address";
+import { FRIENDLY_IDENTIFIER_ADJECTIVES_V1, FRIENDLY_IDENTIFIER_NOUNS_V1 } from "../lib/friendly-identifier";
 
 export const TOOL_PAGE_SCHEMA = `CREATE TABLE tool_pages (
   run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
@@ -78,8 +78,8 @@ export class ToolPageStorage {
     }
     for (;;) {
       const bytes = crypto.getRandomValues(new Uint32Array(4));
-      const words: Array<string | undefined> = [0, 1, 2].map((i) => WORKSTREAM_ADDRESS_ADJECTIVES_V1[bytes[i]! % WORKSTREAM_ADDRESS_ADJECTIVES_V1.length]);
-      words.push(WORKSTREAM_ADDRESS_NOUNS_V1[bytes[3]! % WORKSTREAM_ADDRESS_NOUNS_V1.length]);
+      const words: Array<string | undefined> = [0, 1, 2].map((i) => FRIENDLY_IDENTIFIER_ADJECTIVES_V1[bytes[i]! % FRIENDLY_IDENTIFIER_ADJECTIVES_V1.length]);
+      words.push(FRIENDLY_IDENTIFIER_NOUNS_V1[bytes[3]! % FRIENDLY_IDENTIFIER_NOUNS_V1.length]);
       const pageId = `${input.prefix}_${words.join("_")}`;
       const inserted = this.sql.exec<{ page_id: string }>(
         `INSERT INTO tool_pages(run_id, page_id, producer_id, slot, operation, connection_id, principal_json, input_json, parent_page_id)
