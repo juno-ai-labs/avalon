@@ -1,5 +1,7 @@
 import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import {
+  ArtifactManifestSchema,
+  artifactManifestKey,
   SITE_MANIFEST_MIME_TYPE,
   asWorkspaceId,
   classifyAttachmentKind,
@@ -177,6 +179,7 @@ export class CanvasPublicationService {
     )));
     const previous = existing ? await existingArtifactForResource(runtime.DB, this.auth.workspaceId, existing.id) : null;
     if (existing && previous && existing.content_sha256 === contentDigest) {
+      await this.reconcileServing(runtime, canvasId, existing, previous);
       return { resourceId: existing.id, title: existing.title, outcome: "unchanged" as const };
     }
     const built = source.kind === "static" ? null
@@ -229,6 +232,38 @@ export class CanvasPublicationService {
     });
     return { resourceId, title: existing?.title ?? title, outcome: existing ? "updated" as const : "created" as const,
       ...(build ? { build } : {}) };
+  }
+
+  /**
+   * Finish a site publish that stopped after its resource row moved: the row
+   * holds the new version's manifest, but the registry or the serving pointer
+   * may still name the old one. A retry with the same content is unchanged,
+   * so it is the retry's job to bring both up to the manifest the row holds.
+   * Pointing is an upsert, so doing it again for a site already pointed
+   * changes nothing.
+   */
+  private async reconcileServing(runtime: Env, canvasId: string,
+    existing: NonNullable<Awaited<ReturnType<typeof publishedRowByIdentity>>>,
+    previous: NonNullable<Awaited<ReturnType<typeof existingArtifactForResource>>>) {
+    if (!existing.content_ref) return;
+    const stored = await this.env.PAYLOADS.get(existing.content_ref);
+    if (!stored) return;
+    const manifest = ArtifactManifestSchema.parse(JSON.parse(await stored.text()) as unknown);
+    if (manifest.artifactId !== previous.artifactId) return;
+    if (previous.version !== manifest.artifactVersion) {
+      const hostnameStub = previous.hostnameStub ?? await ensureArtifactHostname(runtime, {
+        workspaceId: this.auth.workspaceId, artifactId: previous.artifactId,
+      });
+      await registerArtifact(runtime.DB, {
+        artifactId: previous.artifactId, hostnameStub, workspaceId: this.auth.workspaceId, workstreamId: canvasId,
+        resourceId: existing.id, mode: "static", stateful: false, version: manifest.artifactVersion,
+        manifestRef: artifactManifestKey(previous.artifactId, manifest.artifactVersion),
+      });
+    }
+    await pointArtifactAtVersion(runtime, {
+      artifactId: previous.artifactId, workspaceId: this.auth.workspaceId, workstreamId: canvasId, resourceId: existing.id,
+      region: this.env.AVALON_REGION, manifest,
+    });
   }
 
   private assertSize(bytes: number) {
