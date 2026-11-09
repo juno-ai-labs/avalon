@@ -65,6 +65,21 @@ afterEach(() => {
   while (openDatabases.length > 0) openDatabases.pop()?.close();
 });
 
+describe("WorkspaceDO migration 142", () => {
+  it("keeps existing Canvases and participants active when adding the archive tombstone", () => {
+    const database = openDatabase();
+    apply(database, 141);
+    database.exec(`INSERT INTO canvas_directory (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at,
+      visibility, authority_generation) VALUES ('canvas-one', 'workspace', 'Plan', 'creator', 1, 1, 'participants', 1)`);
+    insertParticipant(database, 'participant', 'added');
+    apply(database, 142, 141);
+    expect(all(database, "SELECT canvas_id, title, archived_at FROM canvas_directory"))
+      .toEqual([{ canvas_id: 'canvas-one', title: 'Plan', archived_at: null }]);
+    expect(all(database, "SELECT user_id FROM canvas_participants")).toEqual([{ user_id: 'participant' }]);
+    expect(() => database.exec("UPDATE canvas_directory SET archived_at = -1")).toThrow(/CHECK constraint failed/u);
+  });
+});
+
 describe("WorkspaceDO migration 137", () => {
   it("keeps every row of the tables it copies, with their indexes and triggers, and admits a Canvas in each", () => {
     const database = openDatabase();

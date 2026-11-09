@@ -239,9 +239,9 @@ stays open after one of its rows is opened, stays when the sheet closed for
 that navigation. Landing on a section home by a link or a restored route, the
 shut sheet's bar names that home and carries its actions, whichever list is
 stored; the list itself, once the sheet opens, is the stored one. A pane
-header's folded "More" button sits after the pane's own controls, so a
-Canvas's header reads Share then "⋯" as it does at desktop width. Opening the sheet
-from a pane header moves focus to its close button; closing hands focus back
+header's folded "More" button sits after the pane's own controls. The Canvas's
+header keeps Share at the right and its actions in the centred pill's menu.
+Opening the sheet from a pane header moves focus to its close button; closing hands focus back
 to the opener, or to the visible menu button when the opener is gone
 (`useSheetOpener`). Opening anything from it closes it, as do Escape and
 widening past 640px; switching sections does not navigate, so the sheet stays

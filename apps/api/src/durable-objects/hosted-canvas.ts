@@ -144,6 +144,7 @@ export interface CanvasRow extends Record<string, SqlStorageValue> {
   title_status: "naming" | "settled";
   /** The chosen icon and colour, `WorkstreamAppearanceSchema` JSON; null until someone chooses (migration 137). */
   appearance_json: string | null;
+  archived_at: number | null;
 }
 
 /** What a hosted Canvas needs from the Organization object that holds it. */
@@ -219,6 +220,7 @@ export function canvasParticipant(sql: SqlStorage, canvasId: string, userId: str
  * admits one.
  */
 export function canvasReaderAllows(row: CanvasRow, actor: { userId: string; actorRole: CanvasActor["actorRole"] }, sql: SqlStorage): boolean {
+  if (row.archived_at !== null) return false;
   return canvasAdmits({
     visibility: row.visibility,
     creator: row.created_by_user_id === actor.userId,
@@ -259,12 +261,12 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
 
   protected identity(): HostedConversationIdentity | null {
     const row = this.row();
-    return row ? { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: false } : null;
+    return row ? { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: row.archived_at !== null } : null;
   }
 
   protected assertParent(workspaceId: string, parentId: string): HostedConversationIdentity {
-    const row = this.assertCanvas(workspaceId, parentId);
-    return { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: false };
+    const row = this.assertCanvas(workspaceId, parentId, true);
+    return { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: row.archived_at !== null };
   }
 
   /**
@@ -303,18 +305,19 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     // nobody has retitled since: it starts naming now, in this write, so an
     // empty Canvas reads as its title rather than as a naming skeleton that
     // waits for a message that may never come.
-    this.sql.exec(
+    const changed = this.sql.exec<{ title_status: string }>(
       `UPDATE canvas_directory
           SET updated_at = MAX(updated_at, ?1),
               title_status = CASE WHEN ?3 = 0 AND ?4 >= 1 AND title_status = 'settled' AND title = ?5
                                        AND writer_sidekick_id IS NULL THEN 'naming' ELSE title_status END
-        WHERE canvas_id = ?2`,
+        WHERE canvas_id = ?2 AND archived_at IS NULL RETURNING title_status`,
       now, this.canvasId, before, latest, UNTITLED_CANVAS,
-    );
+    ).toArray()[0];
+    if (!changed) return;
     this.host.noteCanvasDirectoryChanged(this.canvasId);
     // A Canvas waiting for a title: the naming pass reads its first message.
     // Armed again by a later message before it runs, which is the same entry.
-    if (latest >= 1 && this.row()?.title_status === "naming") {
+    if (latest >= 1 && changed.title_status === "naming") {
       this.host.alarms.schedule({ kind: CANVAS_NAMING_ALARM_KIND, key: this.canvasId, dueAt: now }, now);
     }
   }
@@ -351,11 +354,12 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   async readAuthorizationFacts(input: ConversationAuthorizationRequest) {
     const request = parseRpcInput(ConversationAuthorizationRequestSchema, input, "canvas_read_authorization_facts");
     const initial = this.row();
-    if (!initial) return { exists: false as const, validatedAt: Date.now() };
+    if (!initial || initial.archived_at !== null) return { exists: false as const, validatedAt: Date.now() };
     this.assertCanvas(request.workspaceId, request.parentId);
     const relationship = request.relationship ?? await this.host.readRelationship(initial.workspace_id, request.userId);
     // Read again after the await: the row is what the facts describe.
     const row = this.row() ?? initial;
+    if (row.archived_at !== null) return { exists: false as const, validatedAt: Date.now() };
     // A Sidekick's Organization scope admits a member and no guest, so the
     // writer's audience is decided for the relationship in hand.
     const member = relationship?.status === "active" && relationship.accessClass === "member";
@@ -377,17 +381,35 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     return this.sql.exec<CanvasRow>(
       `SELECT canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, last_editor_kind,
               last_editor_id, writer_sidekick_id, writer_run_id, last_writer_run_id, visibility, authority_generation,
-              title_status, appearance_json
+              title_status, appearance_json, archived_at
          FROM canvas_directory WHERE canvas_id = ?`,
       this.canvasId,
     ).toArray()[0] ?? null;
   }
 
   /** The row, refused as not found for another Organization's id. */
-  assertCanvas(workspaceId: string, canvasId: string): CanvasRow {
+  assertCanvas(workspaceId: string, canvasId: string, includeArchived = false): CanvasRow {
     const row = this.row();
-    if (!row || row.workspace_id !== workspaceId || canvasId !== this.canvasId) throw notFound();
+    if (!row || row.workspace_id !== workspaceId || canvasId !== this.canvasId || (!includeArchived && row.archived_at !== null)) throw notFound();
     return row;
+  }
+
+  /** A manager archives for everyone; content stays stored and a retry converges. */
+  archive(input: CanvasActorRequest): void {
+    const request = parseRpcInput(CanvasActorRequestSchema, input, "canvas_archive");
+    this.storage.transactionSync(() => {
+      const row = this.assertCanvas(request.workspaceId, request.canvasId, true);
+      if (!this.manages(row, request.actor)) {
+        if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
+        throw new ApiError(403, "canvas_archive_forbidden", "Only a Canvas manager can archive it");
+      }
+      if (row.archived_at !== null) return;
+      const now = Date.now();
+      this.sql.exec(`UPDATE canvas_directory SET archived_at = ?, updated_at = ?, title_status = 'settled' WHERE canvas_id = ?`,
+        now, now, this.canvasId);
+      this.host.alarms.cancel(CANVAS_NAMING_ALARM_KIND, this.canvasId);
+      this.host.noteCanvasDirectoryChanged(this.canvasId);
+    });
   }
 
   /**
@@ -406,15 +428,17 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         if (existing.workspace_id !== request.workspaceId) throw notFound();
         // A replay is its creator's: anybody else naming the id is refused.
         if (existing.created_by_user_id !== request.createdByUserId) throw idUnavailable();
+        if (existing.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
         return { created: false, canvasId: this.canvasId };
       }
       if (request.anchored) throw idUnavailable();
       // A run makes one Canvas: a second create for the same run, under any
       // id, answers with the Canvas its first made.
-      const made = request.writer ? this.sql.exec<{ canvas_id: string }>(
-        `SELECT canvas_id FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`,
+      const made = request.writer ? this.sql.exec<{ canvas_id: string; archived_at: number | null }>(
+        `SELECT canvas_id, archived_at FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`,
         request.writer.sidekickId, request.writer.runId,
       ).toArray()[0] : undefined;
+      if (made?.archived_at != null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
       if (made) return { created: false, canvasId: made.canvas_id };
       if (request.writer && !writerSidekick(this.sql, request.writer.sidekickId)) {
         throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
@@ -500,7 +524,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   async noteArtifact(input: z.input<typeof CanvasNoteArtifactRequestSchema>): Promise<{ noted: boolean }> {
     const request = parseRpcInput(CanvasNoteArtifactRequestSchema, input, "canvas_note_artifact");
     const row = this.row();
-    if (!row || row.workspace_id !== request.workspaceId) return { noted: false };
+    if (!row || row.workspace_id !== request.workspaceId || row.archived_at !== null) return { noted: false };
     const now = Date.now();
     this.host.storage.transactionSync(() => {
       this.sql.exec(
@@ -805,7 +829,7 @@ export function canvasSidebarRows(
              AND written.sidekick_id = canvas.last_editor_id AND written.run_id = canvas.last_writer_run_id
        LEFT JOIN automation_directory written_by ON written_by.automation_id = written.sidekick_id
              AND written_by.lifecycle <> 'deleted'
-      WHERE (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
+      WHERE canvas.archived_at IS NULL AND (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
          OR (?2 = 1 AND canvas.visibility = 'workspace') OR canvas.writer_sidekick_id IS NOT NULL)
         AND (?3 IS NULL OR instr(lower(canvas.title), lower(?3)) > 0)
       ORDER BY canvas.updated_at DESC, canvas.canvas_id`,

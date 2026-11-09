@@ -27,7 +27,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/durable-objects/workspace-do.ts` | The facade: `canvasCreate`, `canvasDetail`, `canvasUpdate` (the title and the appearance), `canvasSetAudience`, `hostedConversationAuthorizationFacts`, every conversation-parent method for a Canvas id, and the Canvas branch of `createScopeInvitations`, `claimScopeInvitations`, `revokeScopeInvitation` and the invitation alarms. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Conversation object migration 83: its root row admits the `canvas` parent kind. |
 | `apps/api/src/services/canvas-service.ts` | `createCanvas`: the directory row, then the Chat's object, bootstrapped and provisioned with the creator seated; `CanvasService`, the routes' service. |
-| `apps/api/src/routes/canvases.ts` | `GET /canvases` (the reader's list, as their sidebar socket sends it, for a client with no socket such as the [MCP server](rally-mcp.md)), `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title and the appearance), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`, `POST /canvases/:id/artifacts` (a person publishing a file or static site made elsewhere; [`rally-mcp.md`](rally-mcp.md#publishing)). `PUT /workspace/pinned-order` (in `routes/workspace.ts`) orders a Pinned group. |
+| `apps/api/src/routes/canvases.ts` | `GET /canvases` (the reader's list, as their sidebar socket sends it, for a client with no socket such as the [MCP server](rally-mcp.md)), `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title and the appearance), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`, `POST /canvases/:id/archive`, `POST /canvases/:id/artifacts` (a person publishing a file or static site made elsewhere; [`rally-mcp.md`](rally-mcp.md#publishing)). `PUT /workspace/pinned-order` (in `routes/workspace.ts`) orders a Pinned group. |
 | `apps/api/src/services/integrations.ts` | `canvasRunContextMessage`: the `CANVAS CONTEXT` message a run in a Canvas's Chat is given. |
 | `apps/api/src/services/terminal/authority.ts` | `resolveTerminalPublicationHome` (a Sidekick run publishes into a Canvas) and `canvasArtifactNoter` (a publish tells its Canvas). |
 | `apps/api/src/services/conversation-service.ts`, `socket-service.ts` | Opening a Canvas's Chat: admission by the Canvas, the reader seated, and a ticket whose `pk` is `canvas`. |
@@ -496,11 +496,18 @@ section records only what the code decides.
   a link naming an artifact opens it expanded. The surface does not close a
   requested panel on the device cache's copy of the conversation, which may
   list none of its artifacts. Closing the panel clears what was saved, and the
-  menus' **Open artifact** is the way back to it.
-- **The header** is a `TitlePillHeader` naming the Canvas (`align="start"`),
-  with the face pile of everyone else in it now, Share, and a "⋯" whose menu
-  matches the pill's: Pin, Rename…, Change appearance, Share…, Copy link, Copy
-  Canvas ID and, while there is an artifact, Open artifact. The pill's title is
+  command menu's **Open artifact** is the way back to it.
+- **The header** is a centred `TitlePillHeader` naming the Canvas,
+  with the face pile of everyone else in it now and Share at the right.
+  The pill's menu starts with four action tiles, using the artifact menu's
+  shared primitives: Share, Open artifact, Copy link and Pin (Unpin when pinned).
+  Open artifact is disabled until the Canvas has an artifact and while its
+  artifact panel is already open; closing the panel enables it again. A tooltip
+  explains either disabled state on hover or keyboard focus. Rename… and
+  Change appearance follow as rows, with **Archive canvas** last, separated
+  and in danger styling, for a manager. It confirms before writing and returns
+  to Canvases after success; a failure keeps the Canvas and confirmation open.
+  The pill's title is
   the detail's, and a change to the list row's title is written into the
   detail's cache once the socket has applied the list, so the header follows a
   rename from anywhere without a refetch.
@@ -562,11 +569,17 @@ detached artifact window's **Copy link** adds the artifact's segment.
 
 ## Invariants
 
-- **A Canvas is admitted by `canvasAdmits` and nothing else, and it is the
+- **An active Canvas is admitted by `canvasAdmits` and nothing else, and it is the
   rule a Sidekick's audience is.** A second rule in a reader would let one
   surface show a Canvas another refuses. Guard: the Node policy test
   (`test/authorization-policy.test.ts`), `test-workers/canvas-hosting.test.ts`
   and `test-workers/canvas-conversation.test.ts`.
+- **Archiving is terminal and retains content.** Archived Canvases leave active
+  discovery, reject admission and late publication, and cannot be recreated by
+  retrying creation. The timestamp and retained relationships survive retries.
+  Guards: `test-workers/canvas-hosting.test.ts`, `test-workers/canvas-conversation.test.ts`,
+  `test-workers/conversation-audience-revocation.test.ts` and the migration-142
+  case in `test/workspace-canvas-schema-migration.test.ts`.
 - **A guest is admitted only from a list.** Organization visibility admits
   members; a guest whose share was never claimed opens nothing. Guard: the
   guest cases of both workers files.
@@ -685,11 +698,31 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
   carries a populated v81 root, every column and all nine triggers across the
   rebuild.
 
+### Archiving
+
+`POST /canvases/:id/archive` delegates through `CanvasService` and
+`WorkspaceDO.canvasArchive` to `HostedCanvas.archive`. A manager
+(`canvasManages`: creator, writer Sidekick manager, owner or administrator)
+may archive for everyone. A participant who cannot manage is refused with
+`canvas_archive_forbidden`; a person the Canvas never admitted sees
+`canvas_not_found`. The transaction writes `archived_at` once and settles any
+pending naming state. A retry by a manager succeeds without changing the
+timestamp. No unarchive operation is offered.
+
+The directory row, participants, Chat and artifacts stay stored. Active lists
+omit archived rows; parent authority reports archived, new admission and
+artifact authorization refuse them, and a late child projection or artifact
+notice cannot make them active again. A create replay cannot recreate an
+archived Canvas. Writer Sidekicks cannot select an archived Canvas for another
+publication. `closingNarrowedConversations` applies the existing audience-change
+revocation walk to every former reader, closing open Chat sockets. The Canvas
+list's ordinary waterline push removes it from every viewer's active list.
+
 ## Data model
 
 | Table | Keyed by | Holds |
 | --- | --- | --- |
-| `canvas_directory` | `canvas_id` | The row: title, creator, times, last editor, writer Sidekick and run, visibility, authority generation, title status (`naming` until a Canvas made with no title is titled from its first message, migration 137), the chosen icon and colour (`appearance_json`, `WorkstreamAppearanceSchema` JSON, null until chosen, migration 137), and the run whose publish made the newest version (`last_writer_run_id`, migration 137). Its CHECK admits a run only beside a `sidekick` last editor, so a future writer that moves `last_editor_kind` without writing this column in the same statement fails its write. Indexed by recency, by writer Sidekick, and uniquely by `(writer_sidekick_id, writer_run_id)`. |
+| `canvas_directory` | `canvas_id` | The row: title, creator, times, last editor, writer Sidekick and run, visibility, authority generation, title status (`naming` until a Canvas made with no title is titled from its first message, migration 137), the chosen icon and colour (`appearance_json`, `WorkstreamAppearanceSchema` JSON, null until chosen, migration 137), and the run whose publish made the newest version (`last_writer_run_id`, migration 137). Its CHECK admits a run only beside a `sidekick` last editor, so a future writer that moves `last_editor_kind` without writing this column in the same statement fails its write. Migration 142 adds nullable `archived_at`: null is active; a timestamp retains the archived Canvas without admitting or listing it. Indexed by recency, by writer Sidekick, and uniquely by `(writer_sidekick_id, writer_run_id)`. |
 | `canvas_participants` | `(canvas_id, user_id)` | Whom its managers added (`added`), a claimed share brought (`invitation`) or an approved access request let in (`request`, migration 137). Indexed by person for "shared with me". |
 | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts`, `sidekick_viewer_reads` | `(sidekick_id, …)`, the column holding the Canvas id | The hosted conversation's children, their projections and receipts, and each reader's read of the Chat. |
 | `workspace_sidebar_list_state` | `list` | Gains the `canvases` waterline; the table is rebuilt to widen its CHECK. |
@@ -725,6 +758,24 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-09 — Put Canvas commands and manager-only archival in the title menu
+
+The Chat header centres its title pill and keeps Share and presence at the right.
+Share, Open artifact, Copy link and Pin use the artifact menu's shared action
+tiles, with Rename and Change appearance below. Open artifact stays visible but
+disabled until an artifact exists and while its panel is already open, with a
+tooltip explaining why. The duplicate header overflow menu and Copy
+Canvas ID action are removed. This restores the familiar artifact-menu shortcuts
+and gives the Canvas one place for commands without pulling its title to the
+left; future commands should extend that menu rather than add another trigger.
+
+Archive Canvas adds the missing lifecycle operation, through a manager-only
+route and WorkspaceDO migration 142's nullable `archived_at` tombstone. It
+removes active discovery and admission, reuses the existing socket-revocation
+walk, and keeps content stored. Deleting the directory row was rejected because
+retained conversations and writer-run identities still refer to it, and a
+late effect or create replay must not bring an archived Canvas back.
 
 ### 2026-11-09 — Separate viewer presence from database-backed artifacts
 

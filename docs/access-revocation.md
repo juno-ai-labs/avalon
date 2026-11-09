@@ -115,7 +115,9 @@ The producers are:
   `workstream_participant_removed`. A Sidekick's narrowing covers the Canvases
   it writes too, since those admit its audience. One line,
   `conversation_audience_narrowed`, names the parent, the people and how many
-  messages did not go out.
+  messages did not go out. `WorkspaceDO.canvasArchive` uses this same before/after
+  admission walk: the archived parent admits nobody, so every former reader's
+  open Canvas conversation is revoked.
 - **A session is revoked.** `AuthService.logout` returns the rows it revoked
   (`RETURNING id, user_id, workspace_id`) and publishes one message per row,
   carrying that session's id. Only the windows that presented that session are

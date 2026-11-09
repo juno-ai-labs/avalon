@@ -1215,6 +1215,10 @@ export class RallyApi {
     return this.request(`/canvases/${encodeURIComponent(id)}`, { schema: CanvasDetailSchema, signal });
   }
 
+  async archiveCanvas(id: string): Promise<void> {
+    await this.requestVoid(`/canvases/${encodeURIComponent(id)}/archive`, { method: 'POST' });
+  }
+
   /**
    * Asked only after `getCanvas` answered not found: whether the Canvas exists
    * in this person's Organization for them to ask into (`requestable`, never

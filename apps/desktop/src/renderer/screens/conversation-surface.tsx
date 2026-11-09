@@ -931,6 +931,8 @@ export interface ConversationHeaderContext {
   detail: WorkstreamDetail;
   socketState: SocketState;
   presentUserIds: readonly string[];
+  /** This conversation's resource or attachment panel is currently shown. */
+  panelOpen: boolean;
   openResource: (resourceId: string, returnFocus: HTMLElement) => void;
   openRail: (variant: RailVariant) => void;
   /** Open one of this conversation's artifacts in its own right panel. */
@@ -2376,6 +2378,7 @@ function ConversationSurfaceContent({
         detail: displayedDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
+        panelOpen: panelShown,
         openResource: openResourceDetails,
         openRail: openOwnRail,
         openArtifact: citations.openPreview,

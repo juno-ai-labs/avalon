@@ -367,6 +367,19 @@ function clientCanvasRows(frames: Array<Record<string, unknown>>): Row[] {
 }
 
 describe("the Canvas list", () => {
+  it("pushes an archived Canvas off every reader's active list", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId,
+      actor: { userId: CREATOR, actorRole: "member" }, update: { visibility: "participants", userIds: [MEMBER] } });
+    const creator = await connect(CREATOR);
+    const member = await connect(MEMBER);
+    expect(clientCanvasRows(creator.frames).map((row) => row.id)).toContain(canvasId);
+    expect(clientCanvasRows(member.frames).map((row) => row.id)).toContain(canvasId);
+    await new CanvasService(TEST_ENV, auth(CREATOR)).archive(canvasId);
+    await expect.poll(() => clientCanvasRows(creator.frames).map((row) => row.id), { timeout: waitBudget() }).toEqual([]);
+    await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id), { timeout: waitBudget() }).toEqual([]);
+  });
+
   it("lists a Canvas to whoever may open it, unread to a participant who has not opened it", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
     const creator = await connect(CREATOR);
