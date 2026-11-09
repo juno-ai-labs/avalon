@@ -1587,8 +1587,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    * room. Another agent's message counts as the person it acts for, and
    * outside text from a bound provider thread as the Rally user its sender
    * resolved to, or else is refused (`continuationSender` decides who sent
-   * it). Rally's own input (a scheduled wake-up, the Sidekick's own wizard)
-   * is not screened by sender.
+   * it). Rally's own input (a scheduled wake-up, a review notice) is not
+   * screened by sender.
    */
   async continueRun(input: SidekickRunContinuationRequest): Promise<SidekickRunContinuation> {
     const request = parseRpcInput(SidekickRunContinuationRequestSchema, input, "continue_run");

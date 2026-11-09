@@ -332,11 +332,15 @@ posts into an email thread. The wizard's continuation note (`renderRunContinuati
   comes from the run's `automationRun`, never from a model argument; a field
   for it would let a run's model, steered by a Slack reply, address another
   Sidekick's wizard.
-- Any conversation whose principal may view a Sidekick may message its
-  authoring agent. The one check is the Sidekick's own viewer authorization
-  (grant-only for a guest), not which Thread or Breakout the message comes
-  from: no Thread owns a Sidekick, so no Thread-based rule may refuse one.
-  Guarded by `conversation-tools.test.ts`.
+- A conversation may message a Sidekick's authoring agent when its principal
+  may view the Sidekick (grant-only for a guest) and manages it
+  (`authorizeWizardTurn`, `sidekick_edit_requires_manager` otherwise), because
+  the message starts a wizard turn with the authoring tools, which the shared
+  conversation gives a person only when they manage the Sidekick. The
+  Sidekick's own runs and workers are exempt: a run's change request is how
+  the wizard hears of one. Where the message comes from is not checked: no
+  Thread owns a Sidekick. Guarded by `conversation-tools.test.ts` and
+  `sidekick-run-continuation.test.ts`.
 
 ## Boundary
 
@@ -418,9 +422,12 @@ Thread owner left, a rule keyed on the owning Thread would refuse nothing and
 mislead whoever reads it.
 
 **Consequences:** Who may change a Sidekick is now its own access (audience,
-grants, manager rules), checked by the Sidekick's viewer authorization. A rule
-that narrows contact again belongs in that check, not in where the message comes
-from. Setup from a Thread always creates a Sidekick; an existing one is reached
+grants, manager rules), not where the message comes from. Viewing it was
+first the whole check, which let any reader's agent start a wizard turn with
+the authoring tools, and a wizard turn could then message a run as if it
+were the Sidekick's own; a review found the chain. Messaging the wizard now
+also needs a manager (`authorizeWizardTurn`, `sidekick_edit_requires_manager`),
+except from the Sidekick's own runs and workers. Setup from a Thread always creates a Sidekick; an existing one is reached
 by its exact name through `find_sidekick`.
 
 Shipped in juno-ai-labs/avalon#1490.

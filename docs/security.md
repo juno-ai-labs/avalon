@@ -1002,7 +1002,10 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   From domain (DMARC pass, or a DKIM pass for that domain, from Resend's
   `authentication`), and only for a sender the Sidekick admits as a reader
   ([inbound email](automation-lifecycle.md#triggers-and-occurrences)). It is
-  only as strong as the sending domain's own spoofing protection. The
+  only as strong as the sending domain's own spoofing protection, and DMARC and
+  DKIM authenticate the sending domain, not the mailbox: on a domain whose own
+  mail server does not bind From to the sending account, anyone who can send as
+  any address on that domain can still make a run act as a colleague there. The
   changelog entry of 2026-09-03 records why the tool filter came out.
 
 - **An invitation token exists in D1 only as a SHA-256 hash**, and never in a query

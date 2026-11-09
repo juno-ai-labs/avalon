@@ -16,6 +16,7 @@ import { createConversationResourceLinks } from "../runtime/resource-port";
 import { conversationParentStub } from "./conversation-parent-client";
 import { createAutomation } from "./automation-service";
 import { sidekickChangeRequestText } from "./agent-communication-prompts";
+import { sidekickAllowsManager } from "./sidekick-run-continuation";
 
 // The wire names this service asks about — a message, and the delegation that
 // also counts as handing work on — are in `@rally/contracts` beside the schemas
@@ -241,7 +242,10 @@ export class AgentCommunicationService {
     if (!route.ok) throw new AgentCommunicationError(route.code);
     const target = route.value;
     if (target.recipientAgentId === this.senderId) throw new AgentCommunicationError("agent_self_message");
-    if ("messageId" in args) await this.authorizeSidekick(target.recipientAgentId);
+    if ("messageId" in args) {
+      await this.authorizeSidekick(target.recipientAgentId);
+      await this.authorizeWizardTurn(target.recipientAgentId);
+    }
     const address = agentAddressForId(target.recipientAgentId);
     const recipient = await this.conversation(target.recipientAgentId);
     const attachmentIds = await this.validateAttachments(args.attachmentIds);
@@ -263,7 +267,34 @@ export class AgentCommunicationService {
     const address = agentAddressForId(agentId);
     if (address.parentKind !== "automation" || address.substreamId !== "0") return;
     await this.authorizeSidekick(agentId);
+    await this.authorizeWizardTurn(agentId);
     await (await this.workspace()).joinAgentTeam({ workspaceId: this.input.workspaceId, teamId, agentId });
+  }
+
+  /**
+   * Whether this conversation's message may start a turn of a Sidekick's
+   * wizard, which runs with the authoring tools. The shared conversation
+   * gives the wizard a person's message only from someone who manages the
+   * Sidekick (`admitConversationMessage`), and an agent's message is held to
+   * the same rule by the person it acts for, refused by name otherwise.
+   * The Sidekick's own agents (its runs, their workers, the wizard's own
+   * workers) are exempt: a run's change request is how the wizard learns of
+   * one, and the wizard decides whether to apply it.
+   */
+  private async authorizeWizardTurn(agentId: AgentId) {
+    const address = agentAddressForId(agentId);
+    if (address.parentKind !== "automation" || address.substreamId !== "0") return;
+    if (this.input.parentKind === "automation" && this.input.parentId === address.parentId) return;
+    if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_contact_user_unavailable");
+    const userId = this.input.executionPrincipal.userId;
+    const member = await this.env.DB.prepare(
+      "SELECT role, access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'",
+    ).bind(this.input.workspaceId, userId).first<{ role: AuthContext["role"]; access_class: string | null }>();
+    const manages = member !== null && await sidekickAllowsManager(this.env, {
+      workspaceId: this.input.workspaceId, automationId: address.parentId,
+      actor: { userId, actorRole: member.access_class === "guest" ? null : member.role },
+    });
+    if (!manages) throw new AgentCommunicationError("sidekick_edit_requires_manager");
   }
 
   /**
@@ -425,6 +456,7 @@ class AgentCommunicationError extends Error {
       agent_destination_mismatch: "Copy the exact agentId from creation or discovery. The supplied ID does not match the recipient.",
       sidekick_contact_forbidden: "Choose a Sidekick you can access. This Sidekick is unavailable to this execution.",
       sidekick_contact_user_unavailable: "Ask your coordinator to contact the Sidekick. This execution has no user identity for Sidekick access.",
+      sidekick_edit_requires_manager: "Tell the person that only the people who manage this Sidekick can change it. Its wizard was not messaged.",
       sidekick_change_outside_run: "Use sidekicks_list and message the Sidekick's authoring agentId. Only a Sidekick run can request a change to its own Sidekick this way.",
       sidekick_author_unavailable: "Ask your coordinator to create the Sidekick. This execution has no user identity for creation.",
       sidekick_owning_workstream_unavailable: "Choose personal or workspace scope if appropriate. This conversation has no owning workstream.",
