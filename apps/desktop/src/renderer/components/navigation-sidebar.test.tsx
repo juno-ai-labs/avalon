@@ -3,7 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
-import { Link, MemoryRouter, Navigate, Route, Routes, useLocation, useNavigationType, type InitialEntry } from 'react-router-dom';
+import { Link, MemoryRouter, Navigate, Route, Routes, useLocation, useNavigate, useNavigationType, type InitialEntry } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CollaborationSessionProvider } from '../lib/collaboration-session';
@@ -51,10 +51,12 @@ function sidekick(id: string, name: string, overrides: Partial<AutomationSummary
 /** The pane: where the route is, how it got there, and a link inside it, as a Canvas's own links are. */
 function Location(): React.JSX.Element {
   const { pathname, search } = useLocation();
+  const navigate = useNavigate();
   return <div>
     <div data-navigation={useNavigationType()} data-testid="location">{pathname}</div>
     <div data-testid="address">{`${pathname}${search}`}</div>
     <Link to="/sidekicks/triage">Open a Sidekick from the pane</Link>
+    <button onClick={() => void navigate(-1)} type="button">Back</button>
   </div>;
 }
 
@@ -104,7 +106,7 @@ beforeEach(() => {
 
 describe('the Canvases and Sidekicks sections', () => {
   it('draws a rail of Canvases and Sidekicks, each with its count, and switches between them', () => {
-    renderSidebar();
+    renderSidebar(workspace, '/canvases/00000000-0000-7000-8000-0000000000c1');
     const rail = screen.getByRole('navigation', { name: 'Sections' });
     expect([...rail.querySelectorAll('.navigation-rail-label')].map((label) => label.textContent))
       .toEqual(['Canvases', 'Sidekicks', 'Activity']);
@@ -117,14 +119,43 @@ describe('the Canvases and Sidekicks sections', () => {
     fireEvent.click(within(rail).getByRole('button', { name: /Sidekicks/ }));
     expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
     expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
+
+    fireEvent.click(canvases);
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/canvases$/);
+    expect(useUiStore.getState().sidebarSection).toBe('canvases');
+
+    // Picking an already-selected Canvases rail entry still returns home.
+    fireEvent.click(screen.getByRole('link', { name: /Launch plan/ }));
+    fireEvent.click(canvases);
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/canvases$/);
+
+    fireEvent.click(screen.getByRole('link', { name: /Launch plan/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Canvas dashboard' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/canvases$/);
+
+    // Repeated dashboard shortcuts must not add extra Back steps.
+    fireEvent.click(canvases);
+    fireEvent.click(canvases);
+    fireEvent.click(screen.getByRole('button', { name: 'Canvas dashboard' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/canvases/00000000-0000-7000-8000-0000000000c2');
   });
 
-  it('closes the phone sheet when a row is opened from it, and keeps it open across sections', () => {
+  it('keeps the phone sheet open for Sidekicks and closes it for the Canvas dashboard or a row', () => {
     renderSidebar();
     fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
     fireEvent.click(screen.getByRole('button', { name: /Sidekicks/ }));
-    fireEvent.click(screen.getByRole('button', { name: /Canvases/ }));
     expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(screen.getByRole('button', { name: /Canvases/ }));
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/canvases$/);
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Canvas dashboard' }));
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
 
     fireEvent.click(screen.getByRole('link', { name: /Launch plan/ }));
 
@@ -473,7 +504,7 @@ describe('the Activity section', () => {
       pick(/Activity/);
       fireEvent.click(rows()[1]!);
       pick(/Canvases/);
-      expect(screen.getByTestId('address')).toHaveTextContent(MENTION);
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/);
       pick(/Activity/);
       expect(screen.getByTestId('address')).toHaveTextContent(TOP);
     });
