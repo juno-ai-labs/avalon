@@ -204,7 +204,7 @@ caller.
 **Consequences:** a feature that lets an agent drive the browser again adds
 its own commands and their isolation, starting from the retired record above.
 
-Shipped in juno-ai-labs/avalon#TBD.
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-10-22 — Leave the browser visible beside a thread menu
 

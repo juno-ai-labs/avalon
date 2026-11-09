@@ -188,7 +188,7 @@ the same change.
 
 ### Progress
 
-Shipped in juno-ai-labs/avalon#TBD: phases 1 to 4 in full (the runtime
+Shipped in juno-ai-labs/avalon#1500: phases 1 to 4 in full (the runtime
 database fallback kept, decision 1); phase 5's desktop-action server half, the
 browser plugin and realm (decision 2), the `activity_event` producers and
 `announceTo`'s writer; phase 7's first deploy. Phase 8's WorkspaceDO drops
