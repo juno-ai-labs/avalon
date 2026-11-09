@@ -242,14 +242,14 @@ migration.
 
 #### Reading it back inside the conversation
 
-The composer of a conversation that already exists — Main's and a
-substream's — shows the same control in the same place, behind the same **Debug
-enabled** preference: the identical dropdown, trigger and pill and chevron, with
-the trigger `disabled`. That is what
-stops it opening, and its menu is left unrendered because a disabled trigger can
-never reach one. Disabled rather than merely quiet is the honest shape here: the
-pin is written once, when the conversation is created, and nothing afterwards
-edits it, so a menu would offer a change the next run would not honour.
+The composer of a conversation that already exists shows the model as a
+disabled pill with a chevron, behind the **Debug enabled** preference
+(`ComposerModelControl` in `composer-input.tsx`). Disabled rather than merely
+quiet is the honest shape here: the pin is written once, when the conversation
+is created, and nothing afterwards edits it, so a menu would offer a change the
+next run would not honour. No composer offers a choice any more: the creation
+pickers went with the Thread and Breakout launchers, and their `choice` shape
+was deleted with its menu in the dead-code pass.
 
 **Same place** is load-bearing and was not always true. The single-row message
 capsule the launchers and conversations wear has no room for a pill beside its

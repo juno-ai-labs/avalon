@@ -104,7 +104,7 @@ import {
   type InstallationRotationPrepare,
 } from './connector-installation-protocol';
 import { createInstallation, readInstallation, readInstallations, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
-import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, purgeRetiredMeetingObjects, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
+import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
 import { AgentIdSchema, type AgentId, type RetirementParentKind } from "@rally/contracts";
 import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
@@ -9443,76 +9443,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }));
   }
 
-  /** Operator-only RPC, including closed workspaces; no product route exposes it. */
-  async purgeMeetingNoteObjects(resourceId?: string) {
-    await this.initialized;
-    const workspaceId = this.workspaceId();
-    if (!workspaceId) throw new Error("workspace_object_identity_missing");
-    return purgeRetiredMeetingObjects(this.state.storage, this.env.PAYLOADS, this.env.AVALON_REGION, workspaceId, resourceId === undefined ? undefined : IdSchema.parse(resourceId));
-  }
-
-  /** Delete only decisions whose canonical resource has verified meeting provenance. */
-  async purgeMeetingSearchAuthorization() {
-    await this.initialized;
-    const sql = this.state.storage.sql;
-    const keys = sql.exec<{ cache_key: string }>(`SELECT cache_key FROM search_authorization_keys
-      WHERE resource_id IN (SELECT resource_id FROM retired_meeting_resources)`).toArray();
-    for (const { cache_key: key } of keys) {
-      // The retirement check rejects new registrations and publications. Drain an
-      // already admitted KV write before deleting its external copy.
-      await this.searchPublications.get(key)?.catch(() => {});
-      if (this.env.AUTHORIZATION_CACHE) await this.env.AUTHORIZATION_CACHE.delete(key);
-      this.state.storage.transactionSync(() => {
-        sql.exec('DELETE FROM search_authorization_dependencies WHERE cache_key = ?', key);
-        sql.exec('DELETE FROM authorization_snapshots WHERE cache_key = ?', key);
-        sql.exec('DELETE FROM search_authorization_keys WHERE cache_key = ?', key);
-      });
-    }
-    sql.exec(`DELETE FROM search_authorization_push WHERE kind = 'resource'
-      AND target_id IN (SELECT resource_id FROM retired_meeting_resources)`);
-    return { deletedKeys: keys.length };
-  }
-
-  /** Operator calls after verifying external cleanup; pending cleanup is an error. */
-  async finalizeMeetingRetirement() {
-    await this.initialized;
-    await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
-      storage: this.state.storage,
-      migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
-      component: MIGRATION_COMPONENT,
-      workerVersionId: this.env.APP_VERSION ?? "unknown",
-    }));
-    this.detectUnheardLedger();
-    return { schemaVersion: 58 };
-  }
-
   private isRetiredMeetingResource(resource: z.infer<typeof AuthorizationResourceSchema>): boolean {
     return resource.kind === 'resource' && this.state.storage.sql.exec(
       'SELECT 1 FROM retired_meeting_resources WHERE resource_id = ?', resource.resourceId).toArray().length > 0;
-  }
-
-  async retiredMeetingInventory() {
-    await this.initialized;
-    const sql = this.state.storage.sql;
-    const tables = sql.exec<{ name: string }>("SELECT name FROM sqlite_schema WHERE type = 'table'").toArray();
-    const references: Array<{ table: string; count: number }> = [];
-    for (const { name } of tables) {
-      // Cloudflare's hidden KV tables are not accessible through SQL.
-      if (name === 'retired_meeting_resources' || /^(?:_+cf_|sqlite_)/.test(name)) continue;
-      const quoted = '"' + name.replaceAll('"', '""') + '"';
-      if (!sql.exec<{ name: string }>(`PRAGMA table_info(${quoted})`).toArray().some(column => column.name === 'resource_id')) continue;
-      const count = sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM ${quoted} WHERE resource_id IN (SELECT resource_id FROM retired_meeting_resources)`).one().count;
-      if (count) references.push({ table: name, count });
-    }
-    return {
-      workspaceId: this.workspaceId(),
-      schemaVersion: sql.exec<{ version: number }>('SELECT MAX(version) AS version FROM _sql_schema_migrations').one().version,
-      featureTables: tables.map(row => row.name).filter(name => ['notes', 'note_transcript_segments', 'note_privacy_change_outbox', 'note_resource_deletion_outbox', 'workspace_batch_dispatch_note_targets'].includes(name)),
-      references,
-      resources: sql.exec<{
-        resource_id: string; note_id: string | null; objects_deleted: number;
-      }>('SELECT resource_id, note_id, objects_deleted FROM retired_meeting_resources ORDER BY resource_id').toArray(),
-    };
   }
 
   async createConnectorInstallation(input: InstallationCreate) {
@@ -11835,10 +11768,6 @@ applyRetirementGate(WorkspaceDO, {
     // report that it had reached them.
     // Only the entry points. A permit carries the whole call beneath it, so the
     // private helpers these reach need no entry of their own.
-    "purgeMeetingNoteObjects",
-    "purgeMeetingSearchAuthorization",
-    "finalizeMeetingRetirement",
-    "retiredMeetingInventory",
     "beginWorkspaceRetirement",
     "recordRetiredNode",
     "recordRetiredChild",
