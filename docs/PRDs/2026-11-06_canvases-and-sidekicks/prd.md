@@ -158,7 +158,7 @@ that published its definition, runs, conversation and the Canvases it
 writes to every member and made administrators its managers, irreversibly:
 nothing would record who could read it before.
 
-**Changes:** WorkspaceDO migration 135 seeds `sidekick_audience` from
+**Changes:** WorkspaceDO migration 136 seeds `sidekick_audience` from
 `channel_viewers` or `breakout_viewers`; docs/automation-lifecycle.md,
 docs/hosted-conversation-parents.md, docs/authorization.md,
 docs/data-model.md.
@@ -436,7 +436,7 @@ titled from the opening message, and the role survived the pivot for pasted
 text.
 
 **Changes:** `HostedCanvas.nameFromOpening`, `canvas-naming.ts`, WorkspaceDO
-migration 136 (`docs/canvases.md`).
+migration 137 (`docs/canvases.md`).
 
 ### 2026-11-08 — Opening Activity opens its top row, and only a rail pick leaves Activity
 

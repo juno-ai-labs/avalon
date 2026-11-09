@@ -1,5 +1,5 @@
 /**
- * WorkspaceDO migration 138 drops the Thread-era tables nothing reads and the
+ * WorkspaceDO migration 139 drops the Thread-era tables nothing reads and the
  * Thread rows of the shared tables, keeping what the Thread conversion reads.
  * A drop that left a trigger writing a dropped table, or a foreign key naming
  * one, would fail every later write to the surviving table; a delete that
@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
-const VERSION = 138;
+const VERSION = 139;
 const openDatabases: DatabaseSync[] = [];
 
 function apply(database: DatabaseSync, through: number, after = 0): void {
@@ -50,7 +50,7 @@ afterEach(() => {
   while (openDatabases.length > 0) openDatabases.pop()?.close();
 });
 
-describe("WorkspaceDO migration 138", () => {
+describe("WorkspaceDO migration 139", () => {
   it("drops the Thread-era tables and rows, and keeps what Canvases, Sidekicks and the Thread retirement read", () => {
     const database = new DatabaseSync(":memory:");
     openDatabases.push(database);

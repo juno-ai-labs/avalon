@@ -108,7 +108,7 @@ navigation is ignored, and any live conversation snapshot replaces the seed.
 `AgentLoopDO` migration 78 queues every historical turn and the conversation
 header. The WorkspaceDO lane that woke each historical conversation
 (`thread_backfill`, filled by migration 124) is retired: WorkspaceDO migration
-138 dropped it, and the name survives only as a migration-history `INSERT`
+139 dropped it, and the name survives only as a migration-history `INSERT`
 (`workspace-conversation-view.ts`) and a parse-only job value in
 `activity-consumer.ts`.
 

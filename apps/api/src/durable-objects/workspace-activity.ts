@@ -3,7 +3,7 @@ import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import { PUSH_BODY_PREVIEW_CHARACTERS } from "@rally/contracts/push-notifications";
 
 /**
- * WorkspaceDO migration 139: each person's Activity, one row per event per
+ * WorkspaceDO migration 140: each person's Activity, one row per event per
  * recipient, and the one row per person that Mark all seen moves.
  *
  * A row is written by the code that records the event's notification intent,
@@ -11,7 +11,7 @@ import { PUSH_BODY_PREVIEW_CHARACTERS } from "@rally/contracts/push-notification
  * `recordSidekickRunNotices`, `recordParentNotice`), and carries the intent's
  * id as its own, so a replayed effect or a retried alarm converges on one
  * row. The intents' reaper never touches it. Its kinds are the intents' own
- * (migration 137); `subject_id` names what a row is about beyond its parent:
+ * (migration 138); `subject_id` names what a row is about beyond its parent:
  * an artifact's resource id for `artifact_updated`, or the access request's
  * id for the three access kinds.
  *
@@ -23,10 +23,10 @@ import { PUSH_BODY_PREVIEW_CHARACTERS } from "@rally/contracts/push-notification
  * time, not copied here. Times are integer milliseconds, as the Canvas tables
  * keep them. `docs/activity.md` owns all of it.
  *
- * This runs after migration 138, which drops the Thread-era
+ * This runs after migration 139, which drops the Thread-era
  * `workspace_activity_seen`; the table made here is a new one under the same
  * name. The sidebar-list waterline's CHECK already admits `activity`
- * (migration 136), so only its row is inserted.
+ * (migration 137), so only its row is inserted.
  */
 export const WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE workspace_activity_items (

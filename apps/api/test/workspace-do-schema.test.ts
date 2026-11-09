@@ -28,7 +28,7 @@ const ARTIFACT_REGISTRY_VERSION = 28;
 const ARTIFACT_HOSTNAME_VERSION = 29;
 const RANKING_PENDING_DUE_VERSION = 30;
 /** The Thread-owned (`workstream`) Sidekick scope is retired. */
-const SIDEKICK_SCOPE_RETIREMENT_VERSION = 135;
+const SIDEKICK_SCOPE_RETIREMENT_VERSION = 136;
 
 /** Apply the ledger's versions in `(after, through]`, the way a deploy does. */
 function apply(database: DatabaseSync, through: number, after = 0): void {
@@ -977,12 +977,12 @@ describe("the WorkspaceDO hosted-Sidekick migration", () => {
 });
 
 describe("the WorkspaceDO migration ledger", () => {
-  // Version 134 is the last one main shipped (2026-11-09, 910d94dc4); every
+  // Version 135 is the last one main shipped (2026-11-09, a47746dbc); every
   // Organization object already holds a receipt for each of these, so none
   // may change. Versions above it are unshipped until this branch deploys.
-  it("keeps every shipped migration fingerprint through v134 immutable", () => {
+  it("keeps every shipped migration fingerprint through v135 immutable", () => {
     expect(WORKSPACE_DO_SCHEMA_MIGRATIONS
-      .filter((migration) => migration.version <= 134)
+      .filter((migration) => migration.version <= 135)
       .map((migration) => [migration.version, durableObjectMigrationHash(migration)]))
       .toEqual([
         [1, "fnv1a64:e9ab4e8aef8cdca6"], [2, "fnv1a64:3e3fba9e408f99fe"], [3, "fnv1a64:afd5eb5841d15b82"],
@@ -1030,6 +1030,7 @@ describe("the WorkspaceDO migration ledger", () => {
         [127, "fnv1a64:9f3ad595ab1fc371"], [128, "fnv1a64:35b8f81a850d140d"], [129, "fnv1a64:00c6839e8f9b941e"],
         [130, "fnv1a64:4fa6093296666607"], [131, "fnv1a64:a18c87740266b6dc"], [132, "fnv1a64:9444eeec188cccbb"],
         [133, "fnv1a64:2cfaa8d846ead288"], [134, "fnv1a64:a194ecef7441448b"],
+        [135, "fnv1a64:b86ab74741d1ec2c"],
       ]);
   });
 

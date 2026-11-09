@@ -330,4 +330,41 @@ describe("workspace retirement graph", () => {
       "SELECT reason FROM object_retirement WHERE id = 1").toArray())).toEqual([{ reason: "operator_retirement" }]);
   });
 
+  it("keeps the children a cut-off pass closed, and the next pass wakes only the rest", async () => {
+    // Cut off after one child: the next object call does not come back.
+    const workspaceId = freshWorkspaceId();
+    const stub = workspaceStub(workspaceId);
+    await seedDirectory(stub, workspaceId);
+    const canvasId = "00000000-0000-7000-8000-00000000e502";
+    await stub.canvasCreate({ workspaceId, canvasId, title: "Plan", createdByUserId: ACTOR_ID, authorityGeneration: 1 });
+    // A second conversation under the Canvas, after its Chat.
+    await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec(
+        `INSERT OR IGNORE INTO sidekick_children (sidekick_id, substream_id, kind, created_by_user_id, created_at)
+         VALUES (?, ?, 'child', ?, ?)`,
+        canvasId,
+        "00000000-0000-7000-8000-00000000e601",
+        ACTOR_ID,
+        Date.now() + 1,
+      );
+    });
+
+    const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" } as const;
+
+    const cut = countingEnv(1);
+    const first = await retireWorkspaceGraph(cut.env, { workspaceId, ...tombstone });
+    expect(first.complete).toBe(false);
+    expect(first.retiredChildren).toBe(1);
+    expect(cut.counter.retires).toBe(2);
+
+    const resumed = countingEnv(Number.POSITIVE_INFINITY);
+    const second = await retireWorkspaceGraph(resumed.env, { workspaceId, ...tombstone });
+    expect(second.failed).toEqual([]);
+    expect(second.complete).toBe(true);
+    // Only the child the first pass did not finish. Without the per-child
+    // receipt this pass wakes both again.
+    expect(resumed.counter.retires).toBe(1);
+    expect(second.retiredChildren).toBe(1);
+  });
+
 });

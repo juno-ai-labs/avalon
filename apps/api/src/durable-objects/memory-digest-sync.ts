@@ -162,7 +162,7 @@ export const MEMORY_DIGEST_SYNC_MIGRATION: readonly string[] = [
 const MEMORY_DIGEST_TRIGGER_STATEMENTS = Object.values(MEMORY_DIGEST_SYNC_TRIGGERS).flat();
 
 /**
- * Part of WorkspaceDO migration 136: a holder may be a Canvas's Chat. The CHECK on
+ * Part of WorkspaceDO migration 137: a holder may be a Canvas's Chat. The CHECK on
  * `parent_kind` cannot widen in place, so the table is copied. Every trigger
  * above reads the table by name in its body, and SQLite refuses to rename a
  * table into place while a trigger names one that does not exist, so the
@@ -185,9 +185,9 @@ export const MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION: readonly string[] = [
 ];
 
 /**
- * Part of WorkspaceDO migration 136: the copy-sync triggers for the parents that
+ * Part of WorkspaceDO migration 137: the copy-sync triggers for the parents that
  * remain, which `MEMORY_DIGEST_SYNC_TRIGGERS` (written for Threads and
- * Channels, and hashed into migrations 117 and 136) never covered. A Canvas
+ * Channels, and hashed into migrations 117 and 137) never covered. A Canvas
  * changing who may open it (`canvasReaderAllows` reads its visibility, its
  * creator and the Sidekick that writes it) or being deleted marks every
  * holder; a participant joining marks that Canvas's holders, and one leaving
@@ -270,7 +270,7 @@ export function recordMemoryDigestHolder(
     );
   } catch (error) {
     // The table's CHECK names the conversation kinds that may hold a copy. A
-    // kind it does not admit (a Canvas, before migration 136) failed every
+    // kind it does not admit (a Canvas, before migration 137) failed every
     // refresh under one generic reason; say which kind it was.
     if (!(error instanceof Error) || !/CHECK constraint failed/u.test(error.message)) throw error;
     throw new ApiError(500, "memory_digest_holder_kind_unadmitted", "This conversation kind cannot hold a memory digest copy",

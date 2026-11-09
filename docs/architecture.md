@@ -682,7 +682,7 @@ server half (`space-service.ts`, `space-bootstrap-service.ts`,
 `system-channels.ts`, `channel-rails.ts` and the WorkspaceDO Space, rail and
 directory RPCs), so onboarding seats a new member nowhere. What survives: the
 `spaces`, `space_viewers`, `channels`, `channel_viewers` and `parent_*` tables,
-kept by WorkspaceDO migration 138 until `retire_threads` has run in every
+kept by WorkspaceDO migration 139 until `retire_threads` has run in every
 Organization ([`workspace-retirement.md`](workspace-retirement.md)); the
 shipped migration statements, moved byte for byte to
 `retired-workspace-schema.ts`; the `space_default`, `space_bootstrap` and
@@ -788,7 +788,7 @@ page and `/demo-scenario` skill were deleted rather than left unused. What
 survives: the D1 migrations that made and rebuilt the demo tables (0100,
 0102, 0103, 0106 and 0108, shipped history, never edited), until 0125 drops
 the three tables as a Worker-first migration (it must be the sole pending
-one); WorkspaceDO migration 135,
+one); WorkspaceDO migration 136,
 which drops `sidekick_runs.seed_json`; the persona `users` rows, which cannot
 sign in and which the retired demos' history references; the
 `demo_seed` reason and `seed` key inside stored conversation authorization

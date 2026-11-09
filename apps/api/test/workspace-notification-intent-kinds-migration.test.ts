@@ -1,5 +1,5 @@
 /**
- * WorkspaceDO migration 137 rebuilds `workstream_notification_intents` once so
+ * WorkspaceDO migration 138 rebuilds `workstream_notification_intents` once so
  * its CHECK admits the seven Canvas and Sidekick notices, and adds the index a
  * reply's cooldown seeks. A rebuild that drops a row, a lease, a delivery
  * time, an index or an identity-fence trigger would lose a mention's delivery,
@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
-const VERSION = 137;
+const VERSION = 138;
 const WORKSPACE_ID = "00000000-0000-7000-8000-00000000c137";
 const openDatabases: DatabaseSync[] = [];
 
@@ -44,7 +44,7 @@ afterEach(() => {
   while (openDatabases.length > 0) openDatabases.pop()?.close();
 });
 
-describe("WorkspaceDO migration 137", () => {
+describe("WorkspaceDO migration 138", () => {
   it("keeps every intent, its lease and delivery, its indexes and its identity fence, and admits every new notice", () => {
     const database = openDatabase();
     apply(database, VERSION - 1);

@@ -159,7 +159,7 @@ itself, below.
 
 A run reaching `needs_input`, or finishing (`completed`, `failed` or
 `stopped`), is a notice on the same intent row a mention uses, with
-`notification_kind` `needs_input` or `run_finished` (WorkspaceDO migration 137
+`notification_kind` `needs_input` or `run_finished` (WorkspaceDO migration 138
 widened the CHECK; `NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION`). Who hears it is
 decided, per the [Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
 
@@ -530,7 +530,7 @@ off; `hosted-sidekick.test.ts` covers who each notice is recorded for
 (requester and managers for Needs input, the requester alone for a finish,
 managers alone for a scheduled run's Needs input and nobody for its finish),
 and `test/workspace-notification-intent-kinds-migration.test.ts` migration
-137 over populated rows. `hosted-mention-notifications.test.ts` starts from the message: a mention
+138 over populated rows. `hosted-mention-notifications.test.ts` starts from the message: a mention
 posted in a Canvas's Chat and in an Organization-wide Sidekick's conversation
 reaches the parent, records one `mention` intent for the recipient, enqueues
 one push and sends its literal alert, and a redelivery of every effect sends
@@ -555,7 +555,7 @@ stored `slack_agent_dm` reads as no choice; and the real sink sends one Resend
 request whose subject is the title and whose idempotency key is the intent,
 with the template's literal text.
 `test/workspace-notification-intent-kinds-migration.test.ts` covers migration
-137 over populated rows. `test/conversation-effect-service.test.ts` covers the
+138 over populated rows. `test/conversation-effect-service.test.ts` covers the
 mention processor queueing one message per chosen sink, the email one named,
 and keeping the payload for them. The provider itself and macOS alert
 presentation require a signed installed build.
@@ -636,7 +636,7 @@ conversation emits one `new_message_notification` per message naming its
 recipients, the hosted parent batches it in a `reply_batch` alarm entry, and
 the entry records a `delivered` (or, within the cooldown, `skipped`) intent
 and a collapsing Activity row per recipient through `recordParentNotice`.
-WorkspaceDO migration 137 widens the intents' `notification_kind` CHECK to
+WorkspaceDO migration 138 widens the intents' `notification_kind` CHECK to
 the four kinds a hosted parent now records about itself (`new_message`,
 `artifact_updated`, `access_request`, `access_granted`) and adds a
 recipient-and-kind index the cooldown reads. The push consumer renders those
@@ -745,7 +745,7 @@ the Sidekick for its conversation and runs; a delivery about a Thread or
 Breakout is skipped, `conversation_not_linkable`. A run's transition into
 `needs_input`, or into a finished state, arms a `sidekick_run_notice` alarm
 entry in the Organization object; the entry records a `needs_input` or
-`run_finished` intent per recipient (WorkspaceDO migration 137 widens
+`run_finished` intent per recipient (WorkspaceDO migration 138 widens
 `notification_kind`) and enqueues the push, which renders from the stored
 notice and links to the Sidekick. `needs_input` joins
 `PushNotificationData.kind` and reads the `runFinished` choice, whose Settings
