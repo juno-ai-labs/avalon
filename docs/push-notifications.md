@@ -253,7 +253,9 @@ within `CONVERSATION_ALERT_COOLDOWN_MS` (two minutes) — read from their last
 `new_message` intent's `delivered_at` — in which case the intent is recorded
 `skipped` (`conversation_alert_cooldown`) and only the Activity row moves.
 Both numbers are the team's from the Thread-era batch
-(`git show 3df4150^:apps/api/src/durable-objects/workspace-activity-push.ts`,
+(`workspace-activity-push.ts`, which
+`git log --diff-filter=D -1 -- apps/api/src/durable-objects/workspace-activity-push.ts`
+finds,
 and the 2026-10-20 entry below), carried rather than set again.
 
 The push reads the notice back (`ParentNoticeSchema`), checks the recipient
