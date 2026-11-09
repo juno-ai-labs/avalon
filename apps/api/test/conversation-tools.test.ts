@@ -78,7 +78,8 @@ function loop(overrides: Partial<WorkstreamWorkflowInput> = {}): WorkstreamWorkf
   } as WorkstreamWorkflowInput;
 }
 
-const configLoop = () => loop({ parentKind: "automation", parentId: SIDEKICK_ID });
+/** The Sidekick's configuration conversation in a turn the claim marked as its wizard's. */
+const configLoop = () => loop({ parentKind: "automation", parentId: SIDEKICK_ID, sidekickWizard: true });
 const runLoop = (triggerMessageId?: string) => loop({
   parentKind: "automation", parentId: SIDEKICK_ID, substreamId: RUN_ID as never,
   ...(triggerMessageId ? { triggerMessageId } : {}),
@@ -194,6 +195,9 @@ describe("which loops get the conversation tools", () => {
     expect(conversationToolAccess(loop({ parentKind: "automation", parentId: SIDEKICK_ID, substreamId: RUN_ID as never })))
       .toBeNull();
     expect(conversationToolAccess(loop({ executionPrincipal: { type: "workspace" } as never }))).toBeNull();
+    // A turn in the configuration conversation the claim did not mark as a
+    // manager's wizard turn gets no conversation tools, attach and post included.
+    expect(conversationToolAccess(loop({ parentKind: "automation", parentId: SIDEKICK_ID }))).toBeNull();
   });
 });
 
