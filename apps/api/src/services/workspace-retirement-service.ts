@@ -11,7 +11,7 @@ import {
   conversationObjectName,
   workspaceDOName,
 } from "../durable-objects/names";
-import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace, workspacePlacementAffinity } from "../lib/durable-object-namespace";
 import { settledBatches } from "../lib/settled-batches";
 import { markDemoWorkspaceRetired } from "./demo-workspace-register";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
@@ -111,11 +111,15 @@ export async function retireWorkspaceGraph(
   // Routed through the shared resolver rather than `idFromName`: a workspace
   // lives in one region with one placement affinity, and addressing its
   // objects directly is how a call ends up in the wrong jurisdiction.
+  // Read once and handed to every stub, so a batch of children starts its
+  // retires together rather than each waiting on its own lookup.
+  const affinity = await workspacePlacementAffinity(env, input.workspaceId);
   const workspace = await durableObjectStubForWorkspace(
     env,
     env.WORKSPACE_DOS,
     input.workspaceId,
     workspaceDOName(region, input.workspaceId),
+    affinity,
   );
 
   const tombstone = {
@@ -204,6 +208,7 @@ export async function retireWorkspaceGraph(
             env.SUBSTREAM_AGENTS,
             input.workspaceId,
             childName,
+            affinity,
           );
           const childReceipt = await conversation.retireObject(tombstone);
           receipt.retainedOutbox += childReceipt.retainedOutbox;
