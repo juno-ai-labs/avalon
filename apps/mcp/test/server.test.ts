@@ -111,6 +111,19 @@ describe("the Canvas tools", () => {
       text: "The session is no longer active (session_revoked). The connection to Rally has ended; reconnect Rally to continue." }] });
   });
 
+  it("publishes a self-contained page as a site through the Canvas's artifacts route", async () => {
+    const upstream = api(async (request) => {
+      expect(`${request.method} ${new URL(request.url).pathname}`).toBe("POST /canvases/0190a000-0000-7000-8000-000000000001/artifacts");
+      expect(await request.json()).toEqual({ kind: "site", name: "pricing", files: [
+        { path: "index.html", content: { encoding: "text", data: "<h1>Pricing</h1>" } }] });
+      return Response.json({ resourceId: "0190a000-0000-7000-8000-0000000000bb", title: "pricing", kind: "site", version: 1,
+        outcome: "created", url: null }, { status: 201 });
+    });
+    const { body } = await rpc(upstream.binding, call("publish_site", { canvasId: "0190a000-0000-7000-8000-000000000001",
+      name: "pricing", files: [{ path: "index.html", content: "<h1>Pricing</h1>" }] }));
+    expect(JSON.parse(body.result!.content[0]!.text)).toMatchObject({ outcome: "created", version: 1 });
+  });
+
   it("refuses to read a Sidekick's conversation as a Canvas's Chat", async () => {
     const upstream = api(() => Response.json({ kind: "automation", title: "Digest", text: "hello", throughSequence: 3, nextAfterSequence: null }));
     const { body } = await rpc(upstream.binding, call("read_canvas_chat", { canvasId: "0190a000-0000-7000-8000-000000000001" }));

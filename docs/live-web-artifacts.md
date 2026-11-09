@@ -46,6 +46,13 @@ exists.
 
 ### Publishing
 
+A person can also publish a static site into a Canvas, from Claude, ChatGPT
+or OpenCode through `POST /canvases/:id/artifacts`: the same version write,
+hostname, registry and host pointer as below, in the same order, with the
+person as the revision's author, and never an active site
+([`rally-mcp.md`](rally-mcp.md#publishing)). The row writes both publishers
+share live in `services/resource-publication.ts`.
+
 `publish_resource` accepts a directory. It gains no parameter for what
 to do with one: **the kind is resolved from the directory's root entry**, because
 a parameter restating what the files already say is a parameter that can disagree

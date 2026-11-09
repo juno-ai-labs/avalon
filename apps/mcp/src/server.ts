@@ -56,6 +56,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
     instructions: [
       "Rally is a shared workspace. A Canvas is a conversation with Rally (its Chat) that everyone in the Canvas can read and join, plus the artifacts that conversation generates. You act in one Organization, as the person who connected Rally, with exactly their permissions.",
       "To make or change an artifact, send a message to the Canvas's Chat with send_canvas_message describing what you want; Rally (the agent in the Canvas) does the work and publishes the artifact. Then read_canvas_chat to follow its answer and get_canvas to see the artifacts and their versions. Rally works asynchronously: a reply can take a while, so read again rather than resending.",
+      "To bring in something already made elsewhere (an artifact, a file, a page), publish it with publish_file or publish_site rather than pasting it into a message: it lands as the Canvas's artifact, exactly as written, and the same name updates it.",
       "Start with list_canvases to find a Canvas by title before creating a new one. Use list_people to turn names into user ids before changing who can open a Canvas.",
       "Every write takes the person's own permissions: only a Canvas's managers (its creator, the Organization's owners and admins) can change its audience or decide access requests. Report a refusal as Rally gave it rather than retrying.",
       "Writes that take an operationId are safe to retry with the same operationId and arguments after an uncertain result. Never invent a new operationId for a retry.",
@@ -239,6 +240,48 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
     await api.json("PATCH", `/conversations/${canvasId}/resources/${resourceId}`, { title });
     return { resourceId, title };
   }));
+
+  const Content = {
+    content: z.string().describe("The content: the text itself, or base64 when encoding is base64."),
+    encoding: z.enum(["text", "base64"]).default("text").describe("text for anything textual; base64 for images, PDFs, spreadsheets and other bytes."),
+  };
+  const Name = z.string().min(1).max(1024).describe(
+    "The artifact's name in this Canvas, as a relative path such as launch-plan.md or reports/q3.csv. Publishing the same name again makes a new version of the same artifact; a new name makes a new artifact.");
+
+  server.registerTool("publish_file", {
+    title: "Publish a file to a Canvas",
+    description: "Publish a document, spreadsheet, image, PDF or other file you made (a Claude or ChatGPT artifact, a file in an OpenCode workspace) into a Canvas as one of its artifacts, as the person. Everyone who can open the Canvas sees it, and Rally can read and work on it there. Publish under the same name again to update it: the Canvas keeps each version. Publishing content that has not changed does nothing. Give the file's extension in the name so Rally knows its type.",
+    inputSchema: {
+      canvasId: CanvasId,
+      name: Name,
+      title: z.string().trim().min(1).max(300).optional().describe("The title people see; the name by default."),
+      description: z.string().trim().min(1).max(2000).optional(),
+      mimeType: z.string().max(160).optional().describe("The content type, when the name's extension does not say it."),
+      ...Content,
+    },
+    annotations: write,
+  }, ({ canvasId, name, title, description, mimeType, content, encoding }) => tool("publish_file", () =>
+    api.json("POST", `/canvases/${canvasId}/artifacts`, {
+      kind: "file", name, ...(title ? { title } : {}), ...(description ? { description } : {}), ...(mimeType ? { mimeType } : {}),
+      content: { encoding, data: content },
+    })));
+
+  server.registerTool("publish_site", {
+    title: "Publish a site to a Canvas",
+    description: "Publish a static web page or site you made (an HTML artifact, a built front end) into a Canvas as a live site Rally serves at its own address, for everyone who can open the Canvas. files must include index.html, its entry page; other files (CSS, scripts, images) are served beside it at their paths. A self-contained HTML page is one file, index.html. Publish under the same name again to update the site at the same address. Server code (index.js) is not accepted here; ask Rally in the Canvas to build a site that needs one.",
+    inputSchema: {
+      canvasId: CanvasId,
+      name: Name,
+      title: z.string().trim().min(1).max(300).optional(),
+      description: z.string().trim().min(1).max(2000).optional(),
+      files: z.array(z.object({ path: z.string().min(1).max(1024), ...Content })).min(1),
+    },
+    annotations: write,
+  }, ({ canvasId, name, title, description, files }) => tool("publish_site", () =>
+    api.json("POST", `/canvases/${canvasId}/artifacts`, {
+      kind: "site", name, ...(title ? { title } : {}), ...(description ? { description } : {}),
+      files: files.map((file) => ({ path: file.path, content: { encoding: file.encoding, data: file.content } })),
+    })));
 
   return server;
 }
