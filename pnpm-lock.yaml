@@ -623,8 +623,8 @@ importers:
   packages/agent-harness:
     dependencies:
       '@juno-ai/bind':
-        specifier: 16.0.0
-        version: 16.0.0(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.21.0)(zod@4.5.4))(zod@4.5.4)
+        specifier: workspace:*
+        version: link:../bind
       '@openrouter/sdk':
         specifier: 1.2.54
         version: 1.2.54
@@ -638,6 +638,22 @@ importers:
         specifier: 'catalog:'
         version: 4.5.4
     devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/bind:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.5.4
+    devDependencies:
+      openai:
+        specifier: 6.49.0
+        version: 6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.21.0)(zod@4.5.4)
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
@@ -1895,15 +1911,6 @@ packages:
 
   '@js-sdsl/ordered-map@4.4.2':
     resolution: {integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==}
-
-  '@juno-ai/bind@16.0.0':
-    resolution: {integrity: sha512-aDpZGGr/09pWrtmAn4Sw8n5ViMuKkjjMU6N3kbvhgewUoDonCyIjUa4BTB52NJHkCQovsfrustpVjt8YEeeSmg==}
-    peerDependencies:
-      openai: ^6.0.0
-      zod: ^4.0.0
-    peerDependenciesMeta:
-      openai:
-        optional: true
 
   '@malept/cross-spawn-promise@2.0.0':
     resolution: {integrity: sha512-1DpKU0Z5ThltBwjNySMC14g0CkbyhCaz9FkhxqNsZI6uAPJXFS8cMXlBKo26FJ8ZuW6S9GCMcR9IO5k2X5/9Fg==}
@@ -7920,12 +7927,6 @@ snapshots:
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
-  '@juno-ai/bind@16.0.0(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.21.0)(zod@4.5.4))(zod@4.5.4)':
-    dependencies:
-      zod: 4.5.4
-    optionalDependencies:
-      openai: 6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.21.0)(zod@4.5.4)
-
   '@malept/cross-spawn-promise@2.0.0':
     dependencies:
       cross-spawn: 7.0.6
@@ -11042,7 +11043,6 @@ snapshots:
       '@smithy/signature-v4': 5.7.0
       ws: 8.21.0
       zod: 4.5.4
-    optional: true
 
   opentype.js@1.3.4:
     dependencies:
