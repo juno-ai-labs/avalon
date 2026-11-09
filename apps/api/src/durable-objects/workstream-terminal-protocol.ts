@@ -98,6 +98,8 @@ const DISPATCHED_OPERATIONS = [
   "retireMissingSandboxAfterLifecycleClaim",
   "renewLifecycleClaim",
   "attachProviderSandbox",
+  "recordCredentialMount",
+  "recordCredentialsCleared",
   "failGeneration",
   "setRunning",
   "refreshDeadlines",
@@ -207,6 +209,11 @@ const NON_DIRECTORY_OPERATIONS = new Set<TerminalOperation>([
   // directory updates in production.
   "beginProviderObservation",
   "settleProviderObservation",
+  // Whose GitHub credentials the sandbox holds. A column of
+  // `terminal_workspace` the directory does not project, written once per
+  // mount or person change.
+  "recordCredentialMount",
+  "recordCredentialsCleared",
   // Writes that leave `terminal_workspace` alone.
   "insertTask",
   "renewTaskSubmissionAuthority",

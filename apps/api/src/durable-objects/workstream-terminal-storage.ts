@@ -113,6 +113,18 @@ export interface TerminalSandboxRecord {
   expireDueAt: number | null;
   finalDiffResourceId: string | null;
   failureCode: string | null;
+  /**
+   * Whose GitHub credentials this generation's sandbox may hold, as an
+   * execution principal key, or `null` when none were ever mounted into it.
+   *
+   * Written before a credential is mounted, never after, so a mount that
+   * failed half-way is still attributed. A Canvas's sandbox is shared, and
+   * the coordinator clears the credentials before a different principal's
+   * operation runs, then attributes the empty slot to that principal
+   * (`recordCredentialsCleared`). Every generation bump resets it: a new
+   * sandbox has no secrets mounted.
+   */
+  credentialPrincipalKey: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -136,6 +148,7 @@ interface SandboxRow extends Record<string, SqlStorageValue> {
   expire_due_at: number | null;
   final_diff_resource_id: string | null;
   failure_code: string | null;
+  credential_principal_key: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -145,7 +158,7 @@ const SANDBOX_COLUMNS = `lifecycle_state, stable_name, sandbox_id, generation,
   operation_run_substream_id,
   operation_lease_expires_at, lifecycle_claim_id, lifecycle_claim_expires_at,
   last_command_at, idle_expires_at, archive_due_at, expire_due_at,
-  final_diff_resource_id, failure_code, created_at, updated_at`;
+  final_diff_resource_id, failure_code, credential_principal_key, created_at, updated_at`;
 
 /**
  * Whether the lease holder is still running, as this object can tell.
@@ -198,6 +211,7 @@ function toSandbox(row: SandboxRow): TerminalSandboxRecord {
     expireDueAt: row.expire_due_at,
     finalDiffResourceId: row.final_diff_resource_id,
     failureCode: row.failure_code,
+    credentialPrincipalKey: row.credential_principal_key,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -786,6 +800,7 @@ export class WorkstreamTerminalStorage {
                 idle_expires_at = ?, archive_due_at = ?, expire_due_at = ?,
                 lifecycle_claim_id = NULL, lifecycle_claim_expires_at = NULL,
                 final_diff_resource_id = NULL, failure_code = NULL,
+                credential_principal_key = NULL,
                 version = version + 1, updated_at = ?
           WHERE id = 1 AND generation = ? AND sandbox_id = ?
             AND lifecycle_claim_id = ?
@@ -835,6 +850,7 @@ export class WorkstreamTerminalStorage {
                 archive_due_at = NULL, expire_due_at = NULL,
                 lifecycle_claim_id = NULL, lifecycle_claim_expires_at = NULL,
                 final_diff_resource_id = NULL, failure_code = NULL,
+                credential_principal_key = NULL,
                 version = version + 1, updated_at = ?
           WHERE id = 1 AND generation = ? AND sandbox_id = ?
             AND lifecycle_claim_id = ?
@@ -1041,6 +1057,7 @@ export class WorkstreamTerminalStorage {
                 operation_lease_expires_at = ?, last_command_at = ?,
                 idle_expires_at = ?, archive_due_at = ?, expire_due_at = ?,
                 final_diff_resource_id = NULL, failure_code = NULL,
+                credential_principal_key = NULL,
                 version = version + 1, updated_at = ?
           WHERE id = 1 AND generation = ?`,
         input.authorityFingerprint,
@@ -1835,6 +1852,63 @@ export class WorkstreamTerminalStorage {
       input.repositoryFullName,
       input.baseSha,
     );
+  }
+
+  /**
+   * Attribute this generation's GitHub credential slot to the principal about
+   * to mount a credential into it. Called before the mount, so a mount that
+   * fails part-way is still attributed and the next principal's operation
+   * clears it. A generation that moved on is left alone: the credential goes
+   * to a sandbox the row no longer names, which is being retired.
+   */
+  recordCredentialMount(input: { generation: number; principalKey: string; now: number }): void {
+    this.sql.exec(
+      `UPDATE terminal_workspace
+          SET credential_principal_key = ?, updated_at = ?
+        WHERE id = 1 AND generation = ?
+          AND credential_principal_key IS NOT ?`,
+      input.principalKey,
+      input.now,
+      input.generation,
+      input.principalKey,
+    );
+  }
+
+  /**
+   * Record that the credentials `fromPrincipalKey` held in this generation
+   * were cleared, and hand the empty slot to the principal now acting.
+   *
+   * Fenced on the generation and on the attribution the caller cleared, so a
+   * clear that raced a newer mount does not erase the record of it. The
+   * repository's cached token expiry goes with it, in the same transaction:
+   * it described the cleared credential, and bootstrap reads its absence as
+   * "mint and mount before the next command". `false` means the fence missed
+   * and nothing was written.
+   */
+  recordCredentialsCleared(input: {
+    generation: number;
+    fromPrincipalKey: string;
+    toPrincipalKey: string;
+    now: number;
+  }): boolean {
+    return this.storage.transactionSync(() => {
+      const handed = first<{ id: number }>(this.sql.exec(
+        `UPDATE terminal_workspace
+            SET credential_principal_key = ?, updated_at = ?
+          WHERE id = 1 AND generation = ? AND credential_principal_key = ?
+          RETURNING id`,
+        input.toPrincipalKey,
+        input.now,
+        input.generation,
+        input.fromPrincipalKey,
+      ));
+      if (!handed) return false;
+      this.sql.exec(
+        `UPDATE terminal_repository SET read_token_expires_at = NULL, updated_at = ? WHERE id = 1`,
+        input.now,
+      );
+      return true;
+    });
   }
 
   // ----------------------------------------------------------- publications

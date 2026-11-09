@@ -40,6 +40,7 @@ export type TerminalUtilityOperation =
   | "resource.import.stage"
   | "resource.import.finalize"
   | "repository.bootstrap"
+  | "repository.credentials.clear"
   | "repository.publish.status"
   | "repository.publish.branch"
   | "repository.publish.head"
