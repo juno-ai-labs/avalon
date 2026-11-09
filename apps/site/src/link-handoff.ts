@@ -1,4 +1,4 @@
-import { isRetiredLinkPath, linkDeepLink, parseLinkPathTarget, type LinkTarget } from '@rally/contracts/links';
+import { isRetiredLinkPath, linkCanonicalUrl, linkDeepLink, parseLinkPathTarget, parseMessageSearch, type LinkTarget } from '@rally/contracts/links';
 import { apiBaseUrl, reportDesktopHandoff, storageRead, storageWrite } from './telemetry';
 
 export {};
@@ -19,8 +19,18 @@ export type HandoffPlan =
   | { kind: 'gone' }
   | { kind: 'invalid' };
 
-export function handoffPlan(pathname: string): HandoffPlan {
+/**
+ * `search` is the link's query: a Canvas link's `?turn=&sequence=` names the
+ * message it opens at, and is carried into the target so either app opens
+ * there. Any other query is dropped rather than breaking the link: neither
+ * app would read it.
+ */
+export function handoffPlan(pathname: string, search = ''): HandoffPlan {
   const target = parseLinkPathTarget(pathname);
+  if (target?.kind === 'canvas' && target.artifactId === undefined && search) {
+    const message = parseMessageSearch(new URLSearchParams(search));
+    return { kind: 'open', target: message ? { ...target, ...message } : target };
+  }
   if (target) return { kind: 'open', target };
   return isRetiredLinkPath(pathname) ? { kind: 'gone' } : { kind: 'invalid' };
 }
@@ -42,7 +52,7 @@ function initializeLinkHandoff(): void {
   const error = document.querySelector<HTMLElement>('#link-error');
   if (!button) return;
 
-  const plan = handoffPlan(window.location.pathname);
+  const plan = handoffPlan(window.location.pathname, window.location.search);
   if (plan.kind !== 'open') {
     button.setAttribute('hidden', '');
     help?.setAttribute('hidden', '');
@@ -70,7 +80,9 @@ function initializeLinkHandoff(): void {
   if (title) void showResourceName(title);
   // Choosing the browser also cancels the app launch still pending on this page.
   let attempted = false;
-  const webUrl = new URL(window.location.pathname, browserAppOrigin()).toString();
+  // Minted from the target, so a message link's `?turn=&sequence=` is carried
+  // and any other query is not.
+  const webUrl = linkCanonicalUrl(browserAppOrigin(), plan.target);
   if (browser) {
     browser.href = webUrl;
     browser.removeAttribute('hidden');
