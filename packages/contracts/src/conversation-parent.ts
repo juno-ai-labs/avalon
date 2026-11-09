@@ -41,6 +41,12 @@ export const ConversationParentAuthorizeViewerRequestSchema = z.strictObject({
 export const ConversationParentAuthorizeViewerResultSchema = z.strictObject({
   authorized: z.boolean(),
   archived: z.boolean(),
+  /**
+   * Why a viewer the parent's own rule never reached was refused: the person
+   * has no active relationship with the Organization, whatever list still
+   * names them.
+   */
+  refusal: z.literal("viewer_relationship_inactive").optional(),
   childStatus: z.enum(["reserved", "ready", "failed"]).nullable().optional(),
   membershipVersion: z.number().int().nonnegative().optional(),
 });

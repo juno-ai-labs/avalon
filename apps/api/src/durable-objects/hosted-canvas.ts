@@ -291,12 +291,11 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
    * (who asks with `requireGrantAuthority`) is never admitted by Organization
    * visibility.
    */
-  protected async admitsViewer(request: ConversationParentAuthorizeViewerRequest): Promise<boolean> {
+  protected async admitsViewer(request: ConversationParentAuthorizeViewerRequest, relationship: WorkspaceRelationship): Promise<boolean> {
     const row = this.row()!;
-    const relationship = request.requireGrantAuthority ? null : await this.host.readRelationship(row.workspace_id, request.userId);
-    // Only an active member has a role: a guest asks on the grant path, and
-    // a missing or inactive relationship is no membership at all.
-    const actorRole = relationship?.status === "active" && relationship.accessClass === "member"
+    // Only a member has a role: a guest, or a caller asking on the grant path,
+    // is admitted from the lists alone.
+    const actorRole = !request.requireGrantAuthority && relationship.accessClass === "member"
       ? relationship.role ?? "member" : null;
     return canvasReaderAllows(this.row() ?? row, { userId: request.userId, actorRole }, this.sql);
   }
