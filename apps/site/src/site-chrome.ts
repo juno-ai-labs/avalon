@@ -7,6 +7,8 @@
 import { readFileSync } from 'node:fs';
 import { loadBlogPosts, type BlogPost } from './blog-pages';
 import { escapeHtml as escape, loadComparisons, type Comparison } from './comparison-pages';
+import { renderLoopFigure, renderPeopleFigure } from './explorable-figures';
+import { renderLiveCarousel } from './live-examples';
 
 /** Every rival, read from `content/compare/*.md` and sorted by `order`. */
 export const comparisons: readonly Comparison[] = loadComparisons(new URL('../content/compare/', import.meta.url));
@@ -150,6 +152,9 @@ const markers: Record<string, () => string> = {
   'site-nav': renderSiteNav,
   'landing-sections': renderLandingSections,
   'canvas-demo': renderCanvasDemo,
+  'live-carousel': renderLiveCarousel,
+  'loop-figure': renderLoopFigure,
+  'people-figure': renderPeopleFigure,
   'site-footer': renderSiteFooter,
   'comparison-table': renderComparisonTable,
 };
