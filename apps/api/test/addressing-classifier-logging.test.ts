@@ -26,7 +26,7 @@ function fixture(options: {
     TYPESAFE_API_KEY: "typesafe-secret",
     OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
     OPENROUTER_FALLBACK_MODELS: "",
-    OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
+    OPENROUTER_FASTER_MODEL: "google/gemini-2.5-flash-lite",
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({
       put: payloadPut,
       async delete(key: string) {

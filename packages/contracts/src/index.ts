@@ -244,7 +244,8 @@ export const AGENT_MODEL_ROLES = [
   "inline_child",
   "workstream_naming",
   "memory_sweep",
-  "sidekick_authoring",
+  "sidekick_wizard",
+  "sidekick_run",
 ] as const;
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 

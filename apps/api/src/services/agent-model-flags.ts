@@ -69,15 +69,17 @@ export async function resolveAgentModelRouting(
 export function resolveNewWorkstreamModelRouting(
   env: Env,
   context: { workspaceId: string; workstreamId: string },
+  role: AgentModelRole = "workstream",
 ): Promise<AgentModelRouting> {
-  return resolveAgentModelRouting(env, "workstream", context);
+  return resolveAgentModelRouting(env, role, context);
 }
 
 export async function scheduledWorkstreamModel(
   env: Env,
   context: { workspaceId: string; workstreamId: string },
+  role: AgentModelRole = "workstream",
 ): Promise<string> {
-  return (await resolveNewWorkstreamModelRouting(env, context)).model;
+  return (await resolveNewWorkstreamModelRouting(env, context, role)).model;
 }
 
 /**
@@ -166,22 +168,23 @@ export function conversationModelContext(
 
 /**
  * A Sidekick's Main is its wizard, and the background agents the wizard
- * starts read runs for it on the same route; a run's activation and its
- * delegation workers keep their existing route.
+ * starts use the wizard route; a run's activation and its
+ * delegation workers use the Sidekick run route.
  */
 export function conversationModelRole(
   context: ConversationModelContext,
-): "workstream" | "sidekick_authoring" {
-  return context.parentKind === "automation" && !context.automationRun && !context.automationDelegation
+): "workstream" | "sidekick_wizard" | "sidekick_run" {
+  if (context.parentKind !== "automation") return "workstream";
+  return !context.automationRun && !context.automationDelegation
     && ((context.substreamId ?? "0") === "0" || context.backgroundAgent === true)
-    ? "sidekick_authoring"
-    : "workstream";
+    ? "sidekick_wizard"
+    : "sidekick_run";
 }
 
 /**
  * The work-stream agent's route plan for one work stream: its own override if
  * it carries one, otherwise its conversation role's configured default.
- * Sidekick authoring has its own role; triggered runs and ordinary threads retain `workstream`.
+ * Sidekick wizard and run roles are independent of the Canvas `workstream` role.
  *
  * The override wins over configuration. Configuration is a
  * fleet-wide default and an override is somebody asking this one work stream to

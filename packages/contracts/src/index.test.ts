@@ -202,7 +202,8 @@ describe("boundary contracts", () => {
       "inline_child",
       "workstream_naming",
       "memory_sweep",
-      "sidekick_authoring",
+      "sidekick_wizard",
+      "sidekick_run",
     ]);
     expect(AgentModelRoutingSchema.parse({ model: "openai/gpt-6.1-sol", reasoningEffort: "low" })).toEqual({
       model: "openai/gpt-6.1-sol", fallbackModels: [], reasoningEffort: "low",

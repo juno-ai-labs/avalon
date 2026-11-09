@@ -60,12 +60,12 @@ function namingCall(call: { stream: boolean; body: Record<string, unknown> }): b
  * leaves it unset, so every other case here makes no naming call.
  */
 async function withNamingModel<T>(run: () => Promise<T>): Promise<T> {
-  const mutable = env as { OPENROUTER_CLASSIFIER_MODEL?: string };
-  mutable.OPENROUTER_CLASSIFIER_MODEL = "double/naming";
+  const mutable = env as { OPENROUTER_FASTER_MODEL?: string };
+  mutable.OPENROUTER_FASTER_MODEL = "double/naming";
   try {
     return await run();
   } finally {
-    delete mutable.OPENROUTER_CLASSIFIER_MODEL;
+    delete mutable.OPENROUTER_FASTER_MODEL;
   }
 }
 /**

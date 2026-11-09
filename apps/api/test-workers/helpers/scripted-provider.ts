@@ -101,7 +101,7 @@ export async function installProviderCapture(
     target.env = new Proxy(target.env, {
       get: (current, property, receiver) => {
         if (property === "OPENROUTER_API_KEY") return `${PROVIDER_KEY_PREFIX}${objectId}`;
-        if (property === "OPENROUTER_PRIMARY_MODEL") return model;
+        if (property === "OPENROUTER_PRIMARY_MODEL" || property === "OPENROUTER_SMARTER_MODEL") return model;
         if (property === "OPENROUTER_FALLBACK_MODELS") return "";
         return Reflect.get(current, property, receiver);
       },
@@ -228,7 +228,7 @@ export async function installScriptedProvider(
       get: (current, property, receiver) => {
         if (property === "OPENROUTER_API_KEY") return `${PROVIDER_KEY_PREFIX}${objectId}`;
         if (property === "TYPESAFE_API_KEY") return `${PROVIDER_KEY_PREFIX}${objectId}`;
-        if (property === "OPENROUTER_PRIMARY_MODEL") return routing.primaryModel;
+        if (property === "OPENROUTER_PRIMARY_MODEL" || property === "OPENROUTER_SMARTER_MODEL") return routing.primaryModel;
         if (property === "OPENROUTER_FALLBACK_MODELS") {
           return routing.fallbackModels.join(",");
         }
