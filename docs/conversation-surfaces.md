@@ -145,10 +145,13 @@ records where a running signal would come from.
   `screens/automation.tsx` renders it with `parentKind: "automation"` and
   `substreamId: "0"` (or a run's id) through `SidekickDetailLayout`, which lays
   a Sidekick out as design §4 does and as a Canvas is: one `TitlePillHeader`
-  over the main column (Back and Forward, the Sidekick's pill and its menu,
-  the face pile; a run's pill after the Sidekick's while `?run=` is open), the
+  over the main column (Back and Forward, the Sidekick's pill and its menu;
+  a run's pill after the Sidekick's while `?run=` is open), the
   conversation under it, and `components/automation-header.tsx`, the details,
-  in a 340px column on the right. Below 900px the details take the
+  in a 340px column on the right. A Sidekick the list already holds mounts its
+  conversation and pill from the list row at once, and the details and the
+  manager's composer menu fill in when `GET /automations/:id` answers: the
+  conversation is the slow part to open, and it needs only the id. Below 900px the details take the
   conversation's place under the same header, switched by its **Sidekick
   details** button, so the page has one header at every width. Tool rows are not rendered one per call: they collapse into one row per plugin, which
   [`plugin-activity-rows.md`](plugin-activity-rows.md) owns entirely. The
@@ -907,8 +910,13 @@ where design §4 keeps both.
 
 **Considered and rejected:** Rendering the Sidekick's header inside the
 conversation, as a Canvas does: it would vanish with the conversation when the
-details take its place at narrow widths. The header reads presence from the
-workspace socket instead.
+details take its place at narrow widths.
+
+The conversation first waited for the detail read before mounting, though
+the list row already named the Sidekick, so every open paid that request
+before the conversation's own socket started; it now mounts from the row.
+The screen is keyed by the Sidekick, so an error or a pending action from one
+Sidekick does not carry over to the next one opened in its place.
 
 **What a future change must respect:** a Sidekick's page keeps one header at
 every width, and the conversation stays mounted behind the details. A turn's

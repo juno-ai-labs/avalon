@@ -109,6 +109,24 @@ beforeEach(() => {
   socket.mounted = false;
 });
 
+describe('opening a Sidekick the list already holds', () => {
+  it('mounts its conversation from the list row before the detail read answers, and fills the details in after', async () => {
+    let answer!: (value: AutomationDetail) => void;
+    getAutomation.mockReturnValue(new Promise<AutomationDetail>((resolve) => { answer = resolve; }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    applyVersionedSidebarList(client, 'automations', 1, [
+      { id: SIDEKICK_ID, name: 'Weekly changelog', description: '', scope: 'workspace', status: 'active', updatedAt: '2026-11-08T09:00:00.000Z' },
+    ]);
+    renderScreen(client);
+    expect(surfaceIntents.length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Sidekick menu: Weekly changelog' })).toBeInTheDocument();
+    const mounted = surfaceIntents.length;
+    await act(async () => { answer(detail()); });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sidekick menu: Weekly changelog' })).toBeInTheDocument());
+    expect(surfaceIntents.length).toBeGreaterThanOrEqual(mounted);
+  });
+});
+
 describe("The Sidekick's conversation composer", () => {
   async function open(userId: string, role: string | null, overrides: Partial<AutomationDetail> = {}) {
     viewer.session = { user: { id: userId }, workspace: { role } };
