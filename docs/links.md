@@ -366,6 +366,8 @@ a Canvas link with no artifact segment, as exactly `turn` and `sequence`;
 any other query is still refused. A build before this refuses such a link
 (an older Mac opens the app without navigating).
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — The Mac app routes links as the web app does
 
 **What changed:** Three divergences between the two hosts' routing closed. A
@@ -404,6 +406,8 @@ them changes the Mac app's signing entitlements and the release, and is the
 owner's call. Only the main process mints a `home` deep link, from a claimed
 universal link, so no older build is ever handed one. A Canvas screen change must keep
 consuming `?artifact=`, which is now the only way any link opens an artifact.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — Canvases get a link form; the Space, Channel, Breakout, Thread and iPhone forms go
 
@@ -450,6 +454,8 @@ link; the web app opens it. A Thread card already in Slack is frozen as last
 rendered, and one in a channel that became externally shared afterwards is not
 redacted; `slack_unfurled_links` keeps its rows until a data migration drops
 it.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-17 — A link can open a thread onto an artifact
 

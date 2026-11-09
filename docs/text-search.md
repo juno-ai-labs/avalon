@@ -745,7 +745,7 @@ audience and no read-path consumer, so its snapshots do not follow audience
 changes; member search computes the audience live, which is what makes that
 safe.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-19 — A Channel's own messages are indexed
 

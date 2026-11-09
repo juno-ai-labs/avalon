@@ -829,6 +829,8 @@ change, so its history should not split.
 build of either Worker carries the old name. This section heading was missing;
 the entries below it were already the changelog.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-06 — SidekickDO leaves the tracked fleet
 
 **What changed:** `SidekickDO` and `AutomationDO` were removed from

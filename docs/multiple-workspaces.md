@@ -517,6 +517,8 @@ ranks an unseen mention as the reason and the label names it ("You were
 mentioned") with no run waiting. "Counts last updated <when>" broke its time
 onto a second line in the menu label's column (F10); it is one line.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — Discovery withholds nothing, and activation has no preparing state
 
 **What changed:** Regional discovery no longer drops the demo template and
@@ -532,6 +534,8 @@ on every sign-in.
 **What a future change must respect:** the template, `demo-template`, is
 retired before this ships, because without the filter its members would see
 it in their account menus ([`workspace-retirement.md`](workspace-retirement.md#operations)).
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-21 — Initial members through shared Organization creation
 

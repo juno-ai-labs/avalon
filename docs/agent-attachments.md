@@ -780,6 +780,8 @@ objects and a client older than the field would refuse the whole history over
 an unknown key. Agent and system authors carry no name: the product names
 them Rally, and a run id resolves to nothing a person reads.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 
 ### 2026-11-07 — `publish_resource` lands in a Canvas, and no conversation inherits a Thread's links
 
@@ -805,7 +807,7 @@ the same tool with a second identity rule.
 **Consequences:** One run makes at most one Canvas of its own. A publish
 outside a Sidekick run that names a `canvas` is refused rather than ignored.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-06 — Out-of-scope resources no longer trip the grounding guard
 

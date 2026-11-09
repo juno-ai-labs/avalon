@@ -1208,6 +1208,8 @@ rotation in every region and in Ace together, so it is listed as a later
 rename in [`rally-rebrand-inventory.md`](rally-rebrand-inventory.md) rather
 than done in passing.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — Only the main window may capture audio, and the iOS client's boundary is gone
 
 **What changed:** `allowsTrustedAudioCapture` admits the main window alone,
@@ -1228,7 +1230,7 @@ explicitly; nothing else may record. The desktop `avalon-desktop` audience and
 the `ai.rallywith.ios` push topic the iOS client reused stay in server code
 with no iOS client using them.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-03 — Cross-origin requests reach a site anonymously, not refused
 

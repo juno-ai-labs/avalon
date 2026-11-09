@@ -83,6 +83,8 @@ the index, and the participant list is already the Canvas's answer.
 an effect already in the Queue still lands; removing them is a WorkspaceDO
 migration that drops `scope_grant_directory` with the consumer branch.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-09-28 — Admit every shared Channel in one Organization call
 
 **What changed:** `listSharedNavigationDirectory` and `listSharedDirectory`

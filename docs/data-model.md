@@ -1112,6 +1112,8 @@ Worker, which reads `demo_operations` on every regional discovery. The persona `
 platform identity) are not deleted; they cannot sign in and the retired demos'
 history references them.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — Each person's Activity is stored beside their notification intents
 
 **What changed:** WorkspaceDO migration 148 adds `workspace_activity_items`
@@ -1127,6 +1129,8 @@ workspace socket that carries it all live there.
 `sidekick_viewer_reads` and the one Mark all seen row.
 
 **Consequences:** Nothing prunes either table; retention is an open decision.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — Thread, Channel and Activity subsystems retired from the server
 
@@ -1254,6 +1258,8 @@ run `retire_threads` in every Organization, since its inventory reads them;
 `digest_schedules` stays emptied because `schedules` names it in a foreign
 key; D1 `workstreams` and the authority tables stay because Canvas and
 Sidekick creation read them.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-18 — A rename is a version cause of its own
 

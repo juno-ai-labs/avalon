@@ -1064,6 +1064,8 @@ roles. `session_import` stays in the usage ledger's `METERED_ACTIVITIES` and
 two suggested-work roles gone `OPENROUTER_STRUCTURED_MODEL` has no reader;
 removing the Worker variable is a later, deploy-affecting change.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — Thread-era model roles and `live-artifacts-enabled` are retired
 
 **What changed:** `workstream_description` and `suggestion_draft` left
@@ -1098,7 +1100,7 @@ until the updater delivers this build; that is expected, not a bug.
 `suggested-work-enabled` is still served with no reader; retiring it is the
 same `retireFlag` step.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-21 — Route the Sidekick wizard independently on Sol
 

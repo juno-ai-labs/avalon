@@ -647,6 +647,8 @@ one close.
 the app (v4-F18, v4-F21, v4-F22, v4-F23, v3-G10). The PRD's names win over
 the storage names the copy had leaked.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — A local browser can use the development account
 
 **What changed:** `GET` and `POST /browser/dev/session`, and the signed-out
@@ -676,6 +678,8 @@ sign-in now keeps the stored name, which on a seeded stack is the seed's
 **What a future change must respect:** both routes stay behind
 `APP_ENV=development` and `RALLY_DEV_AUTH=true`; the button's presence is the
 API's answer, never a client build flag.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — The browser opens Canvases and Sidekicks, beside the sidebar, and forwards their routes
 
@@ -707,6 +711,8 @@ nobody needs.
 **Consequences:** A route family a later step adds to the shell must be added
 to the list in the same change. The links themselves are
 [`links.md`](links.md)'s.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-03 — A protected site's link signs you in and brings you back
 

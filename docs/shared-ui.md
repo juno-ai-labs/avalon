@@ -262,6 +262,8 @@ family class no source uses; a selector list that also named a live class kept
 that selector. A class built from a template string at run time would read as
 unused, so a new family member must be spelled out where it is used.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-23 — Show Sidekick delegates with immediate creation
 
 **What changed:** The shared profile lists allowed identities, availability and

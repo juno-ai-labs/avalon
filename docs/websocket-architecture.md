@@ -906,7 +906,7 @@ secondary window that reads workspace state joins it the way Sidekicks did.
 released before the workspace-socket breakout list, went with the Thread host
 in C-2.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-21 — Push exact-target Sidekick counts to open composers
 

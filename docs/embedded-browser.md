@@ -223,6 +223,8 @@ never ask for confirmation; and `MAX_PAGE_PARALLEL_DOWNLOADS` is written open,
 its number the team's to set. The realm's isolation has no automated guard,
 only real Electron verification.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — A Canvas hosts the rail browser; the import window is removed
 
 **What changed:** The rail browser's host is a Canvas's Chat, where it was a
@@ -241,6 +243,8 @@ Channel's place as the rail's host.
 driving its browser (`agentDriven`) describe code main no longer reaches; the
 `EmbeddedBrowser` flag stays false until that path is removed with the server's
 session import in phase C.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-22 — Leave the browser visible beside a thread menu
 

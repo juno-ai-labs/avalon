@@ -216,6 +216,8 @@ the title in the notice: the requester was refused it.
 title; a new kind on these two tables needs another rebuild, not an edit to
 150 or 152.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — Document created: a member asks to open a Canvas, and its deciders answer
 
 **What changed:** Access requests return for Canvases: the access read, the
@@ -253,3 +255,5 @@ number the team has not set.
 **What a future change must respect:** every way a requester gets in settles
 through `settleCanvasAccessRequest`, and only someone `canvasManages` admits
 decides.
+
+Shipped in juno-ai-labs/avalon#1490.

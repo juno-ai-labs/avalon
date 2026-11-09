@@ -620,6 +620,8 @@ only; a sink never branches on kind except for its own transport's needs
 (push's collapse id). The consumer checks `notificationAllows` for the
 message's own channel.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — Every intent writes an Activity row, and replies notify again
 
 **What changed:** `recordPersonNotificationIntent` and
@@ -702,6 +704,8 @@ notice goes by push only: an email or Slack channel chosen on **New messages**
 sends nothing for it today. A Rally reply is never pushed; the conversation's
 unread is its signal.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — A mention in a Canvas's Chat or a Sidekick's conversation is delivered
 
 **What changed:** The hosted parent records a conversation's mention and add
@@ -722,6 +726,8 @@ nobody, so an Organization-wide Sidekick's mention was skipped as
 **Consequences:** An inactive recipient's mention is now recorded and skipped
 at delivery as `recipient_inactive_or_identity_missing`, where the Thread path
 never recorded it; the row is reaped with the rest.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — Push is a Canvas mention and a Sidekick run's two notices, checked against the Canvas or Sidekick and opening it
 
@@ -777,7 +783,7 @@ is summarized for it. The `platform: "ios"` registration shape, the
 `ai.rallywith.ios` topic and the sandbox APNs host stay in code with no client
 sending them.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-21 — The installed browser app shows the badge
 

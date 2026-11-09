@@ -195,6 +195,8 @@ reader lists them. The client offers no reorder yet, since both sections pass
 `reorderable={false}`; the order route is ready for it. See
 [`canvases.md`](canvases.md#the-canvas-list).
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-17 — Generated artifacts can be pinned
 
 **What changed:** An artifact Rally generated in a thread's Main can be pinned

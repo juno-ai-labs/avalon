@@ -182,6 +182,8 @@ Thread per member for nothing.
 are added to one; the Canvases empty state is the whole first-run surface, so
 a change to it is a change to onboarding.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-24 — Share the invite field with the account menu
 
 **What changed:** The email-chip field, its `something@something` check and

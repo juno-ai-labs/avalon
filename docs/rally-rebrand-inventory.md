@@ -436,6 +436,8 @@ names and record the mismatch here under the storage-name rule.
 **Consequences:** A reader meeting `demos` on an operator route reads it as
 Ace's role, not as a live demo surface.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — The product-name renames are recorded beside the Avalon ones
 
 **What changed:** A section records each product-name rename the tree carries
@@ -453,6 +455,8 @@ storage and was kept on purpose.
 **Consequences:** A later rename of a product noun adds a row here and to the
 "Rebranding Guide" in `AGENTS.md`, in the same change. Renaming one of these
 storage names is a migration, not a sweep, for the reasons section 1 gives.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-08-25 — The person-notification emails and both Resend senders
 

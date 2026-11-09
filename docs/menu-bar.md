@@ -445,6 +445,8 @@ count things the menu does not show.
 
 **Consequences:** The menu bar's title and the dock badge can differ.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — Needs attention is what the rail counts; the Channel and Activity watches are deleted
 
 **What changed:** The menu is built from the Canvases and Sidekicks lists,
@@ -474,6 +476,8 @@ telemetry action names `attention_conversation` and `recent_workstream` are
 kept for the new rows because the enum is admitted at ingestion. Something that
 should appear in Needs attention must change what the rail counts, and
 `menuBarContent` with it.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-13 — Needs attention is the Activity tab's unread rows
 

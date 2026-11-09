@@ -775,6 +775,8 @@ only the protected door's admission moved. See [`canvases.md`](canvases.md). A
 future change that wants to hide a site surface needs a reason specific to
 that surface, not a product-wide toggle.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-03 — Per-viewer rows, sign-in from a site's link, public submissions
 
 **What changed:** A table with a `private_to_viewer` column is private: the

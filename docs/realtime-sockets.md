@@ -875,6 +875,8 @@ producer allowed to move a ledger backwards; a push never is. Nothing in
 WorkspaceDO's `subscribe` may await between reading what it answers with and
 marking the socket subscribed.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — A page waiting on the workspace socket says when it cannot connect
 
 **What changed:** The workspace socket context gains `retry()`, and the
@@ -891,6 +893,8 @@ socket must keep recovering from the second.
 **What a future change must respect:** a page that reads a socket-owned list
 has to draw `PushedListPending` (or its own use of the socket's `state`) for
 the list's `undefined`, or a refused socket is invisible there again.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-08 — The workspace socket carries each person's Activity
 
@@ -913,6 +917,8 @@ it, and a second command would be a second read state.
 **Consequences:** A person's Activity is never broadcast: every send is read
 for and addressed to its one recipient. A new command on this socket must be
 safe for an older server to ignore, which an unknown type is.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — The sockets carry Canvases and Sidekicks; the Thread listing and the Channel control socket go
 
@@ -957,7 +963,7 @@ new sidebar list goes on its own event type, never as a new discriminator
 value of an existing one. The empty `workstreams` page and `notes` list are
 removed in the release after every desktop has updated.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-16 — The dictation lease is held by the open socket, not by its frames
 

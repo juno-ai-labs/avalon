@@ -429,6 +429,8 @@ the rows it lists ([`menu-bar.md`](menu-bar.md)); the dock and the menu bar
 can now show different numbers. A change to what Activity
 counts as unseen changes the dock badge.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — A restored Canvas route the viewer may ask into stays, and Activity rows carry actions
 
 **What changed:** A Canvas route that answers 404 asks `GET /canvases/:id/access`
@@ -464,6 +466,8 @@ second line, rather than on an otherwise empty one: a dot that added a line
 made a row change height when it was read. Any new screen that opens an object which can be asked into
 should hand `useRestoredRouteFallback` the read that decides "gone", not the
 first 404.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-08 — The shell follows design.html: the list column, the rail, the section titles and the Sidekicks list's order
 
@@ -522,6 +526,8 @@ rail included. A width a person already dragged to is kept, so only a person
 who never resized sees the new default. The Sidekicks order is the client's
 over the list the socket keeps, so a reorder costs no request.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — A long title truncates inside the pill, and a pill title can be edited in place
 
 **What changed:** The header's grid gives its side columns their
@@ -545,6 +551,8 @@ keep a real min-content width, or a long title runs over it again. The
 input saves on leaving the field only when the text differs from what it
 last sent, because a refusal's notice takes focus and would otherwise send
 the refused title again.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-08 — Activity is the rail's third section
 
@@ -592,6 +600,8 @@ an unseen mention whose Canvas is already unread would be counted twice.
 **Consequences:** `SidebarSection` has three values; a fourth section needs a
 `BADGE_NOUNS` entry and a decision on whether the dock counts it.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — A restored route waits for onboarding and falls back silently
 
 **What changed:** The landing applies no stored `last-route` until
@@ -619,6 +629,8 @@ restore now waits one journey round trip: the restored Canvas or Sidekick's
 detail query no longer runs in parallel with the journey query, because the
 screen that issues it is not mounted until admission. Deep links and every
 other route are not held and mount as before.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — The shell becomes Canvases and Sidekicks; Channels, Threads and Breakouts are deleted
 
@@ -675,6 +687,8 @@ the preference's allowed list must keep them. Adding a third section is a
 `SECTIONS` entry and a `SidebarSection` value; if a phone row ever overflows
 again, the fold has to be rebuilt rather than restored, and opening a second
 pane beside a conversation would likewise have to be built again.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-21 — Keep artifacts directly discoverable in thread menus
 

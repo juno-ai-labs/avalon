@@ -316,6 +316,8 @@ refuses pin with a reason naming the Canvas, since a Canvas artifact's pin
 belongs to the Canvas. (Its link, refused here at first, became the Canvas
 link onto the artifact on 2026-11-07; [`links.md`](links.md) owns it.)
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-20 — Persist confirmed artifact comments with composer drafts
 
 Comments now survive navigation and restart using per-comment rows in the existing

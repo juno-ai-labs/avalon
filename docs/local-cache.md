@@ -511,6 +511,8 @@ migrates or deletes them, because a stale row costs a few kilobytes and a
 sweep would be code kept for one release. A list missing from the
 `canvas-directory` row means never heard, not empty; keep the two apart.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-21 — Fence image saves across browser tabs
 
 **What changed:** Cache wipes advance shared global/scoped IndexedDB generations atomically

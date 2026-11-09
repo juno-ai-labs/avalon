@@ -797,6 +797,8 @@ every closed Organization is closed.
 `impersonationRevocation`; a new producer of **can impersonate** edges passes
 its own authority basis there rather than teaching the walk to look it up.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-08 — Convert a Thread that has artifacts into a Canvas in place
 
 **What changed:** `convert_threads_to_canvases`, an engineering MCP operator
@@ -821,6 +823,8 @@ conversion is the only path that changes a conversation's stored parent kind,
 and only from `workstream` to `canvas`. Anything new that keys on a Thread's
 Main by its Thread-era name (a source string, a parent kind) has to be carried
 in `convertThreadToCanvas`, or a converted Canvas loses it.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — Retire an Organization's Threads after dumping them, close its Canvases with it, and drop the Thread-era tables nothing reads
 
@@ -894,7 +898,7 @@ still read the authority gate and the create receipts.
 foreign key names a missing table after the drop, and failed with the Channel
 rail's resource triggers left in place.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-09-19 — The graph admits a third parent kind, and the walk enumerates Spaces and knows which namespace to ask
 

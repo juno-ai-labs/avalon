@@ -139,6 +139,8 @@ Canvas routes had never been added, so a browser could not open a Canvas.
 **Consequences:** What a cookie reaches is exactly what the shell calls; a new
 family is added with the surface that calls it.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-07 — Create an organization over the cookie
 
 **What changed.** `POST /browser/workspace/create` creates an organization on

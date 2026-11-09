@@ -369,6 +369,8 @@ the button cannot be hidden from a stale measurement.
 scroll: content growing later fires no scroll event, so a hidden button would
 stay hidden over a reply that had grown past the fold.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-10-08 — Hold the reading row in the commit that prepends
 
 **What changed:** Loading an older range no longer restores the scroll position

@@ -469,6 +469,8 @@ access from members no list names.
 `closingNarrowedConversations`. The comparison asks every known active person
 twice per audience change; at a larger Organization that is the number to watch.
 
+Shipped in juno-ai-labs/avalon#1490.
+
 ### 2026-11-07 — The four Thread and Channel hops end at the consumer
 
 **What changed:** A `workstream_audience_narrowed`, `workstream`, `space` or
@@ -502,7 +504,7 @@ open feed outlives the change until it reconnects (the Known gap); a future
 rule that closes it needs a new per-person hop, not the old narrowing hop
 revived.
 
-Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-07 — Organization settings can suspend a member
 
