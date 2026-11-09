@@ -1,6 +1,6 @@
 import { annotationDraftKeyForScope } from '../common/draft-keys';
 import { describe, expect, it } from 'vitest';
-import { artifactWindowActionRequest, artifactWindowSessionMatches } from './artifact-window-actions';
+import { artifactWindowActionRequest, artifactWindowCanvasLink, artifactWindowSessionMatches } from './artifact-window-actions';
 import type { DesktopArtifactWindowRequest } from '../common/desktop';
 
 const preview: DesktopArtifactWindowRequest = {
@@ -61,4 +61,12 @@ it('derives detached cache keys with the same workspace and breakout identity as
   expect(annotationDraftKeyForScope('enterprise','org','thread:private')).toBe('workspace:enterprise:org:workstream:thread:substream:private');
   expect(annotationDraftKeyForScope('global','org','channel:channel-id')).toBe('workspace:global:org:new-workstream:space:channel-id');
   expect(annotationDraftKeyForScope('global','org','canvas:canvas-id')).toBe('workspace:global:org:canvas:canvas-id');
+});
+
+describe('Copy link from a detached artifact window', () => {
+  it("names the window's own Organization, not whichever the main window has open", () => {
+    const window = { region: 'enterprise', workspaceId: '00000000-0000-7000-8000-000000000001', resourceId: '00000000-0000-7000-8000-000000000003' };
+    expect(artifactWindowCanvasLink('https://app.rallywith.ai', window, '00000000-0000-7000-8000-000000000002'))
+      .toBe('https://app.rallywith.ai/app/enterprise/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/a/1111117Hxt1fAWDjN7TY/');
+  });
 });

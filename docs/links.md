@@ -43,7 +43,7 @@ handoff page or the Slack unfurl card.
 | The web app's rewrite to hash routes | `shellLocation` and `inPlaceHash` in `apps/browser/src/session.ts` |
 | Slack unfurl | `unfurlAvalonLinks` in `apps/api/src/services/slack-agent-service.ts`; `slackUnfurlLinkTargets` and `linkUnfurlBlocks` in `slack-workstream-card.ts` |
 | Copy link (Canvas title menu, Sidekick header) | `apps/desktop/src/renderer/lib/copy-link.ts` |
-| Copy link from a detached artifact window | the `link` action in `apps/desktop/src/main/artifact-window-actions.ts` and `main/index.ts` |
+| Copy link from a detached artifact window | the `link` action and `artifactWindowCanvasLink` in `apps/desktop/src/main/artifact-window-actions.ts`, which names the window's own Organization, never the main window's current one |
 | Open the deep link | `emitDeepLink` and `httpsLinkDeepLink` in `apps/desktop/src/main/`, `apps/desktop/src/renderer/lib/app-session.tsx` |
 | The registered unfurl domains | `config/provider-apps/slack.json` |
 

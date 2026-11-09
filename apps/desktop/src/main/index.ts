@@ -1,6 +1,6 @@
 import { annotationDraftKeyForScope } from '../common/draft-keys';
 import { createElectronFetch } from '@rally/electron-network';
-import { artifactWindowActionRequest, artifactWindowSessionMatches } from './artifact-window-actions';
+import { artifactWindowActionRequest, artifactWindowCanvasLink, artifactWindowSessionMatches } from './artifact-window-actions';
 import { AnnotationCommentPinsSchema, AnnotationSchema, AnnotationSelectionSchema } from "@rally/contracts";
 import { startCanvaConnection } from './canva-loopback';
 import { clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
@@ -11,7 +11,7 @@ import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagn
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
 import { ArtifactPinListSchema } from '@rally/contracts';
-import { canvasCanonicalUrl, canvasDeepLink, sidekickDeepLink } from '@rally/contracts/links';
+import { canvasDeepLink, sidekickDeepLink } from '@rally/contracts/links';
 import { z, type ZodType } from 'zod';
 import {
   ActivateWorkspaceRequestSchema,
@@ -4262,13 +4262,7 @@ function registerIpc(): void {
       const record = poppedOutArtifacts.get(window)!;
       const command = artifactWindowActionRequest(record.request, raw);
       const session = inMemorySession;
-      if ('canvasId' in command) {
-        const workspace = session?.workspace;
-        if (!workspace) throw new Error('Sign in before copying a link');
-        return canvasCanonicalUrl(runtimeConfig().webBaseUrl, {
-          region: workspace.region, workspaceId: workspace.id, canvasId: command.canvasId, artifactId: record.resourceId,
-        });
-      }
+      if ('canvasId' in command) return artifactWindowCanvasLink(runtimeConfig().webBaseUrl, record, command.canvasId);
       const assertSession = (): void => {
         assertArtifactRenderer(event);
         if (!session || !artifactWindowSessionMatches(record, { userId: inMemorySession?.user.id ?? null, workspaceId: inMemorySession?.workspace?.id ?? null, region: inMemorySession?.workspace?.region ?? null })) throw new Error('The Rally session changed');

@@ -1,4 +1,5 @@
 import { IdSchema } from '@rally/contracts';
+import { canvasCanonicalUrl } from '@rally/contracts/links';
 import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import type { DesktopArtifactWindowRequest } from '../common/desktop';
 import { ArtifactWindowActionSchema, type ArtifactWindowAction } from '../common/artifact-window-actions';
@@ -61,4 +62,19 @@ export function artifactWindowSessionMatches(
 ): boolean {
   return window.region !== undefined && window.region === session.region
     && window.userId === session.userId && window.workspaceId === session.workspaceId;
+}
+
+/**
+ * Copy link from a popped-out artifact window: the Canvas link onto this
+ * artifact, in the window's own Organization. Never the main window's, which
+ * may have switched Organization since the window opened.
+ */
+export function artifactWindowCanvasLink(
+  webBaseUrl: string,
+  window: { region: string; workspaceId: string; resourceId: string },
+  canvasId: string,
+): string {
+  return canvasCanonicalUrl(webBaseUrl, {
+    region: window.region, workspaceId: window.workspaceId, canvasId, artifactId: window.resourceId,
+  });
 }
