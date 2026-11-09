@@ -963,7 +963,8 @@ A Canvas a person makes with no title is **Untitled Canvas**, settled, until
 the first message of its Chat reaches the parent, which sets it `naming` in
 the same write and arms a `canvas_naming` entry;
 `HostedCanvas.nameFromOpening` titles it on the `workstream_naming` role and
-settles it. A retitle settles the row. `PATCH /canvases/:id` and every Canvas
+settles it, with the harness prompt `renderCanvasTitleMessages`
+(`prompts/canvas-title.ts`). A retitle settles the row. `PATCH /canvases/:id` and every Canvas
 route's id refuse by name (`canvas_rename_invalid:…`, `canvas_id_invalid:…`)
 through `namedZValidator`. `CanvasSummary` carries `titleStatus`.
 
@@ -983,6 +984,14 @@ A Canvas created `naming` showed the naming skeleton for ever when nobody wrote
 in it, since only a message arms the pass, so the flip moved from creation to
 the first message; the same change stopped an empty Chat's provisioning
 projection from counting as activity.
+
+The title prompt first shipped inline in `canvas-naming.ts`, with no golden
+hash, asking for "two to five words" and dropping the deleted Thread prompt's
+measured rules; it moved under `prompts/` and took back the thirty-character
+limit, sentence case with "never capitalize every word" (without it the model
+title-cased: "Logo For Oslo Coffee") and dropping the framing words first. The
+Thread service's host-side cut at thirty characters was not restored; the
+stored bound stays the title's own 300.
 
 **What a future change must respect:** only a Canvas still `naming` may be
 titled automatically, and every person's retitle must settle it.

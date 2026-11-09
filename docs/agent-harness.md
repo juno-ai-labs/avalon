@@ -409,7 +409,11 @@ work; there is no new wait registration, alarm, or task lifecycle.
 A person titles a Canvas, and a Sidekick's conversations carry the Sidekick's
 name. A Canvas created with no title is titled by a model from the message that
 opened its Chat (`canvasTitleFromOpening` in `canvas-naming.ts`); it keeps the
-title it has when the model answers nothing usable. The Thread naming pass is
+title it has when the model answers nothing usable. The prompt is a harness
+prompt (`renderCanvasTitleMessages`, `prompts/canvas-title.ts`) with a golden
+hash, the opening message as its user-role message: two to four words, thirty
+characters or less, sentence case and never every word capitalized, the rules
+the Thread naming prompt measured. The Thread naming pass is
 deleted ([its retirement record](canvases.md#2026-11-08--retirement-records-naming-a-work-stream-work-stream-descriptions) is in `canvases.md`). The
 `workstream_naming` model role serves that call and one other, the title a
 long pasted text is given (`pasted-text-service.ts`).
