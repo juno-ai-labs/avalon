@@ -1,0 +1,50 @@
+<figure class="ex ex-live reveal" data-explainer="live">
+<p class="ex-label">A day in a live Canvas · drag the time, or switch the condition off</p>
+<svg class="ex-svg" viewBox="0 0 960 400" role="img" aria-labelledby="ex-live-title ex-live-desc">
+<title id="ex-live-title">A day in a live Canvas</title>
+<desc id="ex-live-desc">Signals from a schedule, Gmail, GitHub and Granola travel to a Sidekick. Signals that match its condition go on to the Canvas and each publishes a new version; the rest are ignored. Over the day shown, five signals match and three are ignored, taking the Canvas from version 1 to version 6.</desc>
+<g class="ex-wires">
+<path id="ex-w-Schedule" d="M160 70 C 300 70, 300 190, 426 190"/>
+<path id="ex-w-Gmail" d="M160 150 C 300 150, 300 190, 426 190"/>
+<path id="ex-w-GitHub" d="M160 230 C 300 230, 300 190, 426 190"/>
+<path id="ex-w-Granola" d="M160 310 C 300 310, 300 190, 426 190"/>
+<path id="ex-w-out" class="out" d="M534 190 L 700 190"/>
+<path id="ex-w-drop" class="drop" d="M480 244 L 480 300"/>
+</g>
+<g class="ex-sources">
+<g class="src-Schedule"><rect x="24" y="48" width="136" height="44" rx="12"/><text x="92" y="75">Schedule</text></g>
+<g class="src-Gmail"><rect x="24" y="128" width="136" height="44" rx="12"/><text x="92" y="155">Gmail</text></g>
+<g class="src-GitHub"><rect x="24" y="208" width="136" height="44" rx="12"/><text x="92" y="235">GitHub</text></g>
+<g class="src-Granola"><rect x="24" y="288" width="136" height="44" rx="12"/><text x="92" y="315">Granola</text></g>
+</g>
+<g class="ex-keeper">
+<polygon points="453,143 507,143 534,190 507,237 453,237 426,190"/>
+<text x="480" y="186" class="k1">Pipeline</text><text x="480" y="204" class="k1">keeper</text>
+<text x="480" y="122" class="cap">Sidekick</text>
+</g>
+<g class="ex-bin"><text x="480" y="322" class="cap">Ignored: no match</text></g>
+<g class="ex-canvas">
+<rect class="stack s3" x="718" y="78" width="218" height="190" rx="14"/>
+<rect class="stack s2" x="712" y="84" width="218" height="190" rx="14"/>
+<rect class="stack s1" x="706" y="90" width="218" height="190" rx="14"/>
+<rect class="card" x="700" y="96" width="218" height="190" rx="14"/>
+<text x="722" y="128" class="cap left">Live Canvas</text>
+<text x="722" y="156" class="title left">Q4 pipeline</text>
+<text x="722" y="222" class="ver left" id="ex-ver">v6</text>
+<text x="722" y="256" class="cap left" id="ex-ver-by">by Pipeline keeper</text>
+</g>
+<g class="ex-dots"></g>
+<g class="ex-ruler">
+<line x1="24" y1="368" x2="936" y2="368"/>
+<g class="ex-ticks"></g>
+<line class="head" id="ex-head" x1="0" y1="356" x2="0" y2="380"/>
+</g>
+</svg>
+<div class="ex-controls">
+<button class="ex-play" type="button" aria-pressed="false">Play</button>
+<input class="ex-time" type="range" min="0" max="1439" step="1" value="1439" aria-label="Time of day" />
+<output class="ex-clock">23:59</output>
+<label class="ex-toggle"><input class="ex-filter" type="checkbox" checked /> Only act on signals that match</label>
+</div>
+<figcaption class="ex-caption">Drag through the day. Each signal that matches the Sidekick&rsquo;s condition publishes a new version; the rest are dropped.</figcaption>
+</figure>

@@ -7,6 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { loadBlogPosts, type BlogPost } from './blog-pages';
 import { escapeHtml as escape, loadComparisons, type Comparison } from './comparison-pages';
+import { renderLiveCarousel } from './live-examples';
 
 /** Every rival, read from `content/compare/*.md` and sorted by `order`. */
 export const comparisons: readonly Comparison[] = loadComparisons(new URL('../content/compare/', import.meta.url));
@@ -160,12 +161,13 @@ function renderLandingSections(): string {
  * tiers, the one-to-many ladder, the founders and the closing call. Read on each render, like the
  * landing sections, and run through the markers so a partial may hold one.
  */
-const PARTIALS = ['live-canvas', 'scale', 'pricing-tiers', 'people', 'closing'] as const;
+const PARTIALS = ['scale', 'explainer-live', 'explainer-team', 'pricing-tiers', 'people', 'closing'] as const;
 const renderPartial = (name: string) => (): string =>
   renderSiteChrome(readFileSync(new URL(`./partials/${name}.html`, import.meta.url), 'utf8'));
 
 const markers: Record<string, () => string> = {
   ...Object.fromEntries(PARTIALS.map((name) => [name, renderPartial(name)])),
+  'live-carousel': () => renderLiveCarousel(),
   'site-nav': renderSiteNav,
   'site-header': renderSiteHeader,
   'landing-sections': renderLandingSections,

@@ -4,38 +4,14 @@
  * - `.reveal` elements rise in as they reach the screen. They are only hidden
  *   once this script has added `motion` to the root, so a page whose script
  *   fails still shows everything.
- * - `[data-live-canvas]` plays its scene. The markup ships with every step on
- *   (the finished scene); this clears the steps and turns them on one at a
- *   time while the scene is on screen, then holds and starts again.
  * - The header gains its rule once the page has scrolled, and turns to ink
  *   while an ink block (`.night`, or the footer) sits under it. It does this even with
  *   reduced motion, since it is a colour change and not movement.
  *
- * With reduced motion asked for, none of it runs.
+ * The hero carousel and the explainers have their own modules
+ * (`live-carousel.ts`, `explainers.ts`). With reduced motion asked for, only
+ * the header runs here.
  */
-const STEP_MS = [900, 1200, 1300, 2200, 1800, 1700, 1200, 4800] as const;
-const LAST_STEP = STEP_MS.length - 1;
-
-function playScene(stage: HTMLElement): void {
-  let step = 0;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let visible = false;
-  const show = (n: number): void => {
-    for (let index = 1; index <= LAST_STEP; index += 1) stage.classList.toggle(`is-${index}`, index <= n);
-  };
-  const advance = (): void => {
-    step = step >= LAST_STEP ? 0 : step + 1;
-    show(step);
-    if (visible) timer = setTimeout(advance, STEP_MS[step]);
-  };
-  new IntersectionObserver(([entry]) => {
-    visible = entry?.isIntersecting ?? false;
-    clearTimeout(timer);
-    if (visible) timer = setTimeout(advance, STEP_MS[step]);
-  }, { threshold: 0.25 }).observe(stage);
-  show(step);
-}
-
 function revealOnScroll(): void {
   const observer = new IntersectionObserver((entries) => {
     for (const entry of entries) {
@@ -67,7 +43,6 @@ ruleHeader();
 if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
   document.documentElement.classList.add('motion');
   revealOnScroll();
-  document.querySelectorAll<HTMLElement>('[data-live-canvas]').forEach(playScene);
 }
 
 export {};

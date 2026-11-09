@@ -19,9 +19,12 @@ by [`site-blog.md`](site-blog.md).
 | `apps/site/src/site.css` | The whole system: font faces, tokens, base type, buttons, header, footer, every marketing component, the comparison and blog page styles, motion and reduced motion. |
 | `apps/site/src/trust.css` | Trust Center layouts, on top of `site.css` and its tokens. |
 | `apps/site/src/start-fast.css` | The `/start-fast/` hero's two-door call to action. |
-| `apps/site/src/site-motion.ts` | Reveal on scroll, the Canvas scene's timeline, and the header's rule and ink state. |
+| `apps/site/src/site-motion.ts` | Reveal on scroll, and the header's rule and ink state. |
+| `apps/site/src/live-examples.ts` | The hero carousel's seven examples as data, the check that each one is consistent, and the renderer the `live-carousel` marker calls. |
+| `apps/site/src/live-carousel.ts` | Plays the carousel in the browser: steps, rotation, tabs, pause. |
+| `apps/site/src/explainer-math.ts`, `src/explainers.ts` | The two interactive explainers: the pure arithmetic, and the drawing. |
 | `apps/site/src/site-chrome.ts` | The markers: `site-header`, `site-nav`, `site-footer`, `landing-sections`, `comparison-table`, and the partials. Also `productPages`, the one list of product pages the header and footer read. |
-| `apps/site/src/partials/*.html` | Blocks more than one page shows: `live-canvas`, `scale`, `pricing-tiers`, `people`, `closing`. |
+| `apps/site/src/partials/*.html` | Blocks more than one page shows: `scale`, `explainer-live`, `explainer-team`, `pricing-tiers`, `people`, `closing`. |
 | `apps/site/src/landing-sections.html` | Everything on `/` below the hero, shared with `/start-fast/`. |
 | `apps/site/index.html`, `start-fast/`, `canvases/`, `sidekicks/`, `pricing/`, `company/` | The pages. |
 | `apps/site/src/access-copy.ts` | The home page's title and description. |
@@ -105,18 +108,58 @@ a `state`), `principles` (four numbered columns), `tiers`, `steps`, `faq`,
 `people`, or the comparison table. Buttons are pills; cards have an 18px
 radius and a hairline.
 
-### The Canvas scene
+### The hero carousel
 
-`partials/live-canvas.html` is a live Canvas drawn in HTML: a header with a
-"Live · kept by Pipeline keeper" badge, a versions list on the left, and a
-spreadsheet on the right. Its markup ships with every step class (`is-1` …
-`is-7`) on, which is the finished scene. `site-motion.ts` clears them and
-turns them on one by one while the scene is on screen: a Gmail reply from
-Acme arrives and the Sidekick publishes version 13 (Acme moves to
-Negotiation); a Granola call note arrives and version 14 adds Northwind; then
-Maya and Theo open it, Maya asks for a next-step column, and Rally publishes
-version 15. The order is the message order: live first, people second. It
-pauses off screen and loops.
+The hero is a carousel of seven live Canvases, one per audience: solopreneurs
+(invoices and cash), engineering teams (a release board), parents (school
+email turned into a ranked list both parents tick off), product managers
+(feedback themes), developers on a team (a personal review queue), founders
+(the monthly investor update) and agency recruiters (client roles and
+candidates). Each is one entry in `liveExamples` in `live-examples.ts`; the
+renderer turns every entry into the same window, so a new audience is a data
+change.
+
+Every slide plays the same three beats, which is the whole argument in a few
+seconds:
+
+1. **Signals arrive.** An event from a connected tool slides into the feed
+   and its source tag pings.
+2. **A version lands.** The version number ticks over, the cell it changed
+   rolls up in Rally's colour, and a new row sweeps in.
+3. **The payoff.** After the last signal, Rally points out something useful
+   across the signals that nobody asked about ("The field trip form is due
+   tomorrow and neither of you has ticked it"), lights the row it is about,
+   and the feed shows what the Sidekick did about it. This is the moment each
+   slide exists for, and it holds longest.
+
+Steps are written into the markup at build time: signal `n` lands on step
+`2n - 1`, its version and changes on `2n`, the payoff one step after the last
+version. `checkLiveExample` refuses an entry whose change, row or payoff names
+something that is not there, so the build fails rather than shipping a slide
+that never reaches its payoff. The carousel rotates while on screen, pauses
+under the pointer or focus, has a Pause button, and with reduced motion shows
+each slide finished and only switches on a tab.
+
+### The explainers
+
+Two interactive figures sit in the chapters they explain, in the spirit of
+explorable explanations: the reader moves one input and every part of the
+drawing is recomputed from it, so scrubbing backwards is exact.
+
+- **A day in a live Canvas** (`explainer-live`, in Live Canvases on `/` and
+  How it works on `/canvases/`). A time slider runs through a day of signals
+  from a schedule, Gmail, GitHub and Granola. Each travels to the Sidekick;
+  those that match its condition go on to the Canvas and publish a version,
+  the rest drop out. Switching the condition off shows every signal
+  publishing, which is the reason the condition exists. It plays by itself
+  while on screen until the reader touches a control.
+- **One Canvas, any size** (`explainer-team`, in Multiplayer on `/` and
+  `/canvases/`, and on `/pricing/`). A people slider redraws a file passed
+  between everyone (one hand-off per pair) beside one shared Canvas (one link
+  per person), and the cost per person from the published plan prices.
+
+The figures' numbers come only from `explainer-math.ts`, which is tested: the
+plan prices and the fit bands are the ones on the pricing page.
 
 ### Pages
 
@@ -180,6 +223,10 @@ utility pages on `styles.css` (`/download/`, `/slack/`, the 404 page).
 
 ## Testing
 
+`test/live-examples.test.ts` renders the carousel and checks the tab and
+panel set, the step each element lands on, and that the checker refuses a
+broken example; it also checks the explainers' arithmetic.
+
 `pnpm --filter @rally/site test` renders the home page, `/start-fast/` and the
 four product pages through the markers and checks every tracked id is known,
 every id is on the home page, and every installer link carries its own id; it
@@ -223,7 +270,12 @@ that maps to Canvases and Sidekicks. Shared cursors as the hero motif, which
 the pivot's plan cut from scope. Adding a new placement for the closing link,
 which would need the API deployed first; `body` already existed.
 
-**Consequences:** Live artifacts lead and multiplayer follows, on every page
+The hero then became a carousel of seven audiences, each ending on a payoff
+Rally noticed, and two interactive explainers were added (a day of signals,
+and cost and hand-offs by team size), because the owner asked that liveness
+and usefulness each have a moment a visitor recognizes as theirs.
+
+**Consequences:** A carousel example without a payoff does not render. Live artifacts lead and multiplayer follows, on every page
 and in the scene; a new section goes after the live chapters unless it is
 about live Canvases. Copy must keep the one-person case visible: a line that
 only speaks to teams ("bring everyone", "for the whole room") needs a

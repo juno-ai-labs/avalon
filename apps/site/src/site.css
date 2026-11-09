@@ -213,34 +213,15 @@ h3{font-size:1.25rem;font-weight:550;letter-spacing:-.02em;line-height:1.2}
 .doc-ver{display:grid;color:var(--ultra)}
 .doc-ver span{grid-area:1/1;text-align:right;transition:opacity .4s}
 .doc h4{margin:0 0 18px;font-size:1.625rem;font-weight:550;letter-spacing:-.035em;line-height:1.1}
-.sheet{display:grid;grid-template-columns:1.2fr 1.1fr .7fr;border-top:1px solid var(--line)}
-.sheet>span{display:grid;align-items:center;padding:11px 10px 11px 0;border-bottom:1px solid var(--line);font-size:.875rem;transition:opacity .5s,background 1.6s}
-.sheet .th{font-family:var(--mono);font-size:.6875rem;letter-spacing:.05em;text-transform:uppercase;color:var(--fg-3)}
-.sheet .stage-cell i{grid-area:1/1;font-style:normal;transition:opacity .4s}
-.sheet .stage-cell .new{color:var(--ultra);font-weight:550}
-.sheet .nx{display:none}
+.sheet{border-top:1px solid var(--line)}
+.sheet .row{display:grid;grid-template-columns:var(--cols,1.2fr 1fr .8fr);align-items:center;border-bottom:1px solid var(--line);border-radius:6px}
+.sheet[data-columns="2"]{--cols:.7fr 1.6fr}
+.sheet .row>span{display:grid;align-items:center;padding:11px 10px 11px 0;font-size:.875rem;overflow-wrap:break-word;hyphens:auto}
+.sheet .row.head>span{font-family:var(--mono);font-size:.6875rem;letter-spacing:.05em;text-transform:uppercase;color:var(--fg-3)}
+.sheet .changes i{font-style:normal}
+.sheet .changes .new{color:var(--ultra);font-weight:550}
 .stage-caption{display:flex;justify-content:space-between;gap:16px;margin-top:18px;font-family:var(--mono);font-size:.6875rem;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-3)}
 
-/* Scene states. The markup ships with every step on, so the finished scene
-   shows without script and for reduced motion; site-motion.ts clears them
-   and turns them on one at a time: 1 Gmail arrives, 2 v13, 3 Granola
-   arrives, 4 v14, 5 Maya and Theo open it and Maya asks, 6 Rally works,
-   7 v15. */
-.stage:not(.is-1) .e1,.stage:not(.is-3) .e2,.stage:not(.is-5) .m3,.stage:not(.is-7) .e3{display:none}
-.stage:not(.is-2) .e1 .ver,.stage:not(.is-4) .e2 .ver{opacity:0}
-.stage:not(.is-5) .face{opacity:0;transform:scale(.6)}
-.face{transition:opacity .5s var(--ease),transform .5s var(--ease)}
-.stage .typing{display:none}
-.stage.is-6:not(.is-7) .typing.t2{display:flex}
-.stage .doc-ver span{opacity:0}
-.stage:not(.is-2) .doc-ver .va,.stage.is-2:not(.is-4) .doc-ver .vb,.stage.is-4:not(.is-7) .doc-ver .vc,.stage.is-7 .doc-ver .vd{opacity:1}
-.stage:not(.is-2) .stage-cell .new,.stage.is-2 .stage-cell .old{opacity:0}
-.stage.is-2 .r-acme{animation:flash 1.6s var(--ease)}
-.stage:not(.is-4) .r-north{display:none}
-.stage.is-4 .r-north{animation:flash 1.6s var(--ease)}
-.stage.is-7 .sheet{grid-template-columns:1.1fr 1fr .6fr 1.1fr}
-.stage.is-7 .sheet .nx{display:grid;animation:flash 1.6s var(--ease)}
-@keyframes flash{0%{background:var(--ultra-wash)}100%{background:transparent}}
 @media (max-width:760px){
   .win-body{grid-template-columns:1fr}
   .feed{border-right:0;border-bottom:1px solid var(--line)}
@@ -549,3 +530,129 @@ h3{font-size:1.25rem;font-weight:550;letter-spacing:-.02em;line-height:1.2}
 .signals .arrow{padding:0;border:0;background:none;color:var(--fg-3)}
 .signals .v{border-color:var(--ultra);color:var(--ultra);font-family:var(--mono);font-size:.75rem}
 .scale-after{margin-top:16px}
+
+/* ---------- Hero carousel: live Canvas examples ---------- */
+.lc{padding-top:clamp(14px,2vw,22px)}
+.lc-tabs{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 92%,transparent);mask-image:linear-gradient(90deg,#000 92%,transparent)}
+.lc-tabs::-webkit-scrollbar{display:none}
+.lc-tab{position:relative;flex:none;overflow:hidden;padding:10px 16px;border:1px solid var(--line);border-radius:999px;background:rgb(255 255 255/.55);color:var(--fg-2);font-size:.875rem;font-weight:500;cursor:pointer;transition:background .2s,color .2s,border-color .2s}
+.lc-tab:hover{color:var(--fg)}
+.lc-tab[aria-selected="true"]{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.lc-progress{position:absolute;left:0;bottom:0;width:100%;height:2px;background:var(--ultra-2);transform-origin:left;transform:scaleX(var(--p,0));transition:transform .9s var(--ease)}
+.lc-tab[aria-selected="false"] .lc-progress{display:none}
+.lc-summaries{min-height:1.6em;margin:0 0 16px 4px}
+.lc-summary{color:var(--fg-2);font-size:.9375rem}
+.lc-slide .win{min-height:460px}
+.lc .feed{gap:10px}
+.lc .doc{display:flex;flex-direction:column}
+.lc-pause{padding:0;border:0;background:none;color:var(--fg-3);font:inherit;letter-spacing:inherit;text-transform:inherit;cursor:pointer}
+.lc-pause:hover{color:var(--fg)}
+
+/* Steps. Without script every slide is finished: values that a later version
+   replaced stay hidden and the payoff row is lit. While animating, an element
+   shows only once live-carousel.ts has turned it on. */
+.lc:not(.animating) [data-until]{display:none}
+.lc.animating [data-at]:not(.on),.lc.animating [data-until]:not(.on){display:none}
+.doc-ver span{grid-area:1/1}
+
+/* The gotcha choreography: a signal slides in, the version ticks over with a
+   ring, the cell it changed rolls up in Rally's colour, a new row sweeps in,
+   and the payoff lands last. */
+.lc .ev.fresh{animation:signal-in .7s var(--ease)}
+@keyframes signal-in{0%{opacity:0;transform:translateX(-14px)}60%{opacity:1}100%{transform:none}}
+.lc .ev.fresh .src{animation:src-ping 1.2s var(--ease)}
+@keyframes src-ping{0%{box-shadow:0 0 0 0 rgb(58 43 255/.45);border-color:var(--ultra);color:var(--ultra)}100%{box-shadow:0 0 0 10px rgb(58 43 255/0)}}
+.lc .ver.fresh{animation:ver-in .6s var(--ease)}
+@keyframes ver-in{from{opacity:0;transform:translateY(4px)}}
+.lc .doc-ver span.fresh{animation:ver-tick 1.1s var(--ease)}
+@keyframes ver-tick{0%{transform:translateY(8px);opacity:0}40%{transform:none;opacity:1;text-shadow:0 0 12px rgb(58 43 255/.6)}100%{text-shadow:none}}
+.lc .changes .new.fresh{display:inline-block;animation:roll-up .7s var(--ease)}
+@keyframes roll-up{from{opacity:0;transform:translateY(70%)}}
+.lc .changes:has(.new.fresh){animation:cell-flash 1.6s var(--ease)}
+@keyframes cell-flash{0%{background:var(--ultra-wash)}100%{background:transparent}}
+.lc .row.fresh{animation:row-in 1.4s var(--ease)}
+@keyframes row-in{0%{opacity:0;transform:translateY(-6px);background:linear-gradient(90deg,var(--ultra-wash),transparent)}35%{opacity:1;transform:none}100%{background:transparent}}
+.lc .row.marked,.lc:not(.animating) .row[data-mark]{background:var(--ultra-wash);box-shadow:inset 3px 0 0 var(--ultra)}
+.lc .row.marked>span:first-child,.lc:not(.animating) .row[data-mark]>span:first-child{padding-left:10px}
+.lc .row.marked{animation:mark-pulse 1.6s var(--ease)}
+@keyframes mark-pulse{0%{box-shadow:inset 3px 0 0 var(--ultra),0 0 0 0 rgb(58 43 255/.35)}100%{box-shadow:inset 3px 0 0 var(--ultra),0 0 0 12px rgb(58 43 255/0)}}
+.payoff{position:relative;overflow:hidden;margin-top:auto;padding:16px 18px;border-radius:14px;background:var(--ink);color:var(--paper);box-shadow:0 24px 40px -24px rgb(58 43 255/.7)}
+.lc .sheet+.payoff{margin-top:20px}
+.payoff p{font-size:.9375rem;line-height:1.45}
+.payoff-label{display:inline-flex;align-items:center;gap:8px;margin-bottom:6px;font-family:var(--mono);font-size:.6875rem;letter-spacing:.06em;text-transform:uppercase;color:#a49cff}
+.payoff-label::before{content:'';width:12px;height:12px;background:#a49cff;clip-path:polygon(50% 0,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%)}
+.payoff.fresh{animation:payoff-in .9s var(--ease)}
+.payoff.fresh::after{content:'';position:absolute;inset:0;background:linear-gradient(105deg,transparent 30%,rgb(164 156 255/.35) 50%,transparent 70%);transform:translateX(-100%);animation:shimmer 1.4s .3s var(--ease) forwards}
+@keyframes payoff-in{0%{opacity:0;transform:translateY(16px) scale(.97)}100%{opacity:1;transform:none}}
+@keyframes shimmer{to{transform:translateX(100%)}}
+.lc .ev-did .src{border-color:var(--ultra);background:var(--ultra);color:#fff}
+.lc .ev-did b{color:var(--ultra)}
+.lc .ev-did.fresh{animation:signal-in .7s var(--ease)}
+@media (max-width:760px){.lc-slide .win{min-height:0}.payoff{margin-top:16px}}
+
+/* ---------- Explainers ---------- */
+.ex{margin:clamp(8px,2vw,24px) 0 clamp(40px,5vw,72px);padding:clamp(18px,3vw,36px);border:1px solid var(--line);border-radius:calc(var(--radius) + 6px);background:var(--surface)}
+.ex-svg{width:100%;height:auto;overflow:visible;font-family:var(--sans)}
+.ex-svg text{fill:var(--fg);font-size:15px;text-anchor:middle}
+.ex-svg text.left{text-anchor:start}
+.ex-svg text.end{text-anchor:end}
+.ex-svg .cap{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;fill:var(--fg-3)}
+.ex-wires path{fill:none;stroke:var(--line-2);stroke-width:2;stroke-dasharray:4 6}
+.ex-wires .out{stroke:var(--ultra);stroke-dasharray:none;opacity:.4}
+.ex-wires .drop{stroke:var(--fg-3);opacity:.5}
+.ex-sources rect{fill:var(--bg);stroke:var(--line-2)}
+.ex-sources text{font-weight:500}
+.ex-keeper polygon{fill:var(--ultra)}
+.ex-keeper .k1{fill:#fff;font-size:14px;font-weight:550}
+.ex-canvas .stack{fill:var(--paper-2);stroke:var(--line);opacity:0;transition:opacity .4s}
+.ex-canvas[data-depth="1"] .s1,.ex-canvas[data-depth="2"] .s1,.ex-canvas[data-depth="2"] .s2,.ex-canvas[data-depth="3"] .stack{opacity:1}
+.ex-canvas .card{fill:var(--bg);stroke:var(--ultra);stroke-width:1.5}
+.ex-canvas .title{font-size:22px;font-weight:550;letter-spacing:-.02em}
+.ex-canvas .ver{font-size:52px;font-weight:550;letter-spacing:-.04em;fill:var(--ultra)}
+.ex-canvas.bump .card{animation:card-bump .5s var(--ease)}
+@keyframes card-bump{50%{stroke-width:5}}
+.ex-dots .dot{stroke:#fff;stroke-width:2}
+.ex-dots .dot.dropping{fill:var(--fg-3)!important}
+.src-Schedule .dot,.dot.src-Schedule,.tick.src-Schedule{fill:var(--fg-2)}
+.dot.src-Gmail,.tick.src-Gmail{fill:var(--maya)}
+.dot.src-GitHub,.tick.src-GitHub{fill:var(--ink)}
+.dot.src-Granola,.tick.src-Granola{fill:var(--theo)}
+.ex-sources .src-Gmail rect{stroke:var(--maya)}
+.ex-sources .src-GitHub rect{stroke:var(--ink)}
+.ex-sources .src-Granola rect{stroke:var(--theo)}
+.ex-ruler line{stroke:var(--line-2);stroke-width:2}
+.ex-ruler .head{stroke:var(--ultra);stroke-width:3}
+.ex-ruler .tick.muted{opacity:.3}
+.ex-controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;margin-top:16px}
+.ex-controls input[type="range"]{flex:1 1 240px;accent-color:var(--ultra)}
+.ex-play{min-height:38px;padding:0 16px;border:1px solid var(--fg);border-radius:999px;background:var(--fg);color:var(--bg);font-weight:500;cursor:pointer}
+.ex-clock,.ex-people-out{min-width:3.5em;font-family:var(--mono);font-size:.9375rem;color:var(--ultra)}
+.ex-toggle{display:inline-flex;align-items:center;gap:8px;color:var(--fg-2);font-size:.9375rem}
+.ex-toggle input{accent-color:var(--ultra);width:16px;height:16px}
+.ex-people-label{font-family:var(--mono);font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-3)}
+.ex-caption{margin-top:14px;color:var(--fg-2);font-size:.9375rem;min-height:3em}
+.ex-team-panels{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.ex-team-panels>div{padding:16px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg)}
+.ex-label{font-family:var(--mono);font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-3)}
+.ex-count{color:var(--fg-2);font-size:.9375rem}
+.ex-count b{color:var(--fg);font-size:1.5rem;font-weight:550;letter-spacing:-.03em;margin-right:4px}
+.ex-net .edge{stroke:var(--maya);stroke-width:1;opacity:.35}
+.ex-net .spoke{stroke:var(--ultra);stroke-width:1.5;opacity:.5}
+.ex-net .node{stroke:#fff;stroke-width:2;fill:var(--maya)}
+.ex-net .face-theo{fill:var(--theo)}.ex-net .face-priya{fill:var(--priya)}.ex-net .face-sam{fill:var(--ink)}
+.ex-net .hub{fill:var(--ultra)}
+.ex-net .hub-label{fill:#fff;font-size:13px;font-weight:550}
+.ex-chart-wrap{margin-top:16px;padding:16px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg)}
+.ex-chart .axis{stroke:var(--line-2)}
+.ex-chart .grid{stroke:var(--line);stroke-dasharray:3 5}
+.ex-chart .label{font-family:var(--mono);font-size:12px;fill:var(--fg-3)}
+.ex-chart .plan{fill:none;stroke:var(--ultra);stroke-width:3;stroke-linejoin:round}
+.ex-chart .plan-grow{stroke:var(--ink)}
+.ex-chart .plan-agreed{stroke:var(--fg-3);stroke-dasharray:6 6}
+.ex-chart .plan-label{fill:var(--fg-2)}
+.ex-chart .guide{stroke:var(--ultra);stroke-dasharray:3 4;opacity:.6}
+.ex-chart .knob{fill:var(--ultra);stroke:#fff;stroke-width:3}
+.after-ex{margin-top:0}
+@media (max-width:760px){.ex-team-panels{grid-template-columns:1fr}}
+.face.sam{--who:var(--ink)}
+.sheet.ranked{--cols:44px 1.7fr .8fr}
