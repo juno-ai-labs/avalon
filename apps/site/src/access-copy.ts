@@ -2,7 +2,7 @@
 export const accessCopy = {
   title: 'Rally · One place for you, your coworkers, and AI',
   headline: 'One place for you, your coworkers, and AI.',
-  description: 'Rally is shared AI for teams. Open a Canvas and make a document, a spreadsheet or a site with Rally and your coworkers in one conversation. Share a Sidekick to run the recurring work for all of you.',
+  description: 'Rally is AI that starts with you and grows with your team. Open a Canvas on your own and make a document, a spreadsheet or a site. Share it, and your coworkers join the same conversation with the same Rally. Sidekicks do the recurring work, for you or for everyone.',
 };
 
 export function renderAccessCopy(html: string): string {
