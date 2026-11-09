@@ -132,7 +132,7 @@ One PR train merged within days.
 
 - D-1. New docs: `docs/canvases.md` (identity, access, directory, Chat, Comments) and `docs/sidekick-shared-conversation.md`. Register both in `docs/README.md`. Landed on 2026-11-07: docs/canvases.md was written with Phase A and brought current; no `sidekick-shared-conversation.md` was created, since docs/automation-lifecycle.md already owns the shared conversation (runs as rows, `intent: "edit_sidekick"`, audience, Needs input, the run pushes) and a second owner would split one mechanism.
 - D-2. Rewrite: `desktop-shell.md`, `conversation-surfaces.md`, `live-web-artifacts.md`, `artifact-annotations.md`, `automation-lifecycle.md`, `hosted-conversation-parents.md`, `workstream-durable-object.md`, `architecture.md`, `data-model.md`, `realtime-sockets.md`, `websocket-architecture.md`, `agent-harness.md`, `conversation-tools.md`, `agent-memory.md`, `text-search.md`, `authorization.md`, `scope-invitations.md`, `slack-integration.md`, `external-conversation-bindings.md`, `browser-client.md`, `shared-ui.md`, `engineering-mcp.md`, `e2e.md`, `dev-environment.md`, `demo-workspaces.md`, `branded-ids.md`, `telemetry.md`, `impersonation.md`, `push-notifications.md`.
-- D-3. Delete, with a retirement record in the owning doc's changelog (model: `projects.md`): `spaces.md`, `space-access-sources.md`, `listing-rules.md`, `channel-access-requests.md`, `workstream-creation.md`, `substream-creation.md`, `workstream-naming.md`, `workstream-descriptions.md`, `workstream-markers.md`, `workstream-appearance.md` (keep the icon catalog section under a new name), `workstream-origin-attachments.md`, `workstream-pinning.md` (fold the Pinned group into `canvases.md`), `thread-backfill.md`, `conversation-merge.md`, `conversation-suggestions.md`, `suggested-work.md`, `contextual-routing.md`, `jev-classifier-opportunities.md`, `digests.md`, `attention-menu.md`, `pane-stack.md`, `conversation-view-cache.md`, `ios-client.md`, and `menu-bar.md` unless B-6 keeps the menu bar. Landed on 2026-11-07 across the server waves and the docs pass: the documents whose mechanism went were deleted with retirement records as each step landed (channel-access-requests, substream-creation, thread-backfill, conversation-merge, suggested-work, digests, attention-menu, pane-stack, ios-client; workstream-pinning renamed to pinning.md as the one owner of the Pinned group); kept as retired records for their changelogs: spaces, space-access-sources, listing-rules, workstream-creation, workstream-naming (its model role titles pasted text), workstream-descriptions, workstream-origin-attachments, conversation-suggestions, projects; kept because the mechanism survives: conversation-view-cache (the view job still paints Canvas previews), menu-bar (B-6), workstream-markers, workstream-appearance, jev-classifier-opportunities.
+- D-3. Delete, with a retirement record in the owning doc's changelog (model: `projects.md`): `spaces.md`, `space-access-sources.md`, `listing-rules.md`, `channel-access-requests.md`, `workstream-creation.md`, `substream-creation.md`, `workstream-naming.md`, `workstream-descriptions.md`, `workstream-markers.md`, `workstream-appearance.md` (keep the icon catalog section under a new name), `workstream-origin-attachments.md`, `workstream-pinning.md` (fold the Pinned group into `canvases.md`), `thread-backfill.md`, `conversation-merge.md`, `conversation-suggestions.md`, `suggested-work.md`, `contextual-routing.md`, `jev-classifier-opportunities.md`, `digests.md`, `attention-menu.md`, `pane-stack.md`, `conversation-view-cache.md`, `ios-client.md`, and `menu-bar.md` unless B-6 keeps the menu bar. Landed: every document whose mechanism went is deleted, including the ones first kept as retired records; `workstream-links.md` and `workstream-pinning.md` were renamed to `links.md` and `pinning.md` instead; `conversation-view-cache.md` and `menu-bar.md` stay because their mechanisms survive. [`architecture.md`](../../architecture.md#retired-documents) lists every removed document and where its record lives.
 
 ## 5. Removal inventory
 
@@ -175,223 +175,91 @@ other; Phase C 10 to 12; Phase D alongside each. The team sets the calendar.
 
 ## 9. Follow-ups after this pull request
 
-Recorded as the build went, from the reviews of each step. None blocks the merge; each names where it lives.
+None blocks the merge. Each names where it lives; the reasoning is in the
+owning document's changelog.
 
-**Deploy order.**
+**Deploy order.** [`workspace-retirement.md`](../../workspace-retirement.md#the-deploy-order)
+owns it: retire the demo Organizations on the old Worker; deploy the Worker
+with the pivot desktop release (a pre-pivot desktop is refused with `426`);
+let D1 0125 apply after promotion through the Worker-first list; then in every
+Organization run `dump_thread_transcripts`, `convert_threads_to_canvases` and
+`retire_threads`. Forward-fix only. Ace deploys with or after the API, since
+its retirement result admits a `canvas` node.
 
-The Thread operations ship in this release, so they cannot run before it ([`workspace-retirement.md`](../../workspace-retirement.md#the-deploy-order) owns the order):
+**After the operator's run in every Organization.** One migration drops
+`channels`, `spaces`, `breakouts`, their viewer tables, `parent_*` and their
+memory-digest and search triggers, `digest_schedules` (the `schedules`
+foreign key first), `slack_agent_sessions`, `slack_agent_feedback`,
+`external_registration_generations`, `workspace_workstream_effect_receipts`,
+and the D1 Thread authority tables once Canvas and Sidekick creation stop
+reading them; then `thread-retirement-service.ts` and the three operations
+can go. `authorization_locations` Thread rows and Thread `conversation_view_*`
+rows stay. A cleanup that drops Thread rows from D1 `workstreams` bumps the
+Turbopuffer namespace first ([`text-search.md`](../../text-search.md)).
 
-1. On the old Worker, retire every live demo Organization and the demo template (`01a06d5d-4624-751e-8269-e7950b51a835`) through the existing retire route, with no preparation Workflow running.
-2. Deploy the Worker and publish the pivot desktop release together: from this release the workspace socket refuses a pre-pivot desktop with `426`, and the auto-updater reaching the new build is its only way out. A stale web tab needs a reload. D1 0125 (the demo-table drop) applies after the Worker is promoted, through the Worker-first list in `classify-pending-d1-migrations.mjs`.
-3. Immediately, in every Organization: `dump_thread_transcripts`, then `convert_threads_to_canvases` (the 60 Threads with artifacts, counted on 2026-11-08 across 7 Organizations: Juno Labs 23, Forward Search 19, ThreadBury-Adam 8, KB QA 7, one each in conscious, demo and Kiki & Alex, become Canvases keeping their ids), then `retire_threads`, each until nothing fails. `retire_threads` refuses while a Thread with artifacts is unconverted.
-4. Until step 3 has run in an Organization its Threads are gone for users, a Thread's `AgentLoopDO.alarm` clears its alarm without running, and `receiveChildEffects` answers 409 `conversation_parent_kind_retired:<kind>`, so expect those entries in the dead-letter queue until then.
-5. Forward-fix only, never `wrangler rollback`: the previous Worker refuses the migrated objects (`<component>_schema_ahead:<version>`), and the conversation class is renamed (`v15`).
+**Dead code.** The code kept unreached and the stale comments are listed in
+[`2026-11-08_remove-dead-code-after-the-pivot`](../2026-11-08_remove-dead-code-after-the-pivot/prd.md).
 
-A Thread invitation still unclaimed at conversion is deleted, so its emailed link stops working (the Canvas's owner can share again); guests who had claimed one keep the Canvas.
-- Ace deploys with or after the API: `WorkspaceRetirementResult.failed[].parentKind` admits `canvas` (d97500851).
-- The subscribe answer keeps an empty `workstreams` page and `notes: []` for one release so pre-pivot desktops still parse it; remove once every desktop has updated (realtime-sockets.md).
+**Mechanisms not built.** The memory subject kinds stay `thread`, `channel`
+and `breakout` until the `memory_facts` rebuild, and the memory tools'
+model-facing text still names them. The client offers no pin reorder
+(`PUT /workspace/pinned-order` exists). A Sidekick's mention push title can
+read "in New Sidekick", because the conversation snapshots its title before
+the definition names it. A failed revocation publish on an audience narrowing
+is only logged. The authorization projection has no Canvas or Sidekick
+audience trigger. `conversation_search` does not find a Sidekick's run
+messages. A run that asks twice makes two unseen Activity rows. The Canvas
+naming pass fires on any first turn, not only a person's.
 
-**A later migration, after the operator's run everywhere.** Drop `channels`, `spaces`, `breakouts`, their viewer tables, `parent_*`, their memory-digest and search triggers, `digest_schedules` (remove the `schedules` foreign key first), `slack_agent_sessions`, `slack_agent_feedback`, `external_registration_generations`, `workspace_workstream_effect_receipts`, and the D1 Thread authority tables once Canvas and Sidekick creation no longer read them. `authorization_locations` Thread rows and Thread `conversation_view_*` rows stay (they cannot be told apart safely). Any cleanup that drops Thread rows from D1 `workstreams` must bump the Turbopuffer namespace first (text-search.md).
+**Tests and lanes.** The e2e lane killed the local workerd in 2 of 8 full runs
+at its current chaos burst sizes ([`e2e.md`](../../e2e.md) holds them as the
+team's numbers). No renderer test covers the Canvas restored-route fallback;
+it was checked in a real window. `test/provider-webhooks.test.ts` must move
+onto WorkspaceDO before the provider webhook service's legacy branch can go.
+Intermittent timeouts seen only under heavy machine load, each passing alone
+and in loops, are named in the pull request.
 
-**Product calls open to the owner.** Anyone a Canvas admits may retitle it (decision log). The Slack reply to a mention or DM: "Rally no longer starts work from Slack. Start a Canvas in Rally, or set up a Sidekick to work from Slack for you." A run blocked on a missing connection or grant asks for it and waits in `needs_input` (built in round 5 of 2026-11-08; before, it finished `completed` after saying what was blocked) `conversation_search` does not find a Sidekick's run messages. The privacy policy's effective date and version, and its Customer Content row's "work streams", were left for the team.
+**The owner's calls.** Each was made as the implementer's reading and is open
+to reversal:
 
-**Mechanisms.** `attention()` returns zeros: Canvas and Sidekick unread is not summarized into the Organization badge. The memory subject kinds stay `thread`/`channel`/`breakout` in storage (the `memory_facts` rebuild), and the memory tools' model-facing text still names them. A "Working" state on the Sidekicks home needs a running flag on the directory row; a Canvas card cannot sit at the run that made it until the summary carries `writerRunId`; pin reorder in the client is not wired (`PUT /workspace/pinned-order` exists). A Sidekick's mention push title can read "in New Sidekick" because the conversation snapshots its title before the definition names the Sidekick. A failed revocation publish on audience narrowing is logged only. The authorization projection has no Canvas or Sidekick audience trigger and no read-path consumer. A Sidekick child's Terminal deadline never reached the workspace schedule (workspace-retirement.md).
+- Anyone a Canvas admits may retitle it and choose its appearance; there is
+  no "back to default" control.
+- A Canvas made with no title is titled from its first message.
+- A Canvas's mark takes a hue stable for its id, and the home card's picture
+  is a sketch per artifact kind (a sketch per MIME type needs `artifactMime`
+  on the row).
+- A launch that restores this device's last Canvas or Sidekick keeps it,
+  rather than opening Activity's top row.
+- Email is opt-in for every kind; mentions and adds default to push alone.
+- Only the run's own principal's connection unblocks a waiting run, so a
+  manager connecting their own account makes the run ask again.
+- The `running` flag outranks `runState` on the pill and the row, and the
+  Needs input badge stays beside it.
+- App Home lists the person's whole sidebar set of Sidekicks, six rows each
+  (`SLACK_HOME_ROW_LIMIT`, the team's number).
 
-**Code kept until a later pass.** The provider webhook service's `!WORKSPACE_DOS` legacy branch (its Node suite drives only that branch); the non-producer legacy route branches in connection-service.ts; `OPENROUTER_STRUCTURED_MODEL` has no reader (removing the Worker var is deploy-affecting); `substream-creation.ts`'s `SubstreamInitialContext` and the session-import desktop-action kinds (stored rows still parse); `ArtifactPinListSchema` and the empty `/artifact-pins` route; `membershipVersion` on socket tickets; `announceTo` on the review notice (write-only); `RetirementParentKindSchema`, `EffectParentKindSchema` and `StoredConversationParentKindSchema` as separate four-kind enums; stale code comments describing Threads, Channels, Spaces or Breakouts as live in about 85 files (none change behaviour; the largest are workspace-do.ts, workspace-memory-facts-storage.ts, workspace-pin-storage.ts, agent-loop-do.ts, workspace-memory-facts-protocol.ts).
+**Open questions.**
 
-**Recorded after the end-to-end and visual passes (2026-11-08).** Four Sonnet
-testers (Electron Canvases; Electron Sidekicks and Activity; the browser at
-three widths; the API, sockets and operator tools), three rounds of Opus
-visual inspection against design.html, and three fix rounds landed between
-dd9c3c2da and cb18fb6f1. The design is the authority where a document disagreed
-(desktop-shell.md, desktop-layout.md, canvases.md, automation-lifecycle.md,
-browser-client.md were corrected to it). Decisions made as the implementer's
-reading, open to the owner's reversal, each recorded in the owning document's
-changelog: a new Canvas is titled from its first message; Canvas marks take a
-stable hue per Canvas from its id; the home card's picture is a sketch by
-artifact kind (a mime-level sketch needs `artifactMime` on the row); the
-sidebar list is 340 px beside the 76 px rail, and the artifact panel fills a
-pane narrower than twice the conversation minimum; the viewer's own turn is a
-tint and ink pair, not a solid colour; Back/Forward keep the documented
-`MarkBridge` shape rather than design §2's segmented pill; "All Sidekicks"
-keeps product-noun case; a Needs input row keeps its dot even when read; New
-Sidekick reopens an existing draft; the Sidekick pill stays centred while the
-Canvas pill sits at the left, as each design section draws; a finished-run
-Activity row opens the shared conversation and is never marked open (opening
-the run instead needs run reads projected so the row can clear); the run row
-shows the trigger's kind, not the event's title (the title lives on the
-connector event); the dark dialog shadow and the connecting card overlay stay.
-
-Follow-ups found and not fixed: after a local API restart an open Electron
-window stopped receiving live Sidekick updates until reloaded (seen twice by
-agents, not reproduced in a test); a row arriving in a new sidebar section
-once drew over the next heading for a frame (vis3-e1-15, list-motion.md's
-family); a panel width stored from a narrow window comes back narrow on a wide
-one; the onboarding invite placeholder still uses the library grey; the
-narrow-tab sidebar at 641 px drops under its own 306 px minimum to keep the
-pane's 424; Activity rows have no retention rule and carry the push body's
-1,000-character preview inside the subscribe frame (both numbers are the
-team's); `runState` is null when the newest run finished while an older one
-still works; a run that asks twice makes two unseen Activity rows; the naming
-flip fires on any first turn, not only a person's.
-
-**Tests and lanes.** The e2e lane killed the local workerd in 2 of 8 full runs at the current chaos burst sizes (e2e.md records the sizes as the team's to set). No renderer test covers the Canvas restored-route fallback (checked in a real window). The prepareApply malformed-evaluator 422 case has no cheap fixture. `test/provider-webhooks.test.ts` must move onto WorkspaceDO before its legacy branch goes.
-
-**Recorded after the notifications round and the documentation audit
-(2026-11-08).** The four notification kinds the pivot had dropped came back on
-the one Activity pipeline (e26aa66): `new_message` (a `reply_batch` alarm per
-conversation coalesces replies for `REPLY_BATCH_SECONDS`, the row collapses to
-the newest message while unseen, and a push repeats only after
-`CONVERSATION_ALERT_COOLDOWN_MS`), `artifact_updated` (every pinner of the
-Canvas who did not write the version), and `access_request` /
-`access_granted` (the `canvas_access_requests` table, `GET /canvases/:id/access`
-answering `requestable` with no title, `activity_access_decision` for deciders:
-the creator, owners and administrators, and a writer Sidekick's managers).
-Decisions made as the implementer's reading, open to the owner's reversal: a
-denial tells the requester nothing and allows a new request; a duplicate
-request while one is pending answers pending; adding the person through Share
-or making the Canvas Organization-wide settles pending requests as grants;
-the Settings page offers exactly Mentions, New messages, Being added, Sidekick
-runs, Pinned Canvas updates and Access requests, and the three stored-only
-kinds are emitted for one release so older desktops keep parsing; no cap on
-requests per person or Canvas was added (the number is the team's).
-
-Follow-ups found and not fixed: a reply push opens the conversation at its
-newest message (the row carries the turn, the push body does not); reply and
-run notices are push only, email and Slack still go out for mentions and
-being added alone, while Settings offers all three channels for every kind;
-a guest who opens an unshared Canvas is refused with a 403 and its message
-("Only a member of the Organization can ask to open a Canvas"), which tells a
-non-member the Canvas exists where the design asked for the not-found pane;
-`attention()` still answers zero for every other Organization, so the account
-menu never shows a count; the desktop-action request/answer protocol has no
-caller since session import was deleted; the per-conversation Terminal
-provider check went with the Thread host and nothing polls a sandbox now;
-nothing skips a demo persona's `.invalid` address in notification email.
-
-The documentation audit (five slices, each sampled against the code by a
-reviewer; about 600 claims sampled, 15 wrong and fixed) retired seventeen
-documents into retirement records in their owners' changelogs (spaces,
-space-access-sources, projects, listing-rules, workstream-creation, -naming,
--descriptions, -appearance, -markers, -origin-attachments,
-conversation-suggestions, session-import, contextual-routing,
-implementation-plan, harness-production-qa-2026-08-22, and
-jev-classifier-opportunities folded into jev-best-practices), corrected about
-120 documents and the help centre's 40 pages, and left the Trust Center's
-versioned legal text alone (its stale vocabulary is listed in the audit
-report). Historical changelog entries were kept verbatim; only dead link
-targets inside them changed. Code defects the audit found and did not fix are
-in the slice reports (dead exports in the Slack and connector services, stale
-comments naming deleted documents, `#CEDC00` hard-coded where the brand is
-`#CCFF00`, two Workers proofs lost with deleted test files).
-
-**Recorded after the owner's four instructions of 2026-11-08.** (1) "When
-opening the first activity on top should be auto selected and that should be
-shown in the panels" and "Stay in activity sidebar": entering Activity opens
-its top row in the pane (a rail pick pushes, a launch onto the Canvases home
-replaces once the first list arrives, an empty feed opens nothing, nothing
-re-applies while the person stays in Activity), and only a rail pick leaves
-Activity; two paths that moved the rail off it without a pick (closing the
-phone sheet without a navigation, the `rallywithai://activity` deep link) are
-closed. The implementer's reading, open to the owner: a launch that restores
-this device's last Canvas or Sidekick keeps it rather than opening the top
-row. (2) "Sync up the electron app path routing to match the browser one":
-the two hosts already share the renderer's router; the Mac app now lands an
-artifact link as `?artifact=` like the web, shows the web's retired-link
-sentence from one shared constant, and opens the web app's Organization URL
-(`/app/workspaces/<region>/<id>` with an optional Canvas or Sidekick hash) as
-a universal link through a new `home` intent. Left for the owner: Settings is
-a route in the browser tab and a window on the Mac (matching means dropping
-the window), and the Mac app is associated only with `rallywith.ai` and
-`www`, so a URL copied from `app.rallywith.ai` still opens in the browser
-until an association file is served there and the entitlement added, which
-changes signing and the release. (3) "Remove documents from docs/ that are
-depreciated": desktop-actions, browser-script-runtime, connector-digestibility
-(and the test that read it), meeting-notes and the three dated audit records
-are retired into records in their owners; the dead code they described
-(the desktop-action protocol, the browser plugin and realm, the digestibility
-helpers and column, four meeting-cleanup RPCs) is listed in the pruning
-report for removal. (4) "Deprecate all stale PRDs in the prd folder": fifteen
-`state.md` files carry a supersession, partial or abandoned note (docs/prds.md
-now allows the partial kind), and the implementation brief's contract names
-Activity again as a per-person list.
-
-**Recorded after round 5 (the owner's answers of 2026-11-08).** Built, each
-reviewed before merge: a denial now tells the requester (`access_denied` row
-and push, "Request declined" in the pane, WorkspaceDO 138 and 140); one
-channel-neutral notice rendered once and handed to generic push and email
-sinks, email for every offered kind through one template keyed on the intent,
-Slack removed as a channel (a stored `slack_agent_dm` reads as absent for one
-release); `attention()` counts unseen Activity so the account menu shows other
-Organizations' counts, in the browser too, and every push's badge is that
-count; a mention's or reply's push opens at the message on both hosts
-(`?turn=&sequence=` on the canonical, deep-link and shell forms; client
-contract 13 gates `decidedAt`); a run blocked on a missing connection or
-grant asks through the elicitation path and waits in `needs_input`; the
-Terminal provider poll is back as a `terminal_observation` alarm entry on the
-hosted parent; Slack App Home rebuilt around Sidekicks with the dead Slack
-exports deleted and a Canvas chat's interrupted delegation re-entry fixed; a
-Canvas's icon and colour can be chosen from its pill with the Sidekick's own
-picker (WorkspaceDO 137); the Canvas list row names the run that wrote its
-newest version and the Sidekick row carries `running` (WorkspaceDO 137); the
-workspace socket's `subscribe` resolves flags before reading its answer (a
-write during that await reached neither the answer nor a push) and the answer
-is authoritative over the per-list and per-topic ledgers; the artifact panel
-width is stored as a share of the pane; the demo functionality is removed
-(Ace, API, contracts, docs, skills; WorkspaceDO 136 drops `seed_json`;
-stored names `DEMO_OPERATORS_JSON` and role `demos` kept); a dead-code PRD
-(2026-11-08_remove-dead-code-after-the-pivot) holds the removal inventory.
-
-Deploy order added by this round: retiring the demo Organizations on the old
-Worker, step 1 of the deploy order above. D1 0125 (dropping `demo_operations`,
-`demo_operation_phases`, `demo_seed_receipts`) is this pull request's only
-regional D1 migration and is on the deploy job's Worker-first list, so the
-job promotes the Worker that no longer reads the tables and then applies the
-drop; it refuses to run if any other regional migration is pending beside
-it. The earlier 0125 that rebuilt `demo_seed_receipts` for the new pack never
-shipped and was deleted with the feature. Older desktops: pushes
-of kinds they do not know are dropped, and a message-position link opens the
-app without navigating.
-
-Owner's calls recorded as the implementer's reading: email is opt-in for
-every kind (mentions and adds default to push only); anyone a Canvas admits
-may choose its appearance, as for renaming, and there is no "back to default"
-control; App Home lists the person's whole sidebar set of Sidekicks, six rows
-each (`SLACK_HOME_ROW_LIMIT`, carried over, the team's number); only the
-run's own principal's connection unblocks a waiting run, so a manager
-connecting their own account makes the run ask again; the `running` flag
-outranks `runState` on the pill and the Needs input badge stays beside it.
-Still open: the Notifications modal in Slack writes preferences nothing reads;
-the shortcuts and a bare `/rally` open a task modal only to refuse it
-(manifest change); the Workflow `avalon-global-demo-preparation` may linger
-on Cloudflare after the binding is removed.
-
-Intermittent failures seen under load and named, not fixed (each passed alone
-or in loops; none on a path the round changed): canvas-access-requests'
-`beforeEach reset()` at 30 s; three app-session cases at load average 61;
-core-tool-idempotency and custom-mcp-connection at 15 s; six hosted-sidekick
-timeouts; the Slack reaction-admission test; two canvas.test.tsx cases; the
-workers delegation-recovery test at 61 s.
-
-**Recorded after the round-5 fix round.** The end-to-end and visual passes
-on the merged tree found three defects and fourteen visual findings; each fix
-was reviewed before merge. A requester who asks again after a denial now has
-their Activity republished on their open socket, so the denied row and badge
-clear without a reload; the connection question offers only its two options
-(`allowOther` and `allowSkip` on the elicitation, absent reads as true, the
-schema stays non-strict for a client one release behind) and hides its
-keycaps on touch; a badged Activity tile draws its glyph up-left so the lock's
-shackle stays visible; `attention()` ranks a mention above plain unseen rows
-and the account menu names it; the home card's run link carries the run
-number; a Sidekick that is both working and waiting reads "Working ·
-<question>"; the notice email narrows at phone width. A run's question never
-reached telemetry (its deterministic UUIDv5 id was refused by the v7-only
-envelope) and is now projected with `resourceTelemetryEventId`; a run halted
-in `needs_input` logs as `workstream_harness_run_waiting` instead of a
-failure. In local development only, `createDevelopmentSession` rewrote the
-Organization's name on every sign-in, so it flipped between the desktop's
-"Rally Development" and the bare request's default "Avalon Development"; the
-stored name now sticks, which on a seeded stack is the seed's "Avalon Studio".
-Recorded, not fixed: Ace overflows at phone width (an operator console), and
-a run that lacks a capability still ends `completed` with a message, since no
-question can grant one.
+- A stored notification choice that was Slack alone now reads as none and
+  silences that kind. Should it fall back to the kind's default?
+- The Slack reply to a mention or DM ("Rally no longer starts work from Slack.
+  Start a Canvas in Rally, or set up a Sidekick to work from Slack for you.")
+  is the agent's wording.
+- Slack's Notifications modal writes preferences nothing reads, and the
+  manifest's shortcuts and a bare `/rally` open a task modal only to refuse
+  it; both need a manifest change.
+- Settings is a route in the browser tab and a window on the Mac, and the Mac
+  app is associated only with `rallywith.ai` and `www`, so a URL copied from
+  `app.rallywith.ai` opens in the browser. Matching either changes the Mac
+  app's signing or windows.
+- A guest who opens a Canvas that was not shared with them is told "Only a
+  member of the Organization can ask to open a Canvas", which says the Canvas
+  exists.
+- Activity has no retention rule, and carries the push body's 1,000-character
+  preview inside the subscribe frame; both numbers are the team's.
+- The privacy policy's effective date and version, and its Customer Content
+  row's "work streams".
+- The Workflow `avalon-global-demo-preparation` may linger on Cloudflare after
+  its binding is removed.
+- Ace overflows at phone width, and a run that lacks a capability (no
+  Terminal) still ends `completed`, since no question can grant one.
