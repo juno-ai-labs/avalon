@@ -128,7 +128,7 @@ function fixture(options: {
     LOG_LEVEL: "error",
     OPENROUTER_API_KEY: "test-key",
     OPENROUTER_PRIMARY_MODEL: "test/primary",
-    OPENROUTER_FALLBACK_MODELS: "",
+    OPENROUTER_FALLBACK_MODEL: "",
     PUBLIC_API_BASE_URL: "https://api.example.com",
   });
   return { objectStore, env, sent, candidates, applied, prompts };

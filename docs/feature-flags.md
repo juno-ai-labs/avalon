@@ -50,7 +50,7 @@ deployments, but the new server does not publish it.
 | `sidekick_wizard` | `openai/gpt-6.1-sol` | `OPENROUTER_SMARTER_MODEL` |
 | `workstream_naming` | `openai/gpt-5.6-terra` | `OPENROUTER_FASTER_MODEL` |
 
-`OPENROUTER_FALLBACK_MODELS` overrides the default `google/gemini-3.8-flash`
+`OPENROUTER_FALLBACK_MODEL` overrides the default `google/gemini-3.8-flash`
 fallback. It is a comma-separated ordered list; an explicitly empty string
 selects no fallbacks. Unset variables use the checked-in defaults.
 
@@ -98,6 +98,8 @@ the role the execution resolves. The former `sidekick_authoring` JSON key is
 renamed to `sidekick_wizard`; deployments using that override must rename it.
 The shared naming-model override is now `OPENROUTER_FASTER_MODEL`; rename any
 existing `OPENROUTER_CLASSIFIER_MODEL` deployment variable to the new name.
+The fallback override is now `OPENROUTER_FALLBACK_MODEL`; rename any existing
+`OPENROUTER_FALLBACK_MODELS` deployment variable as well.
 The conversation's served-model pill retains its existing behavior. See
 [`automation-lifecycle.md`](automation-lifecycle.md).
 
@@ -143,7 +145,7 @@ identities, image/audio requests, transcription configuration, and pricing.
 Put optional overrides in `.env.local`, run `pnpm env:sync`, and restart the
 Worker. No override or Cloudflare account is needed to use the constants.
 Generated `.dev.vars.*` files do not retain superseded model defaults; explicit
-empty `OPENROUTER_FALLBACK_MODELS` values are preserved.
+empty `OPENROUTER_FALLBACK_MODEL` values are preserved.
 
 ### Adding a flag
 
