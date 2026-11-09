@@ -219,7 +219,7 @@ owns the catalog and the ring). They live on the directory row as
 `appearance_json` (migration 137), null until someone chooses, and the
 summary carries them as `appearance` on the list row, the detail and a
 Sidekick's Canvases, each field null while unchosen. An unchosen icon draws the
-sketch of the newest artifact's kind and an unchosen colour the hue the id
+glyph of the newest artifact's kind and an unchosen colour the hue the id
 gives it (`canvasHue`), so a Canvas nobody dressed looks as it always has.
 
 `PATCH /canvases/:id` with `appearance` sets them, beside or instead of a
@@ -454,10 +454,12 @@ section records only what the code decides.
   pill is numbered before the shared conversation has loaded.
 - **The mark** (`CanvasMark`) holds the chosen icon, else the row's
   `artifactKind` glyph, in a pastel pair through `markColors`: the chosen
-  colour, else a hue stable for the id (`canvasHue`). The home card's picture
-  is a sketch of the `artifactKind`, since a row carries no image of its
-  artifact. Appearance is chosen from the pill's mark or the menu's **Change
-  appearance** with the Sidekick's `AppearancePicker`, a popup rather than a
+  colour, else a hue stable for the id (`canvasHue`). The home card's preview
+  fills its entire background with that tint and centers the glyph vertically
+  and horizontally, with no icon repeated in the title row. The ink applies
+  only to the glyph so the Live badge keeps the page's text colour. Appearance
+  is chosen from the pill's mark or the menu's **Change appearance** with the
+  Sidekick's `AppearancePicker`, a popup rather than a
   submenu (a submenu has no room beside a phone-width menu); each click saves
   through `PATCH /canvases/:id`.
 - **Making one** is `POST /canvases`, with the "Start from a prompt" card's
