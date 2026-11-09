@@ -363,7 +363,7 @@ them. The menu bar does not read it; the dock badge, and the push badge, count i
   otherwise reports a read on every open, at an unchanged cursor too
   (`conversation-surfaces.md`). That report reaches `acceptViewerRead`
   because the `directory_user` effect carries the report's time
-  (`lastReadAt`, the server fix S10, 695611c); before it, the effect outbox
+  (`lastReadAt`, a245f7ba1); before it, the effect outbox
   dropped an effect identical to its last one, and a run's row that arrived
   after the last report stayed unseen until the cursor moved.
 - **A mention or an add in a Sidekick run's own conversation** clears only by

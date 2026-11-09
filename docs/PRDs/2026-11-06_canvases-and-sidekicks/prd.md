@@ -391,7 +391,7 @@ for every screen, so the documents were the ones out of date.
 
 **Changes:** The design-conformance round (docs/desktop-shell.md,
 desktop-layout.md, canvases.md, automation-lifecycle.md, browser-client.md
-changelogs of 2026-11-08); the plan's section 9 records the decisions made as
+changelogs); the plan's section 9 records the decisions made as
 the implementer's reading and open to reversal.
 
 ### 2026-11-08 — Activity returns, and Threads with artifacts become Canvases
@@ -401,8 +401,10 @@ feed of what happened to them in Canvases and Sidekicks (a mention, being
 added to a Canvas, a Sidekick run that needs their input, a run they asked
 for that finished), written beside the push intent for the same event and
 cleared by the read cursor the Organization already keeps per conversation,
-or by Mark all seen. The rail dock badge and the menu bar stay Needs
-attention only. And a Thread that has artifacts is not deleted: the operator
+or by Mark all seen. The menu bar stays Needs attention only. The dock
+badge stayed on Needs attention at first and moved to the unseen Activity
+count later the same day, so the number Rally writes while open agrees with
+the push badge ([`desktop-shell.md`](../../desktop-shell.md)). And a Thread that has artifacts is not deleted: the operator
 converts it into a Canvas in place, keeping its id, before `retire_threads`
 runs (`convert_threads_to_canvases`, dry run by default). Production held 60
 such Threads across 7 Organizations when counted.
