@@ -187,8 +187,12 @@ cannot be removed while these domains still use that path.
 
 [Cloudflare catch-alls are apex-only](https://developers.cloudflare.com/email-service/configuration/subdomains/#add-a-subdomain-to-email-routing),
 so using a dedicated apex avoids both the subdomain catch-all restriction and the
-200-literal-rule limit for new addresses. It does not migrate the old subdomains;
-retiring their Resend ingress is a separate compatibility migration.
+200-literal-rule limit for new addresses. It does not migrate the old subdomains.
+The owner confirmed on 2026-11-09 that current incoming addresses are unused, so
+activation needs one Worker deployment followed by enabling the new catch-all,
+without an issuance pause or staged compatibility rollout. The unused Resend
+ingress can retire after pending deliveries are settled; stored claims remain
+permanent.
 [The runbook](runbook.md) owns DNS, domain verification and the cutover sequence.
 
 ### Inbound delivery
@@ -547,9 +551,10 @@ an explicit at-least-once delivery limitation.
 **Consequences:** Outbound deployment needs verified Cloudflare sender domains.
 New incoming addresses use the dedicated `rallywithai.com` apex, where one
 Cloudflare catch-all reaches the Worker without per-address rule provisioning.
-Existing addresses retain their exact domains and Resend receiving path. Deploy
-the Worker and enable the dedicated-domain catch-all before issuing new addresses;
-retain legacy receiving credentials until those old ingress paths retire. Future
+Existing addresses retain their exact domains. Because the owner confirmed
+current incoming addresses are unused, deploy the Worker once, enable the
+dedicated-domain catch-all, and verify delivery before announcing availability.
+Retain legacy receiving credentials only until those old ingress paths retire. Future
 changes must preserve regional payload storage, envelope-recipient routing and
 attachment-based authorization.
 

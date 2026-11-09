@@ -38,9 +38,12 @@ Routing through `email()`, and the Wrangler config supplies `send_email` binding
 no runtime dependency loading or administration token is used. External sender
 domain verification and receiving rules are separate deployment prerequisites,
 listed in [the runbook](runbook.md). New addresses use the dedicated
-`rallywithai.com` apex catch-all. The old `automation.*` subdomains retain Resend
-MX, webhook and secrets so their issued addresses keep working. Enable the new
-catch-all only after the Worker with its email handler is deployed.
+`rallywithai.com` apex catch-all. The owner confirmed that current incoming
+addresses are unused: deploy once, then enable the new catch-all and verify
+delivery before announcing availability. No staged compatibility rollout or
+issuance pause is required. The old `automation.*` Resend path remains available
+but can be retired after pending deliveries are settled; it does not gate
+activation of the new domain.
 
 ### Dedicated Ashby ingress
 
