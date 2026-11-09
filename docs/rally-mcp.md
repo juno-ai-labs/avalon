@@ -219,6 +219,20 @@ message. Sidekicks have no tools here.
   default), the limit Rally's own publish and uploads use, counted over all of
   a site's files; a site is also capped at `ARTIFACT_MAX_ASSET_COUNT` files.
   The content arrives as JSON, so base64 bytes cost a third more on the wire.
+  An oversized body is refused from its length before anything is decoded,
+  and base64 decodes in one pass (`Uint8Array.fromBase64`), because a 25 MB
+  file is a 33 MB string and each copy counts against the isolate's 128 MB.
+- **Measured on workerd, 2026-11-09** (route to R2, one run, not a benchmark):
+  a 5 MB file in 0.13 s, 25 MB in 0.5 s, a 50-file site in 0.2 s, 500 files
+  in 0.8 s, 2,000 files in 2.4 s; each read back byte for byte. A site's
+  files upload six at a time, as Rally's own publish does; a site near the
+  platform's subrequest limit fails the publish rather than half-landing.
+- **The MCP hop is the tighter bound.** The MCP Worker holds a tool call's
+  arguments several times over (the request, the SDK's parse, the body sent
+  on), so a call carrying tens of megabytes can exceed its memory and fail.
+  In practice a model's tool call is bounded far lower by its output length,
+  well under a megabyte, so large binaries come from a client that sends
+  them without the model writing them out. No cap is set here.
 - There is no tool to delete a Canvas or remove an artifact: the app has no
   route for the first, and the second's effect on a Canvas's generated
   artifacts is not settled.
@@ -232,8 +246,10 @@ message. Sidekicks have no tools here.
 - `pnpm --filter @rally/api test:workers test-workers/canvas-publication.test.ts`:
   a person's file and site land as Canvas artifacts on real workerd, a
   republish versions the same artifact with the person as each revision's
-  author, a repeat changes nothing, and someone the Canvas does not admit
-  writes nothing.
+  author, a repeat changes nothing, bytes are stored exactly from either
+  base64 alphabet, an oversized file is refused before it is decoded, a
+  site's files are a set, and someone the Canvas does not admit writes
+  nothing.
 - `pnpm --filter @rally/contracts exec vitest run src/canvas-publish.test.ts`:
   the path and site rules a publish is held to.
 - `pnpm --filter @rally/mcp test`: the challenge, the metadata, token
