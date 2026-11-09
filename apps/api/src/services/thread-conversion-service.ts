@@ -143,13 +143,14 @@ async function carryBreakoutArtifacts(
   }
   at("0");
   if (links.length === 0) return;
-  const { adopted } = await (await conversationObject(env, workspaceId, threadId, "0"))
+  await (await conversationObject(env, workspaceId, threadId, "0"))
     .adoptAttachmentsForConversion({ workspaceId, parentId: threadId, links });
-  if (adopted > 0) {
-    await projectAuthorization(env, {
-      type: "authorization_projection_v1", region: env.AVALON_REGION, workspaceId, parentId: threadId, substreamId: asSubstreamId("0"),
-    });
-  }
+  // Whenever anything was carried, not only when this pass added it: a pass
+  // that stopped between the adoption and the projection adds nothing on
+  // its resume, and the projection is what places the artifact in the Chat.
+  await projectAuthorization(env, {
+    type: "authorization_projection_v1", region: env.AVALON_REGION, workspaceId, parentId: threadId, substreamId: asSubstreamId("0"),
+  });
 }
 
 async function organizationObject(env: Env, workspaceId: WorkspaceId) {

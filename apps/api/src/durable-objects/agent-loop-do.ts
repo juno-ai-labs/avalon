@@ -7084,7 +7084,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * conversation of this parent takes them, after `convertParentKind`. An
    * attachment already here is kept as it is; the inventory revision moves
    * only when one is added, and the insert's own trigger queues the
-   * authorization projection. Answers how many it added.
+   * authorization projection. Each row is copied as stored, `watch_enabled`
+   * included: the watch is the attacher's choice about that resource, and the
+   * Chat is the same Thread's conversation. Answers how many it added.
    */
   async adoptAttachmentsForConversion(input: {
     workspaceId: string; parentId: string; links: ConversionAttachmentLink[];
@@ -7099,7 +7101,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       })),
     }), input, "adopt_attachments_for_conversion");
     const identity = this.objectStore.identityForRetirement();
-    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId) {
+    if (!identity) throw new Error("conversation_attachment_adoption_identity_missing");
+    if (identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId) {
       throw new Error("conversation_attachment_adoption_identity_mismatch");
     }
     if (identity.parentKind !== "canvas") throw new Error(`conversation_attachment_adoption_parent_kind:${identity.parentKind}`);

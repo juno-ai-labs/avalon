@@ -431,11 +431,17 @@ conversation under every candidate (Main included) has its dump.
    Breakout closes. Without it an artifact published only in a Breakout is
    listed on the Canvas but opens for its uploader alone:
    `AuthorizationService.resource` needs a conversation the reader can open
-   that holds the attachment. A private Breakout's artifact becomes visible to
-   the Canvas's readers ([`canvases.md`](canvases.md#a-canvas-that-was-a-thread)
-   has the rule); any other resource a Breakout attached stays with it. All
-   are read before any is retired, so a retired Breakout was carried by an
-   earlier pass and a resume skips it. Then each Breakout is retired through
+   that holds the attachment. This widens access: a private Breakout's
+   members chose a smaller audience, and its artifacts' content, not only
+   their titles, opens to every reader of the Canvas, which for an
+   Organization-wide Thread is the whole Organization. It is the
+   implementer's reading, open to the owner, not the owner's call
+   ([`canvases.md`](canvases.md#a-canvas-that-was-a-thread) has the rule);
+   any other resource a Breakout attached stays with it. All are read before
+   any is retired, so a retired Breakout was carried by an earlier pass and a
+   resume skips it; the projection runs whenever anything was carried, so a
+   pass that stopped between the adoption and the projection is finished by
+   its resume. Then each Breakout is retired through
    `retireObject`, as `retire_threads` retires it (reason `thread_conversion`).
 4. **The Thread's rows deleted** by `deleteRetiredThreadParent`.
 
