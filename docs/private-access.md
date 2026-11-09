@@ -24,7 +24,7 @@ The public landing page links directly to the canonical macOS installer. It does
 
 Global `POST /access/requests` remains the intake boundary for a future authorized client. Validation trims and lowercases the email. D1 has a unique normalized email: repeated submissions preserve
 the original row, request time, and frozen acknowledgement sender/subject/body. A new or
-failed request sends through the existing Resend service, reduced to plain text
+failed request sends through the shared Cloudflare email service, reduced to plain text
 by the shared renderer and sent with no HTML part. Success records provider acceptance; development records `skipped` and
 never calls the provider. An acknowledged duplicate returns the same accepted
 response without sending another message. The endpoint still requires and verifies
@@ -78,7 +78,7 @@ outlive it.
 
 - D1 persistence precedes provider I/O; otherwise a mail failure loses the lead.
 - The acknowledgement sender, content and idempotency key stay fixed per request;
-  otherwise retrying after a copy change conflicts at Resend.
+  otherwise a retry changes the message the person receives.
 - The acknowledgement carries no HTML part; otherwise an authored note arrives
   styled as a campaign.
 - Successful acknowledgement is never downgraded by a concurrent failure;
@@ -103,7 +103,7 @@ outlive it.
 Global D1 owns pre-workspace requests; Ace may read them and create attributed
 manual grants through its Access boundary. The API owns public submission and
 redemption. In production these routes accept only the canonical
-`PUBLIC_API_BASE_URL` origin, so legacy aliases cannot bypass host-scoped controls. Resend owns delivery. A successful intake response means the request is accepted;
+`PUBLIC_API_BASE_URL` origin, so legacy aliases cannot bypass host-scoped controls. Cloudflare owns delivery. A successful intake response means the request is accepted;
 a concurrent acknowledgement may still be sending. Only `sent` records provider
 acceptance, not inbox delivery. The state is labelled accordingly in Ace.
 
@@ -155,11 +155,9 @@ no challenge script, widget, or public Turnstile key.
 The authoritative hourly email budget is a conditional update of the singleton
 `access_email_budget` row in Global D1. It counts attempts, including uncertain
 provider failures and operator retries, across all IPs and Cloudflare locations.
-Full capacity leaves the lead pending instead of dropping it. A retryable provider
-409 (`concurrent_idempotent_requests`) remains failed/retryable; changed-payload
-idempotency conflicts require operator review. Other non-retryable provider errors
-also become `review_required`: Resend's 4xx codes include sender/authentication and
-payload failures, so they cannot establish that the visitor's address is wrong.
+Full capacity leaves the lead pending instead of dropping it. Explicit Cloudflare rate/quota refusals remain failed/retryable. Unknown outcomes
+and other provider failures become `review_required` immediately: Cloudflare has
+no send-idempotency key, and these errors do not establish that the visitor's address is wrong.
 Fixed windows can admit a burst across
 the boundary; this is a cost budget, not a smooth traffic scheduler.
 
@@ -220,14 +218,14 @@ as a hardened acquisition system.
 Apply migration 0101 before deploying the Global API and then Ace/site. The Global
 Worker binds the existing `avalon-desktop-releases` bucket as `DESKTOP_RELEASES`;
 no new bucket or Cloudflare admin credential is needed. Acknowledgements use the
-existing production Resend key. New acknowledgements use the supplied
+native Cloudflare `EMAIL` binding. New acknowledgements use the supplied
 `Adam @ Rally <hi@rallywith.ai>` From address, frozen alongside the subject/body.
 Non-retryable provider failures are recorded as `review_required`. Ace's Review email panel
 relays recovery through the Global API's existing `DEMO_OPERATORS_JSON` operator
 boundary (`demos` role), never through a browser-held provider key. Supported actions:
 
 - Retry pending/failed mail with the existing key and frozen content.
-- Mark provider acceptance confirmed after checking Resend.
+- Mark provider acceptance confirmed after checking Cloudflare.
 - Start a new send after confirming the prior attempt was not accepted and no
   send is in flight. This deliberately refreshes sender/copy and increments the
   generation in the idempotency key; it is not an automatic retry.
@@ -298,7 +296,7 @@ sender, research store or invitation-suppression implementation.
    of the verified request, identify it by the grant ID retained by the operator;
    revoke/delete that grant separately. Do not claim an email lookup found every
    anonymously shared link, and never put a bearer URL in logs to find one.
-6. Handle any provider-side message copy using Resend's supported privacy process.
+6. Handle any provider-side message copy using the relevant provider's supported privacy process (Cloudflare for new mail, Resend for historical mail).
    Local deletion cannot retract already delivered mail or guarantee deletion of
    provider backups; record any unresolved external handling separately.
 7. Confirm the outcome without copying deleted content into a new record. These
@@ -314,6 +312,21 @@ related delivery/support investigation is complete. No automatic age-based sweep
 or numerical retention period is configured.
 
 ## Changelog
+
+### 2026-11-09 — Cloudflare acknowledgement outcomes require explicit classification
+
+**What changed:** Acknowledgements use the native Cloudflare sender. Only explicit
+quota refusals remain retryable; uncertain and permanent failures become
+`review_required` immediately. The Resend-specific 24-hour retry window is removed.
+
+**Why:** Cloudflare has no send-idempotency parameter, so waiting inside a former
+provider's dedupe window cannot make an unknown send safe to repeat. The existing
+claim and operator generation still fence concurrent and reconciled attempts.
+
+**Consequences:** Check Cloudflare's outcome before reissuing uncertain mail in
+Ace. Previously failed Resend attempts should be reconciled as part of cutover;
+the new provider does not recognize their old keys.
+
 
 ### 2026-10-11 — Pilot offer card with a per-visitor deadline
 

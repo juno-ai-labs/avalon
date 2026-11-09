@@ -1,3 +1,4 @@
+import type { Env } from "../src/env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { createApp } from "../src/app";
@@ -11,7 +12,7 @@ function bindings() {
   return createTestEnv({ DB:sqliteD1(db),APP_ENV:"development",RALLY_DEV_AUTH:"false",AVALON_REGION:"global",
     ALLOWED_ORIGINS:"https://app.example.test",PUBLIC_API_BASE_URL:"https://api.example.test",LOG_LEVEL:"error",
     SESSION_SIGNING_KEY:"email-login-test-signing-key",OAUTH_STATE_ENCRYPTION_KEY:"email-login-test-encryption-key",
-    BROWSER_APP_ORIGIN:"https://app.example.test",RESEND_FROM_EMAIL:"Rally <login@example.test>",
+    BROWSER_APP_ORIGIN:"https://app.example.test",EMAIL_FROM:"Rally <login@example.test>",
     EMAIL_LOGIN_POLICY_JSON:JSON.stringify({ otpDigits:6,ttlSeconds:600,maxFailedAttempts:3 }) });
 }
 beforeEach(() => { db = migratedSqliteDatabase(); });
@@ -33,7 +34,7 @@ const attempt = (challengeId:string,credential:string,method:"magic"|"otp" = "ot
 describe("passwordless email login", () => {
   it("accepts a well-formed email sign-in policy from literal configuration", () => {
     const env = createTestEnv({
-      AVALON_REGION:"global",APP_ENV:"production",RESEND_FROM_EMAIL:"Rally <login@example.test>",
+      AVALON_REGION:"global",APP_ENV:"production",EMAIL_FROM:"Rally <login@example.test>",
       BROWSER_APP_ORIGIN:"https://app.example.test",SESSION_SIGNING_KEY:"literal-signing-key",
       OAUTH_STATE_ENCRYPTION_KEY:"literal-encryption-key",
       EMAIL_LOGIN_POLICY_JSON:'{"otpDigits":6,"ttlSeconds":600,"maxFailedAttempts":5}',
@@ -126,15 +127,15 @@ describe("passwordless email login", () => {
     expect(await response.json()).toMatchObject({ workspace:null,user:{ email:"guest@example.test" } });
   });
 
-  it("retries an uncertain email with the same provider key and payload", async () => {
+  it("retries a quota refusal with the same delivery reference and payload", async () => {
     const { env,challengeId } = await challenge();
-    const production = { ...env,APP_ENV:"production" as const,RESEND_API_KEY:"test-provider-key" };
+    const production: Env = { ...env,APP_ENV:"production" as const };
     const sent: Array<{ key:string;body:string }> = [];
-    vi.spyOn(globalThis,"fetch").mockImplementation(async (_url,init) => {
-      sent.push({ key:new Headers(init?.headers).get("idempotency-key")!,body:String(init?.body) });
-      if (sent.length === 1) throw new Error("response lost");
-      return Response.json({ id:"accepted-email" });
-    });
+    production.EMAIL = { send: async (message: EmailMessageBuilder) => {
+      sent.push({ key:message.headers!["X-Rally-Delivery-Key"]!,body:JSON.stringify(message) });
+      if (sent.length === 1) throw Object.assign(new Error("quota"), { code: "E_RATE_LIMIT_EXCEEDED" });
+      return { messageId:"accepted-email" };
+    } };
     await expect(deliverEmailLogin(production,challengeId)).rejects.toMatchObject({ code:"email_login_delivery_failed" });
     expect(db.prepare("SELECT delivery_sent_at FROM email_login_challenges WHERE id=?").get(challengeId)).toEqual({ delivery_sent_at:null });
     await deliverEmailLogin(production,challengeId);

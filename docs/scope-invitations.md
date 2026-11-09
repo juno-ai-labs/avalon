@@ -54,8 +54,9 @@ external awaits.
 One operation records an invitation per distinct email, with stable grant
 operation IDs and an encrypted email payload. Its transaction schedules the
 existing alarm mechanism. Retrying the same operation returns its recorded
-invitations; changing its input conflicts. Delivery retries use the same
-provider idempotency key and encrypted body.
+invitations; changing its input conflicts. Delivery retries use the same encrypted body and correlation key with Cloudflare.
+There is no provider deduplication: a retry after acceptance but before local
+settlement can send a duplicate invitation.
 
 The conversation's `participants` table is a projection for names, unread
 state and socket admission; who may read a Canvas is its audience
@@ -326,7 +327,7 @@ arithmetic on a published platform limit rather than a policy guess: change
 Gmail's documented figure and the ceiling moves with it. Existing platform
 request/storage limits still apply. Invalid origin/key configuration
 refuses creation. `BROWSER_APP_ORIGIN` and the existing encryption key are
-required; the existing transactional Resend configuration delivers mail.
+required; the native `EMAIL` binding and `EMAIL_FROM` setting deliver mail.
 Development/test delivery uses the shared sender's no-send behavior.
 
 A send accepted by the provider followed by a lost acknowledgement is retried

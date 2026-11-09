@@ -8,7 +8,7 @@ import type { Env } from "../env";
 import { encryptString, decryptString } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
 import { ensureGuestRelationship, type WorkspaceRelationship } from "../services/workspace-relationship-service";
-import { sendResendEmail } from "../services/resend";
+import { sendEmail } from "../services/email";
 import { readConversationPreview } from "../services/conversation-preview";
 import { PREVIEW_BYTES, PREVIEW_TURNS, PREVIEW_WORDS, scopeInvitationEmailParts } from "../services/scope-invitation-email";
 import { ObjectPortError } from "../runtime/object-port";
@@ -367,7 +367,7 @@ export class ScopeInvitationService {
     const sealed = SealedSchema.parse(JSON.parse(current.deliveryEncrypted));
     const delivery = DeliverySchema.parse(JSON.parse(await decryptString(sealed.ciphertext, sealed.iv,
       this.env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)));
-    await sendResendEmail(this.env, { recipientEmail: delivery.recipientEmail, text: delivery.text,
+    await sendEmail(this.env, { recipientEmail: delivery.recipientEmail, text: delivery.text,
       // Absent rather than undefined: an invitation composed before this email
       // had an HTML part delivers as the text it was composed as.
       ...(delivery.html ? { html: delivery.html } : {}),
