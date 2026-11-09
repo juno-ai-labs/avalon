@@ -529,3 +529,18 @@ h3{font-size:1.25rem;font-weight:550;letter-spacing:-.02em;line-height:1.2}
 .site-header.on-night .button{background:var(--paper);color:var(--ink);border-color:var(--paper)}
 .site-header{transition:border-color .2s,background .3s,color .3s}
 .k-maya{--c:var(--maya)}.k-theo{--c:var(--theo)}.k-priya{--c:var(--priya)}.k-ink{--c:var(--ink)}
+
+/* ---------- From one to many ---------- */
+.scale{position:relative;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;list-style:none}
+.scale::before{content:'';position:absolute;left:8%;right:8%;top:94px;height:1px;background:linear-gradient(90deg,var(--maya),var(--theo),var(--ultra));opacity:.5}
+.scale-step{position:relative;display:flex;flex-direction:column;gap:14px;padding:clamp(24px,2.6vw,36px);border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
+.scale-step:last-child{background:var(--ink);border-color:var(--ink);color:var(--paper);--fg-2:#b6b4bd;--fg-3:#8b8994;--line:rgb(244 242 237/.14);--surface:var(--ink)}
+.scale-step .num{font-family:var(--mono);font-size:.75rem;color:var(--fg-3)}
+.scale-step h3{font-size:var(--step-3);font-weight:500;letter-spacing:-.035em;line-height:1.05}
+.scale-step p{color:var(--fg-2)}
+.scale-faces{display:flex;height:44px;align-items:center;padding-left:6px}
+.scale-faces .face{width:40px;height:40px;margin-left:-8px;font-size:.875rem;border-color:var(--surface)}
+.face.rally{--who:var(--ultra);background:var(--ultra) url('/brand/rally-mark-paper.svg') center/20px no-repeat}
+.face.more{--who:var(--paper-3);color:var(--ink);font-size:.75rem}
+.scale-note{margin-top:auto;padding-top:16px;border-top:1px solid var(--line);font-family:var(--mono);font-size:.75rem;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-3)}
+@media (max-width:900px){.scale{grid-template-columns:1fr}.scale::before{display:none}}

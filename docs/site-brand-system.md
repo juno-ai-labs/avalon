@@ -21,7 +21,7 @@ by [`site-blog.md`](site-blog.md).
 | `apps/site/src/start-fast.css` | The `/start-fast/` hero's two-door call to action. |
 | `apps/site/src/site-motion.ts` | Reveal on scroll, the Canvas scene's timeline, and the header's rule and ink state. |
 | `apps/site/src/site-chrome.ts` | The markers: `site-header`, `site-nav`, `site-footer`, `landing-sections`, `comparison-table`, and the partials. Also `productPages`, the one list of product pages the header and footer read. |
-| `apps/site/src/partials/*.html` | Blocks more than one page shows: `live-canvas`, `pricing-tiers`, `people`, `closing`. |
+| `apps/site/src/partials/*.html` | Blocks more than one page shows: `live-canvas`, `scale`, `pricing-tiers`, `people`, `closing`. |
 | `apps/site/src/landing-sections.html` | Everything on `/` below the hero, shared with `/start-fast/`. |
 | `apps/site/index.html`, `start-fast/`, `canvases/`, `sidekicks/`, `pricing/`, `company/` | The pages. |
 | `apps/site/src/access-copy.ts` | The home page's title and description. |
@@ -38,6 +38,14 @@ carry that: a **Canvas** (a shared conversation with Rally, and the thing Rally
 makes there, version by version) and a **Sidekick** (an AI agent a team shares,
 which runs on a schedule, on an event, or when asked). The audience is
 knowledge workers in small teams, including people who are not engineers.
+
+Rally has to read as useful to **one person on day one** and as something that
+**grows into a team** without starting over: everything starts private, and
+the same Canvas or Sidekick is shared later. A visitor who is alone must not
+conclude the product is not for them. The `scale` partial (Just you → You and a
+teammate → The whole team) says this directly on `/` and `/canvases/`, and the
+hero kicker, hero lede, Sidekicks lede, pricing copy and closing call each
+repeat it.
 
 The positioning line is **"Make it together."** The supporting idea, used on
 the company page and the footer, is **"AI is better in company."** Every page
@@ -100,7 +108,8 @@ step class (`is-1` … `is-7`) on, which is the finished scene. `site-motion.ts`
 clears them and turns them on one by one while the scene is on screen: Maya
 asks, Rally reads two tools and publishes version 1, Priya pins a comment,
 Theo answers, Rally publishes version 2 with the price and the comment
-resolved. It pauses off screen and loops.
+resolved. It starts with Maya alone and the others' faces arrive as they join,
+so the scene itself shows one person growing into a room. It pauses off screen and loops.
 
 ### Pages
 
@@ -190,7 +199,8 @@ three.js Technology schematic was deleted with its loader, tests, document
 (`landing-technology-schematic.md`) and the `three` dependency. The closing
 call gained a tracked web-entry link, `web-app-closing`.
 
-**Why:** The pivot deleted Channels, Threads and Breakouts and left two modes;
+**Why:** The owner also asked that it be obvious Rally works for one
+person and scales to many, which the first draft undersold. The pivot deleted Channels, Threads and Breakouts and left two modes;
 the old page sold a "shared chat between multiple humans" that no longer
 describes the product. The owner asked for the site to be rethought from
 nothing, as a brand agency would, rather than reworded. The schematic drew five
@@ -203,7 +213,9 @@ that maps to Canvases and Sidekicks. Shared cursors as the hero motif, which
 the pivot's plan cut from scope. Adding a new placement for the closing link,
 which would need the API deployed first; `body` already existed.
 
-**Consequences:** Any new marketing page loads `site.css` and the `site-header`
+**Consequences:** Copy must keep the one-person case visible: a line that
+only speaks to teams ("bring everyone", "for the whole room") needs a
+solo counterpart nearby. Any new marketing page loads `site.css` and the `site-header`
 and `site-footer` markers. A page that shows a block another page shows uses a
 partial. The scene must change when the product changes what a Canvas shows.
 The help center, the social cards and the utility pages are still in the old

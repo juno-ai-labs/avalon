@@ -115,7 +115,7 @@ export const renderBlogSitemap = (): string => {
 export function renderLlmsTxt(): string {
   return `# Rally
 
-> Rally is a shared place where a team and AI work together. In a Canvas, people talk with Rally and it makes the artifact itself (a document, a spreadsheet, an image, a PDF, a site), shared per Canvas; Sidekicks are shared AI agents with one conversation each that run jobs on a schedule or when something happens; connectors read and write tools like Gmail, Google Drive, Slack, Notion, and GitHub. Pricing is per organization with no seat limit: Start is $100 a month, Grow is $250 a month. macOS beta. Made by Juno AI Labs Inc.
+> Rally is an AI workspace that starts with one person and grows into a team: everything starts private, and the same Canvas or Sidekick can be shared with a teammate, a guest or the whole organization. In a Canvas, people talk with Rally and it makes the artifact itself (a document, a spreadsheet, an image, a PDF, a site), shared per Canvas; Sidekicks are shared AI agents with one conversation each that run jobs on a schedule or when something happens; connectors read and write tools like Gmail, Google Drive, Slack, Notion, and GitHub. Pricing is per organization with no seat limit: Start is $100 a month, Grow is $250 a month. macOS beta. Made by Juno AI Labs Inc.
 
 ## Product
 
@@ -157,10 +157,10 @@ function renderLandingSections(): string {
 /**
  * Blocks more than one page shows, each one file in `src/partials/` named
  * after its marker: the Canvas scene that `site-motion.ts` plays, the pricing
- * tiers, the founders and the closing call. Read on each render, like the
+ * tiers, the one-to-many ladder, the founders and the closing call. Read on each render, like the
  * landing sections, and run through the markers so a partial may hold one.
  */
-const PARTIALS = ['live-canvas', 'pricing-tiers', 'people', 'closing'] as const;
+const PARTIALS = ['live-canvas', 'scale', 'pricing-tiers', 'people', 'closing'] as const;
 const renderPartial = (name: string) => (): string =>
   renderSiteChrome(readFileSync(new URL(`./partials/${name}.html`, import.meta.url), 'utf8'));
 
