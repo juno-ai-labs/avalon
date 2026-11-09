@@ -5,6 +5,17 @@ import react from '@vitejs/plugin-react';
 
 const developmentScriptSourceMarker = '__RALLY_DEVELOPMENT_SCRIPT_SOURCE__';
 
+function desktopSessionKey(mode: string): string | null {
+  const key = process.env.RALLY_DESKTOP_SESSION_KEY;
+  if (!key && mode !== 'packaged') return null;
+
+  const bytes = Buffer.from(key ?? '', 'base64');
+  if (bytes.length !== 32 || bytes.toString('base64') !== key) {
+    throw new Error('RALLY_DESKTOP_SESSION_KEY must be a base64-encoded 32-byte key');
+  }
+  return key;
+}
+
 const rendererContentSecurityPolicy = {
   name: 'rally-renderer-content-security-policy',
   transformIndexHtml: {
@@ -21,12 +32,13 @@ const rendererContentSecurityPolicy = {
   },
 };
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   main: {
     plugins: [externalizeDepsPlugin({ exclude: ['@rally/contracts', '@rally/electron-network', '@rally/ui'] })],
     // Read in src/main/index.ts: the updater prompts once a build is stale.
     define: {
       __RALLY_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+      __RALLY_DESKTOP_SESSION_KEY__: JSON.stringify(desktopSessionKey(mode)),
     },
     build: {
       sourcemap: true,
@@ -60,4 +72,4 @@ export default defineConfig({
       sourcemap: true,
     },
   },
-});
+}));

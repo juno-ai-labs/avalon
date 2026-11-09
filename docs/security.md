@@ -189,8 +189,11 @@ are canonical storage services, not authorization layers.
   and closes authenticated windows before attempting remote logout for the
   identity and each regional workspace. Remote cleanup failures are reported but
   cannot restore local authority.
-  By default the desktop uses an application-wide embedded key so the saved set survives signing-identity
-  and keystore changes. Application → **Lockdown mode** replaces that with
+  By default the desktop uses an application-wide embedded key so the saved set
+  survives signing-identity and keystore changes. The macOS release build embeds
+  the key from the `desktop-release` Actions environment in the main-process
+  bundle. Anyone with the packaged app can recover it. Application →
+  **Lockdown mode** replaces that with
   Electron `safeStorage`, binding the saved authentication state to the
   operating-system keystore. An in-app toggle re-encrypts every durable session
   component before committing the new preference. The plaintext preference lives
@@ -1345,6 +1348,15 @@ receive no application bridge. See
 [artifact annotations](artifact-annotations.md) for the protocol.
 
 ## Changelog
+
+### 2026-11-09 — Desktop release builds receive the existing session key from Actions
+
+The release build now reads `RALLY_DESKTOP_SESSION_KEY` from the
+`desktop-release` environment to keep the literal out of new source revisions.
+The key stays byte-for-byte compatible with existing saved sessions. Generating
+a new key would make those sessions unreadable. Both packaging commands require
+the key because both apps can open the same local profile. Unpackaged builds
+have a separate development default.
 
 ### 2026-11-09 — MCP clients get their own audience, and a Canvas's sandbox is shared by its people
 

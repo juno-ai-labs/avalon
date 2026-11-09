@@ -1131,6 +1131,14 @@ The symbolicator image is the one expensive thing either workflow builds, in the
 
 #### Releasing the desktop app
 
+The macOS build step reads `RALLY_DESKTOP_SESSION_KEY` from the
+`desktop-release` GitHub Actions environment. Keep the existing key to
+preserve saved sign-ins across releases. Both local and release packaging
+require the same variable in their build environment because the packaged apps
+can use the same profile. Unpackaged development uses a separate default unless
+the variable is supplied. To keep an existing pre-change development session,
+supply the original key through the ignored `.env.local` with `pnpm dev:desktop`.
+
 **Nobody bumps a version by hand.** Merge a change that affects the desktop app and it ships: the pipeline picks the next minor, stamps it onto `package.json` and `apps/desktop/package.json`, commits that bump, and builds it. There is nothing to remember and nothing to prepare.
 
 Two things decide a release, in order. The workflow's **`paths:` filter** is a cheap admission filter: `apps/desktop/**`, all of `packages/contracts/**`, the root manifests and lockfile, `tsconfig.base.json`, and the release workflow itself. A docs, Worker, landing-site, agent-harness, connector, or database-only merge starts no run. Every contracts change does start the Ubuntu planner, because a broad trigger cannot miss a new file or rename.
