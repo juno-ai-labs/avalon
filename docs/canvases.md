@@ -453,7 +453,9 @@ the rail's first section and `/canvases` the landing route
 ([`desktop-shell.md`](desktop-shell.md)). Layout, sizes and copy follow
 `docs/PRDs/2026-11-06_canvases-and-sidekicks/design.html` (§1 the home, §2 an
 open Canvas, §5 the marks), which is the authority for every measurement; this
-section records only what the code decides.
+section records only what the code decides. The home shares its responsive
+card grid with Sidekicks; the shared layout is described in
+[`desktop-shell.md`](desktop-shell.md#section-dashboards).
 
 - **The list** is the `canvases` query the workspace socket fills
   (`workspace_canvas_list`, `applyVersionedSidebarList`), read with

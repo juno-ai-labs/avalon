@@ -1,5 +1,6 @@
-import { ChevronRight, Plus } from 'lucide-react';
-import { AutomationGlyph } from '../components/workstream-glyph';
+import { IconPlayerPause } from '@tabler/icons-react';
+import { Plus } from 'lucide-react';
+import { AutomationGlyph, resolveWorkstreamAppearance } from '../components/workstream-glyph';
 import { SidebarSearch } from '../components/sidebar-search';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -10,7 +11,7 @@ import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
-import { sidekickNext, sidekickStatus, sidekickWorking, type SidekickStatus } from '../lib/sidekick-status';
+import { sidekickNext, sidekickStatus } from '../lib/sidekick-status';
 import type { AutomationSummary } from '../lib/types';
 import { useDocumentTitle } from '../lib/document-title';
 
@@ -33,39 +34,15 @@ function matchesFilter(item: AutomationSummary, filter: SidekickFilter): boolean
   }
 }
 
-/**
- * The Status column's pill, as design.html §3 colours it. Waiting on someone is
- * the badge beside the name, so that row's pill says what it is otherwise.
- */
-const STATUS_PILL: Record<Exclude<SidekickStatus, 'needs_input'>, string> = {
-  working: 'Working',
-  paused: 'Paused',
-  draft: 'Draft',
-  active: 'Active',
-};
-
-function StatusPill({ item }: { item: AutomationSummary }): React.JSX.Element {
-  // Waiting on someone is the badge's to say; the pill keeps the run and the
-  // lifecycle, so a paused Sidekick whose delegation needs attention reads
-  // Paused beside the badge, and one with a run working and another waiting
-  // reads Working beside it: neither hides the other.
-  const status = sidekickStatus({ status: item.status, running: sidekickWorking(item) });
-  const tone = status === 'needs_input' ? 'active' : status;
-  return <span className={`sidekick-status-pill is-${tone}`}>
-    {tone === 'working' && <span aria-hidden="true" className="sidekick-working-dot" />}
-    {STATUS_PILL[tone]}
-  </span>;
-}
-
 function sharedWithLabel(item: AutomationSummary): string {
   if (item.audience === 'people') return 'Named people';
   return item.scope === 'you' ? 'Only you' : 'Organization';
 }
 
 /**
- * `/sidekicks`: every Sidekick this person can open, as rows saying where it
- * stands, who it is shared with and when it next wakes, with the ownership
- * chips and a search. It renders in the main window on both hosts.
+ * `/sidekicks`: the Canvas dashboard’s card layout, with each Sidekick’s
+ * hexagon, status, sharing and next wake. Search and ownership chips come
+ * from the old library. Both hosts use the same live directory.
  */
 export function SidekicksLibraryScreen(): React.JSX.Element {
   const { api } = useAppSession();
@@ -85,7 +62,7 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
     && `${item.name} ${item.description}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
   );
   const newSidekick = <Link className="button button-primary window-no-drag" to="/sidekicks/new"><Plus aria-hidden="true" size={16} />New Sidekick</Link>;
-  return <main className="sidekicks-library">
+  return <main className="sidekicks-library dashboard-home">
     <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1><p>AI teammates your whole team can talk to.</p></div><div className="sidekicks-library-actions">{newSidekick}</div></header>
     <div className="sidekicks-library-controls">
       <SidebarSearch mode="input" aria-label="Search Sidekicks" placeholder="Search Sidekicks" value={search} onChange={(event) => setSearch(event.target.value)} />
@@ -97,19 +74,29 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
     <section aria-labelledby="sidekick-results-title">
     <div className="sidekick-results-heading"><h2 id="sidekick-results-title">{search ? 'Search results' : 'Your Sidekicks'}</h2><span role="status" aria-label="Sidekick count">{query.isSuccess ? `${items.length} ${items.length === 1 ? 'Sidekick' : 'Sidekicks'}` : ''}</span></div>
     {query.isLoading ? (socket ? <PushedListPending label="Loading Sidekicks…" noun="Sidekicks" /> : <OpeningState label="Loading Sidekicks…" />) : query.error ? <ErrorNotice occurrence={query.error}>{query.error.message}</ErrorNotice> : items.length === 0 ? <EmptyState action={query.data?.length ? undefined : newSidekick} title={query.data?.length ? "No matching Sidekicks" : "No Sidekicks yet"} description={query.data?.length ? "Try a different search or ownership filter." : "Describe what you would like to delegate to create one."} /> :
-      // The row's link is its title, stretched over the whole card in CSS.
-      <ul className="sidekicks-library-list sidekicks-library-rows">{items.map((item) => <li key={item.id}>
-        <span className="sidekick-list-glyph"><AutomationGlyph {...(item.appearance ? { appearance: item.appearance } : {})} id={item.id} /></span>
-        <div className="sidekick-list-copy"><h3><Link className="sidekick-list-link" to={`/sidekicks/${item.id}`}>{item.name}</Link>{sidekickStatus(item) === 'needs_input' && <span className="sidekick-needs-input-badge">Needs input</span>}</h3><p>{item.description}</p></div>
-        <dl className="sidekick-list-facts">
-          <div><dt>Status</dt><dd><StatusPill item={item} /></dd></div>
-          <div className="sidekick-list-shared"><dt>Shared with</dt><dd>{sharedWithLabel(item)}</dd></div>
-          <div><dt>Next</dt><dd>{sidekickNext(item)}</dd></div>
-        </dl>
-        <ChevronRight className="sidekick-list-chevron" aria-hidden="true" size={18} />
-      </li>)}</ul>}
+      <ul className="dashboard-grid">{items.map((item) => <SidekickCard item={item} key={item.id} />)}</ul>}
     </section>
   </main>;
+}
+
+/** The title link covers the card, with one keyboard stop for opening it. */
+function SidekickCard({ item }: { item: AutomationSummary }): React.JSX.Element {
+  const { tint } = resolveWorkstreamAppearance(item.id, item.appearance ?? undefined);
+  return <li className="dashboard-card">
+    <div className="dashboard-card-preview" style={{ background: `color-mix(in srgb, ${tint} 45%, var(--av-sys-color-surface-raised))` }}>
+      <span className="sidekick-card-glyph"><AutomationGlyph {...(item.appearance ? { appearance: item.appearance } : {})} id={item.id} /></span>
+      {item.status === 'paused' && <span className="sidekick-card-status"><span className="sidekick-status-pill is-paused"><IconPlayerPause aria-hidden="true" size={13} stroke={1.8} />Paused</span></span>}
+      {sidekickStatus(item) === 'needs_input' && <span className="sidekick-needs-input-badge">Needs input</span>}
+    </div>
+    <div className="sidekick-card-body">
+      <h3><Link className="dashboard-card-link" to={`/sidekicks/${encodeURIComponent(item.id)}`}>{item.name}</Link></h3>
+      <p>{item.description}</p>
+      <dl className="sidekick-card-facts">
+        <div><dt>Shared with</dt><dd>{sharedWithLabel(item)}</dd></div>
+        <div><dt>Next</dt><dd>{sidekickNext(item)}</dd></div>
+      </dl>
+    </div>
+  </li>;
 }
 
 function GuestSidekicksLibrary(): React.JSX.Element {
