@@ -465,7 +465,7 @@ describe('CanvasScreen', () => {
     const retry = vi.fn();
     render(<Tooltip.Provider><MemoryRouter><WorkstreamErrorState description={undefined} onRetry={retry} workstreamId={CANVAS} /></MemoryRouter></Tooltip.Provider>);
     expect(screen.getByText('Rally can’t reach the server right now.')).toBeInTheDocument();
-    expect(screen.getByText('Live edits resume when Rally reconnects.')).toBeInTheDocument();
+    expect(screen.getByText('This Canvas opens when Rally reconnects.')).toBeInTheDocument();
     expect(screen.queryByText(/unavailable/)).toBeNull();
     expect(screen.queryByRole('alertdialog')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
@@ -570,6 +570,16 @@ describe('CanvasScreen', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'participants', userIds: [MAYA] }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share Canvas' })).toBeNull());
+  });
+
+  it('says a Canvas a Sidekick writes is open to everyone the Sidekick is shared with, whatever is chosen', async () => {
+    getCanvas.mockResolvedValue(detail({ writerSidekickId: '00000000-0000-7000-8000-0000000000b9' }));
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    expect(within(dialog).queryByText('Nobody else can open it.')).toBeNull();
+    expect(within(dialog).getByRole('radio', { name: /Only you.*And everyone the Sidekick that writes it is shared with\./u })).toBeChecked();
   });
 
   it("lists a decider's pending requests in Share, and Approve keeps the new participant when Save follows", async () => {

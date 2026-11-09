@@ -755,7 +755,7 @@ export function WorkstreamErrorState({
     />
     : <PaneState
       action={<OfflineRetry onRetry={onRetry} />}
-      description="Live edits resume when Rally reconnects."
+      description={`This ${parentNoun} opens when Rally reconnects.`}
       header={header}
       title={OFFLINE_TITLE}
       trailing={menu}
