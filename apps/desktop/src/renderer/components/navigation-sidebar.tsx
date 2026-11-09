@@ -17,6 +17,7 @@ import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { ActivitySection, activityRoute, useActivityList } from './activity-sidebar-section';
 import { CanvasesSection } from './canvas-sidebar-section';
 import { ErrorNotice, IconButton } from './primitives';
+import { WorkspaceUpdateNotice } from './pushed-list-pending';
 import { RailItem } from './rail-item';
 import { SidekicksSection, useSidekickList } from './sidekick-sidebar-section';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
@@ -303,6 +304,7 @@ export function NavigationSidebar({
           </div>
         </header>
         <SidebarScroll className="navigation-panel-scroll" scrollRef={scroll}>
+          <WorkspaceUpdateNotice />
           {section === 'canvases' && createCanvasError && <ErrorNotice occurrence={createCanvasError}>The Canvas could not be made. Try again.</ErrorNotice>}
           {section === 'canvases' && <CanvasesSection scroll={scroll} />}
           {section === 'sidekicks' && <SidekicksSection scroll={scroll} />}

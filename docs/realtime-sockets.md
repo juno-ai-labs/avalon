@@ -651,7 +651,9 @@ namespace helper.
   again, the pages waiting on its lists say "This version of Rally is out of
   date." with **Update Rally** (the desktop updater: install the downloaded
   build, or check for one) or **Reload Rally** in a browser, and the sidebar
-  lists say the same in a line. That helps only builds that carry it, so the
+  shows the same notice above its lists whatever they hold
+  (`WorkspaceUpdateNotice`), since a returning person's lists paint from the
+  device cache and an empty-list notice would never show. That helps only builds that carry it, so the
   next raise of the minimum is the first one that tells anyone.
 - **A write on a conversation whose parent is archived** (the object answers
   409 `conversation_parent_archived` on the socket; the read side stays open).

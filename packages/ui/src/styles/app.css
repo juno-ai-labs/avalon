@@ -8257,6 +8257,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 /* Between a breakout's thread and its Channels: the thread sits in them. */
 .navigation-row-detail-chevron { display: inline-block; margin: 0 2px; vertical-align: -2px; }
 .navigation-empty { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 8px 12px; }
+.navigation-update-notice { align-items: flex-start; display: flex; flex-direction: column; gap: 8px; margin: 8px 12px 12px; }
+.navigation-update-notice p { color: var(--av-sys-color-text-default); font-size: 13px; margin: 0; }
 .navigation-more { background: transparent; border: 0; color: var(--av-sys-color-text-muted); cursor: pointer; font: inherit; font-size: 13px; padding: 6px 12px; text-align: left; }
 .navigation-more:hover { color: var(--av-sys-color-text-default); }
 .navigation-chips-row { display: flex; gap: 6px; padding: 0 2px 6px; }
