@@ -231,9 +231,13 @@ describe("the conversations plugin", () => {
     expect(full).not.toContain("isParent");
   });
 
-  it("gives permission reporting guidance to the run's conversation plugin", () => {
-    expect(createConversationsPlugin(runLoop(), new Ports(), expand)!.systemMessage)
-      .toContain("say in your final message what is blocked and how someone can fix it");
+  it("leaves missing-access handling to the activation prompt's ask-and-wait rule", () => {
+    // A second wording here, rendered after the activation section, is the one
+    // a model followed: it reported the block and ended the run `completed`.
+    const run = createConversationsPlugin(runLoop(), new Ports(), expand)!.systemMessage;
+    expect(run).not.toContain("permission");
+    expect(run).not.toContain("what is blocked");
+    expect(run).toContain("If that post fails, say so in your final message and do not claim delivery.");
   });
 
   it("tells a run that its final message is its row's reply, and not to post it again", () => {

@@ -756,10 +756,13 @@ export function createConversationsPlugin(
 }
 
 /**
- * A run's final message stays in the run child, which nobody but the run's
- * people reads: a result reaches a conversation only by a post.
+ * A run's final message is its row's reply in the Sidekick's own
+ * conversation: a result reaches another conversation only by a post. What a
+ * run does about missing access is the standing activation section's rule
+ * (`prompts/workstream.ts`: ask and wait); this text must not restate it,
+ * because a second, older wording rendered after it is the one a model follows.
  */
-export const RUN_POST_INSTRUCTION = "Your final message is this run's reply on its row in this Sidekick's own conversation, where everyone it is shared with reads it, so never post that reply there again. When the instructions say another conversation should hear something, post it with conversation_post, once, in full, after the work is done. When a permission problem prevents you from finishing, say in your final message what is blocked and how someone can fix it. Distinguish completed and unfinished work; report the unresolved problem once for this run. Successful fallback needs no permission-error message. Share no private event contents, tokens or raw provider errors. Name a concrete recovery step, such as adding a delegate, reconnecting an account, or restoring resource or destination access. If you cannot post, leave the actionable failure visible and do not claim delivery.";
+export const RUN_POST_INSTRUCTION = "Your final message is this run's reply on its row in this Sidekick's own conversation, where everyone it is shared with reads it, so never post that reply there again. When the instructions say another conversation should hear something, post it with conversation_post, once, in full, after the work is done. If that post fails, say so in your final message and do not claim delivery.";
 
 /** The plugin's standing instructions; the tool-naming lines are pinned by a test. */
 export function conversationsSystemMessage(options: {

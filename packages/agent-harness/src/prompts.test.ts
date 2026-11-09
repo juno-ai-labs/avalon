@@ -189,7 +189,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "55228b6e1bf1c7597a4b3365ab094889fcfad715cd0c1243ac4568679c5bf21b",
+        hash: "a88f85607b6b1429639822e455037c2d6629092ba31f52fae9b7679c64a02c29",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -197,7 +197,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "71aa87e017902e38dadb8c40c6056d29661832e2ac94e551b6ef5ed1fe6d7ea2",
+        hash: "bf135d87508467c2543be8f4dfbd156115c2e51e4ac17affbb937d1f2c10d2c1",
       },
     };
 
@@ -226,9 +226,13 @@ describe("prompt renderers", () => {
     expect(prompt).toContain("import the published resource back into it first");
     expect(prompt).toContain('"answer in chat"');
     expect(prompt).toContain('"Make that a document"');
-    // The fallback, so a run that cannot reach the workspace answers rather
-    // than stalling on a procedure it cannot follow.
-    expect(prompt).toContain("If the terminal sandbox cannot be reached, provide the requested content in chat instead");
+    // The fallback, so a run with no Terminal plugin (a Sidekick run a
+    // non-delegate asked for) or no reachable workspace answers rather than
+    // stalling on a procedure it cannot follow, and its precedence over a
+    // request for a document.
+    expect(prompt).toContain("Without a Terminal plugin or a reachable terminal sandbox, write it in chat instead, even when a document was asked for");
+    expect(prompt).toContain("Without a Terminal plugin, say in one sentence that no site can be built here");
+    expect(prompt).toContain("Without a Terminal plugin, write each calculation out step by step.");
     // No wire tool name in standing policy: the plugin's activated system
     // message owns the mechanics, and this section renders for runs whose
     // plugin is not loaded yet.

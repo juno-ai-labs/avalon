@@ -122,6 +122,10 @@ describe("a Sidekick run asking its wizard for a change", () => {
 
     const run = createAgentCommunicationPlugin(service, "", { sidekickRun: true });
     expect(run.systemMessage).toContain("You are executing one run of a Sidekick.");
+    // The tie-break with the conversations plugin's "never post that reply
+    // there again": an answer for someone who wrote in Rally is the final message.
+    expect(run.systemMessage).toContain("If they wrote in Rally, in this run or this Sidekick's own conversation, your final message is the reply they read: put the answer there and post nothing.");
+    expect(run.systemMessage).toContain("If they wrote outside Rally, such as the Slack or email thread they replied in, post the answer in that thread");
     const tool = run.tools.find((candidate) => candidate.definition.name === "request_sidekick_change")!;
     expect(tool.definition.mode).toBe("write");
     await expect(tool.execute({ changes: "  Add a weekly totals row.  " }, context))
