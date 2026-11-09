@@ -701,11 +701,10 @@ Organization's Threads (the stored `channels`). The pivot removed both; the
 server half (`space-service.ts`, `space-bootstrap-service.ts`,
 `workspace-space-storage.ts`, `workspace-space-protocol.ts`,
 `system-channels.ts`, `channel-rails.ts` and the WorkspaceDO Space, rail and
-directory RPCs) is deleted, so onboarding seats a new member nowhere. What
-survives: the `spaces`, `space_viewers`, `channels`, `channel_viewers` and
-`parent_*` tables, kept by WorkspaceDO migration 139 until `retire_threads` has
-run in every Organization ([`workspace-retirement.md`](workspace-retirement.md));
-the shipped migration statements, moved byte for byte to
+directory RPCs) is deleted, so onboarding seats a new member nowhere, and
+WorkspaceDO migration 141 dropped the `spaces`, `channels` and `parent_*`
+tables only they used ([`workspace-retirement.md`](workspace-retirement.md)).
+What survives: the shipped migration statements, moved byte for byte to
 `retired-workspace-schema.ts`; the `space_default`, `space_bootstrap` and
 `space_intent_resume` Queue tombstones in `activity-consumer.ts`; and the
 Sidekick list SQL, moved unchanged to `sidekick-directory-sql.ts`. Its
@@ -793,8 +792,8 @@ the loose schemas that read them ignore; the **can impersonate** storage and
 RPCs, now with no producer ([`impersonation.md`](impersonation.md)); and Ace's
 operator credential under its stored names `DEMO_OPERATORS_JSON` and role
 `demos` ([`rally-rebrand-inventory.md`](rally-rebrand-inventory.md)). A demo
-Organization is retired like any other; the deploy order is
-[`workspace-retirement.md`](workspace-retirement.md#the-deploy-order)'s. The
+Organization is retired like any other; how the demo Organizations were is
+in [`workspace-retirement.md`](workspace-retirement.md#operations). The
 demo document's changelog records why seeded history went through the
 production paths rather than rows made to look like it.
 

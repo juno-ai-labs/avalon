@@ -146,8 +146,8 @@ export async function retireWorkspaceGraph(
   for (const node of progress.nodes) {
     if (node.retired) continue;
     try {
-      // Every parent, a Canvas, a Sidekick, and a Thread or Channel not yet
-      // retired by `retire_threads`, is hosted by
+      // Every parent, a Canvas or a Sidekick (or a Thread or Channel node an
+      // earlier pass recorded), is hosted by
       // this workspace's own object, which is already closed and answers only
       // the retirement read.
       const parent = workspace;

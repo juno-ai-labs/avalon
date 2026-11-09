@@ -27,32 +27,35 @@ type OutboxRow = {
 };
 
 /**
- * The outbox a stub keeps: a conversation's and a Sidekick's `durable_outbox`,
- * or the `parent_outbox` the Organization object keeps for every Channel and
- * Space parent it hosts.
+ * The outbox a stub keeps: a conversation's `durable_outbox`, or none. The
+ * Organization object hosts every Canvas and Sidekick, which publish no parent
+ * effect; its `parent_outbox`, for the Channel and Space parents it hosted,
+ * went with WorkspaceDO migration 141, so a parent leg reads nothing there.
  */
-function outboxTable(state: DurableObjectState, kind: "conversation_effect" | "parent_effect"): string {
-  if (kind === "conversation_effect") return "durable_outbox";
+function outboxTable(state: DurableObjectState): string | null {
   return state.storage.sql.exec(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'parent_outbox'",
-  ).toArray().length > 0 ? "parent_outbox" : "durable_outbox";
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'durable_outbox'",
+  ).toArray().length > 0 ? "durable_outbox" : null;
 }
 
 async function pendingRows(stub: DurableObjectStub, kind: "conversation_effect" | "parent_effect"): Promise<OutboxRow[]> {
-  return runInDurableObject(stub, (_instance, state) =>
-    state.storage.sql.exec<OutboxRow>(
-      `SELECT message_id, payload_json FROM ${outboxTable(state, kind)}
+  return runInDurableObject(stub, (_instance, state) => {
+    const table = outboxTable(state);
+    return table === null ? [] : state.storage.sql.exec<OutboxRow>(
+      `SELECT message_id, payload_json FROM ${table}
         WHERE state IN ('pending', 'inflight')
           AND json_extract(payload_json, '$.kind') = ?
         ORDER BY created_at, message_id`,
       kind,
-    ).toArray());
+    ).toArray();
+  });
 }
 
-async function deleteRows(stub: DurableObjectStub, rows: OutboxRow[], kind: "conversation_effect" | "parent_effect"): Promise<void> {
+async function deleteRows(stub: DurableObjectStub, rows: OutboxRow[]): Promise<void> {
   if (rows.length === 0) return;
   await runInDurableObject(stub, (_instance, state) => {
-    const table = outboxTable(state, kind);
+    const table = outboxTable(state);
+    if (table === null) return;
     for (const row of rows) {
       state.storage.sql.exec(`DELETE FROM ${table} WHERE message_id = ?`, row.message_id);
     }
@@ -122,7 +125,7 @@ export async function deliverChildEffects(env: Env, child: DurableObjectStub): P
   const envelopes = rows.map((row) => ConversationEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
   if (envelopes.length === 0) return envelopes;
   await deliverUntilSettled(env, envelopes, "conversation");
-  await deleteRows(child, rows, "conversation_effect");
+  await deleteRows(child, rows);
   return envelopes;
 }
 
@@ -132,7 +135,7 @@ export async function deliverParentEffects(env: Env, parent: DurableObjectStub):
   const envelopes = rows.map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
   if (envelopes.length === 0) return envelopes;
   await deliverUntilSettled(env, envelopes, "parent");
-  await deleteRows(parent, rows, "parent_effect");
+  await deleteRows(parent, rows);
   return envelopes;
 }
 
@@ -203,7 +206,7 @@ export async function deliverParentEffectsInOrder(
     if (result.retried > 0) {
       throw new Error(`parent effect delivery retried ${envelope.effect.kind} ${envelope.messageId}`);
     }
-    await deleteRows(parent, [row], "parent_effect");
+    await deleteRows(parent, [row]);
     delivered.push(envelope);
   }
   return delivered;

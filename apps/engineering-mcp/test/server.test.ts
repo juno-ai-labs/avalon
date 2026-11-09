@@ -21,9 +21,6 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     createOrg: vi.fn<EngineeringInspectionRpcBinding["createOrg"]>(),
     sendMessage: vi.fn<EngineeringInspectionRpcBinding["sendMessage"]>(),
     setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
-    dumpThreadTranscripts: vi.fn<EngineeringInspectionRpcBinding["dumpThreadTranscripts"]>(),
-    retireThreads: vi.fn<EngineeringInspectionRpcBinding["retireThreads"]>(),
-    convertThreadsToCanvases: vi.fn<EngineeringInspectionRpcBinding["convertThreadsToCanvases"]>(),
     retireOrg: vi.fn<EngineeringInspectionRpcBinding["retireOrg"]>(),
     readConversation: vi.fn<EngineeringInspectionRpcBinding["readConversation"]>(),
     listWorkspaces: vi.fn<EngineeringInspectionRpcBinding["listWorkspaces"]>(
@@ -179,86 +176,6 @@ describe("Rally engineering MCP tools", () => {
     expect(global.setSidekickPaused).not.toHaveBeenCalled();
   });
 
-  it("routes dump_thread_transcripts to the Organization's region only when confirm names it", async () => {
-    const global = regionalBinding("global");
-    const enterprise = regionalBinding("enterprise");
-    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
-    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
-    vi.mocked(enterprise.dumpThreadTranscripts).mockResolvedValue({ region: "enterprise", orgId, conversations: 3, dumped: 2, skipped: 1,
-      failed: [{ parentKind: "workstream", parentId: "thread-1", substreamId: "0", error: "thread_transcript_identity_mismatch" }] });
-    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
-
-    const refused = await rpc(env, "tools/call", { name: "dump_thread_transcripts", arguments: { orgId, confirm: "00000000-0000-7000-8000-000000000ef9" } });
-    expect(refused.result).toMatchObject({ isError: true, content: [{ type: "text", text: "confirm must equal orgId; nothing was changed" }] });
-    expect(enterprise.resolveWorkspace).not.toHaveBeenCalled();
-
-    const response = await rpc(env, "tools/call", { name: "dump_thread_transcripts", arguments: { orgId, confirm: orgId } });
-    expect(response.result).not.toHaveProperty("isError", true);
-    expect(JSON.parse((response.result as { content: Array<{ text: string }> }).content[0]!.text)).toEqual({
-      region: "enterprise", orgId, conversations: 3, dumped: 2, skipped: 1,
-      failed: [{ parentKind: "workstream", parentId: "thread-1", substreamId: "0", error: "thread_transcript_identity_mismatch" }],
-    });
-    expect(enterprise.dumpThreadTranscripts).toHaveBeenCalledExactlyOnceWith({ orgId, confirm: orgId }, principal);
-    expect(global.dumpThreadTranscripts).not.toHaveBeenCalled();
-  });
-
-  it("publishes the dump as an idempotent write and the retirement as a destructive one, each taking a confirmation", async () => {
-    const response = await rpc(testEnv(), "tools/list");
-    const tools = (response.result as { tools: Array<{ name: string; inputSchema: { required?: string[] }; annotations?: Record<string, boolean> }> }).tools;
-    const dump = tools.find((item) => item.name === "dump_thread_transcripts");
-    const retire = tools.find((item) => item.name === "retire_threads");
-    expect(dump?.inputSchema.required).toEqual(["orgId", "confirm"]);
-    expect(dump?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
-    expect(retire?.inputSchema.required).toEqual(["orgId", "confirm"]);
-    expect(retire?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true });
-  });
-
-  it("routes retire_threads to the Organization's region only when confirm names it", async () => {
-    const global = regionalBinding("global");
-    const enterprise = regionalBinding("enterprise");
-    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
-    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
-    vi.mocked(enterprise.retireThreads).mockResolvedValue({ region: "enterprise", orgId, parents: 2, conversations: 3,
-      retiredParents: 2, retiredConversations: 3, retainedOutbox: 0, failed: [] });
-    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
-
-    const refused = await rpc(env, "tools/call", { name: "retire_threads", arguments: { orgId, confirm: "Acme" } });
-    expect(refused.result).toMatchObject({ isError: true, content: [{ type: "text", text: "confirm must equal orgId; nothing was changed" }] });
-    expect(enterprise.retireThreads).not.toHaveBeenCalled();
-
-    const response = await rpc(env, "tools/call", { name: "retire_threads", arguments: { orgId, confirm: orgId } });
-    expect(JSON.parse((response.result as { content: Array<{ text: string }> }).content[0]!.text)).toEqual({
-      region: "enterprise", orgId, parents: 2, conversations: 3, retiredParents: 2, retiredConversations: 3, retainedOutbox: 0, failed: [],
-    });
-    expect(enterprise.retireThreads).toHaveBeenCalledExactlyOnceWith({ orgId, confirm: orgId }, principal);
-    expect(global.retireThreads).not.toHaveBeenCalled();
-  });
-
-  it("routes convert_threads_to_canvases to the Organization's region, a dry run by default and an apply only when confirm names it", async () => {
-    const global = regionalBinding("global");
-    const enterprise = regionalBinding("enterprise");
-    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
-    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
-    vi.mocked(enterprise.convertThreadsToCanvases).mockResolvedValue({ region: "enterprise", orgId, dryRun: true,
-      candidates: [{ threadId: "thread-1", title: "Launch plan", artifactCount: 2, linkedArtifactCount: 1, participantCount: 3, conversations: 2, undumped: 0 }],
-      converted: 0, alreadyConverted: 0, failed: [], artifactsWithoutThread: 1 });
-    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
-
-    const listed = await rpc(env, "tools/call", { name: "convert_threads_to_canvases", arguments: { orgId } });
-    expect(listed.result).not.toHaveProperty("isError", true);
-    expect(JSON.parse((listed.result as { content: Array<{ text: string }> }).content[0]!.text)).toMatchObject({
-      dryRun: true, candidates: [{ threadId: "thread-1", artifactCount: 2 }], artifactsWithoutThread: 1 });
-    expect(enterprise.convertThreadsToCanvases).toHaveBeenCalledExactlyOnceWith({ orgId, dryRun: true }, principal);
-
-    const refused = await rpc(env, "tools/call", { name: "convert_threads_to_canvases", arguments: { orgId, dryRun: false } });
-    expect(refused.result).toMatchObject({ isError: true, content: [{ type: "text", text: "confirm must equal orgId; nothing was changed" }] });
-    expect(enterprise.convertThreadsToCanvases).toHaveBeenCalledOnce();
-
-    await rpc(env, "tools/call", { name: "convert_threads_to_canvases", arguments: { orgId, dryRun: false, confirm: orgId } });
-    expect(enterprise.convertThreadsToCanvases).toHaveBeenLastCalledWith({ orgId, dryRun: false, confirm: orgId }, principal);
-    expect(global.convertThreadsToCanvases).not.toHaveBeenCalled();
-  });
-
   it("retires an Organization only in the region that owns it, as the trusted operator", async () => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
@@ -327,9 +244,6 @@ describe("Rally engineering MCP tools", () => {
       "pause_sidekick",
       "resume_sidekick",
       "retire_org",
-      "dump_thread_transcripts",
-      "retire_threads",
-      "convert_threads_to_canvases",
       "read_canvas_chat",
       "read_sidekick_conversation",
       "list_workspaces",

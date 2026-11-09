@@ -388,15 +388,14 @@ export const SidekickSkillReadRequestSchema = z.strictObject({
 export type SidekickSkillReadRequest = z.infer<typeof SidekickSkillReadRequestSchema>;
 
 /**
- * Several Sidekicks' skill reads in one call: by id, by the Channel that
- * recommends or owns them, every active loadable one in the Organization
- * (`allLoadable`, what a run offers as skills), or any mix. `onlyScope` keeps
+ * Several Sidekicks' skill reads in one call: by id, every active loadable
+ * one in the Organization (`allLoadable`, what a run offers as skills), or
+ * both. `onlyScope` keeps
  * only Sidekicks of that scope, for a caller that may offer only Organization
  * ones.
  */
 export const SidekickBatchSkillReadRequestSchema = SidekickSkillReadRequestSchema.omit({ automationId: true }).extend({
   automationIds: z.array(IdSchema).optional(),
-  channelId: IdSchema.optional(),
   allLoadable: z.boolean().optional(),
   onlyScope: z.enum(["personal", "workspace", "workstream"]).optional(),
 }).strict();

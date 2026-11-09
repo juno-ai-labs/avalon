@@ -11,7 +11,8 @@ import { IdSchema } from "./identifiers";
 /**
  * Every kind of parent a retirement walk closes: the hosted Canvas and
  * Sidekick (`automation`), and the retired Thread (`workstream`) and Space
- * parents whose objects still await the Thread retirement operation. Wider
+ * kinds, which a graph recorded before every Thread was retired can still
+ * hold. Wider
  * than `ConversationParentKindSchema`, which names only what is hosted, and an
  * independent list rather than an import: this contract crosses to Ace and is
  * parsed on both sides, so widening it is a deliberate decision about what an
