@@ -16,7 +16,7 @@ import { createConversationResourceLinks } from "../runtime/resource-port";
 import { conversationParentStub } from "./conversation-parent-client";
 import { createAutomation } from "./automation-service";
 import { sidekickChangeRequestText } from "./agent-communication-prompts";
-import { sidekickAllowsManager } from "./sidekick-run-continuation";
+import { personManagesSidekick } from "./sidekick-run-continuation";
 
 // The wire names this service asks about — a message, and the delegation that
 // also counts as handing work on — are in `@rally/contracts` beside the schemas
@@ -286,13 +286,8 @@ export class AgentCommunicationService {
     const address = agentAddressForId(agentId);
     if (address.parentKind !== "automation" || address.substreamId !== "0") return;
     if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_contact_user_unavailable");
-    const userId = this.input.executionPrincipal.userId;
-    const member = await this.env.DB.prepare(
-      "SELECT role, access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'",
-    ).bind(this.input.workspaceId, userId).first<{ role: AuthContext["role"]; access_class: string | null }>();
-    const manages = member !== null && await sidekickAllowsManager(this.env, {
-      workspaceId: this.input.workspaceId, automationId: address.parentId,
-      actor: { userId, actorRole: member.access_class === "guest" ? null : member.role },
+    const manages = await personManagesSidekick(this.env, {
+      workspaceId: this.input.workspaceId, automationId: address.parentId, userId: this.input.executionPrincipal.userId,
     });
     if (!manages) throw new AgentCommunicationError("sidekick_edit_requires_manager");
   }
