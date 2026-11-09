@@ -381,7 +381,7 @@ To cut over a deployment:
    and other verification records; Resend verification does not transfer.
 2. Merge the email-provider PR after review and CI pass. The `Deploy Avalon API`
    workflow runs automatically on the merge to `main`, applies ordinary migration
-   `0126_email_delivery_receipts.sql` before the Worker, and deploys the checked-in
+   `0127_email_delivery_receipts.sql` before the Worker, and deploys the checked-in
    `EMAIL` binding, sender vars and `WORKSTREAM_EMAIL_DOMAIN=rallywithai.com`.
    Reconcile uncertain outbound attempts before reissuing
    them: Cloudflare does not deduplicate Resend keys or `X-Rally-Delivery-Key`.
