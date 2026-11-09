@@ -12,15 +12,14 @@
  * a legacy object: every Channel and Space the directory knew when this ran.
  * Migration 75 drops the ledger once every import had run.
  *
- * Every `parent_*` table with a `parent_id` column is one parent's state, and
- * retiring a Thread or Channel (`WorkspaceDO.deleteRetiredThreadParent`)
- * sweeps that parent's rows from each table `HOSTED_PARENT_STATE_TABLES`
- * names. A Canvas keys its invitation and grant rows here by its own id
- * (`CANVAS_SHARE_TABLES`), and a converted Thread's Canvas has the Thread's
- * id: the conversion deletes the Thread's rows from those tables before it
- * makes the Canvas, and its later sweep skips them, so a share made on the
- * live Canvas survives a rerun. A new `parent_*` table joins that list, or a
- * retired Thread leaves its rows in it.
+ * Migration 141 dropped the `parent_*` tables only a Thread or a Channel
+ * used, once the operator had retired every one. What a Canvas's share
+ * primitive writes under the Canvas's own id stays (`parent_invitations`,
+ * `parent_invitation_operations`, `parent_grants`, `parent_grant_operations`,
+ * `parent_grant_imports`, `parent_grant_revision`,
+ * `parent_participant_targets`, `parent_participant_deliveries`), and so does
+ * `parent_children`, which `ScopeGrantStorage` still joins
+ * (`THREAD_ERA_PARENTS_DROP_MIGRATION` in `retired-workspace-schema.ts`).
  */
 export const HOSTED_PARENT_SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE workspace_workstream_directory RENAME TO channels`,
@@ -406,60 +405,4 @@ export const HOSTED_PARENT_SCHEMA_STATEMENTS: readonly string[] = [
     sequence INTEGER NOT NULL CHECK (sequence >= 0),
     updated_at INTEGER NOT NULL
   ) STRICT`,
-];
-
-/**
- * Every live `parent_*` table keyed by `parent_id`, in definition order: what
- * `WorkspaceDO.deleteRetiredThreadParent` sweeps for a retired Thread or
- * Channel. The closed, code-owned allowlist its dynamic table names come from
- * (docs/durable-object-sqlite.md); it is intersected with the schema, so a
- * table phase C drops first is skipped rather than failed on. Tables earlier
- * migrations dropped (`parent_imports`, and the four `parent_*_access` and
- * Space-source tables migration 94 dropped) are not listed.
- */
-export const HOSTED_PARENT_STATE_TABLES: readonly string[] = [
-  "parent_metadata",
-  "parent_children",
-  "parent_child_projections",
-  "parent_child_viewer_projections",
-  "parent_child_receipts",
-  "parent_projection_keys",
-  "parent_state_clock",
-  "parent_state_changes",
-  "parent_outbox",
-  "parent_breakout_preparations",
-  "parent_breakout_members",
-  "parent_breakout_member_effects",
-  "parent_grant_revision",
-  "parent_grants",
-  "parent_grant_operations",
-  "parent_grant_imports",
-  "parent_participant_targets",
-  "parent_participant_migrations",
-  "parent_participant_deliveries",
-  "parent_invitation_operations",
-  "parent_invitations",
-  "parent_connector_admissions",
-  "parent_sidekicks",
-];
-
-/**
- * The `parent_*` tables a Canvas's share primitive (`ScopeInvitationService`,
- * `ScopeGrantStorage`) writes under the Canvas's own id, in an order that
- * deletes each referencing row before the row it names
- * (`parent_invitations` before `parent_invitation_operations`). Converting a
- * Thread clears the Thread's rows from these before the Canvas of the same id
- * exists, and the conversion's sweep of the Thread's rows then leaves them to
- * the Canvas (`WorkspaceDO.convertThreadToCanvas`,
- * `deleteRetiredThreadParent`).
- */
-export const CANVAS_SHARE_TABLES: readonly string[] = [
-  "parent_invitations",
-  "parent_invitation_operations",
-  "parent_grants",
-  "parent_grant_operations",
-  "parent_grant_imports",
-  "parent_grant_revision",
-  "parent_participant_targets",
-  "parent_participant_deliveries",
 ];

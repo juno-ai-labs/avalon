@@ -10,7 +10,6 @@ export type WorkspaceScheduledAlarmPhase =
   | "connector_event_reap"
   | "memory_digest_sync"
   | "schedule_reconcile"
-  | "parent_outbox"
   | "directory_followup"
   | "final_rearm";
 

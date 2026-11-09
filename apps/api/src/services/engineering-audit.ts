@@ -4,8 +4,11 @@ import { diagnosticErrorCode } from "../observability/logger";
 
 /** Same independent audit authority as impersonation: an attempt precedes effects. */
 export async function auditedEngineeringWrite<T>(env: Env, operator: EngineeringOperator, entry: {
-  action: "create_org" | "send_message" | "pause_sidekick" | "resume_sidekick"
-    | "dump_thread_transcripts" | "retire_threads" | "convert_threads_to_canvases" | "retire_org";
+  // Written as `engineering.<action>.<phase>` text in `audit_events.action`,
+  // which nothing parses back into this union: rows from operations since
+  // removed (`dump_thread_transcripts`, `convert_threads_to_canvases`,
+  // `retire_threads`) stay readable as stored.
+  action: "create_org" | "send_message" | "pause_sidekick" | "resume_sidekick" | "retire_org";
   orgId: string;
   /** The user an action is taken as; an Organization-wide operator operation has none and targets the Organization. */
   representedUserId?: string;

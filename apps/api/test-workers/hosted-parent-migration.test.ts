@@ -279,7 +279,8 @@ it("narrows parent_metadata to identity at v79 and keeps every parent's row", as
 
   await runInDurableObject(stub, (_instance, state) => {
     applyDurableObjectSqliteMigrations({
-      storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+      // Through 140: migration 141 drops `parent_metadata` with the Thread tables.
+      storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 140),
       component: "workspace_do", workerVersionId: "with-narrow-metadata", now: 2,
     });
     const sql = state.storage.sql;
