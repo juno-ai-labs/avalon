@@ -1614,6 +1614,31 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
+  it("retries a Thread-era failed run once its Thread is converted to a Canvas", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    const runId = opened.body.harnessRunId as string;
+    await settledRun(stub, runId);
+    await waitForLoopRelease(stub);
+    // As a Thread left it before the conversion: a failed latest run whose
+    // stored input, like the root, names the Thread's kind.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE workstream SET parent_kind = 'workstream' WHERE id = 1");
+      state.storage.sql.exec(`UPDATE runs SET status = 'failed',
+          execution_context_json = json_set(execution_context_json, '$.parentKind', 'workstream') WHERE run_id = ?`, runId);
+    });
+    await stub.convertParentKind({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, from: "workstream", to: "canvas" });
+
+    await runInDurableObject(stub, async (instance) => {
+      const productService = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      const retryRunId = asHarnessRunId("00000000-0000-7000-8000-0000000000f3");
+      const retry = await productService.retry(AUTH, retryRunId);
+      expect(retry.activationRequest.workflowInput).toMatchObject({
+        parentKind: "canvas", parentId: WORKSTREAM_ID, harnessRunId: retryRunId, reason: "manual_retry",
+      });
+    });
+  });
+
   it("records stop on the loop and makes retry durable as a subordinate execution receipt", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");

@@ -491,7 +491,10 @@ The order, which the plan's deploy section repeats:
    this release the workspace socket refuses a pre-pivot desktop with `426`;
    its only way out is the auto-updater reaching the new build, so the build
    must be there when the Worker is. A web tab left open on the old app needs
-   a reload.
+   a reload. The D1 migration 0125 that drops the demo tables applies after
+   the Worker is promoted, through the Worker-first list of
+   `classify-pending-d1-migrations.mjs`, so the Worker that no longer reads
+   those tables serves first.
 3. **Immediately, in every Organization: dump, convert, retire**, each until
    it reports nothing failed. `retire_threads` refuses while a Thread with
    artifacts is unconverted, so the order holds even if an operator slips.
