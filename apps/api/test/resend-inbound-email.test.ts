@@ -558,6 +558,7 @@ describe("regional Resend email ingestion", () => {
       to: [EMAIL_ADDRESS],
       subject: "Run again",
       text: "Process this message.",
+      authentication: { spf: "pass", dkim: "pass", dmarc: "pass" },
       attachments: [],
     }), { status: 200, headers: { "content-type": "application/json" } }));
     const runId = "00000000-0000-7000-8000-0000000000aa";
@@ -595,6 +596,7 @@ describe("regional Resend email ingestion", () => {
       emailAddress: EMAIL_ADDRESS,
       resendEmailId: RESEND_EMAIL_ID,
       senderUserId: OWNER_USER_ID,
+      senderAuthenticated: true,
       receivedAt: Date.parse("2026-08-02T18:00:00.000Z"),
       payloadRef,
       resourceId: resource!.id,
@@ -607,6 +609,30 @@ describe("regional Resend email ingestion", () => {
     });
     // An automation's mail is the automation's: nothing lands in a work
     // stream's transcript and no work stream gets the resource attached.
+  });
+
+  it.each([
+    ["DMARC passed", { spf: "fail", dkim: "gray", dmarc: "pass" }, true],
+    ["DKIM passed for the From domain", { spf: "gray", dkim: "pass", dmarc: "gray" }, true],
+    ["only SPF passed", { spf: "pass", dkim: "gray", dmarc: "gray" }, false],
+    ["DMARC failed", { spf: "fail", dkim: "fail", dmarc: "fail" }, false],
+    ["no verdict was recorded", null, false],
+  ] as const)("hands the automation whether the From domain authenticated the mail when %s", async (_case, authentication, expected) => {
+    const database = new FakeDatabase();
+    database.activeMembers.set("owner@example.com", OWNER_USER_ID);
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      id: RESEND_EMAIL_ID, from: "Owner <owner@example.com>", to: [EMAIL_ADDRESS], subject: "Run again",
+      text: "Process this message.", authentication, attachments: [],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const admitInboundEmail = vi.fn(async (..._args: unknown[]) => ({
+      admitted: false, duplicate: false, outcomeCode: "email_sender_unauthenticated", runId: null,
+    }));
+    const service = new ResendRegionalEmailService(
+      environment(database, "enterprise", new FakeBucket(), { admitInboundEmail }),
+      { fetch: fetcher, now: () => NOW },
+    );
+    await service.ingest(automationRegionalInput());
+    expect(admitInboundEmail.mock.calls[0]?.[0]).toMatchObject({ senderUserId: OWNER_USER_ID, senderAuthenticated: expected });
   });
 
   it("lets the automation refuse a stranger, after the message is kept for its receipt", async () => {
