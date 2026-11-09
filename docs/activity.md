@@ -219,7 +219,12 @@ The section lists the page newest first, each row in the shared sidebar row
 layout (`RowLayout`, as Canvas and Sidekick rows are): a tile with the kind's
 glyph (an at sign, a person added, a question, a check, a speech bubble for a
 reply, a pencilled file for a new version, a lock for an access request and
-for a declined one, and an open lock for a grant); on the first line who (a person's name from the member
+for a declined one, and an open lock for a grant), and on a Canvas row the Canvas's own mark as a badge
+on the tile's corner (the glyph then sits up and to the left of the tile's
+centre, so the badge never covers the right shackle leg that tells the closed
+lock from the open one), in the icon and colour chosen for it or else its
+default, read from the viewer's Canvas list
+([`canvases.md`](canvases.md#choosing-what-a-canvas-looks-like)); on the first line who (a person's name from the member
 directory, or the Sidekick's), what (mentioned you in, added you to, needs your
 input, finished a run, "in" for a reply, updated <artifact> in, asked to open,
 let you into) and the title, or, for a declined request, "<decider> declined
@@ -436,6 +441,11 @@ Canvas they were refused, so listing it shows them no content.
 cannot read it. Gating the new enum value by client contract: the Activity
 kinds this round's predecessors added were not gated either, and no released
 desktop parses Activity yet.
+
+On the client the row's lock and a grant's open lock differ only in the
+right shackle leg, which the Canvas badge covered; a badged tile now draws its
+glyph up and to the left (the round-5 visual check, F3). Asking again also
+republishes the requester's list, so the row reads seen without a reload.
 
 **What a future change must respect:** the exemption is this kind alone, and
 its row must keep carrying nothing of the Canvas but its id.

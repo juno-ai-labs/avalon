@@ -640,7 +640,8 @@ describe('the Activity section', () => {
       expect(rows[0]!.querySelector('.activity-row-text')).toHaveTextContent('Maya Chen declined your request to open a Canvas');
       expect(rows[0]).toHaveAttribute('title', 'Maya Chen declined your request to open a Canvas');
       expect(rows[0]).not.toHaveTextContent('Q4 revenue review');
-      expect(rows[0]!.querySelector('.activity-row-glyph.is-access_denied svg')).toHaveClass('tabler-icon-lock');
+      expect(rows[0]!.querySelector('.activity-row-tile .activity-row-glyph.is-access_denied svg')).toHaveClass('tabler-icon-lock');
+      expect(rows[0]!.querySelector('.activity-row-glyph.is-access_denied svg')).not.toHaveClass('tabler-icon-lock-open');
       expect(rows[0]).toHaveAttribute('href', `/canvases/${CANVAS}`);
       expect(within(rows[0]!.parentElement!).queryByRole('button', { name: /^(Approve|Deny) / })).toBeNull();
     });
@@ -648,6 +649,9 @@ describe('the Activity section', () => {
     it('names who let the person in and opens the Canvas', async () => {
       const rows = await rowsOf([item({ id: 'g1', kind: 'access_granted', actor: { kind: 'person', id: MAYA } })]);
       expect(rows[0]!.querySelector('.activity-row-text')).toHaveTextContent('Maya let you into Q4 revenue review');
+      // An open lock, not the closed one a request and a denial draw, beside the Canvas badge.
+      expect(rows[0]!.querySelector('.activity-row-tile .activity-row-glyph.is-access_granted svg')).toHaveClass('tabler-icon-lock-open');
+      expect(rows[0]!.querySelector('.activity-row-tile .identity-tile-badge')).not.toBeNull();
       expect(rows[0]).toHaveAttribute('href', `/canvases/${CANVAS}`);
     });
   });
