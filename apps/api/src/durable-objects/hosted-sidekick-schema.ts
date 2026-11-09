@@ -182,7 +182,7 @@ export const SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS: readonly string[] = [
 ];
 
 /**
- * WorkspaceDO migration 154: the demo seeder's script for a seeded run's model
+ * Part of WorkspaceDO migration 135: the demo seeder's script for a seeded run's model
  * bytes leaves `sidekick_runs`. Demo preparation was removed on 2026-11-08 and
  * nothing writes or reads the column; every run production made held NULL.
  * The column's CHECK is its own and no index, trigger or key names it, so
@@ -230,7 +230,7 @@ export const SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS: readonly string[] = [
 ];
 
 /**
- * WorkspaceDO migration 136: who a Sidekick is shared with, and what each
+ * Part of WorkspaceDO migration 135: who a Sidekick is shared with, and what each
  * reader of its shared conversation has read.
  *
  * `sidekick_audience` is the `people` audience's list; a Sidekick with rows

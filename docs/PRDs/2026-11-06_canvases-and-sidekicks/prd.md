@@ -415,7 +415,7 @@ titled from the opening message, and the role survived the pivot for pasted
 text.
 
 **Changes:** `HostedCanvas.nameFromOpening`, `canvas-naming.ts`, WorkspaceDO
-migration 149 (`docs/canvases.md`).
+migration 136 (`docs/canvases.md`).
 
 ### 2026-11-08 — Opening Activity opens its top row, and only a rail pick leaves Activity
 

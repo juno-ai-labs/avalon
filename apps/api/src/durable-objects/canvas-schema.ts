@@ -1,6 +1,6 @@
 /**
- * WorkspaceDO migration 139: a Canvas's directory row and who besides its
- * creator may open it.
+ * WorkspaceDO migration 136 (the Canvas schema, one migration): a Canvas's
+ * directory row and who besides its creator may open it.
  *
  * A Canvas is a conversation first: `canvas_id` is the parent id of its
  * `canvas`-kind conversation, so one Canvas can generate many artifacts and a
@@ -17,6 +17,25 @@
  * in the same transaction before inserting, so a second create for the same
  * run under another id answers with the first Canvas rather than failing on
  * the index.
+ *
+ * Three columns follow the original twelve, in the order they were designed:
+ *  * `title_status` is `naming` while a Canvas made with no title waits for
+ *    the title its opening message gives it, `settled` once that lands,
+ *    fails, or a person retitles it.
+ *  * `appearance_json` is the icon and colour somebody chose. The JSON is the
+ *    Sidekick's own (`WorkstreamAppearanceSchema`, the shape
+ *    `automation_directory.appearance_json` holds), so one picker and one
+ *    schema serve both. Null until someone chooses, and reads as the default:
+ *    its kind's sketch and its id's hue.
+ *  * `last_writer_run_id` is the Sidekick run whose publish made the newest
+ *    version, beside its last editor, so the Canvas list names the run
+ *    ("Weekly digest · run #3") and the home card opens it. `noteArtifact`
+ *    writes it with every publish it records: a run's sets it, any other
+ *    clears it. It is not `writer_run_id`, the run that created the Canvas:
+ *    a Sidekick that writes one Canvas across runs moves this and not that.
+ *
+ * A participant's `source` is `added`, `invitation`, or `request` (seated by
+ * an approved request to open the Canvas, `docs/canvas-access-requests.md`).
  */
 export const CANVAS_SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE canvas_directory (
@@ -32,6 +51,9 @@ export const CANVAS_SCHEMA_STATEMENTS: readonly string[] = [
     writer_run_id TEXT,
     visibility TEXT NOT NULL CHECK (visibility IN ('creator', 'participants', 'workspace')),
     authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+    title_status TEXT NOT NULL DEFAULT 'settled' CHECK (title_status IN ('naming', 'settled')),
+    appearance_json TEXT CHECK (appearance_json IS NULL OR json_valid(appearance_json)),
+    last_writer_run_id TEXT CHECK (last_writer_run_id IS NULL OR last_editor_kind = 'sidekick'),
     CHECK (writer_run_id IS NULL OR writer_sidekick_id IS NOT NULL)
   ) STRICT`,
   `CREATE INDEX canvas_directory_recency_idx ON canvas_directory(updated_at DESC, canvas_id)`,
@@ -42,32 +64,33 @@ export const CANVAS_SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE canvas_participants (
     canvas_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
-    source TEXT NOT NULL CHECK (source IN ('added', 'invitation')),
+    source TEXT NOT NULL CHECK (source IN ('added', 'invitation', 'request')),
     added_by_user_id TEXT,
     added_at INTEGER NOT NULL CHECK (added_at >= 0),
     PRIMARY KEY (canvas_id, user_id)
   ) STRICT`,
   `CREATE INDEX canvas_participants_user_idx ON canvas_participants(user_id, canvas_id)`,
-  // The Canvas list's waterline beside the other sidebar lists'. The CHECK
-  // cannot widen in place; nothing references the table, so it is copied.
-  `CREATE TABLE workspace_sidebar_list_state_v139 (
-    list TEXT PRIMARY KEY CHECK (list IN ('automations', 'notes', 'canvases')),
+  // The Canvas list's waterline beside the other sidebar lists', and the
+  // Activity list's, whose row migration 139 inserts, so the table is copied
+  // once. The CHECK cannot widen in place; nothing references the table.
+  `CREATE TABLE workspace_sidebar_list_state_v136 (
+    list TEXT PRIMARY KEY CHECK (list IN ('automations', 'notes', 'canvases', 'activity')),
     waterline INTEGER NOT NULL CHECK (waterline >= 0)
   ) STRICT`,
-  `INSERT INTO workspace_sidebar_list_state_v139 (list, waterline) SELECT list, waterline FROM workspace_sidebar_list_state`,
+  `INSERT INTO workspace_sidebar_list_state_v136 (list, waterline) SELECT list, waterline FROM workspace_sidebar_list_state`,
   `DROP TABLE workspace_sidebar_list_state`,
-  `ALTER TABLE workspace_sidebar_list_state_v139 RENAME TO workspace_sidebar_list_state`,
+  `ALTER TABLE workspace_sidebar_list_state_v136 RENAME TO workspace_sidebar_list_state`,
   `INSERT INTO workspace_sidebar_list_state (list, waterline) VALUES ('canvases', 0)`,
 ];
 
 /**
- * WorkspaceDO migration 140: a Sidekick's conversation attachments admit a
+ * Part of WorkspaceDO migration 136: a Sidekick's conversation attachments admit a
  * Canvas's Chat beside a Thread's, so `conversation_post` can name one. The
  * CHECK cannot widen in place; nothing references the table and it has no
  * index or trigger, so it is copied.
  */
 export const SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS: readonly string[] = [
-  `CREATE TABLE sidekick_conversation_attachments_v140 (
+  `CREATE TABLE sidekick_conversation_attachments_v136 (
     automation_id TEXT NOT NULL,
     parent_kind TEXT NOT NULL CHECK (parent_kind IN ('workstream', 'canvas')),
     parent_id TEXT NOT NULL,
@@ -76,13 +99,13 @@ export const SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS: readonly string[] = [
     attached_at INTEGER NOT NULL CHECK (attached_at >= 0),
     PRIMARY KEY (automation_id, parent_kind, parent_id, substream_id)
   ) STRICT`,
-  `INSERT INTO sidekick_conversation_attachments_v140 SELECT * FROM sidekick_conversation_attachments`,
+  `INSERT INTO sidekick_conversation_attachments_v136 SELECT * FROM sidekick_conversation_attachments`,
   `DROP TABLE sidekick_conversation_attachments`,
-  `ALTER TABLE sidekick_conversation_attachments_v140 RENAME TO sidekick_conversation_attachments`,
+  `ALTER TABLE sidekick_conversation_attachments_v136 RENAME TO sidekick_conversation_attachments`,
 ];
 
 /**
- * WorkspaceDO migration 141: a person pins a Canvas or a Sidekick in its
+ * Part of WorkspaceDO migration 136: a person pins a Canvas or a Sidekick in its
  * list's Pinned group, in the same `workspace_pins` table and order the other
  * pins use. Neither names a parent, so the CHECK that only a breakout and an
  * artifact carry one holds. A CHECK cannot widen in place; nothing references
@@ -90,7 +113,7 @@ export const SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS: readonly string[] = [
  * migration 110 copied it.
  */
 export const CANVAS_SIDEKICK_PINS_STATEMENTS: readonly string[] = [
-  `CREATE TABLE workspace_pins_v141 (
+  `CREATE TABLE workspace_pins_v136 (
     user_id TEXT NOT NULL,
     item_kind TEXT NOT NULL CHECK (item_kind IN ('thread', 'channel', 'breakout', 'artifact', 'canvas', 'sidekick')),
     item_id TEXT NOT NULL,
@@ -101,19 +124,19 @@ export const CANVAS_SIDEKICK_PINS_STATEMENTS: readonly string[] = [
     CHECK ((item_kind IN ('breakout', 'artifact')) = (parent_id IS NOT NULL)),
     PRIMARY KEY (user_id, item_kind, item_id)
   ) STRICT`,
-  `INSERT INTO workspace_pins_v141
+  `INSERT INTO workspace_pins_v136
      (user_id, item_kind, item_id, parent_id, position, created_at, updated_at)
    SELECT user_id, item_kind, item_id, parent_id, position, created_at, updated_at
      FROM workspace_pins`,
   `DROP TABLE workspace_pins`,
-  `ALTER TABLE workspace_pins_v141 RENAME TO workspace_pins`,
+  `ALTER TABLE workspace_pins_v136 RENAME TO workspace_pins`,
   `CREATE INDEX workspace_pins_order_idx
     ON workspace_pins(user_id, item_kind, position, item_id)`,
   `CREATE INDEX workspace_pins_item_idx ON workspace_pins(item_kind, item_id)`,
 ];
 
 /**
- * WorkspaceDO migration 142: the artifacts a Canvas's conversation generated,
+ * Part of WorkspaceDO migration 136: the artifacts a Canvas's conversation generated,
  * written by the publish that attached each one (`HostedCanvas.noteArtifact`),
  * so the Canvas list and the detail read them without asking the
  * conversation. Its own table, not `workspace_workstream_resource_links`,
@@ -132,7 +155,7 @@ export const CANVAS_ARTIFACTS_STATEMENTS: readonly string[] = [
 ];
 
 /**
- * WorkspaceDO migration 146: the retirement graph admits a Canvas.
+ * Part of WorkspaceDO migration 136: the retirement graph admits a Canvas.
  *
  * Retiring an Organization walks `workspace_retirement_graph`, whose CHECK
  * admitted only `workstream`, `automation` and `space`, so a Canvas's Chat was
@@ -140,17 +163,17 @@ export const CANVAS_ARTIFACTS_STATEMENTS: readonly string[] = [
  * the table, so it is copied: every recorded node and its receipt survive.
  */
 export const RETIREMENT_GRAPH_CANVAS_MIGRATION: readonly string[] = [
-  `CREATE TABLE workspace_retirement_graph_v146 (
+  `CREATE TABLE workspace_retirement_graph_v136 (
     parent_kind TEXT NOT NULL CHECK (parent_kind IN ('workstream', 'automation', 'space', 'canvas')),
     parent_id TEXT NOT NULL,
     recorded_at INTEGER NOT NULL,
     retired_at INTEGER,
     PRIMARY KEY (parent_kind, parent_id)
   ) STRICT`,
-  `INSERT INTO workspace_retirement_graph_v146 (parent_kind, parent_id, recorded_at, retired_at)
+  `INSERT INTO workspace_retirement_graph_v136 (parent_kind, parent_id, recorded_at, retired_at)
      SELECT parent_kind, parent_id, recorded_at, retired_at FROM workspace_retirement_graph`,
   `DROP TABLE workspace_retirement_graph`,
-  `ALTER TABLE workspace_retirement_graph_v146 RENAME TO workspace_retirement_graph`,
+  `ALTER TABLE workspace_retirement_graph_v136 RENAME TO workspace_retirement_graph`,
 ];
 
 /** The title a Canvas made with no title has until its first message names it. */
@@ -158,43 +181,3 @@ export const UNTITLED_CANVAS = "Untitled Canvas";
 
 /** The alarm kind that titles a Canvas made with no title from its opening message. */
 export const CANVAS_NAMING_ALARM_KIND = "canvas_naming";
-
-/**
- * WorkspaceDO migration 149: whether a Canvas's title is still to come.
- * `naming` while a Canvas made with no title waits for the title its opening
- * message gives it, `settled` once that lands, fails, or a person retitles it.
- * Every existing Canvas was titled already, so the default is `settled`.
- * `docs/canvases.md` owns the mechanism.
- */
-export const CANVAS_TITLE_STATUS_STATEMENTS: readonly string[] = [
-  `ALTER TABLE canvas_directory ADD COLUMN title_status TEXT NOT NULL DEFAULT 'settled'
-     CHECK (title_status IN ('naming', 'settled'))`,
-];
-
-/**
- * WorkspaceDO migration 155: the Sidekick run whose publish made a Canvas's
- * newest version, beside its last editor, so the Canvas list names the run
- * ("Weekly digest · run #3") and the home card opens it. `noteArtifact`
- * writes it with every publish it records: a run's sets it, any other
- * clears it. It is not `writer_run_id`, the run that created the Canvas: a
- * Sidekick that writes one Canvas across runs moves this and not that. No
- * existing row is backfilled; a Canvas a run wrote before this reads as
- * written by no run until its next publish. `docs/canvases.md` owns it.
- */
-export const CANVAS_LAST_WRITER_RUN_STATEMENTS: readonly string[] = [
-  `ALTER TABLE canvas_directory ADD COLUMN last_writer_run_id TEXT
-     CHECK (last_writer_run_id IS NULL OR last_editor_kind = 'sidekick')`,
-];
-
-/**
- * WorkspaceDO migration 153: the icon and colour somebody chose for a Canvas.
- * The JSON is the Sidekick's own (`WorkstreamAppearanceSchema`, the shape
- * `automation_directory.appearance_json` holds), so one picker and one schema
- * serve both. Null until someone chooses, which every existing Canvas is, and
- * reads as the default: its kind's sketch and its id's hue.
- * `docs/canvases.md` owns the mechanism.
- */
-export const CANVAS_APPEARANCE_STATEMENTS: readonly string[] = [
-  `ALTER TABLE canvas_directory ADD COLUMN appearance_json TEXT
-     CHECK (appearance_json IS NULL OR json_valid(appearance_json))`,
-];

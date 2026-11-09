@@ -61,7 +61,7 @@ const PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA = [
 ] as const;
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 87;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 84;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3646,6 +3646,15 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     // joined in when the turn is read. Its source is the Sidekick's
     // `sidekick_runs` row, so `source_version` is that row's `updated_at`.
     // Empty in every conversation but a Sidekick's "0".
+    //
+    // `requester_user_id` names the person whose request started the run, so
+    // a reader can tell their own run's row from news: the conversation seats
+    // that person at the row's turn while the run works, and the client
+    // mirrors it rather than drawing an Unread divider above the run they just
+    // started. Null for a trigger's run. `run_number` is the run's ordinal
+    // among its Sidekick's runs, which the row reads as "Run 412" (design §4);
+    // `projectRunRow` counts it (`created_at`, then `run_id`). No shipped
+    // build has this table, so it starts empty and nothing is backfilled.
     statements: [
       `CREATE TABLE sidekick_run_rows (
         run_id TEXT PRIMARY KEY,
@@ -3654,7 +3663,9 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         step_count INTEGER NOT NULL CHECK (step_count >= 0),
         reply TEXT,
         source_version INTEGER NOT NULL CHECK (source_version >= 0),
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        requester_user_id TEXT,
+        run_number INTEGER CHECK (run_number IS NULL OR run_number > 0)
       ) STRICT`,
     ],
   },
@@ -3792,10 +3803,19 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
   },
   {
     version: 84,
-    description: "drop the suggestion, participant handoff and session import tables",
-    // Each mechanism is deleted (plan step C-3): conversation suggestions
-    // (version 75), a Thread Main's participant authority handoff (its
-    // freeze triggers and both tables), and session import (version 67).
+    description: "drop the tables of the deleted Thread-era mechanisms: suggestions, participant handoff, session import, Breakout context and mirrors, and per-conversation Sidekick attachments",
+    // Each mechanism is deleted by the Canvases and Sidekicks pivot (plan
+    // steps C-3 and C-7):
+    //  * conversation suggestions (version 75), a Thread Main's participant
+    //    authority handoff (its freeze triggers and both tables), and session
+    //    import (version 67);
+    //  * a Breakout's frozen parent transcript (`substream_context_captures`)
+    //    and inherited context (`substream_initial_context`, version 40), and
+    //    a private child's mirrors of its parent's roster and archive versions
+    //    (versions 41 and 50); dropping the membership mirror drops version
+    //    44's three authorization triggers on it with it;
+    //  * the per-conversation Sidekick attachments (version 43), which the
+    //    Organization's `sidekick_conversation_attachments` replaced.
     // Nothing references these tables, so each drops on its own. Version
     // 59's `prepared_conversation_receipts` stays: a live table's foreign
     // key names it, and its rows still let a failed preparation's held
@@ -3811,57 +3831,11 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `DROP TABLE imported_session_sources`,
       `DROP TABLE imported_session_messages`,
       `DROP TABLE imported_session_update_receipts`,
-    ],
-  },
-  {
-    version: 85,
-    description: "drop a Breakout's context capture, inherited context and parent-owned mirrors",
-    // A Breakout froze its parent's transcript into `substream_context_captures`
-    // and started from `substream_initial_context` (version 40); a private
-    // child mirrored its parent's roster and archive versions (versions 41 and
-    // 50). Breakouts are deleted (plan step C-3). Dropping the membership
-    // mirror drops version 44's three authorization triggers on it with it;
-    // nothing else references these tables.
-    statements: [
       `DROP TABLE substream_context_captures`,
       `DROP TABLE substream_initial_context`,
       `DROP TABLE private_child_membership_authority`,
       `DROP TABLE private_child_lifecycle_authority`,
-    ],
-  },
-  {
-    version: 86,
-    description: "drop the per-conversation Sidekick attachment table",
-    // Version 43 recorded which Sidekicks a conversation had attached; the
-    // Organization's `sidekick_conversation_attachments` replaced it, and no
-    // reader or writer has named this one since the Thread retirement (plan
-    // step C-7). No trigger or foreign key references it.
-    statements: [`DROP TABLE IF EXISTS sidekick_attachments`],
-  },
-  {
-    version: 87,
-    description: "name the person whose request started a Sidekick run, and the run's number, on its row",
-    // The run's row carries who asked, so a reader can tell their own run's
-    // row from news: the conversation seats that person at the row's turn
-    // while the run works, and the client mirrors it rather than drawing an
-    // Unread divider above the run they just started. Null for a trigger's
-    // run and for rows written before the column; the next projection of the
-    // run fills it. `run_number` is the run's ordinal among its Sidekick's
-    // runs, which the row reads as "Run 412" (design §4). The rows already
-    // here are numbered in place, oldest first, by run id: a run id is a
-    // UUIDv7 minted when the run is created, so that is the order
-    // `projectRunRow` counts (`created_at`, then `run_id`). No shipped build
-    // has `sidekick_run_rows` (it arrives in migration 82 alongside this one),
-    // so in production the table is empty here and the backfill serves only
-    // objects that ran an intermediate build of this change. Where a row is
-    // missing the count comes out short, and a finished run is not projected
-    // again on its own; the operator RPC `replayRunRows` rebuilds every row
-    // with its real number.
-    statements: [
-      `ALTER TABLE sidekick_run_rows ADD COLUMN requester_user_id TEXT`,
-      `ALTER TABLE sidekick_run_rows ADD COLUMN run_number INTEGER CHECK (run_number IS NULL OR run_number > 0)`,
-      `UPDATE sidekick_run_rows
-          SET run_number = (SELECT COUNT(*) FROM sidekick_run_rows earlier WHERE earlier.run_id <= sidekick_run_rows.run_id)`,
+      `DROP TABLE IF EXISTS sidekick_attachments`,
     ],
   },
 ];

@@ -64,7 +64,7 @@ import type {
  * One object the retirement walk has to close before this workspace can report
  * complete: a Canvas, a Sidekick, or a Thread or Channel still awaiting the
  * Thread retirement operation. `workspace_retirement_graph`'s CHECK admits all
- * four kinds from migration 146.
+ * four kinds from migration 136.
  */
 interface RetirementGraphNode {
   parentKind: RetirementParentKind;
@@ -108,9 +108,7 @@ import { AgentIdSchema, type AgentId, type RetirementParentKind } from "@rally/c
 import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
 import {
-  NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION,
-  NOTIFICATION_INTENTS_PARENT_NOTICES_MIGRATION,
-  NOTIFICATION_INTENTS_ACCESS_DENIED_MIGRATION,
+  NOTIFICATION_INTENTS_CANVAS_SIDEKICK_KINDS_MIGRATION,
   readNotificationIntentForDelivery as readStoredPushIntent,
 } from "./workspace-notification-intent-storage";
 
@@ -711,8 +709,8 @@ import {
 } from "./workspace-sidekick-conversation-storage";
 import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-batch";
 import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
-import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS, WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
-import { CANVAS_APPEARANCE_STATEMENTS, CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, CANVAS_TITLE_STATUS_STATEMENTS, CANVAS_LAST_WRITER_RUN_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
+import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
+import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
 import { canvasAppearanceReporter, canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS, SIDEKICK_RUN_SEED_DROP_STATEMENTS } from "./hosted-sidekick-schema";
 import {
@@ -4288,24 +4286,28 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     ) STRICT`,
   ],
 }, {
+  // Versions 135 to 139 are the Canvases and Sidekicks pivot's schema, one
+  // migration per subsystem: each table it creates is created in its final
+  // shape and each table it widens is copied once. None shipped before they
+  // were folded; docs/workstream-durable-object.md#sql-only-schema-migration
+  // records the fold.
   version: 135,
-  description: "count each Sidekick run's steps, and arm its row in the Sidekick's shared conversation whenever the run changes",
-  // See SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS and docs/automation-lifecycle.md#runs-in-the-shared-conversation.
-  statements: SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS,
-}, {
-  version: 136,
-  description: "record who a Sidekick is shared with, and what each reader of its shared conversation has read",
-  // See SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS and docs/automation-lifecycle.md#who-a-sidekick-is-shared-with.
-  statements: SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS,
-}, {
-  version: 137,
-  description: "retire the Thread-owned Sidekick scope: every one becomes an Organization Sidekick",
-  // The Canvases and Sidekicks decision: a Thread no longer owns a Sidekick.
-  // The owning columns stay as dead columns (released CHECKs name them), so
-  // the row's home is cleared to satisfy the scope CHECK. A Sidekick a room
-  // archive paused under the old rule is archived, as the current rule would
-  // have left it. See docs/automation-lifecycle.md#creation-and-ownership.
+  description: "the Sidekick schema for Canvases and Sidekicks: run rows in the shared conversation, run requesters, audiences and viewer reads; the demo seed column and the Thread-owned scope retire",
+  // See SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS,
+  // SIDEKICK_RUN_SEED_DROP_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS and
+  // docs/automation-lifecycle.md.
   statements: [
+    ...SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS,
+    ...SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS,
+    ...SIDEKICK_RUN_SEED_DROP_STATEMENTS,
+    ...SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS,
+    // The Canvases and Sidekicks decision: a Thread no longer owns a
+    // Sidekick. The owning columns stay as dead columns (released CHECKs
+    // name them), so the row's home is cleared to satisfy the scope CHECK.
+    // A Sidekick a room archive paused under the old rule is archived, as the
+    // current rule would have left it. See
+    // docs/automation-lifecycle.md#creation-and-ownership.
+    //
     // It bumped only the owning room's rail, and no row has one after this;
     // dropped first so clearing the home bumps no owning room. The conversion
     // still bumps the rails of the rooms that recommend or attach a converted
@@ -4320,97 +4322,37 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHERE scope = 'workstream'`,
   ],
 }, {
+  version: 136,
+  description: "the Canvas schema: directory, participants, access requests and artifacts; pins, Sidekick attachments, the retirement graph and memory digest holders admit a Canvas",
+  // See CANVAS_SCHEMA_STATEMENTS and docs/canvases.md#data-model,
+  // CANVAS_ACCESS_REQUESTS_STATEMENTS and docs/canvas-access-requests.md,
+  // MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION, MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION
+  // and docs/agent-memory.md, RETIREMENT_GRAPH_CANVAS_MIGRATION and docs/workspace-retirement.md.
+  statements: [
+    ...CANVAS_SCHEMA_STATEMENTS,
+    ...CANVAS_ACCESS_REQUESTS_STATEMENTS,
+    ...CANVAS_ARTIFACTS_STATEMENTS,
+    ...SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS,
+    ...CANVAS_SIDEKICK_PINS_STATEMENTS,
+    ...RETIREMENT_GRAPH_CANVAS_MIGRATION,
+    ...MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION,
+    ...MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION,
+  ],
+}, {
+  version: 137,
+  description: "admit the Sidekick run, reply, pinned-Canvas version and access-request notices among the notification intents",
+  // See NOTIFICATION_INTENTS_CANVAS_SIDEKICK_KINDS_MIGRATION and docs/push-notifications.md.
+  statements: NOTIFICATION_INTENTS_CANVAS_SIDEKICK_KINDS_MIGRATION,
+}, {
   version: 138,
-  description: "record who started a Sidekick run under their own access",
-  // See SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS and docs/automation-lifecycle.md#who-a-run-acts-as.
-  statements: SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS,
-}, {
-  version: 139,
-  description: "record each Canvas: its directory row and who besides its creator may open it",
-  // See CANVAS_SCHEMA_STATEMENTS and docs/canvases.md#data-model.
-  statements: CANVAS_SCHEMA_STATEMENTS,
-}, {
-  version: 140,
-  description: "admit a Canvas's Chat among the conversations a Sidekick is attached to",
-  // See SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS and docs/canvases.md#data-model.
-  statements: SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS,
-}, {
-  version: 141,
-  description: "pin a Canvas or a Sidekick in its list's Pinned group",
-  // See CANVAS_SIDEKICK_PINS_STATEMENTS and docs/canvases.md#the-canvas-list.
-  statements: CANVAS_SIDEKICK_PINS_STATEMENTS,
-}, {
-  version: 142,
-  description: "record the artifacts each Canvas's conversation generated",
-  // See CANVAS_ARTIFACTS_STATEMENTS and docs/canvases.md#artifacts-and-versions.
-  statements: CANVAS_ARTIFACTS_STATEMENTS,
-}, {
-  version: 143,
-  description: "admit a Canvas's Chat among the conversations that hold a memory digest copy",
-  // See MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION.
-  statements: MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION,
-}, {
-  version: 144,
-  description: "refresh memory digest copies when who may open a Canvas or a Sidekick changes",
-  // See MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION and docs/agent-memory.md.
-  statements: MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION,
-}, {
-  version: 145,
-  description: "admit a Sidekick run's needs-input and finished notices among the notification intents",
-  // See NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION and docs/push-notifications.md.
-  statements: NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION,
-}, {
-  version: 146,
-  description: "admit a Canvas to the retirement graph",
-  // See RETIREMENT_GRAPH_CANVAS_MIGRATION and docs/workspace-retirement.md.
-  statements: RETIREMENT_GRAPH_CANVAS_MIGRATION,
-}, {
-  version: 147,
   description: "drop the Thread-era tables nothing reads, and the Thread rows of the shared tables",
   // See THREAD_ERA_TABLES_DROP_MIGRATION and docs/workspace-retirement.md.
   statements: THREAD_ERA_TABLES_DROP_MIGRATION,
 }, {
-  version: 148,
-  description: "record each person's Activity: one row per mention, add and Sidekick run notice they were sent",
+  version: 139,
+  description: "record each person's Activity: one row per notice they were sent",
   // See WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS and docs/activity.md.
   statements: WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS,
-}, {
-  version: 149,
-  description: "record whether a Canvas made with no title still waits for its opening message's title",
-  // See CANVAS_TITLE_STATUS_STATEMENTS and docs/canvases.md.
-  statements: CANVAS_TITLE_STATUS_STATEMENTS,
-}, {
-  version: 150,
-  description: "admit a reply, a pinned Canvas's new version, an access request and its grant as notices and Activity rows",
-  // See NOTIFICATION_INTENTS_PARENT_NOTICES_MIGRATION, WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS,
-  // docs/push-notifications.md and docs/activity.md.
-  statements: [...NOTIFICATION_INTENTS_PARENT_NOTICES_MIGRATION, ...WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS],
-}, {
-  version: 151,
-  description: "record members' requests to open a Canvas, and seat an approved one as a request participant",
-  // See CANVAS_ACCESS_REQUESTS_STATEMENTS and docs/canvas-access-requests.md.
-  statements: CANVAS_ACCESS_REQUESTS_STATEMENTS,
-}, {
-  version: 152,
-  description: "admit a declined access request as a notice and an Activity row for its requester",
-  // See NOTIFICATION_INTENTS_ACCESS_DENIED_MIGRATION, WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS
-  // and docs/canvas-access-requests.md.
-  statements: [...NOTIFICATION_INTENTS_ACCESS_DENIED_MIGRATION, ...WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS],
-}, {
-  version: 153,
-  description: "record the icon and colour somebody chose for a Canvas",
-  // See CANVAS_APPEARANCE_STATEMENTS and docs/canvases.md#choosing-what-a-canvas-looks-like.
-  statements: CANVAS_APPEARANCE_STATEMENTS,
-}, {
-  version: 154,
-  description: "drop a seeded Sidekick run's script, which demo preparation wrote",
-  // See SIDEKICK_RUN_SEED_DROP_STATEMENTS and docs/architecture.md.
-  statements: SIDEKICK_RUN_SEED_DROP_STATEMENTS,
-}, {
-  version: 155,
-  description: "record the Sidekick run whose publish made a Canvas's newest version",
-  // See CANVAS_LAST_WRITER_RUN_STATEMENTS and docs/canvases.md.
-  statements: CANVAS_LAST_WRITER_RUN_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {

@@ -27,15 +27,15 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000a1d00");
 const PARENT_ID = "00000000-0000-7000-8000-0000000a1d01";
 
 describe("the conversation store AgentLoopDO opens, over a conversation stored before the rename", () => {
-  it("opens a v82 root, keeping its identity and columns, and admits a Canvas parent at v83", async () => {
-    const stub = env.MIGRATION_PROBE_DO!.getByName("agent-loop-do-continuity-v82");
+  it("opens a v81 root, the last shipped version, keeping its identity and columns, and admits a Canvas parent at v83", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("agent-loop-do-continuity-v81");
     await stub.ping();
     // The history and the root are committed in their own event, as a deployed
     // object's are before the new build wakes it.
     await runInDurableObject(stub, (_instance, state) => {
       applyDurableObjectSqliteMigrations({
         storage: state.storage,
-        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 82),
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 81),
         component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
         workerVersionId: "worker-before-rename",
         now: 1_000,
@@ -127,15 +127,15 @@ describe("the conversation store AgentLoopDO opens, over a conversation stored b
     });
   });
 
-  it("drops a Breakout's capture, inherited context and mirrors at v85, keeping the conversation", async () => {
-    const stub = env.MIGRATION_PROBE_DO!.getByName("agent-loop-do-v85-drops");
+  it("drops a Breakout's capture, inherited context and mirrors at v84, keeping the conversation", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("agent-loop-do-v84-breakout-drops");
     await stub.ping();
     await runInDurableObject(stub, (_instance, state) => {
       applyDurableObjectSqliteMigrations({
         storage: state.storage,
-        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 84),
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 83),
         component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
-        workerVersionId: "worker-before-v85",
+        workerVersionId: "worker-before-v84-breakout-drops",
         now: 1_000,
       });
       state.storage.sql.exec(
@@ -164,7 +164,7 @@ describe("the conversation store AgentLoopDO opens, over a conversation stored b
       );
     });
     await runInDurableObject(stub, (_instance, state) => {
-      const store = new WorkstreamObjectStore(state.storage, "worker-after-v85", "global");
+      const store = new WorkstreamObjectStore(state.storage, "worker-after-v84-breakout-drops", "global");
       expect(store.identity()).toEqual({ workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: PARENT_ID });
       expect(state.storage.sql.exec<{ name: string }>(
         `SELECT name FROM sqlite_master WHERE name IN ('substream_context_captures', 'substream_initial_context',
