@@ -917,7 +917,9 @@ one identity and one history, and can complete more than once.
    (`runInputRefusal`, asked through `sidekickRunInputRefusal`), so a person
    who may not continue the run cannot close the question for one who may.
    So is a Retry in a run child (`retryWithAuthority`), which re-runs the run
-   under its definition as the retrier. Another agent's message counts as the
+   under its definition as the retrier, and a Retry in the shared
+   conversation re-runs a wizard turn as the retrier without passing the
+   claim, so it needs a manager (`sidekick_edit_requires_manager`). Another agent's message counts as the
    person that agent acts for (`senderExecutionPrincipal` on the stored
    input, which a background worker's own principal does not replace), and
    the Sidekick's own wizard is no exception: a wizard turn acts for whoever

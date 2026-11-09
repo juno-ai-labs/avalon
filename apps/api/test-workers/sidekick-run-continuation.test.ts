@@ -1181,6 +1181,34 @@ describe("Sidekick run continuation", () => {
     expect(await revision()).toBe(before);
   });
 
+  it("refuses a reader's retry of a failed wizard turn, and lets a manager retry it", async () => {
+    await activeSidekick();
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE automation_directory SET scope='workspace' WHERE automation_id=?", AUTOMATION_ID);
+    });
+    const wizardStub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID)));
+    // The author, a manager, marks an edit; the wizard turn fails.
+    script = [{ httpError: { status: 400, body: { error: { message: "bad request" } } } }];
+    await new ConversationService(TEST_ENV, AUTH).authorizeViewer(AUTOMATION_ID);
+    const edit = await product(wizardStub, { operation: "create_message", parentKind: "automation", auth: AUTH,
+      input: { text: "Tighten the instructions.", clientMessageId: "manager-edit-fails", mentions: [], confirmedParticipantUserIds: [],
+        attachmentIds: [], intent: "edit_sidekick" } });
+    expect(edit.status, JSON.stringify(edit.body)).toBe(200);
+    await runDurableObjectAlarm(wizardStub);
+    await expect.poll(async () => (await runInDurableObject(wizardStub, (_instance, state) => state.storage.sql.exec<{ status: string }>(
+      `SELECT status FROM runs WHERE substream_id = '0' AND parent_tool_call_id IS NULL ORDER BY created_at DESC, run_id DESC LIMIT 1`,
+    ).toArray()))[0]?.status, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe("failed");
+    await new ConversationService(TEST_ENV, CLAIMANT_AUTH).authorizeViewer(AUTOMATION_ID);
+    const retry = (auth: AuthContext) => runInDurableObject(wizardStub, (instance) =>
+      (instance as unknown as { product: { retryForAdmittedSocket(auth: AuthContext, runId: string): Promise<{ harnessRunId: string }> } })
+        .product.retryForAdmittedSocket(auth, crypto.randomUUID()).then((result) => result.harnessRunId, (error: unknown) => (error as { code?: string }).code));
+    // The claimant reads the Sidekick but does not manage it: a retry would
+    // run the wizard, with its authoring tools, as them.
+    expect(await retry(CLAIMANT_AUTH)).toBe("sidekick_edit_requires_manager");
+    expect(await retry(AUTH)).toMatch(/^[0-9a-f-]{36}$/u);
+  });
+
   it("refuses an answer from a reader who is not a delegate and keeps the question open for the author", async () => {
     script = [{
       callTool: {
