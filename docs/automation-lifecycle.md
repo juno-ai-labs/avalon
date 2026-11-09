@@ -834,7 +834,10 @@ An answer resumes the same run: on Continue the model checks the connection
 again (a resumed activation loads the connections as they are now) and does
 the work; on Decline, or when no tool can ask (an activation whose answers go
 to an agent holds neither), it ends with one final message saying what is
-blocked and how to recover, and the run is `completed` with that reply.
+blocked and how to recover, and the run is `completed` with that reply. The
+harness logs a halt that waits as `workstream_harness_run_waiting` at info
+(`logHarnessRunOutcome`), never as `workstream_harness_run_failed`, which stays
+at warn for a run that did fail, with its failure code, kind and message.
 
 ### Continuing a run
 
@@ -2053,7 +2056,10 @@ connection card, and in a run the card is a question: it opens an
 elicitation carrying the card's selection (`Elicitation.connection`, optional)
 and the run waits in `needs_input`. The question panel draws the card;
 connecting answers Continue, and Decline ends the run `completed` with its
-reason. The question says it is answered by those two options alone
+reason. Every such halt had also been logged at warn as
+`workstream_harness_run_failed` with a null `failure_code` (the round-5
+end-to-end pass, D3); a waiting halt now logs `workstream_harness_run_waiting`
+at info. The question says it is answered by those two options alone
 (`allowOther` and `allowSkip` false): the round-5 visual check found the panel
 offering a typed "Other" answer and Skip, neither of which means anything to a
 run waiting on a connection. A missing grant is asked with `request_elicitation`. The activation

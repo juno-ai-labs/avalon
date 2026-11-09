@@ -218,10 +218,8 @@ import {
   emitAgentToolStartedTelemetry,
   emitAgentToolTerminalTelemetry,
 } from "../telemetry/tool-usage";
-import {
-  emitProductUsageTelemetry,
-  telemetryCountBucket,
-} from "../telemetry/product-usage";
+import { emitProductUsageTelemetry } from "../telemetry/product-usage";
+import { elicitationPresentedTelemetry } from "../telemetry/elicitation";
 import {
   withWorkspaceRuntimeDatabase,
 } from "./workspace-runtime-database";
@@ -5026,20 +5024,7 @@ export async function runWorkstreamHarness(
   const stoppedByUser = runtime?.persistentLoop
     ? outcome.status === "stopped"
     : await isHarnessStopped(runs, input.harnessRunId);
-  if (outcome.status !== "completed" && !stoppedByUser) {
-    // The member-safe terminal result deliberately strips this detail, so it
-    // must be recorded here or nowhere: a Bind run that fails before its first
-    // inference attempt leaves no other trace of why.
-    logStructuredEvent(env, "warn", "workstream_harness_run_failed", {
-      request_id: input.harnessRunId,
-      workspace_id: input.workspaceId,
-      workstream_id: input.parentId,
-      outcome_status: outcome.status,
-      failure_code: outcome.failure?.code ?? null,
-      failure_kind: outcome.failure?.kind ?? null,
-      failure_message: outcome.failure?.message?.slice(0, 500) ?? null,
-    });
-  }
+  logHarnessRunOutcome(env, input, outcome, stoppedByUser);
   // Only bytes accepted by Bind may become the durable final turn. A failed
   // partial stream has already been replaced at its reservation by a status
   // pill, so adopting the preview here would resurrect ephemeral output under
@@ -8900,23 +8885,17 @@ async function openToolQuestion(
     { type: "elicitation_created", elicitation },
     input.substreamId ?? "0",
   );
-  emitProductUsageTelemetry(env, {
+  emitProductUsageTelemetry(env, elicitationPresentedTelemetry({
     workspaceId: input.workspaceId,
     ...(input.executionPrincipal.type === 'user'
       ? { userId: input.executionPrincipal.userId }
       : {}),
-    name: 'elicitation_presented',
-    properties: {
-      elicitationId: id,
-      runId: input.harnessRunId,
-      workstreamId: input.parentId,
-      responseType: question.responseType,
-      optionCount: telemetryCountBucket(question.options.length),
-      surface: 'workstream',
-    },
-    operationId: input.harnessRunId,
-    eventId: id,
-  });
+    elicitationId: id,
+    runId: input.harnessRunId,
+    workstreamId: input.parentId,
+    responseType: question.responseType,
+    optionCount: question.options.length,
+  }));
   return halted;
 }
 
@@ -9692,3 +9671,38 @@ export const __integrationTesting = {
   AttachmentGroundingGuard,
   acceptHarnessAssistantContent,
 };
+
+/**
+ * What a harness run that did not complete leaves in the log. The member-safe
+ * terminal result deliberately strips a failure's detail, so it is recorded
+ * here or nowhere: a Bind run that fails before its first inference attempt
+ * leaves no other trace of why. A run that asked and waits (`needs_input`) has
+ * not failed, so it is logged at its own code and level, and a failure search
+ * no longer finds every question a run asked. A stop the person asked for logs
+ * nothing.
+ */
+export function logHarnessRunOutcome(
+  env: Env,
+  input: Pick<WorkstreamWorkflowInput, "harnessRunId" | "workspaceId" | "parentId">,
+  outcome: { status: string; failure?: { code?: string; kind?: string; message?: string } | null | undefined },
+  stoppedByUser: boolean,
+): void {
+  if (outcome.status === "completed" || stoppedByUser) return;
+  if (outcome.status === "needs_input") {
+    logStructuredEvent(env, "info", "workstream_harness_run_waiting", {
+      request_id: input.harnessRunId,
+      workspace_id: input.workspaceId,
+      workstream_id: input.parentId,
+    });
+    return;
+  }
+  logStructuredEvent(env, "warn", "workstream_harness_run_failed", {
+    request_id: input.harnessRunId,
+    workspace_id: input.workspaceId,
+    workstream_id: input.parentId,
+    outcome_status: outcome.status,
+    failure_code: outcome.failure?.code ?? null,
+    failure_kind: outcome.failure?.kind ?? null,
+    failure_message: outcome.failure?.message?.slice(0, 500) ?? null,
+  });
+}
