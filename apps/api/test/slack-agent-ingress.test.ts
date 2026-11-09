@@ -747,10 +747,10 @@ describe("which shared links get a card", () => {
     ]));
   });
 
-  it("leaves another Organization's, a retired Thread's and a look-alike host's links to Slack", () => {
+  it("leaves another Organization's, a retired Breakout's and a look-alike host's links to Slack", () => {
     expect(slackUnfurlLinkTargets([
       { url: "https://rallywith.ai/app/global/1111117Hxt1fAWDjN7Te/cv/1111117Hxt1fAWDjN7TX/" },
-      { url: "https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY" },
+      { url: "https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY/b/1111117Hxt1fAWDjN7TZ" },
       { url: "https://with-avalon.com/app/workstreams/019fec70-fba0-7b0e-9f7a-3dd1ef56520f" },
       { url: "https://evil.example/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/" },
       { url: 42 },

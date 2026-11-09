@@ -15,8 +15,8 @@ describe('Apple universal links', () => {
       .toMatchObject({ kind: 'sidekick', sidekickId: '00000000-0000-7000-8000-000000000002', target: { region: 'global' } });
   });
   it('leaves retired, legacy-host and other links in the browser', () => {
-    expect(httpsLinkDeepLink('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY')).toBeNull();
-    expect(httpsLinkDeepLink(`https://rallywith.ai/app/workspaces/enterprise/${id}/workstreams/${id}`)).toBeNull();
+    expect(httpsLinkDeepLink('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY/b/1111117Hxt1fAWDjN7TZ')).toBeNull();
+    expect(httpsLinkDeepLink(`https://rallywith.ai/app/workspaces/enterprise/${id}/workstreams/${id}/substreams/${id}`)).toBeNull();
     expect(httpsLinkDeepLink('https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/')).toBeNull();
     expect(httpsLinkDeepLink('https://rallywith.ai/download')).toBeNull();
     expect(httpsLinkDeepLink('rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/canvases/1111117Hxt1fAWDjN7TX')).toBeNull();
