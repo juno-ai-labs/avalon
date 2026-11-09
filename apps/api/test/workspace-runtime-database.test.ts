@@ -200,14 +200,14 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "sidekick_reviews",
   "sidekick_audience",
   "sidekick_viewer_reads",
-  // A hosted Canvas's tables (migration 139), behind the `canvas*` facade and
+  // A hosted Canvas's tables (migration 137), behind the `canvas*` facade and
   // in `WORKSPACE_TYPED_RPC_ONLY_TABLES` for the reason a Sidekick's are.
   "canvas_directory",
   "canvas_participants",
   "canvas_artifacts",
-  // Requests to open a Canvas (migration 136), behind the same facade.
+  // Requests to open a Canvas (migration 137), behind the same facade.
   "canvas_access_requests",
-  // Each person's Activity (migration 139): written beside a notification
+  // Each person's Activity (migration 140): written beside a notification
   // intent and read for their workspace socket, both inside the object.
   "workspace_activity_items",
   "workspace_activity_seen",
@@ -243,7 +243,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_sync_events",
   "channels",
   "workspace_workstream_effect_receipts",
-  // A retired Thread's artifact links, kept by migration 138 only for the
+  // A retired Thread's artifact links, kept by migration 139 only for the
   // Thread-to-Canvas conversion, which reads them through the object's own
   // storage; `deleteRetiredThreadParent` deletes each Thread's rows.
   "workspace_workstream_resource_links",

@@ -48,7 +48,7 @@ selection and the event cutoffs that unchanged rows preserve.
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
 | `apps/api/src/durable-objects/agent-loop-do.ts` | Adopts it for a conversation's agent: `agent_timer` entries index `workstream_wakeups`; one `terminal_observation` entry indexes its Terminal sandbox's `next_observe_at`; the retired `merge_suggestion` kind is named only so a leftover entry can be recognised. Execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
-| `apps/api/src/durable-objects/hosted-sidekick.ts` | A hosted Sidekick's entries in `WorkspaceDO`'s store, each keyed `<sidekickId>:<key>`: `automation_schedule`, `automation_run`, `sidekick_review` (one per Sidekick, armed by run finishes; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), `sidekick_run_row` (`<sidekickId>:<runId>`, armed by migration 135's triggers on `sidekick_runs`, handled by `projectRunRow`), `sidekick_memory_tables`, and the delegation kinds. |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | A hosted Sidekick's entries in `WorkspaceDO`'s store, each keyed `<sidekickId>:<key>`: `automation_schedule`, `automation_run`, `sidekick_review` (one per Sidekick, armed by run finishes; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), `sidekick_run_row` (`<sidekickId>:<runId>`, armed by migration 136's triggers on `sidekick_runs`, handled by `projectRunRow`), `sidekick_memory_tables`, and the delegation kinds. |
 
 ### Two kinds of wake reason
 
@@ -276,7 +276,7 @@ itself:
 | Hand one admitted occurrence to provisioning, which opens its child conversation and starts its loop | `automation_run` (stored) | the run id |
 | Materialize the memory tables an accepted revision declares | `sidekick_memory_tables` (stored) | the revision |
 | Ask the wizard for a scheduled self-review, and send the request again until the wizard reports it admitted | `sidekick_review` (stored) | the one `review` key; armed by the tenth run finish, cancelled by pause, archive, an accepted revision and the delivery report ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)) |
-| Write one run, as it stands, into its row in the Sidekick's shared conversation | `sidekick_run_row` (stored) | the run id; armed in SQL by WorkspaceDO migration 135's triggers on every insert into `sidekick_runs` and every change to its state, summary or step count, each at `MAX(updated_at, due_at + 1)` so a change during a delivery survives the drain's delete; re-armed by `replayRunRows` with a `{"replay":true}` payload that forces the write; handled by `projectRunRow`, which reads the run at delivery ([`automation-lifecycle.md`](automation-lifecycle.md#runs-in-the-shared-conversation)) |
+| Write one run, as it stands, into its row in the Sidekick's shared conversation | `sidekick_run_row` (stored) | the run id; armed in SQL by WorkspaceDO migration 136's triggers on every insert into `sidekick_runs` and every change to its state, summary or step count, each at `MAX(updated_at, due_at + 1)` so a change during a delivery survives the drain's delete; re-armed by `replayRunRows` with a `{"replay":true}` payload that forces the write; handled by `projectRunRow`, which reads the run at delivery ([`automation-lifecycle.md`](automation-lifecycle.md#runs-in-the-shared-conversation)) |
 
 **A handler that wants to run again later moves its own entry.** The drain
 deletes an entry at the instant that ran whatever its handler returned, and
@@ -647,7 +647,7 @@ Shipped in juno-ai-labs/avalon#1490.
 ### 2026-11-07 — A Sidekick's run rows are a stored kind armed by triggers
 
 **What changed:** `sidekick_run_row` joins a Sidekick's stored kinds. It is the
-one kind armed in SQL: WorkspaceDO migration 135's triggers on `sidekick_runs`
+one kind armed in SQL: WorkspaceDO migration 136's triggers on `sidekick_runs`
 write the entry in the statement that changes the run, at one past any due
 instant already held. A replay arms the same entry with a payload that forces
 the conversation to apply the projection whatever version it holds.

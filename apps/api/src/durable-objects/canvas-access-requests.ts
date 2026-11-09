@@ -13,7 +13,7 @@ import type { ParentNotice } from "./workspace-notification-intent-protocol";
 import { recordParentNotice } from "./workspace-notification-intent-storage";
 
 /**
- * Part of WorkspaceDO migration 136: a member's request to open a Canvas
+ * Part of WorkspaceDO migration 137: a member's request to open a Canvas
  * they cannot open. An approved one seats its requester with the `request`
  * participant source, which `canvas_participants` admits from the start.
  *

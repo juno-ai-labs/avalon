@@ -282,7 +282,7 @@ marks holders in `memory_digest_sync` with a revision:
   creator or writing Sidekick changes or the row is deleted, when a
   `workspace_member_status` row's access class, role, status or `active`
   changes, when an `automation_directory` row's `scope` changes, or when a
-  `sidekick_audience` row is inserted or deleted (migration 136). Those
+  `sidekick_audience` row is inserted or deleted (migration 137). Those
   triggers fire per row, so a `setAudience` rewrite of N people to M marks
   every holder N+M times; each mark only bumps the holder's revision, so the
   cost is bounded by the list and accepted;
@@ -296,7 +296,7 @@ marks holders in `memory_digest_sync` with a revision:
   holders, because a wider audience hides nothing;
 - the Thread, Breakout and Channel triggers of migration 117 (`channels`,
   `breakouts`, `spaces` and their `*_viewers`) still sit on their tables,
-  which migration 138 kept for the Thread retirement's inventory and nothing
+  which migration 139 kept for the Thread retirement's inventory and nothing
   writes.
 
 The alarm lane `memory_digest_sync` publishes one batch of up to 100
@@ -582,7 +582,7 @@ defensive numbers.
 | `apps/api/test-workers/memory-facts.test.ts` | Migration 116 on a populated object at 115 (subjects, sources, FTS, the drop, the retired alarm row); `applyMemorySweep`'s fence, receipt replay and `cursor_ahead`, one fence per Sidekick conversation; an update's source order and `mixed`; placement refusals; candidate and recall audience fencing; `memoryDigest`, the revision it answers and the holder and holder facts it records, one holder per conversation of a Sidekick; the copy-sync lane: a retraction marks only the holders of its fact and an update none, a participant joining marks that Thread's holders only, a participant leaving marks the copies elsewhere holding a fact learned there, a member becoming a guest and an archive mark every holder, one batch publishes, work, complete and release settle the row. Run with `pnpm --filter @rally/api test:workers`. |
 | `apps/api/test/memory-facts-tools.test.ts` | The three tools over a real `WorkspaceDO` (node:sqlite) and real conversation objects: person facts follow their person and nobody else, a Sidekick run reads as the Sidekick, conversation facts stay with their subject, forget authority, dedupe, receipt replay, horizon errors. The fixture uses `migratedSqliteDatabase()` because the object reads a person's relationship from current `workspace_members`. |
 | `apps/api/test/memory-sweep-service.test.ts` | The attempt's gates and claim, the Queue message, rest and `retry_at` (resting, keyless, the follow-up a settle keeps); the window's character budget, and a full page or an over-budget run of agent text passed without a model call; the run's window, names, candidates, prompt, per-operation parsing, trust class from evidence, apply, settle, the empty receipt, release on model failure, replay and rewind, quiet rests. The model is a stubbed `fetch`; `WorkspaceDO` is a stub recording its calls. |
-| `apps/api/test/workspace-canvas-schema-migration.test.ts` | Migration 136 on a populated object at 135: a Thread's holder and its facts survive the copy, the shipped triggers keep their names beside the six Canvas and Sidekick-audience ones, a Canvas is admitted and `project` still refused; at 135 a Canvas holder is refused as `memory_digest_holder_kind_unadmitted:canvas`. |
+| `apps/api/test/workspace-canvas-schema-migration.test.ts` | Migration 137 on a populated object at 136: a Thread's holder and its facts survive the copy, the shipped triggers keep their names beside the six Canvas and Sidekick-audience ones, a Canvas is admitted and `project` still refused; at 136 a Canvas holder is refused as `memory_digest_holder_kind_unadmitted:canvas`. |
 | `apps/api/test-workers/memory-queue-delivery.test.ts` | The activity consumer's two memory branches on workerd: a `memory_sweep` for a Canvas's Chat records its range on the Organization object, and a `memory_digest_sync` settles a row whose holder is gone. |
 | `apps/api/test-workers/memory-sweep-state.test.ts` | `memory_sweep_state` through the real scheduling port, as the consumer reaches it: a settle's arguments cross the binding, and a release re-arms the object's alarm at the rest. |
 | `packages/agent-harness/src/prompts.test.ts` | The sweep prompt's golden hash, injection isolation, bounding, and load-bearing lines; the digest's golden hash, group order, horizons, full fact ids, the `external` exclusion, the budget cut and its trailer, and the personal note only beside a person fact. |
@@ -636,7 +636,7 @@ authority. `retracted_by` records who forgot a fact.
 `canvas:<canvasId>`, filed under the stored subject kind `thread` with the
 Canvas id; its audience is the Canvas's (`canvasReaderAllows`, every member
 when the Canvas or its writer Sidekick is Organization-wide). WorkspaceDO
-migration 136 rebuilds `memory_digest_holders` with `parent_kind` admitting
+migration 137 rebuilds `memory_digest_holders` with `parent_kind` admitting
 `canvas`, dropping and restoring its triggers with the same text. A fact's
 sources open through `canvasReaderAllows` and `sidekickAdmits` only; Thread,
 Breakout and Channel sources, a Thread's or Channel's audience, a Sidekick's
@@ -644,7 +644,7 @@ home Thread and the Personal Channel removal rule are gone, and a Canvas's
 Chat reads its own `thread:<canvasId>` subject. The review lists a Canvas
 source as the contract's `thread` source, which the client opens as the
 Canvas; the Thread and Channel review routes went with their routers.
-Migration 136 adds the copy-sync triggers for the parents that remain: a
+Migration 137 adds the copy-sync triggers for the parents that remain: a
 Canvas's visibility, creator or writing Sidekick changing, or the Canvas being
 deleted, marks every holder; a participant joining marks that Canvas's
 holders and one leaving also marks every copy holding a fact learned there; a
@@ -677,9 +677,9 @@ facts is the rule a conversation made private already follows.
 **Consequences:** A reader of `subject_kind = 'thread'` must not assume the id
 names a Thread; the titles a fact shows are looked up in `canvas_directory`
 as well. The Thread, Breakout and Channel triggers of migration 117 stay on
-their tables, which migration 138 kept for the Thread retirement, and a new
+their tables, which migration 139 kept for the Thread retirement, and a new
 trigger set goes in its own migration: `MEMORY_DIGEST_SYNC_TRIGGERS` is hashed
-into migrations 117 and 136. A Canvas's own facts have no review surface yet.
+into migrations 117 and 137. A Canvas's own facts have no review surface yet.
 
 Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 

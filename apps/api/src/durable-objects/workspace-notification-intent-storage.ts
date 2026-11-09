@@ -17,7 +17,7 @@ import {
 import { recordActivityItem, recordCollapsedActivityItem, type ActivityItemInput, type NoteActivity } from "./workspace-activity";
 
 /**
- * WorkspaceDO migration 137: admit the notices of Canvases and Sidekicks on
+ * WorkspaceDO migration 138: admit the notices of Canvases and Sidekicks on
  * the intent row and push pointer a mention and an add ride, so the push
  * consumer, its receipts and the reaper serve every kind:
  *  * a Sidekick run's two notices, `needs_input` and `run_finished`;

@@ -15,7 +15,7 @@ does; who can open a Canvas at all is [`canvases.md`](canvases.md)'s.
 | --- | --- |
 | `packages/contracts/src/canvases.ts` | `CanvasAccessSchema` (`GET /canvases/:id/access`), `CanvasAccessRequestSchema` and `CanvasAccessRequestResultSchema` (asking), `CanvasAccessDecisionRequestSchema` and `CanvasAccessDecisionSchema` (deciding), and `CanvasDetail.pendingAccessRequests`. |
 | `packages/contracts/src/activity.ts` | The `access_request`, `access_granted` and `access_denied` kinds and the item's `accessRequest` (`state`, `decidedByName`). |
-| `apps/api/src/durable-objects/canvas-access-requests.ts` | `CANVAS_ACCESS_REQUESTS_STATEMENTS`, part of WorkspaceDO migration 136 (the intents admit `access_denied` in migration 137 and Activity in 139), `requestCanvasAccess`, `settleCanvasAccessRequest` (one settlement for a decision and for every other way in), `settleAdmittedAccessRequests`, the deciders, and the named refusals. |
+| `apps/api/src/durable-objects/canvas-access-requests.ts` | `CANVAS_ACCESS_REQUESTS_STATEMENTS`, part of WorkspaceDO migration 137 (the intents admit `access_denied` in migration 138 and Activity in 140), `requestCanvasAccess`, `settleCanvasAccessRequest` (one settlement for a decision and for every other way in), `settleAdmittedAccessRequests`, the deciders, and the named refusals. |
 | `apps/api/src/durable-objects/hosted-canvas.ts` | `HostedCanvas.access`, `requestAccess`, `decideAccess`; `detail`'s pending list for a decider; `setAudience` settling what the new audience admits. |
 | `apps/api/src/routes/canvases.ts` | The three routes; `CanvasService` carries them to `WorkspaceDO.canvasAccess`, `canvasRequestAccess` and `canvasDecideAccess`. |
 | `apps/api/src/durable-objects/workspace-activity.ts` | A request's row reads as seen once settled, and names its state and decider; a declined request's row lists for a requester who cannot open the Canvas, untitled, and reads as seen once they ask again; `requestCanvasAccess` republishes the requester's list when they do. |
@@ -104,7 +104,7 @@ Client: a 404 on a well-formed Canvas id asks `GET /canvases/:id/access`; `reque
 
 - **At most one waiting request per person per Canvas.** The partial unique
   index is the rule, so two asks racing each other leave one row, and deciders
-  are told once. Guard: the first case's second ask; migration 136's proof.
+  are told once. Guard: the first case's second ask; migration 137's proof.
 - **Every way in that this module or the audience writes settles through
   `settleCanvasAccessRequest`**: an approval, Share naming the person, and the
   Canvas opening to the Organization. A second such path that seated a
@@ -175,9 +175,9 @@ request and tell the requester; a guest is
 `canvas_not_found`, and a participant who does not manage it
 `canvas_access_decision_not_manager`. Each case uses fresh Organization and
 Canvas ids. `apps/api/test/workspace-canvas-schema-migration.test.ts`
-proves the request table and the `request` seat (migration 136);
+proves the request table and the `request` seat (migration 137);
 `apps/api/test-workers/workspace-canvases-and-sidekicks-migration.test.ts`
-upgrades a populated v134 object through 139, keeping its intents with their
+upgrades a populated v135 object through 140, keeping its intents with their
 leases and the identity trigger, and admits a declined request in the
 intents and in Activity.
 
@@ -186,8 +186,8 @@ intents and in Activity.
 | Table | Key | Columns |
 | --- | --- | --- |
 | `canvas_access_requests` | `request_id` | `canvas_id`, `user_id`, `requester_name`, `message`, `state` (`pending`, `approved`, `denied`), `decided_by_user_id`, `decided_by_name`, `created_at`, `decided_at` (null exactly while pending). Unique `(canvas_id, user_id)` where pending; indexed by `(canvas_id, user_id, created_at DESC)`. |
-| `canvas_participants` | `(canvas_id, user_id)` | `source` admits `request` (migration 136 makes the table with it). |
-| `workspace_activity_items` | `item_id` | An `access_request`, `access_granted` or `access_denied` row's `subject_id` is the request's id. `kind` admits `access_denied` (migration 139), as `workstream_notification_intents.notification_kind` does (migration 137). |
+| `canvas_participants` | `(canvas_id, user_id)` | `source` admits `request` (migration 137 makes the table with it). |
+| `workspace_activity_items` | `item_id` | An `access_request`, `access_granted` or `access_denied` row's `subject_id` is the request's id. `kind` admits `access_denied` (migration 140), as `workstream_notification_intents.notification_kind` does (migration 138). |
 
 ## Changelog
 
@@ -199,8 +199,8 @@ Canvas's title, and pushes it under their `accessRequests` choice; the access
 read gives the denied request's `decidedAt`, to every build: one older than
 contract 13 was first served the request without it, a branch deleted once
 13 became `MINIMUM_SERVED_CLIENT_CONTRACT` and such a build stopped
-connecting. WorkspaceDO migration 137 admits the kind in
-`workstream_notification_intents` and migration 139 in
+connecting. WorkspaceDO migration 138 admits the kind in
+`workstream_notification_intents` and migration 140 in
 `workspace_activity_items`.
 Asking again republishes the requester's own Activity list
 (`noteActivityChanged`), because their denied row now reads as seen through
@@ -225,7 +225,7 @@ Shipped in juno-ai-labs/avalon#1490.
 
 **What changed:** Access requests return for Canvases: the access read, the
 request and the decision routes; `canvas_access_requests` and the `request`
-participant source (WorkspaceDO migration 136); an `access_request` intent and
+participant source (WorkspaceDO migration 137); an `access_request` intent and
 Activity row per decider (the creator, the Organization's administrators and
 a writer Sidekick's managers), settled for all of them by one decision; an
 `access_granted` intent and row for the requester; and a request settling when

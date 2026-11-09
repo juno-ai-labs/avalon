@@ -6,7 +6,7 @@ child (`parentKind: "automation"`, substream = the run id), so a reply there
 continues the run. Every Slack message is resolved against these rows before
 anything else is decided. The **room binding** that linked a Slack channel to
 a Space, so an addressed thread there opened a Channel, is retired with Spaces
-and Channels: nothing writes one, and WorkspaceDO migration 138 deleted every
+and Channels: nothing writes one, and WorkspaceDO migration 139 deleted every
 row that held one (`target_kind = 'space'`) along with every binding to a
 Thread (`parent_kind = 'workstream'`). The table's CHECK still admits those
 values; no row holds them.
@@ -117,7 +117,7 @@ from the ingress claim key, so a retried job posts it once.
 | Event | Effect |
 | --- | --- |
 | Bot `member_joined_channel` | Links and reactivates nothing (logged `slack_room_invitation`, `room_bindings_retired`). |
-| Bot `member_left_channel`, `channel_left`, `group_left` | Retired in effect: suspends the room's own row (`[channel]`) as `provider_membership_ended`, and no such row exists since migration 138, so nothing changes. |
+| Bot `member_left_channel`, `channel_left`, `group_left` | Retired in effect: suspends the room's own row (`[channel]`) as `provider_membership_ended`, and no such row exists since migration 139, so nothing changes. |
 | `channel_archive`, `group_archive` | Retired in effect: the same suspension as `provider_room_archived`, touching no row. |
 | `channel_id_changed` | Move every run-thread binding under the room to the new id, or refuse on a conflict. |
 | Workspace disconnect, uninstall, token revocation | Suspend the installation's active bindings: `connection_disconnected`. Reconnecting, or the installation's next delivered event, reactivates exactly those. |
@@ -215,7 +215,7 @@ the object refuses the database as another workspace's.
 90). Every live row is a `conversation` target with `parent_kind =
 'automation'`: a run child. The CHECK still admits `target_kind = 'space'`
 and a `workstream` parent, and `space_id` and `space_matched` remain as
-columns, but WorkspaceDO migration 138 deleted every row that used them, and
+columns, but WorkspaceDO migration 139 deleted every row that used them, and
 nothing writes one. `pending` was written only by the retired Thread claim. CHECKs tie a target kind to
 its columns, a suspended state to a reason, and a pending state to a claim
 key. A partial index on the conversation target serves suspending one
@@ -235,7 +235,7 @@ cannot widen what the bot joins.
 **What changed:** `resolve` no longer answers `spawn` (an addressed message
 under a room bound to a Space created a Channel there) and its `none` no
 longer carries `roomBound`. `linkRoom`, `ExternalRoomLinkRequestSchema` and
-`ExternalRoomSpaceMatchRequestSchema` are deleted. WorkspaceDO migration 138
+`ExternalRoomSpaceMatchRequestSchema` are deleted. WorkspaceDO migration 139
 (plan step C-7) deleted every room row (`target_kind = 'space'`) and every
 binding to a Thread (`parent_kind = 'workstream'`); the CHECK still admits
 both, and no row holds either. A bot joining, leaving or archiving a room now

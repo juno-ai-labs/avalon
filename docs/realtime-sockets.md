@@ -924,7 +924,7 @@ Shipped in juno-ai-labs/avalon#1490.
 `activity` page beside `automations` and `canvases`; `workspace_activity_list`
 pushes one person's page to that person's sockets only; the socket accepts
 `activity_mark_all_seen`, answered by that push. The waterline is
-`workspace_sidebar_list_state` row `activity` (migration 139).
+`workspace_sidebar_list_state` row `activity` (migration 140).
 
 **Why:** Activity returns as a per-person feed (the user's 2026-11-08
 decision, [`activity.md`](activity.md)), and the workspace socket is where every

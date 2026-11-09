@@ -21,7 +21,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `packages/contracts/src/canvases.ts` | The wire shapes: `CanvasIdSchema` (the `WorkstreamId` brand), `CanvasVisibilitySchema`, `CanvasAudienceUpdateSchema`, the summary and detail. |
 | `packages/contracts/src/conversation-parent.ts` | `ConversationParentKindSchema` gains `canvas`. |
 | `apps/api/src/services/authorization-policy.ts` | `audienceAdmits`, the one audience rule, which `canvasAdmits` and `sidekickAdmits` apply over their own facts; `canvasManages`. |
-| `apps/api/src/durable-objects/canvas-schema.ts` | `WorkspaceDO` migration 136, the Canvas schema (`canvas_directory`, `canvas_participants`, `canvas_artifacts`, the `canvases` list waterline, and the copies that admit a Canvas among a Sidekick's conversation attachments, the pins and the retirement graph). |
+| `apps/api/src/durable-objects/canvas-schema.ts` | `WorkspaceDO` migration 137, the Canvas schema (`canvas_directory`, `canvas_participants`, `canvas_artifacts`, the `canvases` list waterline, and the copies that admit a Canvas among a Sidekick's conversation attachments, the pins and the retirement graph). |
 | `apps/api/src/durable-objects/hosted-conversation.ts` | `HostedConversation`: the conversation-parent contract one hosted conversation answers — authority, the viewer check, children, the children's effects, and each reader's read of `"0"`. A Canvas and a Sidekick both extend it. |
 | `apps/api/src/durable-objects/hosted-canvas.ts` | `HostedCanvas`: one Canvas's parent state inside `WorkspaceDO`, scoped to a `canvas_id` — creation, the read rule over a row (`canvasReaderAllows`), the audience, guest shares and authorization facts. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The facade: `canvasCreate`, `canvasDetail`, `canvasUpdate` (the title and the appearance), `canvasSetAudience`, `hostedConversationAuthorizationFacts`, every conversation-parent method for a Canvas id, and the Canvas branch of `createScopeInvitations`, `claimScopeInvitations`, `revokeScopeInvitation` and the invitation alarms. |
@@ -178,7 +178,7 @@ manage it); `POST /canvases/:id/audience` changes who can open it;
 through the conversation routes like any conversation.
 
 A Canvas a person makes with no title starts as **Untitled Canvas**, settled
-(`canvas_directory.title_status`, migration 136). When the first projection of
+(`canvas_directory.title_status`, migration 137). When the first projection of
 its Chat that carries a message reaches the parent (`onChildProjection`,
 `latestAttentionOrdinal` moving from 0 to at least 1), the same write sets it
 `naming` — only while it is still settled as **Untitled Canvas** and no
@@ -216,7 +216,7 @@ A Canvas may carry an icon and a colour somebody chose, the same two keys a
 Sidekick stores and parsed by the same `WorkstreamAppearanceSchema`
 ([`automation-lifecycle.md`](automation-lifecycle.md#choosing-what-a-sidekick-looks-like)
 owns the catalog and the ring). They live on the directory row as
-`appearance_json` (migration 136), null until someone chooses, and the
+`appearance_json` (migration 137), null until someone chooses, and the
 summary carries them as `appearance` on the list row, the detail and a
 Sidekick's Canvases, each field null while unchosen. An unchosen icon draws the
 sketch of the newest artifact's kind and an unchosen colour the hue the id
@@ -292,11 +292,11 @@ may have died before its note), which records the resource in
 `canvas_artifacts`, moves the Canvas's `updated_at`, and names its last editor:
 Rally for the Chat, the Sidekick for a run. A run's note also names the run
 (its substream id, which is the run id), stored as
-`canvas_directory.last_writer_run_id` (migration 136); any note that is not a
+`canvas_directory.last_writer_run_id` (migration 137); any note that is not a
 run's clears it, so it always names the run whose publish made the newest
 version or nothing. It is not `writer_run_id`, the run that created the
 Canvas: a Sidekick writing one Canvas across runs moves this and not that.
-Nothing was backfilled: a Canvas a run wrote before migration 136 reads as
+Nothing was backfilled: a Canvas a run wrote before migration 137 reads as
 written by no run until its next publish. The resource versioning layer
 records every version with its run, as it does everywhere; `canvas_artifacts`
 records only which resources the Canvas holds. A version somebody else made
@@ -757,20 +757,20 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 | Table | Keyed by | Holds |
 | --- | --- | --- |
-| `canvas_directory` | `canvas_id` | The row: title, creator, times, last editor, writer Sidekick and run, visibility, authority generation, title status (`naming` until a Canvas made with no title is titled from its first message, migration 136), the chosen icon and colour (`appearance_json`, `WorkstreamAppearanceSchema` JSON, null until chosen, migration 136), and the run whose publish made the newest version (`last_writer_run_id`, migration 136). Its CHECK admits a run only beside a `sidekick` last editor, so a future writer that moves `last_editor_kind` without writing this column in the same statement fails its write. Indexed by recency, by writer Sidekick, and uniquely by `(writer_sidekick_id, writer_run_id)`. |
-| `canvas_participants` | `(canvas_id, user_id)` | Whom its managers added (`added`), a claimed share brought (`invitation`) or an approved access request let in (`request`, migration 136). Indexed by person for "shared with me". |
+| `canvas_directory` | `canvas_id` | The row: title, creator, times, last editor, writer Sidekick and run, visibility, authority generation, title status (`naming` until a Canvas made with no title is titled from its first message, migration 137), the chosen icon and colour (`appearance_json`, `WorkstreamAppearanceSchema` JSON, null until chosen, migration 137), and the run whose publish made the newest version (`last_writer_run_id`, migration 137). Its CHECK admits a run only beside a `sidekick` last editor, so a future writer that moves `last_editor_kind` without writing this column in the same statement fails its write. Indexed by recency, by writer Sidekick, and uniquely by `(writer_sidekick_id, writer_run_id)`. |
+| `canvas_participants` | `(canvas_id, user_id)` | Whom its managers added (`added`), a claimed share brought (`invitation`) or an approved access request let in (`request`, migration 137). Indexed by person for "shared with me". |
 | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts`, `sidekick_viewer_reads` | `(sidekick_id, …)`, the column holding the Canvas id | The hosted conversation's children, their projections and receipts, and each reader's read of the Chat. |
 | `workspace_sidebar_list_state` | `list` | Gains the `canvases` waterline; the table is rebuilt to widen its CHECK. |
-| `sidekick_conversation_attachments` | `(automation_id, parent_kind, …)` | Migration 136 widens `parent_kind` to admit `canvas`. |
-| `workspace_pins` | `(user_id, item_kind, item_id)` | Migration 136 admits `canvas` and `sidekick`, with no parent. |
-| `canvas_artifacts` | `(canvas_id, resource_id)` | Migration 136: the resources the Canvas's conversation generated, written by the publish that attached each (`noteArtifact`); ordered by the resource's own `updated_at`. Its own table because the Thread-era resource-link table's foreign key named a Thread's directory row, which a Canvas has none of. Indexed by resource. |
+| `sidekick_conversation_attachments` | `(automation_id, parent_kind, …)` | Migration 137 widens `parent_kind` to admit `canvas`. |
+| `workspace_pins` | `(user_id, item_kind, item_id)` | Migration 137 admits `canvas` and `sidekick`, with no parent. |
+| `canvas_artifacts` | `(canvas_id, resource_id)` | Migration 137: the resources the Canvas's conversation generated, written by the publish that attached each (`noteArtifact`); ordered by the resource's own `updated_at`. Its own table because the Thread-era resource-link table's foreign key named a Thread's directory row, which a Canvas has none of. Indexed by resource. |
 
 ## Changelog
 
 ### 2026-11-08 — A Canvas row names the run that wrote its newest version, and the home card opens it
 
 **What changed:** A publish note from a Sidekick run carries the run id.
-WorkspaceDO migration 136 stores it on the Canvas's row
+WorkspaceDO migration 137 stores it on the Canvas's row
 (`last_writer_run_id`), and any other publish clears it. The Canvas list row
 gains optional `lastWrittenBy` (Sidekick, run, run number, name), and the
 home card reads "<Sidekick> · run #N" and opens that run.
@@ -804,7 +804,7 @@ Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-08 — A Canvas's icon and colour can be chosen
 
-**What changed:** WorkspaceDO migration 136 adds
+**What changed:** WorkspaceDO migration 137 adds
 `canvas_directory.appearance_json`, the Sidekick's own
 `WorkstreamAppearanceSchema` JSON. `PATCH /canvases/:id` takes a partial
 `appearance` beside or instead of the title (`HostedCanvas.update`, which
@@ -968,7 +968,7 @@ Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-08 — A Canvas made with no title is titled from its first message, and a refused retitle names its field
 
-**What changed:** WorkspaceDO migration 136 adds `canvas_directory.title_status`.
+**What changed:** WorkspaceDO migration 137 adds `canvas_directory.title_status`.
 A Canvas a person makes with no title is **Untitled Canvas**, settled, until
 the first message of its Chat reaches the parent, which sets it `naming` in
 the same write and arms a `canvas_naming` entry;
@@ -1070,7 +1070,7 @@ Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-11-07 — Document created: a Canvas is a hosted conversation with its own audience
 
-**What changed:** A Canvas has a directory row in `WorkspaceDO` (migration 136),
+**What changed:** A Canvas has a directory row in `WorkspaceDO` (migration 137),
 keyed by the parent id of its `canvas`-kind conversation, with a participant
 list, a creator-only default, an Organization-wide option, guests invited
 through the share primitive keyed by the Canvas id, and administrators
@@ -1080,7 +1080,7 @@ artifacts are admitted to whoever opens it. `audienceAdmits` is the one rule
 under both `canvasAdmits` and `sidekickAdmits`. Each viewer's Canvas list,
 with unread, presence and pins, rides the workspace socket. A Canvas is made
 with `POST /canvases`; its Chat's publishes are its artifacts (recorded in
-`canvas_artifacts`, migration 136), and a Sidekick run publishes into a Canvas
+`canvas_artifacts`, migration 137), and a Sidekick run publishes into a Canvas
 it makes or one it writes. Rally in the Chat is told the Canvas's artifacts,
 and what it learns is the Canvas's memory.
 

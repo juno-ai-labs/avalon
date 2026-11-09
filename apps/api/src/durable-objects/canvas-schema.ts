@@ -1,5 +1,5 @@
 /**
- * WorkspaceDO migration 136 (the Canvas schema, one migration): a Canvas's
+ * WorkspaceDO migration 137 (the Canvas schema, one migration): a Canvas's
  * directory row and who besides its creator may open it.
  *
  * A Canvas is a conversation first: `canvas_id` is the parent id of its
@@ -71,7 +71,7 @@ export const CANVAS_SCHEMA_STATEMENTS: readonly string[] = [
   ) STRICT`,
   `CREATE INDEX canvas_participants_user_idx ON canvas_participants(user_id, canvas_id)`,
   // The Canvas list's waterline beside the other sidebar lists', and the
-  // Activity list's, whose row migration 139 inserts, so the table is copied
+  // Activity list's, whose row migration 140 inserts, so the table is copied
   // once. The CHECK cannot widen in place; nothing references the table.
   `CREATE TABLE workspace_sidebar_list_state_v136 (
     list TEXT PRIMARY KEY CHECK (list IN ('automations', 'notes', 'canvases', 'activity')),
@@ -84,7 +84,7 @@ export const CANVAS_SCHEMA_STATEMENTS: readonly string[] = [
 ];
 
 /**
- * Part of WorkspaceDO migration 136: a Sidekick's conversation attachments admit a
+ * Part of WorkspaceDO migration 137: a Sidekick's conversation attachments admit a
  * Canvas's Chat beside a Thread's, so `conversation_post` can name one. The
  * CHECK cannot widen in place; nothing references the table and it has no
  * index or trigger, so it is copied.
@@ -105,7 +105,7 @@ export const SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS: readonly string[] = [
 ];
 
 /**
- * Part of WorkspaceDO migration 136: a person pins a Canvas or a Sidekick in its
+ * Part of WorkspaceDO migration 137: a person pins a Canvas or a Sidekick in its
  * list's Pinned group, in the same `workspace_pins` table and order the other
  * pins use. Neither names a parent, so the CHECK that only a breakout and an
  * artifact carry one holds. A CHECK cannot widen in place; nothing references
@@ -136,7 +136,7 @@ export const CANVAS_SIDEKICK_PINS_STATEMENTS: readonly string[] = [
 ];
 
 /**
- * Part of WorkspaceDO migration 136: the artifacts a Canvas's conversation generated,
+ * Part of WorkspaceDO migration 137: the artifacts a Canvas's conversation generated,
  * written by the publish that attached each one (`HostedCanvas.noteArtifact`),
  * so the Canvas list and the detail read them without asking the
  * conversation. Its own table, not `workspace_workstream_resource_links`,
@@ -155,7 +155,7 @@ export const CANVAS_ARTIFACTS_STATEMENTS: readonly string[] = [
 ];
 
 /**
- * Part of WorkspaceDO migration 136: the retirement graph admits a Canvas.
+ * Part of WorkspaceDO migration 137: the retirement graph admits a Canvas.
  *
  * Retiring an Organization walks `workspace_retirement_graph`, whose CHECK
  * admitted only `workstream`, `automation` and `space`, so a Canvas's Chat was

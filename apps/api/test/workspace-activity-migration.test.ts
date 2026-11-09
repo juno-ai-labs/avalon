@@ -1,5 +1,5 @@
 /**
- * WorkspaceDO migration 139 makes each person's Activity after migration 138
+ * WorkspaceDO migration 140 makes each person's Activity after migration 139
  * has dropped the Thread-era table of the same purpose. It must create the
  * table every notice kind can land in, and add the Activity list's waterline
  * without touching the other lists' waterlines, which the sidebar reads to
@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
-const VERSION = 139;
+const VERSION = 140;
 const WORKSPACE_ID = "00000000-0000-7000-8000-00000000c139";
 const openDatabases: DatabaseSync[] = [];
 
@@ -33,7 +33,7 @@ afterEach(() => {
   while (openDatabases.length > 0) openDatabases.pop()?.close();
 });
 
-describe("WorkspaceDO migration 139", () => {
+describe("WorkspaceDO migration 140", () => {
   it("adds the Activity waterline beside the others, and records every notice kind with its subject", () => {
     const database = new DatabaseSync(":memory:");
     openDatabases.push(database);
