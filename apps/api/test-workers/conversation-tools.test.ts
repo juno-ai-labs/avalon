@@ -635,18 +635,20 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
   const SIDE_ROOM = () => asWorkstreamId(ROOM_ID.replace(/0a01$/u, "0a04"));
   const WRITTEN = () => asWorkstreamId(ROOM_ID.replace(/0a01$/u, "0a05"));
 
-  /** The Sidekick's configuration conversation, talking with `userId`. */
-  function configuration(userId: string) {
+  /** The Sidekick's configuration conversation, talking with `userId`, in a wizard turn unless `wizard` is false. */
+  function configuration(userId: string, wizard = true) {
     return WorkstreamWorkflowInputSchema.parse({
       region: "global", workspaceId: WORKSPACE_ID, parentKind: "automation", parentId: AUTOMATION_ID, substreamId: "0",
       loopId: `automation:${AUTOMATION_ID}:substream:0:loop`, harnessRunId: crypto.randomUUID(),
       triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId }, reason: "user_message",
+      // A wizard turn, as the claim marks one only for a manager.
+      ...(wizard ? { sidekickWizard: true } : {}),
     });
   }
 
   /** The real plugin over the real ports: WorkspaceDO's scope and each parent's admission. */
-  function conversationTools(userId: string) {
-    const input = configuration(userId);
+  function conversationTools(userId: string, wizard = true) {
+    const input = configuration(userId, wizard);
     const plugin = createConversationsPlugin(input, conversationToolPorts(TEST_ENV, input), (tool) => [tool]);
     if (!plugin) throw new Error("conversations_plugin_missing");
     const byName = new Map(plugin.tools.map((tool) => [tool.definition.name, tool]));
@@ -695,6 +697,16 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
       .then(() => null, (error: unknown) => error as { code: string; details: unknown });
     expect(byTitle).toMatchObject({ code: "conversation_not_in_scope", details: { available: [AUTOMATION_ID, WRITTEN(), ROOM_ID] } });
     expect(JSON.stringify(byTitle?.details)).not.toContain(SIDE_ROOM());
+  });
+
+  it("gives a turn in the configuration conversation that is not a manager's wizard turn neither attach nor post", async () => {
+    await seedCanvases();
+    // However such a turn was reached, the plugin is not there to call.
+    const input = configuration(COLLEAGUE_ID, false);
+    expect(createConversationsPlugin(input, conversationToolPorts(TEST_ENV, input), (tool) => [tool])).toBeNull();
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `SELECT parent_id FROM sidekick_conversation_attachments WHERE automation_id = ?`, AUTOMATION_ID,
+    ).toArray())).toEqual([]);
   });
 
   it("refuses to attach a Canvas the person cannot open, and never names one by a title they cannot see", async () => {

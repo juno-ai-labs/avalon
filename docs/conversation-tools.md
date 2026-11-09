@@ -37,7 +37,7 @@ conversations are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 | Loop | Scope | Tools | Acts as |
 | --- | --- | --- | --- |
-| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's own conversation (`isOwn`), the Canvases it writes, and the Canvases attached to it | list, read, search, post, attach | The person talking to it |
+| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run), a wizard turn only (`sidekickWizard`, which the claim sets only for a principal who manages the Sidekick) | The Sidekick's own conversation (`isOwn`), the Canvases it writes, and the Canvases attached to it | list, read, search, post, attach | The person talking to it |
 | Sidekick run (`automationRun` present) | The Sidekick's own conversation (`isParent`), the Canvases it writes, and the Canvases attached to it | list, read, search, post | The run-as user |
 
 A Canvas's Chat gets no conversation tools: its own transcript is its context.
@@ -328,7 +328,12 @@ disclosed by a guess. Read, search and post resolve a title the same way
 whole scope before admission, so a unique title the person could not open came
 back as `conversation_access_denied` carrying that Canvas's id, which reached
 the model. A refusal names a conversation's id only when the caller supplied
-it. A readable archived Canvas named by title now reads as not in scope rather
+it. The configuration conversation's tools also follow the wizard mark now
+(`sidekickWizard`): a turn there that the claim did not mark as a manager's
+wizard turn gets none, so attach (which widens every later run's reach) and
+post (which speaks as the Sidekick) cannot be reached by a non-manager however
+the turn started; the claim refuses any non-human input there whose principal
+does not manage the Sidekick. A readable archived Canvas named by title now reads as not in scope rather
 than archived, the cost of matching titles only among what can be opened.
 
 Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
