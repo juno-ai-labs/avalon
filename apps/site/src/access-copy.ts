@@ -1,7 +1,7 @@
 /** Approved landing copy. */
 export const accessCopy = {
-  title: 'Rally: AI for you, then your whole team',
-  description: 'Start a Canvas with Rally on your own, and bring your team into the same chat when the work needs them. Rally makes the document, spreadsheet or site; Sidekicks take the work that repeats.',
+  title: 'Rally: live documents, sheets and sites that keep themselves current',
+  description: 'Rally makes live Canvases: documents, spreadsheets and sites built from your tools and kept current as things happen in them. Start on your own, then bring your team into the same Canvas.',
 };
 
 export function renderAccessCopy(html: string): string {

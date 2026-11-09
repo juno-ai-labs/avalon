@@ -52,7 +52,7 @@
   --radius-sm:10px;
   --ease:cubic-bezier(.2,.7,.1,1);
 
-  --step-hero:clamp(4.25rem,17vw,12.5rem);
+  --step-hero:clamp(3.5rem,11vw,9.5rem);
   --step-1:clamp(2.75rem,6.6vw,6.25rem);
   --step-2:clamp(2.125rem,4.4vw,4rem);
   --step-3:clamp(1.5rem,2.4vw,2.125rem);
@@ -158,20 +158,20 @@ h3{font-size:1.25rem;font-weight:550;letter-spacing:-.02em;line-height:1.2}
 @keyframes breathe{50%{box-shadow:0 0 0 7px rgb(31 191 106/.06)}}
 .hero-grid{display:grid;grid-template-columns:auto minmax(0,400px);justify-content:space-between;align-items:end;gap:40px 64px}
 .hero-title{position:relative;display:inline-block;justify-self:start;font-size:var(--step-hero);line-height:.88;letter-spacing:-.06em;font-weight:500}
-.hero-title .line{display:block}
+.hero-title .line{display:block;white-space:nowrap}
 .hero-title em{letter-spacing:-.035em;padding-right:.04em}
 /* Name tags hang off the headline: the people in the room, and Rally. */
 .tag{position:absolute;display:inline-flex;align-items:center;gap:6px;padding:5px 10px 5px 6px;border-radius:999px 999px 999px 4px;background:var(--who,var(--ink));color:#fff;font-family:var(--sans);font-size:clamp(.75rem,1vw,.9375rem);font-style:normal;font-weight:500;letter-spacing:-.01em;line-height:1;white-space:nowrap;box-shadow:0 10px 30px -10px rgb(12 12 17/.4);animation:tag-in .9s var(--ease) both,float 7s ease-in-out infinite}
 .tag::before{content:attr(data-initial);display:grid;place-items:center;width:1.5em;height:1.5em;border-radius:50%;background:rgb(255 255 255/.22);font-size:.85em}
-.tag-maya{--who:var(--maya);left:96%;top:4%;animation-delay:.5s,1.4s}
-.tag-theo{--who:var(--theo);left:-1%;top:44%;animation-delay:.8s,0s;border-radius:999px 999px 4px 999px}
-.tag-rally{--who:var(--ultra);left:97%;top:66%;animation-delay:1.1s,.6s}
+.tag-a{--who:var(--ink);left:86%;top:-8%;animation-delay:.5s,1.4s}
+.tag-b{--who:var(--ink);left:-2%;top:50%;animation-delay:.8s,0s;border-radius:999px 999px 4px 999px}
+.tag-c{--who:var(--ultra);left:78%;top:92%;animation-delay:1.1s,.6s}
 @keyframes tag-in{from{opacity:0;transform:translateY(10px) scale(.9)}}
 @keyframes float{50%{translate:0 -6px}}
 .hero-aside{display:grid;gap:28px;padding-bottom:.6rem}
 .hero-actions{display:flex;flex-wrap:wrap;gap:12px}
 @media (max-width:1100px){.hero-grid{grid-template-columns:1fr}.hero-aside{max-width:36rem}}
-@media (max-width:640px){.tag-maya{left:auto;right:-2%;top:-14%}.tag-rally{left:auto;right:0;top:auto;bottom:-16%}}
+@media (max-width:640px){.tag-a,.tag-b{display:none}.tag-c{left:auto;right:0;top:auto;bottom:-30%}.hero-title{margin-bottom:24px}}
 @media (hover:none) and (pointer:coarse){.hero-download{display:none}}
 
 /* ---------- The live Canvas stage ---------- */
@@ -187,65 +187,64 @@ h3{font-size:1.25rem;font-weight:550;letter-spacing:-.02em;line-height:1.2}
 .face{display:grid;place-items:center;width:28px;height:28px;margin-left:-6px;border:2px solid var(--surface);border-radius:50%;background:var(--who);color:#fff;font-size:.75rem;font-weight:600;transition:opacity .5s var(--ease),transform .5s var(--ease)}
 .face.maya{--who:var(--maya)}.face.theo{--who:var(--theo)}.face.priya{--who:var(--priya)}
 .win-share{padding:6px 14px;border-radius:999px;background:var(--ink);color:var(--paper);font-weight:500}
-.win-body{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);min-height:440px}
-.chat{display:flex;flex-direction:column;gap:14px;padding:22px;border-right:1px solid var(--line)}
-.msg{display:grid;grid-template-columns:28px minmax(0,1fr);gap:4px 10px;transition:opacity .5s var(--ease),transform .5s var(--ease)}
+.win-live{display:inline-flex;align-items:center;gap:8px;padding:5px 11px;border-radius:999px;background:var(--ultra-wash);color:var(--ultra);font-family:var(--mono);font-size:.6875rem;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
+.win-live i{width:7px;height:7px;border-radius:50%;background:var(--live);box-shadow:0 0 0 3px rgb(31 191 106/.2);animation:breathe 2.4s ease-in-out infinite}
+.win-body{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);min-height:440px}
+.feed{display:flex;flex-direction:column;gap:12px;padding:22px;border-right:1px solid var(--line)}
+.feed-head{font-family:var(--mono);font-size:.6875rem;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-3)}
+.ev{display:grid;grid-template-columns:72px minmax(0,1fr);gap:10px;align-items:start;transition:opacity .5s var(--ease),transform .5s var(--ease)}
+.ev .src{padding:4px 0;border:1px solid var(--line);border-radius:6px;background:var(--bg);font-family:var(--mono);font-size:.6875rem;text-align:center;color:var(--fg-2)}
+.ev .src.rally{border-color:var(--ultra);color:var(--ultra)}
+.ev b{display:block;font-weight:500;font-size:.875rem;line-height:1.35}
+.ev .ver{display:inline-block;margin-top:4px;font-family:var(--mono);font-size:.6875rem;font-style:normal;color:var(--ultra);transition:opacity .4s}
+.msg{display:grid;grid-template-columns:28px minmax(0,1fr);gap:2px 10px;transition:opacity .5s var(--ease),transform .5s var(--ease)}
 .msg::before{content:attr(data-initial);grid-row:span 2;display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--who);color:#fff;font-size:.75rem;font-weight:600}
-.msg.maya{--who:var(--maya)}.msg.theo{--who:var(--theo)}.msg.priya{--who:var(--priya)}
-.msg.rally{--who:var(--ultra)}
-.msg.rally::before{content:'';background:var(--ultra) url('/brand/rally-mark-paper.svg') center/15px no-repeat}
+.msg.maya{--who:var(--maya)}
 .msg>*{grid-column:2}
 .msg b{font-weight:600;font-size:.8125rem}
-.msg p{color:var(--fg-2);line-height:1.45}
-.msg .tools{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 4px}
-.msg .tools span{padding:3px 8px;border:1px solid var(--line);border-radius:6px;font-family:var(--mono);font-size:.6875rem;color:var(--fg-3)}
-.typing{display:flex;gap:4px;padding:6px 0 0 38px;transition:opacity .3s}
+.msg p{color:var(--fg-2);line-height:1.45;font-size:.875rem}
+.typing{display:flex;gap:4px;padding:2px 0 0 82px}
 .typing i{width:6px;height:6px;border-radius:50%;background:var(--ultra);animation:dot 1s infinite}
 .typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
 @keyframes dot{50%{opacity:.25;transform:translateY(-2px)}}
 .composer{margin-top:auto;padding:12px 14px;border:1px solid var(--line);border-radius:12px;color:var(--fg-3)}
-.doc{position:relative;padding:28px clamp(20px,3vw,40px);background:linear-gradient(var(--surface),var(--surface))}
+.doc{position:relative;padding:28px clamp(20px,3vw,40px)}
 .doc-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;font-family:var(--mono);font-size:.6875rem;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-3)}
-.doc-ver{position:relative;display:grid}
+.doc-ver{display:grid;color:var(--ultra)}
 .doc-ver span{grid-area:1/1;text-align:right;transition:opacity .4s}
-.doc-ver .v2{color:var(--ultra)}
-.doc-empty{position:absolute;inset:70px 24px auto;text-align:center;color:var(--fg-3);transition:opacity .4s}
-.doc-body{transition:opacity .6s var(--ease),transform .6s var(--ease)}
-.doc h4{margin:0 0 14px;font-size:1.625rem;font-weight:550;letter-spacing:-.035em;line-height:1.1}
-.doc p{margin:0 0 12px;color:var(--fg-2);line-height:1.55}
-.doc-row{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-top:1px solid var(--line)}
-.doc-row:last-of-type{border-bottom:1px solid var(--line)}
-.doc-row span{color:var(--fg-3)}
-.doc-row strong{position:relative;display:grid;font-weight:550;text-align:right}
-.doc-row strong i{grid-area:1/1;font-style:normal;transition:opacity .4s}
-.doc-row strong .new{color:var(--ultra)}
-.doc-row.changed{animation:none}
-.pin{position:relative;margin-top:28px;margin-left:auto;display:flex;align-items:flex-start;gap:8px;max-width:230px;transition:opacity .5s var(--ease),transform .5s var(--ease)}
-.pin b{flex:none;display:grid;place-items:center;width:26px;height:26px;border-radius:50% 50% 50% 4px;background:var(--priya);color:#fff;font-size:.75rem;box-shadow:0 6px 16px -6px rgb(12 12 17/.4)}
-.pin span{padding:8px 10px;border-radius:10px;background:var(--ink);color:var(--paper);font-size:.8125rem;line-height:1.35;box-shadow:0 16px 30px -16px rgb(12 12 17/.6)}
-.pin.done span{text-decoration:line-through;opacity:.6}
+.doc h4{margin:0 0 18px;font-size:1.625rem;font-weight:550;letter-spacing:-.035em;line-height:1.1}
+.sheet{display:grid;grid-template-columns:1.2fr 1.1fr .7fr;border-top:1px solid var(--line)}
+.sheet>span{display:grid;align-items:center;padding:11px 10px 11px 0;border-bottom:1px solid var(--line);font-size:.875rem;transition:opacity .5s,background 1.6s}
+.sheet .th{font-family:var(--mono);font-size:.6875rem;letter-spacing:.05em;text-transform:uppercase;color:var(--fg-3)}
+.sheet .stage-cell i{grid-area:1/1;font-style:normal;transition:opacity .4s}
+.sheet .stage-cell .new{color:var(--ultra);font-weight:550}
+.sheet .nx{display:none}
 .stage-caption{display:flex;justify-content:space-between;gap:16px;margin-top:18px;font-family:var(--mono);font-size:.6875rem;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-3)}
 
 /* Scene states. The markup ships with every step on, so the finished scene
-   shows without script and for reduced motion; live-canvas.ts clears them
-   and turns them on one at a time. */
-.stage:not(.is-1) .face.theo,.stage:not(.is-4) .face.priya{opacity:0;transform:scale(.6)}
-.stage:not(.is-1) .m1,.stage:not(.is-3) .m2,.stage:not(.is-5) .m3,.stage:not(.is-7) .m4{opacity:0;transform:translateY(10px)}
-.stage:not(.is-1) .m1,.stage:not(.is-3) .m2,.stage:not(.is-5) .m3,.stage:not(.is-7) .m4{display:none}
+   shows without script and for reduced motion; site-motion.ts clears them
+   and turns them on one at a time: 1 Gmail arrives, 2 v13, 3 Granola
+   arrives, 4 v14, 5 Maya and Theo open it and Maya asks, 6 Rally works,
+   7 v15. */
+.stage:not(.is-1) .e1,.stage:not(.is-3) .e2,.stage:not(.is-5) .m3,.stage:not(.is-7) .e3{display:none}
+.stage:not(.is-2) .e1 .ver,.stage:not(.is-4) .e2 .ver{opacity:0}
+.stage:not(.is-5) .face{opacity:0;transform:scale(.6)}
+.face{transition:opacity .5s var(--ease),transform .5s var(--ease)}
 .stage .typing{display:none}
-.stage.is-2:not(.is-3) .typing.t1,.stage.is-6:not(.is-7) .typing.t2{display:flex}
-.stage:not(.is-3) .doc-body{opacity:0;transform:translateY(12px)}
-.stage.is-3 .doc-empty{opacity:0}
-.stage:not(.is-4) .pin{opacity:0;transform:translateY(8px) scale(.95)}
-.stage:not(.is-7) .doc-ver .v2,.stage.is-7 .doc-ver .v1{opacity:0}
-.stage:not(.is-7) .doc-row strong .new,.stage.is-7 .doc-row strong .old{opacity:0}
-.stage.is-7 .doc-row.changed{animation:flash 1.6s var(--ease)}
-.stage.is-7 .pin span{text-decoration:line-through;opacity:.55}
+.stage.is-6:not(.is-7) .typing.t2{display:flex}
+.stage .doc-ver span{opacity:0}
+.stage:not(.is-2) .doc-ver .va,.stage.is-2:not(.is-4) .doc-ver .vb,.stage.is-4:not(.is-7) .doc-ver .vc,.stage.is-7 .doc-ver .vd{opacity:1}
+.stage:not(.is-2) .stage-cell .new,.stage.is-2 .stage-cell .old{opacity:0}
+.stage.is-2 .r-acme{animation:flash 1.6s var(--ease)}
+.stage:not(.is-4) .r-north{display:none}
+.stage.is-4 .r-north{animation:flash 1.6s var(--ease)}
+.stage.is-7 .sheet{grid-template-columns:1.1fr 1fr .6fr 1.1fr}
+.stage.is-7 .sheet .nx{display:grid;animation:flash 1.6s var(--ease)}
 @keyframes flash{0%{background:var(--ultra-wash)}100%{background:transparent}}
 @media (max-width:760px){
   .win-body{grid-template-columns:1fr}
-  .chat{border-right:0;border-bottom:1px solid var(--line)}
-  .win-share,.win-dots{display:none}
+  .feed{border-right:0;border-bottom:1px solid var(--line)}
+  .win-share,.win-dots,.win-live{display:none}
 }
 
 /* ---------- Statement ---------- */
@@ -544,3 +543,9 @@ h3{font-size:1.25rem;font-weight:550;letter-spacing:-.02em;line-height:1.2}
 .face.more{--who:var(--paper-3);color:var(--ink);font-size:.75rem}
 .scale-note{margin-top:auto;padding-top:16px;border-top:1px solid var(--line);font-family:var(--mono);font-size:.75rem;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-3)}
 @media (max-width:900px){.scale{grid-template-columns:1fr}.scale::before{display:none}}
+.signals{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.signals span{display:inline-flex;align-items:baseline;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);font-size:.875rem}
+.signals b{font-family:var(--mono);font-size:.6875rem;font-weight:450;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-3)}
+.signals .arrow{padding:0;border:0;background:none;color:var(--fg-3)}
+.signals .v{border-color:var(--ultra);color:var(--ultra);font-family:var(--mono);font-size:.75rem}
+.scale-after{margin-top:16px}

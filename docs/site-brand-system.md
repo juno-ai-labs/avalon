@@ -26,38 +26,43 @@ by [`site-blog.md`](site-blog.md).
 | `apps/site/index.html`, `start-fast/`, `canvases/`, `sidekicks/`, `pricing/`, `company/` | The pages. |
 | `apps/site/src/access-copy.ts` | The home page's title and description. |
 | `apps/site/src/fonts/` | Geist, Geist Mono and Instrument Serif (and Barlow, for the help center); see its README. |
-| `apps/site/public/rally-og.jpg` | The home, product page and blog-index social card: the hero headline and its three name tags at 1200×630, drawn once in a browser from the site's own fonts and saved as a static JPEG. `scripts/generate-brand-assets.py` still writes the earlier `rally-social*.jpg` cards, which no page references now; they stay published because unfurls already cached point at them. |
+| `apps/site/public/rally-og.jpg` | The home, product page and blog-index social card: the hero headline and its three event tags at 1200×630, drawn once in a browser from the site's own fonts and saved as a static JPEG. `scripts/generate-brand-assets.py` still writes the earlier `rally-social*.jpg` cards, which no page references now; they stay published because unfurls already cached point at them. |
 | `apps/site/public/brand/rally-mark-paper.svg` | The mark in white, for ink grounds and Rally's avatar. |
 
 ## How it works
 
 ### The brief
 
-Rally is AI for groups of people, not for one person at a keyboard. Two modes
-carry that: a **Canvas** (a shared conversation with Rally, and the thing Rally
-makes there, version by version) and a **Sidekick** (an AI agent a team shares,
-which runs on a schedule, on an event, or when asked). The audience is
-knowledge workers in small teams, including people who are not engineers.
+The site argues two things, **in this order**:
 
-Rally has to read as useful to **one person on day one** and as something that
-**grows into a team** without starting over: everything starts private, and
-the same Canvas or Sidekick is shared later. A visitor who is alone must not
-conclude the product is not for them. The `scale` partial (Just you → You and a
-teammate → The whole team) says this directly on `/` and `/canvases/`, and the
-hero kicker, hero lede, Sidekicks lede, pricing copy and closing call each
-repeat it.
+1. **Live artifacts first.** A Canvas is a document, spreadsheet or site Rally
+   builds from the team's connected tools and **keeps current as things happen
+   in them**: a Sidekick wakes on a schedule or an event (a customer email, a
+   merged pull request, a call note) and publishes the next version. This is
+   the headline, the hero scene, and the first chapter on `/` and
+   `/canvases/`.
+2. **Multiplayer second.** The same Canvas starts private to one person and
+   can be shared with a teammate, a guest or the organization. It is chapter 04
+   on `/`, after Connectors and Sidekicks, and chapter 03 on `/canvases/`.
+   The `scale` partial (Just you → You and a teammate → The whole team) is the
+   one block that shows it; a visitor who is alone must not conclude the
+   product is not for them.
 
-The positioning line is **"Make it together."** The supporting idea, used on
-the company page and the footer, is **"AI is better in company."** Every page
-argues one of three points: the work is shared (Canvases), the repeat work is
-handled (Sidekicks), and the price does not punish inviting people (per
-organization, no seats).
+Connectors are framed as the signals that keep a Canvas live, and Sidekicks
+as the engine that does it (and that also takes repeat work needing no
+Canvas). The audience is knowledge workers in small teams, including people
+who are not engineers.
+
+The positioning line is **"Make it once. It stays live."** The supporting
+idea, used on the company page and the footer, is **"AI is better in
+company."** The price argument is unchanged: per organization, no seats, so
+going from one person to fifty costs nothing per head.
 
 ### Voice
 
 Short declarative sentences, plain words, a concrete example over an
 adjective. Headlines are two beats: a plain statement, then a turn set in
-the serif italic ("Ask once. Everyone sees it *take shape.*"). Body copy names
+the serif italic ("Built from your tools. *Kept current by them.*"). Body copy names
 real things a team would recognize (a Granola note, a merged pull request, a
 launch plan) and real states from the product ("Needs input", "Live now",
 "version 2").
@@ -102,14 +107,16 @@ radius and a hairline.
 
 ### The Canvas scene
 
-`partials/live-canvas.html` is a Canvas window drawn in HTML: a header with
-faces, the shared chat, and the document panel. Its markup ships with every
-step class (`is-1` … `is-7`) on, which is the finished scene. `site-motion.ts`
-clears them and turns them on one by one while the scene is on screen: Maya
-asks, Rally reads two tools and publishes version 1, Priya pins a comment,
-Theo answers, Rally publishes version 2 with the price and the comment
-resolved. It starts with Maya alone and the others' faces arrive as they join,
-so the scene itself shows one person growing into a room. It pauses off screen and loops.
+`partials/live-canvas.html` is a live Canvas drawn in HTML: a header with a
+"Live · kept by Pipeline keeper" badge, a versions list on the left, and a
+spreadsheet on the right. Its markup ships with every step class (`is-1` …
+`is-7`) on, which is the finished scene. `site-motion.ts` clears them and
+turns them on one by one while the scene is on screen: a Gmail reply from
+Acme arrives and the Sidekick publishes version 13 (Acme moves to
+Negotiation); a Granola call note arrives and version 14 adds Northwind; then
+Maya and Theo open it, Maya asks for a next-step column, and Rally publishes
+version 15. The order is the message order: live first, people second. It
+pauses off screen and loops.
 
 ### Pages
 
@@ -126,8 +133,10 @@ so the scene itself shows one person growing into a room. It pauses off screen a
 
 - **The scene shows only what the product does.** Live co-editing, shared
   cursors and the pending-edit shimmer were cut from the pivot (see the PRD's
-  plan). The scene shows presence, a shared chat, comments and published
-  versions, and the name tags in the hero are people in the room, not cursors.
+  plan). The scene shows a Sidekick publishing versions on events, presence,
+  a shared chat and published versions; the hero's tags are events and a
+  version, not cursors. "Live" means a new version published on a signal,
+  never in-place streaming edits.
   Drawing a cursor editing the document would advertise a feature that does
   not exist.
 - **Without script, everything is visible.** `.reveal` hides content only under
@@ -199,8 +208,9 @@ three.js Technology schematic was deleted with its loader, tests, document
 (`landing-technology-schematic.md`) and the `three` dependency. The closing
 call gained a tracked web-entry link, `web-app-closing`.
 
-**Why:** The owner also asked that it be obvious Rally works for one
-person and scales to many, which the first draft undersold. The pivot deleted Channels, Threads and Breakouts and left two modes;
+**Why:** The owner set the focus: live artifacts (Canvases that change with
+activity in connected tools) first, multiplayer second, and it must be obvious
+Rally works for one person and scales to many. The pivot deleted Channels, Threads and Breakouts and left two modes;
 the old page sold a "shared chat between multiple humans" that no longer
 describes the product. The owner asked for the site to be rethought from
 nothing, as a brand agency would, rather than reworded. The schematic drew five
@@ -213,7 +223,9 @@ that maps to Canvases and Sidekicks. Shared cursors as the hero motif, which
 the pivot's plan cut from scope. Adding a new placement for the closing link,
 which would need the API deployed first; `body` already existed.
 
-**Consequences:** Copy must keep the one-person case visible: a line that
+**Consequences:** Live artifacts lead and multiplayer follows, on every page
+and in the scene; a new section goes after the live chapters unless it is
+about live Canvases. Copy must keep the one-person case visible: a line that
 only speaks to teams ("bring everyone", "for the whole room") needs a
 solo counterpart nearby. Any new marketing page loads `site.css` and the `site-header`
 and `site-footer` markers. A page that shows a block another page shows uses a
