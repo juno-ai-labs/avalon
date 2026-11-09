@@ -220,6 +220,31 @@ phone widths.
 
 ## Changelog
 
+### 2026-11-09 — Wildcard redirects go last, and only renamed pages redirect
+
+**What changed:** The nine wildcard rules in `apps/site/public/_redirects`
+moved to the end of the file, and the redirects for help pages retired in the
+Canvases and Sidekicks pivot went from 82 to 15: one per page whose subject
+still exists under a new name, at its trailing-slash address.
+
+**Why:** The site deploy after #1490 failed with Cloudflare code 100324,
+"Maximum number of dynamic _redirects rules limit of 100 exceeded". Cloudflare
+counts every rule after the first wildcard as dynamic (100 allowed) rather than
+static (2,000 allowed), and `/app/*` sat at the top. Reordering alone fixed the
+limit; the cut was the owner's call, because only the trailing-slash form is
+likely to circulate and a removed feature's page sent to a loosely related one
+misleads more than a 404.
+
+**Considered and rejected:** Keeping all 82 rules after the reorder, which
+fits the limit but keeps slashless, `.md` and `llms.txt` copies and pages for
+removed features (iPhone, the digest, email-in).
+
+**Consequences:** New exact rules go above the wildcard block, and the exact
+`/support/...` rules stay above `/support/*`, which they overlap. A renamed
+page gets one trailing-slash redirect; a removed feature's page answers 404.
+
+Shipped in juno-ai-labs/avalon#1493.
+
 ### 2026-10-01 — Help center built from Markdown at /help/
 
 **What changed:** Added the help center: a content folder, a build step that
