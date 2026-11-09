@@ -5103,6 +5103,14 @@ export class WorkstreamObjectProductService {
       });
       if (refusal) throw new ApiError(403, refusal, "Only the people this run acts for can retry it");
     }
+    // In the Sidekick's own conversation a retry re-runs a wizard turn, with
+    // the authoring tools, as the retrier, and activates without the claim,
+    // so it is held here to the claim's rule: only a manager.
+    if (identity?.parentKind === "automation" && sidekickRunId === "0" && !await this.sidekickAllowsManager({
+      workspaceId: auth.workspaceId, automationId: identity.parentId, actor: { userId: auth.userId, actorRole: auth.role },
+    })) {
+      throw new ApiError(403, "sidekick_edit_requires_manager", "Only the people who manage this Sidekick can retry its wizard");
+    }
     const latest = first(this.storage.sql.exec<{
       run_id: string;
       status: string;
