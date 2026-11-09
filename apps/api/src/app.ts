@@ -39,6 +39,7 @@ import { linkRoutes } from "./routes/links";
 import { telemetryOperatorRoutes } from './routes/telemetry-operations';
 import { deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
+import { mcpOAuthRoutes } from "./routes/mcp-oauth";
 import { workspaceOperatorRoutes } from './routes/workspace-operations';
 import {
   isAllowedGitHubIngressRoute,
@@ -127,6 +128,8 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/health", healthRoutes);
   app.route("/access", privateAccessRoutes);
   app.route("/auth", authRoutes);
+  // Rally's MCP authorization server; the MCP Worker forwards here (`docs/rally-mcp.md`).
+  app.route("/mcp-oauth", mcpOAuthRoutes);
   app.route("/browser",createBrowserRoutes((request,c) => {
     let executionContext;
     try { executionContext = c.executionCtx; } catch { /* Route tests have no Worker context. */ }

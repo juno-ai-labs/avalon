@@ -1,0 +1,10 @@
+{
+  "name": "rally",
+  "displayName": "Rally",
+  "version": "1.0.0",
+  "description": "Create, update, share and maintain Rally Canvases from Claude: shared conversations with Rally and the documents, sheets and sites they generate.",
+  "author": { "name": "Juno AI Labs Inc" },
+  "homepage": "https://rallywith.ai",
+  "license": "UNLICENSED",
+  "keywords": ["rally", "canvas", "collaboration", "mcp"]
+}

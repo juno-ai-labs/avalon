@@ -43,6 +43,12 @@ loser's session. There is no mutable active-workspace field. Selecting workspace
 A leaves a tab using B unchanged. Child expiry cannot exceed the identity
 session's expiry.
 
+`GET /browser/oauth/authorization`, `POST /browser/oauth/approve` and
+`POST /browser/oauth/deny` are the consent half of the MCP authorization
+server: the cookie names the person who approves an MCP client, and approval
+answers a redirect URL carrying a single-use code, never a session
+credential. [`rally-mcp.md`](rally-mcp.md#consent) owns them.
+
 `POST /browser/workspace/create` creates an organization; see
 [browser client](browser-client.md#creating-an-organization).
 
