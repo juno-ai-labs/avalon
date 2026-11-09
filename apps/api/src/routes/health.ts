@@ -7,6 +7,7 @@ import { assertEnvContract, EnvContractError, type HonoAppEnv } from "../env";
 import {
   durableObjectStubForRegionalSingleton,
 } from "../lib/durable-object-namespace";
+import { ApiError } from "../lib/api-error";
 import { logEvent } from "../observability/logger";
 import { opsNotificationsConfigured } from "../observability/ops-slack-notifier";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
@@ -232,7 +233,11 @@ healthRoutes.get("/", async (c) => {
     logEvent(c, "warn", "workstream_email_registry_health_check_failed", { reason });
     checks.workstreamEmailRegistry = {
       ok: false,
-      message: c.env.APP_ENV === "development" ? reason : "unavailable",
+      // The error code is schema shape, not data, so production may name it;
+      // the message can carry a caught error's own text and stays out.
+      message: c.env.APP_ENV === "development"
+        ? reason
+        : error instanceof ApiError ? `unavailable (${error.code})` : "unavailable",
     };
   }
   const inboundConfigured = c.env.AVALON_REGION !== "global"

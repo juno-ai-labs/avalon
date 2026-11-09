@@ -142,6 +142,23 @@ describe("the health probe under a misconfigured environment", () => {
     expect(response.status).toBe(503);
   });
 
+  it("names the missing email address key when the production registry is unavailable", async () => {
+    const app = new Hono<HonoAppEnv>();
+    app.route("/health", healthRoutes);
+    const response = await app.request("/health", undefined, createInvalidTestEnv({
+      DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
+      PAYLOADS: { list: async () => ({ objects: [] }) },
+      AVALON_REGION: "global",
+      APP_ENV: "production",
+    }));
+
+    const body = await response.json() as { checks: Record<string, { ok: boolean; message: string }> };
+    expect(body.checks.workstreamEmailRegistry).toEqual({
+      ok: false,
+      message: "unavailable (workstream_email_key_unavailable)",
+    });
+  });
+
   it("still answers when the region and environment are absent entirely", async () => {
     // The two fields the response itself is built from are contract fields
     // too. `z.string()` rejects `undefined`, so without a fallback a Worker
