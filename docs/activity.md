@@ -375,8 +375,8 @@ them. The menu bar does not read it; the dock badge, and the push badge, count i
   A run that takes longer than the Queue's delivery delay is not affected.
 - **Mark all seen while the socket is down** is not sent; the button does
   nothing until it reconnects.
-- **An older desktop** ignores `workspace_activity_list` by type and strips
-  the subscribe payload's `activity` page.
+- **A desktop from before the pivot** is refused the workspace socket ticket
+  (`MINIMUM_SERVED_CLIENT_CONTRACT`), so it is sent no Activity at all.
 
 ## Testing
 

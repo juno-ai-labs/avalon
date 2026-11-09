@@ -1,8 +1,7 @@
 /**
  * Which kinds a person's notification record holds and which choice a push
- * reads: Settings offers only kinds a producer records, `merges` stays only
- * where a person stored it, the two kinds the previous release's desktop
- * requires read as they did then, and no Thread-era kind is consulted.
+ * reads: Settings offers only kinds a producer records, and a Thread-era kind
+ * a person stored is neither in the record nor consulted.
  */
 import { describe, expect, it } from "vitest";
 
@@ -13,16 +12,16 @@ const row = (notify: Record<string, unknown>, push: Record<string, unknown> = {}
 });
 
 describe("member notification kinds", () => {
-  it("defaults the offered kinds, access requests among them, and leaves merges out", () => {
+  it("defaults the offered kinds, access requests among them", () => {
     expect(storedMemberPreferences(row({})).notify).toEqual({
       mentions: ["push"], newMessages: ["push"], added: ["push"], runFinished: ["push"],
-      artifactUpdates: ["push"], accessRequests: ["push"], newThreads: ["push"], newBreakouts: ["push"],
+      artifactUpdates: ["push"], accessRequests: ["push"],
     });
   });
 
-  it("keeps a Thread-era kind a person stored, without consulting it", () => {
+  it("drops a Thread-era kind a person stored", () => {
     const notify = storedMemberPreferences(row({ newThreads: ["email"], merges: ["email"] })).notify;
-    expect(notify).toMatchObject({ newThreads: ["email"], merges: ["email"] });
+    expect(Object.keys(notify).sort()).toEqual(["accessRequests", "added", "artifactUpdates", "mentions", "newMessages", "runFinished"]);
     expect(notificationAllows(notify, "thread_started", "email")).toBe(false);
     expect(notificationAllows(notify, "merged", "email")).toBe(false);
   });

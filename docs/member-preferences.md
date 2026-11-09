@@ -40,17 +40,15 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
    way, so a stored Slack choice is read as absent and never consulted (and a
    save naming it is dropped the same way). `push` in the
    record is derived from the channels, for clients older than them. A kind
-   newer than the push switches (`merges`) has no switch: it reads from its
-   default until set, and `NotificationChannelsSchema` defaults it so a client
-   reading an older server's record still parses. The Thread-era kinds
-   `newThreads`, `newBreakouts` and `merges` have no producer: they are still
-   accepted where a person stored them, and a save naming them still lands,
-   but they are not offered and never consulted. `merges` is in the record
-   only when stored. `newThreads` and `newBreakouts` are in it always, the
-   stored value or the previous release's default (`PREVIOUS_RELEASE_DEFAULTS`),
-   because a desktop of that release requires them to parse the record; this
-   window closes once every desktop has updated, as the socket's `workstreams`
-   page's did.
+   newer than the push switches has no switch: it reads from its default until
+   set, and `NotificationChannelsSchema` defaults it so a client reading an
+   older server's record still parses. The Thread-era kinds `newThreads`,
+   `newBreakouts` and `merges` are not kinds any more: a stored record naming
+   them is read without them, a save naming them is stripped of them, and
+   their old push switches carry into nothing. No served desktop requires them,
+   since a build from before the Canvases and Sidekicks pivot is refused the
+   workspace socket (`MINIMUM_SERVED_CLIENT_CONTRACT`,
+   [`realtime-sockets.md`](realtime-sockets.md#failure-modes-and-limits)).
 2. **First paint.** The WorkspaceDO's answer to a workspace socket `subscribe`
    carries `viewerPreferences` beside `featureFlags`. The renderer writes it to
    `['member-preferences', workspaceId]`, so the first frame already honours it
@@ -116,10 +114,8 @@ predates the field sends no `viewerPreferences`, which also reads as defaults.
 ## Testing
 
 `apps/api/test/member-preferences-kinds.test.ts` covers the record's kinds
-(the offered six defaulted, a stored Thread-era kind kept and never read) and
-which choice each pushed kind reads;
-`member-preferences-previous-release.test.ts` that the record parses under
-the previous release's schema.
+(the offered six defaulted, a stored Thread-era kind dropped) and which choice
+each pushed kind reads.
 `apps/api/test-workers/member-push-preferences-migration.test.ts` covers
 migrations 106 and 107 over populated rows.
 
@@ -156,15 +152,12 @@ Shipped in juno-ai-labs/avalon#1490.
 ### 2026-11-08 — Settings offers only kinds a producer records, and Access requests joins them
 
 **What changed:** `NotificationKindSchema` gains `accessRequests` (default
-push); `OFFERED_NOTIFICATION_KINDS` names the six Settings offers. `newThreads`,
-`newBreakouts` and `merges` are optional in `NotificationChannelsSchema` and
-absent from `DEFAULT_NOTIFICATION_CHANNELS`; the server still emits
-`newThreads` and `newBreakouts` in the record, stored or `["push"]`, for one
-release, for a person with no stored row too (the no-row read first returned
-the bare defaults, so that desktop failed to parse exactly the people who had
-never opened Settings). `NOTIFICATION_KIND_FOR_PUSH` drops `thread_started`,
+push); `OFFERED_NOTIFICATION_KINDS` names the six Settings offers, which are
+now every kind: `newThreads`, `newBreakouts` and `merges` are deleted from
+`NotificationKindSchema` and `NotificationChannelsSchema`, so a stored record
+or a save naming them is read without them. `NOTIFICATION_KIND_FOR_PUSH` drops `thread_started`,
 `breakout_started` and `merged`, and maps `access_request` to
-`accessRequests` and `access_granted` to `added`. Client: Settings → Notifications draws its rows from `OFFERED_NOTIFICATION_KINDS` in contract order (Mentions, New messages, Being added, Sidekick runs, Pinned Canvas updates, Access requests); the stored-only kinds are never drawn, and a save sends only the kind that changed, so stored `newThreads`, `newBreakouts` and `merges` are left as they are.
+`accessRequests` and `access_granted` to `added`. Client: Settings → Notifications draws its rows from `OFFERED_NOTIFICATION_KINDS` in contract order (Mentions, New messages, Being added, Sidekick runs, Pinned Canvas updates, Access requests); a save sends only the kind that changed.
 
 **Client:** Settings → Notifications offers Push and Email for every kind
 and nothing else: the connector-surface options, the unlinked Slack row and
@@ -184,20 +177,20 @@ producer; now each has one, and access requests are a new kind a decider may
 want to route on its own. Being let into a Canvas is being added, so it reads
 that choice rather than a seventh row.
 
-**Considered and rejected:** Deleting the three Thread-era kinds from the
-schema: a stored record naming them, and an older client's save of them,
-would then be refused or stripped mid-release; one release of accepting them
-costs nothing. Leaving `newThreads` and `newBreakouts` out of the record
-unless stored: the previous release's desktop requires both, so its whole
-preferences record would fail to parse (the one-release compatibility rule
-wins over "not defaulted").
+The three Thread-era kinds were first kept for one release, with
+`newThreads` and `newBreakouts` emitted in every record because the previous
+release's desktop requires both to parse it. That window closed in the same
+pull request: raising `MINIMUM_SERVED_CLIENT_CONTRACT` to the pivot contract
+refuses that desktop the workspace socket, so nothing served reads them.
 
-**Consequences:** The two emitted kinds are a compatibility window: remove
-`PREVIOUS_RELEASE_DEFAULTS` once every desktop has updated; nothing reads
-them. Guard: `member-preferences-previous-release.test.ts` parses the
-emitted record with the previous release's schema, copied verbatim from
-d0cab03. A later release can drop the three kinds once no stored record
-matters.
+**Considered and rejected:** Keeping the emitted kinds after the minimum
+rose: compatibility for a client that can no longer connect is dead code. A
+migration rewriting stored `notify_json`: the object schema strips the
+retired keys on read, which costs nothing.
+
+**Consequences:** A kind is deleted, not retired, once no served client
+reads it; the record's object schemas are not strict, so a stored key that is
+no longer a kind is dropped on read rather than failing the record.
 
 Shipped in juno-ai-labs/avalon#1490.
 

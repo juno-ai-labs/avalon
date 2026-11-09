@@ -336,8 +336,8 @@ Settings → Notifications → **Notify me about** holds, for each kind it offer
 — exactly the kinds a producer records: Mentions, New messages, Being added,
 Sidekick runs, Pinned Canvas updates, Access requests
 (`OFFERED_NOTIFICATION_KINDS`) — the channels it goes by: `push` and `email`,
-each a [sink](#sinks). `newThreads`, `newBreakouts` and `merges` are accepted where stored
-but are never offered or consulted. How
+each a [sink](#sinks). A Thread-era kind a person stored (`newThreads`,
+`newBreakouts`, `merges`) is dropped as the record is read. How
 they are stored and how a save merges them is
 [`member-preferences.md`](member-preferences.md). They apply to every device;
 the device switch above them is still the device's own on/off. An empty list

@@ -1003,12 +1003,8 @@ describe("Durable Objects in the Workers runtime", () => {
       workspaceDOName("global", WORKSPACE_ID),
     ));
     await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
-    // Nothing stored is every default, plus the two kinds a desktop of the
-    // previous release still requires (`PREVIOUS_RELEASE_DEFAULTS`).
-    const defaults = {
-      ...DEFAULT_MEMBER_PREFERENCES,
-      notify: { ...DEFAULT_MEMBER_PREFERENCES.notify, newThreads: ["push"], newBreakouts: ["push"] },
-    };
+    // Nothing stored is every default.
+    const defaults = DEFAULT_MEMBER_PREFERENCES;
     await expect(stub.memberPreferences({ workspaceId: WORKSPACE_ID, userId: USER_ID }))
       .resolves.toEqual(defaults);
     await expect(stub.saveMemberPreferences({

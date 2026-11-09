@@ -196,7 +196,10 @@ out of the copy.
 **What changed:** Denying a request now writes the requester an
 `access_denied` intent and Activity row naming who declined, never the
 Canvas's title, and pushes it under their `accessRequests` choice; the access
-read gives the denied request's `decidedAt`. WorkspaceDO migration 152
+read gives the denied request's `decidedAt`, to every build: one older than
+contract 13 was first served the request without it, a branch deleted once
+13 became `MINIMUM_SERVED_CLIENT_CONTRACT` and such a build stopped
+connecting. WorkspaceDO migration 152
 rebuilds `workstream_notification_intents` and `workspace_activity_items` to
 admit the kind, as 150 did.
 Asking again republishes the requester's own Activity list

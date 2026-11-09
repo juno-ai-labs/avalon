@@ -79,8 +79,6 @@ interface WorkspaceSocketClaims {
   expiresAt: number;
   /** The staff member behind a support session (`docs/impersonation.md`). */
   impersonatorUserId?: UserId;
-  /** Whether the build that asked for this ticket reads a Space scoped `individual`. */
-  readsIndividualSpaces?: boolean;
 }
 
 export interface TranscriptionSocketClaims {
@@ -170,7 +168,6 @@ export async function issueSocketTicket(
 export async function issueWorkspaceSocketTicket(
   env: Env,
   auth: AuthContext,
-  options: { readsIndividualSpaces: boolean } = { readsIndividualSpaces: false },
 ): Promise<string> {
   assertSessionPrincipal(auth);
   const now = Math.floor(Date.now() / 1_000);
@@ -180,7 +177,6 @@ export async function issueWorkspaceSocketTicket(
     wid: auth.workspaceId,
     region: auth.region,
     ...(auth.impersonatorUserId ? { imp: auth.impersonatorUserId } : {}),
-    ...(options.readsIndividualSpaces ? { ind: true } : {}),
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(auth.userId)
@@ -277,7 +273,6 @@ export async function verifyWorkspaceSocketTicket(
       ticketId: payload.jti,
       expiresAt: payload.exp,
       ...(typeof payload.imp === "string" ? { impersonatorUserId: asUserId(payload.imp) } : {}),
-      readsIndividualSpaces: payload.ind === true,
     };
   } catch {
     throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
@@ -595,8 +590,6 @@ export class WorkspaceSocketService {
     headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
     for (const name of rallyHeaderAliases(RALLY_HEADERS.SOCKET_IMPERSONATOR_ID)) headers.delete(name);
     if (claims.impersonatorUserId) headers.set(RALLY_HEADERS.SOCKET_IMPERSONATOR_ID, claims.impersonatorUserId);
-    for (const name of rallyHeaderAliases(RALLY_HEADERS.SOCKET_READS_INDIVIDUAL_SPACES)) headers.delete(name);
-    if (claims.readsIndividualSpaces) headers.set(RALLY_HEADERS.SOCKET_READS_INDIVIDUAL_SPACES, "1");
     const response = await stub.fetch(
       new Request("https://workspace.internal/socket", { method: "GET", headers }),
     );

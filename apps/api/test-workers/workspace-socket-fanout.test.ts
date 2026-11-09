@@ -202,11 +202,6 @@ describe("a workspace sync topic's audience", () => {
 
     const back = await connect(member, waterline);
     expect(back.answer).toMatchObject({ reason: "change", topics: ["resources"] });
-    // The one-release compatibility page a pre-pivot desktop requires to parse.
-    expect(back.answer).toMatchObject({ sidebar: {
-      workstreams: { directoryWaterline: 0, items: [], stateVersions: [], nextCursor: null },
-      notes: { waterline: 0, items: [], nextCursor: null },
-    } });
     close(back);
   });
 
