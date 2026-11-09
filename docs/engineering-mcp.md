@@ -259,6 +259,159 @@ Their audit rows in `AUDIT_DB` (`engineering.dump_thread_transcripts.*`,
 `engineering.convert_threads_to_canvases.*`, `engineering.retire_threads.*`)
 stay as written; nothing parses the action names back.
 
+### D1
+
+`run_d1_sql` runs SQL against five of the six D1 databases the regional API
+Worker binds: `DB`, `TELEMETRY_DB`, `USAGE_DB`, `PLATFORM_DB` and
+`MESSAGE_ISSUES_DB` (Oopsie message issue reports). `AUDIT_DB`
+is left out: it records privileged actions such as impersonation and support
+access, D1 offers no read-only binding, and this Worker's log does not record
+the SQL it ran, so a write there would erase the record without leaving one.
+The caller names the region and the binding, and the bridge's `runD1Sql` runs
+the statement through that binding. `PLATFORM_DB` is one database every region
+binds, so any region reaches the same rows.
+
+`MESSAGE_ISSUES_DB` holds Oopsie reports in the submitting Organization's region
+(only `global` today); the report columns and provenance are documented in
+[message issues](message-issues.md#data-model).
+
+The result has the Durable Object tools' shape, with two differences D1
+forces. D1 returns rows as objects, so `columns` comes from the first row and is
+empty when no row returns; `raw({ columnNames: true })` would name them but
+drops `rows_read` and `rows_written`. For the same reason a later column
+overwrites an earlier one of the same name, so a JOIN aliases its duplicates. Given several statements, D1 runs them all
+only when the last alone has parameters, and answers with the last one's rows
+and counters, so `rowsWritten` misses an earlier statement's writes. D1 returns
+a BLOB as an array of bytes, which the bridge turns into `{ type: "blob",
+base64 }`, and refuses `BEGIN` and `SAVEPOINT`.
+
+### Feature and model flags
+
+The four flag tools call Ace's `FlagAdministration` entrypoint over the
+`FLAG_ADMINISTRATION` Service Binding. They hold no Flagship credential and
+write nothing themselves:
+
+| Tool | Ace method | Effect |
+| --- | --- | --- |
+| `list_feature_flags` | `listProductFlags` | Each managed product flag's catalog entry and live Flagship definition, `null` if not provisioned |
+| `update_feature_flag` | `updateProductFlag` | Replaces the flag's whole definition, then queues the key-only client notification |
+| `list_model_flags` | `listModelFlags` | Each agent role's catalog entry, checked-in default route, and live Flagship definition |
+| `update_model_flag` | `updateModelRouting` | Checks every model id against OpenRouter, then replaces the default variation's route plan, keeping rules and other variations |
+
+These are the same catalogs, schemas and write functions the Ace pages use, so
+an MCP write is validated, fanned out to connected clients, and limited to the
+managed keys exactly as an Ace save is. See [`ace.md`](ace.md) for what each
+write does in Flagship and [`feature-flags.md`](feature-flags.md) for what
+each flag controls.
+
+`update_feature_flag` is a whole replacement because Flagship's API is: rules
+left out of the call are deleted. The tool description tells the client to read
+the flag first and send it back with its change.
+
+### Lakehouses
+
+`query_data_lake` sends one statement to Cloudflare's Basin SQL HTTP API
+(formerly R2 SQL) for one of the three Global lakehouses: the
+[inference](inference-lakehouse.md), [analytics events](analytics-lakehouse.md)
+and [usage](usage-metering.md) tables. Their bucket, namespace and table names
+come from `config/*-lakehouse.json`.
+
+Each bucket is its own catalog, so the tool takes the table and picks the
+bucket; a query cannot join across lakehouses. Basin SQL is read-only on
+Cloudflare's side, so the tool passes the statement through and is annotated
+read-only. It returns Cloudflare's `result` unchanged: `schema`, `rows`, and
+`metrics` with bytes and files scanned. A refusal is returned to the engineer
+with Cloudflare's codes and messages and logged as
+`lakehouse_query_failed:<code>`, where the code is Basin SQL's own (for
+example `40004`) or `http_<status>` when the response carried none.
+
+The tool does not reach the exact per-event archive in `avalon-global-payloads`.
+An `llm_inference` row too large for Pipeline carries only
+`payload_object_key`; the [runbook](runbook.md#retrieve-the-exact-archived-record)
+still owns reading that object.
+
+The shared Durable Object base waits for the object's checked-in migrations,
+runs the supplied statement through `ctx.storage.sql.exec`, and returns column
+names, JSON-safe rows, and the platform's physical `rowsRead` and `rowsWritten`
+counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
+
+### Worker logs and traces
+
+`query_worker_observability` sends one query to Cloudflare's Workers
+Observability API (`/workers/observability/telemetry/query`), the store behind
+the dashboard's Query Builder. It reaches every Worker on the account, so a
+query narrows to one with a `$metadata.service` filter. The `view` picks the
+shape: `events` (one row per log line or span), `traces` (one row per trace),
+`invocations` (events grouped by request) or `calculations` (aggregates with
+group-bys). One trace's spans and logs are the `events` view filtered on
+`$metadata.traceId`.
+
+The tool takes Cloudflare's own filter, calculation and group-by vocabulary
+with one level of filter grouping, which is what every saved view in
+[`runbook.md`](runbook.md#log-shape) uses. It sends
+`dry: true` so runs stay out of the account's query history, and returns
+Cloudflare's `result` unchanged. A refusal is returned with Cloudflare's codes
+and messages and logged as `observability_query_failed:<code>`. The audit row
+names the view only; filter values and the needle can quote product data.
+
+## Invariants and contracts
+
+- D1 locates authority; it never substitutes for Durable Object product state.
+- The bridge accepts workspace identity only in the current
+  `durable_object_open` generation with a compatible serving contract.
+  The regional `workspaces` row is the deterministic WorkspaceDO route;
+  migration 0115 removed the completed per-workspace cutover ledger so it
+  cannot be mistaken for live authority. Work-stream targets still require
+  their active current-generation route. A closed or incompatible regional
+  authority and pending, importing, verified, quarantined, or stale work-stream
+  routes cannot obtain a Durable Object stub.
+- SQL resolves configured deployments without mutation, refuses a duplicate target, and
+  executes against exactly one selected binding. The selected bridge rechecks
+  the generation so a cutover between resolution and execution fails closed.
+- Main substream `0` needs no directory row: route activation happens only after
+  creation or import initializes that object. Child substreams still require a
+  directory membership row before their stub is obtained, and so does every
+  artifact.
+- **An inspection tool never materializes an object that does not exist, with one stated
+  exception.** An artifact's registry row is written *before*
+  `pointArtifactAtVersion` initializes its supervisor, so between those two
+  calls — and permanently if the second never returns — `run_artifact_sql`
+  against that artifact creates an empty supervisor. Closing it needs a
+  readiness fact written after the supervisor exists, which is a WorkspaceDO
+  migration and a product write; until then the empty supervisor an operator
+  finds, with schema and no `artifact_state` row, is itself the diagnosis of the
+  half-finished publish.
+- The origin verifies Access JWT provenance. A header's presence alone is not
+  authentication.
+- The Access application is separate from Ace and has its own audience, while
+  its policy and allowed identity providers are copied from Ace at deployment.
+- SQL tools are annotated non-read-only, destructive, and non-idempotent. The
+  list tools are read-only.
+- The SQL text, bindings, returned rows, and error message never enter Worker
+  logs. Audit events contain Access subject/email, tool name, target IDs, and a
+  fixed outcome code only.
+- The private regional entrypoint has no HTTP route. Only a Worker with the
+  named Service Binding can call it.
+- **A per-object-kind id on the SQL result is optional and omitted, never a
+  required nullable field.** The MCP parses every regional response through a
+  strict schema and deploys *after* the regional Workers, so a key the previous
+  build did not know is an unknown key mid-rollout and strict parsing rejects
+  it. Adding the next object kind's id as a required field breaks every existing
+  SQL tool for the length of the deployment window.
+
+- Flag tools reach Flagship only through Ace. A direct Flagship write from this
+  Worker would skip the client notification and the managed-key allowlist, and
+  would put a second Flagship token on a second Worker.
+- Ace records `actor_subject` and `via: "engineering_mcp"` on every flag write
+  it makes for this Worker, beside this Worker's own audit event.
+- The lakehouse token reaches only Basin SQL, from inside this Worker. It never
+  crosses to a client, and its permissions are scoped to the three lakehouse
+  buckets, not the account.
+- The Workers Observability token is likewise used only from inside this Worker
+  and holds only Workers Observability permission.
+
+## Boundaries and non-goals
+
 This is an unrestricted engineering console, not a domain RPC. It intentionally
 permits schema reads, arbitrary queries, and mutations because production
 inspection and repair are the product requirement. Product code must continue
