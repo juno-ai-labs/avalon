@@ -1356,7 +1356,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
 
   /**
    * Admit one inbound email, once: the receipt is keyed by the provider's
-   * message id, so a webhook retry answers from it.
+   * message id, so a webhook retry answers from it. The run acts as the
+   * sender alone, by the rule a message in the shared conversation follows.
    */
   async admitInboundEmail(input: AutomationInboundEmailAdmission): Promise<{
     admitted: boolean; duplicate: boolean; outcomeCode: string; runId: string | null;
@@ -1401,7 +1402,15 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     if (existing) return replay(existing);
     const initialRefusal = refusalFor(initial);
     if (initialRefusal) return refuse(initialRefusal);
-    const coordinator = await this.coordinator();
+    // The run acts as its sender alone, as a message in the shared
+    // conversation does (`admitConversationMessage`): as a delegate when they
+    // are an eligible one, and otherwise under their own access as its
+    // requester. Mail from someone on the list must not borrow another
+    // delegate's access. `refusalFor` has already required a sender.
+    const sender = request.senderUserId!;
+    const coordinator = await this.coordinator(sender, [sender], false);
+    const requester = coordinator === null && await this.requesterActive(initial.workspace_id, sender) ? sender : null;
+    if (coordinator === null && requester === null) return refuse("run_no_eligible_delegate");
     return this.storage.transactionSync(() => {
       // Definition publication and another copy of this email can interleave
       // while delegate authority is read. Commit only against current state.
@@ -1416,7 +1425,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         `inbound_email:${request.resendEmailId}`,
         { kind: "inbound_email", receiptId: uuidV7(now), occurredAt: request.receivedAt },
         { textContent: request.textContent, structuredContent: request.structuredContent, resourceId: request.resourceId },
-        coordinator,
+        coordinator ?? requester,
+        requester,
       );
       this.sql.exec(
         `INSERT OR IGNORE INTO sidekick_email_receipts
