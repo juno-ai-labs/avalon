@@ -175,7 +175,7 @@ import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_ST
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, RESOURCE_SEARCH_AUDIENCE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch, type ResourceSearchPace } from './resource-search-projection';
-import { isDraftUpload, requiresAttachment } from '../services/resource-read-rules';
+import { isDraftUpload, requiresAttachment, resourceCanvasState } from '../services/resource-read-rules';
 import { searchAudienceGroup, searchAudienceGroupIds } from '../services/search-audience';
 import { MEMORY_SEARCH_KEY_PURGE_MIGRATION, SEARCH_AUTHORIZATION_PUSH_MIGRATION } from './search-authorization-projection';
 import { observeSqlWrites } from './sql-write-observer';
@@ -11093,10 +11093,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return request.resourceIds.map((resourceId) => {
       const row = this.state.storage.sql.exec<{
         provider: string; resource_type: string; uploaded_by_user_id: string | null;
-        attachment_status: string | null; updated_at: string; connection_id: string | null;
-      }>('SELECT provider, resource_type, uploaded_by_user_id, attachment_status, updated_at, connection_id FROM resources WHERE id = ? AND workspace_id = ?',
+        attachment_status: string | null; updated_at: string; connection_id: string | null; publication_parent_id: string | null;
+      }>('SELECT provider, resource_type, uploaded_by_user_id, attachment_status, updated_at, connection_id, publication_parent_id FROM resources WHERE id = ? AND workspace_id = ?',
       resourceId, request.workspaceId).toArray()[0];
-      if (!row) return { resourceId, exists: false as const, validatedAt: Date.now() };
+      if (!row || (row.provider === 'avalon_generated'
+        && resourceCanvasState(this.state.storage.sql, resourceId, row.publication_parent_id).archived)) {
+        return { resourceId, exists: false as const, validatedAt: Date.now() };
+      }
       const connection = row.connection_id ? this.state.storage.sql.exec<{ scope: string; owner_user_id: string | null; status: string }>(
         'SELECT scope, owner_user_id, status FROM connector_connections WHERE id = ?', row.connection_id,
       ).toArray()[0] : null;

@@ -727,8 +727,10 @@ waterline pushes remove their rows and unseen counts from open windows.
 Migration 142 also records a publication's parent on `resources` and fences
 resource mutations and artifact-registry writes against that parent's tombstone
 inside SQLite. A publisher which prepared bytes or cached its destination before
-archive cannot advance the retained content afterwards. Existing generated-resource
-search rows are requeued to withdraw their former independent publisher audience.
+archive cannot advance the retained content afterwards. Canvas-owned artifacts check the tombstone before uploader ownership; standalone
+artifacts retain their own ownership. Existing generated-resource search rows are
+requeued so Canvas-owned artifacts lose their independent publisher audience,
+and archive queues their search withdrawal.
 Artifact hosts retain a
 Canvas tombstone of their own (migration 3), so delayed pointer writes or open
 code minting cannot undo archive delivery. Existing anonymous public-site reads

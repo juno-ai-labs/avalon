@@ -161,7 +161,7 @@ describe("publishing into a Canvas", () => {
     expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ version: number }>(
       "SELECT MAX(version) AS version FROM resource_versions WHERE resource_id = ?", first.resourceId).one().version)).toBe(1);
     const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId, asSubstreamId("0"))));
-    expect((await decide()).status).toBe("denied");
+    expect((await decide()).status).toBe("not_found");
     // Retained bytes and versions stay readable to storage, not to their publisher.
     expect(await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec("SELECT 1 FROM workstream WHERE id = 1").toArray().length)).toBe(1);
   });
