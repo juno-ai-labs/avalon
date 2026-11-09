@@ -676,8 +676,13 @@ relationship, and current derivative dependency before any result is placed in
 the next model request. Missing authority omits that assistant/tool pair rather
 than replaying stale content.
 
-A Sidekick run continues on input from anyone who can reach it, including
-everyone in a provider thread bound to the run who is a full member of the
+Inside Rally, a Sidekick run continues on a person's input only when the run
+could act as them: its requester, for a run under its requester's own access,
+or an eligible delegate, for a run under a delegate's access; anyone else the
+Sidekick is shared with is refused by name
+([continuing a run](automation-lifecycle.md#continuing-a-run)). Outside
+Rally, a run continues on input from everyone in a provider thread bound to
+the run who is a full member of the
 connected workspace, whether or not they have a linked Rally account. For Slack,
 the sender check refuses guests (restricted and single-channel accounts) and
 members of another team, such as Slack Connect users, before the reply reaches

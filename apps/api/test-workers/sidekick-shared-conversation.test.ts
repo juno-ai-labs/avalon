@@ -485,8 +485,11 @@ describe("a Sidekick's shared conversation", () => {
     expect(await workspaceStub().sidekickRunProvisioning({ ...addressed(), runId: run!.run_id }))
       .toMatchObject({ runAsUserId: MEMBER_ID });
     expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([run!.run_id]);
-    expect(await workspaceStub().sidekickContinueRun({ ...addressed(), runId: run!.run_id }))
+    expect(await workspaceStub().sidekickContinueRun({ ...addressed(), runId: run!.run_id, sender: { kind: "person", userId: MEMBER_ID } }))
       .toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: MEMBER_ID } });
+    // Nobody else continues it, a delegate included: it would act as the member.
+    expect(await workspaceStub().sidekickContinueRun({ ...addressed(), runId: run!.run_id, sender: { kind: "person", userId: AUTHOR_ID } }))
+      .toEqual({ outcome: "refused", code: "run_continuation_requires_requester" });
   });
 
   it("runs a guest's message under the guest's own access when the Sidekick is shared with them", async () => {
@@ -499,7 +502,7 @@ describe("a Sidekick's shared conversation", () => {
     const [run] = await sidekickRuns();
     expect(run).toMatchObject({ occurrence_key: `message:${turnId}`, coordinator_user_id: GUEST_ID, requester_user_id: GUEST_ID });
     expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([run!.run_id]);
-    expect(await workspaceStub().sidekickContinueRun({ ...addressed(), runId: run!.run_id }))
+    expect(await workspaceStub().sidekickContinueRun({ ...addressed(), runId: run!.run_id, sender: { kind: "person", userId: GUEST_ID } }))
       .toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: GUEST_ID } });
   });
 

@@ -109,6 +109,7 @@ import {
   AutomationReviewRequestSchema,
   type AutomationReviewRequest,
   SIDEKICK_REVIEW_ALARM_KIND,
+  SidekickRunContinuationRequestSchema,
   SidekickRunContinuationSchema,
   SidekickSkillReadRequestSchema,
   type AutomationActor,
@@ -123,6 +124,9 @@ import {
   type AutomationSetAppearanceRequest,
   type AutomationSubmitDefinitionRequest,
   type SidekickRunContinuation,
+  type SidekickRunContinuationRefusalCode,
+  type SidekickRunContinuationRequest,
+  type SidekickRunContinuationSender,
   type SidekickSkillReadRequest,
 } from "./automation-do-protocol";
 import { RECEIVE_CHILD_EFFECTS_MAX_ENVELOPES, type DirectoryCommonEffect } from "./conversation-parent-object";
@@ -1509,17 +1513,62 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   }
 
   /**
+   * Whether this sender's input may continue a run that acts as `principal`,
+   * by the rule `continueRun` states. `coordinator` answers only with an
+   * eligible delegate, so a sender who is the principal it picked is one.
+   */
+  private async senderRefusal(
+    run: { requester_user_id: string | null },
+    sender: SidekickRunContinuationSender,
+    principal: string | null,
+  ): Promise<"run_continuation_requires_requester" | "run_continuation_requires_delegate" | null> {
+    if (sender.kind !== "person") return null;
+    if (run.requester_user_id !== null) {
+      return sender.userId === run.requester_user_id ? null : "run_continuation_requires_requester";
+    }
+    if (sender.userId === principal) return null;
+    return await this.coordinator(sender.userId, [sender.userId], false) === sender.userId
+      ? null : "run_continuation_requires_delegate";
+  }
+
+  /**
+   * The refusal `continueRun` would give this sender's input to the run, for
+   * a caller that must refuse before it records anything: a run child asks it
+   * before it records an answer to a question the run asked, which would
+   * otherwise close the question for the person who may answer it.
+   */
+  async runInputRefusal(input: SidekickRunContinuationRequest): Promise<SidekickRunContinuationRefusalCode | null> {
+    const request = parseRpcInput(SidekickRunContinuationRequestSchema, input, "run_input_refusal");
+    this.assertSidekick(request.workspaceId, request.automationId);
+    const run = this.runView(request.runId)?.run;
+    if (!run) return null;
+    return this.senderRefusal(run, request.sender, await this.runPrincipal(run));
+  }
+
+  /**
    * Whether input that reached a run child may continue the run, and with
    * what: the `automationRun` block and run-as principal, against the
    * Sidekick's currently accepted revision. Replaces an unavailable coordinator.
+   *
+   * Everyone the Sidekick is shared with is seated in every run child, so the
+   * sender decides whether their input may continue the run, because the run
+   * keeps acting as its principal and not as them. A run under its
+   * requester's own access continues only from the requester; a run under a
+   * delegate's access continues from a person only while they are an
+   * eligible delegate themselves. Anyone else is refused by name, never given
+   * a new run in its place: the input stays in the transcript, said to the
+   * room. Outside text from a provider thread the run bound, and Rally's own
+   * input (a scheduled wake-up, a worker's report), continue as before.
    */
-  async continueRun(input: AutomationRunRequest): Promise<SidekickRunContinuation> {
-    const request = parseRpcInput(AutomationRunRequestSchema, input, "continue_run");
+  async continueRun(input: SidekickRunContinuationRequest): Promise<SidekickRunContinuation> {
+    const request = parseRpcInput(SidekickRunContinuationRequestSchema, input, "continue_run");
     if (!this.row()) return { outcome: "refused", code: "run_not_found" };
     const before = this.runView(request.runId)?.run;
     // A requester's run keeps its requester; any other run keeps or re-picks a delegate.
     const coordinator = await this.runPrincipal({ coordinator_user_id: before?.coordinator_user_id ?? null,
       requester_user_id: before?.requester_user_id ?? null });
+    // Asked before the reads below, as the principal is.
+    const senderRefusal = before ? await this.senderRefusal(before, request.sender, coordinator) : null;
     const view = this.runView(request.runId);
     if (!view) return { outcome: "refused", code: "run_not_found" };
     const { sidekick, run } = view;
@@ -1530,6 +1579,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       return { outcome: "refused", code: "run_not_found" };
     }
     if (coordinator === null) return { outcome: "refused", code: "run_no_eligible_delegate" };
+    if (senderRefusal) return { outcome: "refused", code: senderRefusal };
     if (coordinator !== run.coordinator_user_id) {
       this.sql.exec("UPDATE sidekick_runs SET coordinator_user_id=?,updated_at=? WHERE sidekick_id=? AND run_id=?",
         coordinator, Date.now(), this.sidekickId, run.run_id);

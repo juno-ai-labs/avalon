@@ -6205,6 +6205,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.allowsManager(input));
   }
 
+  /** A call, not a read: picking the run's principal can enroll legacy delegates first. */
+  async sidekickRunInputRefusal(input: Parameters<HostedSidekick["runInputRefusal"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runInputRefusal(input));
+  }
+
   async sidekickListRuns(input: Parameters<HostedSidekick["listRuns"]>[0]) {
     return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.listRuns(input));
   }

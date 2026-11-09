@@ -11,12 +11,14 @@ import { z } from "zod";
 import {
   type AutomationActorRequestSchema,
   SidekickConversationMessageRouteSchema,
+  SidekickRunContinuationRefusalCodeSchema,
   SidekickRunContinuationSchema,
   type SidekickConversationMessageRefusalCode,
   type SidekickConversationMessageRequest,
   type SidekickConversationMessageRoute,
   type SidekickRunContinuation,
   type SidekickRunContinuationRefusalCode,
+  type SidekickRunContinuationSender,
 } from "../durable-objects/automation-do-protocol";
 import type { Env } from "../env";
 import { hostedParentStub } from "./conversation-parent-client";
@@ -35,7 +37,7 @@ import { hostedParentStub } from "./conversation-parent-client";
 /** Ask the Sidekick whether input may continue one of its runs. Replaces an unavailable coordinator when needed. */
 export async function continueSidekickRun(
   env: Env,
-  input: { region: Region; workspaceId: string; automationId: string; runId: string },
+  input: { region: Region; workspaceId: string; automationId: string; runId: string; sender: SidekickRunContinuationSender },
 ): Promise<SidekickRunContinuation> {
   const workspaceId = asWorkspaceId(input.workspaceId);
   const workspace = await hostedParentStub(env, workspaceId);
@@ -43,7 +45,18 @@ export async function continueSidekickRun(
     workspaceId,
     automationId: input.automationId,
     runId: input.runId,
+    sender: input.sender,
   }));
+}
+
+/**
+ * Who sent a queued input, as `continueSidekickRun` asks. A person's input
+ * names them; outside text from a bound provider thread and Rally's own input
+ * name only their kind.
+ */
+export function continuationSender(pending: { actor: string; author_user_id: string | null }): SidekickRunContinuationSender {
+  if (pending.actor === "human" && pending.author_user_id !== null) return { kind: "person", userId: asUserId(pending.author_user_id) };
+  return pending.actor === "external" ? { kind: "external" } : { kind: "system" };
 }
 
 /**
@@ -87,6 +100,8 @@ export const SIDEKICK_RUN_REFUSAL_TEXT: Record<SidekickRunContinuationRefusalCod
   sidekick_deleted: "This message did not continue the run because its Sidekick was archived.",
   run_not_found: "This message did not continue the run because its Sidekick no longer knows the run.",
   run_no_eligible_delegate: "This message did not continue the run because no delegated user is available. Add a delegate with access to continue.",
+  run_continuation_requires_requester: "This message did not continue the run because the run acts for the person who started it, and only they can continue it.",
+  run_continuation_requires_delegate: "This message did not continue the run because it acts with access shared with this Sidekick, and only people who share theirs can continue it.",
 };
 
 /**
@@ -106,6 +121,24 @@ export async function routeSidekickConversationMessage(
 export async function sidekickAllowsManager(env: Env, input: z.input<typeof AutomationActorRequestSchema>): Promise<boolean> {
   const workspace = await hostedParentStub(env, asWorkspaceId(input.workspaceId));
   return z.boolean().parse(await workspace.sidekickAllowsManager(input));
+}
+
+/**
+ * The refusal a person's input to a run would get, asked by a run child
+ * before it records an answer to a question the run asked, so that a person
+ * who may not continue the run cannot close the question for one who may.
+ */
+export async function sidekickRunInputRefusal(
+  env: Env,
+  input: { workspaceId: string; automationId: string; runId: string; userId: string },
+): Promise<SidekickRunContinuationRefusalCode | null> {
+  const workspace = await hostedParentStub(env, asWorkspaceId(input.workspaceId));
+  return SidekickRunContinuationRefusalCodeSchema.nullable().parse(await workspace.sidekickRunInputRefusal({
+    workspaceId: asWorkspaceId(input.workspaceId),
+    automationId: input.automationId,
+    runId: input.runId,
+    sender: { kind: "person", userId: asUserId(input.userId) },
+  }));
 }
 
 /** What the shared conversation says when a message addressed to the Sidekick started no run. */

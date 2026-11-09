@@ -393,6 +393,8 @@ export async function fireWorkstreamWakeup(
         workspaceId: row.workspace_id,
         automationId: row.workstream_id,
         runId: conversation.substreamId,
+        // The run scheduled this wake-up itself; nobody sent it.
+        sender: { kind: "system" },
       });
       if (decided.outcome === "refused") return { fired: false };
       continuation = decided;

@@ -1020,7 +1020,7 @@ describe("firing a due wake-up", () => {
       );
 
       expect(outcome.fired).toBe(true);
-      expect(asked).toEqual([{ workspaceId: WORKSPACE_ID, automationId: WORKSTREAM_ID, runId }]);
+      expect(asked).toEqual([{ workspaceId: WORKSPACE_ID, automationId: WORKSTREAM_ID, runId, sender: { kind: "system" } }]);
       expect(dispatches).toHaveLength(1);
       expect(dispatches[0]).toMatchObject({
         parentKind: "automation",
