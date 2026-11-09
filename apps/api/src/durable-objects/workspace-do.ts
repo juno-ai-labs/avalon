@@ -1247,6 +1247,15 @@ const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V62 = [
 ] as const;
 
 /**
+ * The tables that reference `connector_connections` now: v121's, less the
+ * Slack agent sessions and feedback migration 141 dropped. A later rebuild of
+ * the parent holds these; `connector-connection-dependents.test.ts` checks the
+ * list against the schema.
+ */
+export const CONNECTOR_CONNECTION_DEPENDENTS = CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V121
+  .filter((table) => table !== "slack_agent_feedback" && table !== "slack_agent_sessions");
+
+/**
  * The version-capture triggers as migration 112 left them, named so migration
  * 113 can drop and restore them around the cause columns it replaces: SQLite
  * refuses to drop a column a trigger reads.

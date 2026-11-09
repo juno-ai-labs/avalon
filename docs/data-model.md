@@ -1050,7 +1050,10 @@ The connector connection rebuild inventory is frozen through WorkspaceDO v55,
 whose list is `CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55` in `workspace-do.ts`.
 Each version's list stays exactly as the migration that used it left it — a
 later rebuild declares its own, without editing v31/v53/v55 statements or their
-stored fingerprints. `apps/api/test/connector-connection-dependents.test.ts`
+stored fingerprints. `CONNECTOR_CONNECTION_DEPENDENTS` is the list as the
+schema stands now, without the Slack agent sessions and feedback migration 141
+dropped, and is the one a future rebuild holds.
+`apps/api/test/connector-connection-dependents.test.ts` checks it: it
 derives the true set from `PRAGMA foreign_key_list` over the migrated schema and
 fails when a table referencing `connector_connections` is added without being
 declared, which is the failure that otherwise waits until the next rebuild drops
