@@ -442,6 +442,8 @@ jobs:
           test "$matches" = 1
 
       - name: Build, sign, notarize, staple, and verify
+        env:
+          RALLY_DESKTOP_SESSION_KEY: ${{ secrets.RALLY_DESKTOP_SESSION_KEY }}
         run: pnpm --filter @rally/desktop package:release
 
       - name: Install the pinned native symbol extractor

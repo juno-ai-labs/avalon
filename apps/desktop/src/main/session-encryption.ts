@@ -1,8 +1,11 @@
 import {
   createCipheriv,
   createDecipheriv,
+  createHash,
   randomBytes,
 } from 'node:crypto';
+
+declare const __RALLY_DESKTOP_SESSION_KEY__: string | null | undefined;
 
 export type SessionEncryptionMode = 'global' | 'lockdown';
 
@@ -49,7 +52,10 @@ const SUPERSEDED_GLOBAL_ENVELOPE_HEADERS: readonly Buffer[] = Object.freeze([
 const SUPERSEDED_LOCKDOWN_ENVELOPE_HEADERS: readonly Buffer[] = Object.freeze([
   Buffer.from('avalon-session/lockdown/v1\0', 'utf8'),
 ]);
-const GLOBAL_SESSION_KEY = Buffer.from('LqOwpiqP2oXJ/YMaSMg20IKP4wxNKnxvtXeQegxogOw=', 'base64');
+// Unpackaged builds and tests can run without access to the release key.
+const GLOBAL_SESSION_KEY = typeof __RALLY_DESKTOP_SESSION_KEY__ === 'string'
+  ? Buffer.from(__RALLY_DESKTOP_SESSION_KEY__, 'base64')
+  : createHash('sha256').update('Rally Development session encryption v1').digest();
 const GLOBAL_IV_BYTES = 12;
 const GLOBAL_AUTH_TAG_BYTES = 16;
 
