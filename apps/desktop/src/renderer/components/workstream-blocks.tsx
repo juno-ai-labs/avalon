@@ -37,20 +37,7 @@ import {
   Volume2,
   X,
 } from 'lucide-react';
-import {
-  Children,
-  Fragment,
-  memo,
-  useCallback,
-  useContext,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type ButtonHTMLAttributes,
-  type PropsWithChildren,
-} from 'react';
+import { Children, Fragment, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ButtonHTMLAttributes, type PropsWithChildren } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import {
   citationFootnotes,

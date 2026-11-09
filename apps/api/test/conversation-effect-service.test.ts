@@ -1,14 +1,5 @@
 import "../../../tests/isolated-region";
-import {
-  asAutomationId,
-  asSubstreamId,
-  asWorkspaceId,
-  asWorkstreamId,
-  DEFAULT_MEMBER_PREFERENCES,
-  DEFAULT_NOTIFICATION_CHANNELS,
-  type NotificationChannel,
-  type WorkstreamId,
-} from "@rally/contracts";
+import { asAutomationId, asSubstreamId, asWorkspaceId, asWorkstreamId, DEFAULT_MEMBER_PREFERENCES, DEFAULT_NOTIFICATION_CHANNELS, type NotificationChannel, type WorkstreamId } from "@rally/contracts";
 import {
   conversationEffectHash,
   isPersonNotificationEffect,

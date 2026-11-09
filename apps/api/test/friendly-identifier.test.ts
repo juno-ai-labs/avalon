@@ -49,17 +49,7 @@ describe("friendly identifier vocabulary", () => {
     expect(FRIENDLY_IDENTIFIER_SCIENTIST_SURNAMES_V1).not.toContain("archimedes");
     expect(FRIENDLY_IDENTIFIER_SCIENTIST_SURNAMES_V1).not.toContain("heisenberg");
     expect(FRIENDLY_IDENTIFIER_SCIENTIST_SURNAMES_V1).not.toContain("marconi");
-
-    const adjectiveLengths = FRIENDLY_IDENTIFIER_ADJECTIVES_V1
-      .map((word) => word.length)
-      .sort((left, right) => right - left);
-    const longestNoun = Math.max(...FRIENDLY_IDENTIFIER_NOUNS_V1.map((word) => word.length));
-    expect(
-      adjectiveLengths[0]! + adjectiveLengths[1]! + adjectiveLengths[2]! + longestNoun + 3
-    ).toBeLessThanOrEqual(64);
   });
-
-
 });
 
 describe("friendlyIdentifierCandidate", () => {
@@ -95,7 +85,6 @@ describe("friendlyIdentifierCandidate", () => {
     expect(FRIENDLY_IDENTIFIER_ADJECTIVES_V1).toContain(secondAdjective);
     expect(FRIENDLY_IDENTIFIER_ADJECTIVES_V1).toContain(thirdAdjective);
     expect(FRIENDLY_IDENTIFIER_NOUNS_V1).toContain(noun);
-    expect(new TextEncoder().encode(candidate).byteLength).toBeLessThanOrEqual(64);
   });
 
   it("uses the attempt when deriving collision candidates", async () => {

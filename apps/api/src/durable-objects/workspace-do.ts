@@ -42,19 +42,9 @@ import { SIDEKICK_SOURCE_CONNECTION_SCHEMA_STATEMENTS } from "./sidekick-source-
 import { RESOURCE_READ_PROJECTION_SQL } from '../services/resource-read-projection';
 import { WorkspaceConversationView, WORKSPACE_CONVERSATION_VIEW_MIGRATION } from "./workspace-conversation-view";
 import { ConversationViewProjectionSchema } from "./conversation-view-projection";
-import {
-  CONNECTOR_EVENT_PEOPLE_MIGRATION,
-  writeConnectorEventPeople,
-  readConnectorEventPeople,
-  copyConnectorEventPeople,
-} from "./connector-event-people";
+import { CONNECTOR_EVENT_PEOPLE_MIGRATION, writeConnectorEventPeople, readConnectorEventPeople, copyConnectorEventPeople } from "./connector-event-people";
 import { CANVA_POLL_SECONDS } from "@rally/connectors";
-import {
-  SCOPE_GRANT_DIRECTORY_SCHEMA,
-  applyScopeGrantDirectory,
-  scopeGrantCandidates,
-  ScopeGrantCandidatesRequestSchema,
-} from "./scope-grant-directory";
+import { SCOPE_GRANT_DIRECTORY_SCHEMA, applyScopeGrantDirectory, scopeGrantCandidates, ScopeGrantCandidatesRequestSchema } from "./scope-grant-directory";
 
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 import { ConversationEffectEnvelopeSchema, type ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
@@ -113,24 +103,8 @@ import {
   type InstallationMaintenanceCancel,
   type InstallationRotationPrepare,
 } from './connector-installation-protocol';
-import {
-  createInstallation,
-  readInstallation,
-  readInstallations,
-  claimInstallation,
-  recordInstallationDelivery,
-  settleInstallation,
-  changeInstallation,
-  cancelInstallationMaintenance,
-  prepareInstallationMaintenance,
-  prepareInstallationRotation,
-  replaceInstallationCredentials,
-} from './connector-installation-storage';
-import {
-  MEETING_NOTES_FINALIZATION_MIGRATION,
-  MEETING_NOTES_RETIREMENT_MIGRATION,
-  applyMeetingRetirementMigrations,
-} from "./meeting-notes-retirement";
+import { createInstallation, readInstallation, readInstallations, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
+import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
 import { AgentIdSchema, type AgentId, type RetirementParentKind } from "@rally/contracts";
 import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
@@ -195,20 +169,9 @@ import {
   AuthorizationSnapshotSchema, AuthorizationSubjectSchema, AuthorizationResourceSchema,
   admitsOrganizationWide, connectionAdmits, sidekickAdmits, type Viewer,
 } from '../services/authorization-policy';
-import {
-  SearchAuthorizationSnapshotSchema,
-  SearchAuthorizationTargetSchema,
-  searchAuthorizationKey,
-  searchDecisionFingerprint,
-} from '../services/search-authorization';
+import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey, searchDecisionFingerprint } from '../services/search-authorization';
 import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
-import {
-  AuthorizationStorage,
-  AUTHORIZATION_STORAGE_MIGRATION,
-  AUTHORIZATION_STORAGE_TABLES,
-  AuthorizationLocationSchema,
-  SPACE_MERGE_EMBED_LINKS_MIGRATION,
-} from './authorization-storage';
+import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_STORAGE_TABLES, AuthorizationLocationSchema, SPACE_MERGE_EMBED_LINKS_MIGRATION } from './authorization-storage';
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, RESOURCE_SEARCH_AUDIENCE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch, type ResourceSearchPace } from './resource-search-projection';
@@ -252,11 +215,7 @@ import {
 import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
 import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
 
-import {
-  googleConnectorReplayCompatibility,
-  workspaceConnectorEventContentFingerprint,
-  workspaceConnectorEventPayloadHash,
-} from "../services/workspace-connector-event-ingress";
+import { googleConnectorReplayCompatibility, workspaceConnectorEventContentFingerprint, workspaceConnectorEventPayloadHash } from "../services/workspace-connector-event-ingress";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import {
   recordWorkspaceScheduleFailure,
@@ -749,42 +708,10 @@ import {
 } from "./workspace-sidekick-conversation-storage";
 import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-batch";
 import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
-import {
-  activityCounts,
-  activityPage,
-  hasActivityFor,
-  markAllActivitySeen,
-  WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS,
-} from "./workspace-activity";
-import {
-  CANVAS_ARCHIVE_CONVERSATION_ALARM,
-  CANVAS_ARCHIVE_ARTIFACT_ALARM,
-  CANVAS_ARCHIVE_STATEMENTS,
-  CANVAS_ARTIFACTS_STATEMENTS,
-  CANVAS_NAMING_ALARM_KIND,
-  CANVAS_SCHEMA_STATEMENTS,
-  CANVAS_SIDEKICK_PINS_STATEMENTS,
-  SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS,
-  RETIREMENT_GRAPH_CANVAS_MIGRATION,
-} from "./canvas-schema";
-import {
-  canvasAppearanceReporter,
-  canvasesWrittenBy,
-  canvasReaderAllows,
-  canvasSidebarRows,
-  HostedCanvas,
-  writerSidekickAdmits,
-  type CanvasRow,
-  type HostedCanvasHost,
-} from "./hosted-canvas";
-import {
-  HOSTED_SIDEKICK_SCHEMA_STATEMENTS,
-  SIDEKICK_REVIEW_SCHEMA_STATEMENTS,
-  SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS,
-  SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS,
-  SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS,
-  SIDEKICK_RUN_SEED_DROP_STATEMENTS,
-} from "./hosted-sidekick-schema";
+import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
+import { CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_STATEMENTS, CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
+import { canvasAppearanceReporter, canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
+import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS, SIDEKICK_RUN_SEED_DROP_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
   HOSTED_SIDEKICK_ALARM_KINDS,
@@ -4487,10 +4414,9 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
          WHERE json_extract(value, '$.type') <> 'inbound_email'), '[]')))
       WHERE EXISTS (SELECT 1 FROM json_each(definition_json, '$.triggers')
         WHERE json_extract(value, '$.type') = 'inbound_email')`,
-    `UPDATE automation_directory SET loadable = COALESCE((SELECT
-        CASE WHEN json_array_length(definition_json, '$.triggers') = 0 THEN 1 ELSE 0 END
-        FROM sidekick_revisions WHERE sidekick_id = automation_id
-          AND definition_revision = accepted_definition_revision), loadable)`,
+    // Keep the accepted loading decision: retiring a trigger must not expose
+    // its instructions to conversations. Only an explicit publication or
+    // manager reconciliation may change that capability.
     `UPDATE sidekick_runs SET opening_json = json_remove(opening_json, '$.resourceId') WHERE opening_json IS NOT NULL`,
     `ALTER TABLE automation_directory DROP COLUMN email_address`,
     `DROP TABLE sidekick_email_receipts`,

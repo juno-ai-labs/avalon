@@ -2,12 +2,12 @@
 
 /**
  * A hosted Sidekick: the Sidekick itself, its definition revisions, schedules,
- * runs, inbound email, and the run child it provisions, all held by its
+ * runs, and the run child it provisions, all held by its
  * Organization's `WorkspaceDO` (`HostedSidekick`).
  *
  * Everything here is driven through the Organization object's `sidekick*` RPC
  * surface and the alarm entries it arms, against the real WorkspaceDO, the
- * real regional D1 it reads members and email routes from, and a real run
+ * real regional D1 it reads members from, and a real run
  * child (an `AgentLoopDO`) whose loop reads its definition back from this
  * object by revision. The one thing replaced is the model: the OpenRouter
  * double answers every turn, so the run reaches inference and ends, and what
@@ -2004,6 +2004,39 @@ describe("a hosted Sidekick", () => {
     const message = (rejection as Error).message;
     expect(message).toContain("save_definition_invalid");
     expect(message).toContain("draft.triggers");
+  });
+
+  it("reads and projects historical email runs after receiving is retired", async () => {
+    await activeAutomation();
+    const runId = "00000000-0000-7000-8000-00000000ad91";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO sidekick_runs
+        (sidekick_id,run_id,occurrence_key,trigger_json,definition_revision,harness_run_id,state,opening_json,
+         run_as_user_id,coordinator_user_id,created_at,updated_at)
+        VALUES (?,?,'historical-email',?,1,?,'completed',?,?,?,1,2)`, AUTOMATION_ID, runId,
+        JSON.stringify({ kind: "inbound_email", receiptId: "00000000-0000-7000-8000-00000000ad92", occurredAt: 1 }),
+        "00000000-0000-7000-8000-00000000ad93",
+        JSON.stringify({ textContent: "Historical evidence", structuredContent: { kind: "inbound_email", untrusted: true } }),
+        AUTHOR_ID, AUTHOR_ID);
+    });
+    const detail = AutomationDetailSchema.parse(await workspaceStub().sidekickReadDetail({ ...addressed(), actor: actor() }));
+    expect(detail.recentRuns).toMatchObject([{ id: runId, triggerType: "inbound_email", status: "completed" }]);
+    expect((await workspaceStub().sidekickListRuns({ ...addressed(), actor: actor() })).items)
+      .toMatchObject([{ id: runId, triggerType: "inbound_email" }]);
+    expect(await workspaceStub().sidekickReadRunDefinition({ ...addressed(), runId })).toMatchObject({
+      trigger: { kind: "inbound_email", receiptId: "00000000-0000-7000-8000-00000000ad92", occurredAt: 1 },
+      opening: { textContent: "Historical evidence", structuredContent: { kind: "inbound_email", untrusted: true } },
+    });
+    await workspaceStub().sidekickReplayRunRows({ ...addressed(), actor: actor() });
+    const shared = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID));
+    await expect.poll(() => runInDurableObject(shared, (_instance, state) => {
+      const row = state.storage.sql.exec<{ structured_content_json: string }>(
+        `SELECT structured_content_json FROM canonical_conversation_turn_details WHERE client_message_id = ?`, `sidekick-run:${runId}`,
+      ).toArray()[0];
+      return row ? JSON.parse(row.structured_content_json) as unknown : null;
+    }), { timeout: RUN_SETTLE_TIMEOUT_MS }).toMatchObject({
+      automationId: AUTOMATION_ID, runId, trigger: { kind: "inbound_email" },
+    });
   });
 
   it("refuses a run whose stored trigger does not parse by the field it got wrong", async () => {

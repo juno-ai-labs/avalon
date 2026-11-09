@@ -36,14 +36,7 @@ import { speechRoutes } from "./routes/speech";
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from "./routes/telemetry";
 import { linkRoutes } from "./routes/links";
 import { telemetryOperatorRoutes } from './routes/telemetry-operations';
-import {
-  connectedAppRoutes,
-  deviceTimezoneRoutes,
-  workspaceMembers,
-  workspaceProfile,
-  workspaceRoutes,
-  workspaceSocketTicket,
-} from "./routes/workspace";
+import { connectedAppRoutes, deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
 import { mcpOAuthRoutes } from "./routes/mcp-oauth";
 import { workspaceOperatorRoutes } from './routes/workspace-operations';

@@ -3,34 +3,12 @@ import { connectorAuthorizationStatus } from '@rally/contracts';
 import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
 
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
-import {
-  ScopeSharingOptionsSchema,
-  ScopeInvitationsListSchema,
-  ScopeInvitationResultSchema,
-  type ScopeGrantTarget,
-  type CreateScopeInvitations,
-} from "@rally/contracts/scope-grants";
+import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
 import { WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
-import {
-  MemberPreferencesSchema,
-  MemoryForgetResponseSchema,
-  MemoryReviewSchema,
-  PersonalSystemPromptSchema,
-  type MemoryForgetResponse,
-  type MemoryReview,
-  type MemberPreferences,
-  type MemberPreferencesUpdate,
-} from "@rally/contracts";
+import { MemberPreferencesSchema, MemoryForgetResponseSchema, MemoryReviewSchema, PersonalSystemPromptSchema, type MemoryForgetResponse, type MemoryReview, type MemberPreferences, type MemberPreferencesUpdate } from "@rally/contracts";
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
-import {
-  AccountOnboardingSchema,
-  OrganizationNameSuggestionSchema,
-  UpdateAccountOnboardingSchema,
-  type AccountOnboarding,
-  type OrganizationNameSuggestion,
-  type UpdateAccountOnboarding,
-} from "@rally/contracts";
+import { AccountOnboardingSchema, OrganizationNameSuggestionSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type OrganizationNameSuggestion, type UpdateAccountOnboarding } from "@rally/contracts";
 
 import { SupportAccessSchema, type SupportAccess } from "@rally/contracts";
 import { UserTimezoneSchema, type UserTimezone } from "@rally/contracts";

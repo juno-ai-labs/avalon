@@ -318,7 +318,7 @@ export const SidekickRunRowProjectionSchema = z.strictObject({
   ...Addressed,
   runId: IdSchema,
   automationName: z.string().min(1).max(300),
-  triggerKind: z.enum(["manual", "schedule", "external_event"]),
+  triggerKind: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
   createdAt: z.number().int().nonnegative(),
   state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
   stepCount: z.number().int().nonnegative(),
