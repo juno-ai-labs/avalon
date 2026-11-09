@@ -702,6 +702,7 @@ import {
   attachSidekickConversation,
   canvasesTitled,
   canvasTitle,
+  conversationNamedById,
   matchConversationReference,
   parseConversationId,
   scopeConversations,
@@ -7732,23 +7733,30 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ConversationToolResolveRequestSchema, input, "conversation_tool_resolve");
     this.assertWorkspace(request.workspaceId);
     const scoped = scopeConversations(this.state.storage.sql, request.scope);
-    // Only a refusal lists what the person can reach, so only a refusal pays for it.
-    const available = async () => (await this.reachableConversations(request.workspaceId, scoped, request.userId))
-      .map((conversation) => conversation.conversationId);
-    let match = matchConversationReference<ScopedConversation>(scoped, request.reference);
-    if (match.outcome === "ambiguous") {
-      // Only name ids this person can actually open when disambiguating a title.
+    // A conversation named by its id is checked against the scope and then
+    // admitted, and a refusal may name it: the caller already holds the id.
+    // A title is matched only among the conversations this person can open,
+    // so a title never confirms, or hands over the id of, one they cannot.
+    const byId = conversationNamedById(scoped, request.reference);
+    let target: ScopedConversation;
+    if (byId) {
+      target = byId;
+      const admission = await this.conversationToolAdmission(request.workspaceId, target, request.userId);
+      if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], target.parentId);
+      if (admission.archived) return conversationToolRefusal("conversation_archived", [], target.parentId);
+    } else {
+      // Admitted already: `reachableConversations` keeps only what the
+      // person can open now and is not archived.
       const reachable = await this.reachableConversations(request.workspaceId, scoped, request.userId);
-      match = matchConversationReference<ScopedConversation>(reachable, request.reference);
+      const match = matchConversationReference<ScopedConversation>(reachable, request.reference);
+      if (match.outcome === "missing") {
+        return conversationToolRefusal("conversation_not_in_scope", reachable.map((conversation) => conversation.conversationId));
+      }
+      if (match.outcome === "ambiguous") {
+        return conversationToolRefusal("conversation_ambiguous", match.matches.map((conversation) => conversation.conversationId));
+      }
+      target = match.conversation;
     }
-    if (match.outcome === "missing") return conversationToolRefusal("conversation_not_in_scope", await available());
-    if (match.outcome === "ambiguous") {
-      return conversationToolRefusal("conversation_ambiguous", match.matches.map((conversation) => conversation.conversationId));
-    }
-    const target = match.conversation;
-    const admission = await this.conversationToolAdmission(request.workspaceId, target, request.userId);
-    if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], target.parentId);
-    if (admission.archived) return conversationToolRefusal("conversation_archived", [], target.parentId);
     const sidekickName = this.state.storage.sql.exec<{ title: string }>(
       `SELECT title FROM automation_directory WHERE automation_id = ?`, request.scope.automationId,
     ).toArray()[0]?.title || "New Sidekick";

@@ -138,6 +138,14 @@ export type ReferenceMatch<T> =
   | { outcome: "ambiguous"; matches: T[] }
   | { outcome: "missing" };
 
+/** The candidate a reference names by its id or link, or null when it names none by id. */
+export function conversationNamedById<T extends { conversationId: string }>(candidates: readonly T[], reference: string): T | null {
+  const address = parseConversationId(reference);
+  if (!address) return null;
+  const id = conversationIdOf(address);
+  return candidates.find((candidate) => candidate.conversationId === id) ?? null;
+}
+
 /**
  * Which of `candidates` a model-supplied reference names: a `conversationId`
  * exactly, or else a title, compared without regard to case. More than one
@@ -147,12 +155,8 @@ export function matchConversationReference<T extends { conversationId: string; t
   candidates: readonly T[],
   reference: string,
 ): ReferenceMatch<T> {
-  const address = parseConversationId(reference);
-  if (address) {
-    const id = conversationIdOf(address);
-    const byId = candidates.find((candidate) => candidate.conversationId === id);
-    if (byId) return { outcome: "found", conversation: byId };
-  }
+  const byId = conversationNamedById(candidates, reference);
+  if (byId) return { outcome: "found", conversation: byId };
   const title = reference.trim().toLowerCase();
   const byTitle = title ? candidates.filter((candidate) => candidate.title.trim().toLowerCase() === title) : [];
   if (byTitle.length === 1) return { outcome: "found", conversation: byTitle[0]! };

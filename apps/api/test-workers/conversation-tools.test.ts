@@ -689,6 +689,12 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
     expect(await listed(COLLEAGUE_ID)).toEqual([AUTOMATION_ID, WRITTEN(), ROOM_ID]);
     await expect(conversationTools(COLLEAGUE_ID).run("read", { conversation: SIDE_ROOM() }))
       .rejects.toMatchObject({ code: "conversation_access_denied" });
+    // By its title the colleague reaches nothing, and is told nothing about
+    // the Canvas they cannot open: not that it exists, nor its id.
+    const byTitle = await conversationTools(COLLEAGUE_ID).run("read", { conversation: "Side room" })
+      .then(() => null, (error: unknown) => error as { code: string; details: unknown });
+    expect(byTitle).toMatchObject({ code: "conversation_not_in_scope", details: { available: [AUTOMATION_ID, WRITTEN(), ROOM_ID] } });
+    expect(JSON.stringify(byTitle?.details)).not.toContain(SIDE_ROOM());
   });
 
   it("refuses to attach a Canvas the person cannot open, and never names one by a title they cannot see", async () => {
