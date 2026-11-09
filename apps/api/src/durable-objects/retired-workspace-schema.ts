@@ -1,6 +1,3 @@
-import { listedResourceVisibilitySql } from "../services/resource-listing";
-import { MEMORY_DIGEST_SYNC_TRIGGERS } from "./memory-digest-sync";
-
 /**
  * WorkspaceDO migration statements whose runtime code is gone.
  *
@@ -8,7 +5,10 @@ import { MEMORY_DIGEST_SYNC_TRIGGERS } from "./memory-digest-sync";
  * statements a deleted module exported for one stay here, byte for byte, for
  * the migration lists in `workspace-do.ts` to keep applying to a fresh object.
  * Only a migration list may import them: the tables they create are dropped by a later
- * migration, and their triggers with them.
+ * migration, and their triggers with them. Nothing here imports a live
+ * helper: a statement a live module still builds (the memory digest triggers,
+ * the resource listing predicate) is written out as it was when it shipped,
+ * so a later change to that helper cannot rewrite shipped SQL.
  */
 
 // --- Channel colour sync (`channel-color-sync.ts`, deleted in plan step C-2) --
@@ -587,7 +587,26 @@ export const SPACE_VIEWER_JOINED_AT_MIGRATION: readonly string[] = [
   `ALTER TABLE space_viewers_next RENAME TO space_viewers`,
   // Its v70 name, which every object already carries and the rename tests hold.
   `CREATE INDEX workspace_space_viewers_user_idx ON space_viewers(user_id, is_participant, space_id)`,
-  ...MEMORY_DIGEST_SYNC_TRIGGERS.space_viewers,
+  // `MEMORY_DIGEST_SYNC_TRIGGERS.space_viewers` as it shipped.
+  `CREATE TRIGGER memory_digest_space_participant_insert AFTER INSERT ON space_viewers
+   WHEN NEW.is_participant = 1 BEGIN
+     UPDATE memory_digest_sync_state SET revision = revision + 1 WHERE id = 1;
+     UPDATE memory_revision SET revision = revision + 1 WHERE id = 1;
+     INSERT INTO memory_digest_sync(conversation, revision, attempts, not_before)
+       SELECT conversation, (SELECT revision FROM memory_digest_sync_state WHERE id = 1), 0, 0 FROM memory_digest_holders WHERE parent_kind = 'space' AND parent_id = NEW.space_id
+       ON CONFLICT(conversation) DO UPDATE SET revision = excluded.revision, attempts = 0, not_before = 0, in_flight = 0;
+   END`,
+  `CREATE TRIGGER memory_digest_space_participant_update AFTER UPDATE OF is_participant ON space_viewers
+   WHEN OLD.is_participant IS NOT NEW.is_participant BEGIN
+     UPDATE memory_digest_sync_state SET revision = revision + 1 WHERE id = 1;
+     UPDATE memory_revision SET revision = revision + 1 WHERE id = 1;
+     INSERT INTO memory_digest_sync(conversation, revision, attempts, not_before)
+       SELECT conversation, (SELECT revision FROM memory_digest_sync_state WHERE id = 1), 0, 0 FROM memory_digest_holders WHERE (parent_kind = 'space' AND parent_id = NEW.space_id) OR (OLD.is_participant = 1 AND conversation IN (
+         SELECT held.conversation FROM memory_digest_holder_facts held
+           JOIN memory_facts fact ON fact.fact_id = held.fact_id
+          WHERE EXISTS (SELECT 1 FROM json_each(fact.source_conversations_json) source WHERE source.value = 'space:' || NEW.space_id)))
+       ON CONFLICT(conversation) DO UPDATE SET revision = excluded.revision, attempts = 0, not_before = 0, in_flight = 0;
+   END`,
 ];
 
 /**
@@ -745,7 +764,7 @@ export const CHANNEL_RAIL_MIGRATION: readonly string[] = [
   `CREATE TRIGGER channel_rail_resource_update
      AFTER UPDATE OF ${RAIL_RESOURCE_COLUMNS.join(", ")}, metadata_json ON resources
      WHEN ${changed(RAIL_RESOURCE_COLUMNS)}
-       OR (${listedResourceVisibilitySql("OLD")}) IS NOT (${listedResourceVisibilitySql("NEW")})
+       OR (COALESCE(json_extract(OLD.metadata_json, '$.listing'), '') != 'unlisted') IS NOT (COALESCE(json_extract(NEW.metadata_json, '$.listing'), '') != 'unlisted')
      BEGIN ${bumpRailsSql(resourceLinkers("NEW"))} END`,
   `CREATE TRIGGER channel_rail_resource_delete AFTER DELETE ON resources
      BEGIN ${bumpRailsSql(resourceLinkers("OLD"))} END`,
