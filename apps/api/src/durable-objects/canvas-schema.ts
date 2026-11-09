@@ -37,6 +37,11 @@
  * A participant's `source` is `added`, `invitation`, or `request` (seated by
  * an approved request to open the Canvas, `docs/canvas-access-requests.md`).
  */
+/** WorkspaceDO migration 142: retain archived Canvases without admitting or listing them. */
+export const CANVAS_ARCHIVE_STATEMENTS: readonly string[] = [
+  `ALTER TABLE canvas_directory ADD COLUMN archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0)`,
+];
+
 export const CANVAS_SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE canvas_directory (
     canvas_id TEXT PRIMARY KEY,

@@ -72,8 +72,9 @@ The **Sidekicks** home page has **New Sidekick**, a search box and the filter ch
 
 Open a Canvas and it fills the window.
 
-- At the top left floats the Canvas's header pill, with its mark and name. Click it for the Canvas's menu: **Pin**, **Rename…**, **Share…**, **Copy link**, **Copy Canvas ID**, and **Open artifact** once Rally has made something.
-- At the top right are the faces of the people who have the Canvas open right now, then **Share**, then a **…** button with the same menu as the pill.
+- At the top center floats the Canvas's header pill, with its mark and name. Click it for four shortcuts: **Share**, **Open artifact**, **Copy link**, and **Pin** (or **Unpin**). **Open artifact** becomes available once Rally has made something and the artifact panel is closed. **Rename…** and **Change appearance** sit below the shortcuts.
+- At the top right are the faces of the people who have the Canvas open right now, then **Share**.
+- If you manage the Canvas, **Archive canvas** appears in red at the bottom of its menu. It asks you to confirm, then removes the Canvas for everyone. The conversation and artifacts remain stored but are no longer viewable in Rally; there is no unarchive option yet.
 - The conversation fills the middle: your messages, your teammates' messages and Rally's, with the message box at the bottom. It says **Ask Rally or the people here…**.
 - Once Rally has made something, it opens in a panel on the right, with its version. Drag the panel's edge to make it wider or narrower.
 
