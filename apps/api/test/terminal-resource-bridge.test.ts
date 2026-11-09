@@ -121,9 +121,14 @@ function fixture(
   });
   const objects = new Map<string, Uint8Array>();
   let afterPut: (() => Promise<void>) | undefined;
-  const put = vi.fn(async (key: string, value: Uint8Array | string) => {
+  // R2's own answer to a create-once put (`If-None-Match: *`) on a key that
+  // exists is null; every other put stores and answers the object.
+  const put = vi.fn(async (key: string, value: Uint8Array | string, options?: R2PutOptions) => {
+    const onlyIf = options?.onlyIf;
+    if (onlyIf instanceof Headers && onlyIf.get("If-None-Match") === "*" && objects.has(key)) return null;
     objects.set(key, typeof value === "string" ? new TextEncoder().encode(value) : value);
     await afterPut?.();
+    return { key };
   });
   const bucket = createCloudflareTestBinding<R2Bucket>({
     put,
@@ -493,6 +498,50 @@ describe("Terminal resource bridge", () => {
     expect(republished.resourceId).toBe(first.resourceId);
     expect(republished.version).toBe(2);
     expect(republished.slug).toBe(first.slug);
+  });
+
+  it("serves only the publish that moved the row when two runs republish one site at once", async () => {
+    const state = fixture();
+    state.database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
+          content_ref, content_sha256, metadata_json, attachment_status, model_content_status,
+          created_at, updated_at)
+       VALUES (?, ?, 'generated_site', 'avalon_generated', ?, 'Site',
+               'application/vnd.rally.site-manifest+json', 'old-manifest', ?, '{}',
+               'attached', 'unsupported', '2026-08-13', '2026-08-13')`,
+    ).run(RESOURCE, W, `terminal:${S}:site`, "a".repeat(64));
+    state.database.prepare(
+      `INSERT INTO artifact_registry
+         (artifact_id, workspace_id, workstream_id, resource_id, mode, stateful,
+          current_version, manifest_ref, hostname_stub, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'static', 0, 1, 'old-manifest', NULL, 1, 1)`,
+    ).run(ARTIFACT, W, S, RESOURCE);
+    const site = (html: string) => ({
+      mode: "static" as const, stateful: false, serverModuleSha256: null,
+      files: [{ path: "index.html", bytes: new TextEncoder().encode(html), sha256: html === "<h1>A</h1>" ? "b".repeat(64) : "c".repeat(64) }],
+    });
+    // The first run stops once its version's manifest is written; the second
+    // runs to the end in that gap, as a concurrent run would.
+    let rival: Promise<unknown> | undefined;
+    state.setAfterPut(async () => {
+      const manifest = [...state.objects.keys()].find((key) => key.endsWith("/manifest.json"));
+      if (rival || !manifest) return;
+      rival = state.bridge.publishSiteResource({ ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+        { filePath: "site" }, site("<h1>B</h1>"));
+      await rival;
+    });
+
+    await expect(state.bridge.publishSiteResource(context, { filePath: "site" }, site("<h1>A</h1>")))
+      .rejects.toMatchObject({ code: "resource_publish_conflict" });
+    await expect(rival).resolves.toMatchObject({ version: 3 });
+    // Each run wrote its own version; only the winner's is registered and served.
+    const indexes = [...state.objects.keys()].filter((key) => key.includes(`artifact/${ARTIFACT}/`) && key.endsWith("index.html"));
+    expect(indexes.map((key) => [key.includes("/v2/") ? 2 : 3, new TextDecoder().decode(state.objects.get(key))]).sort())
+      .toEqual([[2, "<h1>A</h1>"], [3, "<h1>B</h1>"]]);
+    expect(state.database.prepare("SELECT current_version FROM artifact_registry WHERE artifact_id = ?").get(ARTIFACT))
+      .toEqual({ current_version: 3 });
+    expect(state.recordPublish).toHaveBeenCalledTimes(1);
   });
 
   it("reserves a site's hostname before a republish mutates its resource row", async () => {
