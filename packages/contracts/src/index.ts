@@ -505,8 +505,8 @@ export { MESSAGE_MAX_CHARACTERS,MESSAGE_TOO_LONG_MESSAGE } from "./message-limit
  *
  * Deliberately far below {@link MESSAGE_MAX_CHARACTERS}, because a description
  * is not a message: it is a one-line summary of the conversation, and the
- * retired `docs/workstream-descriptions.md` records (in its 2026-08-24 entry)
- * why the bound stayed here when the message ceiling was raised.
+ * retired `workstream-descriptions.md` recorded (in its 2026-08-24 entry; see
+ * `docs/canvases.md#retired-documents`) why the bound stayed here when the message ceiling was raised.
  *
  * Changing this number means changing the `length(description) <= 4000` CHECK on
  * `channels` and the producer-side bound in

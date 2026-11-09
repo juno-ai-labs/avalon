@@ -17,12 +17,8 @@
  * gives: a key would make a future rebuild of either cascade here. A pin whose
  * item is gone is dropped where it is read.
  *
- * **Indexes.** The Threads tab lists the threads and breakouts one person takes
- * part in, which is the first read of either viewer table to start from the
- * person rather than the conversation, so each gets its `(user_id,
- * is_participant)` index now. The Channel feed lists a Channel's threads newest
- * placement first, which the membership table's existing
- * `(space_id, state, workstream_id)` index cannot order.
+ * **Indexes.** The retired Threads tab and Channel feed each added an index
+ * here, on tables later dropped with Threads and Channels.
  *
  * **Activity.** `workspace_activity_seen` is how far each person has read the
  * Activity tab; see `workspace-activity-feed.ts`.
