@@ -6,13 +6,23 @@ import { parseWorkspaceAddressedDeepLink } from '@rally/contracts/workspace-targ
 /** What the deep-link error window says for a retired link: the web app's sentence. */
 export { RETIRED_LINK_MESSAGE } from "@rally/contracts/links";
 
-/** The exact native URL shapes the main process will deliver to a renderer. */
+/**
+ * The exact native URL shapes the main process will deliver to a renderer.
+ * An old Thread deep link (`spaces/<space>/channels/<thread>`), which a click
+ * on a pre-pivot link in Slack or mail still hands the app, is delivered as
+ * the Canvas deep link of the Thread's id: `parseLinkTarget` reads it so, as
+ * it reads the Thread's HTTPS link, because the conversion kept a Thread with
+ * artifacts as the Canvas of its id.
+ */
 export function acceptedDeepLink(rawUrl: string): string | null {
   try {
-    return parseDesktopDeepLinkIntent(rawUrl) ? new URL(rawUrl).toString() : null;
+    if (parseDesktopDeepLinkIntent(rawUrl)) return new URL(rawUrl).toString();
   } catch {
     return null;
   }
+  const target = parseLinkTarget(rawUrl, { webBaseUrl: [] });
+  const minted = target ? linkDeepLink(target) : null;
+  return minted && parseDesktopDeepLinkIntent(minted) ? minted : null;
 }
 
 /** Connector completions are also delivered to a legacy initiating Settings renderer. */
@@ -53,7 +63,8 @@ export function httpsLinkDeepLink(rawUrl: string): string | null {
 /**
  * Whether a deep link the app refused names a Space, Channel, Breakout or
  * Thread, which no longer exist: a deep link under `spaces` or `workstreams`,
- * addressed or not. Shape only, as on the site: nothing it names is read.
+ * addressed or not, that `acceptedDeepLink` does not read (a Thread's own deep
+ * link opens its Canvas). Shape only, as on the site: nothing it names is read.
  * Main says so in its deep-link error window rather than dropping the link
  * without a word. An HTTPS link never reaches here: `continue-activity` hands
  * back to the browser any link `httpsLinkDeepLink` does not claim, and the
@@ -62,7 +73,7 @@ export function httpsLinkDeepLink(rawUrl: string): string | null {
 export function isRetiredDeepLink(rawUrl: string): boolean {
   let url: URL;
   try { url = new URL(rawUrl); } catch { return false; }
-  if (!isDesktopDeepLinkProtocol(url.protocol)) return false;
+  if (!isDesktopDeepLinkProtocol(url.protocol) || acceptedDeepLink(rawUrl)) return false;
   const destination = parseWorkspaceAddressedDeepLink(url)?.destination ?? url;
   return destination.hostname === 'spaces' || destination.hostname === 'workstreams';
 }

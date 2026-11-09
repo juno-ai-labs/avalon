@@ -79,12 +79,21 @@ describe('a link to something retired with Threads', () => {
       'rallywithai://workstreams/new',
       'rallywithai://workstreams/00000000-0000-7000-8000-000000000021',
       'rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/workstreams/00000000-0000-7000-8000-000000000021',
-      'rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/spaces/1111117Hxt1fAWDjN7TX/channels/1111117Hxt1fAWDjN7TY',
+      'rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/spaces/1111117Hxt1fAWDjN7TX/channels/1111117Hxt1fAWDjN7TY/breakouts/1111117Hxt1fAWDjN7TX',
+      'rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/spaces/1111117Hxt1fAWDjN7TX',
       'avalon://workstreams/00000000-0000-7000-8000-000000000021',
     ]) {
       expect(isRetiredDeepLink(retired), retired).toBe(true);
       expect(acceptedDeepLink(retired), retired).toBeNull();
     }
+  });
+
+  it("opens a Thread's own deep link as the Canvas of the Thread's id", () => {
+    const thread = 'rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/spaces/1111117Hxt1fAWDjN7TX/channels/1111117Hxt1fAWDjN7TY';
+    expect(acceptedDeepLink(thread)).toBe('rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/canvases/1111117Hxt1fAWDjN7TY');
+    expect(acceptedDeepLink(`${thread}/artifacts/1111117Hxt1fAWDjN7TX`))
+      .toBe('rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/canvases/1111117Hxt1fAWDjN7TY/artifacts/1111117Hxt1fAWDjN7TX');
+    expect(isRetiredDeepLink(thread)).toBe(false);
   });
 
   it('leaves current, unrelated and malformed links alone', () => {

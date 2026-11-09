@@ -3262,7 +3262,8 @@ function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): vo
 function emitDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint = 'deep_link'): boolean {
   const deepLink = acceptedDeepLink(rawUrl);
   if (!deepLink) {
-    // A Space, Channel, Breakout or Thread link opens nothing now; say so, as
+    // A Space or Breakout link opens nothing now (a Thread's own deep link
+    // was accepted above, as its Canvas); say so, as
     // the site's handoff page and the web app do, rather than drop it. It can
     // arrive before `ready` on a cold launch, and a window cannot open before.
     if (isRetiredDeepLink(rawUrl)) {
