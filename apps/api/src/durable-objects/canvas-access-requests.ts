@@ -195,6 +195,9 @@ export async function requestCanvasAccess(host: CanvasAccessHost, subject: Canva
       requestId, subject.canvasId, requesterUserId, requesterName, stored, now,
     ).toArray().length === 1;
     if (!inserted) return [];
+    // A denial on this Canvas reads as seen once its requester asks again
+    // (the seen join), so their open list is republished as every other seen change is.
+    host.noteActivityChanged(requesterUserId);
     return told.map((recipientUserId) => ({
       recipientUserId,
       ...recordParentNotice(host.storage, {

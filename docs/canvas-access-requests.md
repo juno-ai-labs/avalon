@@ -18,7 +18,7 @@ does; who can open a Canvas at all is [`canvases.md`](canvases.md)'s.
 | `apps/api/src/durable-objects/canvas-access-requests.ts` | WorkspaceDO migration 151 (migration 152, which admits `access_denied`, is `NOTIFICATION_INTENTS_ACCESS_DENIED_MIGRATION` and `WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS` beside the tables it rebuilds), `requestCanvasAccess`, `settleCanvasAccessRequest` (one settlement for a decision and for every other way in), `settleAdmittedAccessRequests`, the deciders, and the named refusals. |
 | `apps/api/src/durable-objects/hosted-canvas.ts` | `HostedCanvas.access`, `requestAccess`, `decideAccess`; `detail`'s pending list for a decider; `setAudience` settling what the new audience admits. |
 | `apps/api/src/routes/canvases.ts` | The three routes; `CanvasService` carries them to `WorkspaceDO.canvasAccess`, `canvasRequestAccess` and `canvasDecideAccess`. |
-| `apps/api/src/durable-objects/workspace-activity.ts` | A request's row reads as seen once settled, and names its state and decider; a declined request's row lists for a requester who cannot open the Canvas, untitled, and reads as seen once they ask again. |
+| `apps/api/src/durable-objects/workspace-activity.ts` | A request's row reads as seen once settled, and names its state and decider; a declined request's row lists for a requester who cannot open the Canvas, untitled, and reads as seen once they ask again; `requestCanvasAccess` republishes the requester's list when they do. |
 
 ## How it works
 
@@ -197,6 +197,10 @@ Canvas's title, and pushes it under their `accessRequests` choice; the access
 read gives the denied request's `decidedAt`. WorkspaceDO migration 152
 rebuilds `workstream_notification_intents` and `workspace_activity_items` to
 admit the kind, as 150 did.
+Asking again republishes the requester's own Activity list
+(`noteActivityChanged`), because their denied row now reads as seen through
+the seen join: without it the row and the badge stayed unseen on an open
+socket until a reload (the round-5 visual check, F1).
 
 **Why:** The owner's answer of 2026-11-08: "inform the person [of] a
 denial". The first version kept the Thread-era rule that a denial tells
