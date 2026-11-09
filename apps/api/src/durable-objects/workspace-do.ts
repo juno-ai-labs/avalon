@@ -4849,6 +4849,22 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "record when a person became a Channel participant, so Activity tells them only what happened after",
   // See SPACE_VIEWER_JOINED_AT_MIGRATION and docs/digests.md#who-is-told-about-channel-news.
   statements: SPACE_VIEWER_JOINED_AT_MIGRATION,
+}, {
+  version: 135,
+  description: "receipt each conversation the retirement walk closes, so an interrupted pass keeps its progress",
+  statements: [
+    // Keyed by the conversation object's own identity: its name is derived
+    // from the parent id and substream id alone, whatever kind the parent is.
+    // A row means that object confirmed its tombstone; the parent's receipt in
+    // `workspace_retirement_graph` still decides completion. See
+    // docs/workspace-retirement.md#retiring-a-workspace.
+    `CREATE TABLE workspace_retirement_children (
+      parent_id TEXT NOT NULL,
+      substream_id TEXT NOT NULL,
+      retired_at INTEGER NOT NULL,
+      PRIMARY KEY (parent_id, substream_id)
+    ) STRICT`,
+  ],
 }];
 
 function conversationToolEntry(conversation: {
@@ -6516,13 +6532,34 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return (await this.hostedParent(input.parentId, input.workspaceId)).childTerminalDeadlines(input);
   }
 
-  /** The children a hosted parent knows, for the retirement walk. */
+  /**
+   * The children a hosted parent knows that the retirement walk has not yet
+   * closed. A child receipted by `recordRetiredChild` is left out, so a pass
+   * cut off partway through a large parent resumes at the next child rather
+   * than waking every closed one again.
+   */
   async childrenForRetirement(input: { workspaceId: string; parentId: string }) {
     const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.childrenForRetirement();
+    if (sidekick) {
+      const listing = sidekick.childrenForRetirement();
+      return listing.status === "ok"
+        ? { ...listing, children: this.unretiredChildren(input.parentId, listing.children) }
+        : listing;
+    }
     const parent = await this.hostedParent(input.parentId, input.workspaceId);
     if (!parent.metadataRow()) return { status: "missing" as const };
-    return { status: "ok" as const, children: parent.childrenForRetirement() };
+    return {
+      status: "ok" as const,
+      children: this.unretiredChildren(input.parentId, parent.childrenForRetirement()),
+    };
+  }
+
+  private unretiredChildren<T extends { substreamId: string }>(parentId: string, children: T[]): T[] {
+    const retired = new Set(this.state.storage.sql.exec<{ substream_id: string }>(
+      "SELECT substream_id FROM workspace_retirement_children WHERE parent_id = ?",
+      parentId,
+    ).toArray().map((row) => row.substream_id));
+    return retired.size === 0 ? children : children.filter((child) => !retired.has(child.substreamId));
   }
 
   /**
@@ -19625,6 +19662,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * One conversation confirmed retired. Terminal and idempotent. It only lets
+   * a later pass skip the child; the parent's receipt still decides completion.
+   */
+  async recordRetiredChild(input: { parentId: string; substreamId: string }): Promise<void> {
+    await this.initialized;
+    this.state.storage.sql.exec(
+      `INSERT OR IGNORE INTO workspace_retirement_children (parent_id, substream_id, retired_at)
+       VALUES (?, ?, ?)`,
+      input.parentId,
+      input.substreamId,
+      Date.now(),
+    );
+  }
+
+  /**
    * What the walk has left.
    *
    * Read after the tombstone, which is why it is permitted: an operator asking
@@ -19700,6 +19752,7 @@ applyRetirementGate(WorkspaceDO, {
     "retiredMeetingInventory",
     "beginWorkspaceRetirement",
     "recordRetiredNode",
+    "recordRetiredChild",
     "workspaceRetirementProgress",
     // The walk's read of a hosted Channel's or Space's children. The parent is
     // closed with this object; its conversations are still separate objects

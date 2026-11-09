@@ -250,5 +250,8 @@ it('tracks desktop signup through verified ticket exchange, excluding OAuth-only
   const response = await desktop('desktop/exchange', { ticket:target.searchParams.get('ticket'),region:'global',attemptId:'a'.repeat(43),codeVerifier:verifier });
   expect(response.status,await response.clone().text()).toBe(200);
   await drainWaitUntil();
-  expect(names()).toEqual(['signup_started','signup_verification_requested','signup_verification_completed','authentication_completed','signup_account_created']);
+  // The exchange emits these two together, each from its own deferred, so
+  // either may land first (see the browser test above).
+  expect(names().slice(0, 3)).toEqual(['signup_started','signup_verification_requested','signup_verification_completed']);
+  expect(names().slice(3).sort()).toEqual(['authentication_completed','signup_account_created']);
 });
