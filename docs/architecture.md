@@ -835,8 +835,10 @@ so the operator cleanup they drove is finished and nothing calls them.
 **Considered and rejected:** deleting the 57 shim and 58 guard too; they run on
 every cold start and an object restored from before 58 still needs them.
 
-**Consequences:** an object found below 58 again has no operator path to clean
-up; that would need the RPCs back from history.
+**Consequences:** the 57 hold is terminal. An object found there again has no
+operator path to clean up and misses every later migration, so WorkspaceDO
+logs `workspace_meeting_retirement_held` on each of its wakes; clearing it
+needs the RPCs back from history.
 
 Shipped in juno-ai-labs/avalon#1500.
 
