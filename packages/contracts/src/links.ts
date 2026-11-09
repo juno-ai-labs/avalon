@@ -3,10 +3,14 @@
  *
  * Every link carries `(region, workspaceId)` as routing context. That pair
  * selects an already-authorized desktop Organization and grants no access; the
- * regional API still authorizes every read. The Space, Channel, Breakout and
- * Thread forms these replaced are not read here: `isRetiredLinkPath` only
- * recognizes their shapes, so the handoff page can say the thing they named is
- * gone rather than that the link is broken. See `docs/links.md`.
+ * regional API still authorizes every read. A Thread link (a Channel in the
+ * product of the time) is read as a link to the Canvas of the same id, since
+ * the conversion kept a Thread with artifacts as a Canvas under its id; for a
+ * Thread that was retired instead, the API answers `canvas_not_found` as for
+ * any missing Canvas. The Space, Breakout and import forms are not read:
+ * `isRetiredLinkPath` only recognizes their shapes, so the handoff page can say
+ * the thing they named is gone rather than that the link is broken. See
+ * `docs/links.md`.
  *
  * This module is intentionally dependency-free so the public site can import
  * it directly without pulling a validation library into a static page.
@@ -158,12 +162,41 @@ export function linkDeepLink(target: LinkTarget): string {
 }
 
 const CANONICAL_PATH = /^\/app\/([a-z][a-z0-9-]*)\/([^/]+)\/(cv|sk)\/([^/]+)(?:\/a\/([^/]+))?$/u;
+/** A Thread's canonical link, `/app/<region>/<organization>/s/<space>/c/<thread>`, optionally onto an artifact. */
+const THREAD_PATH = /^\/app\/([a-z][a-z0-9-]*)\/([^/]+)\/s\/([^/]+)\/c\/([^/]+)(?:\/a\/([^/]+))?$/u;
+/** A Thread's addressed invitation link, with UUIDs: `/app/workspaces/<region>/<organization>/workstreams/<thread>`. */
+const THREAD_ADDRESSED_PATH = /^\/app\/workspaces\/([a-z][a-z0-9-]*)\/([^/]+)\/workstreams\/([^/]+)$/u;
 
-/** Read a canonical Canvas or Sidekick path, with or without its trailing slash. */
+/** A Thread link's Canvas: the conversion kept a Thread with artifacts as the Canvas of its id. */
+function threadLinkPathTarget(normalized: string): LinkTarget | null {
+  const addressed = THREAD_ADDRESSED_PATH.exec(normalized);
+  if (addressed) {
+    const [, region, workspaceId, canvasId] = addressed;
+    const organization = { region: region!, workspaceId: workspaceId! };
+    return isWorkspaceTarget(organization) && isId(canvasId!) ? { kind: "canvas", ...organization, canvasId: canvasId! } : null;
+  }
+  const match = THREAD_PATH.exec(normalized);
+  if (!match) return null;
+  const [, region, encodedWorkspaceId, encodedSpaceId, encodedThreadId, encodedArtifactId] = match;
+  const workspaceId = uuidFromBase58(encodedWorkspaceId!);
+  const canvasId = uuidFromBase58(encodedThreadId!);
+  // The Space segment names nothing any more, but a link that never held one is not a Thread link.
+  if (!workspaceId || !canvasId || !uuidFromBase58(encodedSpaceId!) || !isWorkspaceTarget({ region, workspaceId })) return null;
+  const organization = { region: region!, workspaceId };
+  if (encodedArtifactId === undefined) return { kind: "canvas", ...organization, canvasId };
+  const artifactId = uuidFromBase58(encodedArtifactId);
+  return artifactId ? { kind: "canvas", ...organization, canvasId, artifactId } : null;
+}
+
+/**
+ * Read a canonical Canvas or Sidekick path, with or without its trailing
+ * slash, or a Thread's, as the Canvas of the same id (see the module comment).
+ * Thread-era links carried no message query.
+ */
 export function parseLinkPathTarget(pathname: string): LinkTarget | null {
   const normalized = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
   const match = CANONICAL_PATH.exec(normalized);
-  if (!match) return null;
+  if (!match) return threadLinkPathTarget(normalized);
   const [, region, encodedWorkspaceId, family, encodedId, encodedArtifactId] = match;
   const workspaceId = uuidFromBase58(encodedWorkspaceId!);
   const id = uuidFromBase58(encodedId!);
@@ -175,7 +208,24 @@ export function parseLinkPathTarget(pathname: string): LinkTarget | null {
   return artifactId ? { kind: "canvas", ...organization, canvasId: id, artifactId } : null;
 }
 
-/** Read a desktop deep link to a Canvas or a Sidekick. */
+/**
+ * A Thread's desktop deep link, `spaces/<space>/channels/<thread>`, optionally
+ * `/artifacts/<artifact>`, as the Canvas of the Thread's id. A Breakout's is
+ * not read: the Breakout is gone.
+ */
+function threadDeepLinkTarget(
+  target: WorkspaceTarget, channelSegment: string | undefined, encodedThreadId: string | undefined,
+  rest: string[], search: string,
+): LinkTarget | null {
+  const canvasId = encodedThreadId ? uuidFromBase58(encodedThreadId) : null;
+  if (channelSegment !== "channels" || !canvasId || search) return null;
+  const [childKind, encodedChildId, ...extra] = rest;
+  if (childKind === undefined) return { kind: "canvas", ...target, canvasId };
+  const artifactId = childKind === "artifacts" && encodedChildId && !extra.length ? uuidFromBase58(encodedChildId) : null;
+  return artifactId ? { kind: "canvas", ...target, canvasId, artifactId } : null;
+}
+
+/** Read a desktop deep link to a Canvas or a Sidekick (or a Thread's, as its Canvas). */
 function parseDeepLink(url: URL): LinkTarget | null {
   if (!isDesktopDeepLinkProtocol(url.protocol)) return null;
   const addressed = parseWorkspaceAddressedDeepLink(url);
@@ -184,7 +234,9 @@ function parseDeepLink(url: URL): LinkTarget | null {
   if (destination.hash || destination.username || destination.password || destination.port) return null;
   const [encodedId = "", childKind, encodedChildId, ...extra] = destination.pathname.slice(1).split("/");
   const id = uuidFromBase58(encodedId);
-  if (!id || extra.length) return null;
+  if (!id) return null;
+  if (destination.hostname === "spaces") return threadDeepLinkTarget(target, childKind, encodedChildId, extra, destination.search);
+  if (extra.length) return null;
   if (destination.hostname === "sidekicks") return childKind === undefined && !destination.search ? { kind: "sidekick", ...target, sidekickId: id } : null;
   if (destination.hostname !== "canvases") return null;
   const message = parseMessageSearch(destination.searchParams);
@@ -287,8 +339,10 @@ export function organizationShellDeepLink(target: OrganizationShellTarget): stri
 export const RETIRED_LINK_MESSAGE = "This link is to something that no longer exists. Rally replaced Channels, Threads and Breakouts with Canvases.";
 
 /**
- * Whether a path has the shape of a link to something that no longer exists:
- * a Space (later a Channel), a Channel (later a Thread) or a Breakout, in the
+ * Whether a path has the shape of a link to something that no longer exists,
+ * and is not a Thread link `parseLinkPathTarget` reads as its Canvas:
+ * a Space (later a Channel), a Breakout, a Thread link in a form that names
+ * no Organization, or a malformed Thread link, in the
  * hierarchical form (`/app/<region>/<organization>/s/...`), the addressed
  * invitation form (`/app/workspaces/<region>/<organization>/workstreams/...`),
  * the ID-only form from before Organizations were addressed
@@ -298,6 +352,7 @@ export const RETIRED_LINK_MESSAGE = "This link is to something that no longer ex
  * nothing it names is read, since nothing it named is left to open.
  */
 export function isRetiredLinkPath(pathname: string): boolean {
+  if (parseLinkPathTarget(pathname)) return false;
   return /^\/app\/workspaces\/[^/]+\/[^/]+\/workstreams\/./u.test(pathname)
     || /^\/app\/workstreams\/./u.test(pathname)
     || /^\/app\/[a-z][a-z0-9-]*\/[^/]+\/(?:s|i)\/[^/]+/u.test(pathname);

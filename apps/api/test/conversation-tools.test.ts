@@ -465,8 +465,9 @@ describe("conversation_attach", () => {
       sidekickCanonicalUrl("https://rally.test", { region: "global", workspaceId: WORKSPACE_ID, sidekickId: SIDEKICK_ID }), input, origins,
     )).toBe(SIDEKICK_ID);
     expect(__conversationToolTesting.attachReference(link(OTHER_WORKSPACE_ID), input, origins)).toBeNull();
-    // A Thread's link went with Threads.
-    expect(__conversationToolTesting.attachReference(`https://rally.test/app/workspaces/global/${WORKSPACE_ID}/workstreams/${OTHER_CANVAS_ID}`, input, origins)).toBeNull();
+    // A Thread's link names the Canvas a conversion kept under its id; an Organization-less one names nothing.
+    expect(__conversationToolTesting.attachReference(`https://rally.test/app/workspaces/global/${WORKSPACE_ID}/workstreams/${OTHER_CANVAS_ID}`, input, origins)).toBe(OTHER_CANVAS_ID);
+    expect(__conversationToolTesting.attachReference(`https://rally.test/app/workstreams/${OTHER_CANVAS_ID}`, input, origins)).toBeNull();
     expect(__conversationToolTesting.attachReference("Weekly call", input, origins)).toBe("Weekly call");
     expect(__conversationToolTesting.attachReference("https://elsewhere.test/app/x", input, origins)).toBeNull();
   });
