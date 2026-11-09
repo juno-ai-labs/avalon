@@ -12,7 +12,7 @@ import { seedWorkstreamObjectRoot, testSubstreamAgentsBinding, testWorkstreamObj
 
 const baseEnv = createTestEnv({ APP_ENV: "production", AVALON_REGION: "global", LOG_LEVEL: "error",
   OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
-  OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash, anthropic/claude-sonnet-4.5",
+  OPENROUTER_FALLBACK_MODEL: "google/gemini-3.6-flash, anthropic/claude-sonnet-4.5",
   OPENROUTER_FASTER_MODEL: "google/gemini-2.5-flash-lite",
 });
 function envWithRouting(routing: AgentModelRouting): Env {
@@ -101,11 +101,11 @@ describe("local agent model configuration", () => {
 
   it("supports the shared model environment variables and ordered fallbacks", () => {
     expect(defaultAgentModelRouting(baseEnv, "workstream")).toEqual({ model: "x-ai/grok-4.3", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] });
-    expect(defaultAgentModelRouting({ ...baseEnv, OPENROUTER_FALLBACK_MODELS: "" }, "workstream_naming")).toEqual({ model: "google/gemini-2.5-flash-lite", fallbackModels: [] });
+    expect(defaultAgentModelRouting({ ...baseEnv, OPENROUTER_FALLBACK_MODEL: "" }, "workstream_naming")).toEqual({ model: "google/gemini-2.5-flash-lite", fallbackModels: [] });
   });
 
   it("overrides primary and smarter models independently", async () => {
-    const env = createTestEnv({ OPENROUTER_PRIMARY_MODEL: "custom/primary", OPENROUTER_SMARTER_MODEL: "custom/smarter", OPENROUTER_FALLBACK_MODELS: "" });
+    const env = createTestEnv({ OPENROUTER_PRIMARY_MODEL: "custom/primary", OPENROUTER_SMARTER_MODEL: "custom/smarter", OPENROUTER_FALLBACK_MODEL: "" });
     await expect(resolveAgentModelRouting(env, "workstream")).resolves.toEqual({ model: "custom/primary", fallbackModels: [] });
     await expect(resolveAgentModelRouting(env, "sidekick_run")).resolves.toEqual({ model: "custom/primary", fallbackModels: [] });
     await expect(resolveAgentModelRouting(env, "sidekick_wizard")).resolves.toEqual({ model: "custom/smarter", fallbackModels: [] });
@@ -197,7 +197,7 @@ describe("local agent model configuration", () => {
       }),
     }), null);
     env.OPENROUTER_SMARTER_MODEL = "openai/gpt-6.1-sol";
-    env.OPENROUTER_FALLBACK_MODELS = "google/gemini-3.8-flash";
+    env.OPENROUTER_FALLBACK_MODEL = "google/gemini-3.8-flash";
     const context = { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID };
 
     await expect(resolveWorkstreamModelRouting(env, {

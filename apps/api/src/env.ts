@@ -183,7 +183,7 @@ export interface Env extends FeatureFlagEnvironment {
   AGENT_MODEL_ROUTING_JSON?: string;
   OPENROUTER_PRIMARY_MODEL?: string;
   OPENROUTER_SMARTER_MODEL?: string;
-  OPENROUTER_FALLBACK_MODELS?: string;
+  OPENROUTER_FALLBACK_MODEL?: string;
   OPENROUTER_FASTER_MODEL?: string;
   AZURE_OPENAI_ENDPOINT?: string;
   AZURE_OPENAI_API_KEY?: string;
@@ -484,7 +484,7 @@ const EnvContractSchema = z.object({
   AGENT_MODEL_ROUTING_JSON: z.string().optional(),
   OPENROUTER_PRIMARY_MODEL: z.string().min(1).optional(),
   OPENROUTER_SMARTER_MODEL: z.string().min(1).optional(),
-  OPENROUTER_FALLBACK_MODELS: z.string().optional(),
+  OPENROUTER_FALLBACK_MODEL: z.string().optional(),
   OPENROUTER_FASTER_MODEL: z.string().min(1).optional(),
   AZURE_INFERENCE_ENDPOINT: AzureInferenceEndpointSchema.optional(),
   // Deliberately optional: Azure model routing degrades to OpenRouter when absent.

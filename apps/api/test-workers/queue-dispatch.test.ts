@@ -47,7 +47,7 @@ const contractComplete = {
   OAUTH_STATE_ENCRYPTION_KEY: "oauth-secret",
   SESSION_SIGNING_KEY: "session-secret",
   OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
-  OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
+  OPENROUTER_FALLBACK_MODEL: "google/gemini-3.6-flash",
   OPENROUTER_FASTER_MODEL: "google/gemini-2.5-flash-lite",
   TOOL_DEFAULT_TIMEOUT_MS: "30000",
   WEB_SEARCH_MAX_RESULTS: "8",
