@@ -54,7 +54,7 @@ import { externalBindingReplyAdmission } from "../src/services/slack-agent-servi
 import { admitExternalWorkstreamMessage } from "../src/services/workstream-service";
 import { consumeEffectBodies, deliverChildEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { useOpenRouterDouble, type ProviderReply } from "./helpers/openrouter-double";
+import { useOpenRouterDouble, withSuccessfulSidekickOutcome, type ProviderReply } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { runSidekickAlarms, sidekickWorkspace } from "./helpers/sidekick";
@@ -115,14 +115,14 @@ let script: ProviderReply[] = [];
  * a promise the test made.
  */
 const hold = { armed: false, arrived: false, released: false };
-const provider = useOpenRouterDouble(async () => {
+const provider = useOpenRouterDouble(withSuccessfulSidekickOutcome(async () => {
   if (hold.armed) {
     hold.armed = false;
     hold.arrived = true;
     while (!hold.released) await new Promise((resolve) => setTimeout(resolve, 10));
   }
   return script.shift() ?? { say: "Done." };
-});
+}));
 
 /** Hold the next provider call; `arrived` settles once it is held, `release` lets it go. */
 function holdNextCall(): { arrived: Promise<void>; release: () => void } {
@@ -678,7 +678,8 @@ describe("Sidekick run continuation", () => {
 
     // Each run is a new conversation; the digest was copied into it when it
     // was provisioned, before the run's first and only activation here.
-    expect(provider.calls).toHaveLength(1);
+    // The first turn reports task success; the second returns its final reply.
+    expect(provider.calls).toHaveLength(2);
     expect(provider.completionCalls).toHaveLength(1);
     expect(provider.completionCalls[0]).toMatchObject({ state: {
       context_status: "resolved",

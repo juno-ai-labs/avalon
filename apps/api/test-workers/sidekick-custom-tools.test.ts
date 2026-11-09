@@ -29,7 +29,7 @@ import { createAutomation } from "../src/services/automation-service";
 
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 
-import { memberInputs, useOpenRouterDouble } from "./helpers/openrouter-double";
+import { memberInputs, useOpenRouterDouble, withSuccessfulSidekickOutcome } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { runSidekickAlarms, sidekickWorkspace } from "./helpers/sidekick";
@@ -78,14 +78,14 @@ const DEFINITION: AutomationDraft = {
 
 useSelectedModel();
 useHeldEffectQueue();
-const provider = useOpenRouterDouble((call) => {
+const provider = useOpenRouterDouble(withSuccessfulSidekickOutcome((call) => {
   const latest = memberInputs(call).at(-1);
   const current = call.messages.slice(call.messages.lastIndexOf(latest!));
   if (current.some((message) => message.role === "tool")) return { say: "Doubled: 42 days." };
   const tool = call.toolNames.find((name) => name === "custom_day_math");
   if (tool) return { callTool: { name: tool, arguments: { days: 21 } } };
   return { say: "No saved tool was offered." };
-});
+}));
 
 function sidekickHost() {
   return sidekickWorkspace(TEST_ENV, WORKSPACE_ID);

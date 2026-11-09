@@ -42,7 +42,6 @@ import type { TerminalPortFactory } from "./object-port";
 import {
   isTerminalProviderNotFound,
   deleteTerminalSandbox,
-  observeTerminalSandbox,
   stopTerminalSandbox,
   isTerminalSandboxLost,
   assertTerminalSandboxReady,
@@ -585,6 +584,10 @@ export class TerminalSandboxCoordinator {
 
       if (!row.sandboxId) {
         row = await this.createReservedSandbox(context, row, domains, now, waitBudget);
+      } else if (row.lifecycleState === "starting" && observed) {
+        // A previous acquisition discovered the identity but did not finish
+        // verifying its managed environment. Resume preparation, not reuse.
+        row = await this.prepareReservedSandbox(context, row, observed, domains, now, waitBudget);
       } else {
         const resumed = await this.resumeProviderSandbox(
           context,
@@ -1084,6 +1087,7 @@ export class TerminalSandboxCoordinator {
     domains: string[],
     now: number,
     waitBudget: TerminalSandboxWaitOptions,
+    replacingLostSandbox = false,
   ): Promise<TerminalSandboxRecord> {
     let created: TerminalSandboxSnapshot;
     try {
@@ -1115,47 +1119,52 @@ export class TerminalSandboxCoordinator {
         );
       }
     }
+    return this.prepareReservedSandbox(context, row, created, domains, now, waitBudget, replacingLostSandbox);
+  }
+
+  private async prepareReservedSandbox(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    created: TerminalSandboxSnapshot,
+    domains: string[],
+    now: number,
+    waitBudget: TerminalSandboxWaitOptions,
+    replacingLostSandbox = false,
+  ): Promise<TerminalSandboxRecord> {
+    // A create conflict can discover the same stopped, recoverable or lost
+    // sandbox as an ordinary ID lookup. Persist that identity before any
+    // provider operation, so an interrupted restore resumes by ID next time.
+    // It stays `starting` until preparation verifies the environment/policy.
+    await this.terminal(context).attachProviderSandbox({
+      generation: row.generation, sandboxId: created.id, lifecycleState: "starting",
+      ...deadlines(this.clock.now()), now,
+    });
+    const adopted = { ...row, sandboxId: created.id, lifecycleState: "starting" as const, version: row.version + 1 };
+    // Once replacement itself has failed, preserve its identity and surface
+    // the provisioning failure instead of recursively replacing new failures.
+    if (replacingLostSandbox && isTerminalSandboxLost(created)) {
+      throw new TerminalToolError("sandbox_unavailable",
+        "Daytona could not provision the replacement Terminal sandbox. Repair the managed snapshot or provider before retrying.",
+        { reason: "Repair the managed snapshot or provider before retrying." });
+    }
+    row = adopted;
     if (created.state !== "running") {
-      if (created.state === "stopped" || created.state === "archived") {
-        try {
-          await this.provider.startSandbox(created.id, waitBudget);
-        } catch {
-          // The same reasoning `resumeProviderSandbox` documents, and this
-          // call site now needs it for the same reason: the wait is bounded by
-          // the caller's deadline rather than a fixed minute, so running out
-          // of it is an ordinary outcome rather than a provider fault. A raw
-          // Daytona error escaping here would reach the model as an
-          // unclassified tool failure instead of a retryable
-          // `sandbox_unavailable` with guidance.
-          //
-          // The generation is deliberately not failed. The sandbox exists and
-          // is most likely still starting, and it is reachable by its stable
-          // name — the ambiguous-create reconcile above adopts it on the next
-          // attempt. Failing the generation here would discard a live sandbox
-          // over a wait that merely ran out.
-          const settled = await observeTerminalSandbox(this.provider, created.id)
-            .catch(() => undefined);
-          if (settled?.state !== "running") throw providerStateError(settled?.state ?? "unknown");
-        }
-      } else {
-        throw providerStateError(created.state);
-      }
+      const resumed = await this.resumeProviderSandbox(context, adopted, created,
+        row.authorityFingerprint, row.appliedNetworkRevision, domains, now, waitBudget, false);
+      // Replacement has already prepared and committed its new generation.
+      if (resumed.row.generation !== row.generation) return resumed.row;
+      row = resumed.row;
     }
     if (this.provider.prepareSandbox) {
       try {
         created = await this.provider.prepareSandbox(created.id, domains);
       } catch {
-        await this.provider.deleteSandbox(created.id).catch(() => (
-          this.provider.stopSandbox(created.id).catch(() => undefined)
-        ));
-        await this.terminal(context).failGeneration({
-          generation: row.generation,
-          failureCode: "provider_initialize_failed",
-          now,
-        });
+        const discarded = await this.discardUnverifiedSandbox(context, row, created.id, "provider_initialize_failed", now);
         throw new TerminalToolError(
           "sandbox_unavailable",
-          "Daytona could not verify the managed Terminal environment. The sandbox was discarded; retry after provider health or the managed snapshot is repaired.",
+          discarded
+            ? "Daytona could not verify the managed Terminal environment. The sandbox was discarded; retry after provider health or the managed snapshot is repaired."
+            : "Daytona could not verify the managed Terminal environment or confirm its removal. The sandbox identity is retained; retry after provider health or the managed snapshot is repaired.",
           { reason: "Retry after provider health or the managed Terminal snapshot is repaired." },
         );
       }
@@ -1163,17 +1172,12 @@ export class TerminalSandboxCoordinator {
     const expectedDomains = [...domains].sort();
     const observedDomains = [...created.domainAllowList].sort();
     if (expectedDomains.join("\n") !== observedDomains.join("\n")) {
-      await this.provider.deleteSandbox(created.id).catch(() => (
-        this.provider.stopSandbox(created.id).catch(() => undefined)
-      ));
-      await this.terminal(context).failGeneration({
-        generation: row.generation,
-        failureCode: "provider_policy_mismatch",
-        now,
-      });
+      const discarded = await this.discardUnverifiedSandbox(context, row, created.id, "provider_policy_mismatch", now);
       throw new TerminalToolError(
         "network_policy_unverified",
-        "Daytona did not confirm the workspace Terminal network policy. The sandbox was discarded; ask a workspace owner to verify the policy before retrying.",
+        discarded
+          ? "Daytona did not confirm the workspace Terminal network policy. The sandbox was discarded; ask a workspace owner to verify the policy before retrying."
+          : "Daytona did not confirm the workspace Terminal network policy or sandbox removal. The sandbox identity is retained; ask a workspace owner to verify the policy before retrying.",
         { reason: "Ask a workspace owner to verify the Terminal network policy before retrying." },
       );
     }
@@ -1185,6 +1189,20 @@ export class TerminalSandboxCoordinator {
       now,
     });
     return { ...row, sandboxId: created.id, lifecycleState: "running", version: row.version + 1 };
+  }
+
+  /** Release an unverified identity only after deletion is confirmed. */
+  private async discardUnverifiedSandbox(context: HarnessToolContext, row: TerminalSandboxRecord,
+    sandboxId: string, failureCode: string, now: number): Promise<boolean> {
+    try {
+      await deleteTerminalSandbox(this.provider, sandboxId);
+    } catch {
+      await this.provider.stopSandbox(sandboxId).catch(() => undefined);
+      // Keep `starting`: a later acquisition must finish preparation before reuse.
+      return false;
+    }
+    await this.terminal(context).failGeneration({ generation: row.generation, failureCode, clearSandboxId: true, now });
+    return true;
   }
 
   private async assertRestoredSandboxReady(sandboxId: string): Promise<void> {
@@ -1212,6 +1230,7 @@ export class TerminalSandboxCoordinator {
     domains: string[],
     now: number,
     waitBudget: TerminalSandboxWaitOptions,
+    commitRunning = true,
   ): Promise<{
     row: TerminalSandboxRecord;
     action: TerminalAcquisitionObservation["action"] | null;
@@ -1241,9 +1260,9 @@ export class TerminalSandboxCoordinator {
         return { row, action: null };
       }
       await this.assertRestoredSandboxReady(sandboxId);
-      await this.setRunning(context, row, now);
+      if (commitRunning) await this.setRunning(context, row, now);
       return {
-        row: { ...row, lifecycleState: "running", version: row.version + 1 },
+        row: commitRunning ? { ...row, lifecycleState: "running", version: row.version + 1 } : row,
         action: "restore",
       };
     }
@@ -1274,9 +1293,9 @@ export class TerminalSandboxCoordinator {
       });
     }
     await this.assertRestoredSandboxReady(sandboxId);
-    await this.setRunning(context, row, now);
+    if (commitRunning) await this.setRunning(context, row, now);
     return {
-      row: { ...row, lifecycleState: "running", version: row.version + 1 },
+      row: commitRunning ? { ...row, lifecycleState: "running", version: row.version + 1 } : row,
       action: "restore",
     };
   }
@@ -1343,7 +1362,7 @@ export class TerminalSandboxCoordinator {
       ...deadlines(this.clock.now()),
       now,
     });
-    return this.createReservedSandbox(context, replaced, domains, now, waitBudget);
+    return this.createReservedSandbox(context, replaced, domains, now, waitBudget, true);
   }
 
   private async replaceForAuthority(

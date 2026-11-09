@@ -272,6 +272,8 @@ import {
 import type { ToolReceiptRecord, ToolReceiptStatus } from "../durable-objects/workstream-tool-receipt-storage";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { createSidekickRunTools, readsSidekickRuns, SIDEKICK_RUN_READING_GUIDANCE } from "./sidekick-run-tools";
+import { createSidekickTaskOutcomePlugin, reportsSidekickTaskOutcome, sidekickTaskOutcomeFromReceipts,
+  SIDEKICK_TASK_OUTCOME_CAPABILITY, type SidekickTaskOutcome } from "./sidekick-task-outcome";
 import { withToolPagination } from "./tool-pagination";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
@@ -454,6 +456,7 @@ function workstreamHarnessTerminalResult(input: {
   finalTurnId: string | null;
   ambiguousToolOutcome: boolean;
   stoppedByUser: boolean;
+  sidekickTaskOutcome?: SidekickTaskOutcome | null;
 }): WorkstreamHarnessResult {
   const { outcome, streamedText, finalTurnId, ambiguousToolOutcome, stoppedByUser } = input;
   const durableTurn = streamedText && finalTurnId ? { finalTurnId } : {};
@@ -472,6 +475,14 @@ function workstreamHarnessTerminalResult(input: {
     };
   }
   if (stoppedByUser) return { status: "stopped", ...durableTurn };
+  if (outcome.status === "completed" && input.sidekickTaskOutcome !== undefined
+    && input.sidekickTaskOutcome?.outcome !== "succeeded") {
+    return { status: "failed", ...durableTurn, error: {
+      code: input.sidekickTaskOutcome === null ? "sidekick_task_outcome_missing"
+        : `sidekick_task_${input.sidekickTaskOutcome.outcome}`,
+      message: input.sidekickTaskOutcome?.summary ?? "The Sidekick finished without confirming its task outcome.",
+    } };
+  }
   if (outcome.status === "completed" && streamedText && finalTurnId) return { status: "completed", finalTurnId };
   // Preserve the harness's tool-ended outcome here. The conversation
   // terminalizer separately requires a durable final turn; Sidekick submission
@@ -5033,6 +5044,11 @@ export async function runWorkstreamHarness(
     finalTurnId: acceptedFinalTurnId,
     ambiguousToolOutcome,
     stoppedByUser,
+    ...(reportsSidekickTaskOutcome(input) && outcome.status === "completed" ? {
+      sidekickTaskOutcome: sidekickTaskOutcomeFromReceipts(await createToolReceiptObjectPort(
+        env, input.workspaceId, input.parentId, undefined, conversationSubstreamId,
+      ).receiptsForRun({ runId: input.harnessRunId, capabilities: [SIDEKICK_TASK_OUTCOME_CAPABILITY] })),
+    } : {}),
   });
   await persistHarnessHostOutcome(
     runs,
@@ -5204,6 +5220,7 @@ async function loadRunPromptContext(
         instructions: string;
         expectedOutputs: string[];
         homeConversationId: string | null;
+        failureNotificationConversationId: string | null;
         defaultBehavior: Record<string, unknown>;
         overrides: Record<string, unknown>;
         durableTables: MaterializedMemoryTable[];
@@ -5225,6 +5242,8 @@ async function loadRunPromptContext(
       instructions: definition.definition.instructions,
       expectedOutputs: definition.definition.expectedOutputs,
       homeConversationId,
+      failureNotificationConversationId: definition.definition.failureNotificationConversationId === undefined
+        ? homeConversationId : definition.definition.failureNotificationConversationId,
       defaultBehavior: definition.definition.defaultBehavior,
       overrides: {},
       // What lives in the automation's memory scope: the tables its
@@ -5846,6 +5865,7 @@ async function loadHarnessTools(
   // built-in and credential-scoped plugins.
   const tools: HarnessTool[] = [...coreTools];
   const builtinPlugins = [
+    createSidekickTaskOutcomePlugin(input),
     createAgentCommunicationPlugin(new AgentCommunicationService(env, input), agentCoordinationRoleGuidance(input),
       { sidekickRun: input.automationRun !== undefined }),
     workstreamPlugin,
