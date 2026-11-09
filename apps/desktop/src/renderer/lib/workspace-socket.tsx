@@ -426,10 +426,25 @@ export function WorkspaceSocketProvider({
      * request of the desktop's is in play then, so no sync topic follows; the
      * list is the one signal, whether it came as a push or, for one missed
      * while the socket was away, in the answer to the next `subscribe`.
+     *
+     * Only the Sidekicks whose row moved are refetched: the list is pushed
+     * whenever any one row changes, so invalidating every open detail and its
+     * runs on each push refetched Sidekicks nothing had happened to.
      */
-    const sidekickListMoved = (): void => {
-      void queryClient.invalidateQueries({ queryKey: ['automation'] });
-      void queryClient.invalidateQueries({ queryKey: ['automation-runs'] });
+    const sidekickListMoved = (previous: readonly unknown[] | undefined): void => {
+      const next = queryClient.getQueryData<readonly { id: string }[]>(SIDEBAR_LIST_QUERY_KEYS.automations) ?? [];
+      const before = new Map((previous as readonly { id: string }[] | undefined ?? []).map((row) => [row.id, JSON.stringify(row)]));
+      const moved = new Set<string>();
+      for (const row of next) {
+        if (before.get(row.id) !== JSON.stringify(row)) moved.add(row.id);
+        before.delete(row.id);
+      }
+      for (const id of before.keys()) moved.add(id);
+      if (moved.size === 0) return;
+      for (const id of moved) {
+        void queryClient.invalidateQueries({ queryKey: ['automation', id] });
+        void queryClient.invalidateQueries({ queryKey: ['automation-runs', id] });
+      }
       void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
       // Relayed as the `automations` topic it amounts to, so a consuming
       // window that reads these surfaces and not the list hears it without a
@@ -445,6 +460,7 @@ export function WorkspaceSocketProvider({
      */
     const applyConnectedSidebar = (sidebar: WorkspaceSidebar): void => {
       const authoritative = { authoritative: true };
+      const previousSidekicks = queryClient.getQueryData<readonly unknown[]>(SIDEBAR_LIST_QUERY_KEYS.automations);
       const sidekicksMoved = applyVersionedSidebarList(
         queryClient,
         'automations',
@@ -462,7 +478,7 @@ export function WorkspaceSocketProvider({
       // A reconnect's answer that moved the list stands in for the pushes the
       // socket missed while it was away. The first answer this window hears
       // has nothing to stand in for: whatever it loaded, it loaded just now.
-      if (sidekicksMoved && hadSubscribed) sidekickListMoved();
+      if (sidekicksMoved && hadSubscribed) sidekickListMoved(previousSidekicks);
       // The lists are the bound on the conversation cache: a conversation
       // stays on disk for as long as its Canvas or Sidekick is listed.
       if (localCacheScope !== null) {
@@ -719,14 +735,15 @@ export function WorkspaceSocketProvider({
             // opening batch writes the same two entries, and only a comparison
             // against one ledger can order the two producers.
             if (sidebarList.data.list === 'automations') {
-              applyVersionedSidebarList(
+              const previousSidekicks = queryClient.getQueryData<readonly unknown[]>(SIDEBAR_LIST_QUERY_KEYS.automations);
+              // Pushed whenever an automation's own row changes; a push the
+              // ledger drops as stale moved nothing.
+              if (applyVersionedSidebarList(
                 queryClient,
                 'automations',
                 sidebarList.data.waterline,
                 sidebarList.data.items.map(mapAutomationSummary),
-              );
-              // Pushed whenever an automation's own row changes.
-              sidekickListMoved();
+              )) sidekickListMoved(previousSidekicks);
             }
             return;
           }

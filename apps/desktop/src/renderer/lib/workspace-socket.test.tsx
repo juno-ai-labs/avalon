@@ -1,4 +1,5 @@
 import {
+  AutomationSummarySchema,
   ClientFeatureFlagsSchema,
   asSubstreamId,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
@@ -12,7 +13,8 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { StrictMode, useEffect, type JSX } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from './workspace-socket';
-import { ApiError } from './api';
+import { ApiError, mapAutomationSummary } from './api';
+import { SIDEBAR_LIST_QUERY_KEYS } from './sidebar-list-store';
 import { PushedListPending } from '../components/pushed-list-pending';
 import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
@@ -1263,9 +1265,17 @@ describe('WorkspaceSocketProvider', () => {
     queryClient.clear();
   });
 
-  it('refetches an open automation page when its list row is pushed', async () => {
+  it('refetches an open automation page when its list row is pushed, and not one whose row stayed', async () => {
     const queryClient = new QueryClient();
     const automationId = '00000000-0000-7000-8000-000000000005';
+    const untouchedId = '00000000-0000-7000-8000-000000000006';
+    const untouched = {
+      id: untouchedId, name: 'Incident triage', description: '', emailAddress: null, scope: 'workspace' as const,
+      status: 'active' as const, nextRunAt: null, lastRunAt: null, updatedAt: '2026-08-17T18:00:00.000Z',
+    };
+    queryClient.setQueryData(SIDEBAR_LIST_QUERY_KEYS.automations, [mapAutomationSummary(AutomationSummarySchema.parse(untouched))]);
+    queryClient.setQueryData(['automation', untouchedId], { id: untouchedId, currentDefinition: null });
+    queryClient.setQueryData(['automation-runs', untouchedId], []);
     queryClient.setQueryData(['automation', automationId], { id: automationId, currentDefinition: null });
     queryClient.setQueryData(['automation-runs', automationId], []);
     queryClient.setQueryData(['sidekicks-library'], []);
@@ -1309,10 +1319,13 @@ describe('WorkspaceSocketProvider', () => {
         nextRunAt: null,
         lastRunAt: null,
         updatedAt: '2026-08-17T19:00:00.000Z',
-      }],
+      }, untouched],
     }));
 
     expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(true);
+    // Its row is the same as before the push: nothing happened to it.
+    expect(queryClient.getQueryState(['automation', untouchedId])?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(['automation-runs', untouchedId])?.isInvalidated).toBe(false);
     expect(queryClient.getQueryState(['automation-runs', automationId])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['sidekicks-library'])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['sidekick-activity', 'workstream', 'room', '0'])?.isInvalidated).toBe(false);
@@ -1770,7 +1783,9 @@ describe('the organization-sync relay between windows', () => {
       occurredAt: '2026-08-17T20:00:03.000Z',
       list: 'automations',
       waterline: 2,
-      items: [],
+      // A row that moved: a push that changes no row relays nothing.
+      items: [{ id: '00000000-0000-7000-8000-000000000005', name: 'Weekly changelog', description: '', emailAddress: null,
+        scope: 'workspace', status: 'active', nextRunAt: null, lastRunAt: null, updatedAt: '2026-08-17T19:00:00.000Z' }],
     }));
     act(() => socket.message({
       type: 'workspace_usage',
