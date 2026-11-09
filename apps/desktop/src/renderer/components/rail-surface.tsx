@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 
-import { RailResizeHandle } from './rail-resize-handle';
+import { RailResizeHandle, type RailResize } from './rail-resize-handle';
 
 /**
  * How long a panel that has just lost the right sidebar stays on screen fading
@@ -53,7 +53,7 @@ interface RailSurfaceProps {
   className?: string;
   resizeLabel: string;
   width: number;
-  onResize: (width: number) => void;
+  onResize: RailResize;
   onClose: () => void;
   /** Lets the panel reach the surface, which holds focus when the rail opens. */
   surfaceRef?: RefObject<HTMLElement | null>;
