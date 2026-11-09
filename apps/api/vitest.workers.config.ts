@@ -1,6 +1,8 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
+import { WORKERS_TEST_TIMEOUT_MS } from "./test-workers/helpers/test-timeout";
+
 export default defineConfig({
   plugins: [
     cloudflareTest({
@@ -46,7 +48,7 @@ export default defineConfig({
     // budgeted at about 30 seconds in total, so a 30-second wall can only ever
     // mask a hang, never a productive run. Per-test overrides stay for the
     // tests that need *more* than this floor.
-    testTimeout: 30_000,
+    testTimeout: WORKERS_TEST_TIMEOUT_MS,
     hookTimeout: 30_000,
     // No explicit `maxWorkers`: the pool's own default, `availableParallelism()
     // minus one`, decides how many module-graph instantiations compete against

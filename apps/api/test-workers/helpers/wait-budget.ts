@@ -14,16 +14,21 @@
  * test's own clock starts; `waitBudget()` is each poll's timeout, the time
  * left before the deadline. A slow wait therefore gets everything the test has
  * left, and the one that runs out fails with its own assertion. The budget is
- * the config's `testTimeout` less a margin for the work between the waits; it
- * is derived from that number, not a new one, and moves with it.
+ * the suite's timeout (`WORKERS_TEST_TIMEOUT_MS`, which the config also reads)
+ * less a margin for the work between the waits.
  */
-const TEST_TIMEOUT_MS = 30_000;
+import { WORKERS_TEST_TIMEOUT_MS } from "./test-timeout";
+
+/**
+ * Time kept back for the work between a test's waits (setup reads, closing
+ * sockets). A test-harness setting, not a product limit; the team may change it.
+ */
 const MARGIN_MS = 5_000;
 
 let deadline = 0;
 
 export function startWaitBudget(): void {
-  deadline = Date.now() + TEST_TIMEOUT_MS - MARGIN_MS;
+  deadline = Date.now() + WORKERS_TEST_TIMEOUT_MS - MARGIN_MS;
 }
 
 /** The time left for this test's waits, for an `expect.poll` timeout. */
