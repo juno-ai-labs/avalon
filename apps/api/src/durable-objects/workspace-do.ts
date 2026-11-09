@@ -783,9 +783,8 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",
-  // Claims live on `claimWebhookReceipt`; the only generic statements left
-  // naming this table are the connection service's pre-cutover branches, which
-  // run only when WORKSPACE_DOS is unbound and so never reach this object.
+  // Claims live on `claimWebhookReceipt`; no generic statement names this
+  // table any more.
   // `connector_oauth_attempts` is deliberately absent: the attempt-bind
   // statement batched with a connection mutation in
   // `persistConnectionMutation` still arrives generically, and refusing the
