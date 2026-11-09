@@ -29,7 +29,7 @@ the machinery.
 | `apps/site/build/help/plugin.ts` | The Vite plugin: serves pages on request under `vite dev`, and emits every output during `vite build`, linking the `help` entry's hashed script and stylesheet, and naming other entries a page script loads itself (`entryMeta`, the PostHog SDK) in meta tags. |
 | `apps/site/src/help.ts`, `src/help-search.ts` | The browser script: phone menu, copy buttons, the outline's current-section marker, and search. Ranking lives in `help-search.ts` so it can be tested without a DOM. |
 | `apps/site/build/help/og.ts` | Each page's social card: a 1200×630 PNG laid out by Satori and rasterized by resvg (WebAssembly), named by a hash of its words. |
-| `apps/site/public/_redirects` | Sends every retired `/support/...` address, and every help page removed or renamed since, with its `.md` copy, to the page that now covers its subject. |
+| `apps/site/public/_redirects` | Sends every retired `/support/...` address, and the trailing-slash address of each help page renamed since, to the page that now covers its subject. A page for a removed feature, and a removed page's slashless and `.md` copies, answer 404. Wildcard rules go last: Cloudflare counts every rule after the first wildcard against its 100-rule dynamic limit. |
 | `apps/site/src/help.css` | All styling. Colours and type are `--help-*` tokens; the light and dark themes are the only places colours are set. |
 
 ## How it works
