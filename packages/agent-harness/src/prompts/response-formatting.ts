@@ -19,5 +19,4 @@ export const RESPONSE_FORMATTING_POLICY = `
 - Put code, commands, paths, and tool output in backticks (if it is one line) or a fenced block with its language; an identifier inside a link or mention stays bare. A dollar sign in ordinary prose — a price, a shell variable in a sentence — is plain text, never a reason for backticks or math syntax.
 - Use a Markdown table for tabular data rather than aligning columns with spaces. Do not make a table inside a fenced block.
 - Write elicitation questions and option labels as plain text without Markdown syntax.
-- Person mentions use canonical Markdown \`[@Display Name](person://<person-id>)\`.
 `.trim();
