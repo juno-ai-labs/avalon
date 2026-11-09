@@ -477,75 +477,61 @@ placement hints with results. Visibility times include polling resolution and us
 Worker timestamps; they are not exact replication timestamps. Remove probe deployments
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
-## Changelog
+## Retired documents
 
-### 2026-11-08 — Retirement record: Listing rules
+Removed from `docs/`; the last text and changelog are recoverable as
+[`architecture.md`](architecture.md#retired-documents) describes.
 
-**What changed:** Nothing in the code. `listing-rules.md`, kept after its
-module was deleted only as a record for its changelog, was removed in the
-documentation audit; its retirement record is below. Its full text and
-changelog is `git show e26aa66:docs/listing-rules.md`.
-
-**`listing-rules.md` — Listing rules (retired 2026-11-07).**
+**`listing-rules.md`: Listing rules (retired 2026-11-07).**
 `apps/api/src/durable-objects/listing-rules.ts` held the one ladder that
 decided who may be told a Space, Channel or Breakout exists: Organization-wide
-scope admits a member and never a guest, a participant is listed what they take
-part in, a Channel is listed through a Breakout of it, and a Space through a
-Channel in it. Plan step C-2 of the Canvases and Sidekicks pivot deleted it
-once its last reader, agent memory's visibility, was re-derived from Canvas
-and Sidekick participation. What survives is the member-versus-guest half:
-`admitsOrganizationWide`, `AccessClass` and `Viewer` moved to
-`apps/api/src/services/authorization-policy.ts` beside `sidekickAdmits`, and
-scope grants' Organization-wide branch (`scope-grant-policy.ts`) reads the
-access class directly. Its changelog is the record of why a guest is never
-admitted by Organization-wide scope.
+scope admits a member and never a guest, a participant is listed what they
+take part in, a Channel is listed through a Breakout of it, and a Space through
+a Channel in it. It was deleted once its last reader, agent memory's
+visibility, was re-derived from Canvas and Sidekick participation. What
+survives is the member-versus-guest half: `admitsOrganizationWide`,
+`AccessClass` and `Viewer` in `apps/api/src/services/authorization-policy.ts`
+beside `sidekickAdmits`, and scope grants' Organization-wide branch
+(`scope-grant-policy.ts`), which reads the access class directly. Its
+changelog is the record of why a guest is never admitted by Organization-wide
+scope.
 
-Shipped in juno-ai-labs/avalon#1490.
+## Changelog
 
-### 2026-11-07 — A conversation's read is answered by its Canvas or Sidekick alone, through one audience rule
+### 2026-11-09 — A conversation's read is answered by its Canvas or Sidekick alone, through one audience rule
 
-**What changed:** A Sidekick's conversations and the resources in them are
-read by whoever the Sidekick is shared with (`sidekickAdmits`): its author, the
-person it runs as, anyone on its new `people` list (`sidekick_audience`), and
-for an Organization-scoped one every member. The owner rule that also admitted
-the participants of a Sidekick's owning Thread or Breakout
-(`<owningWorkstreamId>/<owningSubstreamId>`), and the guest path through that
-home's grants, are removed, here and in search audience and memory facts. A
-conversation whose parent is a Canvas, and an artifact attached to it, are
-decided by `canvasAdmits` from the Canvas's facts
-(`hostedConversationAuthorizationFacts`, which answers a Sidekick or a Canvas
-in one call). `canvasAdmits` and `sidekickAdmits` are both `audienceAdmits`
-over their own facts; an owner or administrator is admitted to every Canvas.
-`AuthorizationBatch` no longer asks a Thread parent's `readAuthorizationFacts`
-before the hosted parent, and a resource's `sharedThrough` (the Channel a
-merge shared it with) and its second policy are gone.
+**What changed:** A Sidekick's conversations and resources are read by whoever
+it is shared with (`sidekickAdmits`: its author, the person it runs as, its
+`people` list, and every member when it is Organization-scoped), and a Canvas's
+Chat and artifacts by `canvasAdmits` over the Canvas's facts; both are
+`audienceAdmits`, and an owner or administrator is admitted to every Canvas. The
+owner rule that admitted an owning Thread's or Breakout's participants, its
+guest path, a resource's `sharedThrough` Channel share, and the Thread parent's
+`readAuthorizationFacts` round trip are removed, here and in search audience and
+memory facts. `listing-rules.ts` is deleted ([Retired
+documents](#retired-documents)).
 
-**Why:** The Canvases and Sidekicks pivot retires Threads; a Sidekick's shared
-conversation is read by the people it is shared with (plan step A-4), and a
-Canvas owns its audience, so its artifacts inherit it rather than a Thread's.
-An audience inherited from a Thread would outlive the Thread it came from, and
-two rules written field for field would drift. Plan step C-2 deleted the
-Thread and Channel hosts the old branches read: asking a parent that no longer
-exists first cost a Durable Object round trip on every read for an answer that
-was always "absent", and a merge, the only writer of a Channel share, is gone.
+**Why:** The pivot retires Threads; a Sidekick's shared conversation is read by
+the people it is shared with, and a Canvas owns its audience, so its artifacts
+inherit it. An audience inherited from a Thread would outlive the Thread, two
+rules written field for field would drift, and asking a deleted parent first
+cost a Durable Object round trip on every read for an answer that was always
+"absent".
 
 **Considered and rejected:** A separate artifact-level grant: an artifact is
 generated in the Canvas's Chat and attached to it, so the attachment path
 already decides it.
 
-**Consequences:** A Thread-scoped Sidekick keeps its Thread's audience since
-WorkspaceDO migration 136 (plan step A-5): an Organization-wide Thread's is an
-Organization one, read as members read it, and a personal Thread's or
-Breakout's lists that owner's viewers, so its former Thread's people keep
-reading it and nobody else gains it. A guest reaches a Sidekick only by being named on
-its list, and a Canvas only from its participant list. The rule is one
-function; a reader that decides access some other way is a defect. The
-artifact door (`ArtifactOpenService`) needs no Canvas branch; it is admitted
-through the canonical resource decision. A resource is readable through the
-conversation that holds it and nothing else, and resource authorization for a
-hosted conversation is one RPC whichever kind it is.
+**Consequences:** A Thread-scoped Sidekick kept its Thread's audience through
+WorkspaceDO migration 136, so nobody gained or lost one. A guest reaches a
+Sidekick only from its list and a Canvas only from its participants. The rule is
+one function, and a reader that decides access some other way is a defect:
+search groups ([`text-search.md`](text-search.md)) and memory visibility
+([`agent-memory.md`](agent-memory.md)) call the same predicates. A resource is
+readable through the conversation that holds it and nothing else.
 
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-21 — Admit attachment and artifact reads once per request
 

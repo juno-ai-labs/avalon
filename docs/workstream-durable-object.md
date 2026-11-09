@@ -72,7 +72,6 @@ those cross-conversation relationships; the conversation remains authoritative
 for its content and execution. [Agent communication](agent-communication.md)
 owns the typed host RPCs and storage behavior.
 
-
 Substream migration 46 adds `sidekick_skill_names`, a conversation-owned map from
 canonical Sidekick ID to a unique model-facing name. Assignment is synchronous
 and transactional. Removed Sidekicks keep their reservation so a name present in
@@ -1475,7 +1474,6 @@ interleaving with preparation. A large-roster case verifies that hydrating one
 participant does not bind the whole roster into a D1 query. The new message
 never reaches a provider.
 
-
 `test-workers/durable-object-runtime.test.ts` proves connector-event retention:
 the alarm ages out a processed event past 90 days and keeps every event still
 in flight.
@@ -1777,275 +1775,142 @@ Snapshots and resyncs use the same store query for `activeInferenceDelays`, sele
 the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
-## Changelog
+## Retired documents
 
-### 2026-11-08 — Retirement records: Conversation suggestions, Session import, Work-stream origin attachments, Desktop actions
+Removed from `docs/`; the last text and changelog are recoverable as
+[`architecture.md`](architecture.md#retired-documents) describes. They are
+recorded here because what each left behind is conversation-object state.
 
-**What changed:** Nothing in the code. Four documents kept after their
-mechanism was deleted, or after it stopped being reached, were removed in the
-documentation audit; their retirement records are below, here because what
-each left behind is conversation-object state. The first three documents' full
-text and changelog is `git show e26aa66:docs/<name>.md`; the fourth's, deleted
-in a later pass the same day, is `git show 14d68b1:docs/desktop-actions.md`.
+**`conversation-suggestions.md`: Conversation suggestions (retired
+2026-11-07).** After a Thread's or a Breakout's run settled, a
+turn-disposition observer asked a classifier whether to carry the result up
+(`merge_up`), break a side question out (`start_breakout`) or mark the
+conversation resolved, and the `suggestion_draft` role wrote the words. Merges,
+Breakouts and resolution belonged to Threads, so the observer, the drafter, the
+backfill and `turn-disposition.ts` are deleted; migration 84 dropped
+`conversation_suggestions` and `turn_disposition_judgements`, and a stored
+`merge_suggestion` alarm is acknowledged and dropped
+(`RETIRED_MERGE_SUGGESTION_ALARM_KIND`). WorkspaceDO's `suggestion_backfill`
+lane statements survive in `retired-workspace-schema.ts`.
 
-**`conversation-suggestions.md` — Conversation suggestions (retired
-2026-11-07).** After a Thread's or a Breakout's run settled, a turn-disposition
-observer asked a classifier whether to carry the result up (`merge_up`), break a
-side question out (`start_breakout`) or mark the conversation resolved, and the
-`suggestion_draft` role wrote the words. Merges, Breakouts and resolution
-belonged to Threads, so plan step C-3 deleted the observer, the drafter, the
-backfill, `turn-disposition.ts` and the product operations; `AgentLoopDO`
-migration 84 dropped `conversation_suggestions` and
-`turn_disposition_judgements`, and a stored `merge_suggestion` alarm is
-acknowledged and dropped (`RETIRED_MERGE_SUGGESTION_ALARM_KIND`). The contracts
-went in step B-8. What survives is WorkspaceDO's `suggestion_backfill` lane
-statements in `retired-workspace-schema.ts`.
-
-**`session-import.md` — Prepared conversations and session import (retired
-2026-11-07).** An agent imported a person's ChatGPT or Claude conversation into a
-reserved Channel, and a prepared conversation (ordered content with resolved
-files and provenance) was materialized into a work stream. Plan step C-1
-deleted the run service and routes, step C-2 the import desktop action, the
-reservation reclaim and its WorkspaceDO alarm lane, and `AgentLoopDO`
+**`session-import.md`: Prepared conversations and session import (retired
+2026-11-07).** An agent imported a person's ChatGPT or Claude conversation into
+a reserved Channel, and a prepared conversation (ordered content with resolved
+files and provenance) was materialized into a work stream. The run service,
+routes, import desktop action and reservation reclaim are deleted, and
 migration 84 dropped the `imported_session_*` tables. What survives:
-`prepared_conversation_receipts`, kept as a dead table because
+`prepared_conversation_receipts`, a dead table because
 `pending_attachment_reservation_recovery`'s foreign key names it;
 `PreparedConversationSchema` and `ImportedMessageProvenanceSchema` in
 `packages/contracts/src/substream-content.ts`, which stored transcripts and
-harness evaluations still read; WorkspaceDO migration 119's statements in `retired-workspace-schema.ts`; and
-the `session_import.finish` / `session_import.fail` action kinds in
-`packages/contracts/src/desktop-actions.ts`, which nothing sends
-(the desktop actions record below).
+harness evaluations still read; WorkspaceDO migration 119's statements in
+`retired-workspace-schema.ts`; and the `session_import.finish` and
+`session_import.fail` action kinds in `packages/contracts/src/desktop-actions.ts`,
+which nothing sends.
 
-**`workstream-origin-attachments.md` — Work-stream origin attachments
-(retired 2026-11-07).** A work stream started from a place in a connected tool
-(the Slack thread Rally was mentioned in, the Linear issue a Sidekick fired on)
+**`workstream-origin-attachments.md`: Work-stream origin attachments (retired
+2026-11-07).** A work stream started from a place in a connected tool (the
+Slack thread Rally was mentioned in, the Linear issue a Sidekick fired on)
 carried that place as an `origin` resource, described by the connector and
-bound to a connection by the host. Plan step C-2 deleted the host half
-(`workstream-origin-resource.ts` and every create path that attached one) and
-step B-8 the connector half (`ConnectorOriginLocator`,
+bound to a connection by the host. Both halves are deleted
+(`workstream-origin-resource.ts`; `ConnectorOriginLocator`,
 `describeConnectorOrigin`, `ConnectorAdapter.origin`). Stored
-`workstream_resource_links` rows in conversation-object SQLite keep
-`relationship_type = 'origin'` (`packages/contracts/src/resource-relationships.ts`). Its changelog is the
+`workstream_resource_links` rows keep `relationship_type = 'origin'`
+(`packages/contracts/src/resource-relationships.ts`). Its changelog is the
 record of why the connector names the object and only the host names the
 connection.
 
-**`desktop-actions.md` — Desktop actions (retired 2026-11-08).** The protocol
-by which an agent loop on the API asked the conversation creator's own Rally
-desktop to act in its embedded browser: a tool called the run's
-`desktopAction` executor, `AgentLoopDO.requestDesktopAction` recorded a
-`desktop_actions` row keyed by `(run_id, tool_call_id)`, published
-`desktop_action_requested` on the conversation socket and waited in memory,
-and the desktop ran the action on one pinned tab and answered with
-`answer_desktop_action`; only the creator's answer was accepted
-(`answersDesktopActions`), the first answer won, and crash repair re-entered
-the `reenterable` browser tools against the durable row. It was built for the
-conversation importer (#1058) and had no other user. It is retired because
-nothing reaches it: `AGENT_PROFILES` in
-`apps/api/src/services/agent-profiles.ts` is empty, a run is handed the
-`desktopAction` authority only through a profile's `plugins`
-(`integrations.ts`), `createBrowserPlugin` has no caller outside
-`apps/api/test/desktop-action-tools.test.ts`, and no file under
-`apps/desktop/src` or `packages/ui/src` handles `desktop_action_requested` or
-sends `answer_desktop_action`. What survives, all unreached: the
-`desktop_actions` table (`workstream-object-schema.ts`,
-`workstream-desktop-action-storage.ts`); the two socket frames in
-`packages/contracts/src/index.ts`; the action union, result schemas, failure
-codes, `StoredRef` and the dead `session_import.*` kinds in
-`packages/contracts/src/desktop-actions.ts`; `requestDesktopAction`,
-`answerDesktopAction`, `answersDesktopActions` and `offerPendingDesktopActions`
-in `agent-loop-do.ts`; `desktopAction` in `runtime/local-authorities.ts`; the
-`desktop_action_phase` diagnostic (`common/desktop.ts`, `main/telemetry-intent.ts`); the
+**`desktop-actions.md`: Desktop actions (retired 2026-11-08).** The protocol by
+which an agent loop asked the conversation creator's own desktop to act in its
+embedded browser: a tool called the run's `desktopAction` executor,
+`AgentLoopDO.requestDesktopAction` recorded a `desktop_actions` row keyed by
+`(run_id, tool_call_id)`, published `desktop_action_requested` and waited, and
+the desktop answered with `answer_desktop_action`; only the creator's answer
+was accepted (`answersDesktopActions`), the first answer won, and crash repair
+re-entered the `reenterable` browser tools against the durable row. It was
+built for the conversation importer and had no other user. Nothing reaches it:
+`AGENT_PROFILES` (`apps/api/src/services/agent-profiles.ts`) is empty, a run is
+handed `desktopAction` only through a profile's `plugins`,
+`createBrowserPlugin` has no caller outside
+`apps/api/test/desktop-action-tools.test.ts`, and nothing under
+`apps/desktop/src` or `packages/ui/src` handles the request or sends an answer.
+What survives, all unreached: the `desktop_actions` table
+(`workstream-object-schema.ts`, `workstream-desktop-action-storage.ts`); the two
+socket frames in `packages/contracts/src/index.ts`; the action union, results
+and failure codes in `packages/contracts/src/desktop-actions.ts`;
+`requestDesktopAction`, `answerDesktopAction`, `answersDesktopActions` and
+`offerPendingDesktopActions` in `agent-loop-do.ts`; `desktopAction` in
+`runtime/local-authorities.ts`; the `desktop_action_phase` diagnostic; the
 browser tools in `services/desktop-actions/browser-plugin.ts`; and the desktop
-executor, page-script wrapper, store and outline in
-`apps/desktop/src/common/desktop-actions/`, which the equally unreached browser
-script runtime drives ([its retirement record](embedded-browser.md#2026-11-08--retirement-record-browser-script-runtime)).
-A feature that revives it inherits four decisions from its changelog: only the
-conversation's creator answers unless the feature states whose desktop may act;
-an action is recorded before it is published and answered at most once, its
-answer stored before it is used; stored bytes stay on the desktop and only
-handles reach the API and the model; and, by product decision, neither page
-content nor network bodies are redacted and the tab may go to any site, the
-boundary being the one tab. The Workers proof of the creator-only rule went
-with the import suite and was never replaced.
+executor in `apps/desktop/src/common/desktop-actions/`, which the equally
+unreached browser script runtime drives
+([its record](embedded-browser.md#retired-documents)). A feature that revives
+it inherits four decisions: only the conversation's creator answers unless the
+feature states whose desktop may act; an action is recorded before it is
+published and answered at most once, its answer stored before it is used;
+stored bytes stay on the desktop and only handles reach the API and the model;
+and, by product decision, page content and network bodies are not redacted and
+the tab may go to any site, the boundary being the one tab. The Workers proof
+of the creator-only rule went with the import suite and was never replaced.
 
-Shipped in juno-ai-labs/avalon#1490.
+## Changelog
 
-### 2026-11-08 — Stop ends a streaming response at its next chunk
+### 2026-11-09 — The conversation class is `AgentLoopDO`, a conversation belongs to a Canvas or a Sidekick, and the Thread machinery is deleted
 
-**What changed:** The persistent loop's runtime exposes `stopRequested()`,
-and the harness's `onEvent` aborts the provider request on the first
-`stream_delta` after a Stop. The turn settles through the existing
-`settleAssistantFailure({ outcome: "stopped" })`, which writes the
-`assistant_turn_stopped` status. The rule that a Stop never cancels an
-in-flight model request is narrowed to tool effects.
+**What changed:** `SubstreamAgent` is renamed `AgentLoopDO` by Wrangler
+`renamed_classes` tag v15; every object keeps its id and SQLite database, its
+ledger continues under `substream_agent_do`, and loop ids, object names and the
+`SUBSTREAM_AGENTS` binding are unchanged. Conversation migration 83 admits
+`canvas` in the root row's `parent_kind`. The object admits only an `automation`
+or a `canvas` parent (`ConversationParentKindSchema`): a stored `workstream` or
+`space` root is refused on open with `conversation_parent_kind_retired:<kind>`,
+only the constructor and the operator dump read it (`identityForRetirement`),
+and such an object's alarm runs no lane. Everything only a Thread or a Breakout
+used is deleted: Thread `initialize`, session import, the participant authority
+handoff, conversation suggestions and turn disposition, Breakout context capture
+and the private-child mirrors, whose tables migration 84 drops.
+`convertParentKind` rewrites a Thread's stored kind to `canvas`, with its
+pending outbox envelopes, for the conversion. A Stop aborts a streaming response
+at its next `stream_delta`. The branch's unshipped migrations were folded before
+shipping, into conversation 82 to 84 and WorkspaceDO 136 to 140, one per
+subsystem.
 
-**Why:** The end-to-end pass stopped a long reply with no tool running; it
-streamed for about ninety seconds after Stop, the composer said "Stopping once
-the current work finishes…" throughout, and the turn ended as an ordinary
-reply. Waiting for a response nobody wants is the one wait a Stop is pressed
-to end, and an aborted stream loses only text the person asked not to get.
+**Why:** The decision log: Threads, Channels, Spaces and Breakouts leave the
+product, a Canvas's Chat is an ordinary conversation object, no new Durable
+Object is added, and the class is renamed because its name describes a Breakout
+that no longer exists. Every removed path served a Thread's lifecycle and had no
+caller once a Thread could not be created. A retired object's alarm runs no lane
+because every lane reads the hosted identity, and a leftover wake would
+otherwise throw on each pass until `retire_threads` closes the object. Outbox
+envelopes move with the kind because they name the parent by kind and would
+otherwise be refused until they dead-letter; the effect hash covers the effect
+alone, so the rewrite keeps it. The end-to-end pass watched a long reply stream
+for about ninety seconds after Stop, and an aborted stream loses only text the
+person asked not to get. The fold was forced by the first wake: every object
+runs the whole tail on its single thread before it answers, and the unfolded
+tail rebuilt one table three times.
 
-**Considered and rejected:** Aborting on the Stop command itself, from the
-socket handler: the request and the stream live in the harness, which the
-command does not hold, and a per-chunk read of the loop row is a local SQLite
-read. Aborting during tools: an effect already started may have written, and
-its receipt is the recovery authority.
+**Considered and rejected:** Renaming the `SUBSTREAM_AGENTS` binding (about four
+hundred reads for no behavioural change) or the `substream_agent_do` component
+key, which would split the fleet's schema history. Aborting a stream from the
+Stop command's socket handler, which does not hold the request, or during a
+tool, whose started effect may have written. Shipping the migration tail as
+written; folding was possible only because main had shipped neither tail, which
+the fingerprint tests now pin.
 
-**What a future change must respect:** the check runs only on `stream_delta`,
-so a Stop never aborts the harness while a tool runs.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — A Thread's conversation can become a Canvas's: `convertParentKind`
-
-**What changed:** `AgentLoopDO.convertParentKind` (over
-`WorkstreamObjectStore.convertParentKind`) rewrites the stored parent kind
-from `workstream` to `canvas`, together with the `parentKind` of every
-regional effect still pending in `durable_outbox`, then binds the persistent
-loop as construction does for a hosted conversation (the constructor's block,
-now `bindHostedConversation`) and arms the alarm. Any other transition is
-refused with `conversation_parent_kind_conversion_unsupported:<from>:<to>`; an
-object already `canvas` succeeds unchanged.
-
-**Why:** The user decided on 2026-11-08 that a Thread with artifacts becomes a
-Canvas in place, keeping its id (`convert_threads_to_canvases`,
-[`workspace-retirement.md`](workspace-retirement.md#converting-threads-that-have-artifacts)).
-The object's Main is the Canvas's Chat, so only its kind has to move. The
-outbox envelopes move with it because they name the parent by kind and would
-otherwise be refused (`conversation_parent_kind_retired:workstream`) until they
-dead-letter; the effect hash covers the effect alone, so the rewrite keeps it.
-The authority row and the identity are read from SQL on every use, so nothing
-in memory needs invalidating. A Thread object skipped the loop binding on
-construction and had its alarm cleared on every firing, which is why the RPC
-does both.
-
-**What a future change must respect:** the stored kind is otherwise
-write-once. A new place that caches or copies the kind inside this object has
-to be rewritten by `convertParentKind` too.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — The parent-kind contract names only Canvas and Sidekick
-
-**What changed:** `ConversationParentKindSchema` in `@rally/contracts` is
-`automation | canvas`, as the object already hosted, so no request into the
-object can name a Thread or Space parent. The object's stored root row may
-still say `workstream` or `space`: it is read through
-`StoredConversationParentKindSchema` (all four kinds) in
-`workstream-object-storage.ts`, by `identityForRetirement` for the retirement
-readers, and refused by name (`conversation_parent_kind_retired:<kind>`) on
-every product read, as before. Effect envelopes keep the four kinds
-(`EffectParentKindSchema`) so a retired parent's effect still reaches its
-receiver and is refused there. The merge tag on message admission, its replay
-flag and its Activity metadata are deleted with the merge contracts.
-
-**Why:** plan step B-8 of the Canvases and Sidekicks pivot. The contract
-narrowed last, after C-3 stopped hosting the retired kinds, because a stored
-root or an in-flight effect may still name one; the readers that must see a
-retired kind each name their wider enum rather than widen the contract again.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — The conversation class is `AgentLoopDO`, a conversation belongs to a Canvas or a Sidekick, and the Thread machinery is deleted
-
-**What changed:** The class `SubstreamAgent` is renamed `AgentLoopDO`
-(`agent-loop-do.ts`) by a Wrangler `renamed_classes` tag, v15, in the global
-and scratch configs; the test config, which starts every run empty, declares
-the new name in its v1. Every object keeps its id and its SQLite database; its
-migration ledger continues under the `substream_agent_do` component, and loop
-ids (`workstream:<parentId>:substream:<id>:loop`) and object names are
-unchanged. The `SUBSTREAM_AGENTS` binding keeps its name. Conversation
-migration 83 widens the root row's `parent_kind` CHECK to admit `canvas`,
-carrying the singleton, the three columns added after version 66 and all nine
-triggers on it across the rebuild.
-
-The branch's unshipped conversation migrations were folded before it
-shipped: 82 creates `sidekick_run_rows` with `requester_user_id` and
-`run_number` (an intermediate 87 added them and numbered the rows), and 84
-holds every drop below (once 84, 85 and 86). The `WorkspaceDO` versions the
-branch added, 135 to 155, became 136 to 140 (main's 135 came first), one per subsystem
-([SQL-only schema migration](#sql-only-schema-migration)). The pressure was
-the first wake: every Organization object and every conversation runs the
-whole tail on its single thread before it answers, and the unfolded list
-rebuilt `workstream_notification_intents` three times and
-`workspace_activity_items` twice, created a table in one version and altered
-it in three more, and dropped tables over three back-to-back versions. The
-rejected alternative was shipping the tail as written, since a fold cannot be
-undone once an object holds the receipts; it was taken only because main
-had shipped neither tail, which the fingerprint tests now pin.
-
-Plan step C-3 then removed from `AgentLoopDO` what only a Thread or a Breakout
-used: the Thread `initialize` product operation and its prepared-conversation
-install, the session-import operations, the participant authority handoff
-(`participant-authority-transfer.ts`, the `transferParticipantAuthority` and
-`applyParticipantProjection(s)` RPCs and the roster check a feed ticket's
-membership version was held to), and the conversation suggestions with the
-turn-disposition observer, the drafter, the merge-result alarm and the
-per-client socket filtering. Migration 84 drops `conversation_suggestions`,
-`turn_disposition_judgements`, the handoff's two tables and three freeze
-triggers on `participants`, and the three `imported_session_*` tables. A
-Breakout's lifecycle went too: its context capture and inherited context
-(`captureSubstreamContext`, `installInitialContext`, `initialContext`, the
-model-prompt rendering and the socket's `initial_context_snapshot_chunk`
-frames), and the private-child roster and archive mirrors; migration 84 also
-drops their four tables, and with the membership mirror its three
-authorization triggers, and `sidekick_attachments`. `prepared_conversation_receipts`
-stays as a dead table: `pending_attachment_reservation_recovery`'s foreign key
-names it, and dropping it would rebuild a live table to remove a reference
-nothing writes.
-
-A conversation object admits only a Sidekick (`automation`) or a Canvas
-parent: `HostedConversationParentKindSchema` types every request the object
-parses, a product request must name its parent kind (the `workstream` default
-is gone), and a root row whose stored `parent_kind` is `workstream` or `space`
-is refused on open with `conversation_parent_kind_retired:<kind>`, the code a
-child effect for those kinds already answers. The Thread-only branches went
-with it: the Space loop refusal, Thread appearance writes, the private-child
-archive guard, a Main's Sidekick attachment list and its report on wake, the
-Thread terminal-sandbox sweep with the alarm lane that ran it, and the Slack
-outcome delivery a Channel run made. Two readers still see a retired kind,
-through `identityForRetirement`: the constructor, so a Thread's object still
-constructs and `retireObject` can close it, and `conversationTranscriptText`,
-the operator dump that must read it first (`thread-retirement-service.ts`).
-Such an object's alarm runs no lane: `alarm` logs
-`conversation_parent_kind_retired:<kind>` and clears the slot, and its derived
-wake candidates are empty.
-
-**Why:** The Canvases and Sidekicks decision log: Threads, Channels, Spaces and
-Breakouts leave the product, a Canvas's Chat is an ordinary conversation
-object, no new Durable Object is added, and the class is renamed because its
-name describes a Breakout that no longer exists. Every removed path served a
-Thread's lifecycle (creating one with its first message, moving its roster to
-its Channel's grants, carrying a result up or breaking a question out), so
-each had no caller left once a Thread could not be created or opened. A
-retired object's alarm runs no lane because every lane reads the hosted
-identity, and a leftover wake reason (a memory sweep retry, an outbox row, an
-agent timer) would otherwise throw on each pass until `retire_threads` closes
-the object.
-
-**Considered and rejected:** Renaming the `SUBSTREAM_AGENTS` binding, which is
-read in about four hundred places for no behavioral change. Renaming the
-`substream_agent_do` component key, which would split the fleet's schema
-history in the migration tracker under two keys for a schema that did not
-change.
-
-**Consequences:** The rename is irreversible once deployed; rolling back means
-a further rename tag, not removing v15. A report or a forced-migration command
-the outgoing build sends under the old class name is translated by the tracker
-and the command consumer
+**Consequences:** The rename is irreversible once deployed; rolling back is a
+further rename tag, not removing v15. Version 83's literal is frozen, and a
+later widening copies it. Membership in a conversation is the parent's to
+decide: `participants` rows record who spoke or was added, never who may read.
+The stored kind is write-once except through `convertParentKind`, and a new
+place that caches the kind inside the object must be rewritten by it too. A Stop
+never aborts the harness while a tool runs. A stored `merge_suggestion` alarm is
+acknowledged and dropped. The tracker translates reports and commands sent under
+the old class name
 ([`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)).
-Version 83's literal is frozen; a later widening copies it. A conversation is
-created by its parent (`createCanvas`, the Sidekick's hosting) and its first
-message is an ordinary `create_message`. Membership in a Canvas's or a
-Sidekick's conversation is the parent's to decide; the conversation's own
-`participants` rows record who has spoken and who was added, never who may
-read. A stored `merge_suggestion` alarm is acknowledged and dropped. The
-contract's `ConversationParentKindSchema` still lists all four kinds, so the
-Worker narrows at each call into the object (`hostedConversationParentKind`)
-until the contracts step (B-8) narrows the enum.
 
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-31 — Crash repair names a program's completed nested calls
 
@@ -2287,7 +2152,6 @@ writes and questions as never started.
 recovery settles interruptions using the original receipt identities, and the
 next ordinary reservation replaces the head pointer under the current loop.
 
-
 ### 2026-10-19 — Connector event people occupy ordered rows
 
 **What changed:** WorkspaceDO migration 122 creates
@@ -2314,7 +2178,6 @@ rows commit with the event, and late-event restoration must copy them alongside
 the event identity. An enriched Google replay updates the canonical hash and
 latest-content fingerprint together, with a hash fence after async comparison;
 it does not schedule processed work again. Applied migrations remain untouched.
-
 
 ### 2026-10-18 — The conversation object keeps one suggestion per judged turn
 
@@ -3968,7 +3831,7 @@ activity and device-local history cannot express that order.
 
 **Consequences:** Access state belongs to WorkspaceDO, outside child-owned viewer
 projection writes. The complete ordering contract lives in
-[work-stream pinning](pinning.md#recent-work-streams).
+[work-stream pinning](pinning.md#list-order).
 
 ### 2026-09-07 — Search directory readability
 

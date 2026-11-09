@@ -249,25 +249,6 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
-### 2026-11-08 — Every window's native background follows a change of appearance
-
-**What changed:** Switching appearance, or the Mac switching it under System,
-repaints every Rally window's native background, not only the next one built.
-
-The badge token pair, `sys.color.badge.base` and `sys.color.badge.on`, now
-paints the rail and sidebar counts, the Sidekicks home's Needs input badge and
-the lists' unread dots; `cmp.feed.width-wide` is gone with the transcript
-column it sized.
-
-**Why:** The background was applied only in the constructors, so after Light
-to Dark the area a live resize exposes stayed `#fcfcfc` beside a `#070707`
-document (v3-G1); docs/e2e.md step 7 promises no flash of the other mode. In
-dark the rail's badges drew white digits on the dark `danger.base` at 3.12:1
-while the Needs input badge used the dark `danger.on` beside them, two looks
-for one object, where design.html §5 keeps the light red with white (v3-R2-4).
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-18 — A dark phone no longer opens the Home Screen app on white
 
 **What changed:** `apps/browser/index.html` carries an inline rule that paints

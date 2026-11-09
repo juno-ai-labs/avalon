@@ -261,65 +261,6 @@ relationships.
 
 ## Changelog
 
-### 2026-11-08 — Demo preparation, the relationship's producer, is removed
-
-**What changed:** Demo preparation, which wrote the complete ordered
-**can impersonate** pair set among the people it seated with
-`demo:<operation>` as the authority basis, is deleted, and so is retirement's
-lookup of the demo register that revoked those edges when a demo
-Organization closed. The relationship's storage, its four WorkspaceDO RPCs and
-the generic `impersonationRevocation` input to `beginWorkspaceRetirement`
-stay. Rally access is unchanged.
-
-**Why:** The owner's instruction of 2026-11-08: "remove the demo
-functionality completely". Only the demo-specific branches went; the
-relationship is a platform primitive that a demo was one producer of, and the
-same reasoning that kept it when Sideline went keeps it now.
-
-**Consequences:** The relationship is neither written nor read. Edges a demo
-wrote stay in their Organization's object; every live demo Organization is
-retired before this ships ([`workspace-retirement.md`](workspace-retirement.md)),
-so the old Worker revokes them on the way out. A new producer supplies its own
-authority basis and, if retirement should revoke its edges, passes it to the
-walk.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-06 — Sideline is deleted; the relationship stays
-
-**What changed:** Sideline is gone: the `apps/sideline` Electron app, its macOS
-release workflow, the `/sideline` catalog and send routes, the regional
-`ImpersonationService` behind them (relationship-gated represented send, attempt
-and result audits, and the per-person Channel and Breakout catalog), the
-Sideline contract shapes, its shared composer and sidebar, its
-`sideline://auth/complete` sign-in callback, and its `app://sideline` socket
-origin. The **can impersonate** relationship, its WorkspaceDO storage and RPCs,
-the demo producer, the `workspace_reach_changed` nudge on a relationship change,
-and Rally access are unchanged.
-
-**Why:** The Canvases and Sidekicks PRD
-(`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`, decision of 2026-11-06,
-"iOS, Sideline, browser import and Thread-scoped Sidekicks") retires Threads.
-Every Sideline destination was a Thread, so it had no home after the pivot; the
-product owner chose deletion over porting it.
-
-**Considered and rejected:** Keeping `ImpersonationService` and its represented
-send for a later surface. With its only route gone it had no caller, and its
-request and catalog shapes named Sideline and Thread destinations, so keeping
-it meant inventing a new contract for a surface nobody has asked for. Deleting
-the relationship as well, which would discard a working platform primitive
-whose demo producer still runs.
-
-**Consequences:** No represented action exists today; the relationship is
-written but read only by the reach nudge. A surface that brings it back owns the
-attempt-before-effect audit and the rechecks the invariants list, and can start
-from the service this change deleted. `principal: "impersonation"` and
-`impersonation_member_revoked` remain in the auth enums with no producer.
-`AccountTrigger` and `SidebarCollapseFooter` in `@rally/ui` lost their only host
-and are left for the shared-UI pruning that follows.
-
-Shipped in juno-ai-labs/avalon#1490. PRD: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md` (step B-10 of its plan).
-
 ### 2026-10-07 — The Rally access list rereads on a timer, not on open
 
 **What changed:** Staff's list of granting Organizations is reread every ten

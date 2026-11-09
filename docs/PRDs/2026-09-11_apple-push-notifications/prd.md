@@ -14,7 +14,7 @@
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Read alongside [`digests.md`](../../digests.md), which owns the notification
 > intent pipeline this plugs into, and
-> [`workstream-durable-object.md`](../../workstream-durable-object.md#sidebar-activity-and-notifications).
+> [`workstream-durable-object.md`](../../workstream-durable-object.md).
 
 ## Summary
 

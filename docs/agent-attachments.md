@@ -15,7 +15,7 @@ source of truth for retry, replay, and compaction recovery.
 User attachments and assistant artifact files use the verified upload pipeline
 and per-turn canonical attachment relationships. The prepared-conversation
 import that also wrote them, with its own reservations and retry
-reconciliation, is retired; see [the session import retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions).
+reconciliation, is retired; see [the session import retirement record](workstream-durable-object.md#retired-documents).
 
 ## Where the code lives
 
@@ -504,7 +504,7 @@ It does not own composer upload UX or the desktop lightbox presentation; those
 remain with the composer and renderer modules. It does not turn an ID into
 authority, search arbitrary workspace content, edit documents, or transcribe
 audio/video.
-Connector-origin relationships were retired with Threads ([record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions)), and the
+Connector-origin relationships were retired with Threads ([record](workstream-durable-object.md#retired-documents)), and the
 generic tool execution/receipt loop is owned by
 [`agent-harness.md`](agent-harness.md).
 
@@ -762,53 +762,6 @@ attachment reservation, since a pin usually names an already-sent resource.
 
 ## Changelog
 
-### 2026-11-08 — A version names its author, and the artifact panel shows it
-
-**What changed:** `ResourceRevision` gains optional `authorName`, filled by
-`ResourceService.versions` and `.version` for member and connector authors.
-The panel's "Last updated" line adds "version N · <author>" for the current
-version, and both it and the Versions menu prefer that name.
-
-**Why:** design.html §2 reads "Last updated today, 10:42 · version 4 · Rally",
-and the PRD has the artifact sit in the panel "with its version" (v1-F11,
-v4-F13). The Versions menu named a member only when the person was on the
-Canvas's participant list, and an Organization-wide Canvas lists nobody, so a
-teammate's version read "A teammate" and a connection's the provider. The
-client has no other way to resolve a user or connection id. The name sits
-beside `author`, not inside it, because the author variants are strict
-objects and a client older than the field would refuse the whole history over
-an unknown key. Agent and system authors carry no name: the product names
-them Rally, and a run id resolves to nothing a person reads.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-
-### 2026-11-07 — `publish_resource` lands in a Canvas, and no conversation inherits a Thread's links
-
-**What changed:** A publish from a Canvas's Chat is one of the Canvas's
-artifacts: the bridge tells the Canvas after each publish
-(`canvasArtifactNoter`). A Sidekick run's publish goes to a Canvas
-(`resolveTerminalPublicationHome`): the one its first publish made, or one it
-names with the new optional `canvas` argument, which must be a Canvas the
-Sidekick writes. The run's own conversation is still attached, so it reads
-back what it published. `inheritanceContext` loses its `breakout` answer, and
-`conversationResourceLinks` its Channel-Main port and the fingerprint arm that
-folded a Thread's revision into a Breakout's.
-
-**Why:** A Sidekick's output is a Canvas (the Canvases and Sidekicks PRD), and
-a Canvas holds every artifact its conversation generates; the publish identity
-`(conversation, path)` did not need to change for either. The inheritance arm
-answered only for a `workstream` parent, which the conversation object refuses
-to host after plan step C-2, so it was unreachable.
-
-**Considered and rejected:** A separate Canvas publish tool: it would have been
-the same tool with a second identity rule.
-
-**Consequences:** One run makes at most one Canvas of its own. A publish
-outside a Sidekick run that names a `canvas` is refused rather than ignored.
-
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
-
 ### 2026-11-06 — Out-of-scope resources no longer trip the grounding guard
 
 **What changed:** The attachment grounding guard ignores `resource_not_found`,
@@ -890,7 +843,6 @@ The text hydration and resource-discovery contracts remain the source of IDs.
 **Consequences:** Preserve source fidelity through live, replayed, inherited and overheard turns; resource sharing remains authoritative. See [artifact annotations](artifact-annotations.md).
 
 PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
-
 
 ### 2026-10-10 — Connectors read files through this converter, and XLSX shared strings stay aligned
 
@@ -1002,7 +954,7 @@ checks operation identity, bytes and the intended descriptor. Prepared conversat
 receipts own reservations separately from live input mailboxes; definite failures
 release holds, while canonical resource projection releases committed holds. Both
 historical roles retain model manifests. Unavailable originals remain references,
-and extracted text is labeled separately. See [session import](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions).
+and extracted text is labeled separately. See [session import](workstream-durable-object.md#retired-documents).
 
 The separate durable preparation owner prevents file holds from depending on a
 live-message mailbox that imported history never creates. Fake pending messages

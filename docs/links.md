@@ -364,128 +364,52 @@ attribution. See [push](push-notifications.md).
 
 ## Changelog
 
-### 2026-11-08 — A Canvas link can name a message
-
-**What changed:** `CanvasLinkTarget` gains `turnId` and `sequence`. The
-canonical link carries them as `?turn=<turn-uuid>&sequence=<n>`, the deep
-link as the same query, and the web app's Organization URL as
-`#/canvases/<canvas>?turn=…&sequence=…`; `parseLinkTarget`,
-`parseDesktopDeepLinkIntent` (its canvas intent gains the two fields) and
-`parseOrganizationShellTarget` read them, through one `parseMessageSearch`.
-A mention's or a reply's push links there.
-
-**Why:** The owner's answer of 2026-11-08 ("fix this") to a reply push
-opening the conversation at its newest message instead of at the message.
-
-**Considered and rejected:** A path segment, as the artifact took: a message
-is a place in the Chat, not a resource, and the renderer already routed it as
-`?turn=&sequence=` (`canvasTurnRoute`). Base58 for the turn id: the in-app
-route and the shell hash carry UUIDs.
-
-**What a future change must respect:** the message query is accepted only on
-a Canvas link with no artifact segment, as exactly `turn` and `sequence`;
-any other query is still refused. A build before this refuses such a link
-(an older Mac opens the app without navigating). The handoff page first read
-only the path, so it opened a message link at the Canvas's default spot on
-both hosts; it now reads the query into the target and mints both onward
-links from it, dropping a query neither app would accept rather than
-forwarding a link the web app refuses.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — The Mac app routes links as the web app does
-
-**What changed:** Three divergences between the two hosts' routing closed. A
-Canvas deep link onto an artifact navigates to `#/canvases/<canvas>?artifact=<artifact>`
-(`canvasArtifactRoute`) instead of `#/canvases/<canvas>` with open-resource
-route state, so the Canvas screen opens the artifact from the one query
-`shellLocation` already wrote. The retired-link sentence is one constant,
-`RETIRED_LINK_MESSAGE` in `@rally/contracts/links`, which the web app's entry
-card and the desktop's deep-link error window both show; the desktop's had been
-the shorter "This link is to something that no longer exists.", and
-`isRetiredDeepLink` lost its HTTPS branch, which nothing could reach because
-`continue-activity` hands an unclaimed link back to the browser and every other
-path passes a scheme URL. And the web app's Organization URL,
-`/app/workspaces/<region>/<organization>` with an optional landing, Canvas or
-Sidekick hash, opens the Mac app on `rallywith.ai` and `www` through
-`parseOrganizationShellTarget` and a new addressed `home` intent that lands on
-`#/`.
-
-**Why:** The owner asked for the Electron app's routing to match the
-browser's. Both hosts mount the same router, so the differences were around
-it: what a link put in front of the Canvas screen, the copy for a retired link,
-and which inbound URLs the app would take.
-
-**Considered and rejected:** Reusing the `activity` intent for the
-Organization landing: it lands on the Canvases home and names the Activity
-section, while the web app lands on `#/` and restores the last route.
-Keeping the dead HTTPS branch with a comment. Letting `parseLinkTarget` read
-hashes: it reads shareable links, which never carry one, and widening it would
-widen every caller.
-
-**Consequences:** `httpsLinkDeepLink` claims the Organization URL only on the
-two associated hosts. `app.rallywith.ai`, where the web app runs and whose
-address bar a person would copy from, is neither an associated domain nor
-serving the association file, so its URLs still open in the browser; claiming
-them changes the Mac app's signing entitlements and the release, and is the
-owner's call. Only the main process mints a `home` deep link, from a claimed
-universal link, so no older build is ever handed one. A Canvas screen change must keep
-consuming `?artifact=`, which is now the only way any link opens an artifact.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — Canvases get a link form; the Space, Channel, Breakout, Thread and iPhone forms go
+### 2026-11-09 — Canvases get a link form, and the Space, Channel, Breakout, Thread and iPhone forms go
 
 **What changed:** A Canvas has a canonical link,
-`/app/<region>/<organization>/cv/<canvas>/` (with `a/<artifact>/` onto one of
-its artifacts) and `rallywithai://.../canvases/<canvas>`, beside the
-Sidekick's `/sk/`. The contracts module is `links.ts` (this document was
-`workstream-links.md`) with one reader, `parseLinkTarget`; the Space, Channel,
-Breakout, Thread and import minters and readers are deleted, and
-`isRetiredLinkPath` only recognizes their shapes. The site's handoff page moved
-to `app/open`, hands a Canvas or Sidekick link to the Mac app or the web app,
-and answers a retired link with "This link is to something that no longer
-exists" instead of a 404. Server-minted links come from
-`conversationCanonicalUrl`, which reads the parent's kind; a notification about
-a Thread is skipped, named `conversation_not_linkable`. The Slack unfurl reads
-Canvas and Sidekick links and shows the name only, recording nothing; the
-sweep that kept old Thread cards current was deleted with the Thread storage
-it read. The web app rewrites to `#/canvases/:id` and `#/sidekicks/:id`. The
-iPhone entry in the Apple association file and the handoff's iPhone branches
-went with `apps/ios`.
+`/app/<region>/<organization>/cv/<canvas>/`, optionally onto an artifact
+(`a/<artifact>/`) or a message (`?turn=<uuid>&sequence=<n>`), and a deep link,
+`rallywithai://.../canvases/<canvas>`, beside the Sidekick's `/sk/`. The
+contracts module is `links.ts` (this document was `workstream-links.md`), with
+one reader, `parseLinkTarget`; the retired minters and readers are deleted, and
+`isRetiredLinkPath` recognizes their shapes so every host answers with
+`RETIRED_LINK_MESSAGE`. A Thread link reads as the Canvas a converted Thread
+became, else `canvas_not_found`. The site's handoff page is `app/open`.
+Server-minted links come from `conversationCanonicalUrl`, and a notification
+about a Thread is skipped as `conversation_not_linkable`. The Slack unfurl reads
+Canvas and Sidekick links and shows the name only; its refresh sweep is deleted.
+The Mac app routes as the web app does: an artifact link lands as `?artifact=`,
+and the web app's Organization URL opens the app through a new `home` intent.
+The iPhone association entry went with `apps/ios`.
 
-**Why:** The pivot deletes Threads, Breakouts and Channels and their client
-surfaces, and the iOS client
-([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md), plan steps B-5 and
-B-9). A link to one now opens nothing, and a Canvas, the shared thing that
-replaced them, had no link of its own: its Chat used the Thread forms in the
-interim. Saying a retired link's thing is gone is the honest answer; a 404
-reads as a broken link.
+**Why:** The pivot deletes Threads, Breakouts, Channels and the iOS client, so a
+link to one opens nothing, while a Canvas, the shared thing that replaced them,
+had no link of its own. Saying a retired link's thing is gone is the honest
+answer; a 404 reads as a broken link. The conversion kept about 60 Threads as
+Canvases under their own ids, and reading their links in the parser means the
+web app, the desktop paste path and the link title route agree. The owner asked
+for a push to open at its message and for the Mac app's routing to match the
+browser's.
 
-**Considered and rejected:** Keeping the Thread readers so an old link opens
-"the Canvas with that id". Thread ids and Canvas ids shared a namespace but no
-meaning, so an old link would open the unavailable state at best. That
-changed on 2026-11-08, when the conversion kept every Thread with artifacts
-(about 60) as a Canvas under its own id: a Thread link is now read as that
-Canvas inside `parseLinkPathTarget`, and a retired Thread's link answers
-`canvas_not_found`. Reading it in the parser rather than at the handoff page
-means the web app, the desktop paste path and the link title route agree. A Canvas
-path under a Space-like hierarchy (`/s/.../cv/...`): a Canvas belongs to the
-Organization, as a Sidekick does. Recording Canvas cards for a refresh sweep:
-a name-only card has no status to keep current.
+**Considered and rejected:** A Canvas path under a Space-like hierarchy: a
+Canvas belongs to the Organization, as a Sidekick does. A path segment or Base58
+for the message: a message is a place in the Chat, and the in-app route already
+carried `?turn=&sequence=` with UUIDs. Recording Canvas cards for a refresh
+sweep, when a name-only card has nothing to keep current. Letting
+`parseLinkTarget` read hashes, which would widen every caller.
 
-**Consequences:** The desktop's main process says "This link is to something
-that no longer exists" in its deep-link error window for a retired deep link,
-as the site and the web app do, rather than refusing it without a word. The
-web app's Organization shell path, `/app/workspaces/<region>/<organization>`,
-shares a prefix with the retired addressed form and must stay outside
-`isRetiredLinkPath`. A desktop build older than this refuses a Canvas deep
-link; the web app opens it. A Thread card already in Slack is frozen as last
-rendered, and one in a channel that became externally shared afterwards is not
-redacted; `slack_unfurled_links` keeps its rows until a data migration drops
-it.
+**Consequences:** The message query is accepted only on a Canvas link with no
+artifact segment, and any other query is refused; the handoff page forwards only
+what an app accepts. The web app's Organization shell path shares a prefix with
+the retired addressed form and must stay outside `isRetiredLinkPath`. A Canvas
+screen must keep consuming `?artifact=`, the only way a link opens an artifact.
+`app.rallywith.ai` is not an associated domain, so its URLs open in the browser;
+claiming them changes the Mac app's signing and is the owner's call. A desktop
+older than this release refuses a Canvas deep link. A Thread card already in
+Slack is frozen as last rendered.
 
-Shipped in juno-ai-labs/avalon#1490.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-17 — A link can open a thread onto an artifact
 
@@ -509,7 +433,6 @@ general mints it: it rides only `artifact_updated` pushes, which an older Mac
 and iPhone already drop by kind. The addressed fallback form, for a thread no
 Space holds, has no artifact segment and opens the thread. The site must
 deploy before a desktop release that relies on it, as for any new path.
-
 
 ### 2026-10-10 — Links keep their shape; the app's routes say Channel and thread
 
@@ -641,7 +564,6 @@ link events adapt supported work-stream paths into the existing scheme parser
 and navigation dispatch. This keeps one navigation contract while preserving
 the browser handoff page for clients without an associated app. Association
 publication and signed-Mac acceptance must precede the desktop release.
-
 
 ### 2026-09-08 — Preserve private-child destinations
 

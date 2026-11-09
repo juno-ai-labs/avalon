@@ -707,59 +707,43 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
 
-### 2026-11-07 — Search groups follow a Canvas's and a Sidekick's own audiences
+### 2026-11-09 — Search groups follow a Canvas's and a Sidekick's own audiences
 
 **What changed:** `readSearchAudience` gives each person the
-`conversation:<canvasId>/0` group of every Canvas `canvasReaderAllows` lets
-them open, and a Sidekick's `sidekick:<id>` group to whoever `sidekickAdmits`
-admits: its author, the person it runs as, anyone on its `people` list, and
-every member for an Organization Sidekick. The projection universe registers a
-Canvas's creator, participants, writer Sidekick audience and administrators
-(every member for an Organization Canvas) instead of a Channel's viewers. The
-owning Channel's and Breakout's audiences, a guest's management-access path to
-a Channel-owned Sidekick, the `space:<id>` group and the Space branch of a
-resource's audience are gone, and Channel messages are no longer indexed. The
-index namespace is not bumped.
+`conversation:<canvasId>/0` group of every Canvas `canvasReaderAllows` lets them
+open, and a Sidekick's `sidekick:<id>` group to whoever `sidekickAdmits` admits.
+The projection universe registers a Canvas's audience instead of a Channel's
+viewers. The owning Channel's and Breakout's audiences, a guest's management
+path to a Channel-owned Sidekick, the `space:<id>` group and Channel-message
+indexing are gone. A message result's location carries `parentKind`, derived
+from the searcher's groups. The index namespace is not bumped.
 
-**Why:** Plan steps A-4 and C-6 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
-A Sidekick's audience became its own share list, and search groups follow
-canonical admission, so they moved with it; a Thread no longer owns a
-Sidekick. A Canvas's Chat turns were already indexed under
-`conversation:<canvasId>/0`, but no person held that group, so no Canvas
-message reached member search. The person side is read on every search, so
-granting it needs no row rewritten.
+**Why:** Plan steps A-4 and C-6 of the pivot: a Sidekick's audience became its
+own share list and search groups follow canonical admission. A Canvas's Chat
+turns were already indexed under `conversation:<canvasId>/0`, but no person held
+that group, so no Canvas message reached member search, and a Sidekick hit
+opened as a missing Canvas because the client routed every message hit to a
+Canvas. The person side is read on every search, so granting it needs no row
+rewritten.
 
-**Considered and rejected:** Bumping `rally-search-v3` to a new namespace, as a
-"Version skew" change would. A bump composes with the existing re-projection
-passes (WorkspaceDO migration 47 re-publishes resources by setting
-`resource_search_versions.pending`; conversation-outbox migrations 52, 53 and
-70 re-queue every committed turn), but it would re-embed every row of every
-Organization, with search empty until those passes land, for a change that
-alters no row's shape.
+**Considered and rejected:** Bumping `rally-search-v3` to a new namespace:
+composed with the re-projection passes it would re-embed every row of every
+Organization, with search empty until they land, for a change that alters no
+row's shape. Writing `parentKind` to the index, which would need every committed
+turn re-projected before old rows carried it.
 
 **Consequences:** A Sidekick's and a Canvas's group are computed by the same
 predicate as their viewer admission, never a search-only rule. Channel, Thread
-and Breakout rows stay in the namespace, unreadable because no person holds
-their groups any longer. Nothing deletes them: a retired conversation's
-Turbopuffer rows have no deleter, and Channel message rows never had one. A
-stale `conversation:<threadId>/0` row stays unreachable only because D1
-`workstreams` still anchors every Thread id and `CanvasService.create` refuses
-an anchored id, so no Canvas can take a Thread's id and inherit its rows; a
-cleanup that drops Thread rows from `workstreams` must bump the namespace
-first. The authorization projection has no trigger on a Canvas's or Sidekick's
-audience and no read-path consumer, so its snapshots do not follow audience
-changes; member search computes the audience live, which is what makes that
-safe.
+and Breakout rows stay in the namespace, unreadable because nobody holds their
+groups, and nothing deletes them. A stale `conversation:<threadId>/0` row stays
+unreachable only because D1 `workstreams` still anchors every Thread id and
+`CanvasService.create` refuses an anchored id, so a cleanup that drops Thread
+rows from `workstreams` must bump the namespace first. The authorization
+projection's snapshots do not follow audience changes; member search computes
+the audience live, which is what makes that safe.
 
-A message result's location gained `parentKind`. A Sidekick's turns are
-indexed under its group, so they reached search, but the client routed every
-message hit to `canvasTurnRoute` and dropped its substream, so a Sidekick hit
-opened as a missing Canvas. The kind is derived from the searcher's groups
-rather than written to the index: the groups already decide admission, and a
-new index attribute would need a re-projection of every committed turn before
-old rows carried it.
-
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-19 — A Channel's own messages are indexed
 

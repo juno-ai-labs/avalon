@@ -659,211 +659,211 @@ and raw dumps remain in a dedicated regional bucket behind audited opaque-ID
 access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
-## Changelog
+## Retired documents
 
-### 2026-11-08 — Retirement records: Spaces, Space access sources, Projects, the implementation plan, Meeting notes, Demo workspaces, the demo presenter guide
+The documents below described subsystems the Canvases and Sidekicks pivot
+([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)) or an earlier change
+deleted, or were dated records of a moment rather than of the code. Each is
+removed from `docs/`; its last text, changelog included, is recoverable with
 
-**What changed:** Nothing in the code. Five documents that had been kept
-after their mechanism was deleted, only as records for their changelogs, were
-removed in the documentation audit; their retirement records are below. Each
-one's full text and changelog is in git as `git show e26aa66:docs/<name>.md`,
-except the meeting notes record's, removed in a later pass the same day, which
-is `git show 14d68b1:docs/meeting-notes.md`. The two demo documents went with
-their code, on the owner's instruction of 2026-11-08; their text is
-`git show a7a7cd0:docs/<name>.md`.
+```bash
+git show "$(git log --diff-filter=D -1 --format=%h -- docs/<name>.md)^:docs/<name>.md"
+```
 
-**`spaces.md` — Spaces (retired 2026-11-07).** A Space, shown as a Channel
-after the navigation redesign, grouped an Organization's Threads (the stored
-`channels`). The Canvases and Sidekicks pivot
-([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)) removed both; the
-client stopped reaching them in plan steps B-1 to B-6, and step C-2 deleted the
+A record that needs more than a line lives in the document that inherited what
+survives; this table is the one list.
+
+| Removed document | What it described | Record |
+| --- | --- | --- |
+| `spaces.md`, `space-access-sources.md`, `projects.md` | The containers that grouped Threads, and the access a Space lent its Channels | [Below](#spaces-space-access-sources-and-projects) |
+| `implementation-plan.md` | The prototype's phased build checklist | [Below](#the-implementation-plan) |
+| `meeting-notes.md` | The meeting recording and Notes cleanup | [Below](#meeting-notes) |
+| `demo-workspaces.md`, `demo-presenter-guide.md` | Presentation Organizations prepared from Ace | [Below](#demo-workspaces) |
+| `harness-production-qa-2026-08-22.md`, `terminal-production-qa-2026-08-21.md`, `durable-object-self-rpc-audit-2026-08-22.md`, `private-access-security-audit-2026-09-09.md` | Dated QA and audit passes | [Below](#dated-records) |
+| `ios-client.md` | The native iOS client, deleted with `apps/ios` | `platform: "ios"` push registration survives in the contracts with no sender ([`push-notifications.md`](push-notifications.md)) |
+| `listing-rules.md` | Who may be told a Space, Channel or Breakout exists | [`authorization.md`](authorization.md#retired-documents) |
+| `workstream-creation.md` | Starting a Thread from a Channel's composer | [`hosted-conversation-parents.md`](hosted-conversation-parents.md#retired-documents) |
+| `workstream-naming.md`, `workstream-descriptions.md` | The model passes that named and described a Thread | [`canvases.md`](canvases.md#retired-documents) |
+| `workstream-appearance.md`, `workstream-markers.md` | A Thread's icon and colour, and its row's status dot | [`automation-lifecycle.md`](automation-lifecycle.md#retired-documents) |
+| `conversation-suggestions.md`, `session-import.md`, `workstream-origin-attachments.md`, `desktop-actions.md` | Merge and Breakout suggestions, the ChatGPT and Claude import, a Thread's origin resource, and the desktop-action protocol | [`workstream-durable-object.md`](workstream-durable-object.md#retired-documents) |
+| `contextual-routing.md`, `connector-digestibility.md` | Suggested context, and each activity type's digest verdict | [`connectors.md`](connectors.md#retired-documents) |
+| `browser-script-runtime.md` | The `browser_js` realm | [`embedded-browser.md`](embedded-browser.md#retired-documents) |
+| `digests.md` | The Thread-era Activity feed and scheduled digests | Its email converter is [`markdown-rendering.md`](markdown-rendering.md)'s; Activity returned as [`activity.md`](activity.md) |
+| `suggested-work.md`, `conversation-merge.md`, `channel-access-requests.md`, `substream-creation.md`, `thread-backfill.md` | Suggested work, merge-back, Channel access requests, Breakout creation and the Thread backfill | Deleted with their code; what stays in storage is in [`data-model.md`](data-model.md) |
+| `attention-menu.md`, `pane-stack.md` | The Threads attention count, and the Channel–thread–Breakout pane stack | [`desktop-shell.md`](desktop-shell.md) owns what survives (the panel expanding over its conversation) |
+| `jev-classifier-opportunities.md` | Candidate classifiers, all for deleted mechanisms | Its design guidance is in [`jev-best-practices.md`](jev-best-practices.md) |
+| `workstream-links.md`, `workstream-pinning.md` | Renamed, not retired | [`links.md`](links.md), [`pinning.md`](pinning.md) |
+
+### Spaces, Space access sources and Projects
+
+A Space, shown as a Channel after the navigation redesign, grouped an
+Organization's Threads (the stored `channels`). The pivot removed both; the
 server half (`space-service.ts`, `space-bootstrap-service.ts`,
 `workspace-space-storage.ts`, `workspace-space-protocol.ts`,
 `system-channels.ts`, `channel-rails.ts` and the WorkspaceDO Space, rail and
-directory RPCs), so onboarding seats a new member nowhere. What survives: the
-`spaces`, `space_viewers`, `channels`, `channel_viewers` and `parent_*` tables,
-kept by WorkspaceDO migration 139 until `retire_threads` has run in every
-Organization ([`workspace-retirement.md`](workspace-retirement.md)); the
-shipped migration statements, moved byte for byte to
+directory RPCs) is deleted, so onboarding seats a new member nowhere. What
+survives: the `spaces`, `space_viewers`, `channels`, `channel_viewers` and
+`parent_*` tables, kept by WorkspaceDO migration 139 until `retire_threads` has
+run in every Organization ([`workspace-retirement.md`](workspace-retirement.md));
+the shipped migration statements, moved byte for byte to
 `retired-workspace-schema.ts`; the `space_default`, `space_bootstrap` and
 `space_intent_resume` Queue tombstones in `activity-consumer.ts`; and the
 Sidekick list SQL, moved unchanged to `sidekick-directory-sql.ts`. Its
-changelog is the record of why the claim/send/accept publisher, the generation
-fences and the directory waterline that the surviving code carries are shaped
-as they are.
+changelog records why the claim/send/accept publisher, the generation fences
+and the directory waterline that surviving code carries are shaped as they are.
 
-**`space-access-sources.md` — Space access sources (retired 2026-10-06).**
 From the Spaces cutover until PR #1119 a Space supplied readers to the Channels
 placed in it, as a widen-only *source* applied by plan, recorded with
 provenance and confirmed in three steps; once every Space was
-Organization-wide and granted no reader, every plan was empty, so the code was
-deleted and WorkspaceDO migration 94 dropped its tables. `parent_grants` rows
-with `source_kind = 'space'` written before 94 remain. The document's twelve
-numbered lessons (a source may only widen; seat before you narrow; a replayed
-receipt runs the old rules; a tri-state answer is not a yes; and the rest) are
-the record to read before building anything that lets one object grant access
-to another.
+Organization-wide every plan was empty, so the code was deleted and
+WorkspaceDO migration 94 dropped its tables. `parent_grants` rows with
+`source_kind = 'space'` written before 94 remain. `space-access-sources.md`'s
+twelve numbered lessons (a source may only widen; seat before you narrow; a
+replayed receipt runs the old rules; a tri-state answer is not a yes) are the
+record to read before building anything that lets one object grant access to
+another.
 
-**`projects.md` — Projects (retired 2026-09-19).** A Project grouped an
-Organization's work streams with defaults delivered to each; Spaces replaced
-it, and WorkspaceDO migration 64 (`PROJECT_RETIREMENT_STATEMENTS` in
-`workspace-do.ts`) dropped its eight tables and settled undelivered defaults
-in the same transaction. What survives under a Project name is a colour
-vocabulary, not a module: the appearance constants in
-`packages/contracts/src/projects.ts`, the frozen palette snapshots in
+A Project grouped an Organization's work streams with defaults delivered to
+each; Spaces replaced it on 2026-09-19, and WorkspaceDO migration 64
+(`PROJECT_RETIREMENT_STATEMENTS` in `workspace-do.ts`) dropped its eight tables
+and settled undelivered defaults in the same transaction. What survives under
+a Project name is a colour vocabulary, not a module: the appearance constants
+in `packages/contracts/src/projects.ts`, the frozen palette snapshots in
 `workspace-do.ts`, the `--av-sys-color-project-*` tokens and
-`lib/project-palette.ts`, all covered by
-[`rally-rebrand-inventory.md`](rally-rebrand-inventory.md). The
-`/projects/*` tombstone route has since been deleted, and `"projects"` left
-`WORKSPACE_SYNC_TOPICS`; it survives only as a read-drop tombstone in
-`RETIRED_SYNC_TOPICS` (`workspace-do.ts`), so a stored sync row that names it
-is filtered rather than refused.
+`lib/project-palette.ts` ([`rally-rebrand-inventory.md`](rally-rebrand-inventory.md)),
+and `"projects"` as a read-drop tombstone in `RETIRED_SYNC_TOPICS`, so a stored
+sync row that names it is filtered rather than refused.
 
-**`implementation-plan.md` — the implementation plan (retired 2026-11-08).**
-The prototype's phased build checklist: foundation, the secure desktop shell,
-regional auth and persistence, work streams and multiplayer, the OpenRouter
-harness, automations and the scheduler, connectors and activity routing, and
-hardening and delivery, closing with the prototype's release gates. Every
-phase was ticked against products that no longer exist (work streams,
-suggested context, a release gate that forbade channels and a terminal), and
-the three unticked items (Google restricted-scope verification, the Linear and
-Notion app registrations, the human acceptance pass) are operational work
-tracked elsewhere. What Rally is, is the implementation brief PRD
-(`docs/PRDs/2026-08-05_avalon-implementation-brief/`); how it is built, is
-this document.
+### The implementation plan
 
-**`meeting-notes.md` — Meeting notes retirement (feature retired 2026-09-14;
-document removed 2026-11-08).** Built-in meeting recording, Notes and Control
-Tower were removed and their data erased, rather than their entry point hidden,
-because hiding left stored content and backend writers in place; composer
-dictation, its microphone permissions and transcription transport, and the
-Granola and Fireflies integrations stayed. The document described the cleanup
-and recorded its production checkpoint of 2026-09-15: workspace schema 58
-completed on all 16 workspace objects, conversation migration 58 on all 6,693
-conversation objects, every note file and attributable search, authorization
-and inference record removed, with copies the available mechanisms could not
-erase named as such (13 PostHog lifecycle events, historical Iceberg snapshots,
-30 days of Durable Object point-in-time recovery), so the checkpoint is not a
-completed physical erasure. It is retired because the procedure it owned is
-finished: what runs now is migration code and fences, each owned elsewhere,
-and four internal RPCs (`retiredMeetingInventory`,
-`purgeMeetingSearchAuthorization`, `purgeMeetingNoteObjects`,
-`finalizeMeetingRetirement` in `workspace-do.ts`) that nothing in the tree
-calls. What survives: `apps/api/src/durable-objects/meeting-notes-retirement.ts`
-and `applyMeetingRetirementMigrations`, which every WorkspaceDO cold start runs.
-Workspace migration 57 cleared note content and kept content-free ids and
-object addresses in `retired_meeting_resources`, which still fences stale
-writers and retired ids out of search registration and publication. A
-temporary empty relation brackets migration 57 alone for adopted schemas that
-lack `automation_resources`, because 57 had shipped and its hash could not
-change. Workspace migration 58 drops the feature tables only once its guard
-finds R2 deletion and search-key cleanup complete, and it is committed apart
-from 57 because the guard's rollback would otherwise undo the retirement. The
-telemetry, analytics and inference fences that discard historical meeting
-events are recorded in [`telemetry.md`](telemetry.md),
+The prototype's phased build checklist (foundation, the desktop shell, regional
+auth, work streams, the harness, automations, connectors, hardening) closed
+with release gates that forbade channels and a terminal. Every phase was ticked
+against products that no longer exist, and its three unticked items (Google
+restricted-scope verification, the Linear and Notion app registrations, the
+human acceptance pass) are operational work tracked elsewhere. What Rally is,
+is the implementation brief PRD (`docs/PRDs/2026-08-05_avalon-implementation-brief/`);
+how it is built, is this document.
+
+### Meeting notes
+
+Built-in meeting recording, Notes and Control Tower were removed on 2026-09-14
+and their data erased, rather than their entry point hidden, because hiding
+left stored content and backend writers in place; composer dictation and the
+Granola and Fireflies integrations stayed. The document's production
+checkpoint of 2026-09-15 recorded workspace schema 58 on all 16 workspace
+objects and conversation migration 58 on all 6,693 conversation objects, and
+named the copies the available mechanisms could not erase (13 PostHog
+lifecycle events, historical Iceberg snapshots, 30 days of Durable Object
+point-in-time recovery), so it is not a completed physical erasure. What
+survives: `meeting-notes-retirement.ts` and `applyMeetingRetirementMigrations`,
+which every WorkspaceDO cold start runs; `retired_meeting_resources`, whose
+content-free ids still fence stale writers out of search and publication; and
+four internal RPCs (`retiredMeetingInventory`, `purgeMeetingSearchAuthorization`,
+`purgeMeetingNoteObjects`, `finalizeMeetingRetirement`) that nothing calls.
+Migration 58 drops the feature tables only once its guard finds R2 and search
+cleanup complete, and is committed apart from 57 because the guard's rollback
+would otherwise undo the retirement. The telemetry, analytics and inference
+fences are in [`telemetry.md`](telemetry.md),
 [`analytics-lakehouse.md`](analytics-lakehouse.md) and
-[`inference-lakehouse.md`](inference-lakehouse.md). The real workerd proof is
+[`inference-lakehouse.md`](inference-lakehouse.md); the workerd proof is
 `apps/api/test-workers/meeting-notes-retirement.test.ts`.
 
-**`demo-workspaces.md` — Demo workspaces (removed 2026-11-08).** An operator
-prepared a presentation Organization from Ace's Demos tab: a durable
-operation (`DemoPreparationWorkflow`, the `/internal/demos` routes behind
-Ace's operator credential) created a new Organization owned by a presenter
-chosen from the `demo-template` Organization's members, seated a cast of
-colleagues on the company's email domain or *personas* (a `users` row with no
-platform identity and an `<operation>.<role>@persona.invalid` address, so it
-could never sign in), copied the template's Google connections with their
-credentials re-encrypted, wrote the complete **can impersonate** relationship
-set among the cast with `demo:<operation>` as its authority basis, and played
-a checked-in pack of Canvases, artifact versions, uploads and Sidekicks
-through the production write paths. A seeded run answered its one provider
-request from the pack through a scripted OpenRouter `fetch` (the
-`demo_seed` principal and the `seed` on a run's execution context), and the
-Organization stayed withheld from its members' discovery and activation until
-a readiness barrier had read every verified viewer's lists and found them
-matching the pack. The owner's instruction of 2026-11-08 was to "remove the
-demo functionality completely", so the seeder, pack, cast, readiness barrier,
-connection copy, register, discovery filter, Workflow, routes, contracts, Ace
-page and `/demo-scenario` skill were deleted rather than left unused. What
-survives: the D1 migrations that made and rebuilt the demo tables (0100,
-0102, 0103, 0106 and 0108, shipped history, never edited), until 0125 drops
-the three tables as a Worker-first migration (it must be the sole pending
-one); WorkspaceDO migration 136,
-which drops `sidekick_runs.seed_json`; the persona `users` rows, which cannot
-sign in and which the retired demos' history references; the
-`demo_seed` reason and `seed` key inside stored conversation authorization
-and run context JSON, which the loose and non-strict schemas that read them
-ignore; the **can impersonate** relationship storage and RPCs, which now have
-no producer ([`impersonation.md`](impersonation.md)); and Ace's operator
-credential, which keeps its stored names `DEMO_OPERATORS_JSON` and role
-`demos` ([`rally-rebrand-inventory.md`](rally-rebrand-inventory.md)). An
-Organization a demo made is retired like any other, through
-[`workspace-retirement.md`](workspace-retirement.md)'s operator door; the
-deploy order — every live demo Organization and `demo-template` retired
-before the code ships, 0125 after it through the Worker-first list — is
-recorded there. The
-document's changelog is the record of why seeded history was written through
-the production paths rather than as rows made to look like it, and of the
-readiness barrier's projection-match rule.
+### Demo workspaces
 
-**`demo-presenter-guide.md` — the demo presenter guide (removed 2026-11-08).**
-Which of the placeholder pack's Canvases and Sidekicks to open for which
-prospect pain, and what each showed, for the presenter playing Maya beside
-Theo and Priya. It described a pack that no longer exists, so it went with it.
+An operator prepared a presentation Organization from Ace's Demos tab: a
+durable operation (`DemoPreparationWorkflow`, the `/internal/demos` routes
+behind Ace's operator credential) created an Organization owned by a presenter
+from the `demo-template` Organization, seated a cast of colleagues or
+*personas* (a `users` row with no platform identity and an
+`<operation>.<role>@persona.invalid` address, so it could never sign in),
+copied the template's Google connections, wrote the **can impersonate**
+relationship among the cast with `demo:<operation>` as its basis, and played a
+checked-in pack of Canvases, artifacts and Sidekicks through the production
+write paths, a seeded run answering its provider request from the pack. The
+owner's instruction of 2026-11-08 was to "remove the demo functionality
+completely", so all of it, the Ace page, the `/demo-scenario` skill and the
+presenter guide that walked the pack were deleted rather than left unused.
+What survives: the shipped D1 migrations that made the demo tables (0100,
+0102, 0103, 0106, 0108) and 0125, which drops them as a Worker-first migration;
+WorkspaceDO migration 136, which drops `sidekick_runs.seed_json`; the persona
+`users` rows, which the retired demos' history references; the `demo_seed`
+reason and `seed` key inside stored authorization and run context JSON, which
+the loose schemas that read them ignore; the **can impersonate** storage and
+RPCs, now with no producer ([`impersonation.md`](impersonation.md)); and Ace's
+operator credential under its stored names `DEMO_OPERATORS_JSON` and role
+`demos` ([`rally-rebrand-inventory.md`](rally-rebrand-inventory.md)). A demo
+Organization is retired like any other; the deploy order is
+[`workspace-retirement.md`](workspace-retirement.md#the-deploy-order)'s. The
+demo document's changelog records why seeded history went through the
+production paths rather than rows made to look like it.
 
-**Historical records removed in the same audit.** Dated audit and QA records
-were deleted rather than kept as documents: a dated record describes a moment,
-not the code as it stands, and the changelog entries that cite one now name it
-as text. The first is in git at `git show e26aa66:docs/<name>.md`, the rest,
-removed in a later pass the same day, at `git show 14d68b1:docs/<name>.md`:
+### Dated records
 
-- `harness-production-qa-2026-08-22.md` — the 2026-08-22 signed-in production
-  QA pass. It attempted every visible plugin and built-in skill, exercised the
-  Terminal, attachment, memory, elicitation, alarm and parallel-child surfaces,
-  and found five defects that were fixed in that change.
-- `terminal-production-qa-2026-08-21.md` — the 2026-08-21 production Terminal
-  plug-in pass, which found repeated Terminal calls in one run failing and a
-  write left `started` until its lease was reaped, and its 2026-08-22 and
-  2026-08-23 follow-ups through Global production acceptance and the
-  stop-recovery lease and quiescence gates. Cited by
-  [`workstream-durable-object.md`](workstream-durable-object.md)'s changelog
-  for the alarm-joins-drain fault.
-- `durable-object-self-rpc-audit-2026-08-22.md` — the audit of Durable
-  Objects that addressed themselves over RPC: twelve paths in `SubstreamAgent`
-  and `WorkspaceDO`, each a shared helper addressing an object by role, with
-  the 2026-08-24 follow-up that found a thirteenth path and a subrequest-depth
-  outage, and the 2026-08-25 follow-up that moved recognition from names to
-  ids. Cited by [`workstream-durable-object.md`](workstream-durable-object.md)'s
-  changelog.
-- `private-access-security-audit-2026-09-09.md` — the early-access security
-  audit of PR #637: verified Cloudflare configuration, email and download
-  abuse, DDoS exposure, the regressions it fixed, and its verdict to hold the
-  public launch until admission limits and bot protection existed. Cited by
+Dated audit and QA records describe a moment, not the code, so they are not
+kept as documents; changelog entries that cite one name it as text.
+
+- `harness-production-qa-2026-08-22.md`: the signed-in production QA pass that
+  attempted every visible plugin and built-in skill and found five defects,
+  fixed in that change.
+- `terminal-production-qa-2026-08-21.md`: the production Terminal pass that
+  found repeated Terminal calls in one run failing and a write left `started`
+  until its lease was reaped, with its follow-ups through the stop-recovery
+  lease and quiescence gates. Cited by
+  [`workstream-durable-object.md`](workstream-durable-object.md)'s changelog.
+- `durable-object-self-rpc-audit-2026-08-22.md`: twelve paths in which a
+  Durable Object addressed itself over RPC, and the follow-ups that found a
+  thirteenth and a subrequest-depth outage. Cited by
+  [`workstream-durable-object.md`](workstream-durable-object.md)'s changelog.
+- `private-access-security-audit-2026-09-09.md`: the early-access security
+  audit of PR #637 and its verdict to hold the public launch until admission
+  limits and bot protection existed. Cited by
   [`private-access.md`](private-access.md).
 
-Shipped in juno-ai-labs/avalon#1490.
+## Changelog
 
-### 2026-11-07 — The product is Canvases and Sidekicks; the native iOS client is deleted
+### 2026-11-09 — The product is Canvases and Sidekicks; Threads, Channels, Breakouts, the iOS client and demos are deleted
 
-**What changed:** `apps/ios` and `ios-client.md` are gone; the deployment
-surfaces are the Electron desktop and the browser SPA. The Channel, Space,
-Thread and Breakout parents, their control socket and the cross-Thread
-directory are deleted: `WorkspaceDO` hosts a Canvas or a Sidekick over one
-`AgentLoopDO` per conversation, and the workspace socket carries each viewer's
-Canvas and Sidekick lists.
+**What changed:** The deployment surfaces are the Electron desktop and the
+browser SPA; `apps/ios` is deleted. Spaces, Channels, Threads and Breakouts are
+deleted from both clients and the server, and with them the Thread-era Activity
+feed, digests, suggested work, merge-back, session import, Sideline and the demo
+workspaces. `WorkspaceDO` hosts a Canvas or a Sidekick on one
+`HostedConversation` primitive over one `AgentLoopDO` (the renamed
+`SubstreamAgent`) per conversation, and the workspace socket carries each
+viewer's Canvas, Sidekick and Activity lists. An Organization's existing Threads
+are dumped to R2, those holding artifacts converted to Canvases under their own
+ids, and the rest retired, by operator operations. The documents of the deleted
+subsystems are removed; [Retired documents](#retired-documents) lists each and
+where its record lives.
 
-**Why:** The Canvases and Sidekicks pivot
-([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)) makes those the two
-sections of the product, and deletes iOS rather than carrying a prototype
-client forward.
+**Why:** The Canvases and Sidekicks pivot makes those the product's two
+sections. Code kept only for removed concepts is deleted rather than left
+dormant, so the next change does not have to reason about it. iOS was a
+prototype client nobody was carrying forward, and the owner instructed on
+2026-11-08 that the demo functionality be removed completely.
 
-**Consequences:** `platform: "ios"` push registration stays in the contracts
-(`push-notifications.ts`) with no client sending it. The owning documents for
-the hosting and the conversation object are
-[`hosted-conversation-parents.md`](hosted-conversation-parents.md) and
-[`workstream-durable-object.md`](workstream-durable-object.md).
+**Considered and rejected:** A new Durable Object or a second hosting class for
+Canvases: a Canvas is a shared conversation with children and readers, which the
+Sidekick's host already was. Keeping Thread data readable in a read-only mode,
+which keeps the old product's readers deployed.
 
-Shipped in juno-ai-labs/avalon#1490.
+**Consequences:** Storage names do not change (a Canvas id is a `workstream` id;
+`SUBSTREAM_AGENTS`; `automation`), as
+[`rally-rebrand-inventory.md`](rally-rebrand-inventory.md) records. The release
+is forward-fix only, in the order
+[`workspace-retirement.md`](workspace-retirement.md#the-deploy-order) gives. The
+owning documents are
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md) for the
+hosting, [`workstream-durable-object.md`](workstream-durable-object.md) for the
+conversation object, [`canvases.md`](canvases.md),
+[`automation-lifecycle.md`](automation-lifecycle.md) and
+[`activity.md`](activity.md). The reasoning behind decisions recorded in the
+deleted documents is in their changelogs, recoverable as Retired documents
+describes.
+
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-09-17 — A lite browser host reuses regional identity
 

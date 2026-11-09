@@ -235,35 +235,6 @@ test runner is needed for the same implementations.
 
 ## Changelog
 
-### 2026-11-07 — The Thread, Channel and Breakout components are deleted
-
-**What changed:** `conversation-menus.tsx` (the thread, Channel and Breakout
-title menus), `breakout-marks.tsx`, `split-conversation.tsx`,
-`merge-message.tsx`, `merge-response-card.tsx`, `conversation-suggestion.tsx`,
-`conversation-card.tsx`, `conversation-identity-tip.tsx`, `space-icon.tsx`,
-`account-trigger.tsx`, `sidekick-section.tsx`, `sidekick-picker.tsx` and
-`sidebar-refresh-row.tsx` are deleted, as are the Channel rows in
-`navigation.tsx` and `ResizableSidebar`'s collapse toggle, compact layout and
-`SidebarCollapseFooter`. `app.css` loses the 231 rules whose selectors name a
-class of the `.channel*`, `.space*`, `.merge*`, `.suggestion*`, `.breakout*`,
-`.activity*`, `.substream*`, `.sideline-*` or `.pinned*` families that no
-source file uses any longer. `workstream-glyph.tsx` keeps its name: it draws
-the Sidekick marks and a rename would touch a dozen importers for no change in
-behaviour.
-
-**Why:** Plan step B-4 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-the client code that used these was deleted in step B-3, and the Canvas and
-Sidekick title pills build their menus from `title-pill.tsx`'s generic
-blocks, not from `conversation-menus.tsx`.
-
-**Consequences:** A rule was removed only when one of its selectors names a
-family class no source uses; a selector list that also named a live class kept
-that selector. A class built from a template string at run time would read as
-unused, so a new family member must be spelled out where it is used.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-23 — Show Sidekick delegates with immediate creation
 
 **What changed:** The shared profile lists allowed identities, availability and

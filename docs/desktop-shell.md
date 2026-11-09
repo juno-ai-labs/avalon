@@ -402,293 +402,58 @@ It does not own:
 
 ## Changelog
 
-### 2026-11-08 — The dock badge is the unseen Activity count
+### 2026-11-09 — The shell is Canvases, Sidekicks and Activity; Channels, Threads and Breakouts are deleted
 
-**What changed:** While Rally is open the dock badge, and an installed
-browser app's icon badge, is the Activity rail badge's `unseenCount`
-(`dockBadgeCount` in `navigation-sidebar.tsx`), sent once the Activity list
-has arrived; it was the Canvases and Sidekicks needs-attention rows added up.
+**What changed:** The rail lists Canvases, Sidekicks and Activity, with Settings
+at the bottom, and a section stored before the cutover reads as Canvases. The
+landing opens the restorable `last-route` (written only for Canvas and Sidekick
+routes and the two homes) or `/canvases`, and every removed route redirects to
+`/canvases`. The Channel and Thread screens, the Breakout launch, the Thread
+directory and socket pool, the phone More tab and the per-device Thread sorts
+are deleted; `pane-stack.md` and `attention-menu.md` retire with them, leaving
+the panel's expansion over its conversation. A restored route is applied only
+once admission says onboarding is finished, and a 404 on one falls back silently
+to its section home, except a Canvas the viewer may still ask into, which stays
+on its Request access pane. Entering Activity opens its top row in the pane,
+opening a row keeps the rail on Activity, and a pending access request's row
+carries Approve and Deny under its link. The dock badge is the unseen Activity
+count. The sidebar follows design.html: a 340px list beside the rail (416px in
+all), Sidekicks sorted by what they last did with a Recent and Name control, and
+a header pill that truncates and can be edited in place.
 
-**Why:** The owner asked on 2026-11-08 to "fix" the dock badge clearing when
-an alert arrives while Rally is closed. The push badge is now the person's
-unseen Activity count after the notice was recorded, so the count Rally
-writes while open must be the same one, or opening Rally would replace the
-number an alert left with a different kind of count.
+**Why:** Plan steps A-14, B-1 and B-3 of the pivot: Threads, Breakouts and
+Channels are deleted, and the PRD's rail is Canvases, Sidekicks, then Settings.
+The owner then asked for Activity back, opened on its top row, and for the dock
+badge to stop clearing when an alert arrives while Rally is closed. The push
+badge is the unseen Activity count, so the number Rally writes while open must
+be the same one; this reverses the menu bar's rule that the menu, the rail and
+the dock are one number. A real-window pass showed a restored route from an
+earlier database raising "Sidekick could not be opened" over onboarding: a
+restore is the app's guess, not an open the person asked for. A Canvas the
+person cannot open may be granted later, so its stored route is not stale. The
+PRD makes design.html the authority, and it draws 340px for the list alone.
 
-This reverses the earlier 2026-11-08 entry's rejection of Activity on the
-dock badge and the menu bar's 2026-11-07 rule that the menu, the rail and the
-dock are one number: that held while the push badge was `0` and nothing set
-the icon while Rally was closed.
+**Considered and rejected:** A second sidebar for the new sections, where the
+switcher, row primitives and badge record already did the work. Keeping
+needs-attention rows on the dock while the push badge counts Activity, so the
+icon would change meaning as Rally opened and closed. Re-opening Activity's top
+row whenever it changes, which would move the pane under the reader. Putting the
+access buttons inside the row's link, which is invalid markup and announces as
+one control.
 
-**Considered and rejected:** Keeping needs-attention rows on the dock while
-the push badge counts Activity: the icon would change meaning each time Rally
-opened or closed.
+**Consequences:** `SidebarSection` has three values; a fourth needs a
+`BADGE_NOUNS` entry and a decision on whether the dock counts it, and a phone
+row that overflows has to be rebuilt rather than restored. The dock and the menu
+bar can show different numbers ([`menu-bar.md`](menu-bar.md)). A new restorable
+route kind calls `useRestoredRouteFallback` and hands it the read that decides
+"gone", not the first 404; only a 404 counts as gone, and a 403 still shows the
+error. A row with controls is a group whose settled line keeps the controls'
+height. `sidebarWidth` is the whole sidebar, rail included, and a dragged width
+is kept. A side column of the title header must keep a real min-content width,
+or a long title runs over it.
 
-**Consequences:** The menu bar still counts Needs attention, because it counts
-the rows it lists ([`menu-bar.md`](menu-bar.md)); the dock and the menu bar
-can now show different numbers. A change to what Activity
-counts as unseen changes the dock badge.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — A restored Canvas route the viewer may ask into stays, and Activity rows carry actions
-
-**What changed:** A Canvas route that answers 404 asks `GET /canvases/:id/access`
-before it is treated as gone, and `useRestoredRouteFallback` is handed that
-read's error rather than the detail's: a restored route on a Canvas that
-exists in the viewer's Organization stays on its Request access pane, and the
-pane reopens into the Canvas when the grant arrives (the Canvas joining the
-list, or its `access_granted` Activity row). Activity rows gain four kinds
-(replies, pinned Canvas updates, access requests and grants), and a pending
-access request's row is the first Activity row with controls of its own:
-Approve and Deny sit under the link, never inside it.
-
-**Why:** The owner asked on 2026-11-08 for access requests to come back as the
-whole flow, and for replies and pinned Canvas updates to notify again
-([`activity.md`](activity.md), [`canvases.md`](canvases.md)). A Canvas the
-person cannot open may be granted later, so the stored route is not stale
-state the way a deleted Canvas's is; sending them home would lose the place
-the grant is meant to open.
-
-**Considered and rejected:** Making the whole row a button group, or putting
-the buttons inside the row's link: a link that holds buttons is invalid
-markup and announces as one control. A socket command for the decision was
-dropped for the decision route, which answers its own refusal by name; the
-Activity push follows from the same write.
-
-**Consequences:** A row with controls is a group (`.activity-row-group`)
-holding its link and, under it, the controls (`.activity-row-actions`); the
-group owns the open and hover fill, so the controls sit inside the row, and
-the spacing rule between rows covers groups too. Settling replaces the
-controls with a line as tall as they were, so the list does not move under
-the pointer. `RowLayout` puts the unread dot after the time when a row has no
-second line, rather than on an otherwise empty one: a dot that added a line
-made a row change height when it was read. Any new screen that opens an object which can be asked into
-should hand `useRestoredRouteFallback` the read that decides "gone", not the
-first 404.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — The shell follows design.html: the list column, the rail, the section titles and the Sidekicks list's order
-
-**What changed:** The sidebar's default width is the rail plus the design's
-340px list column (416px), not 340px for both. At phone width, closing the
-sheet returns its bar to the open screen's section (v3-G5): the bar had kept
-naming the last list looked at, "Activity" over the Canvases home.
-`TitlePillHeader` takes `align="start"` for a Canvas's header (v1-F8), and a
-phone's headers drop Back and Forward (v3-G6). The rail's badge takes the
-design's danger red at 15px and an unread row's time stays muted (v1-F7,
-v4-F6), its buttons are named section first (v1-F14; "Sidekicks, 1 waiting",
-where the content read "1 waiting Sidekicks"), the browser's rail keeps the
-desktop's top clearance (v4-F9), focus rings the tile (v4-F10, v3-G12), the
-account avatar is 28px (v1-F12), the account menu's Sidekicks item wears the
-rail's single hexagon (v3-G13), and the Canvases home and Settings name the
-window (v4-F24). A list row reads its age in the design's words ("now", "2m",
-"1h", "Tue") instead of a clock time that cut the title beside it (v4-F5).
-The Sidekicks section lists every Sidekick by what it last did (its newest run
-or change), with a **Recent** / **Name** control in the heading, where it was
-in the server's alphabetical order with no control.
-
-In the second round the sidebar gives way between 641px and 840px, so the
-pane keeps the conversation's minimum (v3-R2-2), and every section home, the
-Sidekicks home as well as the Canvases home, hides its own heading at phone
-width (v4-R2-3). Back and Forward read an entry pushed around the router as
-the next one (v1-R2-6), and the Sidekicks home and the not-found states name
-the window (v4-F24). Both lists' sort controls draw ⇵ (v4-R2-12), a phone
-header puts its "More" after Share (v4-R2-14), Settings' phone title starts
-at the header's edge with the sections sheet open (v4-F23), a list row's age
-and a spelled-out age count whole units alike (v4-R2-4), and the phone bar
-names the section home the route shows (v3-R2-6). In the third round the
-rule that hides Settings' sections toggle under the open sheet is keyed on
-`.app-shell`, because the shell's later `.app-shell .sidebar-menu-toggle`
-drew it again as a second × beside Settings' own (b1-N1).
-
-**Why:** The PRD makes design.html the authority for every screen, and the
-design inspection (v1-F1, v4-F4) measured a 264px list that cut ordinary
-titles the design shows whole. This document said 340px for both columns, a
-number carried over from the single-column sidebar of the navigation
-redesign; the design draws 340px for the list alone, and the design wins.
-Round two found one Sidekick reading "4h" beside "Last run 5 hours ago": the
-compact age floored and the phrase rounded, so both now count whole units
-elapsed. The phone bar read "Activity" over the Canvases home after a link
-landed there, with the home's own heading hidden at that width, so nothing on
-screen named the page.
-design.html §3 draws "All sidekicks" sorted by recency with a "Recent ⇵"
-control; alphabetical rows beside their times read as a broken sort. The
-heading keeps "All Sidekicks", the product noun's case. The 416px sidebar
-left a 284px pane in a 700px tab, because nothing narrowed it before the phone
-layout at 640px; the sheet's bar already titles a section home at phone width
-and carries its New and Search, so the home drawing them again was the F16
-repetition the Canvases home had already dropped.
-
-**What a future change must respect:** `sidebarWidth` is the whole sidebar,
-rail included. A width a person already dragged to is kept, so only a person
-who never resized sees the new default. The Sidekicks order is the client's
-over the list the socket keeps, so a reorder costs no request.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — A long title truncates inside the pill, and a pill title can be edited in place
-
-**What changed:** The header's grid gives its side columns their
-min-content as a floor and the pill `minmax(0, auto)`, the pill's title
-carries the full title as its tooltip, and `TitlePillTitleInput` edits a
-level's title in place.
-
-**Why:** A 300-character Canvas title (the server's limit) grew the pill's
-`auto` column past the header: it covered Back and Forward and clipped at
-the window edge. The floor keeps the pill centred while it fits and lets it
-take only the room between the sides once it does not. Renaming a Canvas
-(`canvases.md`) is the first in-place edit.
-
-A launch or a reload also lost a stored Sidekicks section: the landing's
-`/canvases` moved the rail to Canvases every time. The landing, the window's
-first route that belongs to a section (after the redirect from `/`), now
-moves it only when it names a Canvas or a Sidekick.
-
-**What a future change must respect:** a control in a side column has to
-keep a real min-content width, or a long title runs over it again. The
-input saves on leaving the field only when the text differs from what it
-last sent, because a refusal's notice takes focus and would otherwise send
-the refused title again.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — Activity is the rail's third section
-
-**What changed:** The rail gains **Activity** after Sidekicks, with the
-triangle it wore before the pivot. Its list is the person's Activity
-(`ActivitySection`), its badge the unseen count, and its header action
-**Mark all seen**. A stored `rally.sidebar-section` of `activity` opens it
-again instead of reading as the default.
-
-**Why:** The user asked on 2026-11-08 to bring the Activity section back, as a
-feed of what happened to the person in Canvases and Sidekicks
-([`activity.md`](activity.md)). The browser mounts the same renderer, so both
-platforms get it.
-
-Opening one of its rows keeps Activity open, unlike every other route, which
-moves the rail to the section the route belongs to: Activity is a list of
-things to go to, and switching away on each click would hide the next one.
-
-Entering Activity opens its top row in the pane, and only a rail pick leaves
-it. The owner, 2026-11-08: "When opening the first activity on top should be
-auto selected and that should be shown in the panels." and "Stay in activity
-sidebar." The rail's button pushes the row's route and a launch replaces the
-landing, so Back returns to what the person had open and never to the
-Canvases home a launch only passed through. Only that default landing gives
-way: a launch onto a Canvas or Sidekick, a link's or one this device restored
-because the person quit with it open, keeps it, since that is where they
-asked to be or were; this reading is the implementer's and open to the
-owner. The first list after entering decides, so
-a row arriving on top never pulls the pane away from what the person is
-reading. An audit of what moved the rail off Activity found two paths: closing
-the phone sheet without a navigation returned it to the route's section, and
-the `activity` deep link still set the Canvases section from when Activity was
-gone; both now keep or select Activity. The link, after an Organization
-change, also lands the pane on the Canvases home rather than leaving it on
-`/opening`, so the remounted sidebar's launch replace has a landing to
-replace. Considered and rejected: re-opening
-the top row whenever it changes (it would move the pane under the reader), and
-waiting for the first non-empty list (the first row to arrive in an empty feed
-would then move a pane the person had already chosen).
-
-**Considered and rejected:** Adding Activity to the dock badge. The dock badge
-and the menu bar count Needs attention, by the menu bar's 2026-11-07 decision;
-an unseen mention whose Canvas is already unread would be counted twice.
-
-**Consequences:** `SidebarSection` has three values; a fourth section needs a
-`BADGE_NOUNS` entry and a decision on whether the dock counts it.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — A restored route waits for onboarding and falls back silently
-
-**What changed:** The landing applies no stored `last-route` until
-conversation admission says onboarding is finished, and opens a restored route
-with `RESTORED_ROUTE` state. The Sidekick and Canvas screens, on a 404 for a
-restored route, replace themselves with their section home and log
-`restored_route_not_found` instead of raising **could not be opened**.
-
-**Why:** A real-window pass after a fresh `db:migrate && db:seed` showed
-"Sidekick could not be opened / This Sidekick does not exist" over the "This is
-you in Rally" onboarding screen. The `last-route` from an earlier database named
-a Sidekick that no longer existed; the landing restored it while the journey
-was still loading (the gate renders the workspace until it knows the journey is
-unfinished), the Sidekick screen published its error to the window's notice
-queue, and the queue outlived the screen once onboarding replaced it. A dialog
-is for an open the person just asked for; a restore is the app's own guess.
-Admission was reused rather than adding an onboarding flag because it already
-composes both onboarding gates and means exactly "the workspace may be used".
-
-**Consequences:** Only a 404 counts as gone; a 403 still shows the screen's
-error, since access can come back. A new restorable route kind (beyond Canvas
-and Sidekick) needs its screen to call `useRestoredRouteFallback`, or a stale
-one will raise a dialog at launch. For an eligible returning account, the `/`
-restore now waits one journey round trip: the restored Canvas or Sidekick's
-detail query no longer runs in parallel with the journey query, because the
-screen that issues it is not mounted until admission. Deep links and every
-other route are not held and mount as before.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — The shell becomes Canvases and Sidekicks; Channels, Threads and Breakouts are deleted
-
-**What changed:** The rail lists two sections, Canvases and Sidekicks, with
-Settings at the bottom; `SidebarSection` is `'canvases' | 'sidekicks'` and a
-section stored before the cutover reads as Canvases. Their lists reuse the
-section switcher, the row primitives and the badge record. The landing opens
-the restorable `last-route` or `/canvases`, replacing the Channel fallback
-chain (pinned Channel, General, A–Z); `last-route` is written only for Canvas
-and Sidekick routes, and the Channel, Space, Thread, Project, Activity and
-Artifacts routes redirect to `/canvases`. The open Canvas is the shell's
-foreground conversation for presence. The phone row's More tab
-(`MoreSections`, `PHONE_RAIL_SECTIONS`) is gone. The Channel screen, the Thread
-screen, the Breakout launch surface, the old landing
-(`lib/workstream-landing.ts`), the Thread directory and its caches, the Thread
-socket pool, the access-request dialog, the attention ranking behind the
-Threads count, the per-device Thread and Channel sorts, and the Channel and
-Space places in search are deleted, and the workspace socket no longer applies
-Space snapshots, Thread pages, recency, state or rail frames, access requests
-or Space nudges. **`pane-stack.md` is retired**: it described the stack a
-Channel, a thread, a breakout and a panel formed, two on screen with the rest
-as breadcrumbs; what survives of it is the right panel expanding over its
-conversation (`usePaneExpansion`, `expandToggle`, now in
-`lib/navigation-routes.ts`). **`attention-menu.md` is retired**: it kept what
-counted as needing attention (`attentionItems`) for the Threads count and the
-dock badge; both now count the Canvases and Sidekicks lists
-(`useSectionCounts`, by the predicates in `common/sidebar-attention.ts` that
-the menu bar shares), and the dock badge is the rail's counts added up. A
-search result opens its Canvas on the turn it names.
-
-**Why:** Plan steps A-14, B-1 and B-3 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-Threads, Breakouts and Channels are deleted (decision log, 2026-11-06), and the
-PRD's rail is Canvases, Sidekicks, then Settings. The new sections landed first
-as sections reachable by URL beside the untouched old shell, so the cutover was
-a switch of which sections the rail lists rather than new work. Redirecting
-removed routes to `/canvases`, as `/projects/*` already went to the landing,
-keeps every stored route and old link landing somewhere real. The More tab
-existed only because five sections did not fit a phone row with Settings; with
-two it can never fold. The app shell named only an open Thread as the
-foreground conversation, so a Canvas's face pile never saw anyone; a Canvas id
-is a conversation-parent id, so the same field carries it. Both retired
-documents described mechanisms that no longer have code; their decisions are
-summarised here so the reasoning is not lost.
-
-**Considered and rejected:** A second sidebar for the new sections. The
-existing switcher, row primitives and badge record already did what the two
-lists need.
-
-**Consequences:** A server mid-deployment still sends the Thread and Space
-frames; the socket ignores a type it no longer reads, as it does any unknown
-type. The saved `rally.sidebar-section` may read `canvases` or `sidekicks`, so
-the preference's allowed list must keep them. Adding a third section is a
-`SECTIONS` entry and a `SidebarSection` value; if a phone row ever overflows
-again, the fold has to be rebuilt rather than restored, and opening a second
-pane beside a conversation would likewise have to be built again.
-
-Shipped in juno-ai-labs/avalon#1490.
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-21 — Keep artifacts directly discoverable in thread menus
 
@@ -782,7 +547,6 @@ so unifying the menu does not replace its players or annotation transfer.
 another resource. Opening a website externally mints fresh access; copying its
 public URL never copies a single-use access code. File links retain their Rally
 navigation semantics. Detached windows omit the redundant New window action.
-
 
 ### 2026-10-19 — Open Channels at the server read waterline
 
@@ -1298,7 +1062,6 @@ room for another.
 
 Shipped in [#1200](https://github.com/juno-ai-labs/avalon/pull/1200).
 
-
 ### 2026-10-12 — Shape says Channel or Thread; rows carry tiles and times
 
 **What changed:** The section switcher draws outlines instead of icons; every row in the three lists is one layout around an
@@ -1651,7 +1414,6 @@ sidebar goes through `footerItems` as `SidebarRow`s, not into the list. The
 host decides what appears; the sidebar only places it.
 
 Shipped in #1088.
-
 
 ### 2026-10-02 — Space pickers lead with All
 

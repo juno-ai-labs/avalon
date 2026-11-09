@@ -63,28 +63,6 @@ making them discoverable.
 
 ## Changelog
 
-### 2026-11-07 — The index has no producer or reader left
-
-**What changed:** The Channel host that wrote this index and the
-`/sharing/directory` and `/sharing/navigation` routes that read it are deleted
-(plan steps C-1 and C-2). A Canvas share's grant uses the Canvas's own
-directory step, which adds the guest to the participant list, and writes no
-row here; `listScopeGrantCandidates` has no caller.
-
-**Why:** In the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-a guest reaches what is shared with them through the workspace socket's
-Canvas list, decided by each Canvas's audience, so there is no cross-parent
-discovery for this index to narrow.
-
-**Considered and rejected:** Writing Canvas grants here as well: nothing reads
-the index, and the participant list is already the Canvas's answer.
-
-**Consequences:** The table, the apply path and the candidate query stay so
-an effect already in the Queue still lands; removing them is a WorkspaceDO
-migration that drops `scope_grant_directory` with the consumer branch.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-09-28 — Admit every shared Channel in one Organization call
 
 **What changed:** `listSharedNavigationDirectory` and `listSharedDirectory`

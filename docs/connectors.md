@@ -470,7 +470,6 @@ Sheets value reads set `truncated` when rows, cells or cell text are shortened.
 that cell's full value. The existing per-cell and response limits are unchanged;
 shortened text does not discard following rows.
 
-
 Every Google tool parses its arguments with a strict schema, so an undeclared key is an error naming the key rather than a silently dropped intent, and every list-shaped result returns `items` with an optional `nextPageToken` so one tool's shape generalizes to the rest. Header hydration degrades per hit: a message that cannot be fetched — deleted or refused — keeps its identifiers and reports `headersUnavailable`, so one rate-limited hit in a fan-out of up to fifty costs that row rather than the whole search. A revoked grant is the exception and is raised, because reporting it per row would read as an empty mailbox rather than a connection to reconnect. Address headers are truncated at the end of the last address that fits, never mid-address, because a fragment cut inside a domain still parses as an address and would be reported as a real correspondent.
 
 Google always exposes two logical plugins: **Google Mail + Calendar** and
@@ -1150,7 +1149,7 @@ provider emits belongs here, and that is the normal case rather than a failure:
 the GitHub manifest declares eighty-seven activity types and thirty of them are
 digestible. The manifests are the only record of each type's classification;
 the reference table that gave a reason for every row is retired
-([its record](#2026-11-08--retirement-records-suggested-context-connector-digestibility)).
+([its record](#retired-documents)).
 
 A **polling activity stream** declares `digestible` too (`ConnectorPollingActivityStream.digestible`), and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. The rule a reader would apply is that **a stream can only ever withhold**: an activity is digestible when its event type says so *and* its stream agrees, and everything unknown — a connector this region does not register, an event type a manifest has dropped — is withheld. Nothing applies either rule today: the poll runner no longer stamps the withholding, and `activityIsDigestible`, which computed the answer when the activity log was written, was deleted with the digest. `workspace_activity_events.digestible` remains in the schema with nothing writing it.
 
@@ -1226,7 +1225,12 @@ Small first-stage events travel inline. An event above the existing 120,000-byte
 Queue envelope budget calls the same typed WorkspaceDO admission primitive
 directly, then queues the processing IDs after its canonical commit. A failed
 send replays idempotent admission before retrying the wake-up. Processing always
-reloads canonical state from WorkspaceDO.
+reloads canonical state from WorkspaceDO. The producers' pre-WorkspaceDO D1
+branches are deleted, since every deployment binds `WORKSPACE_DOS`; the
+provider-wide webhook service alone keeps its legacy branch, and so an ID-only
+producer the consumer acknowledges as `legacy_message_after_cutover`, until its
+Node suite (`test/provider-webhooks.test.ts`, which drives only that branch) is
+moved onto WorkspaceDO.
 
 Oversized matched deliveries keep registration, destination, and event identity
 in the Queue envelope and reload `textSnippet` and `metadata` through the
@@ -1271,7 +1275,7 @@ connection-scoped events; collapsing those requires an explicit workspace-level
 product rule rather than an accidental cross-connection dedupe.
 
 The removed semantic route into an existing work stream (Suggested context) has
-its retirement record in [this document's changelog](#2026-11-08--retirement-records-suggested-context-connector-digestibility).
+its retirement record in [Retired documents](#retired-documents).
 It is not a dormant step in this pipeline: current processing has no
 classifier, card, or feedback endpoint.
 
@@ -1404,7 +1408,7 @@ It does not own:
 
 | For | Read |
 | --- | --- |
-| The retired Suggested context feature | [its retirement record](#2026-11-08--retirement-records-suggested-context-connector-digestibility) |
+| The retired Suggested context feature | [its retirement record](#retired-documents) |
 | The registrations, secrets, and the zero-copy definition | [`provider-apps.md`](provider-apps.md) |
 | Slack's product surface and its scope inventory | [`slack-integration.md`](slack-integration.md), [`slack-permissions.md`](slack-permissions.md) |
 | Linear's protocol and native-agent gate | [`linear-integration.md`](linear-integration.md) |
@@ -1576,97 +1580,55 @@ arguments. An omitted default or a calendar name may resolve elsewhere after
 interruption, so it stays unresolved instead of risking a second event. Old
 creates without a recorded provider key cannot use this recovery path.
 
-## Changelog
+## Retired documents
 
-### 2026-11-08 — Retirement records: Suggested context, Connector digestibility
+Removed from `docs/`; the last text and changelog are recoverable as
+[`architecture.md`](architecture.md#retired-documents) describes.
 
-**`contextual-routing.md` — Suggested context (retired 2026-08-30; document
-removed 2026-11-08).** Suggested context classified unclaimed connector activity
-against an Organization's recent work streams and offered a card inside the one
-it fit, which a participant accepted (attaching the resource) or dismissed. It
-was paused on 2026-08-12 as too noisy, re-enabled on 2026-08-24 behind
-source-to-target audience fences, and removed on 2026-08-30 because the card was
-an unsolicited interruption not worth a parallel destination beside watches,
-Sidekicks and Suggested Work (itself deleted 2026-11-07). Forward migrations
-discarded pending cards and feedback and kept accepted relationships as ordinary
-attachments, with the source audience surviving as an immutable content fence
-(conversation migration 35 dropped `suggested_actions`); old suggestion event
-names stayed parse-only for rolling deploys. What survives in storage:
-`activity_suggestions` in regional D1 (`packages/db/migrations` 0001, 0014 and 0079), the
-`suggested_activity` relationship the desktop still normalizes to `attachment`
-(`apps/desktop/src/renderer/lib/api.ts`), and the `suggestion` message type the
-projection still filters. The lesson cited elsewhere
+**`contextual-routing.md`: Suggested context (retired 2026-08-30; document
+removed 2026-11-08).** Suggested context classified unclaimed connector
+activity against an Organization's recent work streams and offered a card in
+the one it fit, which a participant accepted (attaching the resource) or
+dismissed. It was paused on 2026-08-12 as too noisy, re-enabled on 2026-08-24
+behind source-to-target audience fences, and removed on 2026-08-30 because the
+card was an unsolicited interruption not worth a destination beside watches
+and Sidekicks. Forward migrations discarded pending cards and kept accepted
+relationships as ordinary attachments, the source audience surviving as an
+immutable content fence (conversation migration 35 dropped
+`suggested_actions`). What survives in storage: `activity_suggestions` in
+regional D1 (`packages/db/migrations` 0001, 0014 and 0079), the
+`suggested_activity` relationship the desktop still normalizes to
+`attachment` (`apps/desktop/src/renderer/lib/api.ts`), and the `suggestion`
+message type the projection still filters. The lesson cited elsewhere
 ([`jev-best-practices.md`](jev-best-practices.md),
-`packages/agent-harness/src/semantic-trigger-gate.ts`): its only quality control
-was "a constant compared against a number the model made up about its own
-answer", and nothing read a dismissal back. Its 2026-08-12 rework rejected
-raising the threshold for everyone (it "still compares against a self-reported
-score") and requiring non-empty `matchedEntities` ("the field is produced by the
-same model whose judgement is in question"); and it rejected reading
-`digestible` as a hard gate, because the field "encodes three different noes and
-only one of them is about relevance" — the gate broke the feature's own
-generic-webhook acceptance flow while every unit test passed. A future router
-over connector activity starts from those three.
+`packages/agent-harness/src/semantic-trigger-gate.ts`): its only quality
+control was "a constant compared against a number the model made up about its
+own answer", and nothing read a dismissal back. Its 2026-08-12 rework rejected
+raising the threshold (it "still compares against a self-reported score"),
+requiring non-empty `matchedEntities` ("produced by the same model whose
+judgement is in question"), and reading `digestible` as a hard gate, because
+the field "encodes three different noes and only one of them is about
+relevance". A future router over connector activity starts from those three.
 
-**`connector-digestibility.md` — What each connector activity type declares
-for a digest (retired 2026-11-08).** A reference appendix to this document: one
-table per registered connector (Ashby, Canva, GitHub, Linear, Slack, Notion,
-Google, Granola, Fireflies, X and the generic webhook), one row per declared
-activity type, answering "would a person who was away for a day want this read
-back to them?" with Yes or No and the reason. It is retired because nothing
-reads the answer: the digest it was written for is deleted, `activityIsDigestible`
-went with it, the poll runner no longer stamps a stream's withholding, and
-the manifest summary's derived `digestibleActivityTypes`
-(`packages/contracts/src/index.ts`) has no consumer. The one thing that read the
-document was `packages/connectors/src/digestibility-doc.test.ts`, which
-checked the table's rows against what `createConnectorRegistry` produced; with
-no reader of the answer left, the table was kept only so that test had
-something to read, and both were deleted. What survives is the declaration itself, still
-required: each manifest's `{ digestible, operational }` partition, refused by
-`defineConnectorActivityTriggers` (`packages/connectors/src/types.ts`) when a type sits
-in both; `ConnectorPollingActivityStream.digestible`; the `digestible` field of
-an activity trigger descriptor, which `packages/agent-harness/src/index.ts`
-deliberately leaves out of what a model sees; and the unwritten
-`workspace_activity_events.digestible` column. The manifests were always
-authoritative, so the verdicts are still there; the reasons are in
-`git show 14d68b1:docs/connector-digestibility.md`. A future surface that
-tells somebody about connector activity reads the rules under
+**`connector-digestibility.md`: what each activity type declares for a digest
+(retired 2026-11-08).** One table per connector, one row per declared
+activity type, answering "would a person who was away for a day want this
+read back to them?" with the reason. Nothing reads the answer any more: the
+digest it was written for is deleted, `activityIsDigestible` went with it,
+and the manifest summary's `digestibleActivityTypes`
+(`packages/contracts/src/index.ts`) has no consumer; the one reader of the
+document, `packages/connectors/src/digestibility-doc.test.ts`, was deleted
+with it. What survives is the declaration, still required: each manifest's
+`{ digestible, operational }` partition, refused by
+`defineConnectorActivityTriggers` (`packages/connectors/src/types.ts`) when a
+type sits in both; `ConnectorPollingActivityStream.digestible`; the
+`digestible` field of an activity trigger descriptor, which
+`packages/agent-harness/src/index.ts` deliberately leaves out of what a model
+sees; and the unwritten `workspace_activity_events.digestible` column. A future
+surface that tells somebody about connector activity reads
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — The origin capability and the legacy ID-only activity producers are deleted
-
-**What changed:** `ConnectorAdapter.origin`, `describeConnectorOrigin`,
-`connectorOriginFromActivity`, `connectorOriginUrl`, the origin locator and
-source types, the `origin_describe`/`origin_url_resolve` observations and
-Slack's origin source are deleted, with the "say where the things you produce
-live" rule.
-
-**Why:** Plan step B-8 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
-Only a Thread recorded the place it started from, and plan step C-2 deleted
-every host path that asked; [`workstream-origin-attachments.md`](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions)
-has the history.
-
-**Considered and rejected:** Keeping the capability for a later Sidekick
-"started from" link: a Sidekick run's trigger event already names the provider
-object, so that link would read the event, not a second description.
-
-**Consequences:** An adapter no longer has an origin obligation, and the
-manifest check on a described `resourceType` went with it. In the same step the
-pre-WorkspaceDO D1 branches of `persistNormalizedActivity` and of the Granola
-and generic webhook ingresses were deleted: every deployment binds
-`WORKSPACE_DOS`, so they could only run in a test, and each still produced the
-ID-only `ActivityQueueMessage` the consumer acks as
-`legacy_message_after_cutover`. That tombstone stays for a message already in
-flight. The commit-before-send recovery scan (`recoverPendingActivityQueue`)
-and the connector-poll Workflow's `enqueue-normalized-activities` step went
-the same way; a poll instance replaying across the deploy never reaches the
-deleted step. The provider-wide webhook service keeps its legacy branch, and
-so its ID-only producer, until its Node suite (`test/provider-webhooks.test.ts`,
-which drives only that branch over a fake D1) is moved onto WorkspaceDO.
-
-Shipped in juno-ai-labs/avalon#1490.
+## Changelog
 
 ### 2026-10-22 — Report shortened Sheets cell text
 
@@ -1731,7 +1693,6 @@ already supply authority; plugin views supply discovery and activation.
 
 **Consequences:** Future Google surfaces must keep bundle tools and triggers
 separate and preserve the shared connection identity for execution and receipts.
-
 
 ### 2026-10-19 — Connection state and reauthorization remain separate
 
@@ -1799,7 +1760,6 @@ admission and context reads reuse the existing authority instead.
 lists fail explicitly. Queue messages preserve full event context through the
 canonical owner, and rollout enrichment preserves identity and processing state.
 Read access to an attached Doc remains the connected account's responsibility.
-
 
 ### 2026-10-19: Polling failure is not a reconnect verdict
 
@@ -2037,7 +1997,6 @@ that lives only in the card is one deletion away from existing nowhere, which
 is what nearly happened to Ashby's. Adding a paragraph back to a card re-breaks
 the row.
 
-
 ### 2026-09-19 — The GitHub single reads are declared too
 
 **What changed:** `repository.get`, `issues.get`, `pull_requests.get`,
@@ -2128,7 +2087,6 @@ and, only if the provider documents one, its format — and gets the link, the
 placeholder and the mismatch message from that. The card description is the
 plain sentence naming what the connector gives you; the scope story belongs in
 the setup modal, which has room for it.
-
 
 ### 2026-09-17 — A Granola event tells the run which note it is about
 
@@ -4338,7 +4296,7 @@ naming the place. `describeConnectorOrigin` in the connector base is the single
 entry point, `connectorOriginFromActivity` is the derivation every connector gets
 without code, and a described `resourceType` is checked against the manifest's
 `resourceTypes`. Slack is the first implementation. What the host does with the
-answer is [`workstream-origin-attachments.md`](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions).
+answer is [`workstream-origin-attachments.md`](workstream-durable-object.md#retired-documents).
 
 **Why:** The behaviour shipped first as Slack-specific code in an API service —
 the host knew Slack's channel-versus-thread rule, Slack's title wording, and

@@ -332,24 +332,6 @@ on the configured medium fallback model, separately from end-to-end tool edits.
 
 ## Changelog
 
-### 2026-11-08 — The open comment editor follows its selection when the document reflows
-
-**What changed:** `AnnotationSurface` observes the document's box while an
-editor is open and moves the editor to its selection's anchor when the box
-changes size. The editor's textarea no longer shows a resize grip.
-
-**Why:** The second design inspection (v1-R2-5) expanded the panel with an
-editor open: the table reflowed from about x 1580 to 1110 and the editor stayed
-at its old screen position over the Status column, detached from "Owner". The
-editor had been placed once, where the pointer let go, while confirmed
-comments already followed scroll and resize.
-
-**What a future change must respect:** the first observation reports the box
-as it already is and does not move the editor, so a fresh editor stays where
-the pointer let go.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-29 — One annotation script on every host, injected by the serving Worker
 
 **What changed:** The picker, cards and restore became one script that installs
@@ -434,7 +416,6 @@ removed comments. Revision checking remains client-side so ambiguous feedback ne
 reaches the model; shared reads reduce its cost without removing that guarantee.
 
 PR #1360.
-
 
 ### 2026-10-19 — Confirm comments before adding composer pins
 

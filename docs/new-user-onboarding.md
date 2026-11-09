@@ -163,27 +163,6 @@ Onboarding no longer starts an agent run or a connector authorization.
 
 ## Changelog
 
-### 2026-11-07 — Onboarding lands on the Canvases home and seats nobody
-
-**What changed:** Finishing the journey replaces it with the Canvases home
-(`useOpenLanding`, `LANDING_ROUTE`), whose empty state offers **Start from a
-prompt**, rather than the landing that opened a Channel. No journey step names
-a Channel, and joining an organization no longer seats the person in General
-or gives them a Personal Channel.
-
-**Why:** Plan step B-13 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-the Channel and Thread screens are deleted, so the old landing had nothing
-left to open, and a new person's first useful act is starting a Canvas. With
-no client to show them, General and the Personal Channel would have cost a
-Thread per member for nothing.
-
-**Consequences:** A new member's sidebar is empty until they start a Canvas or
-are added to one; the Canvases empty state is the whole first-run surface, so
-a change to it is a change to onboarding.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-24 — Share the invite field with the account menu
 
 **What changed:** The email-chip field, its `something@something` check and

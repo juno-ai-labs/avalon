@@ -315,7 +315,6 @@ thread, gets a post there. An email reply never continues a run, and no tool
 posts into an email thread. The wizard's continuation note (`renderRunContinuationNote` with
 `fromWizard`) points back at this guidance rather than restating it.
 
-
 ## Invariants
 
 - Membership and ownership are separate, so a shared Sidekick is not stopped
@@ -411,32 +410,6 @@ guest's grant-only contact. Complete desktop behavior remains an implementation 
 
 ## Changelog
 
-### 2026-11-07 — A Thread no longer owns a Sidekick
-
-**What changed:** The owning-thread rule is gone. Any conversation whose
-principal may view a Sidekick may message its wizard or attach a resource to
-it; `sidekick_owned_by_another_thread` is no longer raised. `create_sidekick`
-offers `personal` (the default) or `workspace`, not `workstream`, and
-`sidekicks_list` names only the Sidekick the conversation belongs to, so its
-items lose `ownedByThisWorkstream` and a Thread's list is empty.
-
-**Why:** The Canvases and Sidekicks PRD decided that Thread-scoped Sidekicks
-convert to Organization scope, so the people who used one keep it. With no
-Thread owner left, a rule keyed on the owning Thread would refuse nothing and
-mislead whoever reads it.
-
-**Consequences:** Who may change a Sidekick is now its own access (audience,
-grants, manager rules), not where the message comes from. Viewing it was
-first the whole check, which let any reader's agent start a wizard turn with
-the authoring tools, and a wizard turn could then message a run as if it
-were the Sidekick's own; a review found the chain. Messaging the wizard now
-also needs the sender's principal to manage it (`authorizeWizardTurn`,
-`sidekick_edit_requires_manager`), from a run of the Sidekick's own as from
-anywhere else. Setup from a Thread always creates a Sidekick; an existing one is reached
-by its exact name through `find_sidekick`.
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-11-02 — A Sidekick run asks its own wizard for a change
 
 **What changed:** A Sidekick run gets `request_sidekick_change`, which sends a
@@ -515,7 +488,6 @@ then spent repeated model turns acknowledging that everyone was waiting. The
 wizard already owns definition editing and normal messages deliver its result;
 a relay chain adds latency and can strengthen constraints the user never set.
 
-
 ### 2026-10-21 — Assign outcomes and carry procedures across delegation
 
 **What changed:** Shared role guidance asks every delegator to pass outcomes,
@@ -556,7 +528,6 @@ that target.
 
 **Consequences:** Recovery remains within current ownership and user intent.
 Refusals and remembered claims cannot stand in for submission or schedule state.
-
 
 ### 2026-10-15 — Only the owning thread changes a thread's Sidekick, and the model reads `sidekick/…`
 

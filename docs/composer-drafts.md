@@ -296,28 +296,6 @@ sits inside.
 
 ## Changelog
 
-### 2026-11-07 — A Canvas's Chat drafts under its own family
-
-**What changed:** A Canvas's Chat caches its draft, attachments and annotation
-pins under `canvas:<canvasId>` and registers the annotation scope
-`canvas:<canvasId>`, chosen by parent kind in `conversationDraftKey`.
-
-**Why:** A Canvas is a new conversation parent
-([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)); keying it as a work
-stream would put Canvas drafts in front of every reader of `workstream:` keys
-(the legacy migration, the Breakout launcher) and make the cutover's deletion
-of those families take Canvas drafts with it.
-
-**Consequences:** The workspace prefix still leads, so leaving an Organization
-clears Canvas drafts with the rest. A popped-out artifact window reads the same
-scope to confine its actions (`main/artifact-window-actions.ts`): for a Canvas
-it renames and deletes through `/conversations/<canvasId>/resources/…` and
-refuses pin with a reason naming the Canvas, since a Canvas artifact's pin
-belongs to the Canvas. (Its link, refused here at first, became the Canvas
-link onto the artifact on 2026-11-07; [`links.md`](links.md) owns it.)
-
-Shipped in juno-ai-labs/avalon#1490.
-
 ### 2026-10-20 — Persist confirmed artifact comments with composer drafts
 
 Comments now survive navigation and restart using per-comment rows in the existing

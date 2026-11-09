@@ -130,10 +130,7 @@ Retirement runs in this order, and the order is the design:
    `childrenForRetirement` leaves receipted children out, so a pass cut off
    inside a large parent leaves the next pass only the children still open.
    The child receipt only saves work; the parent's receipt still decides
-   completion. A parent's children are closed `RETIREMENT_CHILD_CONCURRENCY`
-   at a time (10) through `settledBatches`: every call in a batch settles
-   before the next batch starts, and the first failure stops that parent with
-   no retire left in flight.
+   completion.
 5. **Finish when nothing is left unreceipted.** Completion is the workspace's own
    tombstone plus the absence of NULLs in the graph table, rather than a flag
    somebody sets. The tombstone is what says the enumeration happened: reading
@@ -751,31 +748,64 @@ telemetry roles.
 
 ## Changelog
 
-### 2026-11-09 — The walk closes a parent's children ten at a time
+### 2026-11-09 — Dump, convert and retire an Organization's Threads, close its Canvases with it, and stop writing the demo register
 
-**What changed:** `retireWorkspaceGraph` closes one parent's conversations in
-batches of `RETIREMENT_CHILD_CONCURRENCY` (10) through the existing
-`settledBatches` helper, instead of one at a time. A batch settles in full
-before the next starts; the first failure in a batch still leaves the parent
-unreceipted and named in `failed`.
+**What changed:** Three engineering MCP operator operations, each behind a typed
+`confirm`. `dump_thread_transcripts` writes every Thread, Breakout and Channel
+conversation's transcript to R2 as text, the R2 object being its receipt.
+`convert_threads_to_canvases` makes every Thread that made or linked an artifact
+a Canvas under the same id (`HostedCanvas.createFromThread`,
+`AgentLoopDO.convertParentKind`, each Breakout's attachments carried into the
+Chat). `retire_threads` retires each remaining conversation object and deletes
+its parent's rows, leaving the Organization open, and is refused until the dumps
+cover every conversation and no conversion candidate remains
+(`thread_retirement_conversion_pending`). WorkspaceDO migration 137 lets
+`workspace_retirement_graph` record Canvases, so retiring an Organization closes
+each Canvas's Chat, and migration 139 drops the Thread-era tables nothing reads,
+their dangling triggers and the Thread rows of shared tables. The walk no longer
+reads or stamps `demo_operations`. [The deploy order](#the-deploy-order) is in
+the body.
 
-**Why:** Even with per-child receipts, each pass closed only 150 to 180
-conversations before the ~240s cutoff, because each `retireObject` waits 0.1 to
-1.7s on a cold object and the bridge spent only 68 to 82ms of CPU in a whole
-pass. A demo parent with a few hundred conversations took several passes and
-several MCP timeouts. The team set the number to 10, choosing between 6, 10 and
-20; the reasoning is not recorded beyond that choice. At about 1.7s for the
-slowest call in a batch, that is about 6 conversations a second.
+**Why:** The PRD deletes Threads, Breakouts and Channels at cutover, object by
+object and with no read-only mode, because keeping the old data reachable means
+keeping its readers deployed; since the deletion is irreversible, each
+transcript is dumped first. The owner then decided on 2026-11-08 that Threads
+with artifacts become Canvases (60, in 7 Organizations), and keeping the id
+means `artifact_registry`, search, the D1 anchor and links need no rewrite. The
+order was advice only at first: `retire_threads` run before the conversion
+orphaned every artifact, and after a partly failed one it tombstoned a live
+Canvas's Chat. The graph's CHECK predated Canvases, so retiring an Organization
+left every Canvas Chat open and answering (`workspace-retirement-graph.test.ts`
+failed with the recorder unchanged). The demo feature was removed on the owner's
+instruction, and the walk was its one write into another module.
 
-**Considered and rejected:** A worker pool that starts the next child as soon
-as one finishes. It is somewhat faster, but `settledBatches` already exists and
-already guarantees no write is left in flight when the walk stops, which is
-the property a retirement needs.
+**Considered and rejected:** A receipt table for the dump, a second record of a
+fact the R2 object already is. Reusing `workspace_retirement_graph` for the
+Thread walk, whose completion is the Organization's own tombstone. Only
+tombstoning Thread parents: the Organization stays open, so a surviving row
+would still be listed, opened and refused. Creating new Canvases and copying
+content into them, which rewrites every id-keyed table. Letting the retirement
+skip conversion candidates, which would leave Threads nothing can open. Dropping
+`channels` and `spaces` in 139: where `retire_threads` has not run, they are the
+only record of which objects to dump and close.
 
-**Consequences:** Whether Cloudflare's 6 simultaneous open connections per
-invocation counts Durable Object calls is not established; if it does, calls
-beyond 6 queue rather than fail. The entry below rejected parallel retirement
-because a concurrency figure is the team's to set; it now has one.
+**Consequences:** The order is dump, convert, retire, and `retire_threads`
+enforces it; the three run in every Organization right after the release
+deploys, and the release is forward-fix only. A dump is a snapshot and, after
+retirement, the only copy. The conversion is the only path that changes a
+conversation's stored parent kind: anything new keyed on a Thread's Main by its
+Thread-era name must be carried in `convertThreadToCanvas`, and a new table a
+Canvas writes under its own id that `HOSTED_PARENT_STATE_TABLES` sweeps joins
+`CANVAS_SHARE_TABLES`. `thread-retirement-service.ts`, the operations, the
+Thread directories and their viewers, the `parent_*` tables and the recorder's
+`channels` and `spaces` reads stay until every Organization has run them.
+`digest_schedules` stays, emptied, because `schedules` names it in a foreign
+key, and the D1 authority tables stay because Canvas and Sidekick creation read
+them. A new producer of **can impersonate** edges passes its own basis to the
+walk's `impersonationRevocation` rather than teaching the walk to look it up.
+
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-09 — The walk receipts each conversation, so a cut-off pass keeps its progress
 
@@ -809,154 +839,6 @@ skips receipted children as it already skipped receipted parents, so it counts
 one pass, not the whole retirement. Anything that lists a
 parent's children for retirement now sees only the open ones. Nothing re-invokes
 an interrupted walk yet, and two overlapping passes still duplicate work.
-
-### 2026-11-08 — The walk no longer writes the demo register
-
-**What changed:** `retireWorkspaceGraph` no longer reads `demo_operations` to
-revoke a demo's `demo:<operation>` impersonation edges, and no longer stamps
-`retired_at` on that table once the graph is closed
-(`markDemoWorkspaceRetired` is deleted). Operations gained the step that
-retires every live demo Organization and the template before the removal
-ships, and the deploy order around D1 migration 0125, which drops the demo
-tables as a Worker-first migration after the Worker is promoted.
-
-**Why:** The owner's instruction of 2026-11-08: "remove the demo
-functionality completely". The walk was the demo feature's one write into
-another module and its one demo-specific read; with the feature gone both had
-no reader. Retiring the existing demo Organizations through this door, rather
-than a bulk delete, is the existing path and closes their objects the way
-every closed Organization is closed.
-
-**What a future change must respect:** the walk still takes an optional
-`impersonationRevocation`; a new producer of **can impersonate** edges passes
-its own authority basis there rather than teaching the walk to look it up.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-08 — Convert a Thread that has artifacts into a Canvas in place
-
-**What changed:** `convert_threads_to_canvases`, an engineering MCP operator
-operation, makes every Thread of one Organization that made or linked an
-artifact a Canvas with the same id: the Canvas's rows from the Thread's
-(`HostedCanvas.createFromThread`), the Main's stored parent kind rewritten to
-`canvas` (`AgentLoopDO.convertParentKind`), each Breakout's attachments of the
-Canvas's artifacts carried into the Chat so every Canvas reader opens them,
-the Breakouts retired and the Thread's rows deleted. It runs between the dump and the retirement, behind the
-same dump guard. Migration 139, not yet shipped, now keeps
-`workspace_workstream_resource_links` and Thread-kind Sidekick attachments for
-it; `deleteRetiredThreadParent` deletes both with the Thread.
-
-**Why:** The user decided on 2026-11-08 that Threads with artifacts become
-Canvases rather than being deleted: production held 60 such Threads in 7
-Organizations. Keeping the id means `artifact_registry`, the search index, the
-D1 anchor and route need no rewrite. The alternative, creating new Canvases
-and copying the conversation and artifacts into them, was rejected because
-every id-keyed table would need a rewrite.
-
-The order was advice only at first: `retire_threads` checked
-only the dumps, so run before the conversion it orphaned every artifact, and
-run after a partly failed one it tombstoned the Chat of a live Canvas, which
-keeps the Thread's id. It is now refused while a candidate remains
-(`thread_retirement_conversion_pending`), and its inventory leaves out any id
-`canvas_directory` holds. Letting the retirement skip candidates instead was
-rejected: a Thread it skipped would stay a Thread nothing can open. The
-conversion's sweep also deleted every `parent_*` row of the
-id, including invitations and grants made on the live Canvas between an
-interrupted pass and its rerun; the Thread's shares now go when the Canvas is
-made, and the sweep leaves `CANVAS_SHARE_TABLES` to the Canvas.
-
-The deploy order was also written as "before this deploys", which could not
-happen: the three operations ship in the release that removes Threads. They
-run in every Organization right after it deploys, with Thread traffic failing
-by design until then, and the release is forward-fix only (the deploy order
-above).
-
-**What a future change must respect:** the order is dump, convert, retire, and
-`retire_threads` enforces it. The
-conversion is the only path that changes a conversation's stored parent kind,
-and only from `workstream` to `canvas`; every stored copy of the kind in the
-object (root row, outbox envelopes, run inputs) moves in the same
-transaction. Anything new that keys on a Thread's
-Main by its Thread-era name (a source string, a parent kind) has to be carried
-in `convertThreadToCanvas`, or a converted Canvas loses it. A new table a Canvas writes under its
-own id that `HOSTED_PARENT_STATE_TABLES` also sweeps joins
-`CANVAS_SHARE_TABLES`, or a resumed conversion deletes it.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — Retire an Organization's Threads after dumping them, close its Canvases with it, and drop the Thread-era tables nothing reads
-
-**What changed:** Plan steps B-7a and B-7. `dump_thread_transcripts`, an
-engineering MCP operator operation, walks one Organization's Threads, Breakouts
-and Channels (`WorkspaceDO.threadRetirementInventory`) and writes each
-conversation's transcript to R2 as text (`AgentLoopDO.conversationTranscriptText`,
-formatted by `conversationAsText`), with the R2 object as its receipt.
-`retire_threads`, refused until those receipts cover every conversation, retires
-each conversation object through `retireObject` and then deletes the parent's
-rows (`WorkspaceDO.deleteRetiredThreadParent`), leaving the Organization open.
-
-Plan step C-7. WorkspaceDO migration 137 copies `workspace_retirement_graph`
-so its CHECK admits `canvas`, and `beginWorkspaceRetirement` records every
-`canvas_directory` row; the walk asks the Canvas for its children through the
-hosted-parent path it already uses for a Sidekick, so each Canvas's Chat
-object is tombstoned with the Organization, and Ace's abandon confirmation
-says every Canvas and Sidekick closes. WorkspaceDO migration 139 drops 48
-tables (Activity, digests except `digest_schedules`, suggested work, a
-Channel's own ledgers, Thread pins and order, Thread access (the resource
-links stay, for the conversion of 2026-11-08), batch dispatches, the Thread backfill, the import-reservation reclaim,
-`workstream_email_receipts`), the Channel-rail and Channel-colour triggers on
-the tables that survive, and the Thread rows of the shared tables. AgentLoopDO
-migration 84 drops the per-conversation `sidekick_attachments`. The memory
-digest sync settles a Thread's or a Channel's holder as dead, the workspace
-attention summary and the Terminal schedule targets stop reading `channels`,
-and the dead `isWorkstreamParticipant` is deleted.
-
-**Why:** The PRD's decision log: existing Threads, Breakouts and Channels are
-deleted at cutover, object by object, with no read-only mode, export or
-conversion, because keeping the old product's data reachable means keeping its
-readers deployed; and since that deletion is irreversible, each transcript is
-first dumped to R2 for operators, in the pass the retirement walk already makes.
-The graph's CHECK predated Canvases, so the recorder never named one, and
-retiring an Organization left every Canvas Chat object open and answering
-(`workspace-retirement-graph.test.ts` failed with the recorder unchanged).
-Each dropped table had lost its last reader in phase C, and a trigger left
-writing a dropped table would fail the write it fires on. `digest_schedules`
-stays, emptied, because `schedules` names it in a foreign key and SQLite
-refuses every insert into a child whose parent table is gone. The attention
-summary counted frozen Thread state, so a retired Thread's unread would have
-held the Organization and push badges up for good.
-
-**Considered and rejected:** A receipt table in `WorkspaceDO` — a migration and
-a second record of a fact the R2 object already is; a key that exists is a
-dump that finished. Reusing the read-as-a-user transcript operation — it
-authorizes a viewer, and an operator dump has none. Reusing
-`workspace_retirement_graph` for the Thread walk — its completion is the
-Organization's own tombstone, which this walk never writes. Deleting the parent
-rows rather than only tombstoning, as the workspace walk does: the Organization
-stays open and keeps serving its reads, so a Thread whose row survived would
-still be listed, opened and refused. Reading the `parent_*` tables from the
-schema alone: dynamic table names have to come from a closed code-owned list
-([`durable-object-sqlite.md`](durable-object-sqlite.md)); intersecting the list
-with the schema keeps the tolerance for tables a migration drops. Dropping
-`channels` and `spaces` in 147 too: in an Organization where `retire_threads`
-has not run, they are the only record of which conversation objects to dump
-and close.
-
-**Consequences:** A dump is a snapshot: what lands in a conversation after it is
-not in it, and a rerun does not refresh it, so the two run back to back after
-the cutover. Deletion is irreversible; the dump is the only copy.
-`thread-retirement-service.ts` and the two operations stay until the operator
-has run them in every Organization; only then can the Thread directory tables,
-their viewers, the Breakout directory, the `parent_*` tables and this
-recorder's `channels` and `spaces` reads be dropped. The D1 tables
-`workstream_authority_control`, `workstream_authority_routes` and
-`workstream_create_receipts` are not dropped: Canvas and Sidekick creation
-still read the authority gate and the create receipts.
-`workspace-thread-era-drop-migration.test.ts` checks that no trigger or
-foreign key names a missing table after the drop, and failed with the Channel
-rail's resource triggers left in place.
-
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-09-19 — The graph admits a third parent kind, and the walk enumerates Spaces and knows which namespace to ask
 

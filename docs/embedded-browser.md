@@ -123,7 +123,7 @@ The browser owns local website state, navigation, page inspection, and page
 input. The Rally renderer owns the controls and layout; it cannot receive a
 `WebContents` or an arbitrary IPC channel. The one way an API agent loop could
 reach the browser is the desktop-action protocol
-([its retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions)): a typed request on the
+([its retirement record](workstream-durable-object.md#retired-documents)): a typed request on the
 conversation's socket that the desktop executes through this same
 `command()` path, on one tab, never through another page controller. Tool
 receipts and retry policy stay with the harness. Every run is wired a
@@ -179,72 +179,45 @@ show whether Electron honors the flag. On macOS or Linux, evaluate
 
 The model-facing orchestration realm and its handles, which nothing reaches
 today, are described in [the browser script runtime's retirement
-record](#2026-11-08--retirement-record-browser-script-runtime). This browser
+record](#retired-documents). This browser
 owns the run-to-realm map and disposes associated realms when tabs or the
 browser close, or when the owning renderer reloads or loses its process.
 
+## Retired documents
+
+Removed from `docs/`; the last text and changelog are recoverable as
+[`architecture.md`](architecture.md#retired-documents) describes.
+
+**`browser-script-runtime.md`: the browser script runtime (removed
+2026-11-08).** It owned the model-facing tools `browser_js` and
+`browser_js_reset`: one persistent JavaScript session per run in a hidden,
+sandboxed `WebContentsView` (no Node or preload, an ephemeral partition, a CSP
+that denies navigation, frames and network), holding `cua` browser and tab
+handles, accessibility observations, a Playwright-style locator subset, native
+input on the one pinned tab, and the page-side `rally.pageScript`,
+`rally.downloadFiles`, `rally.network` and `rally.load` extensions. Nothing
+reaches it: a realm is created only by an `{ action: 'script' }` command, which
+only the desktop executor sends for a `browser.script` desktop action, and
+nothing issues one, since `AGENT_PROFILES` is empty and no desktop surface
+answers `desktop_action_requested`
+([the desktop actions record](workstream-durable-object.md#retired-documents)).
+Its one user was the session import, deleted with Threads.
+
+The code survives unreached and tested: `packages/contracts/src/browser-runtime.ts`
+(whose model instructions still name the deleted `import_finish` and
+`import_fail`), `apps/api/src/services/desktop-actions/browser-plugin.ts`, and
+on the desktop `common/browser-script-bootstrap.ts`,
+`common/browser-script-protocol.ts`, `main/browser-script-runtime.ts`,
+`main/browser-script-driver.ts` and this browser's run-to-realm map. A feature
+that gives a run these tools again inherits from that changelog: model code
+runs only in the disposable realm, never in Electron main or Rally's renderer;
+native RPC is a closed union pinned to the owner's tab that refuses script and
+reset, so a script cannot recurse; browser tools use write receipts and never
+ask for confirmation; and `MAX_PAGE_PARALLEL_DOWNLOADS` is written open, its
+number the team's to set. The realm's isolation has no automated guard, only
+real Electron verification.
+
 ## Changelog
-
-### 2026-11-08 — Retirement record: Browser script runtime
-
-**What changed:** Nothing in the code. `docs/browser-script-runtime.md` was
-removed in the documentation audit; its full text and changelog are
-`git show 14d68b1:docs/browser-script-runtime.md`. It owned the model-facing
-browser tools `browser_js` and `browser_js_reset`: one persistent JavaScript
-session per run in a hidden, sandboxed `WebContentsView` (no Node or preload,
-an ephemeral partition, a CSP that denies navigation, frames and network),
-holding `cua` browser and tab handles, indexed accessibility observations,
-a documented Playwright-style locator subset, native input on the one pinned
-tab, `nodeRepl` output, and the page-side `rally.pageScript`,
-`rally.downloadFiles`, `rally.network` and `rally.load` extensions; a reset
-destroyed the realm and kept the tab and transferred handles.
-
-**Why:** Nothing reaches it. A realm is created only by an
-`{ action: 'script' }` embedded-browser command, which only the desktop
-executor sends for a `browser.script` desktop action, and nothing issues one:
-the API's `createBrowserPlugin` has no caller outside its test because
-`AGENT_PROFILES` is empty, and no desktop surface answers
-`desktop_action_requested` ([the desktop actions
-record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions)). Its one user was the ChatGPT and Claude
-session import, deleted with Threads.
-
-**Consequences:** The code survives unreached and tested:
-`packages/contracts/src/browser-runtime.ts` (the model's entry instructions,
-which still name the deleted `import_finish` and `import_fail`),
-`apps/api/src/services/desktop-actions/browser-plugin.ts`, and on the desktop
-`common/browser-script-bootstrap.ts`, `common/browser-script-protocol.ts`,
-`main/browser-script-runtime.ts`, `main/browser-script-driver.ts` and this
-browser's run-to-realm map. A feature that gives a run these tools again
-inherits from that changelog: model code runs only in the disposable realm,
-never in Electron main or Rally's renderer; native RPC is a closed union pinned
-to the owner's tab that refuses script and reset, so a script cannot recurse;
-browser tools use write receipts, since a script mixes reads and writes, and
-never ask for confirmation; and `MAX_PAGE_PARALLEL_DOWNLOADS` is written open,
-its number the team's to set. The realm's isolation has no automated guard,
-only real Electron verification.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — A Canvas hosts the rail browser; the import window is removed
-
-**What changed:** The rail browser's host is a Canvas's Chat, where it was a
-Channel's conversation, and main admits browser IPC from the main window
-alone. The import window (`surface=browser-import`, `browser-import:*` IPC,
-`common/browser-import.ts`, `screens/browser-import.tsx`) is deleted.
-
-**Why:** Plan step B-3 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-Channels are deleted and the ChatGPT and Claude session import is deleted
-(decision log, 2026-11-06), since an import landed in a Thread or Breakout. A
-Canvas's Chat is the conversation with a right rail beside it, so it takes the
-Channel's place as the rail's host.
-
-**Consequences:** Paragraphs below that describe the import window's agent
-driving its browser (`agentDriven`) describe code main no longer reaches; the
-`EmbeddedBrowser` flag stays false until that path is removed with the server's
-session import in phase C.
-
-Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-22 — Leave the browser visible beside a thread menu
 

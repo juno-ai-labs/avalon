@@ -155,12 +155,12 @@ are canonical storage services, not authorization layers.
   DevTools commands; no other window may. Those commands act with the person's
   website sign-ins, so a script injected into the renderer would reach every site
   signed in there. The desktop-action protocol that let an API agent loop ask for
-  those commands is unreached ([its retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions)).
+  those commands is unreached ([its retirement record](workstream-durable-object.md#retired-documents)).
 - Browser orchestration scripts execute in a separate sandboxed, ephemeral
   WebContents with no Node/preload and a network/frame-denying CSP. Only closed,
   typed requests reach the pinned browser tab; browser/tab closure or run
   termination disposes that realm. Nothing reaches the realm today
-  ([its retirement record](embedded-browser.md#2026-11-08--retirement-record-browser-script-runtime)).
+  ([its retirement record](embedded-browser.md#retired-documents)).
 - A strict Content Security Policy allows bundled content and the configured
   regional API only.
 - Markdown treats model, member, email, and attachment text as untrusted.
@@ -1200,49 +1200,6 @@ receive no application bridge. See
 
 ## Changelog
 
-### 2026-11-08 — The `demo_seed` principal and the demo routes are gone
-
-**What changed:** `principal: "demo_seed"` leaves the auth context and the
-conversation object's RPC schema, `/internal/demos` and its Workflow are
-deleted, and with them the copying of a template's Google credentials into a
-new Organization. Ace's operator credential keeps its stored names
-(`DEMO_OPERATORS_JSON`, role `demos`) behind code-facing `requireAceOperator`
-and `ACE_OPERATOR_ROLE`, and still reaches only the routes Ace calls.
-
-**Why:** The owner's instruction of 2026-11-08: "remove the demo
-functionality completely". Each was a server-constructed authority that only
-demo preparation used; leaving one with no producer is a door nothing guards
-the use of.
-
-**What a future change must respect:** renaming the secret or the role is a
-rotation in every region and in Ace together, so it is listed as a later
-rename in [`rally-rebrand-inventory.md`](rally-rebrand-inventory.md) rather
-than done in passing.
-
-Shipped in juno-ai-labs/avalon#1490.
-
-### 2026-11-07 — Only the main window may capture audio, and the iOS client's boundary is gone
-
-**What changed:** `allowsTrustedAudioCapture` admits the main window alone,
-the realtime socket broker no longer admits a Sidekicks window, and the
-trusted-sender set loses it. `system:open-sidekicks` is replaced by
-`system:open-sidekick`, which parses a bare id (`parseRouteId`) before it
-becomes a deep link. `apps/ios` is gone, so the Keychain session store and the
-iOS entitlements are no longer part of the trust model.
-
-**Why:** Plan steps B-2 and B-9 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-removed the separate Sidekicks window and the iOS client; every composer is
-now in the main window, so the grant the 2026-10-24 entry added for the
-second window has no window to apply to.
-
-**Consequences:** A new window that hosts a composer needs adding here
-explicitly; nothing else may record. The desktop `avalon-desktop` audience and
-the `ai.rallywith.ios` push topic the iOS client reused stay in server code
-with no iOS client using them.
-
-Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
-
 ### 2026-11-03 — Cross-origin requests reach a site anonymously, not refused
 
 **What changed:** The artifact serving Worker no longer refuses a
@@ -1345,7 +1302,6 @@ capability to operate on unrelated resources.
 authorization. A new menu action needs a confined operation rather than adding
 the window to `assertTrustedIpcSender`.
 
-
 ### 2026-10-19 — Isolate annotation picking from resource scripts
 
 **What changed:** Opaque static frames and isolated live-site worlds run trusted picker code; main owns screenshots and popouts receive narrow sender-checked IPC.
@@ -1357,7 +1313,6 @@ the window to `assertTrustedIpcSender`.
 **Consequences:** Preserve opaque frames, trusted-input checks, native screenshot ownership, narrow IPC and an active original composer scope for transfer. See [artifact annotations](artifact-annotations.md).
 
 PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
-
 
 ### 2026-10-02 — Isolate persistent browser orchestration from the app
 
@@ -1489,7 +1444,6 @@ workspace-selection writers; only a different workspace selection rebinds.
 Relying solely on asynchronous revocation would leave a rejoin window, while
 binding to every membership revision would unnecessarily sign people out during
 promotion. Incarnation is the lifecycle boundary those two choices missed.
-
 
 ### 2026-09-16 — Receipt-owned pagination replaces model-held provider tokens
 

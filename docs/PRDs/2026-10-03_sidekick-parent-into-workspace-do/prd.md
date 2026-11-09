@@ -419,7 +419,7 @@ design below. Newest first.
    goes in [hosted-conversation-parents.md](../../hosted-conversation-parents.md#performance-and-cost).
 
 9. **One export, one transaction, one importer at a time.** This repeats the
-   Channel move ([How the parents moved](../../hosted-conversation-parents.md#how-the-parents-moved)).
+   Channel move ([How the parents moved](../../hosted-conversation-parents.md)).
    The largest Sidekick holds about 1.6 MB, so a single export RPC is far
    inside the platform's 32 MiB message limit; an export over it fails with a
    code and stays `pending`, which is the failure we will notice. The steps:
