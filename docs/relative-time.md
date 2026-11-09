@@ -100,6 +100,10 @@ formatted where they are produced.
 
 ## Failure modes and limits
 
+- **Message bylines use compact English month names and AM/PM labels.** This
+  follows the requested `Oct 19 · 3:48PM` presentation even for readers whose
+  locale uses another language or a 24-hour clock. The timezone is still local;
+  tooltips and other surfaces continue to follow the reader's locale.
 - **An unparseable instant renders "Unknown time"** rather than throwing, in both
   the label and the tooltip.
 - **A hidden window's labels stop at their last tick** until the window is shown
@@ -158,10 +162,25 @@ shared clock.
 
 ### 2026-11-09 — Calendar context for older messages
 
-Message bylines now show compact local clock times and add a date after twelve
-hours, including the year for prior years. A time alone makes older turns
-ambiguous; the byline uses the existing formatter seam and shared clock so the
-date appears while the conversation stays open without adding timers per row.
+**What changed:** Message bylines show compact local clock times, adding a date
+after twelve hours and the year for prior years through the existing formatter
+seam and shared clock.
+
+**Why:** A time alone makes older turns ambiguous. The requested presentation
+puts calendar context in the byline so readers need not hover to distinguish
+when older messages happened.
+
+**Considered and rejected:** A calendar-day cutoff would omit the date for a
+message over twelve hours old earlier today. Using the reader's default locale
+would change the requested English month and compact AM/PM format. Both would
+depart from the requested display contract.
+
+**Consequences:** Future changes must preserve the elapsed twelve-hour cutoff,
+local calendar year comparison, and updates through the shared clock. The
+English labels can differ from the locale-aware tooltip; adding a date must not
+introduce a timer per message.
+
+Implemented in [#1503](https://github.com/juno-ai-labs/avalon/pull/1503).
 
 ### 2026-09-10 — One byline, one clock, one relative label
 
