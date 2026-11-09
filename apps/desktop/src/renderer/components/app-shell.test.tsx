@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { canvasTurnRoute, openCanvasId } from '../lib/canvases';
 import {
   invitationAccountMismatch,
+  messageResultRoute,
   windowControlsShellClass,
   withActiveWorkspaceName,
 } from './app-shell';
@@ -34,6 +35,23 @@ describe('canvasTurnRoute', () => {
     const params = new URLSearchParams(query);
     expect(params.get('turn')).toBe('turn a/1');
     expect(params.get('sequence')).toBe('42');
+  });
+});
+
+describe('messageResultRoute', () => {
+  const hit = { kind: 'message' as const, workstreamId, turnId: 'turn-1', transcriptSequence: 3, range: { start: 0, end: 1 } };
+
+  it('opens a Canvas Chat hit on the Canvas', () => {
+    expect(messageResultRoute({ ...hit, parentKind: 'canvas', substreamId: '0' }))
+      .toBe(`/canvases/${workstreamId}?turn=turn-1&sequence=3`);
+  });
+
+  it('opens a Sidekick hit on the Sidekick: its shared conversation, or the run it was said in', () => {
+    expect(messageResultRoute({ ...hit, parentKind: 'automation', substreamId: '0' }))
+      .toBe(`/sidekicks/${workstreamId}?turn=turn-1&sequence=3`);
+    const run = '00000000-0000-7000-8000-0000000000b1';
+    expect(messageResultRoute({ ...hit, parentKind: 'automation', substreamId: run }))
+      .toBe(`/sidekicks/${workstreamId}?run=${run}&turn=turn-1&sequence=3`);
   });
 });
 

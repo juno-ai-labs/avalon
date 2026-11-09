@@ -2,6 +2,7 @@ import { NavigationHistoryProvider } from './navigation-history';
 import { AddMembersDialog } from './add-members-dialog';
 import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
 import type { WorkspaceAttention } from '@rally/contracts';
+import type { SearchResult } from '@rally/contracts/search';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PropsWithChildren, useContext } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -31,6 +32,7 @@ import { SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { canvasTurnRoute, openCanvasId } from '../lib/canvases';
+import { sidekickTurnRoute } from '../lib/sidekick-status';
 import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
 import { SearchModal } from './search-modal';
@@ -79,6 +81,17 @@ export function windowControlsShellClass(platform: string | undefined): string {
   return platform === 'darwin' ? 'has-overlay-window-controls' : '';
 }
 
+
+/**
+ * Where a message search result opens: a Canvas's Chat opens the Canvas at
+ * the turn, a Sidekick's conversation (its shared one or a run's) opens the
+ * Sidekick on that conversation at the turn.
+ */
+export function messageResultRoute(target: Extract<SearchResult['location'], { kind: 'message' }>): string {
+  return target.parentKind === 'automation'
+    ? sidekickTurnRoute(target.workstreamId, target.substreamId, target.turnId, target.transcriptSequence)
+    : canvasTurnRoute(target.workstreamId, target.turnId, target.transcriptSequence);
+}
 
 export function invitationAccountMismatch(invitationEmail: string, accountEmail: string): string | null {
   if (invitationEmail.toLocaleLowerCase('en-US') === accountEmail.toLocaleLowerCase('en-US')) return null;
@@ -457,8 +470,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onSelect={(result) => {
           const target = result.location;
           if (target.kind === 'message') {
-            // A message's conversation is a Canvas's Chat: open the Canvas on it.
-            navigate(canvasTurnRoute(target.workstreamId, target.turnId, target.transcriptSequence));
+            navigate(messageResultRoute(target));
           } else if (target.kind === 'link') {
             void openLink(target.url);
           } else {

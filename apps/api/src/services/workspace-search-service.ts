@@ -6,6 +6,7 @@ import { IdSchema, SubstreamIdSchema } from '@rally/contracts';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 import { workspaceSearchIndex, type TextSearchCandidate, type AuthorizedSearchSource } from './text-search';
 import { literalMatchRanges, matchingPassage } from './search-passages';
+import { searchAudienceGroup, searchAudienceGroupId } from './search-audience';
 
 /** Search uses the same 50-result page as the existing resource directory. */
 const SEARCH_PAGE_SIZE = 50;
@@ -33,11 +34,18 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
   const audience = await (await authorizationWorkspace(env, auth.workspaceId))
     .readSearchAudience({ workspaceId: auth.workspaceId, userId: auth.userId });
   const scopeMs = performance.now() - started;
+  // A conversation row's scope is its parent's id, and the index keeps no
+  // parent kind. The searcher's own groups hold the group of every Sidekick
+  // they read, and Canvas and Sidekick ids never collide, so a parent whose
+  // Sidekick group is among them is a Sidekick and any other is a Canvas.
+  const searcherGroups = new Set(audience);
+  const parentKindOf = async (parentId: string): Promise<'automation' | 'canvas'> =>
+    searcherGroups.has(await searchAudienceGroupId(searchAudienceGroup.sidekick(parentId))) ? 'automation' : 'canvas';
   let retrievalMs = 0;
   let hydrationMs = 0;
   const passageOf = (text: string) => matchingPassage(text, literalMatchRanges(text, request.query), PREVIEW_CONTEXT_CHARACTERS);
   const displayTime = (value: number | null | undefined) => typeof value === 'number' ? new Date(value).toISOString() : null;
-  const messageResult = (group: ConversationGroup, candidate: TextSearchCandidate): SearchResult | null => {
+  const messageResult = (group: ConversationGroup, parentKind: 'automation' | 'canvas', candidate: TextSearchCandidate): SearchResult | null => {
     const separator = candidate.source_id.indexOf('/');
     const turnId = separator < 0 ? '' : candidate.source_id.slice(separator + 1);
     if (!turnId || candidate.archived !== false || typeof candidate.text !== 'string' || typeof candidate.title !== 'string'
@@ -48,7 +56,8 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
       id: candidate.id, category: 'messages', title: candidate.title, sourceLabel: candidate.source_label ?? candidate.title,
       occurredAt: displayTime(candidate.occurred_at), revision: String(candidate.revision),
       excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
-      location: { kind: 'message', workstreamId: group.parentId, substreamId: group.substreamId,
+      location: { kind: 'message', parentKind,
+        workstreamId: group.parentId, substreamId: group.substreamId,
         turnId, transcriptSequence: candidate.transcript_sequence, range: passage.range },
     };
   };
@@ -78,8 +87,9 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
         groups.set(key, group);
       }
       for (const group of groups.values()) {
+        const parentKind = source === 'messages' ? await parentKindOf(group.parentId) : null;
         for (const candidate of group.candidates) {
-          const result = source === 'messages' ? messageResult(group, candidate) : linkResult(candidate);
+          const result = parentKind ? messageResult(group, parentKind, candidate) : linkResult(candidate);
           if (result) results.set(candidate.id, result);
         }
       }
