@@ -28,7 +28,8 @@ import { conversationObject, retiredConversationKey } from "./thread-retirement-
  * 2. the Main's stored parent kind, `workstream` to `canvas`
  *    (`AgentLoopDO.convertParentKind`; already `canvas` is success),
  * 3. each Breakout's object retired (`retireObject`),
- * 4. the Thread's rows deleted (`WorkspaceDO.deleteRetiredThreadParent`).
+ * 4. the Thread's rows deleted (`WorkspaceDO.deleteRetiredThreadParent`),
+ *    all but the share rows the Canvas now keys by the same id.
  *
  * A Thread whose rows are gone is no longer a candidate, so a finished
  * Organization reruns as a pass over nothing.
@@ -80,7 +81,7 @@ export async function convertThreadsToCanvases(
         await (await conversationObject(env, workspaceId, candidate.threadId, breakout)).retireObject(tombstone);
       }
       substreamId = null;
-      await workspace.deleteRetiredThreadParent({ parentKind: "workstream", parentId: candidate.threadId });
+      await workspace.deleteRetiredThreadParent({ parentKind: "workstream", parentId: candidate.threadId, convertedToCanvas: true });
       if (created) result.converted += 1;
       else result.alreadyConverted += 1;
     } catch (error) {
