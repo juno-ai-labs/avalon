@@ -61,12 +61,13 @@ function run(command, args, options = {}) {
   });
 }
 
+/** Every file under `root`, as a path relative to it and its size. */
 async function files(root, directory = root) {
   const out = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) out.push(...await files(root, path));
-    else if (entry.isFile()) out.push(relative(root, path));
+    else if (entry.isFile()) out.push({ path: relative(root, path), size: (await stat(path)).size });
   }
   return out;
 }
@@ -146,6 +147,19 @@ export function TabsContent({ value, className, ...props }) {
 }`,
 };
 
+/** What esbuild compiles; every other file beside a component is an asset it serves as it is. */
+const MODULE_EXTENSIONS = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".css"]);
+
+/** The files the build writes into `dist` itself, which a companion file of the same name never replaces. */
+const GENERATED = new Set(["index.html", "app.js", "app.css", "styles.css"]);
+
+/**
+ * What an `import logo from "./logo.png"` (or a stylesheet's `url()`) becomes:
+ * a file esbuild copies beside `app.js` and names by its content.
+ */
+const ASSET_LOADERS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".otf"]
+  .map((extension) => `--loader:${extension}=file`);
+
 async function buildComponent(source, work, entry) {
   const home = await toolchain();
   const src = join(work, "src");
@@ -165,14 +179,27 @@ createRoot(document.getElementById("root")).render(<App />);
   const out = join(work, "dist");
   await mkdir(out, { recursive: true });
   const bin = join(home, "node_modules", ".bin");
+  // A component that imports a stylesheet gets it bundled as `app.css`
+  // beside `app.js`; its imported images and fonts land there too, named by
+  // content and addressed from the site's root, where Rally serves it.
   await run(join(bin, "esbuild"), ["main.jsx", "--bundle", "--minify", "--format=esm", "--jsx=automatic",
-    "--loader:.js=jsx", `--alias:@=./src`, "--define:process.env.NODE_ENV=\"production\"", `--outfile=${join(out, "app.js")}`], { cwd: work });
+    "--loader:.js=jsx", ...ASSET_LOADERS, "--public-path=/", `--alias:@=./src`, "--define:process.env.NODE_ENV=\"production\"",
+    `--outfile=${join(out, "app.js")}`], { cwd: work });
   await run(join(bin, "tailwindcss"), ["-i", "tailwind.css", "-o", join(out, "styles.css"), "--minify",
     "--content", "./src/**/*.{js,jsx,ts,tsx}"], { cwd: work });
+  // A file published beside the component that it names by path rather than
+  // imports (`<img src="/logo.png">`) is served at that same path.
+  for (const file of await files(source)) {
+    if (MODULE_EXTENSIONS.has(extname(file.path)) || GENERATED.has(file.path)) continue;
+    await mkdir(join(out, file.path, ".."), { recursive: true });
+    await cp(join(source, file.path), join(out, file.path));
+  }
   const title = entry.replace(/\.[jt]sx?$/u, "").replace(/[-_]+/gu, " ");
+  // Tailwind first, so the component's own stylesheet overrides it.
+  const ownStyles = existsSync(join(out, "app.css")) ? `<link rel="stylesheet" href="app.css">` : "";
   await writeFile(join(out, "index.html"), `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title.replace(/[<&>"]/gu, "")}</title><link rel="stylesheet" href="styles.css"></head>
+<title>${title.replace(/[<&>"]/gu, "")}</title><link rel="stylesheet" href="styles.css">${ownStyles}</head>
 <body><div id="root"></div><script type="module" src="app.js"></script></body></html>
 `);
   return out;
@@ -192,12 +219,30 @@ async function buildProject(source, work) {
 
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json",
   ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
-  ".ico": "image/x-icon", ".woff": "font/woff", ".woff2": "font/woff2", ".txt": "text/plain" };
+  ".avif": "image/avif", ".ico": "image/x-icon", ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf",
+  ".txt": "text/plain" };
+
+/** Playwright's Chromium, installed globally on the sandbox image, or null when it is not there. */
+async function findChromium() {
+  try {
+    const globalRoot = (await new Promise((done) => {
+      const child = spawn("npm", ["root", "-g"]);
+      let text = "";
+      child.stdout.on("data", (chunk) => { text += chunk; });
+      child.on("error", () => done(""));
+      child.on("exit", () => done(text.trim()));
+    }));
+    return createRequire(join(globalRoot, "noop.js"))("playwright").chromium;
+  } catch {
+    try { return createRequire(import.meta.url)("playwright").chromium; } catch { return null; }
+  }
+}
 
 /**
  * Open the built site as a person would and refuse it unless it renders: no
  * uncaught error, no failed request for one of its own files, and something
- * on the page. A site served from its own origin's root, as Rally serves it.
+ * a person can see inside the app's root. A site served from its own
+ * origin's root, as Rally serves it.
  */
 async function check(out) {
   const server = createServer(async (request, response) => {
@@ -208,23 +253,16 @@ async function check(out) {
   });
   await new Promise((done) => server.listen(0, "127.0.0.1", done));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  let chromium;
+  let browser = null;
+  // Everything after the server listens closes it, a Chromium that never
+  // started included: a server left open keeps Node running until the
+  // Worker's command timeout.
   try {
-    const globalRoot = (await new Promise((done) => {
-      const child = spawn("npm", ["root", "-g"]);
-      let text = "";
-      child.stdout.on("data", (chunk) => { text += chunk; });
-      child.on("exit", () => done(text.trim()));
-    }));
-    ({ chromium } = createRequire(join(globalRoot, "noop.js"))("playwright"));
-  } catch {
-    try { ({ chromium } = createRequire(import.meta.url)("playwright")); } catch {
-      server.close();
-      throw new BuildRefusal("canvas_build_check_unavailable", "Chromium is not available in this sandbox to check the site renders");
-    }
-  }
-  const browser = await chromium.launch({ args: ["--no-sandbox"] });
-  try {
+    const chromium = await findChromium();
+    if (!chromium) throw new BuildRefusal("canvas_build_check_unavailable", "Chromium is not available in this sandbox to check the site renders");
+    browser = await chromium.launch({ args: ["--no-sandbox"] }).catch((error) => {
+      throw new BuildRefusal("canvas_build_check_unavailable", `Chromium did not start: ${error instanceof Error ? error.message : String(error)}`);
+    });
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(`error: ${error.message}`));
@@ -232,18 +270,35 @@ async function check(out) {
     page.on("response", (response) => {
       if (response.url().startsWith(origin) && response.status() >= 400) errors.push(`missing: ${new URL(response.url()).pathname}`);
     });
+    // A ceiling, not an expectation: a site loading only its own files from
+    // this machine idles in well under a second, so one still loading after
+    // 20 s is refused rather than left holding the build.
     await page.goto(`${origin}/`, { waitUntil: "networkidle", timeout: 20_000 });
+    // Long enough for what a component does after its first paint (an
+    // effect's state update, a chart measuring its box) to render or throw.
     await page.waitForTimeout(500);
-    // Runs in the page, where the document is the global one.
-    const rendered = await page.evaluate(() => ({
-      text: globalThis.document.body.innerText.trim().length,
-      elements: globalThis.document.body.querySelectorAll("*").length,
-    }));
+    // Runs in the page, where the document is the global one. The app's root
+    // is the component host's `#root`, or a project's own, or the body; what
+    // counts is text a person can read or a picture with a size, not the
+    // empty elements a host or a framework leaves behind.
+    const rendered = await page.evaluate(() => {
+      const document = globalThis.document;
+      const root = document.getElementById("root") ?? document.getElementById("app") ?? document.body;
+      const visible = (element) => {
+        const box = element.getBoundingClientRect();
+        const style = globalThis.getComputedStyle(element);
+        return box.width > 0 && box.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
+      };
+      const media = [...root.querySelectorAll("img, svg, canvas, video, picture, iframe, object, embed, input, textarea, select, button")]
+        .filter(visible).length;
+      return { text: root.innerText.trim().length, visibleElements: media };
+    });
     if (errors.length > 0) throw new BuildRefusal("canvas_build_check_failed", `The site does not run: ${errors.slice(0, 3).join("; ")}`);
-    if (rendered.text === 0 && rendered.elements < 3) throw new BuildRefusal("canvas_build_check_empty", "The site loads but shows nothing");
+    if (rendered.text === 0 && rendered.visibleElements === 0) throw new BuildRefusal("canvas_build_check_empty", "The site loads but shows nothing");
     return rendered;
   } finally {
-    await browser.close();
+    await browser?.close().catch(() => undefined);
+    server.closeAllConnections();
     server.close();
   }
 }

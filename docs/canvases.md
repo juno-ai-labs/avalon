@@ -276,13 +276,26 @@ one of the Thread's viewers opens the Canvas again, as its creator.
 
 ### Artifacts and versions
 
-A Canvas's artifacts are resources its conversation generated: Rally's
-`publish_resource` from the Chat publishes under the identity it always has,
-`(conversation, path)`, and the conversation is now the Canvas. The first
-publish of a path is a new resource, version 1; a later publish of the same
-path is a new version of it; a different path is another artifact. A file of
-any kind, or a directory that becomes a site or an archive, as
-[`live-web-artifacts.md`](live-web-artifacts.md) decides.
+A Canvas's artifacts come from two producers. Most are resources its
+conversation generated: Rally's `publish_resource` from the Chat publishes
+under the identity it always has, `terminal:<conversation>:<path>`, and the
+conversation is now the Canvas. The first publish of a path is a new resource,
+version 1; a later publish of the same path is a new version of it; a different
+path is another artifact. A file of any kind, or a directory that becomes a
+site or an archive, as [`live-web-artifacts.md`](live-web-artifacts.md) decides.
+
+A person can also publish a file or a static site made elsewhere, through
+`POST /canvases/:id/artifacts` (`CanvasPublicationService`, used by the
+[MCP server](rally-mcp.md#publishing) and any other client). It needs only the
+right to take part in the Canvas, and lands through the same writes as Rally's
+publish, with the person as the version's author and the Canvas's last editor.
+Its identity is `canvas:<canvasId>:<name>`, so publishing the same name again
+is a new version of it. The two namespaces never meet: a name Rally published
+from the Chat and the same name published by a person are two artifacts. A
+component or project site is built first, in the Canvas's own Terminal sandbox
+(`services/canvas-build/`), which every participant's runs share
+([`terminal-workspaces.md`](terminal-workspaces.md),
+[`security.md`](security.md#shared-canvas-sandbox)).
 `artifact_registry.workstream_id` holds the Canvas id, which is the
 conversation's parent id, so no column changes meaning. After each publish the
 Terminal's resource bridge tells the Canvas (`canvasArtifactNoter`,

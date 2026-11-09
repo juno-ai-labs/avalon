@@ -24,9 +24,6 @@ export type PublicationAuthor =
   | { kind: "agent"; runId: string; onBehalfOfUserId: string | null }
   | { kind: "member"; userId: string };
 
-/** The publication's own record in `metadata_json`: which call made this revision, and as what. */
-export type PublicationReceipt = Record<string, string>;
-
 export interface PublishedRow {
   id: string;
   title: string;
@@ -166,10 +163,9 @@ export async function swapPublishedContent(input: {
   contentMode: string;
   derivativeStatus: string;
   author: PublicationAuthor;
-  receipt: PublicationReceipt;
-  /** Extra metadata a site revision carries (its artifact id and version). */
-  extraMetadata?: Record<string, unknown>;
-}): Promise<PublishedRow> {
+  /** The publication's own record in `metadata_json`: which call made this revision, and as what. */
+  receipt: Record<string, string>;
+}): Promise<PublishedRow & { superseded: boolean }> {
   const { workspace, env, workspaceId, existing, bytes, digest } = input;
   const timestamp = nowIso();
   const objectRef = `${env.AVALON_REGION}/${workspaceId}/resources/${existing.id}/${input.objectSource === "terminal" ? "terminal" : "published"}/${digest}/${newId()}`;
@@ -190,7 +186,6 @@ export async function swapPublishedContent(input: {
     attachmentKind: input.attachmentKind,
     contentMode: input.contentMode,
     ...input.receipt,
-    ...input.extraMetadata,
     ...(description ? { description } : {}),
   });
   await putStagedResourceObject({
@@ -242,16 +237,18 @@ export async function swapPublishedContent(input: {
   // (`docs/durable-object-sqlite.md`).
   if (swapped?.content_ref !== objectRef) {
     // Another publish advanced the pointer first. Its content is current;
-    // release this call's bytes and report what the document now holds.
+    // release this call's bytes and report what the document now holds,
+    // marked `superseded` so a caller with more to activate (a site's
+    // registry and serving pointer) stops rather than activating the loser.
     await releaseStagedResourceObject(workspace, workspaceId, objectRef).catch(() => undefined);
     const current = await workspace.prepare(
       `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
               model_content_status, created_at
          FROM resources WHERE id = ? AND workspace_id = ?`,
     ).bind(existing.id, workspaceId).first<PublishedRow>();
-    if (current) return current;
+    if (current) return { ...current, superseded: true };
     throw new PublicationWriteFailed("swap");
   }
   await settleStagedObject(workspace, workspaceId, objectRef);
-  return swapped;
+  return { ...swapped, superseded: false };
 }

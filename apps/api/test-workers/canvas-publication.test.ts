@@ -31,6 +31,35 @@ function workspace(): DurableObjectStub<WorkspaceDO> {
 
 const text = (data: string) => ({ encoding: "text" as const, data });
 
+/**
+ * An environment whose bucket stops at the first `put` (or `get`) whose key
+ * `matches`, until `release()`: how one publish is held at a chosen step
+ * while another runs, the interleaving two concurrent calls produce.
+ */
+function heldBucket(method: "put" | "get", matches: (key: string) => boolean) {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => { release = resolve; });
+  let reached!: () => void;
+  const atHold = new Promise<void>((resolve) => { reached = resolve; });
+  let held = false;
+  const bucket = new Proxy(env.PAYLOADS, {
+    get(target, property) {
+      const value: unknown = Reflect.get(target, property);
+      if (typeof value !== "function") return value;
+      return async (...args: unknown[]) => {
+        if (property === method && !held && typeof args[0] === "string" && matches(args[0])) {
+          held = true;
+          reached();
+          await released;
+        }
+        return Reflect.apply(value, target, args) as unknown;
+      };
+    },
+  });
+  const heldEnv: Env = { ...TEST_ENV, PAYLOADS: bucket };
+  return { env: heldEnv, atHold, release };
+}
+
 beforeEach(async () => {
   await reset();
   WORKSPACE_ID = asWorkspaceId(crypto.randomUUID());
@@ -148,7 +177,8 @@ describe("publishing into a Canvas", () => {
 
     const first = await publisher.publish(canvasId, dashboard);
     expect(first).toMatchObject({ kind: "site", outcome: "created", version: 1, build: { source: "component", files: 1, renderedTextLength: 42 } });
-    expect(builder.build).toHaveBeenCalledWith(canvasId, { kind: "component", entry: "Dashboard.jsx" }, expect.any(Array));
+    // No abort signal: this call has no request to be cancelled with.
+    expect(builder.build).toHaveBeenCalledWith(canvasId, { kind: "component", entry: "Dashboard.jsx" }, expect.any(Array), undefined);
     // What was served is what the build made, not the source.
     const served = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ artifact_id: string; current_version: number }>(
       "SELECT artifact_id, current_version FROM artifact_registry WHERE resource_id = ?", first.resourceId).one());
@@ -186,6 +216,90 @@ describe("publishing into a Canvas", () => {
     expect(await publisher.publish(canvasId, site("Two"))).toMatchObject({ outcome: "unchanged" });
     expect((await registry()).current_version).toBe(2);
     expect(await served()).toBe(2);
+  });
+
+  it("activates only the publish that moved the row when two of one site race, each writing its own version", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const site = (heading: string) => ({ kind: "site" as const, name: "home", files: [{ path: "index.html", content: text(`<h1>${heading}</h1>`) }] });
+    const first = await new CanvasPublicationService(TEST_ENV, auth(CREATOR)).publish(canvasId, site("One"));
+    const isManifest = (key: string) => key.endsWith("/manifest.json");
+    // Both read version 1. The winner stops before its manifest, then the
+    // loser takes the next version and stops there too; the winner moves the
+    // row and finishes, and only then does the loser try to.
+    const winnerHold = heldBucket("put", isManifest);
+    const winner = new CanvasPublicationService(winnerHold.env, auth(CREATOR)).publish(canvasId, site("Winner"));
+    await winnerHold.atHold;
+    const loserHold = heldBucket("put", isManifest);
+    const loser = new CanvasPublicationService(loserHold.env, auth(CREATOR)).publish(canvasId, site("Loser"));
+    const loserOutcome = loser.then(() => "resolved", (error: unknown) => error);
+    await loserHold.atHold;
+    winnerHold.release();
+    expect(await winner).toMatchObject({ outcome: "updated" });
+    loserHold.release();
+    expect(await loserOutcome).toMatchObject({ status: 409, code: "canvas_publish_conflict" });
+
+    const registry = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ artifact_id: string; current_version: number }>(
+      "SELECT artifact_id, current_version FROM artifact_registry WHERE resource_id = ?", first.resourceId).one());
+    const host = env.ARTIFACT_HOSTS.get(env.ARTIFACT_HOSTS.idFromName(artifactHostDOName(env.AVALON_REGION, asArtifactId(registry.artifact_id))));
+    const served = await runInDurableObject(host, (_instance, state) =>
+      state.storage.sql.exec<{ current_version: number }>("SELECT current_version FROM artifact_state WHERE id = 1").one().current_version);
+    expect([registry.current_version, served]).toEqual([2, 2]);
+    // The winner's version holds the winner's bytes, not the loser's written over them.
+    expect(await (await env.PAYLOADS.get(`artifact/${registry.artifact_id}/v2/assets/index.html`))!.text()).toBe("<h1>Winner</h1>");
+  });
+
+  it("never moves the registry or the served version back when an unchanged retry overlaps a later publish", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const publisher = new CanvasPublicationService(TEST_ENV, auth(CREATOR));
+    const site = (heading: string) => ({ kind: "site" as const, name: "home", files: [{ path: "index.html", content: text(`<h1>${heading}</h1>`) }] });
+    await publisher.publish(canvasId, site("One"));
+    const second = await publisher.publish(canvasId, site("Two"));
+    const registry = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ artifact_id: string; current_version: number }>(
+      "SELECT artifact_id, current_version FROM artifact_registry WHERE resource_id = ?", second.resourceId).one());
+    const { artifact_id: artifactId } = await registry();
+    const host = env.ARTIFACT_HOSTS.get(env.ARTIFACT_HOSTS.idFromName(artifactHostDOName(env.AVALON_REGION, asArtifactId(artifactId))));
+    const served = () => runInDurableObject(host, (_instance, state) =>
+      state.storage.sql.exec<{ current_version: number }>("SELECT current_version FROM artifact_state WHERE id = 1").one().current_version);
+    // As if the second publish had moved the resource row and stopped there.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE artifact_registry SET current_version = 1 WHERE resource_id = ?", second.resourceId);
+    });
+    await runInDurableObject(host, (_instance, state) => { state.storage.sql.exec("UPDATE artifact_state SET current_version = 1 WHERE id = 1"); });
+
+    // The retry reads the row and the lagging registry, then stops before
+    // reading the manifest; a later publish lands completely meanwhile.
+    const retryHold = heldBucket("get", () => true);
+    const retry = new CanvasPublicationService(retryHold.env, auth(CREATOR)).publish(canvasId, site("Two"));
+    await retryHold.atHold;
+    expect(await publisher.publish(canvasId, site("Three"))).toMatchObject({ outcome: "updated" });
+    const later = await registry();
+    expect(later.current_version).toBeGreaterThan(2);
+    retryHold.release();
+    expect(await retry).toMatchObject({ outcome: "unchanged" });
+    expect((await registry()).current_version).toBe(later.current_version);
+    expect(await served()).toBe(later.current_version);
+  });
+
+  it("leaves the Canvas's attribution alone on an unchanged republish, and lists an artifact whose note never landed", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const publisher = new CanvasPublicationService(TEST_ENV, auth(CREATOR));
+    const file = { kind: "file" as const, name: "plan.md", content: text("# Plan") };
+    const first = await publisher.publish(canvasId, file);
+    // Rally wrote to the Canvas since.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE canvas_directory SET last_editor_kind = 'rally', last_editor_id = NULL WHERE canvas_id = ?", canvasId);
+    });
+    expect(await publisher.publish(canvasId, file)).toMatchObject({ outcome: "unchanged" });
+    expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).lastEditor).toEqual({ kind: "rally", id: null });
+
+    // As if the first publish had stopped before noting: the retry lists it.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM canvas_artifacts WHERE canvas_id = ?", canvasId);
+    });
+    expect(await publisher.publish(canvasId, file)).toMatchObject({ outcome: "unchanged" });
+    const detail = await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId);
+    expect(detail.artifacts.map((artifact) => artifact.resourceId)).toEqual([first.resourceId]);
+    expect(detail.lastEditor).toEqual({ kind: "person", id: CREATOR });
   });
 
   it("refuses someone the Canvas does not admit, and writes nothing", async () => {

@@ -78,7 +78,10 @@ preserved legacy account identity (or creator for a new Sidekick) to keep
 existing sandbox fingerprints compatible. This identifier confers no execution
 authority. Completed imports remain shared Sidekick state after a delegate
 withdraws or loses source access; every new import still checks current access.
-Ordinary conversations retain their principal and import-visibility fences.
+A Canvas's sandbox identity is the Canvas and its selected repository, not the
+person acting, so every participant's runs share one sandbox and its files; a
+Canvas keeps only the import-visibility fence, checked against the acting
+person.
 A primary run may replace a changed repository; a background agent cannot
 destroy its owner's workspace and must wait for a primary run.
 Files may need recovery after a permission reset, provider loss or expiry, so
@@ -513,10 +516,12 @@ restore measurement.
 A start or recovery timeout does not establish loss. Acquisition reads metadata
 again and accepts a completed start, waits out a transition, or replaces only
 when the provider explicitly establishes loss. Failed deletion does not release
-the old generation while the sandbox still exists. Authority changes remain an
-independent reason to replace for ordinary conversations. Sidekick files and
-completed imports instead remain shared across eligible delegates, while a
-repository selection change still replaces its generation.
+the old generation while the sandbox still exists. A Canvas's files are shared
+by every participant: a different person acting is not a reason to replace,
+but a repository selection change, or an import the acting person can no longer
+read, is. Sidekick files and completed imports likewise remain shared across
+eligible delegates, while a repository selection change still replaces its
+generation.
 
 `observeTerminalSandbox`, `stopTerminalSandbox`, and `deleteTerminalSandbox`
 share the metadata boundary across acquisition and task cleanup. A runner,
@@ -662,9 +667,8 @@ personless; it is not duplicated into these product events.
   repository, so a different person acting never replaces it; a revoked
   imported resource and a GitHub connection or repository change still do.
   A sandbox still under the identity of the person who last used it (from
-  before Canvas sandboxes were shared) moves to the Canvas's in place the
-  first time that person acts (`adoptAuthorityFingerprint`), and one under
-  anyone else's is replaced once. Sidekick files and completed imports stay
+  before Canvas sandboxes were shared) is replaced once, as a different
+  person acting replaced it before. Sidekick files and completed imports stay
   shared across eligible coordinators, with delegation checked separately;
   their stable file identity preserves existing generations. The
   conversation is the one that owns the sandbox rows, which for a background
@@ -713,13 +717,14 @@ personless; it is not duplicated into these product events.
   call, so two runs never mutate at once but do interleave between calls.
   Reads are outside it by design and may see a write in progress.
 - **A background agent inherits its starter's execution principal, and that
-  is checked at the same authorization boundaries.** Ordinary conversations
-  bind files to that principal; Sidekicks bind files to their stable original
-  identity and check current delegation separately. The repository authority
+  is checked at the same authorization boundaries.** A Canvas binds files to
+  the Canvas and its repository, not to any principal, so an agent acting for
+  someone else shares its Canvas's sandbox; Sidekicks bind files to their
+  stable original identity and check current delegation separately. The repository authority
   is shared by the agent and its owner. Bootstrap and publication check the
   selected connection owner against the inventory delegation snapshot in their
   existing connection-policy read. Should those fingerprints differ, or
-  should an ordinary conversation's imported resource become unreadable,
+  should a Canvas's imported resource become unreadable,
   the agent refuses with `sandbox_authority_mismatch` rather than replace a
   checkout that is not its own; only the owning conversation's run replaces
   its sandbox.
@@ -971,7 +976,7 @@ mapping of that field onto Daytona's create call is in
 by the sweep and left to the main conversation by the policy application is
 in the coordinator, lifecycle and settings suites; a run's write calls taking
 turns, an edit refused on a changed digest, a read joining this run's
-preparation, a read refused under another principal, and a background agent's
+preparation, another person reading the files of their Canvas's one sandbox, and a background agent's
 command recorded in its owner's object without the agent's run or receipt are
 in `terminal-runtime.test.ts`; an import judged by its own conversation and
 an agent refusing rather than replacing its owner's sandbox are in
@@ -1370,8 +1375,8 @@ update lag before changing the default.
 **What changed.** A Canvas's sandbox identity is the Canvas and its selected
 repository instead of the person acting, so every person's runs, Rally's own,
 background agents and a person's publication build share one sandbox and its
-files. Existing sandboxes move to the new identity in place when their owner
-next acts (`adoptAuthorityFingerprint`). A person's publish that needs a build
+files. An existing sandbox, still under one person's identity, is replaced
+once on its next acquire. A person's publish that needs a build
 holds the operation lease as `PUBLICATION_BUILD_HOLDER`, which the takeover
 check and the lifecycle sweep treat as live until it expires.
 
@@ -1383,6 +1388,11 @@ it unusable for building what a person publishes. Building in a fresh sandbox
 per publish was considered and rejected by the same decision. A future change
 must not reintroduce the acting person into a Canvas's fingerprint, and must
 not let anything read a missing run row as a publication build having ended.
+Moving an old sandbox to the new identity in place was built and then
+removed: it kept files the per-person model already deleted whenever someone
+else acted, so a one-time replacement loses nothing a person could rely on.
+A guest cannot publish a project build, which runs the publisher's own
+scripts beside the repository's credentials (also the team's decision).
 
 ### 2026-10-23 — Retry observation without repeating a Terminal command
 

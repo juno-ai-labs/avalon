@@ -1,5 +1,5 @@
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -50,6 +50,11 @@ const SocketTicketQuerySchema = z.object({
  * attached to, and subscribed to through the same routes.
  */
 export const conversationRoutes = new Hono<HonoAppEnv>();
+
+/** The conversation surface for this request: a Canvas only, for an MCP client's token. */
+function conversationService(c: Context<HonoAppEnv>, defer?: (promise: Promise<unknown>) => void) {
+  return new ConversationService(c.env, getWorkspaceAuth(c), defer, c.get("tokenAudience") === "mcp");
+}
 // Report an oversized message before session work. This guard only rejects;
 // every accepted body still passes workspace auth.
 conversationRoutes.post("/:parentId/substreams/:substreamId/messages", requireSendableMessageLength("text"));
@@ -58,18 +63,18 @@ conversationRoutes.use("*",workspaceRealtimeInvalidation);
 // Exact-conversation recovery works independently of Main and sibling feeds.
 conversationRoutes.get("/:parentId/substreams/:substreamId",zValidator("param",substreamSocketParam),async (c) => {
   const { parentId,substreamId } = c.req.valid("param");
-  const client = await new ConversationService(c.env,getWorkspaceAuth(c)).client(parentId,true,substreamId);
+  const client = await conversationService(c).client(parentId,true,substreamId);
   const boot = await client.boot();
   return c.json(WorkstreamBootSchema.parse({ ...boot.workstream,transcript:boot.transcript }));
 });
 conversationRoutes.post("/:parentId/substreams/:substreamId/resources",zValidator("param",substreamSocketParam),zValidator("json",resourceBody),async (c) => {
   const { parentId,substreamId } = c.req.valid("param");
-  const client = await new ConversationService(c.env,getWorkspaceAuth(c)).writableClient(parentId,substreamId);
+  const client = await conversationService(c).writableClient(parentId,substreamId);
   return c.json(WorkstreamResourceSchema.parse(await client.attachResource(c.req.valid("json").resourceId)),201);
 });
 conversationRoutes.delete("/:parentId/substreams/:substreamId/resources/:resourceId",zValidator("param",substreamSocketParam.extend({ resourceId:IdSchema })),async (c) => {
   const { parentId,substreamId,resourceId } = c.req.valid("param");
-  const client = await new ConversationService(c.env,getWorkspaceAuth(c)).writableClient(parentId,substreamId);
+  const client = await conversationService(c).writableClient(parentId,substreamId);
   await client.detachResource(resourceId);
   return c.body(null,204);
 });
@@ -87,7 +92,7 @@ conversationRoutes.post("/:parentId/substreams/:substreamId/messages",
     const operationId = telemetryOperationId(
       readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID),
     );
-    const client = await new ConversationService(c.env, getWorkspaceAuth(c))
+    const client = await conversationService(c)
         .writableClient(parentId, substreamId);
     return c.json(WorkstreamMessageAdmissionReceiptSchema.parse(await client.createMessage({
       ...input,
@@ -122,7 +127,7 @@ conversationRoutes.patch("/:parentId/substreams/:substreamId/read-state",
   zValidator("param", substreamSocketParam),
   zValidator("json", AcknowledgeWorkstreamReadRequestSchema), async (c) => {
     const param = c.req.valid("param");
-    const client = await new ConversationService(c.env, getWorkspaceAuth(c)).client(param.parentId, false, param.substreamId);
+    const client = await conversationService(c).client(param.parentId, false, param.substreamId);
     return c.json(WorkstreamSchema.parse(await client.acknowledgeRead(c.req.valid("json"))));
   });
 /**
@@ -139,7 +144,7 @@ conversationRoutes.get("/:parentId/text", zValidator("param", parentParam),
   })), async (c) => {
     c.header("Cache-Control", "no-store");
     const query = c.req.valid("query");
-    return c.json(ConversationTextPageSchema.parse(await new ConversationService(c.env, getWorkspaceAuth(c))
+    return c.json(ConversationTextPageSchema.parse(await conversationService(c)
       .readText(c.req.valid("param").parentId, {
         afterSequence: query.afterSequence,
         ...(query.throughSequence === undefined ? {} : { throughSequence: query.throughSequence }),
@@ -157,7 +162,7 @@ conversationRoutes.get("/:parentId", zValidator("param", parentParam), async (c)
     },
   }, async (span) => {
     const client = await span.step("conversation.authorize", () =>
-      new ConversationService(c.env, getWorkspaceAuth(c)).client(parentId, true));
+      conversationService(c).client(parentId, true));
     // This route is the socket-first reader's explicit recovery twin. The
     // object answers detail and its one canonical ordered transcript snapshot.
     const boot = await span.step("workstream.detail.load", () => client.boot());
@@ -177,20 +182,20 @@ conversationRoutes.get("/:parentId", zValidator("param", parentParam), async (c)
   });
 });
 conversationRoutes.post("/:parentId/resources", zValidator("param", parentParam), zValidator("json", resourceBody), async (c) => {
-  const client = await new ConversationService(c.env, getWorkspaceAuth(c)).writableClient(c.req.valid("param").parentId);
+  const client = await conversationService(c).writableClient(c.req.valid("param").parentId);
   return c.json(WorkstreamResourceSchema.parse(await client.attachResource(c.req.valid("json").resourceId)), 201);
 });
 /** Rename an artifact this conversation generated. Every conversation that links it reads the new title. */
 conversationRoutes.patch("/:parentId/resources/:resourceId", zValidator("param", resourceParam),
   zValidator("json", z.strictObject({ title: ResourceSchema.shape.title })), async (c) => {
     const param = c.req.valid("param");
-    const client = await new ConversationService(c.env, getWorkspaceAuth(c)).writableClient(param.parentId);
+    const client = await conversationService(c).writableClient(param.parentId);
     await client.renameResource(param.resourceId, c.req.valid("json").title);
     return c.body(null, 204);
   });
 conversationRoutes.delete("/:parentId/resources/:resourceId", zValidator("param", resourceParam), async (c) => {
   const param = c.req.valid("param");
-  const client = await new ConversationService(c.env, getWorkspaceAuth(c)).writableClient(param.parentId);
+  const client = await conversationService(c).writableClient(param.parentId);
   await client.detachResource(param.resourceId);
   return c.body(null, 204);
 });
@@ -207,7 +212,7 @@ conversationRoutes.get(
       identity: { workstreamId: param.parentId, substreamId: param.substreamId },
     }, async (span) => {
       const issued = await span.step("workstream.socket.ticket.issue", () =>
-        new ConversationService(c.env, getWorkspaceAuth(c), requestDeferral(c)).socketTicket(
+        conversationService(c, requestDeferral(c)).socketTicket(
           param.parentId,
           param.substreamId,
           afterSequence,

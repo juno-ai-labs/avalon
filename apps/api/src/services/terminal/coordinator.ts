@@ -307,22 +307,6 @@ export class TerminalSandboxCoordinator {
     }));
   }
 
-  /**
-   * A Canvas sandbox's identity before it was the Canvas's: the person who
-   * last used it. A sandbox still holding the acting person's old identity
-   * moves to the Canvas's without being replaced, so the deploy that made the
-   * sandbox shared does not discard its files; one holding someone else's is
-   * replaced once, as it would have been before.
-   */
-  private legacyCanvasFingerprint(
-    context: HarnessToolContext,
-    repositoryAuthority: RepositoryAuthorityRow | null,
-  ): Promise<string> {
-    return sha256(JSON.stringify({
-      principal: executionPrincipalKey(context.executionPrincipal),
-      repository: repositoryAuthority ?? "scratch",
-    }));
-  }
 
   /**
    * Take the operation lease for one tool call on a sandbox this run already
@@ -555,16 +539,6 @@ export class TerminalSandboxCoordinator {
       localFilesRetained = false;
     } else {
       const importedResourceRevoked = await this.hasRevokedImportedResource(context, row);
-      if (
-        row.authorityFingerprint !== authorityFingerprint
-        && !importedResourceRevoked
-        && this.scope.parentKind === "canvas"
-        && row.authorityFingerprint === await this.legacyCanvasFingerprint(context, repositoryAuthority)
-      ) {
-        row = await this.terminal(context).adoptAuthorityFingerprint({
-          generation: row.generation, from: row.authorityFingerprint, to: authorityFingerprint, now,
-        }) ?? row;
-      }
       if (
         (row.authorityFingerprint !== authorityFingerprint || importedResourceRevoked)
         && this.scope.backgroundAgent

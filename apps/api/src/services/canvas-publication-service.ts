@@ -31,7 +31,9 @@ import {
 } from "./resource-publication";
 import { allocateResourceSlugBesideCreation } from "./resource-slug";
 import { ensureArtifactHostname } from "./artifact-hostname";
-import { existingArtifactForResource, pointArtifactAtVersion, registerArtifact, writeArtifactVersion } from "./terminal/site-resource-bridge";
+import {
+  claimArtifactVersion, existingArtifactForResource, pointArtifactAtVersion, registerArtifact, writeArtifactVersion,
+} from "./terminal/site-resource-bridge";
 import { TerminalToolError } from "./terminal/tools";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
@@ -54,7 +56,7 @@ export class CanvasPublicationService {
     /** What builds a component or project; the Canvas's Terminal sandbox unless a test passes another. */
     private readonly builder?: Pick<CanvasBuildService, "build">) {}
 
-  async publish(canvasId: string, request: CanvasPublishRequest): Promise<CanvasPublishedArtifact> {
+  async publish(canvasId: string, request: CanvasPublishRequest, signal?: AbortSignal): Promise<CanvasPublishedArtifact> {
     // The person must be able to take part in the Canvas; a Sidekick's
     // conversation is not a Canvas, and an archived parent takes no writes.
     const parent = await new ConversationService(this.env, this.auth).authorizeViewer(canvasId);
@@ -74,7 +76,7 @@ export class CanvasPublicationService {
     const operationId = newId();
     const published = await (request.kind === "file"
       ? this.publishFile(runtime, canvasId, name, providerResourceId, existing, request, author, operationId)
-      : this.publishSite(runtime, canvasId, name, providerResourceId, existing, request, author, operationId)
+      : this.publishSite(runtime, canvasId, name, providerResourceId, existing, request, author, operationId, signal)
     ).catch((error: unknown) => {
       if (error instanceof PublicationWriteFailed) {
         throw new ApiError(503, `canvas_publish_${error.operation}_failed`, "The artifact could not be recorded. Publish it again with the same name.");
@@ -84,26 +86,41 @@ export class CanvasPublicationService {
       if (error instanceof TerminalToolError) throw new ApiError(422, error.code, error.message);
       throw error;
     });
+    // Whether an unchanged site publish finished serving a half-done one.
+    const { completed, ...answer } = { completed: false, ...published };
 
-    // Attach and note on every outcome, an unchanged one included: a call
-    // retried after it wrote the row but before either step finishes them.
-    await attachWorkstreamRuntimeResource(runtime, {
-      workspaceId: this.auth.workspaceId, workstreamId: canvasId, substreamId: "0",
-      resourceId: published.resourceId, attachedByUserId: this.auth.userId,
-      ...(published.outcome === "updated" ? { eventType: "resource_updated" as const } : {}),
-    }).catch((error: unknown) => {
-      const code = error instanceof Error ? error.message : "";
-      if (code !== "resource_already_attached" && code !== "conflict") throw error;
-    });
-    const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
-    await workspace.canvasNoteArtifact({ workspaceId: this.auth.workspaceId, canvasId, resourceId: published.resourceId,
-      editor: { kind: "person", id: this.auth.userId } });
-    const version = await runtime.DB.prepare("SELECT current_version FROM resources WHERE id = ? AND workspace_id = ?")
-      .bind(published.resourceId, this.auth.workspaceId).first<{ current_version: number | null }>();
+    // Attach on every outcome, an unchanged one included: a call retried
+    // after it wrote the row but before attaching finishes it. The read
+    // beside it answers whether the Canvas already lists the artifact.
+    const [, version] = await Promise.all([
+      attachWorkstreamRuntimeResource(runtime, {
+        workspaceId: this.auth.workspaceId, workstreamId: canvasId, substreamId: "0",
+        resourceId: published.resourceId, attachedByUserId: this.auth.userId,
+        ...(published.outcome === "updated" ? { eventType: "resource_updated" as const } : {}),
+      }).catch((error: unknown) => {
+        const code = error instanceof Error ? error.message : "";
+        if (code !== "resource_already_attached" && code !== "conflict") throw error;
+      }),
+      runtime.DB.prepare(`SELECT current_version,
+          EXISTS (SELECT 1 FROM canvas_artifacts WHERE canvas_id = ? AND resource_id = resources.id) AS listed
+          FROM resources WHERE id = ? AND workspace_id = ?`)
+        .bind(canvasId, published.resourceId, this.auth.workspaceId).first<{ current_version: number | null; listed: number }>(),
+    ]);
+    // The note moves the Canvas's recency and last editor, clears the run
+    // that last wrote it, and tells its pinners, so an unchanged republish
+    // owes it only when this call finished something: a site whose serving it
+    // just completed, or an artifact the Canvas does not list yet (the call
+    // that wrote it stopped before noting). A republish of identical content
+    // is not an edit by whoever repeated it.
+    if (published.outcome !== "unchanged" || completed || !version?.listed) {
+      const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
+        workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
+      await workspace.canvasNoteArtifact({ workspaceId: this.auth.workspaceId, canvasId, resourceId: published.resourceId,
+        editor: { kind: "person", id: this.auth.userId } });
+    }
     const url = await conversationCanonicalUrl(this.env, { region: this.env.AVALON_REGION, workspaceId: this.auth.workspaceId,
       parentId: canvasId, artifactId: published.resourceId }).catch(() => null);
-    return { ...published, kind: request.kind, version: version?.current_version ?? 1, url };
+    return { ...answer, kind: request.kind, version: version?.current_version ?? 1, url };
   }
 
   private maximumBytes(): number {
@@ -132,6 +149,7 @@ export class CanvasPublicationService {
         sourcePath: name, objectSource: "person", displayName: request.title, description: request.description,
         bytes, digest, mimeType, attachmentKind, contentMode, derivativeStatus, author, receipt,
       });
+      if (updated.superseded) return supersededOutcome(updated, digest);
       return { resourceId: updated.id, title: updated.title, outcome: "updated" as const };
     }
 
@@ -159,7 +177,7 @@ export class CanvasPublicationService {
 
   private async publishSite(runtime: Env, canvasId: string, name: string, providerResourceId: string,
     existing: Awaited<ReturnType<typeof publishedRowByIdentity>>, request: Extract<CanvasPublishRequest, { kind: "site" }>,
-    author: PublicationAuthor, operationId: string) {
+    author: PublicationAuthor, operationId: string, signal?: AbortSignal) {
     this.assertSize(request.files.reduce((total, file) => total + smallestDecodedSize(file.content), 0));
     const files = await Promise.all(request.files.map(async (file, index) => {
       const bytes = decode(file.content, `files.${index}.content`);
@@ -179,20 +197,26 @@ export class CanvasPublicationService {
     )));
     const previous = existing ? await existingArtifactForResource(runtime.DB, this.auth.workspaceId, existing.id) : null;
     if (existing && previous && existing.content_sha256 === contentDigest) {
-      await this.reconcileServing(runtime, canvasId, existing, previous);
-      return { resourceId: existing.id, title: existing.title, outcome: "unchanged" as const };
+      const completed = await this.reconcileServing(runtime, canvasId, existing, previous);
+      return { resourceId: existing.id, title: existing.title, outcome: "unchanged" as const, completed };
     }
     const built = source.kind === "static" ? null
-      : await (this.builder ?? new CanvasBuildService(this.env, this.auth)).build(canvasId, source, files);
+      : await (this.builder ?? new CanvasBuildService(this.env, this.auth)).build(canvasId, source, files, signal);
     const served = built?.files ?? files;
     const build = built && source.kind !== "static"
       ? { source: source.kind, files: built.files.length, renderedTextLength: built.renderedTextLength } : undefined;
     const resourceId = existing?.id ?? newId();
-    const version = (previous?.version ?? 0) + 1;
+    // A new artifact id is this call's alone; a republish takes its version
+    // before writing a byte, so a concurrent publish of the same name writes
+    // under another (`claimArtifactVersion`).
+    const artifactId = previous?.artifactId ?? newId();
+    const version = previous
+      ? await claimArtifactVersion(runtime, { artifactId, from: previous.version + 1, claimant: operationId })
+      : 1;
     const title = [...(request.title ?? name.split("/").at(-1) ?? "site")].slice(0, 300).join("");
     const written = await writeArtifactVersion(runtime, {
       workspaceId: this.auth.workspaceId, workstreamId: canvasId, region: this.env.AVALON_REGION,
-      artifactId: previous?.artifactId ?? null, resourceId, version, mode: "static", stateful: false,
+      artifactId, resourceId, version, mode: "static", stateful: false,
       files: served, fallbackTitle: title, serverModuleSha256: null,
     });
     // The public origin before the row, as Rally's own publish orders it, so
@@ -202,12 +226,16 @@ export class CanvasPublicationService {
     });
     const receipt = { publicationOperationId: operationId, publicationEventType: existing ? "resource_updated" : "resource_attached" };
     if (existing) {
-      await swapPublishedContent({
+      const swapped = await swapPublishedContent({
         workspace: runtime.DB, env: runtime, workspaceId: this.auth.workspaceId, existing,
         sourcePath: name, objectSource: "person", displayName: request.title, description: request.description,
         bytes: written.manifestBytes, digest: contentDigest, mimeType: SITE_MANIFEST_MIME_TYPE,
         attachmentKind: "site", contentMode: "unsupported", derivativeStatus: "unsupported", author, receipt,
       });
+      // Another publish moved the row first: its manifest is the site's, and
+      // it registers and points at it. Activating this call's version now
+      // would serve a manifest the row does not hold.
+      if (swapped.superseded) return supersededOutcome(swapped, contentDigest);
     } else {
       const timestamp = nowIso();
       await insertPublishedResource(runtime.DB, {
@@ -240,36 +268,53 @@ export class CanvasPublicationService {
    * may still name the old one. A retry with the same content is unchanged,
    * so it is the retry's job to bring both up to the manifest the row holds.
    * Pointing is an upsert, so doing it again for a site already pointed
-   * changes nothing.
+   * changes nothing. `existing` and `previous` may be stale by the time this
+   * writes, and a later publish may have moved both; the registry and the
+   * host each refuse a version older than their own, so this can only move
+   * them forward. Answers whether it moved either.
    */
   private async reconcileServing(runtime: Env, canvasId: string,
     existing: NonNullable<Awaited<ReturnType<typeof publishedRowByIdentity>>>,
-    previous: NonNullable<Awaited<ReturnType<typeof existingArtifactForResource>>>) {
-    if (!existing.content_ref) return;
+    previous: NonNullable<Awaited<ReturnType<typeof existingArtifactForResource>>>): Promise<boolean> {
+    if (!existing.content_ref) return false;
     const stored = await this.env.PAYLOADS.get(existing.content_ref);
-    if (!stored) return;
+    if (!stored) return false;
     const manifest = ArtifactManifestSchema.parse(JSON.parse(await stored.text()) as unknown);
-    if (manifest.artifactId !== previous.artifactId) return;
-    if (previous.version !== manifest.artifactVersion) {
+    if (manifest.artifactId !== previous.artifactId) return false;
+    let registered = false;
+    if (previous.version < manifest.artifactVersion) {
       const hostnameStub = previous.hostnameStub ?? await ensureArtifactHostname(runtime, {
         workspaceId: this.auth.workspaceId, artifactId: previous.artifactId,
       });
-      await registerArtifact(runtime.DB, {
+      registered = await registerArtifact(runtime.DB, {
         artifactId: previous.artifactId, hostnameStub, workspaceId: this.auth.workspaceId, workstreamId: canvasId,
         resourceId: existing.id, mode: "static", stateful: false, version: manifest.artifactVersion,
         manifestRef: artifactManifestKey(previous.artifactId, manifest.artifactVersion),
       });
     }
-    await pointArtifactAtVersion(runtime, {
+    const pointed = await pointArtifactAtVersion(runtime, {
       artifactId: previous.artifactId, workspaceId: this.auth.workspaceId, workstreamId: canvasId, resourceId: existing.id,
       region: this.env.AVALON_REGION, manifest,
     });
+    return registered || pointed.advanced;
   }
 
   private assertSize(bytes: number) {
     const maximum = this.maximumBytes();
     if (bytes > maximum) throw new ApiError(413, "attachment_too_large", `This is ${bytes} bytes; an artifact may be at most ${maximum}`);
   }
+}
+
+/**
+ * What a publish that lost the row's compare-and-swap answers. The same
+ * content is what the winner published, so this call's intent landed:
+ * `unchanged`. Other content means the person's publish is not what the
+ * artifact holds, which is theirs to decide: publish again to replace it.
+ */
+function supersededOutcome(current: { id: string; title: string; content_sha256: string | null }, digest: string) {
+  if (current.content_sha256 === digest) return { resourceId: current.id, title: current.title, outcome: "unchanged" as const };
+  throw new ApiError(409, "canvas_publish_conflict",
+    "Another publish of this name landed first. Publish it again to replace it.");
 }
 
 /**

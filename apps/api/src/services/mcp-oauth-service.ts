@@ -1,4 +1,5 @@
 import { newId, nowIso } from "@rally/db";
+import { z } from "zod";
 import {
   MCP_SCOPE,
   isAllowedMcpRedirectUri,
@@ -27,7 +28,7 @@ const AUTHORIZATION_CODE_TTL_SECONDS = 10 * 60;
 /** An OAuth error response (RFC 6749 §5.2), which MCP clients read instead of Rally's error envelope. */
 export class McpOAuthError extends Error {
   constructor(
-    readonly error: "invalid_request" | "invalid_client" | "invalid_grant" | "unsupported_grant_type" | "invalid_client_metadata" | "invalid_redirect_uri",
+    readonly error: "invalid_request" | "invalid_client" | "invalid_grant" | "unsupported_grant_type" | "invalid_client_metadata" | "invalid_redirect_uri" | "invalid_target",
     readonly description: string,
     readonly status: 400 | 401 = 400,
   ) {
@@ -35,6 +36,9 @@ export class McpOAuthError extends Error {
     this.name = "McpOAuthError";
   }
 }
+
+/** A client's stored redirects, written by `register` as a JSON array of strings. */
+const RegisteredRedirectsSchema = z.array(z.string());
 
 interface ClientRow { client_id: string; client_name: string; redirect_uris: string }
 
@@ -71,12 +75,14 @@ export class McpOAuthService {
    * an unregistered redirect is never followed (RFC 6749 §4.1.2.1).
    */
   async describe(request: McpAuthorizationRequest): Promise<McpAuthorizationDescription> {
+    this.resource(request.resource);
     const client = await this.client(request.clientId, request.redirectUri);
     return { clientName: client.client_name, redirectOrigin: new URL(request.redirectUri).origin };
   }
 
   /** The person approved: a single-use code for the Organization they chose, on the client's redirect. */
   async approve(identity: IdentityAuthContext, approval: McpAuthorizationApproval): Promise<string> {
+    this.resource(approval.resource);
     await this.client(approval.clientId, approval.redirectUri);
     const workspaces = await new AuthService(this.env).listRegionalWorkspaces(identity.userId);
     if (!workspaces.some((workspace) => workspace.id === approval.workspaceId)) {
@@ -101,6 +107,7 @@ export class McpOAuthService {
   }
 
   async token(request: McpTokenRequest): Promise<McpTokenResponse> {
+    this.resource(request.resource);
     if (request.grant_type === "refresh_token") {
       await this.client(request.client_id);
       const session = await new AuthService(this.env).refresh(request.refresh_token, { mcpClientId: request.client_id })
@@ -157,13 +164,26 @@ export class McpOAuthService {
     if (sessionId) await new AuthService(this.env).logout({ sessionId });
   }
 
+  /**
+   * RFC 8707: a request may name the resource it wants a token for, and the
+   * only one Rally issues for is its own MCP server. Without this check, a
+   * server that names Rally as its authorization server would have a client
+   * fetch a Rally token on its behalf and receive it, then replay it against
+   * the API. A request that names no resource is for Rally's, as before the
+   * parameter existed.
+   */
+  private resource(resource: string | undefined): void {
+    if (resource === undefined || resource.replace(/\/$/u, "") === this.env.MCP_RESOURCE) return;
+    throw new McpOAuthError("invalid_target", "Rally issues tokens only for its own MCP server");
+  }
+
   /** A registered client, and when given, a redirect it registered. */
   private async client(clientId: string, redirectUri?: string): Promise<ClientRow> {
     const row = await this.env.DB.prepare("SELECT client_id,client_name,redirect_uris FROM mcp_oauth_clients WHERE client_id=?")
       .bind(clientId).first<ClientRow>();
     if (!row) throw new McpOAuthError("invalid_client", "This MCP client is not registered with Rally", 401);
     if (redirectUri !== undefined) {
-      const registered = JSON.parse(row.redirect_uris) as string[];
+      const registered = RegisteredRedirectsSchema.parse(JSON.parse(row.redirect_uris));
       if (!registered.includes(redirectUri) || !isAllowedMcpRedirectUri(redirectUri)) {
         throw new McpOAuthError("invalid_redirect_uri", "This redirect was not registered by the MCP client");
       }

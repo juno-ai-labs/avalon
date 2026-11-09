@@ -241,28 +241,20 @@ describe("Terminal sandbox coordinator", () => {
     expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 
-  it("moves a Canvas sandbox made under its owner's identity to the Canvas's without replacing it, and replaces another's once", async () => {
+  it("replaces a Canvas sandbox still under one person's identity once, and keeps the Canvas's after", async () => {
     const { env, objectStore, provider, clock } = fixture();
     const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
     await coordinator.release(context());
-    // What the sandbox held before a Canvas's sandbox was the Canvas's: the
-    // identity of the person who last used it.
+    // What a Canvas's sandbox held before it was the Canvas's: the identity of
+    // the person who last used it. The deploy that made it shared replaces it.
     const ownersIdentity = await sha256(JSON.stringify({ principal: `user:${USER_ID}`, repository: "scratch" }));
-    const canvasIdentity = workstreamObjectGet(objectStore, "SELECT authority_fingerprint FROM terminal_workspace WHERE id = 1");
     workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET authority_fingerprint = ? WHERE id = 1", ownersIdentity);
 
-    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
-    expect(provider.deleteSandbox).not.toHaveBeenCalled();
-    expect(workstreamObjectGet(objectStore, "SELECT authority_fingerprint FROM terminal_workspace WHERE id = 1")).toEqual(canvasIdentity);
-    await coordinator.release(context());
-
-    // A sandbox still under someone else's identity cannot be told apart from
-    // theirs alone, so it is replaced, once; after that it is the Canvas's.
-    const othersIdentity = await sha256(JSON.stringify({ principal: "user:00000000-0000-4000-8000-0000000000ef", repository: "scratch" }));
-    workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET authority_fingerprint = ? WHERE id = 1", othersIdentity);
     await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-2", generation: 2 });
     expect(provider.deleteSandbox).toHaveBeenCalledWith("sandbox-1");
+    await coordinator.release(context());
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-2", generation: 2 });
   });
 
   it("starts stopped sandboxes and refreshes lifecycle deadlines without polling", async () => {

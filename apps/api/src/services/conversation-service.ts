@@ -41,6 +41,12 @@ export class ConversationService {
     private readonly env: Env,
     private readonly auth: AuthContext,
     private readonly defer?: (promise: Promise<unknown>) => void,
+    /**
+     * Whether only a Canvas is a conversation here: an MCP client's token,
+     * which the person let read and change Canvases, never a Sidekick's
+     * conversation (`docs/rally-mcp.md`). Any other kind is not found.
+     */
+    private readonly canvasOnly = false,
   ) {}
 
   /**
@@ -73,7 +79,7 @@ export class ConversationService {
     const hosted = await workspace.resolveHostedParent({
       workspaceId: this.auth.workspaceId, parentId, ...(viewer ? { viewer } : {}),
     });
-    if (hosted.kind === "automation" || hosted.kind === "canvas") {
+    if (hosted.kind === "canvas" || (hosted.kind === "automation" && !this.canvasOnly)) {
       return {
         parent: { kind: hosted.kind, id: parentId, membershipVersion: 0, ...hosted.authority },
         ...(hosted.viewer ? { decision: hosted.viewer } : {}),
@@ -82,16 +88,6 @@ export class ConversationService {
     throw new ApiError(404, "conversation_not_found", "Conversation not found");
   }
 
-  /**
-   * The parent's answer to "may this person read your conversations", and the
-   * seat that follows from it.
-   *
-   * The conversation object decides reads from its own participant list, so a
-   * reader the parent admits is seated there before anything is issued. For a
-   * work stream the seat already exists (the room's participants are the
-   * conversation's); for an automation the parent's rule is wider than the
-   * conversation's list, and this is what carries the parent's decision down.
-   */
   /**
    * One page of a conversation's committed participant prose, as its reader
    * may see it: the viewer is authorized as opening it would, and the owning
@@ -104,6 +100,16 @@ export class ConversationService {
     return { kind: parent.kind, ...await client.readTranscript(page) };
   }
 
+  /**
+   * The parent's answer to "may this person read your conversations", and the
+   * seat that follows from it.
+   *
+   * The conversation object decides reads from its own participant list, so a
+   * reader the parent admits is seated there before anything is issued. For a
+   * work stream the seat already exists (the room's participants are the
+   * conversation's); for an automation the parent's rule is wider than the
+   * conversation's list, and this is what carries the parent's decision down.
+   */
   async authorizeViewer(parentId: string, substreamId = "0"): Promise<ResolvedConversationParent> {
     const viewer: Omit<ConversationParentAuthorizeViewerRequest, "workspaceId" | "parentId"> = {
       userId: this.auth.userId,
