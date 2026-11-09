@@ -208,7 +208,6 @@ describe("asking to open a Canvas", () => {
     const declined = { kind: "access_denied", parentKind: "canvas", parentId: CANVAS_ID, parentTitle: null,
       actor: { kind: "person", id: ADMIN }, preview: null, accessRequest: { state: "denied", decidedByName: "Ada", decidedByUserId: ADMIN } };
     await expect.poll(() => requester.pushes.at(-1)).toMatchObject({ unseenCount: 1, items: [{ ...declined, seen: false }] });
-    requester.close();
     const [denied] = await intents("access_denied");
     expect(denied).toMatchObject({ recipient_user_id: REQUESTER, state: "delivered" });
     expect(await alertFor(REQUESTER, denied!.intent_id)).toEqual({ title: "Ada declined your request to open a Canvas", body: "",
@@ -216,9 +215,14 @@ describe("asking to open a Canvas", () => {
     expect((await openedActivity(CREATOR)).items).toMatchObject([{ kind: "access_request", accessRequest: { state: "denied", decidedByName: "Ada", decidedByUserId: ADMIN }, seen: true }]);
     expect(await workspace().canvasAccess({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(REQUESTER) }))
       .toEqual({ access: "requestable", title: null, request: { state: "denied", requestedAt: expect.any(String), decidedAt: expect.any(String) } });
-    // Asking again is allowed, and reads the answer as seen.
+    // Asking again is allowed, and reads the answer as seen: the open socket
+    // is sent the list with it seen, so the row and badge clear without a reload.
+    const pushedBefore = requester.pushes.length;
     expect(await ask()).toEqual({ status: "pending" });
     expect((await requests()).map((request) => request.state)).toEqual(["denied", "pending"]);
+    await expect.poll(() => requester.pushes.length > pushedBefore ? requester.pushes.at(-1) : null)
+      .toMatchObject({ unseenCount: 0, items: [{ ...declined, seen: true }] });
+    requester.close();
     expect(await openedActivity(REQUESTER)).toMatchObject({ unseenCount: 0, items: [{ ...declined, seen: true }] });
   });
 
