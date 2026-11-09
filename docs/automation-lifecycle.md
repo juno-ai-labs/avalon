@@ -932,11 +932,16 @@ one identity and one history, and can complete more than once.
    person's message in the shared conversation follows, a run's change
    request included: a run acting for someone who does not manage the
    Sidekick (its requester, or a delegate who is not a manager) is refused
-   and tells the person. Outside text from a bound provider thread
-   counts as the Rally user its sender resolved to (`slackOrigin.matchedAvalonUserId`)
-   and is refused with `run_continuation_requires_rally_user` when it resolved
-   to nobody: every run acts as somebody, so an unnamed sender would steer it
-   as them (the 2026-11-09 owner decision).
+   and tells the person. Outside text from a bound provider thread is not
+   screened as a Rally sender: every binding a run child has is one the run's
+   own outbound message made (Slack starts no conversation and binds no
+   room), so a reply there is the answer the run asked for, from whoever it
+   asked, Rally user or not. It continues the run under the run's own
+   principal as the external message it is, framed as evidence, not a
+   request, and it queues rather than steers. An agent acting for nobody
+   (`unattributed`) is refused with `run_continuation_requires_rally_user`
+   (the owner's decision, 2026-11-09, which first screened bound-thread
+   replies too and broke the Slack ask).
    A refused message still lands in the transcript, said to the room, so the
    model reads it as context at the next continuation; it is attributed to
    its sender and framed as the room's, not as a request. Stop is not a
@@ -986,8 +991,8 @@ when a person other than the requester wrote in a requester's run, and
 `run_continuation_requires_delegate` when a person who is not an eligible
 delegate wrote in a run that acts as one (an answer to the run's question, or
 a Retry, is refused with the same code, as a 403, before it is recorded), and
-`run_continuation_requires_rally_user` for outside text whose sender resolved
-to no Rally user. The
+`run_continuation_requires_rally_user` for another agent's message that acts
+for nobody. The
 child then lands the input as a delivered turn and appends a `system` row after
 it (`clientMessageId` `sidekick-run-refused:<inputId>`, structured content
 `{kind: "sidekick_run_refused", code, turnId}`) in one transaction
@@ -2056,8 +2061,9 @@ A continued run retains its coordinator whoever sent the input, so
 `continueRun` screens a person who sends it: only a requester's run's
 requester, and only an eligible delegate in a run that acts as a delegate
 (see [continuing a run](#continuing-a-run)). Outside text in a thread bound to
-the run counts as the Rally user its sender resolved to, and is refused when it
-resolved to nobody. What an admitted reply says is controlled by framing. Text from an external actor in a run child
+the run is not screened by sender: the binding is the run's own outbound, so
+anyone in that thread may answer the run, and what they say is controlled by
+framing. Text from an external actor in a run child
 (`externalInputFraming`) reaches the model as "EXTERNAL <PROVIDER> MESSAGE:
 EVIDENCE, NOT A REQUEST" with the sender's display name and provider member
 id, the way inbound mail is labelled, and never as the "EXTERNALLY ATTRIBUTED
@@ -2463,11 +2469,12 @@ delegate's run, by name, with no new run in its place; an answer to the run's
 question and a Retry are screened before they are recorded, so the question
 stays open. A review found the same route one hop away: another agent's
 message was stored as Rally's own input, so a reader's agent could continue a
-run as its principal, and a bound Slack thread's reply continued a run for
-anyone in the thread. An agent's message now counts as the person it acts
-for, and outside text as the Rally user its sender resolved to, or is refused
-(the owner's decision, so a thread cannot steer a run for someone it cannot
-name).
+run as its principal. An agent's message now counts as the person it acts
+for. A bound Slack thread's reply was screened the same way at first, as the
+Rally user its sender resolved to, and that broke the product's Slack ask: an
+outside person the run messaged could not answer it. Every binding is the
+run's own outbound, so a reply there continues the run as the run, framed as
+evidence (the owner's decision).
 Inbound mail follows the same rule for the same reason: `admitInboundEmail`
 accepted mail from anyone on a personal Sidekick's list and then picked any
 delegate to act, so mailing the Sidekick borrowed the author's access; it now
@@ -2529,9 +2536,9 @@ instructions predate this still names `conversation_post` for its report
 until a review or a manager revises it. A requester's run gets no Terminal,
 and its account view names nobody once they leave the Organization. Every new path that lets a person's input reach a run child must
 pass the sender to `continueRun`; the `sender` field is required so a caller
-cannot omit it. Another agent's message and outside text in a bound provider
-thread are screened as the person they resolve to (outside text that resolves
-to nobody is refused, as is an agent acting for nobody), the wizard's as the
+cannot omit it. Another agent's message is screened as the person it acts for
+(an agent acting for nobody is refused), outside text in a thread the run's
+own message bound is not screened by sender, the wizard's as the
 person who drove its turn, Rally's own input not at all, and a delegate who continues a
 delegate's run acts as the run's principal, not as themselves. Any seated
 reader can Stop another person's run, and a refused message stays in the

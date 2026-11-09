@@ -232,8 +232,10 @@ export type AutomationRunDefinitionRequest = z.infer<typeof AutomationRunDefinit
  */
 export const SidekickRunContinuationSenderSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("person"), userId: UserIdSchema }),
-  /** Outside text whose provider identity resolved to no Rally user, or an agent acting for nobody. */
+  /** Outside text from a provider thread bound to the run, which the run's own outbound message bound. */
   z.strictObject({ kind: z.literal("external") }),
+  /** Another agent's message acting for no person (an Organization-authority turn). */
+  z.strictObject({ kind: z.literal("unattributed") }),
   z.strictObject({ kind: z.literal("system") }),
 ]);
 export type SidekickRunContinuationSender = z.infer<typeof SidekickRunContinuationSenderSchema>;
@@ -254,7 +256,7 @@ export const SidekickRunContinuationRefusalCodeSchema = z.enum([
   "run_continuation_requires_requester",
   /** A person who is not an eligible delegate wrote in a run that acts under a delegate's access. */
   "run_continuation_requires_delegate",
-  /** Outside text whose sender resolved to no Rally user, or an agent's message acting for nobody. */
+  /** Another agent's message acting for no person who may continue the run. */
   "run_continuation_requires_rally_user",
 ]);
 export type SidekickRunContinuationRefusalCode = z.infer<typeof SidekickRunContinuationRefusalCodeSchema>;

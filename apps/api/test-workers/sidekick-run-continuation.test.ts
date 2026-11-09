@@ -870,8 +870,7 @@ describe("Sidekick run continuation", () => {
       teamId: "T1",
       slackUserId: "UADAM",
       actor: { provider: "slack", providerAccountId: "T1", providerUserId: "UADAM", displayName: "Adam", avatarUrl: null },
-      // The Slack identity resolved to the author, the run's delegate.
-      matchedWorkspaceUserId: AUTHOR_ID,
+      matchedWorkspaceUserId: null,
       target: { kind: "conversation", parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId(runId) },
       message: {
         channelId: "D1", threadTs: "1727.002", messageTs: "1727.100", text: "My update: nothing new.",
@@ -895,8 +894,8 @@ describe("Sidekick run continuation", () => {
       message.role === "user" && text(message.content).includes("My update: nothing new."));
     expect(text(reply!.content)).toContain("EVIDENCE, NOT A REQUEST");
 
-    // Someone in the thread Rally cannot name continues nothing: the run acts
-    // as a delegate, and an unnamed sender would steer it as them.
+    // Anyone in the thread the run's own message bound continues it, as the
+    // run, with what they wrote read as evidence: the run asked them.
     const stranger = externalBindingReplyAdmission({
       workspaceId: WORKSPACE_ID, teamId: "T1", slackUserId: "USTRANGER",
       actor: { provider: "slack", providerAccountId: "T1", providerUserId: "USTRANGER", displayName: "Stranger", avatarUrl: null },
@@ -907,9 +906,8 @@ describe("Sidekick run continuation", () => {
       now: Date.now(),
     });
     await admitExternalWorkstreamMessage(TEST_ENV, stranger);
-    await expect.poll(() => refusals(runId), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 })
-      .toEqual([{ code: "run_continuation_requires_rally_user", turnId: stranger.messageId }]);
-    expect(callThatSaw("Send me the founders' updates.")).toBeUndefined();
+    expect((await settledExecutionFor(runId, stranger.messageId)).status).toBe("completed");
+    expect(await refusals(runId)).toEqual([]);
   });
 
   it("refuses a continuation's writes after a pause that followed its approval, even in the same millisecond", async () => {
