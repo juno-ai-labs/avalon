@@ -98,6 +98,10 @@ It holds two columns:
   first route that belongs to a section, so a launch's redirect from `/` to
   `/canvases` is the landing and not a navigation; landing on a section home
   keeps the stored choice, and only a later navigation to a home moves it.
+  Clicking **Canvases** always opens `/canvases`, including when a Canvas is
+  already open and its rail entry is selected. The list header's **Canvas
+  dashboard** home icon, immediately before New Canvas, uses the same action.
+  Both select the Canvases list and close the phone sheet to reveal the dashboard.
   Entering Activity opens its top row (the first the list draws) in the pane,
   as a mail client opens a folder's first message, and draws that row open:
   the rail's button pushes the row's route, so Back returns to what was open;
@@ -137,7 +141,8 @@ It holds two columns:
   Rally"), and so do a missing Canvas ("Canvas not found · Rally") and an
   unknown route ("Nothing here · Rally").
 - **One list**, titled with the section's name. **Canvases** is a Pinned
-  group, then every Canvas by recent activity; its action is **New Canvas**
+  group, then every Canvas by recent activity; its actions are **Canvas dashboard**
+  and **New Canvas**
   (`POST /canvases`, then the new Canvas's route). **Sidekicks** is **Needs
   input**, then Pinned, then every Sidekick by what it last did, or by name
   from the heading's **Recent** control (the same `DropdownSelect` and ⇵
@@ -244,8 +249,8 @@ header keeps Share at the right and its actions in the centred pill's menu.
 Opening the sheet from a pane header moves focus to its close button; closing hands focus back
 to the opener, or to the visible menu button when the opener is gone
 (`useSheetOpener`). Opening anything from it closes it, as do Escape and
-widening past 640px; switching sections does not navigate, so the sheet stays
-open on the list just picked. An open menu, dialog or error popup takes Escape
+widening past 640px; picking Sidekicks changes only the list, so the sheet stays
+open. Picking Canvases opens its dashboard and closes the sheet. An open menu, dialog or error popup takes Escape
 before the sheet does. Code that navigates and wants the sheet open afterwards
 sets `sheetAfterNavigation` instead of `sidebarOpen`: the sidebar's reset on
 mount and route change reads it and opens the sheet once.
@@ -401,6 +406,15 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-09 — Return to the Canvas dashboard from the sidebar
+
+Clicking the Canvases rail entry now opens its dashboard even while a Canvas
+is open, and a home icon before New Canvas provides the same shortcut. Both
+reuse one navigation action and close the phone sheet. Previously the rail
+only selected its list, leaving the open conversation in place and making the
+dashboard hard to return to. Sidekicks keeps its existing list-only behavior;
+the dashboard shortcuts must remain available to guests too.
 
 ### 2026-11-09 — The shell is Canvases, Sidekicks and Activity; Channels, Threads and Breakouts are deleted
 
