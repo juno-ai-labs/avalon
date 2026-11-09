@@ -433,9 +433,19 @@ stay unheld. The unread state of the Canvas list starts empty (the hosted
 parent has no reader rows until a reader's next read reports one), and its
 recency is the Thread's last activity. No pin survives migration 147, and the
 per-conversation `sidekick_attachments` table was dropped by the object's
-migration 86. A Canvas invitation made between steps 1 and 4 of an interrupted
-pass would be swept with the Thread's parent state, since both key it by the
-same id; the window is one pass.
+migration 86.
+
+**Shares are the one table set the Thread and its Canvas both key by the id.**
+A Canvas's email share writes `parent_invitations`, `parent_grants` and their
+operation, revision and participant tables (`CANVAS_SHARE_TABLES` in
+`hosted-parent-schema.ts`) under the Canvas's id, which is the Thread's. So
+step 1 deletes the Thread's rows from those tables in the transaction that
+makes the Canvas's row, and only when it makes it; step 4 passes
+`convertedToCanvas`, and `deleteRetiredThreadParent` then leaves those tables
+alone. An invitation or grant made on the live Canvas between an interrupted
+pass and its resume survives the resume. A Thread's pending invitations are
+not carried to the Canvas: the Thread's participants are, from
+`channel_viewers`.
 
 ## Boundary
 
@@ -834,14 +844,20 @@ run after a partly failed one it tombstoned the Chat of a live Canvas, which
 keeps the Thread's id. It is now refused while a candidate remains
 (`thread_retirement_conversion_pending`), and its inventory leaves out any id
 `canvas_directory` holds. Letting the retirement skip candidates instead was
-rejected: a Thread it skipped would stay a Thread nothing can open.
+rejected: a Thread it skipped would stay a Thread nothing can open. The
+same review found the conversion's sweep deleted every `parent_*` row of the
+id, including invitations and grants made on the live Canvas between an
+interrupted pass and its rerun; the Thread's shares now go when the Canvas is
+made, and the sweep leaves `CANVAS_SHARE_TABLES` to the Canvas.
 
 **What a future change must respect:** the order is dump, convert, retire, and
 `retire_threads` enforces it. The
 conversion is the only path that changes a conversation's stored parent kind,
 and only from `workstream` to `canvas`. Anything new that keys on a Thread's
 Main by its Thread-era name (a source string, a parent kind) has to be carried
-in `convertThreadToCanvas`, or a converted Canvas loses it.
+in `convertThreadToCanvas`, or a converted Canvas loses it. A new table a Canvas writes under its
+own id that `HOSTED_PARENT_STATE_TABLES` also sweeps joins
+`CANVAS_SHARE_TABLES`, or a resumed conversion deletes it.
 
 Shipped in juno-ai-labs/avalon#1490.
 

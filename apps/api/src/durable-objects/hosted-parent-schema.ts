@@ -15,9 +15,12 @@
  * Every `parent_*` table with a `parent_id` column is one parent's state, and
  * retiring a Thread or Channel (`WorkspaceDO.deleteRetiredThreadParent`)
  * sweeps that parent's rows from each table `HOSTED_PARENT_STATE_TABLES`
- * names. A Canvas keys its invitation and grant rows here by its own id, so a
- * Thread's sweep never reaches them. A new `parent_*` table joins that list,
- * or a retired Thread leaves its rows in it.
+ * names. A Canvas keys its invitation and grant rows here by its own id
+ * (`CANVAS_SHARE_TABLES`), and a converted Thread's Canvas has the Thread's
+ * id: the conversion deletes the Thread's rows from those tables before it
+ * makes the Canvas, and its later sweep skips them, so a share made on the
+ * live Canvas survives a rerun. A new `parent_*` table joins that list, or a
+ * retired Thread leaves its rows in it.
  */
 export const HOSTED_PARENT_SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE workspace_workstream_directory RENAME TO channels`,
@@ -438,4 +441,25 @@ export const HOSTED_PARENT_STATE_TABLES: readonly string[] = [
   "parent_invitations",
   "parent_connector_admissions",
   "parent_sidekicks",
+];
+
+/**
+ * The `parent_*` tables a Canvas's share primitive (`ScopeInvitationService`,
+ * `ScopeGrantStorage`) writes under the Canvas's own id, in an order that
+ * deletes each referencing row before the row it names
+ * (`parent_invitations` before `parent_invitation_operations`). Converting a
+ * Thread clears the Thread's rows from these before the Canvas of the same id
+ * exists, and the conversion's sweep of the Thread's rows then leaves them to
+ * the Canvas (`WorkspaceDO.convertThreadToCanvas`,
+ * `deleteRetiredThreadParent`).
+ */
+export const CANVAS_SHARE_TABLES: readonly string[] = [
+  "parent_invitations",
+  "parent_invitation_operations",
+  "parent_grants",
+  "parent_grant_operations",
+  "parent_grant_imports",
+  "parent_grant_revision",
+  "parent_participant_targets",
+  "parent_participant_deliveries",
 ];

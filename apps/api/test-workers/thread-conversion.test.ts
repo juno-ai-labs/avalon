@@ -271,6 +271,45 @@ describe("convert_threads_to_canvases", () => {
   });
 });
 
+/** One email share keyed by `parentId`: an invitation, its operation, and the grant a claim wrote. */
+function insertShare(state: DurableObjectState, parentId: string, name: string, userId: string): void {
+  state.storage.sql.exec(`INSERT INTO parent_invitation_operations (parent_id, operation_id, request_json, invitation_ids_json)
+    VALUES (?, ?, '{}', json_array(?))`, parentId, `${name}-operation`, `${name}-invitation`);
+  state.storage.sql.exec(`INSERT INTO parent_invitations (parent_id, id, operation_id, actor_user_id, actor_incarnation,
+      summary_json, token_hash, delivery_encrypted, grant_operations_json, created_at)
+    VALUES (?, ?, ?, ?, 'existing-member', '{}', ?, 'sealed', '[]', 0)`,
+  parentId, `${name}-invitation`, `${name}-operation`, USER_ID, `${name}-token-hash`);
+  state.storage.sql.exec(`INSERT INTO parent_grants (parent_id, user_id, scope_kind, substream_id, grant_json)
+    VALUES (?, ?, 'workstream', '', '{}')`, parentId, userId);
+}
+
+async function shareRows(parentId: string) {
+  return runInDurableObject(organization(), (_instance, state) => ({
+    invitations: state.storage.sql.exec("SELECT id FROM parent_invitations WHERE parent_id = ? ORDER BY id", parentId).toArray(),
+    operations: state.storage.sql.exec("SELECT operation_id FROM parent_invitation_operations WHERE parent_id = ? ORDER BY operation_id", parentId).toArray(),
+    grants: state.storage.sql.exec("SELECT user_id FROM parent_grants WHERE parent_id = ? ORDER BY user_id", parentId).toArray(),
+  }));
+}
+
+describe("a converted Thread's shares", () => {
+  it("drops the Thread's before the Canvas exists, and keeps the Canvas's through a resumed pass", async () => {
+    await runInDurableObject(organization(), (_instance, state) => insertShare(state, THREAD, "thread", VIEWER));
+    await dump();
+    await organization().convertThreadToCanvas({ workspaceId: WORKSPACE_ID, threadId: THREAD, title: "Launch plan" });
+    expect(await shareRows(THREAD)).toEqual({ invitations: [], operations: [], grants: [] });
+    // Shared on the live Canvas, which keys it by the Thread's id, before the pass is resumed.
+    await runInDurableObject(organization(), (_instance, state) => insertShare(state, THREAD, "canvas", LURKER));
+
+    const resumed = await apply();
+
+    expect(resumed).toMatchObject({ alreadyConverted: 1 });
+    expect((await organizationRows()).threads).not.toContainEqual({ workstream_id: THREAD });
+    expect(await shareRows(THREAD)).toEqual({
+      invitations: [{ id: "canvas-invitation" }], operations: [{ operation_id: "canvas-operation" }], grants: [{ user_id: LURKER }],
+    });
+  });
+});
+
 describe("a conversation's parent kind conversion", () => {
   it("refuses any transition but a Thread's to a Canvas's by its code", async () => {
     await runInDurableObject(await conversation(PLAIN_THREAD), async (instance: AgentLoopDO) => {

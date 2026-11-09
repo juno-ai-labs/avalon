@@ -489,7 +489,7 @@ import {
   type MemberPreferencesReadRequest,
   type MemberPreferencesWriteRequest,
 } from "./member-preferences";
-import { HOSTED_PARENT_SCHEMA_STATEMENTS, HOSTED_PARENT_STATE_TABLES } from "./hosted-parent-schema";
+import { CANVAS_SHARE_TABLES, HOSTED_PARENT_SCHEMA_STATEMENTS, HOSTED_PARENT_STATE_TABLES } from "./hosted-parent-schema";
 import { ReceiveChildEffectsRequestSchema, type ReceiveChildEffectsRequest } from "./conversation-parent-object";
 import type { HostedConversation } from "./hosted-conversation";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
@@ -5225,6 +5225,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * - the resource locations in its Main, which decide who reads the
    *   artifacts in it, and a Sidekick's attachment to its Main.
    *
+   * Just before the Canvas's row is made, the Thread's own share rows
+   * (`CANVAS_SHARE_TABLES`: its invitations and grants) are deleted, since the
+   * Canvas keys its own by the same id and the conversion's sweep leaves those
+   * tables to it.
+   *
    * The Canvas's row is the resume marker: one already there is left as it
    * is (`created: false`). The carry-over is idempotent and runs every pass,
    * so a pass interrupted between the two finishes it.
@@ -5265,14 +5270,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               WHERE link.workstream_id = ?1` : ""}
            ) GROUP BY resource_id ORDER BY resource_id`, input.threadId,
         ).toArray();
-        created = canvas.createFromThread({
+        created = canvas.row() ? false : this.state.storage.transactionSync(() => {
+          // The Thread's shares, deleted before the Canvas of the same id
+          // exists, so whatever these tables hold for the id afterwards is the
+          // Canvas's and the sweep below leaves it.
+          for (const table of CANVAS_SHARE_TABLES) sql.exec(`DELETE FROM "${table}" WHERE parent_id = ?`, input.threadId);
+          return canvas.createFromThread({
           workspaceId: input.workspaceId, canvasId: input.threadId, title: input.title, createdByUserId: creator,
           createdAt: thread.source_created_at, updatedAt: thread.last_activity_at,
           visibility: thread.scope === "workspace" ? "workspace" : "participants",
           authorityGeneration: thread.authority_generation,
           participants: participants.map((viewer) => ({ userId: viewer.user_id, addedAt: viewer.added_at })),
           artifacts: artifacts.map((artifact) => ({ resourceId: artifact.resource_id, addedAt: artifact.added_at })),
-        }).created;
+          }).created;
+        });
       } else if (!canvas.row()) {
         throw new ApiError(404, "thread_conversion_thread_not_found", "No Thread or Canvas has this id",
           undefined, "thread_conversion_thread_not_found");
@@ -5313,14 +5324,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * its conversations go with it; the pin and access tables 147 dropped no
    * longer reference them. Idempotent: a second call finds nothing to
    * delete.
+   *
+   * `convertedToCanvas`, the conversion's sweep, leaves `CANVAS_SHARE_TABLES`
+   * alone: the Canvas of the same id is live by then and its invitations and
+   * grants are there, while the Thread's were deleted before it was made.
    */
-  async deleteRetiredThreadParent(input: { parentKind: "workstream" | "space"; parentId: string }): Promise<void> {
+  async deleteRetiredThreadParent(input: {
+    parentKind: "workstream" | "space"; parentId: string; convertedToCanvas?: boolean;
+  }): Promise<void> {
     await this.initialized;
     const sql = this.state.storage.sql;
     const present = new Set(sql.exec<{ name: string }>(
       "SELECT name FROM sqlite_schema WHERE type = 'table'",
     ).toArray().map((row) => row.name));
-    const parentTables = HOSTED_PARENT_STATE_TABLES.filter((table) => present.has(table));
+    const parentTables = HOSTED_PARENT_STATE_TABLES.filter((table) => present.has(table)
+      && !(input.convertedToCanvas && CANVAS_SHARE_TABLES.includes(table)));
     const resourceLinks = present.has("workspace_workstream_resource_links");
     this.state.storage.transactionSync(() => {
       // Checked at commit, when every referencing row is gone too, so the
