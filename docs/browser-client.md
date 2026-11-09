@@ -171,11 +171,14 @@ everywhere else, so production never draws the button. Choosing it sends
 `POST /browser/dev/session`, which opens `createDevelopmentIdentitySession`'s
 account (`adam@avalon.local`, the seed's Adam) as an ordinary browser cookie
 session with no Organization, and the entry continues as after an email
-sign-in, to the Organization list. The development Organization's name is
-the first development sign-in's: `createDevelopmentSession` (the desktop's
-`POST /auth/dev/session`, which sends the onboarding's name, "Rally
-Development" by default) no longer renames a stored one, so every member and
-every surface read the one `workspaces.name`.
+sign-in, to the Organization list; that route writes no Organization row.
+The development Organization's name is whichever wrote the row first:
+`createDevelopmentSession` (the desktop's `POST /auth/dev/session`, which
+sends the onboarding's name, "Rally Development" by default, or its own
+default "Avalon Development" when a caller sends none) no longer renames a
+stored one, so every member and every surface read the one `workspaces.name`.
+On a stack that ran `pnpm db:seed` first, that is the seed's "Avalon Studio",
+so a developer sees that rather than the name typed at onboarding.
 
 A Canvas or Sidekick link's sign-in line names what it opens ("Sign in to open
 this Canvas."), and an Organization path's says "Sign in to open this
@@ -662,11 +665,13 @@ was the invitation's copy and wrong for a link copied from the app.
 
 After the round-5 visual check (F8): the same Organization read "Rally
 Development" in one member's chooser and "Avalon Development" in another's
-Settings. Both read `workspaces.name`; the desktop's development sign-in had
-rewritten it to its own default on every sign-in, and the seed and the
-browser's sign-in to "Avalon Development", so it flipped with whichever signed
-in last. Local development only; a development sign-in now keeps the stored
-name.
+Settings. Both read `workspaces.name`, which `createDevelopmentSession`
+rewrote on every call: to "Rally Development" from the desktop's sign-in, and
+to its own default parameter, "Avalon Development", from a `POST
+/auth/dev/session` sent with no name (as the test scripts send it), so it
+flipped with whichever ran last. Local development only; a development
+sign-in now keeps the stored name, which on a seeded stack is the seed's
+"Avalon Studio".
 
 **What a future change must respect:** both routes stay behind
 `APP_ENV=development` and `RALLY_DEV_AUTH=true`; the button's presence is the
