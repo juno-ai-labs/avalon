@@ -13,7 +13,6 @@ import {
   parseVerifiedLinearAgentSessionEvent,
   type LinearAgentGraphqlExecutor,
 } from "./linear-agent";
-import { acknowledgeConnectorAgentActivation } from "./types";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const ACTIVITY_ID = "22222222-2222-4222-8222-222222222222";
@@ -163,9 +162,8 @@ describe("Linear native agent protocol", () => {
       signal: neverAborts(),
     };
 
-    await expect(acknowledgeConnectorAgentActivation(
-      adapter,
-      linearAgentInvocation(createdEvent()),
+    await expect(adapter.execute(
+      adapter.activationAcknowledgement!(linearAgentInvocation(createdEvent()))!,
       context,
     )).resolves.toEqual({
       success: true,

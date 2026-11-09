@@ -52,11 +52,10 @@ export class ConversationService {
   /**
    * Which kind of parent this id names.
    *
-   * The Organization object first: it hosts every Channel and Space parent and
-   * says which kind an id is in the same read that returns its authority, so a
-   * Channel costs one warm call and nothing is asked of an object that does
-   * not hold the id. A Space is not a conversation this route opens. An id
-   * neither knows is a 404 rather than a guess.
+   * The Organization object hosts every Canvas and Sidekick parent and says
+   * which kind an id is in the same read that returns its authority, so a
+   * conversation costs one warm call. An id it does not host is a 404 rather
+   * than a guess.
    */
   async resolveParent(parentId: string): Promise<ResolvedConversationParent> {
     return (await this.resolveParentFor(parentId)).parent;

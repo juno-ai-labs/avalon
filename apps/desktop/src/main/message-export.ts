@@ -156,7 +156,7 @@ const MEASURE_SCRIPT = `void 0, (async () => {
  * stream do not come out identical.
  */
 function splashBackground(seed: number): string {
-  const colours = ['#cedc00', '#47c7fc', '#ccff00', '#b995f5', '#2f7d5c'];
+  const colours = ['#d6ff33', '#47c7fc', '#ccff00', '#b995f5', '#2f7d5c'];
   const positions = [
     { size: '78% 34%', at: '6% 1%' },
     { size: '70% 30%', at: '96% 7%' },
@@ -261,7 +261,7 @@ ${syntax}
      string. Widening that pattern — to SVG, whose data URLs carry quotes and
      angle brackets — means escaping here first. */
   .export-signature .export-mark {
-    background: #b6c400;
+    background: #b8e600;
     display: inline-block;
     height: 15px;
     -webkit-mask: url('${logoDataUrl}') center / contain no-repeat;
@@ -296,7 +296,7 @@ ${syntax}
     top: 2px;
     width: 13px;
   }
-  .markdown-body input[type="checkbox"]:checked { background: #cedc00; border-color: #b6c400; }
+  .markdown-body input[type="checkbox"]:checked { background: #ccff00; border-color: #b8e600; }
   .markdown-body input[type="checkbox"]:checked::after {
     border: solid #2f3121;
     border-width: 0 0 1.6px 1.6px;
@@ -308,7 +308,7 @@ ${syntax}
     transform: rotate(-45deg);
     width: 6px;
   }
-  .markdown-body blockquote { border-left: 3px solid #cedc00; color: #4d4f42; margin: 16px 0; padding: 2px 0 2px 16px; }
+  .markdown-body blockquote { border-left: 3px solid #ccff00; color: #4d4f42; margin: 16px 0; padding: 2px 0 2px 16px; }
   .markdown-body blockquote > :last-child { margin-bottom: 0; }
   .markdown-body hr { background: #e2e0d3; border: 0; height: 1px; margin: 22px 0; }
   .markdown-body img { border-radius: 8px; display: block; height: auto; margin: 16px 0; max-width: 100%; }

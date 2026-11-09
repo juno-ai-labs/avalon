@@ -422,7 +422,7 @@ export const WORKSPACE_PINNED_ORDER_MIGRATION: readonly string[] = [
  * Migration 94: every private Space becomes Organization-wide.
  *
  * Spaces can only be Organization-wide, and a Space grants no reader to its
- * Channels (`docs/spaces.md`), so widening a Space here changes who
+ * Channels (`docs/architecture.md#spaces-space-access-sources-and-projects`), so widening a Space here changes who
  * sees the Space and nothing about who reads any Channel in it: a private
  * Channel stays private with the participants it has. Archived Spaces are
  * widened too, so a restore cannot bring a private one back. The waterline
@@ -439,7 +439,7 @@ export const WORKSPACE_PINNED_ORDER_MIGRATION: readonly string[] = [
  * (`assertRecommendableSidekick`) and stays.
  *
  * The four tables that recorded which Space supplied which Channel readers
- * are dropped with the code that wrote them (`docs/space-access-sources.md`).
+ * are dropped with the code that wrote them (`docs/architecture.md#spaces-space-access-sources-and-projects`).
  * Their receipts stored plans under the old rule, so keeping them would let a
  * retried operation replay a widening or a narrowing nothing decides any more.
  * Readers first: it references the sources table. The readers a Space seated
@@ -484,7 +484,7 @@ export const SPACE_PUBLIC_ONLY_MIGRATION: readonly string[] = [
 
 /**
  * WorkspaceDO migration 102: `spaces.scope` admits `individual`, the Personal
- * Channel each member is given (`docs/spaces.md#the-personal-channel`).
+ * Channel each member is given (`docs/architecture.md#spaces-space-access-sources-and-projects`).
  *
  * SQLite cannot change a `CHECK`, so the table is rebuilt: held, dropped,
  * created with the wider check, refilled, and the hold dropped. No rename, so
@@ -554,7 +554,7 @@ export const SPACE_INDIVIDUAL_SCOPE_MIGRATION: readonly string[] = [
 
 /**
  * WorkspaceDO migration 134: `space_viewers.joined_at`, when each person last
- * became a Channel participant (`docs/digests.md#who-is-told-about-channel-news`).
+ * became a Channel participant (`docs/architecture.md#retired-documents`).
  *
  * `NOT NULL` with no default, which SQLite adds only by a rebuild; the rebuild
  * restores the user index under its v70 name and the memory digest's
@@ -611,7 +611,7 @@ export const SPACE_VIEWER_JOINED_AT_MIGRATION: readonly string[] = [
 
 /**
  * WorkspaceDO migration 104: messages in a Channel itself, outside any
- * thread (`docs/spaces.md#channel-messages`). A building block beside a
+ * thread (`docs/architecture.md#spaces-space-access-sources-and-projects`). A building block beside a
  * Channel's placements: who said it (Rally, or a member), what, and when.
  *
  * `message_id` is derived from the Channel and `message_key` when the poster
@@ -635,7 +635,7 @@ export const SPACE_MESSAGES_MIGRATION: readonly string[] = [
 
 /**
  * WorkspaceDO migration 109: a Channel message can be a thread's merged
- * result, and any Channel message can be Channel news (`docs/conversation-merge.md`).
+ * result, and any Channel message can be Channel news (`docs/architecture.md#retired-documents`).
  *
  * `source_workstream_id` is the thread a message is about; the feed shows such
  * a message only to who can open that thread. `attention_ordinal` is the
@@ -982,7 +982,7 @@ export const WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS: readonly string[] = [
 
 /**
  * Requests by a member to join a Channel or Breakout, each addressed to one
- * approver (`docs/channel-access-requests.md`). At most one pending request
+ * approver (`docs/architecture.md#retired-documents`). At most one pending request
  * per person per conversation: asking again while one is pending reuses it,
  * so a second press sends no second email.
  *

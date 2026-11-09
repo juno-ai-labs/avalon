@@ -174,8 +174,7 @@ describe("boundary contracts", () => {
     };
     // Compared against the last id seen *for that vendor*, not the globally
     // preceding one. A vendor's entries are not required to be contiguous —
-    // `AGENT_MODEL_GROUPS` merges a vendor mentioned in two places into one
-    // section on purpose — so an adjacent-pair walk would skip the comparison
+    // a vendor may be mentioned in two places — so an adjacent-pair walk would skip the comparison
     // for exactly the mistake this exists to catch: `x-ai/grok-9` appended
     // after the DeepSeek block displays under xAI as 4.6 / 4.5 / 4.3 / 9,
     // while its only out-of-order pair never sits adjacent in this list.

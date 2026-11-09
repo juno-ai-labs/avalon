@@ -278,7 +278,7 @@ describe("the sweep attempt at settlement", () => {
     expect(sent).toEqual([expect.objectContaining({ fromSeq: 3, toSeq: 7 })]);
   });
 
-  it("never sweeps a Channel's own feed in this release", async () => {
+  it("never sweeps a retired Space parent's feed", async () => {
     const { env, sent } = fixture();
     expect(await attemptMemorySweep(env, { ...target, parentKind: "space" })).toEqual({ status: "skipped", reason: "space_parent" });
     expect(sent).toEqual([]);

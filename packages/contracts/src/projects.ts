@@ -5,7 +5,7 @@ import { PALETTE_KEYS, PALETTE_RING, type PaletteKey } from "./palette";
  * What is left of Projects and Spaces: the appearance vocabulary, under its
  * old names.
  *
- * The product abstractions are gone — `docs/projects.md` records the Project
+ * The product abstractions are gone — `docs/architecture.md#spaces-space-access-sources-and-projects` records the Project
  * retirement and the Canvases and Sidekicks pivot retired Spaces. These names
  * stay because the stored appearance values, the `--av-sys-color-project-*`
  * design tokens and the `project` colour helpers are internal vocabulary a

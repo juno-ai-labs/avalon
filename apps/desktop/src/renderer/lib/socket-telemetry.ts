@@ -10,7 +10,6 @@ export type RealtimeSocketCause = TelemetryRealtimeSocketCause;
 export function reportWorkstreamSocketStarted(
   workstreamId: string,
   socketLeaseId: string,
-  socket: 'workstream_control' | 'substream_feed',
   reason: WorkstreamSocketStartReason,
   attempts: number,
   operationId: string,
@@ -22,7 +21,9 @@ export function reportWorkstreamSocketStarted(
     workstreamId,
     socketLeaseId,
     ...(openAttemptId ? { openAttemptId } : {}),
-    socket,
+    // The contract still admits `workstream_control` for the lakehouse's
+    // history; the conversation feed is the only socket that reports a start.
+    socket: 'substream_feed',
     reason,
     attempts: telemetryCountBucket(attempts),
   });
@@ -31,12 +32,11 @@ export function reportWorkstreamSocketStarted(
 /**
  * The `realtime_socket_state` producer, one instance per live socket loop.
  *
- * Three hooks run near-identical connect/backoff loops against three different
- * Durable Objects — the workspace directory, the WorkstreamDO control channel,
- * and the AgentLoopDO feed — and the question being asked spans all three:
- * which of them drops, why, and how many attempts a client spends getting back.
- * That only reads as one measurement if the three report the same vocabulary,
- * so the vocabulary lives here rather than three times over.
+ * Two hooks run near-identical connect/backoff loops against two different
+ * Durable Objects (the workspace directory and the AgentLoopDO feed), and the
+ * question being asked spans both: which of them drops, why, and how many
+ * attempts a client spends getting back. That only reads as one measurement if
+ * both report the same vocabulary, so the vocabulary lives here.
  *
  * The cause is stated where it is known and read where the transition is
  * observed, because those are rarely the same line: a heartbeat that times out,

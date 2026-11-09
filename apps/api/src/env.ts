@@ -191,7 +191,6 @@ export interface Env {
   OPENROUTER_PRIMARY_MODEL: string;
   OPENROUTER_FALLBACK_MODELS: string;
   OPENROUTER_CLASSIFIER_MODEL: string;
-  OPENROUTER_STRUCTURED_MODEL: string;
   AZURE_OPENAI_ENDPOINT?: string;
   AZURE_OPENAI_API_KEY?: string;
   AZURE_OPENAI_REALTIME_DEPLOYMENT?: string;
@@ -320,16 +319,6 @@ export interface IdentityAuthContext {
    * correlation value only, not a row anywhere. The objects verify a connector
    * principal against current workspace membership instead of `sessions`;
    * see `AgentLoopDO.connectorPrincipalAuth`.
-   *
-   * The Space cutover's driver is the third construction of `"connector"`, and
-   * for the same reason: it runs with nobody signed in, so its `sessionId` is a
-   * correlation value and the objects verify the member it acts as against
-   * current membership (`docs/spaces.md`).
-   *
-   * A Channel access request's approver has no login session either: their
-   * one-click email approval, and the check that they can still open what
-   * they are asked about, act as them after the Worker re-reads their active
-   * membership (`conversation-access-request-service.ts`).
    *
    * A consumed resource-authorization callback also has no login session. The
    * Worker verifies its sealed provider state, connection, and membership,
@@ -506,7 +495,6 @@ const EnvContractSchema = z.object({
   OPENROUTER_PRIMARY_MODEL: z.string().min(1),
   OPENROUTER_FALLBACK_MODELS: z.string(),
   OPENROUTER_CLASSIFIER_MODEL: z.string().min(1),
-  OPENROUTER_STRUCTURED_MODEL: z.string().min(1),
   AZURE_INFERENCE_ENDPOINT: AzureInferenceEndpointSchema.optional(),
   // Deliberately optional: Azure model routing degrades to OpenRouter when absent.
   AZURE_INFERENCE_API_KEY: z.string().min(1).optional(),

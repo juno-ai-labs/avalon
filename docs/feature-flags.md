@@ -106,9 +106,11 @@ and `agent-model-suggestion-draft` through `retireFlag`, as it does the
 keys, whose callers (session import, suggested work) were deleted too.
 `session_import`, `suggestion_draft` and `turn_disposition_classifier` stay in
 the usage contract's metered activities, so a usage event queued before the
-deploy still parses rather than going unbilled, and `OPENROUTER_STRUCTURED_MODEL`
-has no reader left; removing that Worker variable is a deploy-affecting change
-of its own. `workstream_naming`
+deploy still parses rather than going unbilled. `OPENROUTER_STRUCTURED_MODEL`
+has no reader left and leaves in two deploys: the Worker's environment schema
+stopped requiring it first, so a Worker still carrying the variable starts
+either way, and `wrangler.global.jsonc`, `scripts/sync-dev-env.mjs` and the
+inference-boundaries lint rule drop it in the deploy after. `workstream_naming`
 keeps its Thread-era name because it is a Flagship key, and now titles pasted
 text (`pasted-text-service.ts`); a rename would be a flag migration for no
 change in behaviour. The loop read a window of up to 600 messages to judge whether
@@ -242,14 +244,12 @@ migration.
 
 #### Reading it back inside the conversation
 
-The composer of a conversation that already exists — Main's and a
-substream's — shows the same control in the same place, behind the same **Debug
-enabled** preference: the identical dropdown, trigger and pill and chevron, with
-the trigger `disabled`. That is what
-stops it opening, and its menu is left unrendered because a disabled trigger can
-never reach one. Disabled rather than merely quiet is the honest shape here: the
-pin is written once, when the conversation is created, and nothing afterwards
-edits it, so a menu would offer a change the next run would not honour.
+The composer of a conversation that already exists shows the model as a
+disabled pill with a chevron, behind the **Debug enabled** preference
+(`ComposerModelControl` in `composer-input.tsx`). Disabled rather than merely
+quiet is the honest shape here: the pin is written once, when the conversation
+is created, and nothing afterwards edits it, so a menu would offer a change the
+next run would not honour. No composer offers a choice.
 
 **Same place** is load-bearing and was not always true. The single-row message
 capsule the launchers and conversations wear has no room for a pill beside its
@@ -490,12 +490,10 @@ behave:
 | Flag key | Type | Default | Decides |
 | --- | --- | --- | --- |
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
-| `suggested-work-enabled` | boolean | `false` | Still served; it gated the Suggested Work surfaces, which are deleted, so no client reads it |
 | `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
-false,
-"suggestedWorkEnabled": false, "multipleWorkspacesEnabled": false }` — resolved for the
+false, "multipleWorkspacesEnabled": false }` — resolved for the
 signed-in person. It answers under *identity* auth rather than workspace auth:
 eligibility belongs to the account, and a device that has not chosen an
 workspace yet still has to be told the feature is off rather than read a
@@ -663,8 +661,8 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   `client-feature-flags.ts` describes the person, evaluates the flag, and serves
   the answer; changing who is in is a flag change with a changelog entry, not a
   deploy.
-- **Product Boolean flag names explain true.** `suggested-work-enabled` maps
-  to `suggestedWorkEnabled`; a bare or negatively named Boolean invites one
+- **Product Boolean flag names explain true.** `multiple-workspaces-enabled` maps
+  to `multipleWorkspacesEnabled`; a bare or negatively named Boolean invites one
   layer to invert another.
 - **A product-flag notification carries a key, never a value.** Two people in
   one workspace may match different rules, so WorkspaceDO evaluates each user
@@ -802,8 +800,7 @@ identical. Staging a rollout per region does not need a second app either:
 `region` is in the evaluation context, so a targeting rule reaches one region.
 
 Ace automatically ensures all eight `agent-model-*` JSON flags plus
-`meeting-recording-enabled`, `suggested-work-enabled`,
-`multiple-workspaces-enabled`, and `push-notifications-enabled` exist on every
+`multiple-workspaces-enabled` and `push-notifications-enabled` exist on every
 merge-to-main deployment. It seeds model flags from the checked-in Worker
 defaults and does not overwrite an existing definition. Every product flag
 defaults off except `push-notifications-enabled`, which defaults **on** for
@@ -1054,6 +1051,26 @@ both intent enqueue and delivery. Turning it off stops queued sends as well as
 hiding the Notifications section.
 
 ## Changelog
+
+### 2026-11-09 — `suggested-work-enabled` and the structured model variable leave
+
+**What changed:** `suggested-work-enabled` left `ProductFeatureFlagKeySchema`,
+the served flags object and the API's resolver. The Worker's environment schema
+stopped requiring `OPENROUTER_STRUCTURED_MODEL`. The composer's unbuilt `choice`
+model control and its menu were deleted, leaving the read-only pill.
+
+**Why:** each had no reader since the pivot (the dead-code PRD, phases 2, 4
+and 7).
+
+**Considered and rejected:** removing the variable from Wrangler in the same
+deploy; a Worker built before this change requires it at start-up.
+
+**Consequences:** the variable leaves `wrangler.global.jsonc`,
+`scripts/sync-dev-env.mjs` and the inference-boundaries lint rule in the next
+deploy, followed by `pnpm lint:fresh`. Older desktops parse the flags object
+loosely with a false default, so the dropped field reads as off.
+
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-10-21 — Route the Sidekick wizard independently on Sol
 

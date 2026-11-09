@@ -1832,23 +1832,16 @@ embedded browser: a tool called the run's `desktopAction` executor,
 the desktop answered with `answer_desktop_action`; only the creator's answer
 was accepted (`answersDesktopActions`), the first answer won, and crash repair
 re-entered the `reenterable` browser tools against the durable row. It was
-built for the conversation importer and had no other user. Nothing reaches it:
-`AGENT_PROFILES` (`apps/api/src/services/agent-profiles.ts`) is empty, a run is
-handed `desktopAction` only through a profile's `plugins`,
-`createBrowserPlugin` has no caller outside
-`apps/api/test/desktop-action-tools.test.ts`, and nothing under
-`apps/desktop/src` or `packages/ui/src` handles the request or sends an answer.
-What survives, all unreached: the `desktop_actions` table
-(`workstream-object-schema.ts`, `workstream-desktop-action-storage.ts`); the two
-socket frames in `packages/contracts/src/index.ts`; the action union, results
-and failure codes in `packages/contracts/src/desktop-actions.ts`;
-`requestDesktopAction`, `answerDesktopAction`, `answersDesktopActions` and
-`offerPendingDesktopActions` in `agent-loop-do.ts`; `desktopAction` in
-`runtime/local-authorities.ts`; the `desktop_action_phase` diagnostic; the
-browser tools in `services/desktop-actions/browser-plugin.ts`; and the desktop
-executor in `apps/desktop/src/common/desktop-actions/`, which the equally
-unreached browser script runtime drives
-([its record](embedded-browser.md#retired-documents)). A feature that revives
+built for the conversation importer and had no other user. The dead-code pass
+deleted its server half (the AgentLoopDO methods, the local authority, the
+storage class and the browser plugin) and its desktop executor with the browser
+script runtime ([its record](embedded-browser.md#retired-documents)). What
+stays, for compatibility only: the two socket frames in
+`packages/contracts/src/index.ts` and the action schemas in
+`packages/contracts/src/desktop-actions.ts`, because a desktop still in use may
+send an `answer_desktop_action`, which AgentLoopDO parses, logs as
+`desktop_action_answer_dropped` and drops (the schemas go a release later); and
+the `desktop_actions` table, dropped with an AgentLoopDO migration. A feature that revives
 it inherits four decisions: only the conversation's creator answers unless the
 feature states whose desktop may act; an action is recorded before it is
 published and answered at most once, its answer stored before it is used;
@@ -1858,6 +1851,30 @@ the tab may go to any site, the boundary being the one tab. The Workers proof
 of the creator-only rule went with the import suite and was never replaced.
 
 ## Changelog
+
+### 2026-11-09 — Desktop actions and activity effects stop being produced
+
+**What changed:** AgentLoopDO's desktop-action methods, its storage class, the
+`desktopAction` local authority and the browser plugin were deleted; an
+`answer_desktop_action` frame is parsed, logged as
+`desktop_action_answer_dropped` and dropped. The conversation stopped queueing
+an `activity_event` effect on every participant add and delivered turn.
+
+**Why:** no profile hands a run the desktop-action executor, and nothing has
+acted on an `activity_event` since migration 139 (the dead-code PRD, phase 5).
+
+**Considered and rejected:** removing the frame and effect schemas in the same
+change; a desktop still in use, or an effect already queued, would fail to
+parse.
+
+**Consequences:** the desktop's embedded browser lost its script realm and
+every agent-only command with it, so its command protocol is now only what its
+own controls send ([`embedded-browser.md`](embedded-browser.md)). The frame
+schemas, `WorkstreamActivityEffectSchema` and the `desktop_actions` table go in
+a later step, once the oldest desktop in use has
+updated and the effect queue has drained.
+
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-11-09 — The conversation class is `AgentLoopDO`, a conversation belongs to a Canvas or a Sidekick, and the Thread machinery is deleted
 

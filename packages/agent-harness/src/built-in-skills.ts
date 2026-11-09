@@ -1,5 +1,4 @@
 import { BUILDING_LIVE_SITES_SKILL } from "./building-live-sites-skill";
-import { READING_AI_CHATS_SKILLS } from "./reading-ai-chats-skills";
 import { TASK_SKILLS } from "./task-skills";
 import { TRACKING_SEEN_OR_DONE_ITEMS_SKILL } from "./tracking-seen-or-done-items-skill";
 import { USING_EXTERNAL_STRUCTURED_DATA_SKILL } from "./using-external-structured-data-skill";
@@ -564,9 +563,6 @@ export const BUILT_IN_SKILLS: readonly HarnessSkill[] = [
   // Offered only where the Terminal plugin is in scope, by its `ownerPlugin`:
   // the whole procedure ends in publishing a directory from a sandbox.
   BUILDING_LIVE_SITES_SKILL,
-  // Offered only where Rally's browser plugin is in scope: every step reads or
-  // drives a page open in it.
-  ...READING_AI_CHATS_SKILLS,
   // Task skills route a kind of request ("a report", "an app") to the
   // procedure skills above; see `task-skills/index.ts`.
   ...TASK_SKILLS,
