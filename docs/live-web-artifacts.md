@@ -775,8 +775,8 @@ one. A reservation column in `artifact_registry` was rejected because it needs
 a migration; conditional puts on every asset were rejected because they cannot
 tell a call's own retried upload from a rival's. Version numbers may now have
 gaps where a claim's publish failed; nothing reads them as contiguous. Rally's
-own terminal publish does not claim yet, so two of its runs racing can still
-activate the later-numbered loser; the fences stop a rollback there.
+own terminal publish (`publishSiteResource`) claims the same way, and its
+loser answers `resource_publish_conflict` rather than activating.
 
 ### 2026-11-03 — Per-viewer rows, sign-in from a site's link, public submissions
 

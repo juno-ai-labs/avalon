@@ -43,6 +43,7 @@ import {
   readArtifactVersionFiles,
 } from "./site-import";
 import {
+  claimArtifactVersion,
   existingArtifactForResource,
   pointArtifactAtVersion,
   registerArtifact,
@@ -1117,7 +1118,12 @@ export function createTerminalResourceBridge(
       }
 
       const resourceId = settled?.id ?? newId();
-      const version = (previous?.version ?? 0) + 1;
+      // A republish claims its version before writing any byte of it, so two
+      // runs publishing the same path never write the same version's keys
+      // (`claimArtifactVersion`); a first publish's artifact id is new.
+      const version = previous
+        ? await claimArtifactVersion(env, { artifactId: previous.artifactId, from: previous.version + 1, claimant: effectIntentId })
+        : 1;
       const title = [...(input.displayName?.trim() || siteTitle(input.filePath))].slice(0, 300).join("");
       const written = await writeArtifactVersion(env, {
         workspaceId: context.workspaceId,
@@ -1158,7 +1164,7 @@ export function createTerminalResourceBridge(
       // A swap keeps the row, and with it the alias it already has.
       let slug = settled?.slug ?? null;
       if (settled) {
-        await swapTerminalContent({
+        const swapped = await swapTerminalContent({
           workspace,
           env,
           workspaceId: context.workspaceId,
@@ -1177,6 +1183,16 @@ export function createTerminalResourceBridge(
           effectIntentId,
           publicationEventType: "resource_updated",
         });
+        // Another publish of this path moved the row first: its version is the
+        // one to serve, so this one registers and points at nothing. A retry
+        // finds equal content and answers as a settled publish, or replaces it.
+        if (swapped.superseded) {
+          throw new TerminalToolError(
+            "resource_publish_conflict",
+            "Another publish of this site landed first. Retry publish_resource to publish these files over it.",
+            { reason: "A concurrent publish of the same path won the update." },
+          );
+        }
       } else {
         await insertPublishedResource(workspace, {
           resourceId,
