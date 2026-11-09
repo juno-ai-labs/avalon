@@ -137,7 +137,7 @@ event needs a small stub rather than `new DataTransfer()`.
 
 ## Data model
 
-`WorkspaceDO.workspace_pins` (migration 97, rebuilt by 110 and 141) is keyed
+`WorkspaceDO.workspace_pins` (migration 97, rebuilt by 110 and 136) is keyed
 `(user_id, item_kind, item_id)`, with `parent_id` set exactly when `item_kind`
 is `breakout` or `artifact`, ordered by `workspace_pins_order_idx (user_id,
 item_kind, position, item_id)` and indexed by item for removal

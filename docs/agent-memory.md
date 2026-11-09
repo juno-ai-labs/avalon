@@ -679,7 +679,7 @@ names a Thread; the titles a fact shows are looked up in `canvas_directory`
 as well. The Thread, Breakout and Channel triggers of migration 117 stay on
 their tables, which migration 138 kept for the Thread retirement, and a new
 trigger set goes in its own migration: `MEMORY_DIGEST_SYNC_TRIGGERS` is hashed
-into migrations 117 and 143. A Canvas's own facts have no review surface yet.
+into migrations 117 and 136. A Canvas's own facts have no review surface yet.
 
 Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 

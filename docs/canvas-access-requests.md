@@ -199,9 +199,9 @@ Canvas's title, and pushes it under their `accessRequests` choice; the access
 read gives the denied request's `decidedAt`, to every build: one older than
 contract 13 was first served the request without it, a branch deleted once
 13 became `MINIMUM_SERVED_CLIENT_CONTRACT` and such a build stopped
-connecting. WorkspaceDO migration 152 (folded
-into 137 and 139 before it shipped) rebuilt `workstream_notification_intents` and `workspace_activity_items` to
-admit the kind, as 150 did.
+connecting. WorkspaceDO migration 137 admits the kind in
+`workstream_notification_intents` and migration 139 in
+`workspace_activity_items`.
 Asking again republishes the requester's own Activity list
 (`noteActivityChanged`), because their denied row now reads as seen through
 the seen join: without it the row and the badge stayed unseen on an open
