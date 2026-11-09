@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import type {
   HarnessPlugin,
   HarnessToolContext,
@@ -84,7 +85,7 @@ export function createAvalonMultimodalGenerationPlugin(
   const audioClient = options.audioClient ?? createAzureAudioClient({
     endpoint,
     apiKey,
-    maximumBytes: numericEnv(env, "MAX_ATTACHMENT_BYTES", 25_000_000),
+    maximumBytes: numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES),
   });
   const audioResources = options.audioResources
     ?? createMultimodalAudioResourceStore(env, inObjectResourceAttacher);

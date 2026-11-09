@@ -320,12 +320,16 @@ message. Sidekicks have no tools here.
   In practice a model's tool call is bounded far lower by its output length,
   well under a megabyte, so large binaries come from a client that sends
   them without the model writing them out. No cap is set here.
-- **An MCP request body is at most 4 MiB**, the SDK handler's default
-  (`maxRequestBodySize`), refused with 413 before it is parsed. A tool call
-  publishing content near the API's 25 MB cap is refused here first. Not a
-  number this change chose: it is the library's, kept open for the team to
-  set; the arithmetic is a base64 file of N bytes costing about 4N/3 bytes of
-  request.
+- **An MCP request carries up to the largest artifact Rally takes.** The
+  bound (`MCP_MAX_REQUEST_BYTES`) is `DEFAULT_MAX_ATTACHMENT_BYTES` (25 MB,
+  the one constant every upload and publish path defaults to) as base64,
+  plus 1 MiB for the JSON-RPC envelope; past it the SDK refuses with 413
+  before parsing. A deployment that raises the API's `MAX_ATTACHMENT_BYTES`
+  must raise this Worker's bound too, which cannot read that variable. The
+  MCP Worker holds such a request several times over (the body, the SDK's
+  parse, the body it sends on), so a call near the bound may exceed the
+  isolate's 128 MB and fail; measured in Node, a 25 MB call grew the heap by
+  about 164 MB. In practice a model writes far less into one tool call.
 - **A build needs the Terminal.** In a deployment without it (local
   development by default), a component or project is refused with
   `canvas_build_unavailable`; files with an `index.html` still publish.

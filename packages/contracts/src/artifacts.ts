@@ -192,6 +192,17 @@ export type ArtifactManifestEntry = z.infer<typeof ArtifactManifestEntrySchema>;
 /** Existing manifest ceiling; publishers reserve one slot for derived assets. */
 export const ARTIFACT_MAX_ASSET_COUNT = 10_000;
 
+/**
+ * The largest file Rally takes in or publishes: an upload, a generated or
+ * published artifact, or a site's files together. The API's
+ * `MAX_ATTACHMENT_BYTES` Worker variable overrides it per deployment (set to
+ * this same value in `apps/api/wrangler.global.jsonc`, which cannot import
+ * it); this is the default every reader falls back to, and the bound a client
+ * that cannot read that variable, the MCP server, sizes its requests by.
+ * The team's number.
+ */
+export const DEFAULT_MAX_ATTACHMENT_BYTES = 25_000_000;
+
 /** Normalized metadata Rally can inject into a site's HTML response. */
 export const ArtifactSocialPreviewSchema = z.strictObject({
   title: z.string().min(1).max(300),
