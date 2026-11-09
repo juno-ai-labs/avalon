@@ -5,9 +5,8 @@
  * kept, on an object populated at version 140, the last one main shipped.
  *
  * On real workerd because the claims are about workerd's SQLite with foreign
- * keys enforced: `schedules` is rebuilt without its `digest_schedule_id`
- * foreign key so `digest_schedules` can go, and a rebuild that lost a row
- * would stop a connector poll; a drop in the wrong order would abort on a
+ * keys enforced: `schedules` and `digest_schedules` must come through
+ * untouched, and a drop in the wrong order would abort on a
  * referenced parent and take every Organization offline at construction.
  * The historical schema and its upgrade commit in separate object events, as
  * `durable-object-sqlite.md` requires of an upgrade test.
@@ -35,7 +34,7 @@ const DROPPED_TABLES = [
   "parent_projection_keys", "parent_state_clock", "parent_state_changes", "parent_outbox",
   "parent_breakout_preparations", "parent_breakout_members", "parent_breakout_member_effects",
   "parent_participant_migrations", "parent_connector_admissions", "parent_sidekicks",
-  "workspace_workstream_resource_links", "digest_schedules", "slack_agent_sessions", "slack_agent_feedback",
+  "workspace_workstream_resource_links", "slack_agent_sessions", "slack_agent_feedback",
   "external_registration_generations", "workspace_workstream_effect_receipts",
 ];
 
@@ -88,8 +87,8 @@ describe("the WorkspaceDO Thread parents drop on workerd", () => {
           (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
         VALUES (?, 'workstream', ?, 'global', 1, 1, 1)`, THREAD, WORKSPACE);
       sql.exec(`INSERT INTO parent_sidekicks (parent_id, sidekick_id, attached_at) VALUES (?, ?, 1)`, THREAD, SIDEKICK);
-      // A digest and its schedule beside a connector poll's schedule: only the
-      // poll's can be stored without the column the rebuild removes.
+      // A digest and its schedule beside a connector poll's schedule; 141
+      // leaves both tables as they are.
       sql.exec(`INSERT INTO digest_schedules
           (id, workspace_id, user_id, day_mask, execution_principal_json, created_at, updated_at)
         VALUES ('digest-one', ?, ?, 127, '{}', 'then', 'then')`, WORKSPACE, PERSON);
@@ -137,19 +136,10 @@ describe("the WorkspaceDO Thread parents drop on workerd", () => {
       expect(schemaNames(sql, "trigger").filter((name) => /^memory_digest_(thread|breakout|space)_|^search_authz_workspace_workstream_|^parent_breakout_members_freeze_/u.test(name)))
         .toEqual([]);
 
-      // The poll's schedule, every column as it was; the digest's is gone with its column.
-      expect(sql.exec("SELECT name FROM pragma_table_info('schedules') WHERE name = 'digest_schedule_id'").toArray()).toEqual([]);
-      expect(sql.exec("SELECT * FROM schedules").toArray()).toEqual([{
-        id: "schedule-poll", workspace_id: WORKSPACE, automation_subscription_id: null, connector_connection_id: "connection-one",
-        schedule_type: "interval", rrule: null, interval_seconds: 900, timezone: "UTC", next_run_at: "next", last_run_at: "last",
-        enabled: 1, version: 7, created_at: "then", updated_at: "later",
-      }]);
-      expect(sql.exec("SELECT name FROM sqlite_schema WHERE tbl_name = 'schedules' AND type IN ('index', 'trigger') AND name NOT LIKE 'sqlite_%' ORDER BY name").toArray())
-        .toEqual([{ name: "schedules_due_idx" }, { name: "schedules_workspace_identity_insert" }, { name: "schedules_workspace_identity_update" }]);
-      expect(() => sql.exec(`INSERT INTO schedules
-          (id, workspace_id, connector_connection_id, schedule_type, interval_seconds, timezone, next_run_at, created_at, updated_at)
-        VALUES ('schedule-elsewhere', 'another', 'connection-two', 'interval', 900, 'UTC', 'next', 'now', 'now')`))
-        .toThrow(/workspace_identity_mismatch/u);
+      // `schedules` and `digest_schedules` are untouched: both schedules stay.
+      expect(tables).toEqual(expect.arrayContaining(["schedules", "digest_schedules"]));
+      expect(sql.exec("SELECT id FROM schedules ORDER BY id").toArray())
+        .toEqual([{ id: "schedule-digest" }, { id: "schedule-poll" }]);
 
       expect(sql.exec("SELECT canvas_id, title FROM canvas_directory").toArray()).toEqual([{ canvas_id: CANVAS, title: "Plan" }]);
       expect(sql.exec("SELECT parent_id, user_id FROM parent_grants").toArray()).toEqual([{ parent_id: CANVAS, user_id: PERSON }]);
