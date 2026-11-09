@@ -53,9 +53,9 @@ describe('Ace product-flag fanout', () => {
     };
     const enterpriseSend = vi.fn(async () => undefined);
     const messages = [
+      { body: { kind: 'flagship_product_flag_changed', flagKey: 'push-notifications-enabled' }, ack: vi.fn(), retry: vi.fn() },
       { body: { kind: 'flagship_product_flag_changed', flagKey: 'multiple-workspaces-enabled' }, ack: vi.fn(), retry: vi.fn() },
       { body: { kind: 'flagship_product_flag_changed', flagKey: 'multiple-workspaces-enabled' }, ack: vi.fn(), retry: vi.fn() },
-      { body: { kind: 'flagship_product_flag_changed', flagKey: 'suggested-work-enabled' }, ack: vi.fn(), retry: vi.fn() },
     ];
     const env = createTestEnv({
       GLOBAL_DB: globalDb,

@@ -152,9 +152,9 @@ await Promise.all([
   retireFlag('agent-model-work-opportunity-admission'),
   retireFlag('agent-model-work-opportunity-ranking'),
   retireFlag('agent-model-session-import'),
+  retireFlag('suggested-work-enabled'),
 ]);
 await Promise.all([
-  ensureFlag('suggested-work-enabled', 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.'),
   ensureFlag('multiple-workspaces-enabled', 'True shows workspace switching, invitations, creation, and background attention in Electron; false hides them without changing API availability.'),
   ensureFlag('push-notifications-enabled', 'True enables Apple push delivery and the desktop Notifications setting for everyone from launch; false pauses push for the targeted users.', 'on'),
   ensureModelFlag('agent-model-workstream', 'Runs a Canvas\'s Chat or a Sidekick\'s conversation and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
