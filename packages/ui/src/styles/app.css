@@ -8209,6 +8209,10 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .activity-row.is-seen:not(.is-active) .activity-row-text,
 .activity-row.is-seen:not(.is-active) .activity-row-text strong { color: var(--av-sys-color-text-muted); font-weight: 500; }
 .activity-row.is-seen:not(.is-active) .activity-row-glyph { color: var(--av-sys-color-text-muted); }
+/* The Canvas badge takes the tile's lower right, so a badged glyph sits up
+   and to the left: the right shackle leg, the one stroke that tells the
+   closed lock (a request, a denial) from the open one (a grant), stays clear. */
+.activity-row-tile .activity-row-glyph > svg { transform: translate(-4px, -4px); }
 /* The rows the route has open are drawn open, at full contrast; a gap keeps
    two of them from merging into one block. Keyboard focus is a ring, not the
    open fill, so the focused row and the open one never look alike. */
