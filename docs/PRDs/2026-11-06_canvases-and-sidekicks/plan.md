@@ -343,13 +343,13 @@ stored names `DEMO_OPERATORS_JSON` and role `demos` kept); a dead-code PRD
 (2026-11-08_remove-dead-code-after-the-pivot) holds the removal inventory.
 
 Deploy order added by this round: retiring the demo Organizations on the old
-Worker, step 1 of the deploy order above. D1 0126 (dropping `demo_operations`,
-`demo_operation_phases`, `demo_seed_receipts`) is **not** in this pull
-request: the deploy job applies pending D1 migrations before promoting the
-Worker unless the file is in the Worker-first list, which only works for a
-sole pending migration, and 0125 is pending here. It ships in a follow-up
-pull request that adds 0126 and its name to that list once 0125 has shipped
-(patch kept on branch `followup-d1-0126-demo-drop`). Older desktops: pushes
+Worker, step 1 of the deploy order above. D1 0125 (dropping `demo_operations`,
+`demo_operation_phases`, `demo_seed_receipts`) is this pull request's only
+regional D1 migration and is on the deploy job's Worker-first list, so the
+job promotes the Worker that no longer reads the tables and then applies the
+drop; it refuses to run if any other regional migration is pending beside
+it. The earlier 0125 that rebuilt `demo_seed_receipts` for the new pack never
+shipped and was deleted with the feature. Older desktops: pushes
 of kinds they do not know are dropped, and a message-position link opens the
 app without navigating.
 
