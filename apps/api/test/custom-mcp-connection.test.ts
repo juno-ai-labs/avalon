@@ -612,6 +612,9 @@ function fixture() {
     jurisdiction: (): Env["WORKSPACE_DOS"] => workspaceObjects,
   });
   const database = workspace.objectDatabase;
+  database.prepare(`INSERT INTO canvas_directory (canvas_id, workspace_id, title, created_by_user_id,
+    created_at, updated_at, visibility, authority_generation) VALUES (?, ?, 'MCP catalog', ?, 1, 1, 'creator', 1)`)
+    .run(catalogWorkflowInput().parentId, WORKSPACE_ID, USER_ID);
   const auth: AuthContext = {
     sessionId: "session",
     userId: USER_ID,

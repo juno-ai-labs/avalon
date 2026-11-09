@@ -34,6 +34,13 @@ sandbox is allocated only when one of those tools executes.
 | `apps/api/src/durable-objects/workstream-terminal-storage.ts`, `workstream-terminal-protocol.ts` | The only reader and writer of those tables, and the operation contract derived from it. |
 | `apps/api/src/services/terminal/object-port.ts` | The Worker-side handle every Terminal service holds instead of a database. |
 
+Canvas publication retains its parent id on the resource row. WorkspaceDO
+migration 142 fences writes against that parent's archive tombstone inside the
+same SQLite statement, after byte preparation; a cached publication home is not
+a continuing write grant. Both explicit and implicit Sidekick-run lookups refuse
+an archived Canvas with `canvas_archived`. The run's original identity stays
+reserved: it must choose an active Canvas the Sidekick writes or start a new run.
+
 ### Loading and allocation
 
 `rally:terminal` is a built-in deferred plugin. Bind can discover it without
@@ -1408,6 +1415,15 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-09 — Fence publication against Canvas archive at the resource commit
+
+A resolved or cached publication home is no longer sufficient authority to
+change an archived Canvas. The resource retains its publication parent and
+WorkspaceDO fences mutation inside SQLite, after asynchronous byte preparation.
+Explicit and implicit Sidekick-run lookups both refuse archived destinations;
+a run's original Canvas identity stays reserved so omitting the target cannot
+silently recreate it. Host pointer delivery also observes archive authority.
 
 ### 2026-11-09 — A Canvas has one shared sandbox, and a person's publish can build in it
 

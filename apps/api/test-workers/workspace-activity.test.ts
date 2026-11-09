@@ -192,6 +192,21 @@ beforeEach(async () => {
 });
 
 describe("a person's Activity", () => {
+  it("removes an archived Canvas's Activity and unseen count from open workspace sockets", async () => {
+    const canvasId = await sharedCanvas();
+    const recipient = await connect(RECIPIENT);
+    try {
+      await mention("canvas", canvasId, "archive-activity-mention");
+      await deliverChildEffects(TEST_ENV, conversation(canvasId));
+      await expect.poll(() => activityPushes(recipient.frames).at(-1)).toMatchObject({ unseenCount: 1,
+        items: [expect.objectContaining({ parentId: canvasId, preview: "@Robin please review the plan" })] });
+      await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId,
+        actor: { userId: AUTHOR, actorRole: "member" } });
+      await expect.poll(() => activityPushes(recipient.frames).at(-1)).toMatchObject({ unseenCount: 0, items: [] });
+      expect(await openedActivity(RECIPIENT)).toMatchObject({ unseenCount: 0, items: [] });
+    } finally { recipient.socket.close(1000, "done"); }
+  });
+
   it("records a Canvas Chat mention for the mentioned person and sends it to their sockets only", async () => {
     const canvasId = await sharedCanvas();
     const author = await connect(AUTHOR);

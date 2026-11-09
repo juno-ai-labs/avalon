@@ -6,6 +6,7 @@ import { Ellipsis, Menu } from 'lucide-react';
 import { IconGroup, type IconGroupAction, type TooltipSide } from './icon-group';
 import type { IdentityMark } from './identity-tile';
 import { MarkBridge, type MarkBridgeItem } from './mark-bridge';
+import { MenuActionItem } from './menu-action-item';
 import { IconButton } from './primitives';
 import clsx from 'clsx';
 import { isComposingKeyEvent } from '../lib/ime';
@@ -646,12 +647,13 @@ export function ActionTiles({ children, className }: { children: ReactNode; clas
   return <div className={clsx('title-menu-tiles', className)} role="group" aria-label="Actions">{children}</div>;
 }
 
-export function ActionTile({ icon, label, onSelect, disabled }: {
+export function ActionTile({ icon, label, onSelect, disabled, disabledReason }: {
   icon: ReactNode; label: string; onSelect: (event: Event) => void; disabled?: boolean | undefined;
+  disabledReason?: string | undefined;
 }): React.JSX.Element {
-  return <DropdownMenu.Item className="title-menu-tile" disabled={disabled} onSelect={onSelect}>
+  return <MenuActionItem className="title-menu-tile" disabled={disabled} disabledReason={disabledReason} onSelect={onSelect}>
     {icon}<span>{label}</span>
-  </DropdownMenu.Item>;
+  </MenuActionItem>;
 }
 
 /** A row that opens a level of the menu in place: People, Sidekicks, Breakouts. */

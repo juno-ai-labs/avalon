@@ -115,7 +115,13 @@ The producers are:
   `workstream_participant_removed`. A Sidekick's narrowing covers the Canvases
   it writes too, since those admit its audience. One line,
   `conversation_audience_narrowed`, names the parent, the people and how many
-  messages did not go out.
+  messages did not go out. Canvas archive instead persists its recipients in
+  `canvas_archive_conversation` alarm entries in the tombstone's transaction.
+  Each entry stops its child and publishes these same `substream` Queue hops;
+  failed publication throws into the existing alarm retry gate. Replays retain
+  the saved recipients, since admission after archive cannot reconstruct them.
+  Separate `canvas_archive_artifact` entries withdraw the artifact's sessions
+  and retain an artifact-local tombstone, including against delayed publishers.
 - **A session is revoked.** `AuthService.logout` returns the rows it revoked
   (`RETURNING id, user_id, workspace_id`) and publishes one message per row,
   carrying that session's id. Only the windows that presented that session are
@@ -440,6 +446,15 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-11-09 — Save Canvas archive fan-out before withdrawing admission
+
+Canvas archive commits per-child and per-artifact delivery entries alongside its
+tombstone. A before/after audience comparison cannot replay a failed send once
+the parent admits nobody, so the recipients survive in the existing alarm store
+and failed Queue publication enters its retry gate. Children use the ordinary
+socket revocation messages; artifact hosts retain their own archive tombstones
+and withdraw sessions. No per-read authorization polling is added.
 
 ### 2026-11-09 — Narrowing a Canvas's or a Sidekick's audience closes the feeds it took away, and the Thread and Channel hops end at the consumer
 

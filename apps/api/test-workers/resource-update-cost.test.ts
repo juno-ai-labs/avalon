@@ -45,7 +45,9 @@ it('upgrades committed v42 watermarks without clearing pending work and ignores 
     state.storage.sql.exec('UPDATE resource_search_versions SET revision = 12, pending = 1, not_before = 123');
   });
   await runInDurableObject(stub, (_instance, state) => {
-    applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+    applyDurableObjectSqliteMigrations({ storage: state.storage,
+      // This is migration 43's upgrade contract; later reindex migrations may advance these watermarks.
+      migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 43),
       component: 'workspace_do', workerVersionId: 'new', now: 2 });
     const sql = state.storage.sql;
     expect(watermark(sql)).toEqual({ revision: 12, pending: 1, not_before: 123 });

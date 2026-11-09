@@ -121,6 +121,7 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
+  asArtifactId,
   IdSchema,
   UserIdSchema,
   SubstreamIdSchema,
@@ -174,7 +175,7 @@ import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_ST
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, RESOURCE_SEARCH_AUDIENCE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch, type ResourceSearchPace } from './resource-search-projection';
-import { isDraftUpload, requiresAttachment } from '../services/resource-read-rules';
+import { isDraftUpload, requiresAttachment, resourceCanvasState } from '../services/resource-read-rules';
 import { searchAudienceGroup, searchAudienceGroupIds } from '../services/search-audience';
 import { MEMORY_SEARCH_KEY_PURGE_MIGRATION, SEARCH_AUTHORIZATION_PUSH_MIGRATION } from './search-authorization-projection';
 import { observeSqlWrites } from './sql-write-observer';
@@ -187,6 +188,8 @@ import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import { ApiError } from "../lib/api-error";
 import {
   assertDurableObjectJurisdiction,
+  durableObjectStubForWorkspace,
+  durableObjectStubForArtifact,
   isWorkspacePlacementAffinityForRegion,
   workspacePlacementAffinity,
   type WorkspacePlacementAffinity,
@@ -229,7 +232,7 @@ import {
 } from "../services/workstream-authority";
 
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
-import { workspaceDOName } from "./names";
+import { artifactHostDOName, conversationObjectName, workspaceDOName } from "./names";
 import {
   OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
   applyRetirementGate,
@@ -415,6 +418,7 @@ import {
   MemoryDigestSyncWorkSchema,
   completeMemoryDigestSync,
   memoryDigestSyncWork,
+  MEMORY_DIGEST_CANVAS_ARCHIVE_TRIGGER,
   nextMemoryDigestSyncAt,
   publishMemoryDigestSync,
   releaseMemoryDigestSync,
@@ -709,7 +713,7 @@ import {
 import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-batch";
 import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
 import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
-import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
+import { CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_STATEMENTS, CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
 import { canvasAppearanceReporter, canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS, SIDEKICK_RUN_SEED_DROP_STATEMENTS } from "./hosted-sidekick-schema";
 import {
@@ -1022,7 +1026,7 @@ const RETIRED_ALARM_KINDS: ReadonlySet<string> = new Set([
  */
 const WORKSPACE_DISPATCHED_ALARM_KINDS: ReadonlySet<string> = new Set([
   ...HOSTED_SIDEKICK_ALARM_KINDS, ...RETIRED_ALARM_KINDS, ...WORKSPACE_SCHEDULE_ALARM_KINDS,
-  SCOPE_INVITATION_INDEX_ALARM, SCOPE_INVITATION_DELIVERY_ALARM, SCHEDULE_BOOTSTRAP_ALARM_KIND, CANVAS_NAMING_ALARM_KIND,
+  SCOPE_INVITATION_INDEX_ALARM, SCOPE_INVITATION_DELIVERY_ALARM, SCHEDULE_BOOTSTRAP_ALARM_KIND, CANVAS_NAMING_ALARM_KIND, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM,
   REPLY_BATCH_ALARM_KIND,
 ]);
 
@@ -4401,6 +4405,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "drop the Thread, Breakout and Channel tables the Thread operations kept, and digest schedules",
   // See THREAD_ERA_PARENTS_DROP_MIGRATION and docs/workspace-retirement.md.
   statements: THREAD_ERA_PARENTS_DROP_MIGRATION,
+}, {
+  version: 142,
+  description: "retain a Canvas archive tombstone and remove archived Canvases from active admission",
+  statements: [...CANVAS_ARCHIVE_STATEMENTS, ...MEMORY_DIGEST_CANVAS_ARCHIVE_TRIGGER],
 }];
 
 function conversationToolEntry(conversation: {
@@ -5293,6 +5301,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return (await this.hostedCanvas(input.canvasId, input.workspaceId)).detail(input);
   }
 
+  /** Archive for everyone and close the conversations it no longer admits. */
+  async canvasArchive(input: Parameters<HostedCanvas["archive"]>[0]): Promise<void> {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    await this.canvasWrite(async () => {
+      canvas.archive(input);
+      this.broadcastPresence();
+    });
+  }
+
   /** Record an artifact a publish attached to a Canvas; `noted: false` for an id that is no Canvas. See `HostedCanvas.noteArtifact`. */
   async canvasNoteArtifact(input: Parameters<HostedCanvas["noteArtifact"]>[0]) {
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
@@ -5310,17 +5327,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const input = parseRpcInput(CanvasForSidekickRunRequestSchema, rawInput, "canvas_for_sidekick_run");
     this.assertWorkspace(input.workspaceId);
     if (input.canvasId !== null) {
-      const row = this.state.storage.sql.exec<{ writer_sidekick_id: string | null }>(
-        `SELECT writer_sidekick_id FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, input.canvasId, input.workspaceId,
+      const row = this.state.storage.sql.exec<{ writer_sidekick_id: string | null; archived_at: number | null }>(
+        `SELECT writer_sidekick_id, archived_at FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, input.canvasId, input.workspaceId,
       ).toArray()[0];
       if (row?.writer_sidekick_id !== input.sidekickId) {
         throw new ApiError(404, "canvas_not_written_by_sidekick", "This Sidekick does not write that Canvas");
       }
+      if (row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
       return { canvasId: input.canvasId };
     }
-    return { canvasId: this.state.storage.sql.exec<{ canvas_id: string }>(
-      `SELECT canvas_id FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`, input.sidekickId, input.runId,
-    ).toArray()[0]?.canvas_id ?? null };
+    const row = this.state.storage.sql.exec<{ canvas_id: string; archived_at: number | null }>(
+      `SELECT canvas_id, archived_at FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`, input.sidekickId, input.runId,
+    ).toArray()[0];
+    if (row && row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
+    return { canvasId: row?.canvas_id ?? null };
   }
 
   /**
@@ -5351,7 +5371,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const input = parseRpcInput(CanvasContextRequestSchema, rawInput, "canvas_context");
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
     const row = canvas?.row();
-    if (!canvas || !row || row.workspace_id !== input.workspaceId) return null;
+    if (!canvas || !row || row.archived_at !== null || row.workspace_id !== input.workspaceId) return null;
     return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.artifacts() };
   }
 
@@ -6902,8 +6922,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // Thread and Channel parents' own alarms are gone (plan step C-2); an
         // entry an object armed before that deploy has nothing left to do.
         if (RETIRED_ALARM_KINDS.has(alarm.kind)) return;
-        // A Canvas's share deliveries and lookup rows. One a retired Thread or
-        // Channel armed has no parent left to deliver for.
+        // Archive deliveries commit with the tombstone and retry independently.
+        if (alarm.kind === CANVAS_ARCHIVE_CONVERSATION_ALARM) {
+          const delivery = parseRpcInput(z.strictObject({ canvasId: IdSchema, substreamId: SubstreamIdSchema,
+            users: z.array(UserIdSchema) }), JSON.parse(alarm.payload ?? "null"), "canvas_archive_conversation");
+          const child = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
+            asWorkspaceId(workspaceId), conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), delivery.canvasId, delivery.substreamId));
+          await child.archiveFromParent({ workspaceId, canvasId: delivery.canvasId });
+          const sent = await Promise.all(delivery.users.map((userId) => publishAccessRevocation(this.env, {
+            reason: "workstream_participant_removed", workspaceId: asWorkspaceId(workspaceId), userId, sessionId: null,
+            target: { scope: "substream", workstreamId: delivery.canvasId, substreamId: delivery.substreamId },
+          })));
+          if (sent.some((accepted) => !accepted)) throw new Error("canvas_archive_revocation_deferred");
+          return;
+        }
+        if (alarm.kind === CANVAS_ARCHIVE_ARTIFACT_ALARM) {
+          const delivery = parseRpcInput(z.strictObject({ canvasId: IdSchema }), JSON.parse(alarm.payload ?? "null"), "canvas_archive_artifact");
+          const host = durableObjectStubForArtifact(this.env, this.env.ARTIFACT_HOSTS,
+            artifactHostDOName(this.env.AVALON_REGION, asArtifactId(alarm.key)), this.placementAffinity() ?? undefined);
+          await host.archiveCanvas({ workspaceId, canvasId: delivery.canvasId });
+          return;
+        }
         // A Canvas made with no title, titled from its opening message.
         if (alarm.kind === CANVAS_NAMING_ALARM_KIND) {
           await this.canvasWrite(async () => (await this.canvasParent(alarm.key))?.nameFromOpening());
@@ -11054,10 +11093,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return request.resourceIds.map((resourceId) => {
       const row = this.state.storage.sql.exec<{
         provider: string; resource_type: string; uploaded_by_user_id: string | null;
-        attachment_status: string | null; updated_at: string; connection_id: string | null;
-      }>('SELECT provider, resource_type, uploaded_by_user_id, attachment_status, updated_at, connection_id FROM resources WHERE id = ? AND workspace_id = ?',
+        attachment_status: string | null; updated_at: string; connection_id: string | null; publication_parent_id: string | null;
+      }>('SELECT provider, resource_type, uploaded_by_user_id, attachment_status, updated_at, connection_id, publication_parent_id FROM resources WHERE id = ? AND workspace_id = ?',
       resourceId, request.workspaceId).toArray()[0];
-      if (!row) return { resourceId, exists: false as const, validatedAt: Date.now() };
+      if (!row || (row.provider === 'avalon_generated'
+        && resourceCanvasState(this.state.storage.sql, resourceId, row.publication_parent_id).archived)) {
+        return { resourceId, exists: false as const, validatedAt: Date.now() };
+      }
       const connection = row.connection_id ? this.state.storage.sql.exec<{ scope: string; owner_user_id: string | null; status: string }>(
         'SELECT scope, owner_user_id, status FROM connector_connections WHERE id = ?', row.connection_id,
       ).toArray()[0] : null;
