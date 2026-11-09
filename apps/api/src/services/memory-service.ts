@@ -540,11 +540,23 @@ async function forget(
         { reason: "Call memory_recall; if the fact is not in the results, tell the person it could not be forgotten." },
       );
     case "not_forgettable":
+      // Said in product words: the stored subject kind (`channel`, `thread`)
+      // is not one the model knows. Only Organization facts and those filed
+      // under a retired shared space wait for an administrator (`mayForget`);
+      // any other refusal is a fact about someone else, or one another
+      // conversation learned.
+      if (outcome.subjectKind === "organization" || outcome.subjectKind === "channel") {
+        const what = outcome.subjectKind === "organization" ? "This Organization-wide fact" : "This fact, filed under an earlier shared space,";
+        throw new MemoryToolError(
+          "memory_fact_not_forgettable",
+          `${what} can be forgotten only by an administrator. Tell the person an administrator can remove it from the review surface.`,
+          { reason: `${what} can be forgotten only by an administrator. Do not retry.` },
+        );
+      }
       throw new MemoryToolError(
         "memory_fact_not_forgettable",
-        "That fact is filed for the whole Organization or under an earlier shared space, and only an administrator may forget it. Tell the person an administrator can remove it from the review surface.",
-        // The stored subject kind (`channel`) is not a word the model knows.
-        { reason: `${outcome.subjectKind === "organization" ? "This Organization-wide fact" : "This fact, filed under an earlier shared space,"} can be forgotten only by an administrator. Do not retry.` },
+        "Only the person this fact is about, or the conversation that learned it, can forget it. Tell the person it could not be forgotten from here.",
+        { reason: "Only the person this fact is about, or the conversation that learned it, can forget it. Do not retry." },
       );
   }
 }
