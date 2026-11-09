@@ -63,7 +63,10 @@ export function createIndexedDbStore(definition: IndexedDbStoreDefinition): Inde
 
   const openDatabase = (): Promise<IDBDatabase | null> => {
     if (databasePromise) return databasePromise;
-    databasePromise = new Promise<IDBDatabase | null>((resolve) => {
+    // The promise calls are being served from; a connection that yields only
+    // clears the store's handle while that handle is still its own.
+    let served: Promise<IDBDatabase | null> | null = null;
+    const opening = new Promise<IDBDatabase | null>((resolve) => {
       if (typeof indexedDB === 'undefined') {
         resolve(null);
         return;
@@ -75,14 +78,52 @@ export function createIndexedDbStore(definition: IndexedDbStoreDefinition): Inde
         resolve(null);
         return;
       }
+      let answered = false;
       request.onupgradeneeded = () => {
         upgrade(request.result, request.transaction!);
       };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => resolve(null);
-      request.onblocked = () => resolve(null);
+      request.onsuccess = () => {
+        const database = request.result;
+        // Another window's upgrade or deletion waits until every connection
+        // to the database closes, and every open queued behind it waits too,
+        // with no event at all. Yield at once; the next call reopens.
+        const release = (): void => {
+          if (databasePromise === served) databasePromise = null;
+        };
+        database.onversionchange = () => {
+          database.close();
+          release();
+        };
+        database.onclose = release;
+        if (!answered) {
+          answered = true;
+          resolve(database);
+          return;
+        }
+        // The open was blocked and its caller already took the fallback.
+        // Serve the connection to later calls, unless a close let it go.
+        if (databasePromise !== served) {
+          database.close();
+          return;
+        }
+        served = Promise.resolve(database);
+        databasePromise = served;
+      };
+      request.onerror = () => {
+        answered = true;
+        resolve(null);
+      };
+      // Another connection has not yielded to this open's upgrade. Answer the
+      // fallback now rather than wait on it; the open stays queued and, if it
+      // later succeeds, serves the calls after it.
+      request.onblocked = () => {
+        answered = true;
+        resolve(null);
+      };
     });
-    return databasePromise;
+    served = opening;
+    databasePromise = opening;
+    return opening;
   };
 
   const awaitRequest = <T,>(request: IDBRequest<T>): Promise<T> => new Promise<T>((resolve, reject) => {
