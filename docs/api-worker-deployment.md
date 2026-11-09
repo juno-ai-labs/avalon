@@ -262,7 +262,7 @@ mode-specific constructors. `z.object(shape).strict()` and
 derive another schema at module scope; `z.strictObject(shape)` and
 `z.looseObject(shape)` preserve the validation modes without that intermediate
 startup allocation. A lint rule covers the API and its statically linked
-contracts, agent-harness, and connector packages.
+contracts, Bind, agent-harness, and connector packages.
 
 Six alternating local Wrangler 4.126.0 samples against unchanged baseline
 `87b1a0c` and the direct-constructor working tree measured mean active startup
