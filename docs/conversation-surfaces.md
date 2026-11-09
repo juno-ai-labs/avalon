@@ -866,8 +866,11 @@ selection and message protocol.
 
 **What changed:** `SidekickDetailLayout` puts the conversation in the main
 column under one `TitlePillHeader` (Back and Forward, the Sidekick's glyph and
-name in a pill whose menu offers Pin, Run now and Copy link, and the face pile
-of who is here) and the details in a right-hand column. The "‹ Sidekicks"
+name in a pill whose menu offers Pin, Run now and Copy link) and the details
+in a right-hand column. It first carried a face pile of who is here, which
+could never fill: the workspace socket records only an open Canvas as
+anyone's foreground (`set_presence`), so the pile was removed rather than
+left as a slot that promised presence. The "‹ Sidekicks"
 crumb, the "Conversation" heading and the Conversation/Details switch row are
 gone; below 900px the header's **Sidekick details** button switches to the
 details under that same header. An open run is a "Run" pill after the
