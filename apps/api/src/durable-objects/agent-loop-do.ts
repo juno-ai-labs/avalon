@@ -7082,9 +7082,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * An object whose parent was retired runs nothing on its alarm: every lane
    * reads the hosted identity, which refuses that kind, so a due wake reason
    * left in a Thread's object (a memory sweep retry, an outbox row, an agent
-   * timer) would otherwise throw on every pass until `retire_threads` closes
-   * the object. It is logged once per firing and the slot is cleared;
-   * the rows stay for the retirement to discard.
+   * timer) would otherwise throw on every pass. It is logged once per firing
+   * and the slot is cleared; the rows stay unread.
    */
   override async alarm(): Promise<void> {
     await this.storageReady;
