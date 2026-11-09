@@ -57,23 +57,21 @@ beforeEach(() => {
 });
 
 describe('CanvasesHomeScreen', () => {
-  it("draws each card's title beside its Canvas's mark, in the icon and colour chosen for it, and a Chat-only shot in the same", () => {
+  it("draws each Canvas's icon and colour in its preview and leaves its title without an icon", () => {
     renderHome(clientWith([
-      canvas('00000000-0000-7000-8000-0000000000c1', 'Chosen', { appearance: { icon: 'flag', color: 'orange' } }),
+      canvas('00000000-0000-7000-8000-0000000000c1', 'Chosen', { artifactKind: 'site', appearance: { icon: 'flag', color: 'orange' } }),
       canvas('00000000-0000-7000-8000-0000000000c2', 'Unchosen', { artifactKind: 'file', appearance: { icon: null, color: null } }),
+      canvas('00000000-0000-7000-8000-0000000000c3', 'Archive', { artifactKind: 'archive' }),
+      canvas('00000000-0000-7000-8000-0000000000c4', 'Chat only'),
     ]));
     const card = (title: string): HTMLElement => screen.getByRole('link', { name: title }).closest('li')!;
-    const shapes = (title: string): HTMLElement[] => [...card(title).querySelectorAll<HTMLElement>('.identity-tile-shape')];
-    // The title's mark and the Chat-only shot's.
-    expect(shapes('Chosen')).toHaveLength(2);
-    for (const shape of shapes('Chosen')) {
-      expect(shape).toHaveStyle({ background: 'var(--av-sys-color-project-tint-orange)' });
-      expect(shape.querySelector('svg')).toHaveClass('lucide-flag');
+    for (const [title, glyph] of [['Chosen', 'flag'], ['Unchosen', 'file-text'], ['Archive', 'archive'], ['Chat only', 'panels-top-left']] as const) {
+      expect(card(title).querySelectorAll('.canvas-card-shot svg')).toHaveLength(1);
+      expect(card(title).querySelector('.canvas-card-shot svg')).toHaveClass(`lucide-${glyph}`);
+      expect(card(title).querySelector('h3 svg')).toBeNull();
     }
-    // Unchosen: its kind and the hue its id gives it; its shot is the document sketch.
-    expect(shapes('Unchosen')).toHaveLength(1);
-    expect(shapes('Unchosen')[0]).toHaveStyle({ background: 'var(--av-sys-color-project-tint-emerald)' });
-    expect(shapes('Unchosen')[0]!.querySelector('svg')).toHaveClass('lucide-file-text');
+    expect(card('Chosen').querySelector('.canvas-card-shot')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-orange)', color: 'var(--av-sys-color-project-ink-orange)' });
+    expect(card('Unchosen').querySelector('.canvas-card-shot')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-emerald)' });
   });
 
   it('lifts the Canvases people are in now into Live now and lists the rest as Recent', async () => {
