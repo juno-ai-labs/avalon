@@ -34,7 +34,9 @@ import { sidekickRunLabel, useSidekickRunNumber } from '../components/sidekick-r
 export function AutomationScreen(): React.JSX.Element {
   const { id } = useParams();
   if (id === undefined || id === 'new') return <NewAutomationScreen />;
-  return <AutomationDetailScreen id={id} />;
+  // Keyed by the Sidekick, so an error or a pending action shown for one is
+  // not carried over to the next one opened in its place.
+  return <AutomationDetailScreen id={id} key={id} />;
 }
 
 /** A failed Sidekick screen's way on; the sidebar beside it is the way out. */
@@ -118,6 +120,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const delegates = useSidekickDelegates(id);
+  const sidekickRows = useSidekickList();
   const automation = useQuery({
     queryKey: ['automation', id],
     queryFn: ({ signal }) => api!.getAutomation(id, signal),
@@ -208,14 +211,22 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
       </div>
     );
   }
-  if (!automation.data) return <OpeningState label="Opening Sidekick…" />;
+  // The list row is enough to mount the conversation, which is what takes
+  // longest to open: it starts at once and the header and details fill in
+  // when the detail read answers, rather than everything waiting for it.
+  const row = sidekickRows?.find((candidate) => candidate.id === id);
   const detail = automation.data;
+  if (!detail && !row) return <OpeningState label="Opening Sidekick…" />;
+  const conversation = detail
+    ? { id, name: detail.currentDefinition?.name ?? detail.name, draft: detail.lifecycle === 'draft', canvases: detail.canvases ?? [],
+      manages: viewerManagesSidekick(detail, session) }
+    : { id, name: row!.name, draft: row!.status === 'draft', canvases: [], manages: false };
   const copySidekickLink = async (): Promise<void> => {
     if (!session?.workspace) throw new Error('No active organization');
     await copyLink({ kind: 'sidekick', region: session.workspace.region, workspaceId: session.workspace.id, sidekickId: id });
   };
   return (
-    <SidekickDetailLayout key={id} details={<AutomationHeader
+    <SidekickDetailLayout key={id} details={!detail ? <OpeningState label="Opening Sidekick…" /> : <AutomationHeader
       automation={detail}
       delegateNames={new Map([...(delegates.data?.delegates ?? []), ...(delegates.data?.creator ? [delegates.data.creator] : [])].map((person) => [person.userId, person.displayName]))}
       delegation={<SidekickDelegation id={id} />}
@@ -231,11 +242,11 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
       runsError={runs.error?.message}
     />} header={(context) => <SidekickHeader
       context={context}
-      detail={detail}
+      detail={detail ?? { id, name: row!.name, currentDefinition: null, ...(row!.appearance ? { appearance: row!.appearance } : {}) }}
       onCopyLink={copySidekickLink}
-      onRunNow={detail.lifecycle === 'active' && !act.isPending ? () => act.mutate('run') : undefined}
+      onRunNow={detail?.lifecycle === 'active' && !act.isPending ? () => act.mutate('run') : undefined}
     />}>
-      <SidekickConversation detail={detail} manages={viewerManagesSidekick(detail, session)} />
+      <SidekickConversation {...conversation} />
     </SidekickDetailLayout>
   );
 }
@@ -250,7 +261,8 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
  */
 function SidekickHeader({ context, detail, onCopyLink, onRunNow }: {
   context: SidekickDetailHeaderContext;
-  detail: AutomationDetail;
+  /** The detail, or what the list row already says of it while the detail is read. */
+  detail: Pick<AutomationDetail, 'id' | 'name' | 'appearance'> & { currentDefinition: { name: string } | null };
   onCopyLink: () => Promise<void>;
   /** Absent while the Sidekick cannot start a run; the details say why. */
   onRunNow: (() => void) | undefined;
@@ -326,15 +338,16 @@ function SidekickHeader({ context, detail, onCopyLink, onRunNow }: {
  * the server refuses the mark from anyone else. A draft has nothing to run
  * yet, so a manager opens one already editing.
  */
-function SidekickConversation({ detail, manages }: { detail: AutomationDetail; manages: boolean }): React.JSX.Element {
+function SidekickConversation({ id, name, draft, canvases, manages }: {
+  id: string; name: string; draft: boolean; canvases: NonNullable<AutomationDetail['canvases']>; manages: boolean;
+}): React.JSX.Element {
   const [search] = useSearchParams();
   const runId = search.get('run');
-  const [editing, setEditing] = useState(detail.lifecycle === 'draft');
-  const name = detail.currentDefinition?.name ?? detail.name;
+  const [editing, setEditing] = useState(draft);
   if (runId) {
     return <ConversationSurface
       key={`run:${runId}`}
-      parentId={detail.id}
+      parentId={id}
       parentKind="automation"
       // No composer: a message to the Sidekick goes in the shared
       // conversation, where it starts the next run. A question the run asked
@@ -345,7 +358,6 @@ function SidekickConversation({ detail, manages }: { detail: AutomationDetail; m
     />;
   }
   const edit = manages && editing;
-  const canvases = detail.canvases ?? [];
   return <ConversationSurface
     {...(manages ? { composerMenuActions: [{
       checked: editing,
@@ -366,7 +378,7 @@ function SidekickConversation({ detail, manages }: { detail: AutomationDetail; m
     } : {})}
     key="shared"
     messageIntent={edit ? 'edit_sidekick' : undefined}
-    parentId={detail.id}
+    parentId={id}
     parentKind="automation"
     // Always an element: the surface's grid gives its first row to the header,
     // and an empty one keeps the feed in the row that scrolls.
