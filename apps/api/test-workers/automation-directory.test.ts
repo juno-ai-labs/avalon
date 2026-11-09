@@ -142,7 +142,7 @@ describe("automation directory", () => {
     expect((await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID })).items.map((item) => item.id)).toEqual([shared]);
   });
 
-  it("reads the Sidekicks asked for and the ones a Channel recommends in one call, asked-for first and each once", async () => {
+  it("reads the Sidekicks asked for in one call, in the order asked and each once", async () => {
     // Created in this order, so their ids sort A < B < C < D: an order by id
     // is not the order asked for.
     const [a, b, c, d] = [nextAutomationId(), nextAutomationId(), nextAutomationId(), nextAutomationId()];
@@ -152,25 +152,17 @@ describe("automation directory", () => {
         lifecycle: "active", scope: "workspace", title, description: "",
       });
     }
-    // The Channel recommends B first, then A, which is also asked for and
-    // keeps its asked-for place. B's place among the recommendations ties
-    // with C's among the asked-for, so only the tiers order them.
     await runInDurableObject(workspaceStub(), (_instance, state) => {
       // Hosted rows, as a Sidekick's own writes leave them.
       state.storage.sql.exec(`UPDATE automation_directory SET region = 'global'`);
-      for (const [sidekickId, attachedAt] of [[b, 1], [a, 2]] as const) {
-        state.storage.sql.exec(
-          `INSERT INTO parent_sidekicks(parent_id, sidekick_id, attached_at) VALUES (?, ?, ?)`, ROOM_ID, sidekickId, attachedAt,
-        );
-      }
     });
 
     const summaries = await workspaceStub().sidekickReadSkillSummaries({
-      workspaceId: WORKSPACE_ID, automationIds: [d, c, a], channelId: ROOM_ID,
+      workspaceId: WORKSPACE_ID, automationIds: [d, c, a, c],
       principalUserId: AUTHOR_ID, conversationParentId: ROOM_ID, audienceScope: "workspace", audienceUserIds: [AUTHOR_ID],
     });
 
-    expect(summaries.map((summary) => summary.name)).toEqual(["D", "C", "A", "B"]);
+    expect(summaries.map((summary) => summary.name)).toEqual(["D", "C", "A"]);
   });
 
   it("lists the library from the membership its authentication read, reading none itself", async () => {

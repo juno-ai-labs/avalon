@@ -32,7 +32,8 @@ it("upgrades a populated v68 breakout directory without losing its row and const
 
   await runInDurableObject(stub, (_instance, state) => {
     applyDurableObjectSqliteMigrations({
-      storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+      // Through 140: migration 141 drops `breakouts` with the Thread tables.
+      storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 140),
       component: "workspace_do", workerVersionId: "with-breakout-appearance", now: 2,
     });
     const sql = state.storage.sql;

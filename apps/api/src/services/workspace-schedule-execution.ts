@@ -131,7 +131,6 @@ interface ScheduleRow {
   id: string;
   workspace_id: string;
   connector_connection_id: string | null;
-  digest_schedule_id: string | null;
   schedule_type: string;
   rrule: string | null;
   interval_seconds: number | null;
@@ -631,9 +630,6 @@ async function runSchedule(
 
   if (schedule.connector_connection_id) {
     await startConnectorPoll(ctx, schedule);
-  } else if (schedule.digest_schedule_id) {
-    // Digests were retired (plan step C-2); a row written before that sends
-    // nothing and is advanced as before until the C-7 migration drops it.
   } else {
     throw new Error("unsupported_schedule_target");
   }
