@@ -3320,11 +3320,10 @@ export class WorkstreamObjectProductService {
       includeAttachmentContents: true,
     });
     if (!bindMessage) throw new Error("pending_input_bind_payload_invalid");
-    // Outside text steers what is running only when its sender, the Rally
-    // user their provider identity resolved to, may continue it (`steerAllowed`).
+    // Under a Sidekick outside text queues rather than steers
+    // (`steerAllowed`): it continues the run at the claim, as the run.
     const queueInstead = input.runMode === "steer" && !await this.steerAllowed(input.workspaceId,
-      continuationSender({ actor: "external", author_user_id: null },
-        { slackOrigin: "slackOrigin" in input ? input.slackOrigin ?? null : null }));
+      continuationSender({ actor: "external", author_user_id: null }, {}));
     return { participant, bindPayloadJson: canonicalModelMessageJson(bindMessage), queueInstead };
   }
 

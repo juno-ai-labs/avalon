@@ -30,15 +30,15 @@ describe("who sent a Sidekick run's input", () => {
     })).toEqual({ kind: "person", userId: READER_ID });
   });
 
-  it("names nobody for an agent acting for no person, as for outside text no one resolved", () => {
+  it("marks an agent acting for no person as unattributed", () => {
     const workspace = { type: "workspace", workspaceId: "00000000-0000-7000-8000-00000000d104" };
     expect(continuationSender(SYSTEM, { agentExchange: { senderAgentId: OTHER_AGENT }, senderExecutionPrincipal: workspace }))
-      .toEqual({ kind: "external" });
+      .toEqual({ kind: "unattributed" });
   });
 
-  it("names the Rally user a provider identity resolved to, and nobody otherwise", () => {
+  it("reads a reply in a bound provider thread as outside text, whoever its provider identity resolved to", () => {
     expect(continuationSender({ actor: "external", author_user_id: null }, { slackOrigin: { matchedAvalonUserId: READER_ID } }))
-      .toEqual({ kind: "person", userId: READER_ID });
+      .toEqual({ kind: "external" });
     expect(continuationSender({ actor: "external", author_user_id: null }, { slackOrigin: null }))
       .toEqual({ kind: "external" });
   });

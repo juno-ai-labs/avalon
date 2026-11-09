@@ -683,11 +683,9 @@ Sidekick is shared with is refused by name
 ([continuing a run](automation-lifecycle.md#continuing-a-run)). Another
 agent's message counts as the person that agent acts for, and a retry as the
 person retrying. Outside Rally, a reply in a provider thread bound to the run
-continues it only when its sender's provider identity resolves to a Rally user
-the same rule admits; a sender Rally cannot name is refused
-(`run_continuation_requires_rally_user`), because the run would otherwise act
-as its principal for anyone in the thread. For Slack, the sender check also
-refuses guests (restricted and single-channel accounts) and members of another
+continues it under the run's own principal whoever sent it: every binding is
+one the run's own outbound message made, so a reply there is the answer the
+run asked for. For Slack, the sender check refuses guests (restricted and single-channel accounts) and members of another
 team, such as Slack Connect users, before the reply reaches the run. The
 mitigation for what an admitted reply says is framing:
 outside text in a run child reaches the model as labelled evidence from its
