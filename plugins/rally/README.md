@@ -1,9 +1,11 @@
 # Rally for Claude
 
 Connects Claude to Rally through Rally's MCP server at
-`https://mcp.rallywith.ai/mcp`, and adds a skill for working with Canvases:
-finding them, asking Rally to make or change their artifacts, sharing them,
-and keeping them tidy.
+`https://mcp.rallywith.ai/mcp`, and adds two skills: `canvases`, for finding
+Canvases, asking Rally to make or change their artifacts, sharing them and
+keeping them tidy, and `publishing`, for publishing work made here into one.
+The server serves the same two skills to any client that reads skills over
+MCP.
 
 ## Install
 

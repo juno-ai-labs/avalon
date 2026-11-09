@@ -21,7 +21,8 @@ system.
 | --- | --- |
 | `apps/mcp/src/index.ts` | The Worker: OAuth metadata (RFC 9728, RFC 8414), forwarding `/register`, `/token` and `/revoke` to the identity API, the 401 challenge, and the Streamable HTTP MCP endpoint. |
 | `apps/mcp/src/api.ts` | `inspectBearer` (the unverified read of a token's audience, expiry and region), `regionalApi` (the service binding for a region) and `RallyApi`, the product API as the connected person. |
-| `apps/mcp/src/server.ts` | The tools and the server's instructions. |
+| `apps/mcp/src/server.ts` | The tools, resources, prompts and the server's instructions. |
+| `apps/mcp/src/skills.ts` | The skills catalog, served from the plugin's own `SKILL.md` files. |
 | `packages/contracts/src/mcp-oauth.ts` | The OAuth vocabulary: registration, the authorization request, approval, token request and response, the redirect allowlist (`isAllowedMcpRedirectUri`) and the one scope. |
 | `apps/api/src/services/mcp-oauth-service.ts` | `McpOAuthService`: registration, consent description, approval and denial, the code exchange, refresh and revocation. |
 | `apps/api/src/routes/mcp-oauth.ts` | `/mcp-oauth/register`, `/mcp-oauth/token`, `/mcp-oauth/revoke`, answering OAuth's error shape. |
@@ -211,6 +212,35 @@ already text (Markdown, CSV, HTML, JSON) reads as its original, so an
 artifact can be read back the moment it is published. A PDF or a sheet
 answers that its text is not ready yet.
 
+### Skills, resources and prompts
+
+The Worker serves the MCP SDK's own handler (`createMcpHandler` from
+`@modelcontextprotocol/server` 2.4.0), one stateless server per request, for
+both the 2026-07-28 protocol and the 2025-era protocol clients speak today.
+
+**Skills.** Through MCP's skills extension (`io.modelcontextprotocol/skills`)
+the server lists and serves two skills: `skill://rally/canvases/SKILL.md`
+(finding, changing, sharing and tidying Canvases) and
+`skill://rally/publishing/SKILL.md` (bringing in work made elsewhere). They
+are the plugin's own files (`plugins/rally/skills/*/SKILL.md`), bundled into
+the Worker as text, so Claude Code's plugin and every client that reads
+skills from a server get one copy. Each listing carries the files' digests,
+and the SDK's `SkillCatalog` computes them from the bytes it serves.
+
+**Resources.** Three templates: `rally://canvas/{canvasId}` (the detail),
+`rally://canvas/{canvasId}/chat` (the Chat's first page) and
+`rally://artifact/{resourceId}/v{version}` (a version as text). They are not
+listed; `list_canvases` finds Canvases. `get_canvas` returns a resource link
+for each artifact, and `publish_file` and `publish_site` one for the version
+they made, so a client can read it back without another tool call. An id
+that is not one is refused before Rally is asked.
+
+**Prompts.** `publish_to_rally`, `start_canvas` and `catch_up`, which Claude
+shows as slash commands. Each is a user message that names the workflow.
+
+The server's instructions stay sufficient on their own for a client that
+reads neither skills nor prompts, and point at the two skills.
+
 The server's initialization instructions tell the model that Rally, the agent
 in the Canvas, does the work: a change to an artifact is a message to the
 Chat, followed by reading the Chat.
@@ -290,6 +320,12 @@ message. Sidekicks have no tools here.
   In practice a model's tool call is bounded far lower by its output length,
   well under a megabyte, so large binaries come from a client that sends
   them without the model writing them out. No cap is set here.
+- **An MCP request body is at most 4 MiB**, the SDK handler's default
+  (`maxRequestBodySize`), refused with 413 before it is parsed. A tool call
+  publishing content near the API's 25 MB cap is refused here first. Not a
+  number this change chose: it is the library's, kept open for the team to
+  set; the arithmetic is a base64 file of N bytes costing about 4N/3 bytes of
+  request.
 - **A build needs the Terminal.** In a deployment without it (local
   development by default), a component or project is refused with
   `canvas_build_unavailable`; files with an `index.html` still publish.
@@ -330,6 +366,10 @@ message. Sidekicks have no tools here.
   report on the last line). On 2026-11-09 it built a Claude-style dashboard
   (recharts, lucide-react, shadcn Card/Button/Badge, Tailwind), a timer and a
   Vite project, and refused a component that throws on render.
+- `pnpm --filter @rally/mcp test` also covers the skills (each served
+  file matches the digest its listing advertises), the resources (a link from
+  `get_canvas` read back as text, and a malformed id refused before Rally is
+  asked) and a prompt.
 - `pnpm --filter @rally/mcp test`: the challenge, the metadata, token
   forwarding and the tools, with a double for the API's service binding only.
 - `claude plugin validate ./plugins/rally` and `claude plugin validate .`
@@ -387,6 +427,9 @@ source, not a page, so a publish detects what it was given in the Worker and
 builds only what needs it, in the Canvas's own sandbox (the product decision
 of 2026-11-09 that a Canvas has one shared sandbox); compiling in the page
 from a CDN was rejected because it loads code from elsewhere on every view
-and never checks the page renders. A future change must keep MCP and desktop
+and never checks the page renders. The Worker serves the SDK's handler rather than the `agents` package's,
+which pinned the SDK to an exact older version and would have blocked the
+skills extension. Skills are served from the plugin's files rather than
+written a second time. A future change must keep MCP and desktop
 refresh apart, keep `MCP_ROUTE_FAMILIES` to the routes the tools call, and
 change a publication write in `resource-publication.ts` for both publishers.

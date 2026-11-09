@@ -6,6 +6,9 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-30",
   "compatibility_flags": ["nodejs_compat"],
+  // The plugin's skills ship inside the Worker as text, so the server and the
+  // Claude Code plugin serve one copy (src/skills.ts).
+  "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
   "workers_dev": false,
   "preview_urls": false,
   "vars": {
