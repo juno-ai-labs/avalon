@@ -55,6 +55,8 @@ describe("Sidekick consent authority in real workerd", () => {
       // No inference: admit the execution receipt without activating its loop.
       await create();
       const parentId = room ? crypto.randomUUID() : sidekickId;
+      if (room) await stub().canvasCreate({ workspaceId, canvasId: parentId, title: "Consent recovery",
+        createdByUserId: other, authorityGeneration: 1 });
       const triggerMessageId = crypto.randomUUID();
       const child = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, parentId));
       const input = runInput(crypto.randomUUID(), { workspaceId, parentId, parentKind: room ? "canvas" : "automation",
