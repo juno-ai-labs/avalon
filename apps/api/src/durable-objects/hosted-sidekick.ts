@@ -393,6 +393,12 @@ export interface HostedSidekickHost {
    * to that person's sockets, since nobody else's row moved.
    */
   noteViewerReadChanged(userId: string): void;
+  /**
+   * Inside the transaction that changed who may open the Canvases this
+   * Sidekick writes (its audience, which `canvasAdmits` reads live): every
+   * viewer's Canvas list moved.
+   */
+  noteCanvasDirectoryChanged(): void;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** See `HostedConversationHost.noteActivityChanged`. */
   noteActivityChanged(userId: string): void;
@@ -1102,6 +1108,11 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         request.update.audience === "workspace" ? "workspace" : "personal", now, this.sidekickId,
       );
       this.touchDirectory(now);
+      // A Canvas it writes admits its audience, so newly admitted readers
+      // gain those rows and removed ones lose them now, not at reconnect.
+      if (this.sql.exec(`SELECT 1 FROM canvas_directory WHERE writer_sidekick_id = ? LIMIT 1`, this.sidekickId).toArray().length > 0) {
+        this.host.noteCanvasDirectoryChanged();
+      }
     });
     return this.detail();
   }

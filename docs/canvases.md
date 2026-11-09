@@ -365,8 +365,11 @@ audience (`canvasReaderAllows` for a person, Organization-wide for
 
 The workspace socket carries each viewer's Canvas list: `canvases` on the
 subscribe payload's sidebar, and a `workspace_canvas_list` push whenever a
-Canvas's row, its participants, a Chat's latest message or who is in a Canvas
-moves (to every socket, each read for its own viewer), or one person's read of
+Canvas's row, its participants, a Chat's latest message, who is in a Canvas,
+or the audience of the Sidekick that writes it moves (to every socket, each
+read for its own viewer; a Sidekick call ends with the same publish a Canvas
+write does, and `HostedSidekick.setAudience` marks the list when the Sidekick
+writes any Canvas), or one person's read of
 a Chat or their pins move (to that person's sockets alone). It is its own
 event type rather than a third `workspace_sidebar_list` member because a
 released client fails a discriminator value it does not know and ignores an
@@ -1121,7 +1124,11 @@ of the pivot (decision log, "An open Canvas reuses the conversation layout").
 
 **Consequences:** A guest is admitted only from a list; the participant list,
 not the grant, is the authority for whom managers added; a writer Sidekick's
-audience is read live. A new hosted parent kind extends `HostedConversation`
+audience is read live, so anything that changes that audience must mark the
+Canvas list (`noteCanvasDirectoryChanged` on the Sidekick host) in the same
+transaction: the first build marked only the Sidekick list, so someone a
+Sidekick was newly shared with did not see its Canvases, and someone it was
+unshared from kept their rows, until they reconnected. A new hosted parent kind extends `HostedConversation`
 and is dispatched in `WorkspaceDO.hostedConversationParent`. Listing a Canvas's
 shares and grants has no route. The client (plan step A-12) draws a Canvas
 with the conversation layout: the Chat in `ConversationSurface` and the

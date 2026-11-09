@@ -5871,6 +5871,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.sidekickReadersMoved.add(userId);
       },
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
+      noteCanvasDirectoryChanged: () => this.noteCanvasDirectoryMoved(),
       noteActivityChanged: (userId) => this.noteActivityMoved(userId),
       noteActivityReadMoved: (userId, parentId) => this.noteActivityReadMoved(userId, parentId),
       sendRunProvision: async (message) => {
@@ -6019,13 +6020,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(workspaceId);
   }
 
-  /** Run a hosted Sidekick call, then publish the sidebar list and arm what it scheduled. */
+  /** Run a hosted Sidekick call, then publish the sidebar lists it moved and arm what it scheduled. */
   private async sidekickCall<T>(automationId: string, workspaceId: string, run: (sidekick: HostedSidekick) => Promise<T> | T): Promise<T> {
     const sidekick = await this.hostedSidekick(automationId, workspaceId);
     try {
       return await run(sidekick);
     } finally {
       this.publishSidekickList();
+      // A no-op unless the call moved the Canvases it writes (`noteCanvasDirectoryChanged`).
+      this.publishCanvasList();
       this.publishActivityList();
       await this.afterHostedWrite();
     }
