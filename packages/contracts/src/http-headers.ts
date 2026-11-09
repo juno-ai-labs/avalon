@@ -92,7 +92,11 @@ export const GUEST_WORKSPACES_CLIENT_CONTRACT = 4;
  * shows itself reconnecting until the desktop auto-updater (first check ten
  * minutes after launch, then every three hours) installs the pivot build and
  * offers Restart to update; a stale web tab loops until it is reloaded. The
- * 426 itself is legible only in telemetry (`ticket_failed`) and the API log.
+ * 426 itself is legible to those builds only in telemetry (`ticket_failed`)
+ * and the API log. From this release on, the renderer reads it as permanent:
+ * the workspace socket stops dialling (`update_required`) and the pages it
+ * fills offer Update Rally on desktop and Reload Rally in a browser, so the
+ * next raise of this number tells the person.
  */
 export const MINIMUM_SERVED_CLIENT_CONTRACT = 13;
 

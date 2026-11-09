@@ -23,7 +23,12 @@ export const WORKSPACE_SYNC_RELAY_IPC_CHANNELS = {
   conversationView: 'workspace-sync:conversation-view',
 } as const;
 
-export type WorkspaceSyncConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
+/**
+ * `update_required`: the server refused this build the socket ticket with 426
+ * `client_update_required` (`MINIMUM_SERVED_CLIENT_CONTRACT`). Permanent for
+ * this build; nothing dials again until it is replaced.
+ */
+export type WorkspaceSyncConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'unavailable' | 'update_required';
 
 /**
  * Which Organization a socket serves. Workspace UUIDs are unique only within a

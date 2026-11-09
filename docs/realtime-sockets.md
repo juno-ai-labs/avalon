@@ -644,8 +644,15 @@ namespace helper.
   dial: it retries with backoff to a 30 s ceiling and shows itself
   reconnecting until the desktop auto-updater (first check ten minutes after
   launch, then every three hours) installs the current build and offers
-  Restart to update; a stale web tab loops until it is reloaded. The refusal
-  is legible only in telemetry (`ticket_failed`) and the API log.
+  Restart to update; a stale web tab loops until it is reloaded. To such a
+  build the refusal is legible only in telemetry (`ticket_failed`) and the
+  API log. From this release on, the renderer reads the 426 as permanent:
+  the workspace socket's state becomes `update_required` and it never dials
+  again, the pages waiting on its lists say "This version of Rally is out of
+  date." with **Update Rally** (the desktop updater: install the downloaded
+  build, or check for one) or **Reload Rally** in a browser, and the sidebar
+  lists say the same in a line. That helps only builds that carry it, so the
+  next raise of the minimum is the first one that tells anyone.
 - **A write on a conversation whose parent is archived** (the object answers
   409 `conversation_parent_archived` on the socket; the read side stays open).
 - **Disallowed origin** — 403 `socket_origin_forbidden`.
@@ -655,8 +662,9 @@ namespace helper.
   a list only the socket delivers (the Canvases home, the Sidekicks library)
   shows `PushedListPending`: its opening state while the socket dials, and
   "Rally can’t connect" with **Try again** (`retry()` on the socket context,
-  which dials at once) once a dial has failed. A list the device cache already
-  painted keeps showing it.
+  which dials at once) once a dial has failed, or the update state above for a
+  426 `client_update_required`. A list the device cache already painted keeps
+  showing it.
 - **Object refusal** — the object's own JSON status reaches the client unchanged:
   426, 400 `invalid_socket_identity`, 403 `forbidden`, 401
   `socket_ticket_replayed`, 409 `room_identity_mismatch`, 500
@@ -975,7 +983,12 @@ auto-updater (first check ten minutes after launch, then every three hours)
 is its way out, so the pivot's desktop release has to be published with the
 Worker deploy. What the refusal buys is that no socket opens and no
 WorkspaceDO subscribe runs for a build that would discard it, and that the
-failure is legible in telemetry.
+failure is legible in telemetry. So that the next raise does tell the
+person, the renderer now stops on a 426 `client_update_required` and offers
+the update (`update_required`, `UpdateRallyAction`, shared with the connector
+card that already offered it); it could not help the builds this raise shuts
+out. Rejected: keeping the retry with the update copy beside it, since a dial
+that cannot succeed only spends tickets.
 
 **Considered and rejected:** Refusing the retired commands. A refusal on this
 socket is a permanent close, so an old desktop that still sends one would lose
