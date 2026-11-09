@@ -2,7 +2,7 @@
 
 The Technology section of the public landing page (`rallywith.ai/#technology`)
 shows Rally's stack as a cut-away sphere drawn in points. A starfield gathers
-into five nested spheres, one at a time, each labeled with an amber leader
+into five nested spheres, one at a time, each labeled with a volt leader
 line: the LLM routing core, Authorization, Connectors, Sidekicks, and
 Multiplayer collaboration. The octant facing the viewer is cut away so every
 layer shows. After a long hold the cut fills in, the sphere becomes a tennis
@@ -21,7 +21,7 @@ loads.
 | `apps/site/src/technology.ts` | The schematic's own build entry: starts the scene, runs the clock only while the figure is visible, honors reduced motion |
 | `apps/site/vite.config.ts` | The `technology` input, and `rally-technology-entry`, which rewrites the figure's `data-tech-src` to the hashed bundle |
 | `apps/site/src/technology-scene.ts` | The scene: `LAYERS`, the timeline (`stateAt`, `MOMENTS`, `LOOP`), particle geometry, the shader with its lighting, and the SVG label overlay |
-| `apps/site/src/landing.css` | `.tech-*` rules: figure size, label type, the amber of the lines, dots and numerals, the layer list |
+| `apps/site/src/landing.css` | `.tech-*` rules: figure size, label type, the volt (`--volt`) of the lines, dots and numerals, the layer list |
 
 `LAYERS` is the scene's single source of the layer names, their order (inside
 out), and their colors. The text list in `landing-sections.html` repeats the names and the
@@ -30,7 +30,8 @@ in the same commit. The colors are the product's icon palette
 (`--av-sys-color-project-*` in `packages/ui/src/styles/themes.css`): amber,
 fuchsia, orange, emerald, blue. The seam is `--av-sys-color-brand-base`. The
 site does not load that stylesheet, so the hex values are copied, with the
-token name beside each; the leader-line amber is copied again in `landing.css`.
+token name beside each. The leader lines, dots and numerals take the site's
+volt accent from `landing.css` instead (see [`site-design-system.md`](site-design-system.md)).
 
 ## How it works
 
