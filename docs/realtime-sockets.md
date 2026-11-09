@@ -634,6 +634,13 @@ namespace helper.
   for another.
 - **Wrong audience, region, workspace, parent, or substream** (403
   `socket_ticket_scope_mismatch`).
+- **A desktop older than the served contract** — the workspace socket ticket
+  answers 426 `client_update_required` to a browser-context build whose
+  `x-rally-client-contract` is below `MINIMUM_SERVED_CLIENT_CONTRACT` (13, the
+  Canvases and Sidekicks pivot) or absent (`requireCurrentClientContract`).
+  The ticket is the one door: a build that cannot parse the sidebar is
+  refused there rather than admitted to a socket whose first frame it
+  discards. The desktop auto-updates; a build that cannot is told to update.
 - **A write on a conversation whose parent is archived** (the object answers
   409 `conversation_parent_archived` on the socket; the read side stays open).
 - **Disallowed origin** — 403 `socket_origin_forbidden`.
