@@ -63,9 +63,9 @@ import type {
 
 /**
  * One object the retirement walk has to close before this workspace can report
- * complete: a Canvas, a Sidekick, or a Thread or Channel still awaiting the
- * Thread retirement operation. `workspace_retirement_graph`'s CHECK admits all
- * four kinds from migration 137.
+ * complete: a Canvas or a Sidekick. `workspace_retirement_graph`'s CHECK also
+ * admits the Thread and Channel kinds, which a graph recorded before migration
+ * 141 can still hold.
  */
 interface RetirementGraphNode {
   parentKind: RetirementParentKind;
