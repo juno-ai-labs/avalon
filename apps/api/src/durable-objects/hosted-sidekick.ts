@@ -1381,6 +1381,12 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const replay = (receipt: { run_id: string | null; outcome_code: string }) => ({
       admitted: receipt.run_id !== null, duplicate: true, outcomeCode: receipt.outcome_code, runId: receipt.run_id,
     });
+    // The sender's standing, read once: a guest is admitted only from a
+    // Sidekick's `people` list, on every scope, as a reader is.
+    const relationship = request.senderUserId === null ? null
+      : await this.host.readRelationship(request.workspaceId, request.senderUserId);
+    const senderRole = relationship?.status === "active" && relationship.accessClass === "member"
+      ? relationship.role ?? "member" : null;
     const refusalFor = (row: HostedSidekickRow & { accepted_definition_json: string | null }) => {
       const emailEnabled = row.accepted_definition_json !== null
         && sidekickReceivesEmail(AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)));
@@ -1388,16 +1394,13 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         ? "sidekick_not_active"
         : !emailEnabled || row.email_address === null || row.email_address.toLowerCase() !== request.emailAddress.toLowerCase()
           ? "sidekick_email_route_mismatch"
-          : request.senderUserId === null
-            // Whoever the Sidekick is shared with; an Organization one takes
-            // any member's mail, which the email route has already resolved.
-            || (row.scope === "personal" && !sidekickAdmits({
-              scope: row.scope, author: request.senderUserId === row.author_user_id,
-              executor: request.senderUserId === row.run_as_user_id,
-              shared: sidekickSharedWith(this.sql, this.sidekickId, request.senderUserId),
-            }, true))
-            ? "email_sender_not_authorized"
-            : null;
+          // The run acts as the sender, so the From header must be more than a claim.
+          : !request.senderAuthenticated
+            ? "email_sender_unauthenticated"
+            : request.senderUserId === null || relationship?.status !== "active"
+              || !sidekickReaderAllows(row, { userId: request.senderUserId, actorRole: senderRole }, this.sql)
+              ? "email_sender_not_authorized"
+              : null;
     };
     const refuse = (code: string) => {
       this.sql.exec(

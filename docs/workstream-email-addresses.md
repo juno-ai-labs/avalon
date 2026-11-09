@@ -157,9 +157,12 @@ ledger remains only the opaque address-to-region/workspace/owner route needed
 before the regional object can be selected; its column is still named
 `automation_subscription_id` and holds the automation id.
 
-For a personal automation, the normalized From mailbox must match its author or
-its run-as principal. For a workspace or room automation, it must match an
-active workspace member. Email From headers can be spoofed, and this screen is
+The receiving server's verdict must tie the message to its From domain (a
+DMARC pass, or a DKIM pass aligned with it; `email_sender_unauthenticated`
+otherwise), and the normalized From mailbox must match someone in the
+Organization the Sidekick admits as a reader: for a personal one, its author
+or someone it is shared with, and a guest only from its list on every scope.
+The run acts as that sender. Email From headers can be spoofed, and this screen is
 the only control on a mail-started run: since 2026-09-03 an inbound-email run
 holds the same connector and web tools as every other automation run, so what
 stands between a spoofed From and a run that can write and send is membership

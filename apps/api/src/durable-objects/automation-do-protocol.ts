@@ -187,6 +187,13 @@ export const AutomationInboundEmailAdmissionSchema = z.strictObject({
   emailAddress: z.string().email(),
   resendEmailId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/u),
   senderUserId: UserIdSchema.nullable(),
+  /**
+   * Whether the receiving mail server's verdict ties the message to its From
+   * domain (DMARC pass, or a DKIM pass, which Resend reports only for a
+   * signature aligned with the From domain). Without it the From header is
+   * only a claim, and the run would act as whoever it names.
+   */
+  senderAuthenticated: z.boolean(),
   receivedAt: z.number().int().nonnegative(),
   payloadRef: z.string().min(1),
   resourceId: IdSchema,

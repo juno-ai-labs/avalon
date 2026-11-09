@@ -59,6 +59,12 @@ const ResendReceivedEmailSchema = z.looseObject({
   text: z.string().nullable().optional(),
   html: z.string().nullable().optional(),
   message_id: z.string().max(2_000).nullable().optional(),
+  /** The receiving server's SPF, DKIM and DMARC results; null for mail from before Resend recorded them. */
+  authentication: z.looseObject({
+    spf: z.string().max(40).optional(),
+    dkim: z.string().max(40).optional(),
+    dmarc: z.string().max(40).optional(),
+  }).nullable().optional(),
   attachments: z.array(z.looseObject({
     id: z.string().max(500).optional(),
     filename: z.string().max(2_000).optional(),
@@ -507,7 +513,8 @@ export class ResendRegionalEmailService {
     // every member can see rather than a secret. What the automation refuses
     // is recorded on its receipt, so a retry answers from that rather than
     // fetching again.
-    const email = normalizeReceivedEmail(await this.retrieveReceivedEmail(input.resendEmailId));
+    const received = await this.retrieveReceivedEmail(input.resendEmailId);
+    const email = normalizeReceivedEmail(received);
     const senderMailbox = mailboxAddress(email.from);
     const senderUserId = senderMailbox
       ? await this.activeWorkspaceMemberForEmail(input.workspaceId, senderMailbox)
@@ -535,6 +542,7 @@ export class ResendRegionalEmailService {
       emailAddress: input.emailAddress,
       resendEmailId: input.resendEmailId,
       senderUserId: senderUserId === null ? null : asUserId(senderUserId),
+      senderAuthenticated: fromDomainAuthenticated(received.authentication),
       receivedAt: Date.parse(input.receivedAt),
       payloadRef,
       resourceId: resourceId as never,
@@ -680,6 +688,17 @@ interface SafeReceivedEmail {
     contentDisposition: string | null;
   }>;
   truncated: boolean;
+}
+
+/**
+ * Whether the receiving server tied the message to its From domain: DMARC
+ * passed, or DKIM passed (Resend reports `gray`, not `pass`, for a signature
+ * from another domain). SPF alone authenticates the envelope sender, not the
+ * From header, so it does not count. Anything else, a missing verdict
+ * included, is a claim only.
+ */
+function fromDomainAuthenticated(authentication: z.infer<typeof ResendReceivedEmailSchema>["authentication"]): boolean {
+  return authentication?.dmarc === "pass" || authentication?.dkim === "pass";
 }
 
 function normalizeReceivedEmail(

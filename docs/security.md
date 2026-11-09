@@ -995,13 +995,15 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   capability, limits, and idempotency state are all checked before execution.
 
 - **An inbound email address is a routing identifier, never an authenticator.** The
-  From match against active workspace membership is the only control on a
-  mail-started run: since 2026-09-03 such a run holds the same connector and web
-  tools as every other automation run, so a spoofed From that passes the screen
-  steers a run that can write and send. That run acts as the member the From
-  names, never as another delegate, so a spoof reaches only that member's access
-  ([inbound email](automation-lifecycle.md#triggers-and-occurrences)). The changelog entry of
-  that date records why the tool filter came out and what stands in its place.
+  run acts as the person the From header names, under their own access when
+  they are not a delegate, and since 2026-09-03 it holds the same connector and
+  web tools as every other automation run. So the From must be authenticated:
+  the run is admitted only on the receiving server's aligned verdict for the
+  From domain (DMARC pass, or a DKIM pass for that domain, from Resend's
+  `authentication`), and only for a sender the Sidekick admits as a reader
+  ([inbound email](automation-lifecycle.md#triggers-and-occurrences)). It is
+  only as strong as the sending domain's own spoofing protection. The
+  changelog entry of 2026-09-03 records why the tool filter came out.
 
 - **An invitation token exists in D1 only as a SHA-256 hash**, and never in a query
   string, log, audit event, or Resend tag.
