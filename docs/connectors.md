@@ -1653,7 +1653,7 @@ receipts and ingress routes in D1, connections and resources in the object,
 activities on the queue. `withWorkspaceRuntimeDatabase` keeps its no-binding
 fallback as a declared test seam (the PRD's decision log says why).
 
-Shipped in juno-ai-labs/avalon#TBD.
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-10-22 — Report shortened Sheets cell text
 

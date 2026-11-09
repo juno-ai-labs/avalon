@@ -2176,7 +2176,7 @@ conversation, so its report is the announcement (the dead-code PRD, phase 5).
 **Consequences:** the field leaves the schema once notices written before the
 change have drained.
 
-Shipped in juno-ai-labs/avalon#TBD.
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-11-09 — The shared conversation starts runs and shows them, a Sidekick has its own audience, and a blocked run asks and waits
 

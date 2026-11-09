@@ -838,7 +838,7 @@ every cold start and an object restored from before 58 still needs them.
 **Consequences:** an object found below 58 again has no operator path to clean
 up; that would need the RPCs back from history.
 
-Shipped in juno-ai-labs/avalon#TBD.
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-11-09 — The product is Canvases and Sidekicks; Threads, Channels, Breakouts, the iOS client and demos are deleted
 

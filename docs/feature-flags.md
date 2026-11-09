@@ -1072,7 +1072,7 @@ deploy; a Worker built before this change requires it at start-up.
 deploy, followed by `pnpm lint:fresh`. Older desktops parse the flags object
 loosely with a false default, so the dropped field reads as off.
 
-Shipped in juno-ai-labs/avalon#TBD.
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-10-21 — Route the Sidekick wizard independently on Sol
 

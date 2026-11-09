@@ -388,7 +388,7 @@ it.
 **Consequences:** the flag catalog is two product flags; the editor opens on
 `multiple-workspaces-enabled`.
 
-Shipped in juno-ai-labs/avalon#TBD.
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-10-16 — Ace stops managing `digests-enabled`
 
