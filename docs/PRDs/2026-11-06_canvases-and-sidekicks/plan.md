@@ -366,3 +366,26 @@ or in loops; none on a path the round changed): canvas-access-requests'
 core-tool-idempotency and custom-mcp-connection at 15 s; six hosted-sidekick
 timeouts; the Slack reaction-admission test; two canvas.test.tsx cases; the
 workers delegation-recovery test at 61 s.
+
+**Recorded after the round-5 fix round.** The end-to-end and visual passes
+on the merged tree found three defects and fourteen visual findings; each fix
+was reviewed before merge. A requester who asks again after a denial now has
+their Activity republished on their open socket, so the denied row and badge
+clear without a reload; the connection question offers only its two options
+(`allowOther` and `allowSkip` on the elicitation, absent reads as true, the
+schema stays non-strict for a client one release behind) and hides its
+keycaps on touch; a badged Activity tile draws its glyph up-left so the lock's
+shackle stays visible; `attention()` ranks a mention above plain unseen rows
+and the account menu names it; the home card's run link carries the run
+number; a Sidekick that is both working and waiting reads "Working ·
+<question>"; the notice email narrows at phone width. A run's question never
+reached telemetry (its deterministic UUIDv5 id was refused by the v7-only
+envelope) and is now projected with `resourceTelemetryEventId`; a run halted
+in `needs_input` logs as `workstream_harness_run_waiting` instead of a
+failure. In local development only, `createDevelopmentSession` rewrote the
+Organization's name on every sign-in, so it flipped between the desktop's
+"Rally Development" and the bare request's default "Avalon Development"; the
+stored name now sticks, which on a seeded stack is the seed's "Avalon Studio".
+Recorded, not fixed: Ace overflows at phone width (an operator console), and
+a run that lacks a capability still ends `completed` with a message, since no
+question can grant one.
