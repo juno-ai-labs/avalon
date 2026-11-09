@@ -5148,13 +5148,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray().map((row) => row.substream_id);
   }
 
-  /** Whether the Thread-era resource-link projection is still in the schema (an object that ran an earlier 147 dropped it). */
-  private hasThreadResourceLinks(): boolean {
-    return this.state.storage.sql.exec(
-      `SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_workstream_resource_links'`,
-    ).toArray().length > 0;
-  }
-
   /**
    * The Threads that become Canvases (`services/thread-conversion-service.ts`):
    * every `channels` row whose id made an artifact (`artifact_registry`) or
@@ -5173,11 +5166,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }> {
     await this.initialized;
     const sql = this.state.storage.sql;
-    const linked = this.hasThreadResourceLinks()
-      ? `(SELECT COUNT(DISTINCT link.resource_id) FROM workspace_workstream_resource_links link
+    const linked = `(SELECT COUNT(DISTINCT link.resource_id) FROM workspace_workstream_resource_links link
            JOIN artifact_registry artifact ON artifact.resource_id = link.resource_id
-          WHERE link.workstream_id = thread.workstream_id AND artifact.workstream_id <> thread.workstream_id)`
-      : "0";
+          WHERE link.workstream_id = thread.workstream_id AND artifact.workstream_id <> thread.workstream_id)`;
     const rows = sql.exec<{
       workstream_id: string; title: string; artifact_count: number; linked_count: number; participant_count: number;
     }>(
@@ -5269,10 +5260,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         const artifacts = sql.exec<{ resource_id: string; added_at: number }>(
           `SELECT resource_id, MIN(added_at) AS added_at FROM (
              SELECT resource_id, created_at AS added_at FROM artifact_registry WHERE workstream_id = ?1
-             ${this.hasThreadResourceLinks() ? `UNION ALL SELECT link.resource_id, link.projected_at
+             UNION ALL SELECT link.resource_id, link.projected_at
                FROM workspace_workstream_resource_links link
                JOIN artifact_registry artifact ON artifact.resource_id = link.resource_id
-              WHERE link.workstream_id = ?1` : ""}
+              WHERE link.workstream_id = ?1
            ) GROUP BY resource_id ORDER BY resource_id`, input.threadId,
         ).toArray();
         created = canvas.row() ? false : this.state.storage.transactionSync(() => {
