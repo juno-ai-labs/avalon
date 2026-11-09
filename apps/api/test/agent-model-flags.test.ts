@@ -93,7 +93,7 @@ describe("local agent model configuration", () => {
   afterEach(() => { while (openDatabases.length) openDatabases.pop()?.close(); vi.restoreAllMocks(); });
 
   it.each([
-    ["workstream", "openai/gpt-5.6-terra"], ["inline_child", "openai/gpt-5.6-terra"], ["memory_sweep", "openai/gpt-5.6-terra"],
+    ["workstream", "openai/gpt-5.6-terra"], ["memory_sweep", "openai/gpt-5.6-terra"],
     ["sidekick_wizard", "openai/gpt-6.1-sol"], ["sidekick_run", "openai/gpt-5.6-terra"], ["workstream_naming", "openai/gpt-5.6-terra"],
   ] as const)("uses the checked-in default for %s without environment setup", async (role, model) => {
     await expect(resolveAgentModelRouting(createTestEnv({}), role)).resolves.toEqual({ model, fallbackModels: ["google/gemini-3.8-flash"] });
@@ -123,7 +123,7 @@ describe("local agent model configuration", () => {
   it("applies a role's complete route including reasoning, without affecting other roles", async () => {
     const env = { ...baseEnv, AGENT_MODEL_ROUTING_JSON: JSON.stringify({ workstream: { model: "custom/model", reasoningEffort: "high" } }) };
     await expect(resolveAgentModelRouting(env, "workstream")).resolves.toEqual({ model: "custom/model", fallbackModels: [], reasoningEffort: "high" });
-    await expect(resolveAgentModelRouting(env, "inline_child")).resolves.toEqual({ model: "x-ai/grok-4.3", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] });
+    await expect(resolveAgentModelRouting(env, "sidekick_run")).resolves.toEqual({ model: "x-ai/grok-4.3", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] });
   });
 
   it.each(['{', '[]', 'null', '{"workstream":{"model":"custom/model","fallbackModels":"bad"}}'])("rejects malformed overrides atomically: %s", async (value) => {

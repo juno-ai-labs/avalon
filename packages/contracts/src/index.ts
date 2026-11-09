@@ -241,7 +241,6 @@ export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
 /** Every distinct model-using Rally task with a configurable model route. */
 export const AGENT_MODEL_ROLES = [
   "workstream",
-  "inline_child",
   "workstream_naming",
   "memory_sweep",
   "sidekick_wizard",

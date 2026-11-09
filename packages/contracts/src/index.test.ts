@@ -199,7 +199,6 @@ describe("boundary contracts", () => {
   it("owns the complete model-role and route-value contract", () => {
     expect(AGENT_MODEL_ROLES).toEqual([
       "workstream",
-      "inline_child",
       "workstream_naming",
       "memory_sweep",
       "sidekick_wizard",
