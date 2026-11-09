@@ -62,19 +62,19 @@ export const AGENT_MODEL_OVERRIDES = [
 ] as const;
 
 export const AGENT_MODEL_DEFAULTS = {
-  OPENROUTER_PRIMARY_MODEL: MODEL_IDS.GPT_6_1_SOL,
+  OPENROUTER_PRIMARY_MODEL: MODEL_IDS.GPT_5_6_TERRA,
+  OPENROUTER_SMARTER_MODEL: MODEL_IDS.GPT_6_1_SOL,
   OPENROUTER_FALLBACK_MODELS: MODEL_IDS.GEMINI_3_8_FLASH,
-  OPENROUTER_CLASSIFIER_MODEL: MODEL_IDS.GPT_5_6_TERRA,
-  // Former structured roles are retired; retain their configured model identity.
-  OPENROUTER_STRUCTURED_MODEL: MODEL_IDS.GPT_5_6_TERRA,
+  OPENROUTER_FASTER_MODEL: MODEL_IDS.GPT_5_6_TERRA,
 } as const;
 
 export const AGENT_MODEL_ENV_KEYS = {
   workstream: "OPENROUTER_PRIMARY_MODEL",
   inline_child: "OPENROUTER_PRIMARY_MODEL",
   memory_sweep: "OPENROUTER_PRIMARY_MODEL",
-  sidekick_authoring: "OPENROUTER_PRIMARY_MODEL",
-  workstream_naming: "OPENROUTER_CLASSIFIER_MODEL",
+  sidekick_wizard: "OPENROUTER_SMARTER_MODEL",
+  sidekick_run: "OPENROUTER_PRIMARY_MODEL",
+  workstream_naming: "OPENROUTER_FASTER_MODEL",
 } as const satisfies Record<AgentModelRole, keyof typeof AGENT_MODEL_DEFAULTS>;
 
 /** Model choices for inference paths with their own persistence or provider contracts. */

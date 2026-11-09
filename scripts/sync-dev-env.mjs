@@ -26,8 +26,9 @@ const workerKeys = [
   "FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED",
   "AGENT_MODEL_ROUTING_JSON",
   "OPENROUTER_PRIMARY_MODEL",
+  "OPENROUTER_SMARTER_MODEL",
   "OPENROUTER_FALLBACK_MODELS",
-  "OPENROUTER_CLASSIFIER_MODEL",
+  "OPENROUTER_FASTER_MODEL",
   "AZURE_OPENAI_ENDPOINT",
   "AZURE_OPENAI_API_KEY",
   "AZURE_OPENAI_REALTIME_DEPLOYMENT",
@@ -262,7 +263,7 @@ for (const region of configuredRegions) {
   // Generated files must not pin an old default after the code changes.
   for (const key of workerKeys.filter((key) => key.startsWith("FEATURE_FLAG_")
     || key === "AGENT_MODEL_ROUTING_JSON"
-    || /^OPENROUTER_(PRIMARY_MODEL|FALLBACK_MODELS|CLASSIFIER_MODEL)$/.test(key))) {
+    || /^OPENROUTER_(PRIMARY_MODEL|SMARTER_MODEL|FALLBACK_MODELS|FASTER_MODEL)$/.test(key))) {
     delete regional[key];
     if (typeof local[key] === "string") regional[key] = local[key];
   }

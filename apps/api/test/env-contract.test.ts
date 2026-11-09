@@ -12,8 +12,9 @@ describe("environment contract", () => {
   it("allows all model overrides to be absent when code supplies the defaults", () => {
     const env = contractCompleteEnv();
     delete env.OPENROUTER_PRIMARY_MODEL;
+    delete env.OPENROUTER_SMARTER_MODEL;
     delete env.OPENROUTER_FALLBACK_MODELS;
-    delete env.OPENROUTER_CLASSIFIER_MODEL;
+    delete env.OPENROUTER_FASTER_MODEL;
     delete env.AGENT_MODEL_ROUTING_JSON;
     expect(() => assertEnvContract(env)).not.toThrow();
   });
