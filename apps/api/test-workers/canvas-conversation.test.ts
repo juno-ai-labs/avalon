@@ -697,9 +697,9 @@ describe("a Canvas's artifacts", () => {
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec(`UPDATE automation_directory SET title = 'Weekly digest' WHERE automation_id = ?`, sidekickId);
       runIds.forEach((runId, index) => state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key,
-          trigger_json, definition_revision, harness_run_id, state, summary, opening_json, seed_json, run_as_user_id,
+          trigger_json, definition_revision, harness_run_id, state, summary, opening_json, run_as_user_id,
           coordinator_user_id, created_at, started_at, completed_at, updated_at)
-        VALUES (?, ?, ?, '{"kind":"manual"}', 1, ?, 'completed', NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, '{"kind":"manual"}', 1, ?, 'completed', NULL, NULL, ?, ?, ?, ?, ?, ?)`,
         sidekickId, runId, `run:${runId}`, `${runId}-harness`, CREATOR, CREATOR, index + 1, index + 1, index + 1, index + 1));
     });
     const run = { workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId: sidekickId,
