@@ -350,6 +350,14 @@ describe('CanvasScreen', () => {
       getCanvasAccess.mockResolvedValue({ access: 'requestable', title: null, request: null });
     });
 
+    it('tells a guest, who cannot ask, that they cannot open it, with nothing to try again', async () => {
+      getCanvasAccess.mockRejectedValue(new ApiError('Only a member of the Organization can ask to open a Canvas', 403, 'canvas_access_request_not_member'));
+      renderCanvas();
+      expect(await screen.findByText('You can’t open this Canvas.')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
+    });
+
     it('offers Request access with an optional message, opening on the message, then says when it was sent in the button\'s place', async () => {
       renderCanvas();
       expect(await screen.findByText("You don't have access to this Canvas")).toBeInTheDocument();
