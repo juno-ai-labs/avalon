@@ -41,6 +41,7 @@ test("rejects API-side OpenRouter client construction", () => {
 test("rejects model environment reads outside the resolver", () => {
   for (const source of [
     "const model = env.OPENROUTER_FASTER_MODEL;",
+    "const model = env.OPENROUTER_FALLBACK_MODEL;",
     "const model = env.OPENROUTER_SMARTER_MODEL;",
     "const { OPENROUTER_SMARTER_MODEL } = env;",
     "const { OPENROUTER_SMARTER_MODEL: model } = env;",

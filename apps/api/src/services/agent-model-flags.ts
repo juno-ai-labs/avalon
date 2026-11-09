@@ -28,7 +28,7 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
   const variable = AGENT_MODEL_ENV_KEYS[role];
   const model = env[variable]?.trim() || AGENT_MODEL_DEFAULTS[variable];
   // An explicitly empty list disables fallbacks; an unset variable uses the constant.
-  const fallbackModels = (env.OPENROUTER_FALLBACK_MODELS ?? AGENT_MODEL_DEFAULTS.OPENROUTER_FALLBACK_MODELS)
+  const fallbackModels = (env.OPENROUTER_FALLBACK_MODEL ?? AGENT_MODEL_DEFAULTS.OPENROUTER_FALLBACK_MODEL)
     .split(",").map((value) => value.trim()).filter(Boolean);
   return { model, fallbackModels };
 }

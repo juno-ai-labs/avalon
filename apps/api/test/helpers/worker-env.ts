@@ -46,7 +46,7 @@ export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
     OPENROUTER_API_KEY: "sk-or-secret",
     TYPESAFE_API_KEY: "typesafe-secret",
     OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
-    OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
+    OPENROUTER_FALLBACK_MODEL: "google/gemini-3.6-flash",
     OPENROUTER_FASTER_MODEL: "google/gemini-2.5-flash-lite",
     SESSION_SIGNING_KEY: "session-secret",
     OAUTH_STATE_ENCRYPTION_KEY: "oauth-secret",

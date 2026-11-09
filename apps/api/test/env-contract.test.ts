@@ -13,7 +13,7 @@ describe("environment contract", () => {
     const env = contractCompleteEnv();
     delete env.OPENROUTER_PRIMARY_MODEL;
     delete env.OPENROUTER_SMARTER_MODEL;
-    delete env.OPENROUTER_FALLBACK_MODELS;
+    delete env.OPENROUTER_FALLBACK_MODEL;
     delete env.OPENROUTER_FASTER_MODEL;
     delete env.AGENT_MODEL_ROUTING_JSON;
     expect(() => assertEnvContract(env)).not.toThrow();

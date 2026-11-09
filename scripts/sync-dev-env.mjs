@@ -27,7 +27,7 @@ const workerKeys = [
   "AGENT_MODEL_ROUTING_JSON",
   "OPENROUTER_PRIMARY_MODEL",
   "OPENROUTER_SMARTER_MODEL",
-  "OPENROUTER_FALLBACK_MODELS",
+  "OPENROUTER_FALLBACK_MODEL",
   "OPENROUTER_FASTER_MODEL",
   "AZURE_OPENAI_ENDPOINT",
   "AZURE_OPENAI_API_KEY",
@@ -263,7 +263,7 @@ for (const region of configuredRegions) {
   // Generated files must not pin an old default after the code changes.
   for (const key of workerKeys.filter((key) => key.startsWith("FEATURE_FLAG_")
     || key === "AGENT_MODEL_ROUTING_JSON"
-    || /^OPENROUTER_(PRIMARY_MODEL|SMARTER_MODEL|FALLBACK_MODELS|FASTER_MODEL)$/.test(key))) {
+    || /^OPENROUTER_(PRIMARY_MODEL|SMARTER_MODEL|FALLBACK_MODEL|FASTER_MODEL)$/.test(key))) {
     delete regional[key];
     if (typeof local[key] === "string") regional[key] = local[key];
   }
@@ -296,7 +296,7 @@ for (const region of configuredRegions) {
   const serialized = workerKeys
     .filter((key) => (region === "global" || !globalOnlyKeys.has(key))
       && typeof regional[key] === "string"
-      && (regional[key].length > 0 || key === "OPENROUTER_FALLBACK_MODELS"))
+      && (regional[key].length > 0 || key === "OPENROUTER_FALLBACK_MODEL"))
     .map((key) => `${key}=${workerEnvValue(key, regional[key])}`)
     .join("\n");
   await writeFile(regionalTargetPaths[region], `${serialized}\n`, { mode: 0o600 });
