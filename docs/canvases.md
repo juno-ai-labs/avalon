@@ -373,7 +373,11 @@ inputs of the reader rule (scope, lifecycle, executor, `people` list) when the
 Sidekick writes any Canvas, and the host marks the list only when they differ
 from what it last saw, so a run's own touches push nothing; a Sidekick call
 and a Sidekick alarm end with the same publish a Canvas write does, or one person's read of
-a Chat or their pins move (to that person's sockets alone). It is its own
+a Chat or their pins move (to that person's sockets alone). A push that cannot be read or fails its own
+schema is not sent and is logged as `workspace_canvas_list_unpublished` with a
+code naming the failing field (`sidebarListFrame`, which the Activity list
+shares as `workspace_activity_list_unpublished`); only a socket closing as it
+is sent is ignored, since a reconnect brings the whole list. It is its own
 event type rather than a third `workspace_sidebar_list` member because a
 released client fails a discriminator value it does not know and ignores an
 event type it does not know; the sidebar key is optional for the same reason.
