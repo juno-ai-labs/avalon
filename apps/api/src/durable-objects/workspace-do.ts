@@ -7726,7 +7726,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & {
       author_user_id: string; run_as_user_id: string | null; owning_substream_id: string; workspace_id: string; last_run_at: number | null;
-      shared_count: number; shared: number;
+      shared_with_user_ids: string; shared: number;
     }>(
       `SELECT directory.*, ${AUTOMATION_AUDIENCE_SQL},
               EXISTS (SELECT 1 FROM sidekick_audience audience
@@ -11250,7 +11250,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
     // The viewer's own Sidekicks, the Organization's, and those shared with
     // them, each with what they have not read in its shared conversation.
-    return this.state.storage.sql.exec<AutomationDirectoryRow & { shared_count: number; unread: number; needs_input: number;
+    return this.state.storage.sql.exec<AutomationDirectoryRow & { shared_with_user_ids: string; unread: number; needs_input: number;
       run_state: "working" | "needs_input" | null; pending_question: string | null; running: number; last_run_at: number | null;
       trigger_kinds: string | null; schedule_time_zone: string | null;
       pinned_position: number | null }>(

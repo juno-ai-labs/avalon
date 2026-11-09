@@ -705,6 +705,12 @@ describe("a Sidekick's shared conversation", () => {
     const shared = await setAudience({ audience: "people", userIds: [MEMBER_ID] });
     expect({ audience: shared.audience, sharedWithUserIds: shared.sharedWithUserIds })
       .toEqual({ audience: "people", sharedWithUserIds: [MEMBER_ID] });
+    const workspace = workspaceStub();
+    const listing = { workspaceId: WORKSPACE_ID, userId: MEMBER_ID };
+    expect((await workspace.listAutomationDirectory(listing)).items.find((item) => item.id === AUTOMATION_ID))
+      .toMatchObject({ audience: "people", sharedWithUserIds: [MEMBER_ID] });
+    expect((await workspace.listSidekickDirectoryForAuthorizedMember(listing)).items.find((item) => item.id === AUTOMATION_ID))
+      .toMatchObject({ audience: "people", sharedWithUserIds: [MEMBER_ID] });
     expect(await opens(MEMBER_ID)).toBe(true);
     // An admin who is not on the list does not read a personal Sidekick.
     expect(await opens(ADMIN_ID)).toBe(false);
