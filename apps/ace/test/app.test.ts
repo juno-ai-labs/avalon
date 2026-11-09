@@ -35,13 +35,13 @@ describe('Ace Hono application', () => {
     const send = vi.fn(async () => undefined);
     const cloudflare = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({
       success: true,
-      result: { key: 'suggested-work-enabled', default_variation: 'off' },
+      result: { key: 'multiple-workspaces-enabled', default_variation: 'off' },
     }));
-    const request = new Request('https://ace.internal.rallywith.ai/api/flags/suggested-work-enabled', {
+    const request = new Request('https://ace.internal.rallywith.ai/api/flags/multiple-workspaces-enabled', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Origin: 'https://ace.internal.rallywith.ai' },
       body: JSON.stringify({
-        key: 'suggested-work-enabled',
+        key: 'multiple-workspaces-enabled',
         description: 'Meeting Recording Enabled',
         enabled: true,
         default_variation: 'off',
@@ -57,7 +57,7 @@ describe('Ace Hono application', () => {
 
     expect(response.status).toBe(200);
     expect(cloudflare).toHaveBeenCalledWith(
-      'https://api.cloudflare.com/client/v4/accounts/account/flagship/apps/app/flags/suggested-work-enabled',
+      'https://api.cloudflare.com/client/v4/accounts/account/flagship/apps/app/flags/multiple-workspaces-enabled',
       expect.objectContaining({ method: 'PUT' }),
     );
     const [, requestInit] = cloudflare.mock.calls[0]!;
@@ -65,7 +65,7 @@ describe('Ace Hono application', () => {
       variations: { off: false, on: true },
     });
     expect(send).toHaveBeenCalledWith(
-      { kind: 'flagship_product_flag_changed', flagKey: 'suggested-work-enabled' },
+      { kind: 'flagship_product_flag_changed', flagKey: 'multiple-workspaces-enabled' },
       { delaySeconds: 30 },
     );
   });
@@ -76,10 +76,10 @@ describe('Ace Hono application', () => {
       { status: 403 },
     ));
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const response = await worker.fetch!(new Request('https://ace.internal.rallywith.ai/api/flags/suggested-work-enabled', {
+    const response = await worker.fetch!(new Request('https://ace.internal.rallywith.ai/api/flags/multiple-workspaces-enabled', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Origin: 'https://ace.internal.rallywith.ai' },
-      body: JSON.stringify({ key: 'suggested-work-enabled', description: '', enabled: true, default_variation: 'off', rules: [] }),
+      body: JSON.stringify({ key: 'multiple-workspaces-enabled', description: '', enabled: true, default_variation: 'off', rules: [] }),
     }), env({ CLOUDFLARE_ACCOUNT_ID: 'account', FLAGSHIP_APP_ID: 'app', CLOUDFLARE_FLAGSHIP_API_TOKEN: 'secret' }), {
       waitUntil: vi.fn(),
     } as unknown as ExecutionContext);
@@ -88,7 +88,7 @@ describe('Ace Hono application', () => {
     await expect(response.json()).resolves.toMatchObject({ error: 'flagship_request_failed_403' });
     expect(logged.mock.calls.map((call) => JSON.parse(String(call[0])))).toEqual([{
       event: 'ace_request_failed',
-      path: '/api/flags/suggested-work-enabled',
+      path: '/api/flags/multiple-workspaces-enabled',
       error_code: 'flagship_request_failed_403',
     }]);
   });
@@ -96,7 +96,7 @@ describe('Ace Hono application', () => {
   it('rejects a cross-origin write before it reaches Flagship', async () => {
     const cloudflare = vi.spyOn(globalThis, 'fetch');
     const response = await worker.fetch!(new Request(
-      'https://ace.internal.rallywith.ai/api/flags/suggested-work-enabled',
+      'https://ace.internal.rallywith.ai/api/flags/multiple-workspaces-enabled',
       { method: 'PUT', headers: { Origin: 'https://attacker.example' } },
     ), env(), { waitUntil: vi.fn() } as unknown as ExecutionContext);
 
@@ -109,7 +109,7 @@ describe('Ace Hono application', () => {
       success: true,
       result: [
         { key: 'agent-model-workstream', variations: { current: { model: 'x-ai/grok-4.3', fallbackModels: [] } } },
-        { key: 'suggested-work-enabled', variations: { off: false, on: true } },
+        { key: 'multiple-workspaces-enabled', variations: { off: false, on: true } },
         { key: 'agent-model-unregistered', variations: { current: { model: 'unknown/model', fallbackModels: [] } } },
       ],
     }));

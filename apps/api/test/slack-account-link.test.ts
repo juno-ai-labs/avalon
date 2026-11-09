@@ -430,11 +430,6 @@ async function seededWorkspaceObject(database: DatabaseSync): Promise<{
   instance: ReturnType<typeof createTestWorkspaceDO>["instance"];
   objectDatabase: DatabaseSync;
 }> {
-  database.prepare(
-    `INSERT INTO slack_installation_routes
-       (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
-     VALUES ('T123', 'global', ?, ?, 'active', '2026-01-01', '2026-01-01')`,
-  ).run(workspaceId, connectionId);
   const { instance, objectDatabase } = createTestWorkspaceDO({
     workspaceId,
     regionalDatabase: database,
@@ -486,6 +481,9 @@ async function seededDatabase(): Promise<DatabaseSync> {
             'Juno Labs', '${encrypted.ciphertext}', '${encrypted.iv}', 1,
             '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
             'plugin_slack_workspace');
+    INSERT INTO slack_installation_routes
+      (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
+    VALUES ('T123', 'global', '${workspaceId}', '${connectionId}', 'active', '2026-01-01', '2026-01-01');
   `);
   return database;
 }

@@ -39,50 +39,13 @@ export const MEETING_NOTES_RETIREMENT_MIGRATION: DurableObjectSqliteMigration = 
   ],
 };
 
-/** One resource per call; a failure leaves its address available for the next pass. */
-export async function purgeRetiredMeetingObjects(
-  storage: DurableObjectStorage,
-  bucket: R2Bucket,
-  region: string,
-  workspaceId: string,
-  resourceId?: string,
-): Promise<{ remaining: number; deletedObjects: number }> {
-  const row = storage.sql.exec<{
-    resource_id: string; content_ref: string | null; model_content_ref: string | null;
-  }>(resourceId
-    ? 'SELECT resource_id, content_ref, model_content_ref FROM retired_meeting_resources WHERE resource_id = ?'
-    : 'SELECT resource_id, content_ref, model_content_ref FROM retired_meeting_resources WHERE objects_deleted = 0 ORDER BY resource_id LIMIT 1',
-    ...(resourceId ? [resourceId] : []),
-  ).toArray()[0];
-  let deletedObjects = 0;
-  if (row) {
-    // Reverification of a completed resource becomes pending before any external await.
-    storage.sql.exec('UPDATE retired_meeting_resources SET objects_deleted = 0 WHERE resource_id = ?', row.resource_id);
-    const prefix = `${region}/${workspaceId}/resources/${row.resource_id}/`;
-    // Delete a page and list from the beginning again: no cursor can skip survivors.
-    const page = await bucket.list({ prefix });
-    if (page.objects.length) {
-      await bucket.delete(page.objects.map((object) => object.key));
-      deletedObjects += page.objects.length;
-    }
-    if (!page.truncated) {
-      // Older objects may use a key outside the current versioned prefix.
-      for (const ref of new Set([row.content_ref, row.model_content_ref])) {
-        if (ref && await bucket.head(ref)) { await bucket.delete(ref); deletedObjects += 1; }
-      }
-      storage.sql.exec('UPDATE retired_meeting_resources SET objects_deleted = 1 WHERE resource_id = ?', row.resource_id);
-    }
-  }
-  return {
-    remaining: storage.sql.exec<{ count: number }>('SELECT COUNT(*) AS count FROM retired_meeting_resources WHERE objects_deleted = 0').one().count,
-    deletedObjects,
-  };
-}
-
 
 /**
  * Commit retirement before considering finalization. A restored/populated
- * workspace must remain reachable at 57 so operator cleanup RPCs can run.
+ * workspace stays reachable at 57 while its cleanup is pending. That hold is
+ * now terminal: the operator RPCs that cleared it were deleted once every
+ * object had reached 58, so WorkspaceDO logs `workspace_meeting_retirement_held`
+ * on every wake of an object found there.
  * Keep the adopted-schema shim around 57 alone, never around other migrations.
  */
 export function applyMeetingRetirementMigrations(

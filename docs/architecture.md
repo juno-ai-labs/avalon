@@ -757,9 +757,9 @@ lifecycle events, historical Iceberg snapshots, 30 days of Durable Object
 point-in-time recovery), so it is not a completed physical erasure. What
 survives: `meeting-notes-retirement.ts` and `applyMeetingRetirementMigrations`,
 which every WorkspaceDO cold start runs; `retired_meeting_resources`, whose
-content-free ids still fence stale writers out of search and publication; and
-four internal RPCs (`retiredMeetingInventory`, `purgeMeetingSearchAuthorization`,
-`purgeMeetingNoteObjects`, `finalizeMeetingRetirement`) that nothing calls.
+content-free ids still fence stale writers out of search and publication. The
+four operator RPCs that drove the cleanup were deleted once every object had
+reached 58.
 Migration 58 drops the feature tables only once its guard finds R2 and search
 cleanup complete, and is committed apart from 57 because the guard's rollback
 would otherwise undo the retirement. The telemetry, analytics and inference
@@ -820,6 +820,27 @@ kept as documents; changelog entries that cite one name it as text.
   [`private-access.md`](private-access.md).
 
 ## Changelog
+
+### 2026-11-09 — The meeting-cleanup RPCs are deleted
+
+**What changed:** `retiredMeetingInventory`, `purgeMeetingSearchAuthorization`,
+`purgeMeetingNoteObjects` and `finalizeMeetingRetirement`, with their
+retirement-gate permits and `purgeRetiredMeetingObjects`, were deleted. The
+migration-57 shim and the migration-58 guard stay, and their workers proof now
+drives them through cold starts.
+
+**Why:** the production checkpoint recorded every WorkspaceDO at 58 or later,
+so the operator cleanup they drove is finished and nothing calls them.
+
+**Considered and rejected:** deleting the 57 shim and 58 guard too; they run on
+every cold start and an object restored from before 58 still needs them.
+
+**Consequences:** the 57 hold is terminal. An object found there again has no
+operator path to clean up and misses every later migration, so WorkspaceDO
+logs `workspace_meeting_retirement_held` on each of its wakes; clearing it
+needs the RPCs back from history.
+
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-11-09 — The product is Canvases and Sidekicks; Threads, Channels, Breakouts, the iOS client and demos are deleted
 

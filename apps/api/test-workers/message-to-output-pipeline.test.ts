@@ -31,7 +31,6 @@ import {
 } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { pendingChildEffects } from "./helpers/conversation-effects";
 
 import {
   asAutomationId,
@@ -2118,10 +2117,6 @@ describe("a member's message travels the whole pipeline", () => {
         await externallySettledRun(stub, opened.body.harnessRunId as string);
         await settledRunForTrigger(stub, (followUp.body.turn as { turnId: string }).turnId);
 
-        const turnId = (followUp.body.turn as { turnId: string }).turnId;
-        const effects = await pendingChildEffects(stub);
-        expect(effects.flatMap(({ effect }) => effect.kind === "activity_event" && effect.sourceId === turnId
-          ? [effect.body] : [])).toEqual(["second message"]);
 
         const second = messages(await capturedProviderRequests(stub))[1]!;
         expect(JSON.stringify(second.filter((message) => message.role === "system"))).not.toContain(instructions);

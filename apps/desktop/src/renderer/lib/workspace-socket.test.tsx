@@ -648,14 +648,14 @@ describe('WorkspaceSocketProvider', () => {
     act(() => socket.message({
       type: 'workspace_feature_flags',
       occurredAt: '2026-08-17T20:01:00.000Z',
-      changedFlag: 'suggested-work-enabled',
+      changedFlag: 'multiple-workspaces-enabled',
       flags: {
         developerSettings: false,
-        suggestedWorkEnabled: true,
+        multipleWorkspacesEnabled: true,
         controlTowerRefreshSeconds: 60,
       },
     }));
-    expect(queryClient.getQueryData(['feature-flags'])).toMatchObject({ suggestedWorkEnabled: true });
+    expect(queryClient.getQueryData(['feature-flags'])).toMatchObject({ multipleWorkspacesEnabled: true });
   });
 
   it('reports how deep an organization reconnect had to go, and stops reporting at teardown', async () => {
@@ -1211,7 +1211,7 @@ describe('WorkspaceSocketProvider', () => {
       reason: 'initial',
       featureFlags: {
         developerSettings: false,
-        suggestedWorkEnabled: false,
+        multipleWorkspacesEnabled: false,
         controlTowerRefreshSeconds: 60,
       },
       sidebar: {
@@ -1233,7 +1233,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(queryClient.getQueryData(['automations']))
       .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000005', scope: 'workspace' })]);
     expect(queryClient.getQueryData(['feature-flags']))
-      .toMatchObject({ suggestedWorkEnabled: false });
+      .toMatchObject({ multipleWorkspacesEnabled: false });
     const handshakePhases = reportTelemetryProductIntent.mock.calls
       .map(([intent]) => intent as { kind: string; phase?: string })
       .filter((intent) => intent.kind === 'workspace_socket_handshake')
@@ -1762,7 +1762,7 @@ describe('the organization-sync relay between windows', () => {
       sidebar: {
         automations: { waterline: 1, items: [] },
       },
-      featureFlags: { suggestedWorkEnabled: false },
+      featureFlags: { multipleWorkspacesEnabled: false },
     }));
     act(() => socket.message({
       type: 'workspace_sync',
@@ -1775,8 +1775,8 @@ describe('the organization-sync relay between windows', () => {
     act(() => socket.message({
       type: 'workspace_feature_flags',
       occurredAt: '2026-08-17T20:00:02.000Z',
-      changedFlag: 'suggested-work-enabled',
-      flags: ClientFeatureFlagsSchema.parse({ suggestedWorkEnabled: true }),
+      changedFlag: 'multiple-workspaces-enabled',
+      flags: ClientFeatureFlagsSchema.parse({ multipleWorkspacesEnabled: true }),
     }));
     act(() => socket.message({
       type: 'workspace_sidebar_list',

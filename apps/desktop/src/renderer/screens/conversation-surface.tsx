@@ -536,7 +536,8 @@ const BRANCH_PROVENANCE_TURNS = 5;
  * from and the ones that led to it, oldest first.
  *
  * Only written rows, counted in turns. (The rule was "What reaches a
- * Breakout" in the retired docs/substream-creation.md.)
+ * Breakout" in the retired substream-creation.md; see
+ * docs/architecture.md#retired-documents.)
  *
  * A substream started from the sidebar branches from wherever the conversation
  * has reached rather than from a message somebody pointed at, and it shows
@@ -2564,7 +2565,6 @@ function ConversationSurfaceContent({
                before its first token records nothing and would otherwise read
                as following a flag it never consults. */
             model={{
-              kind: 'settled',
               model: displayedDetail.latestHarnessRun?.model ?? displayedDetail.modelOverride ?? null,
               pinned: (displayedDetail.modelOverride ?? null) !== null,
             }}

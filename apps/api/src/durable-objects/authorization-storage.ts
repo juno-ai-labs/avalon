@@ -62,7 +62,7 @@ export function linkSpaceResources(sql: SqlStorage, spaceId: string, resourceIds
 /**
  * WorkspaceDO migration 118: link what every Channel merge made before
  * `linkSpaceResources` embeds to its Channel, so an older merge's artifacts
- * follow the Channel's readers like a new one's (docs/conversation-merge.md).
+ * follow the Channel's readers like a new one's (docs/architecture.md#retired-documents).
  * Each was an Organization-wide thread's, attached to that thread, so no
  * reader loses access. It widens deliberately: the Channel's readers who
  * could not open that thread (its guests, people who reach it through a

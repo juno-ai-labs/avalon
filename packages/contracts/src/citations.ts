@@ -606,7 +606,7 @@ export function embeddedResourceCitations(markdown: string): readonly { readonly
  * of first reference. That is every resource the renderer draws as a link. A
  * link in code or behind an escaped bracket is literal text, and a footnote
  * nothing references is never drawn, so neither counts. A merge reads this to
- * know which artifacts it shares; see docs/conversation-merge.md.
+ * know which artifacts it shares; see docs/architecture.md#retired-documents.
  */
 export function citedResourceIds(markdown: string): string[] {
   const found: string[] = [];

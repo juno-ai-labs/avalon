@@ -57,8 +57,7 @@ files carry the `app_id`; [the feature-flag
 document](feature-flags.md#provisioning) has the commands for rebuilding them in
 a fresh account. Each model flag is seeded with the ids already in the
 `OPENROUTER_*` variables. Ace automatically ensures the
-`meeting-recording-enabled`, `suggested-work-enabled`, and
-`multiple-workspaces-enabled` flags exist with an off default on
+`multiple-workspaces-enabled` flag exists with an off default on
 every merge that deploys it. Changing their targeting happens in Ace rather
 than the Flagship dashboard so connected clients receive the Queue push.
 

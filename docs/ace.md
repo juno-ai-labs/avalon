@@ -55,11 +55,10 @@ Ace-specific Access application by copying the migration site's policies and
 identity-provider settings. Ace therefore follows the same employee rule while
 keeping a distinct audience.
 
-`GET /api/flags` reads `suggested-work-enabled`, `multiple-workspaces-enabled`
-and `push-notifications-enabled`. `suggested-work-enabled` is still provisioned
-and editable, but the Suggested Work surfaces it gated are deleted and no client
-reads it; retiring it is one more `retireFlag` call
-([`feature-flags.md`](feature-flags.md)). The editor exposes enabled/paused state, default Boolean
+`GET /api/flags` reads `multiple-workspaces-enabled` and
+`push-notifications-enabled`. `suggested-work-enabled`, which gated the deleted
+Suggested Work surfaces, is retired: the deploy script's `retireFlag` deletes it
+from Flagship ([`feature-flags.md`](feature-flags.md)). The editor exposes enabled/paused state, default Boolean
 value, ordered first-match rules, all eleven operators, nested AND/OR groups,
 and sticky percentage rollouts. A rule is reordered by dragging its handle
 onto another or, from that same handle, ArrowUp/ArrowDown. A person search
