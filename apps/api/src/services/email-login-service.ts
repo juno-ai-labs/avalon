@@ -11,7 +11,7 @@ import { decryptString, encryptString, hmacSha256, randomToken, timingSafeEqualT
 import { uuidV7 } from "../lib/uuid-v7";
 import { resolveVerifiedEmailIdentity } from "./login-identity-service";
 import { prefetchOrganizationNameSuggestion } from "./organization-name-suggestion";
-import { sendResendEmail } from "./resend";
+import { sendEmail } from "./email";
 
 export const EmailLoginPolicySchema = z.strictObject({
   otpDigits: z.number().int().positive(),
@@ -33,7 +33,7 @@ const refused = () => new ApiError(401,"email_login_invalid","This sign-in link 
 /** Policy is a team decision, not an implicit authentication default. */
 export function configuredEmailLoginPolicy(env: Env): EmailLoginPolicy {
   try {
-    if (!env.RESEND_FROM_EMAIL?.trim() || !env.EMAIL_LOGIN_POLICY_JSON || !env.BROWSER_APP_ORIGIN || !env.SESSION_SIGNING_KEY || !env.OAUTH_STATE_ENCRYPTION_KEY) throw new Error("missing");
+    if (!env.EMAIL_FROM?.trim() || !env.EMAIL_LOGIN_POLICY_JSON || !env.BROWSER_APP_ORIGIN || !env.SESSION_SIGNING_KEY || !env.OAUTH_STATE_ENCRYPTION_KEY) throw new Error("missing");
     browserOrigin(env);
     return EmailLoginPolicySchema.parse(JSON.parse(env.EMAIL_LOGIN_POLICY_JSON));
   } catch (error) {
@@ -84,7 +84,7 @@ export async function startEmailLogin(env: Env, input: z.infer<typeof EmailLogin
   url.hash = new URLSearchParams({ region:env.AVALON_REGION,challenge:request.challengeId,token }).toString();
   const now = Date.now();
   const expiresAt = now + policy.ttlSeconds * 1000;
-  const payload = DeliverySchema.parse({ email:request.email,from:env.RESEND_FROM_EMAIL!.trim(),subject:"Sign in to Rally",
+  const payload = DeliverySchema.parse({ email:request.email,from:env.EMAIL_FROM!.trim(),subject:"Sign in to Rally",
     text:`Your Rally sign-in code is ${code}.\n\nOr open this link and confirm sign-in:\n${url}\n\nThis link and code can be used for one sign-in. If you did not request this email, you can ignore it.` });
   const [magicHash,otpHash,encrypted] = await Promise.all([
     digest(env,request.challengeId,"magic",token),digest(env,request.challengeId,"otp",code),seal(env,request.challengeId,payload),
@@ -156,8 +156,8 @@ export async function deliverEmailLogin(env: Env, challengeId: string): Promise<
     .bind(challengeId,Date.now()).first<{ delivery_payload_encrypted:string }>();
   if (!row) return;
   const payload = DeliverySchema.parse(await openEmailLoginSecret(env,challengeId,row.delivery_payload_encrypted));
-  const outcome = await sendResendEmail(env,{ recipientEmail:payload.email,from:payload.from,text:payload.text,subject:payload.subject,
-    sender:"transactional",idempotencyKey:`email-login:${challengeId}`,category:"email-login",region:env.AVALON_REGION,
+  const outcome = await sendEmail(env,{ recipientEmail:payload.email,from:payload.from,text:payload.text,subject:payload.subject,
+    sender:"transactional",durableDelivery:"review",idempotencyKey:`email-login:${challengeId}`,category:"email-login",region:env.AVALON_REGION,
     errors:{ unavailable:{ code:"email_login_delivery_unavailable",message:"Sign-in email delivery is unavailable" },
       failed:{ code:"email_login_delivery_failed",message:"Sign-in email delivery failed" } } });
   if (outcome === "sent") await env.DB.prepare("UPDATE email_login_challenges SET delivery_sent_at=? WHERE id=?")
@@ -171,6 +171,7 @@ export async function recoverEmailLoginDeliveries(env: Env): Promise<void> {
     .bind(Date.now()).all<{ id:string }>();
   for (const row of rows.results) {
     try { await deliverEmailLogin(env,row.id); }
-    catch { logWarn(env,"email_login_delivery_pending",{ challenge_id:row.id }); }
+    catch (error) { logWarn(env,"email_login_delivery_pending",{ challenge_id:row.id,
+      code: error instanceof ApiError ? error.diagnosticCode ?? error.code : "email_login_delivery_attempt_failed" }); }
   }
 }

@@ -190,13 +190,17 @@ describe("the work-stream email domain a deployment mints on", () => {
       .toThrowError();
     expect(() => __resendInboundEmailTesting.configuredEmailDomain("automaton.rallywith.ai"))
       .toThrowError();
-    expect(__resendInboundEmailTesting.configuredEmailDomain("automation.rallywith.ai"))
-      .toBe("automation.rallywith.ai");
+    expect(() => __resendInboundEmailTesting.configuredEmailDomain("automation.rallywith.ai"))
+      .toThrowError();
+    expect(__resendInboundEmailTesting.configuredEmailDomain("rallywithai.com"))
+      .toBe("rallywithai.com");
+    expect(__resendInboundEmailTesting.configuredEmailDomain(undefined)).toBe("rallywithai.com");
   });
 
   it("still routes mail addressed to the superseded domain", () => {
-    const accepted = __resendInboundEmailTesting.acceptedEmailDomains("automation.rallywith.ai");
+    const accepted = __resendInboundEmailTesting.acceptedEmailDomains("rallywithai.com");
 
+    expect(accepted.has("rallywithai.com")).toBe(true);
     expect(accepted.has("automation.with-avalon.com")).toBe(true);
     expect(accepted.has("automation.rallywith.ai")).toBe(true);
   });

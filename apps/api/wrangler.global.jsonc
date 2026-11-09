@@ -8,6 +8,7 @@
   // Terminal runtime carries a vendored Python applier into the sandbox that way.
   "rules": [{ "type": "Text", "globs": ["**/*.py", "**/*.sandbox.mjs"], "fallthrough": true }],
   "browser": { "binding": "BROWSER" },
+  "send_email": [{ "name": "EMAIL" }],
   "workers_dev": false,
   "preview_urls": false,
   // Team approved 30 requests/IP/minute on 2026-09-09. Coarse pre-D1 admission;
@@ -48,9 +49,9 @@
     "OPENROUTER_FALLBACK_MODELS": "google/gemini-3.8-flash",
     "OPENROUTER_CLASSIFIER_MODEL": "openai/gpt-5.6-terra",
     "OPENROUTER_STRUCTURED_MODEL": "google/gemini-2.5-flash-lite",
-    "RESEND_FROM_EMAIL": "Rally <invites@rallywith.ai>",
-    "RESEND_NOTIFICATION_FROM_EMAIL": "Rally <notifications@rallywith.ai>",
-    "WORKSTREAM_EMAIL_DOMAIN": "automation.rallywith.ai",
+    "EMAIL_FROM": "Rally <invites@rallywith.ai>",
+    "EMAIL_NOTIFICATION_FROM": "Rally <notifications@rallywith.ai>",
+    "WORKSTREAM_EMAIL_DOMAIN": "rallywithai.com",
     "CONNECTOR_CREDENTIALS_KEY_VERSION": "1",
     "HARNESS_MAX_PLUGIN_CATALOG_TOKENS": "2500",
     "HARNESS_CHILD_MAX_MODEL_ITERATIONS": "4",

@@ -942,15 +942,19 @@ exists.
 
 Workspace invitation tokens are random bearer secrets stored only as SHA-256
 hashes in D1. The plaintext token exists transiently in the regional Worker, the
-Resend transactional request, the recipient's email, and the fragment-protected
+Cloudflare email payload, the recipient's email, and the fragment-protected
 browser/deep-link handoff. It is never placed in a query string, log, audit event,
-or Resend tag. Resend uses a send-only API key and a stable per-invitation
-idempotency key; an outbound provider failure revokes the new invitation before
-the API returns an error.
+or correlation header. Sending uses the native `EMAIL` binding rather than an
+administration credential. Its stable invitation reference is correlation data,
+not a provider dedupe guarantee; an outbound provider failure revokes the new
+invitation before the API returns an error.
 
-Conversation inbound addresses are routing identifiers, never authenticators.
-Resend webhooks are verified against their untouched raw body before parsing and
-deduplicated by delivery ID. Received HTML, headers, attachments, sender
+Sidekick inbound addresses are routing identifiers, never authenticators.
+Cloudflare invokes the platform email handler directly. Only its first
+`Authentication-Results` header from `mx.cloudflare.net`, with `dmarc=pass`, sets
+the internal `senderAuthenticated` handoff; later fields, comments and quoted
+values cannot supply that verdict. Legacy Resend webhooks are verified against
+their untouched raw body before parsing. Both paths deduplicate by delivery ID. Received HTML, headers, attachments, sender
 identities, and quoted content are untrusted. Incoming mail is attached as a
 regional resource and system message; it never launches a write-capable agent run
 merely because the From address resembles a workspace member. Friendly addresses
@@ -1139,8 +1143,8 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   they are not a delegate, and since 2026-09-03 it holds the same connector and
   web tools as every other automation run. So the From must be authenticated:
   the run is admitted only on the receiving server's aligned verdict for the
-  From domain (DMARC pass, or a DKIM pass for that domain, from Resend's
-  `authentication`), and only for a sender the Sidekick admits as a reader
+  From domain (Cloudflare's trusted DMARC pass, or the existing Resend
+  `authentication` verdict for legacy receiving), and only for a sender the Sidekick admits as a reader
   ([inbound email](automation-lifecycle.md#triggers-and-occurrences)). It is
   only as strong as the sending domain's own spoofing protection, and DMARC and
   DKIM authenticate the sending domain, not the mailbox: on a domain whose own
@@ -1375,6 +1379,22 @@ Canvas sandbox must record its principal before mounting
 in Settings and can disconnect one, which ends its session at once; a route
 that lists or ends grants must keep matching them on the caller's own user id
 and stay out of `MCP_ROUTES`.
+
+### 2026-11-09 — Native email preserves the receiving-server trust boundary
+
+**What changed:** Cloudflare email events carry an explicit authenticated-sender
+boolean computed from the first Cloudflare authentication verdict into Sidekick
+admission. Legacy signed Resend receiving retains its current checks.
+
+**Why:** A provider change must not turn a sender-controlled From header into a
+principal that can run connector and web tools. Cloudflare's native event supplies
+a different trusted authentication source; later headers and quoted/commented
+text are not that source.
+
+**Consequences:** Missing or failing Cloudflare DMARC results remain refused by
+the existing Sidekick gate. Sending uses a native binding and correlation headers,
+with no Cloudflare administration token or provider dedupe guarantee.
+
 
 ### 2026-11-03 — Cross-origin requests reach a site anonymously, not refused
 

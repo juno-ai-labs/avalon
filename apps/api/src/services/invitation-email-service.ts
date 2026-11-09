@@ -1,7 +1,7 @@
 import type { Region } from "@rally/contracts/regions";
 import { addWorkspaceTarget } from "@rally/contracts";
 import type { Env } from "../env";
-import { escapeHtml, sendResendEmail, singleLine } from "./resend";
+import { escapeHtml, sendEmail, singleLine } from "./email";
 
 const EMAIL_ERRORS = {
   unavailable: { code: "invitation_email_unavailable", message: "Invitation email is temporarily unavailable" },
@@ -38,7 +38,7 @@ export type InvitationEmailDelivery = "sent" | "skipped";
 export async function sendWorkspaceInvitationEmail(
   env: Env,
   invitation: WorkspaceInvitationEmail,
-  request: typeof fetch = fetch,
+  send?: (message: EmailMessageBuilder) => Promise<EmailSendResult>,
 ): Promise<InvitationEmailDelivery> {
   const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
   const expiration = new Intl.DateTimeFormat("en-US", {
@@ -67,7 +67,7 @@ export async function sendWorkspaceInvitationEmail(
     expiration,
   });
 
-  return sendResendEmail(env, {
+  return sendEmail(env, {
     recipientEmail: invitation.recipientEmail,
     subject,
     html,
@@ -77,13 +77,13 @@ export async function sendWorkspaceInvitationEmail(
     region: invitation.region,
     sender: "transactional",
     errors: EMAIL_ERRORS,
-  }, request);
+  }, send);
 }
 
 export async function sendWorkspaceInvitationResolutionEmail(
   env: Env,
   invitation: WorkspaceInvitationResolutionEmail,
-  request: typeof fetch = fetch,
+  send?: (message: EmailMessageBuilder) => Promise<EmailSendResult>,
 ): Promise<InvitationEmailDelivery> {
   const actor = singleLine(invitation.inviteeName?.trim() || invitation.inviteeEmail);
   const workspaceName = singleLine(invitation.workspaceName);
@@ -114,7 +114,7 @@ export async function sendWorkspaceInvitationResolutionEmail(
     desktopUrl: desktopUrl.toString(),
   });
 
-  return sendResendEmail(env, {
+  return sendEmail(env, {
     recipientEmail: invitation.recipientEmail,
     subject,
     html,
@@ -124,7 +124,7 @@ export async function sendWorkspaceInvitationResolutionEmail(
     region: invitation.region,
     sender: "transactional",
     errors: EMAIL_ERRORS,
-  }, request);
+  }, send);
 }
 
 

@@ -201,8 +201,11 @@ export interface Env {
   /** Acquisition-only controls; missing production bindings fail closed. */
   ACCESS_EDGE_RATE_LIMITER?: RateLimit;
   TURNSTILE_SECRET_KEY?: string;
+  /** Native Cloudflare Email Service send binding. */
+  EMAIL?: { send(message: EmailMessageBuilder): Promise<EmailSendResult> };
+  /** Legacy receiving only, retained for previously issued automation.* addresses. */
   RESEND_API_KEY?: string;
-  RESEND_FROM_EMAIL?: string;
+  EMAIL_FROM?: string;
   /** Explicit email sign-in policy; unset keeps the new entrypoint unavailable. */
   EMAIL_LOGIN_POLICY_JSON?: string;
   BROWSER_APP_ORIGIN?: string;
@@ -213,7 +216,7 @@ export interface Env {
    * is refused.
    */
   MCP_RESOURCE?: string;
-  RESEND_NOTIFICATION_FROM_EMAIL?: string;
+  EMAIL_NOTIFICATION_FROM?: string;
   RESEND_RECEIVING_API_KEY?: string;
   RESEND_WEBHOOK_SIGNING_SECRET?: string;
   RESEND_WEBHOOK_SECRET?: string;

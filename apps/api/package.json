@@ -57,6 +57,7 @@
     "heic-decode": "2.1.0",
     "hono": "latest",
     "jose": "latest",
+    "postal-mime": "2.7.3",
     "posthog-node": "5.48.2",
     "rrule": "latest",
     "tldts": "7.4.10",
