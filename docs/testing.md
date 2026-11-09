@@ -493,31 +493,6 @@ triggers on `pull_request` alone, so a
 branch with no pull request open runs nothing; since a pull request here is
 opened ready for review rather than as a draft, that is most of a change's life.
 
-- **Documentation-only changes: run the documentation gates, not the suites.** No
-  suite covers prose, but two things do. `pnpm docs:check` scans every file under
-  `docs/` for a heading a rebase truncated and for a lakehouse table reference
-  that does not match its manifest in `config/`, and only the second of those
-  runs in CI — through `pnpm test:scripts` — so a documentation change that
-  skips `docs:check` is one whose headings nothing checked.
-  And one document is an executable contract, read off disk and checked against
-  what the code produces: `docs/workstream-email-addresses.md` by
-  `apps/api/test/workstream-email-address.test.ts`. Editing it runs
-  its test too. For a document not on
-  that list,
-  `grep -rn 'docs/<file>.md' --include='*.test.*' .` finds the tests that name
-  it; most hits only cite a document in a comment, and those need nothing.
-  A change inside a source file is not a documentation change even when it
-  touches only comments: `// @vitest-environment jsdom` and its neighbours are
-  directives, and they decide how the file runs.
-- **Ordinary changes: run the tests that cover what you touched.** One file, one
-  test name, or the one package's suite. Add a second package only when the
-  change crosses into it. Fixing a flake is the exception:
-  [the flaky-test rule](../AGENTS.md#flaky-tests) wants the full run, because
-  cross-file interference is what makes a flake.
-- **Large changes: run `pnpm test` once** before calling it done — every package,
-  not the whole suite of the one package you were in, which the bullet above
-  already allows. It catches a suite you had no reason to think about.
-
   The trigger is roughly 20 files, and files in `docs/` do not count toward it.
   The number is the team's and it is approximate, because a file count is a weak
   proxy for what it stands in for: three files in `packages/contracts` or the
@@ -563,7 +538,6 @@ tool built for that shape:
 | Which rule wins the cascade for an element: a state that hides a control, a phone rule that one later in the file overrides | A renderer test that mounts the real stylesheet with `mountAppStylesheet({ width, height })` from `apps/desktop/src/renderer/test/app-stylesheet.ts`, renders the component, and reads `getComputedStyle`. jsdom runs specificity and source order, and the helper resolves each media block for that window size. It still lays nothing out and computes no container query or pseudo-element, so position, size and legibility stay a real-window check. `workspace-settings.test.tsx`'s one-close-on-a-phone test is the pattern. |
 | A config or deploy setting: a route list, a header file, a workflow step | Not testable, and not to be tested; the deploy is the test. See [Do not test CI or deployment configuration](#do-not-test-ci-or-deployment-configuration). |
 | A flag list or constant must match across packages | Import the constant from the package that owns it and assert against it, or derive the second list from the first so there is nothing to match. Never scan a source file for the spelling. |
-| A doc table must match the code | Allowed only when the test executes the code side. `apps/api/test/workstream-email-address.test.ts` reads the document's frozen vocabulary and compares it to the lists `workstream-email-address.ts` exports; a test that reads the document and a source file and compares two strings is the scrape above with a second file. A page scan is allowed on the same terms: `apps/site/test/site.test.ts` checks the landing page's tracked link ids against `SITE_ACTION_LINKS` and `siteActionForLink`, which the code resolves at runtime. |
 | A mock was called | Assert the state the call produced, or the argument it was called with. `toHaveBeenCalled()` alone, or `mockResolvedValue(row)` followed by `expect(result).toEqual(row)`, asserts that Vitest works. |
 | A constant has its value | Nothing. `expect(LIMIT).toBe(50)` is the constant written twice. A test covers what the code _does_ with the constant. |
 

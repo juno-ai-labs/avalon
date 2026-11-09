@@ -36,7 +36,6 @@ The four-scene explainer, editable draft-first requests and contextual private/s
 
 The final integration also passed repository lint (zero warnings) and typecheck. Screenshot artifacts are retained in the task visualizations directory. No PR or deployment was performed.
 
-
 ## 2026-09-07 final flow and PR review fixes
 
 The final requested flow supersedes the historical checks above: three animated

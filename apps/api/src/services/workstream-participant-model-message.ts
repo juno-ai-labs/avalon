@@ -70,7 +70,7 @@ export interface SidekickModelAuthor {
  * instructions with its run-as user's authority, and a reply that reaches it
  * through a bound provider thread comes from whoever is in that thread,
  * including people who are not Rally members. Their words are information the
- * instructions decide what to do with, the way an inbound email is, and never
+ * instructions decide what to do with, as provider content is, and never
  * a request ranking beside or above those instructions.
  */
 export type ExternalInputFraming = "request" | "evidence";

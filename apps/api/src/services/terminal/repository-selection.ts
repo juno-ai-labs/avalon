@@ -9,7 +9,7 @@ import { newId } from "@rally/db";
 
 import type { Env } from "../../env";
 import { sha256 } from "../../lib/crypto";
-import { allocateWorkstreamEmailAddressCandidate } from "../../lib/workstream-email-address";
+import { friendlyIdentifierCandidate } from "../../lib/friendly-identifier";
 import { logWarn } from "../../observability/logger";
 import type { WorkstreamRuntimeResourceAttacher } from "../workstream-object-client";
 import {
@@ -89,15 +89,10 @@ async function workstreamBranchRef(
   currentHeadRef: string | null,
 ): Promise<string> {
   if (currentHeadRef && AVALON_BRANCH_PATTERN.test(currentHeadRef)) return currentHeadRef;
-  const workstream = await createIdentityObjectPort(env, workspaceId, workstreamId)
-    .identity();
-  const localPart = workstream?.email_address?.split("@", 1)[0];
-  const slug = localPart && /^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u.test(localPart)
-    ? localPart
-    : await allocateWorkstreamEmailAddressCandidate({
-      secretKey: await sha256(`terminal-branch:${env.SESSION_SIGNING_KEY}`),
-      workstreamId: `${workspaceId}:${workstreamId}`,
-    });
+  const slug = await friendlyIdentifierCandidate({
+    secretKey: await sha256(`terminal-branch:${env.SESSION_SIGNING_KEY}`),
+    id: `${workspaceId}:${workstreamId}`,
+  });
   return `avalon/${slug}`;
 }
 

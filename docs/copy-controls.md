@@ -163,7 +163,7 @@ PR: [#1393](https://github.com/juno-ai-labs/avalon/pull/1393).
 value shown in a read-only field. The Fireflies setup, the inbound-webhook
 result, the invite link, the run-failure notice and the site detail's CSV
 export replaced their labelled `Copy …` buttons with the icon control; the
-inspector rail's email and id controls, the site detail's public-link control
+inspector rail's id controls, the site detail's public-link control
 and the meeting-notes header controls replaced their hand-rolled state with
 it; the code block's header control drives the hook. The run-failure notice
 now shows the request id beside its control. The bridge's direct callers are

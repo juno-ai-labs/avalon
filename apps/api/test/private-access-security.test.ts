@@ -22,7 +22,7 @@ function submit(email = 'security@example.com') {
 beforeEach(() => {
   database = migratedSqliteDatabase();
   env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: 'global', APP_ENV: 'production',
-    PUBLIC_API_BASE_URL: 'https://api.rallywith.ai', ALLOWED_ORIGINS: 'https://rallywith.ai', TURNSTILE_SECRET_KEY: 'test-turnstile-key', RESEND_API_KEY: 'test-not-a-key' });
+    PUBLIC_API_BASE_URL: 'https://api.rallywith.ai', ALLOWED_ORIGINS: 'https://rallywith.ai', TURNSTILE_SECRET_KEY: 'test-turnstile-key' });
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(start);
 });

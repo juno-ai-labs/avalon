@@ -196,7 +196,6 @@ That entry's original smoothness measurements remain historical evidence, not
 measurements of this implementation. The original PR check covered a component
 in Electron; review follow-up validation is recorded in the PR.
 
-
 ### 2026-09-07 — Drawing follows frontend text arrival speed
 
 **What changed:** Accepted deltas now estimate text rate and packet cadence on the
@@ -213,7 +212,6 @@ text-length conversion; received characters measure what must actually be drawn.
 **Consequences:** Timing state belongs to the shared cursor and must survive
 subscriber handoffs. Only accepted nonempty deltas train it; attempts reset it.
 The existing 100ms batching cadence seeds the estimate without a new speed cap.
-
 
 ### 2026-08-28 — The reveal layer follows the persistent-loop cutover
 

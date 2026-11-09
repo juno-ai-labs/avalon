@@ -50,8 +50,7 @@ const provider = useOpenRouterDouble(async (call) => {
 });
 
 function creationEnv(): Env {
-  return new Proxy(env, { get: (target, property, receiver) => property === "WORKSTREAM_EMAIL_ADDRESS_KEY"
-    ? "workerd-test-email-address-key-0123456789" : Reflect.get(target, property, receiver) });
+  return env;
 }
 
 function workspace(orgId = ORG) {
@@ -109,12 +108,7 @@ beforeEach(async () => {
       operation_id TEXT PRIMARY KEY, platform_user_id TEXT NOT NULL, action TEXT NOT NULL,
       workspace_id TEXT NOT NULL, invitation_id TEXT, completed_at TEXT, created_at TEXT NOT NULL
     )`),
-    env.DB.prepare(`CREATE TABLE workstream_email_routes (
-      email_address TEXT PRIMARY KEY COLLATE NOCASE, address_source TEXT NOT NULL,
-      region TEXT NOT NULL, workspace_id TEXT NOT NULL, workstream_id TEXT,
-      automation_subscription_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-      UNIQUE (region, workspace_id, workstream_id)
-    )`),
+
   ]);
 });
 

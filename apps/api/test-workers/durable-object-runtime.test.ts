@@ -353,8 +353,6 @@ async function provisionBootstrappedWorkstream(
       createdByUserId: userId,
       participantUserIds: [userId],
       harnessStatus: "idle",
-      emailAddress: null,
-      emailRouteStatus: null,
       systemKind: null,
       modelOverride: null,
       now: Date.now(),

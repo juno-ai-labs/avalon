@@ -1143,7 +1143,7 @@ async function loadWorkstreamContextCompaction(
  * The boundary is normally the trigger, and for every run started *by* a
  * message the two are the same thing. They are separable because the trigger
  * has a second job: `projectModelProtocolTranscript` admits a suggested-work
- * brief and an inbound email only when they are the trigger, so the id also
+ * brief only when they are the trigger, so the id also
  * carries identity. A `retry` needs to keep that identity — the failed run's
  * trigger — while seeing everything the work stream has accumulated since,
  * including a correction a teammate posted that started no run of its own.
@@ -1423,16 +1423,14 @@ async function projectModelProtocolTranscript(
       continue;
     }
 
-    // Provider-controlled mail remains visible in the human transcript, but is
-    // not implicit model history. Only the selected trigger email is admitted
-    // as explicitly labelled, untrusted user data.
+    // Historical received-message openings remain readable on retry, as
+    // labelled user evidence only when selected as the trigger. No receiver
+    // writes new messages of this kind.
     if (message.structuredContent?.kind === "inbound_email") {
       if (message.id === input.triggerMessageId) {
         projected.push(modelDerivative(
           { role: "user", content: `INBOUND EMAIL:\n${modelMessageContent(message)}` },
-          "participant_turn",
-          message.id,
-          message.sequenceNumber,
+          "participant_turn", message.id, message.sequenceNumber,
         ));
       }
       continue;
@@ -2127,9 +2125,7 @@ function createAvalonAutomationsPlugin(
             appearance: detail.appearance ?? null,
             currentDefinitionRevision: detail.currentDefinitionRevision,
             acceptedDefinitionRevision: detail.acceptedDefinitionRevision,
-            currentDefinition: currentDefinition && currentDefinition.definitionVersion !== 2
-              ? { ...currentDefinition, definitionVersion: 2, triggers: [...currentDefinition.triggers, { type: "inbound_email" }] }
-              : currentDefinition,
+            currentDefinition,
           };
         });
         return { sidekicks };
@@ -3276,7 +3272,6 @@ export async function runWorkstreamHarness(
     ),
     triggerPolicy: {
       reason: input.reason,
-      inboundEmail: input.reason === "inbound_email",
       automationId: input.automationRun?.automationId ?? null,
       triggerMessageId: input.triggerMessageId ?? null,
       activityId: input.activityId ?? null,
@@ -5343,13 +5338,8 @@ async function loadRunPromptContext(
       // be told its final message goes to Slack when nothing sends it there,
       // nor read a different system prefix than the one it started with.
       outputSurface: input.automationRun
-        ? input.automationRun.trigger.kind === "inbound_email"
-          ? "external_delivery"
-          : automationSendsOutward ? "self_delivery" : "workstream"
-        : input.reason === "inbound_email"
-          || Boolean(input.slackOrigin)
-          ? "external_delivery"
-          : "workstream",
+        ? automationSendsOutward ? "self_delivery" : "workstream"
+        : input.slackOrigin ? "external_delivery" : "workstream",
       ...(input.slackOrigin && !input.automationRun ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { sidekick: automationContext } : {}),
     }) + (input.backgroundAgent || input.parentKind === "automation"

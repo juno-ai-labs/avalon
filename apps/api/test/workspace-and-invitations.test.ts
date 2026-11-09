@@ -277,7 +277,7 @@ describe("workspace invitation lifecycle", () => {
     emailSend = resend;
 
     await expect(acceptInvitationForUser(
-      environment(database, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      environment(database, { APP_ENV: "production", }),
       invitationRow.id,
       { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee <Team>" },
     )).resolves.toBe(invitationRow.workspace_id);
@@ -312,7 +312,7 @@ describe("workspace invitation lifecycle", () => {
     emailSend = resend;
 
     await expect(acceptInvitationForUser(
-      environment(database, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      environment(database, { APP_ENV: "production", }),
       invitationRow.id,
       { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee" },
     )).resolves.toBe(invitationRow.workspace_id);
@@ -329,7 +329,7 @@ describe("workspace invitation lifecycle", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("provider unavailable", { status: 503 })));
 
     await expect(acceptInvitationForUser(
-      environment(database, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      environment(database, { APP_ENV: "production", }),
       invitationRow.id,
       { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee" },
     )).resolves.toBe(invitationRow.workspace_id);
@@ -342,7 +342,7 @@ describe("workspace invitation lifecycle", () => {
     emailSend = resend;
 
     await expect(declineInvitationForUser(
-      environment(database, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      environment(database, { APP_ENV: "production", }),
       invitationRow.id,
       { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee" },
     )).resolves.toBeUndefined();
@@ -364,7 +364,7 @@ describe("workspace invitation lifecycle", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("provider unavailable", { status: 503 })));
 
     await expect(declineInvitationForUser(
-      environment(database, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      environment(database, { APP_ENV: "production", }),
       invitationRow.id,
       { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee" },
     )).resolves.toBeUndefined();
@@ -378,14 +378,14 @@ describe("workspace invitation lifecycle", () => {
     emailSend = resend;
 
     await expect(declineInvitationForUser(
-      environment(declinedDatabase, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      environment(declinedDatabase, { APP_ENV: "production", }),
       invitationRow.id,
       { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee" },
     )).rejects.toMatchObject({ status: 404, code: "invitation_invalid" });
 
     const revokeDatabase = new StubDatabase(({ sql }) => sql.includes('WHERE i.id = ?') ? null : undefined);
     await expect(new WorkspaceService(
-      environment(revokeDatabase, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      environment(revokeDatabase, { APP_ENV: "production", }),
       ownerAuth,
     ).revokeInvitation(invitationRow.id)).resolves.toBeUndefined();
     expect(resend).not.toHaveBeenCalled();
@@ -451,7 +451,6 @@ describe("workspace invitation lifecycle", () => {
 
     const result = await new WorkspaceService(environment(database, {
       APP_ENV: "production",
-      RESEND_API_KEY: "re_test_send_only",
     }), ownerAuth).createInvitation(" INVITEE@EXAMPLE.COM ", "member");
 
     expect(result.emailDelivery).toBe("sent");
@@ -499,7 +498,6 @@ describe("workspace invitation lifecycle", () => {
     // Worker: pair the region override with the enterprise row for a realistic case.
     await new WorkspaceService(environment(database, {
       APP_ENV: "production",
-      RESEND_API_KEY: "re_test_send_only",
       AVALON_REGION: "enterprise",
     }), ownerAuth).createInvitation(invitationRow.email, "member");
 
@@ -522,7 +520,6 @@ describe("workspace invitation lifecycle", () => {
 
     await expect(new WorkspaceService(environment(database, {
       APP_ENV: "production",
-      RESEND_API_KEY: "re_test_send_only",
     }), ownerAuth).createInvitation(invitationRow.email, "member"))
       .rejects.toMatchObject({ status: 502, code: "invitation_email_failed" });
     const revocation = database.runs.find(({ sql }) => sql.includes("UPDATE workspace_invitations SET revoked_at = ?"));
@@ -553,7 +550,6 @@ describe("workspace invitation lifecycle", () => {
 
     await expect(new WorkspaceService(environment(database, {
       APP_ENV: "production",
-      RESEND_API_KEY: "re_test_send_only",
     }), ownerAuth).createInvitation(invitationRow.email, "member"))
       .rejects.toThrow("D1 unavailable");
     expect(resend).not.toHaveBeenCalled();

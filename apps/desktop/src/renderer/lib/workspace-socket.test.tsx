@@ -1219,7 +1219,6 @@ describe('WorkspaceSocketProvider', () => {
         id: '00000000-0000-7000-8000-000000000005',
         name: 'Monday brief',
         description: 'Every Monday',
-        emailAddress: null,
         scope: 'workspace',
         status: 'active',
         nextRunAt: null,
@@ -1270,7 +1269,7 @@ describe('WorkspaceSocketProvider', () => {
     const automationId = '00000000-0000-7000-8000-000000000005';
     const untouchedId = '00000000-0000-7000-8000-000000000006';
     const untouched = {
-      id: untouchedId, name: 'Incident triage', description: '', emailAddress: null, scope: 'workspace' as const,
+      id: untouchedId, name: 'Incident triage', description: '', scope: 'workspace' as const,
       status: 'active' as const, nextRunAt: null, lastRunAt: null, updatedAt: '2026-08-17T18:00:00.000Z',
     };
     queryClient.setQueryData(SIDEBAR_LIST_QUERY_KEYS.automations, [mapAutomationSummary(AutomationSummarySchema.parse(untouched))]);
@@ -1313,7 +1312,6 @@ describe('WorkspaceSocketProvider', () => {
         id: automationId,
         name: 'Weekly changelog',
         description: 'Every Monday',
-        emailAddress: null,
         scope: 'workspace',
         status: 'draft',
         nextRunAt: null,
@@ -1361,7 +1359,6 @@ describe('WorkspaceSocketProvider', () => {
         id: '00000000-0000-7000-8000-000000000005',
         name,
         description: 'Every Monday',
-        emailAddress: null,
         scope: 'workspace',
         status: 'active',
         nextRunAt: null,
@@ -1420,7 +1417,7 @@ describe('WorkspaceSocketProvider', () => {
     );
     await flushPromises();
     const sidekick = (name: string) => ({
-      id: automationId, name, description: 'Every Monday', emailAddress: null, scope: 'workspace',
+      id: automationId, name, description: 'Every Monday', scope: 'workspace',
       status: 'active', nextRunAt: null, lastRunAt: null, updatedAt: '2026-08-17T19:00:00.000Z',
     });
     const answer = (waterline: number, listWaterline: number, name: string, reason: string, topics: string[] = []) => ({
@@ -1784,7 +1781,7 @@ describe('the organization-sync relay between windows', () => {
       list: 'automations',
       waterline: 2,
       // A row that moved: a push that changes no row relays nothing.
-      items: [{ id: '00000000-0000-7000-8000-000000000005', name: 'Weekly changelog', description: '', emailAddress: null,
+      items: [{ id: '00000000-0000-7000-8000-000000000005', name: 'Weekly changelog', description: '',
         scope: 'workspace', status: 'active', nextRunAt: null, lastRunAt: null, updatedAt: '2026-08-17T19:00:00.000Z' }],
     }));
     act(() => socket.message({

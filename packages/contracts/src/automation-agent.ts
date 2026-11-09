@@ -61,6 +61,8 @@ export type SidekickAudienceUpdate = z.infer<typeof SidekickAudienceUpdateSchema
 export const AutomationLifecycleStateSchema = z.enum(["draft", "active", "paused", "deleted"]);
 export type AutomationLifecycleState = z.infer<typeof AutomationLifecycleStateSchema>;
 
+/** Provenance for already admitted runs, including retired kinds in stored history.
+ * Active trigger configuration is defined separately by TriggerDefinitionSchema. */
 export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("manual"), requestedByUserId: UserIdSchema }),
   z.strictObject({
@@ -76,6 +78,7 @@ export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
     occurredAt: z.number().int().nonnegative(),
     payloadHash: z.string().min(1),
   }),
+  // Read compatibility only: no admission path creates this kind anymore.
   z.strictObject({
     kind: z.literal("inbound_email"),
     receiptId: IdSchema,

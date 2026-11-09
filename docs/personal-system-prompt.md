@@ -56,7 +56,7 @@ has refreshed since the first attempt.
   Human room-only messages carry the same snapshot and refresh even though
   they start no run, so later requests see setting changes refreshed by them.
   Sidekick parents and background agents are excluded. A wake-up, connector
-  trigger or inbound email must not acquire instructions from its principal.
+  trigger must not acquire instructions from its principal.
 - **Instructions live in user-role history, never the system prompt.** The
   XML scopes them to that speaker's requests, including when later turns or a
   compaction read them. The memory digest still uses `principalSystemSection`.

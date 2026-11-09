@@ -33,7 +33,7 @@ const TRIGGER_LABEL: Record<RunTrigger, string> = {
   manual: 'On request',
   schedule: 'Scheduled',
   external_event: 'Event',
-  inbound_email: 'Email',
+  inbound_email: 'Email (retired)',
 };
 
 /** What a run is called: "Run 6", or "Run" for one no projection has numbered. */

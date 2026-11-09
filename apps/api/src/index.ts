@@ -13,8 +13,6 @@ export { ConnectorEventWorkflow } from "./workflows/connector-event";
 export { RegionalIdentityBridge } from "./regional-identity-bridge";
 export { GitHubRegionalBridge } from "./github-regional-bridge";
 export { GitHubRoutingBridge } from "./github-routing-bridge";
-export { InboundEmailRegionalBridge } from "./inbound-email-regional-bridge";
-export { WorkstreamEmailRoutingBridge } from "./workstream-email-routing-bridge";
 export { LinearRegionalBridge } from "./linear-regional-bridge";
 export { LinearRoutingBridge } from "./linear-routing-bridge";
 export { NotionRegionalBridge } from "./notion-regional-bridge";

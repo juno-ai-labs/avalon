@@ -54,6 +54,53 @@ function bootstrapEntries(database: DatabaseSync): { alarm_key: string; due_at: 
 }
 
 describe("the WorkspaceDO alarm migrations", () => {
+  it("retires receiving while keeping accepted Sidekick instructions and supported triggers", () => {
+    const database = new DatabaseSync(":memory:");
+    try {
+      apply(database, 142);
+      seedIdentity(database);
+      for (const [id, definition, loadable] of [
+        ["instructions", { definitionVersion: 2, triggers: [] }, 1],
+        ["legacy", { triggers: [] }, 0],
+        ["mail-only", { definitionVersion: 2, triggers: [{ type: "inbound_email" }] }, 0],
+        ["mixed", { definitionVersion: 2, triggers: [{ type: "manual" }, { type: "inbound_email" }] }, 0],
+      ] as const) {
+        database.prepare(`INSERT INTO automation_directory
+          (automation_id,workspace_id,author_user_id,source_version,payload_hash,lifecycle,scope,title,description,projected_at,
+           accepted_definition_revision, email_address, loadable)
+          VALUES (?,?,'author',1,'fixture','active','personal','Helper','Help',1,1,'helper@example.test',?)`)
+          .run(id, WORKSPACE_ID, loadable);
+        database.prepare(`INSERT INTO sidekick_revisions
+          (sidekick_id,definition_revision,definition_json,definition_hash,ready,created_at)
+          VALUES (?,1,?,'fixture',1,0)`).run(id, JSON.stringify({ instructions: "Keep these instructions.", ...definition }));
+      }
+      database.prepare(`INSERT INTO sidekick_runs
+        (sidekick_id,run_id,occurrence_key,trigger_json,definition_revision,harness_run_id,state,opening_json,created_at,updated_at)
+        VALUES ('mail-only','past-run','past-message',?,1,'past-harness','completed',?,0,1)`)
+        .run(JSON.stringify({ kind: "inbound_email", receiptId: "00000000-0000-7000-8000-0000000000a5", occurredAt: 0 }),
+          JSON.stringify({ textContent: "Historical evidence", structuredContent: { kind: "inbound_email" }, resourceId: "past-resource" }));
+      apply(database, 143, 142);
+      expect(database.prepare(`SELECT automation_id, loadable FROM automation_directory ORDER BY automation_id`).all())
+        .toEqual([{ automation_id: "instructions", loadable: 1 }, { automation_id: "legacy", loadable: 0 },
+          { automation_id: "mail-only", loadable: 0 }, { automation_id: "mixed", loadable: 0 }]);
+      const definitions = database.prepare(`SELECT definition_json FROM sidekick_revisions ORDER BY sidekick_id`).all() as { definition_json: string }[];
+      expect(definitions.map((row) => JSON.parse(row.definition_json))).toEqual([
+        { instructions: "Keep these instructions.", definitionVersion: 2, triggers: [] },
+        { instructions: "Keep these instructions.", triggers: [] },
+        { instructions: "Keep these instructions.", definitionVersion: 2, triggers: [] },
+        { instructions: "Keep these instructions.", definitionVersion: 2, triggers: [{ type: "manual" }] },
+      ]);
+      const history = database.prepare("SELECT trigger_json, opening_json FROM sidekick_runs WHERE run_id = 'past-run'").get() as
+        { trigger_json: string; opening_json: string };
+      expect(JSON.parse(history.trigger_json)).toEqual({ kind: "inbound_email", receiptId: "00000000-0000-7000-8000-0000000000a5", occurredAt: 0 });
+      expect(JSON.parse(history.opening_json)).toEqual({ textContent: "Historical evidence", structuredContent: { kind: "inbound_email" } });
+      expect(() => database.prepare("SELECT email_address FROM automation_directory")).toThrow(/no such column/);
+      expect(() => database.prepare("SELECT * FROM sidekick_email_receipts")).toThrow(/no such table/);
+      expect(() => database.prepare("SELECT * FROM automation_email_rate_windows")).toThrow(/no such table/);
+      expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally { database.close(); }
+  });
+
   it("wakes only existing active configured Sidekicks when delegated source reconciliation is installed", () => {
     const database = new DatabaseSync(":memory:");
     try {

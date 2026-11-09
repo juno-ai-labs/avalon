@@ -345,7 +345,6 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
     titleStatus: workstream.titleStatus,
     appearance: workstream.appearance,
     objective: workstream.objective,
-    ...(workstream.emailAddress ? { emailAddress: workstream.emailAddress } : {}),
     ...(workstream.createdByUserId ? { createdByUserId: workstream.createdByUserId } : {}),
     harnessStatus: normalizeHarnessStatus(workstream.harnessStatus),
     latestAttentionSequenceNumber: workstream.latestAttentionSequenceNumber,
@@ -461,7 +460,6 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
   switch (trigger.type) {
     case 'manual': return 'On request';
-    case 'inbound_email': return 'When an email arrives';
     case 'calendar': return trigger.summary;
     case 'interval': return trigger.summary;
     case 'connector_activity': return `When there is matching activity in ${trigger.connectorType.replaceAll('_', ' ')}`;
@@ -501,7 +499,6 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     ...(automation.appearance ? { appearance: automation.appearance } : {}),
     name: automation.name,
     description: automation.description,
-    ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     scope: mapAutomationScope(automation.scope),
     status: automation.status,
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),

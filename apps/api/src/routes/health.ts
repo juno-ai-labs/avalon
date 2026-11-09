@@ -9,7 +9,6 @@ import {
 } from "../lib/durable-object-namespace";
 import { logEvent } from "../observability/logger";
 import { opsNotificationsConfigured } from "../observability/ops-slack-notifier";
-import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 
 /** The probe's own shape — this route owns it, so the contract lives here. */
 const HealthCheckSchema = z.object({ ok: z.boolean(), message: z.string() });
@@ -219,31 +218,6 @@ healthRoutes.get("/", async (c) => {
         ? "one public app and regional router configured"
         : "regional router binding unavailable",
   };
-  try {
-    const registry = await new WorkstreamEmailRoutingService(c.env).ping();
-    checks.workstreamEmailRegistry = {
-      ok: registry.region === "global",
-      message: c.env.AVALON_REGION === "global"
-        ? "authoritative Global registry available"
-        : "authoritative Global registry available through RPC",
-    };
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "unknown registry error";
-    logEvent(c, "warn", "workstream_email_registry_health_check_failed", { reason });
-    checks.workstreamEmailRegistry = {
-      ok: false,
-      message: c.env.APP_ENV === "development" ? reason : "unavailable",
-    };
-  }
-  const inboundConfigured = c.env.AVALON_REGION !== "global"
-    || configuredRegions.filter((region) => region !== c.env.AVALON_REGION)
-      .every((region) => typeof regionalBindings(c.env, region).inboundEmail?.ingestResendEmail === "function");
-  checks.inboundEmail = {
-    ok: inboundConfigured,
-    message: !inboundConfigured ? "regional binding unavailable"
-      : c.env.AVALON_REGION === "global" ? "Worker handler available; verify Email Routing rules in Cloudflare"
-        : "regional email RPC handler available",
-  };
   const required = [
     checks.envContract,
     checks.d1,
@@ -251,11 +225,9 @@ healthRoutes.get("/", async (c) => {
     checks.durableObjects,
     checks.queue,
     checks.workflows,
-    checks.workstreamEmailRegistry,
   ];
   if (c.env.APP_ENV === "production") {
     required.push(
-      checks.inboundEmail,
       checks.featureFlags,
       checks.inferenceLakehouse,
       checks.analyticsLakehouse,

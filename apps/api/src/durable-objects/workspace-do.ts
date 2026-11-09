@@ -502,7 +502,6 @@ import {
   WorkspaceConnectorResourceResolveRequestSchema,
   WorkspaceDiscoveredResourcesRequestSchema,
   WorkspaceExpiredDraftReapRequestSchema,
-  WorkspaceInboundEmailResourceRequestSchema,
   WorkspaceReapableResourceObjectListRequestSchema,
   WorkspaceResourceDescriptorsRequestSchema,
   WorkspaceResourceExistsRequestSchema,
@@ -523,8 +522,6 @@ import {
   type WorkspaceDiscoveredResourcesRequest,
   type WorkspaceExpiredDraftReapRequest,
   type WorkspaceExpiredDraftReapResult,
-  type WorkspaceInboundEmailResourceRequest,
-  type WorkspaceInboundEmailResourceResult,
   type WorkspaceReapableResourceObjectList,
   type WorkspaceReapableResourceObjectListRequest,
   type WorkspaceResourceDescriptorList,
@@ -571,7 +568,6 @@ import {
   resolveWorkspaceConnectorResource,
   retireWorkspaceResourceObjectStaging,
   upsertWorkspaceDiscoveredResources,
-  upsertWorkspaceInboundEmailResource,
   workspaceResourceDescriptors,
   workspaceResourceExists,
 } from "./workspace-resources-storage";
@@ -771,7 +767,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "automation_directory",
   "sidekick_conversation_attachments",
   // A hosted Sidekick's own rows: `HostedSidekick` is their only writer.
-  "sidekick_revisions", "sidekick_schedules", "sidekick_runs", "sidekick_email_receipts",
+  "sidekick_revisions", "sidekick_schedules", "sidekick_runs",
   "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts", "sidekick_reviews",
   "sidekick_audience", "sidekick_viewer_reads",
   // A hosted Canvas's own rows: `HostedCanvas` is their only writer.
@@ -4409,6 +4405,25 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 142,
   description: "retain a Canvas archive tombstone and remove archived Canvases from active admission",
   statements: [...CANVAS_ARCHIVE_STATEMENTS, ...MEMORY_DIGEST_CANVAS_ARCHIVE_TRIGGER],
+}, {
+  version: 143,
+  description: "retire email admission and addresses while preserving Sidekick definitions and conversations",
+  statements: [
+    `UPDATE sidekick_revisions SET definition_json = json_set(definition_json, '$.triggers',
+       json(COALESCE((SELECT json_group_array(json(value)) FROM json_each(definition_json, '$.triggers')
+         WHERE json_extract(value, '$.type') <> 'inbound_email'), '[]')))
+      WHERE EXISTS (SELECT 1 FROM json_each(definition_json, '$.triggers')
+        WHERE json_extract(value, '$.type') = 'inbound_email')`,
+    // Keep the accepted loading decision: retiring a trigger must not expose
+    // its instructions to conversations. Only an explicit publication or
+    // manager reconciliation may change that capability.
+    `UPDATE sidekick_runs SET opening_json = json_remove(opening_json, '$.resourceId') WHERE opening_json IS NOT NULL`,
+    `ALTER TABLE automation_directory DROP COLUMN email_address`,
+    `DROP TABLE sidekick_email_receipts`,
+    `DROP TABLE IF EXISTS automation_email_receipts`,
+    `DROP TABLE IF EXISTS automation_email_rate_windows`,
+    `DROP TABLE IF EXISTS workstream_email_receipts`,
+  ],
 }];
 
 function conversationToolEntry(conversation: {
@@ -6106,10 +6121,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async sidekickAdmitExternalEvent(input: Parameters<HostedSidekick["admitExternalEvent"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.admitExternalEvent(input));
-  }
-
-  async sidekickAdmitInboundEmail(input: Parameters<HostedSidekick["admitInboundEmail"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.admitInboundEmail(input));
   }
 
   async sidekickReadSkillSource(input: Parameters<HostedSidekick["readSkillSource"]>[0]) {
@@ -10002,21 +10013,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return listWorkspaceResourcesAwaitingSlug(this.state.storage, request.workspaceId);
   }
 
-  /**
-   * The resource for one inbound email, created or refreshed in one critical
-   * section — a fresh insert deliberately skips the follow-up refresh, which
-   * used to fire the semantic-version trigger and record a phantom second
-   * version of every newly ingested email.
-   */
-  async upsertInboundEmailResource(
-    input: WorkspaceInboundEmailResourceRequest,
-  ): Promise<WorkspaceInboundEmailResourceResult> {
-    await this.initialized;
-    const request = WorkspaceInboundEmailResourceRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return upsertWorkspaceInboundEmailResource(this.state.storage, request);
-  }
-
   /** Register the resources a provider webhook mentioned for one connection. */
   async upsertDiscoveredResources(
     input: WorkspaceDiscoveredResourcesRequest,
@@ -10589,7 +10585,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return WorkspaceDirectoryNotificationStateSchema.parse({
         authorityGeneration: canvas.authority_generation,
         listable: canvasReaderAllows(canvas, { userId: request.userId, actorRole }, sql),
-        title: canvas.title, emailAddress: null,
+        title: canvas.title,
       });
     }
     const sidekick = sql.exec<{ automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null;
@@ -10601,7 +10597,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceDirectoryNotificationStateSchema.parse({
       authorityGeneration: sidekick.authority_generation,
       listable: sidekickReaderAllows(sidekick, { userId: request.userId, actorRole }, sql),
-      title: sidekick.title, emailAddress: null,
+      title: sidekick.title,
     });
   }
 
