@@ -32,6 +32,28 @@ describe('desktop session encryption', () => {
     });
   });
 
+  // These fixtures were sealed independently with a test-only key and fixed IVs.
+  it.each([
+    {
+      plaintext: 'Rally session fixture',
+      envelope: 'cmFsbHktc2Vzc2lvbi9nbG9iYWwvdjEAAQEBAQEBAQEBAQEBkg910r3Xeo8N8U7SXlRrUyYdaqFRvrxWS/hWcmSf49mQivCEpg==',
+    },
+    {
+      plaintext: 'Avalon session fixture',
+      envelope: 'YXZhbG9uLXNlc3Npb24vZ2xvYmFsL3YxAAICAgICAgICAgICAokOieT8orDk0GZZnyVP1x+P+aO30B2QT+B+PrJliSHgkV5WzOkg',
+    },
+  ])('decrypts the $plaintext using an injected key', async ({ plaintext, envelope }) => {
+    vi.stubGlobal('__RALLY_DESKTOP_SESSION_KEY__', Buffer.alloc(32, 0x25).toString('base64'));
+    vi.resetModules();
+    const { decryptSessionValue: decryptWithInjectedKey } = await import('./session-encryption');
+
+    expect(decryptWithInjectedKey(Buffer.from(envelope, 'base64'), fakeSafeStorage(false))).toEqual({
+      plaintext,
+      mode: 'global',
+      legacy: false,
+    });
+  });
+
   it('wraps lockdown values with safeStorage and recognizes pre-setting values', () => {
     const safeStorage = fakeSafeStorage();
     const encrypted = encryptSessionValue('private session', 'lockdown', safeStorage);

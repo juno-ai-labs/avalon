@@ -1133,6 +1133,12 @@ The symbolicator image is the one expensive thing either workflow builds, in the
 
 **Nobody bumps a version by hand.** Merge a change that affects the desktop app and it ships: the pipeline picks the next minor, stamps it onto `package.json` and `apps/desktop/package.json`, commits that bump, and builds it. There is nothing to remember and nothing to prepare.
 
+The macOS build step reads `RALLY_DESKTOP_SESSION_KEY` from the
+`desktop-release` GitHub Actions environment. Packaging checks the key against
+the fingerprint of the key used by existing installs to preserve saved sign-ins.
+See the [local packaging setup](../README.md#desktop-builds-and-releases) for
+building outside Actions.
+
 Two things decide a release, in order. The workflow's **`paths:` filter** is a cheap admission filter: `apps/desktop/**`, all of `packages/contracts/**`, the root manifests and lockfile, `tsconfig.base.json`, and the release workflow itself. A docs, Worker, landing-site, agent-harness, connector, or database-only merge starts no run. Every contracts change does start the Ubuntu planner, because a broad trigger cannot miss a new file or rename.
 
 `apps/desktop/scripts/plan-release.mjs` then picks the version on that cheap runner before any macOS runner is claimed. `apps/site/release.config.json` records both the last published version and `commit`, the commit that release was built from — the **watermark**. The planner diffs `commit..origin/main` with rename detection disabled so a file moved out of a release-input directory still reports its deleted source path. It derives the production contract-module closure from imports in production desktop source, shared UI source and release tooling, then follows relative and `@rally/contracts` package imports inside contracts. It releases only when that entire diff contains a desktop input. Shared UI source, styles, fonts and its package manifest are desktop inputs through both the workflow filter and planner. Classifying the watermark diff rather than the triggering push preserves work when concurrency discards an intermediate run. Contract tests and changes confined to API-only modules such as `durable-object-migrations.ts`, `engineering-inspection.ts`, or `text.ts` therefore produce a distinct, explained Ubuntu skip rather than a macOS build. If the runtime classifier cannot resolve its graph, the planner warns and fails open to a release: an extra macOS build is preferable to silently retiring desktop work.

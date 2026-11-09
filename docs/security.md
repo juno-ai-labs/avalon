@@ -189,8 +189,14 @@ are canonical storage services, not authorization layers.
   and closes authenticated windows before attempting remote logout for the
   identity and each regional workspace. Remote cleanup failures are reported but
   cannot restore local authority.
-  By default the desktop uses an application-wide embedded key so the saved set survives signing-identity
-  and keystore changes. Application → **Lockdown mode** replaces that with
+  By default the desktop uses an application-wide embedded key so the saved set
+  survives signing-identity and keystore changes. The macOS release build embeds
+  the key from the `desktop-release` Actions environment in the main-process
+  bundle. Anyone with the packaged app can recover it. To keep a development
+  session saved before the move to Actions, set `RALLY_DESKTOP_SESSION_KEY` in
+  the ignored `.env.local` for `pnpm dev:desktop`, or export it in the shell
+  for `pnpm dev:desktop:prod`. Application →
+  **Lockdown mode** replaces that with
   Electron `safeStorage`, binding the saved authentication state to the
   operating-system keystore. An in-app toggle re-encrypts every durable session
   component before committing the new preference. The plaintext preference lives
@@ -1345,6 +1351,31 @@ receive no application bridge. See
 [artifact annotations](artifact-annotations.md) for the protocol.
 
 ## Changelog
+
+### 2026-11-09 — Desktop release builds receive the existing session key from Actions
+
+**What changed**
+
+The release build reads `RALLY_DESKTOP_SESSION_KEY` from the `desktop-release`
+environment. Packaging verifies the supplied key against the existing key's
+SHA-256 fingerprint.
+
+**Why**
+
+The original literal was checked into the desktop source. Moving its build input
+to Actions removes the literal from new revisions while preserving saved sign-ins.
+
+**Considered and rejected**
+
+Rotating the key as part of the move would make saved sessions unreadable.
+
+**Consequences**
+
+Local and release packages can open the same profile, so both require the
+original key. Unpackaged builds use a separate development default and need
+the original key to read pre-change development sessions.
+
+[#1508](https://github.com/juno-ai-labs/avalon/pull/1508)
 
 ### 2026-11-09 — MCP clients get their own audience, and a Canvas's sandbox is shared by its people
 
