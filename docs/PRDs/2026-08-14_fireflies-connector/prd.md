@@ -531,7 +531,7 @@ that already exists.
    considered and rejected static allowlists for dynamic scopes; the honest
    alternative to shipping it is not shipping the personal scope, which this
    PRD keeps because the containment (confirmed-write treatment, exclusion
-   from email-triggered automations and sub-agents, per-member scoping) is
+   from sub-agents, per-member scoping) is
    the same one Granola/Slack/Notion personal connections already live under.
    Also rejected: pointing members at the `custom_mcp` connector instead of a
    named entry — it reaches the same server, but a member would have to know
@@ -722,7 +722,7 @@ is the capability handed to `createHostedMcpPassthrough`, as Granola's
   `fireflies_create_soundbite` at time of writing — sharing is external data
   egress). Containment is the pass-through's: every provider tool is treated
   as a confirmed write with a record-before-execute receipt, excluded from
-  email-triggered automations and sub-agent runs; there is no per-call human
+  sub-agent runs; there is no per-call human
   approval gate, and this PRD does not claim one. OAuth is origin-pinned by
   declaring `serverUrl: "https://api.fireflies.ai/mcp"` with
   `allowedAuthorizationOrigins: ["https://api.fireflies.ai"]`, so discovery

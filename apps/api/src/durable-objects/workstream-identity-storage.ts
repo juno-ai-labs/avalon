@@ -40,8 +40,6 @@ export interface IdentityRow extends Record<string, SqlStorageValue> {
   automation_run_id: string | null;
   created_from_opportunity_id: string | null;
   planned_for: number | null;
-  email_address: string | null;
-  email_route_status: string;
   model_override: string | null;
   /** The agent profile this conversation's runs use; null for an ordinary conversation. */
   agent_profile: string | null;
@@ -75,8 +73,6 @@ export interface WorkstreamProvisionInput {
   participantUserIds: readonly string[];
   harnessStatus: string;
   titleStatus?: "naming" | "automatic" | "settled";
-  emailAddress: string | null;
-  emailRouteStatus: string | null;
   systemKind: string | null;
   modelOverride: string | null;
   /**
@@ -137,7 +133,7 @@ export class WorkstreamIdentityStorage {
       `SELECT workstream_key, parent_workspace_key, title, description, description_source,
               title_status, scope, exact_state, state_reason_code, origin_type, parent_kind, system_kind,
               created_by_user_id, automation_subscription_id, automation_run_id,
-              created_from_opportunity_id, planned_for, email_address, email_route_status,
+              created_from_opportunity_id, planned_for,
               model_override, agent_profile, appearance_json, archived_at, created_at, updated_at
          FROM workstream WHERE id = 1`,
     ));
@@ -210,34 +206,6 @@ export class WorkstreamIdentityStorage {
         input.now,
       );
       return { outcome: "archived" as const };
-    });
-  }
-
-  /**
-   * Take the address the Global registry just reserved, if none is held.
-   *
-   * `WHERE email_address IS NULL` was the routed statement's guard against two
-   * reservations racing for one work stream; here the read and the write are
-   * one transaction, so the guard is the read. The caller compares what came
-   * back against what it reserved either way — an address it did not reserve is
-   * a conflict, not a success.
-   */
-  adoptEmailAddress(input: { emailAddress: string; now: number }): {
-    outcome: "adopted" | "already_addressed";
-  } {
-    return this.storage.transactionSync(() => {
-      const root = this.identity();
-      if (!root || root.email_address !== null) {
-        return { outcome: "already_addressed" as const };
-      }
-      this.sql.exec(
-        `UPDATE workstream
-            SET email_address = ?, email_route_status = 'reserved', updated_at = ?
-          WHERE id = 1`,
-        input.emailAddress,
-        input.now,
-      );
-      return { outcome: "adopted" as const };
     });
   }
 
@@ -537,13 +505,6 @@ export class WorkstreamIdentityStorage {
         `UPDATE workstream
             SET title = ?, description = ?, scope = ?,
                 created_by_user_id = ?, system_kind = ?,
-                -- Preserved when the producer has no route to write. The
-                -- digest and activity batches never named these columns, so
-                -- they kept the table's defaults, and email_route_status is
-                -- NOT NULL: writing the absent value would fail the insert
-                -- rather than leave the column alone.
-                email_address = COALESCE(?, email_address),
-                email_route_status = COALESCE(?, email_route_status),
                 model_override = ?, agent_profile = ?,
                 appearance_json = COALESCE(appearance_json, ?),
                 exact_state = ?, state_reason_code = ?, title_status = ?,
@@ -556,8 +517,6 @@ export class WorkstreamIdentityStorage {
         input.scope,
         input.createdByUserId,
         input.systemKind,
-        input.emailAddress,
-        input.emailRouteStatus,
         input.modelOverride,
         input.agentProfile ?? null,
         input.color ? JSON.stringify({ icon: null, color: input.color }) : null,

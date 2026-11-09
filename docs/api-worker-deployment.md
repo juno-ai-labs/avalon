@@ -32,20 +32,11 @@ and [Versions and gradual deployments](https://developers.cloudflare.com/workers
 
 ### Email Service
 
-The Global API's static `worker-events.ts` entrypoint handles Cloudflare Email
-Routing through `email()`, and the Wrangler config supplies `send_email` binding
-`EMAIL` for outgoing mail. Migration `0127_email_delivery_receipts.sql` applies
-before the Worker and stores opaque send claims/completion receipts. `postal-mime`
-is bundled for regional MIME parsing;
-no runtime dependency loading or administration token is used. External sender
-domain verification and receiving rules are separate deployment prerequisites,
-listed in [the runbook](runbook.md). New addresses use the dedicated
-`rallywithai.com` apex catch-all. The owner confirmed that current incoming
-addresses are unused: deploy once, then enable the new catch-all and verify
-delivery before announcing availability. No staged compatibility rollout or
-issuance pause is required. The old `automation.*` Resend path remains available
-but can be retired after pending deliveries are settled; it does not gate
-activation of the new domain.
+Global uses the Wrangler `send_email` binding `EMAIL` for outgoing mail.
+Migration `0127_email_delivery_receipts.sql` applies before the Worker and stores
+opaque delivery claims and completion receipts. Sending-domain verification is
+configured in Cloudflare; [email delivery](email-delivery.md) owns the receipt
+policy and [the runbook](runbook.md) owns deployment setup.
 
 ### Dedicated Ashby ingress
 
@@ -323,22 +314,15 @@ resident Channel agent reads the window snapshot once.
 
 ## Changelog
 
-### 2026-11-09 — Bind email to the API Worker
+### 2026-11-09 — Keep native outbound mail
 
-**What changed:** Global exports an `email()` handler and binds `EMAIL` for native
-Cloudflare sending. The static bundle includes `postal-mime`; receiving rules and
-sender verification are configured outside Wrangler.
-An ordinary D1 migration adds opaque delivery receipts before Worker promotion.
+**What changed:** Global binds `EMAIL` for Cloudflare sending. Migration 0127
+provides opaque delivery receipts before promotion. Sender-domain verification
+is configured outside Wrangler.
 
-**Why:** The email provider switch can use the existing Worker and regional RPC
-boundary without an HTTP receiving secret for new mail. Resend's signed endpoint
-is retained for existing automation-subdomain addresses and pending deliveries.
-
-**Consequences:** A successful build does not prove DNS, sending-domain or
-receiving-rule configuration. The dedicated `rallywithai.com` apex supplies one
-catch-all for new addresses; old subdomains keep Resend receiving. Follow the
-runbook's sequence and retain legacy receiving credentials while those addresses
-remain served.
+**Why:** Login, invitations and notifications require outbound delivery even as
+receiving is removed from the product. A build proves the binding compiles;
+provider verification and delivery receipts prove different parts of delivery.
 
 ### 2026-10-06 — Retry the Pipeline binding form of error 10021 once
 
@@ -492,7 +476,7 @@ rather than through `toISOString()`, so a plausible `…T14:00Z` for "this
 afternoon" is now a hard reject where it used to parse. The stricter `pattern` does
 travel to the model in the tool's JSON Schema, which is the mitigation, but it is
 a pattern a model can ignore. Inbound third-party timestamps — `created_at` on the
-Resend webhook — are the smaller exposure: RFC 3339 has always required seconds,
+provider webhook — are the smaller exposure: RFC 3339 has always required seconds,
 so a conforming producer was never sending the form that now fails.
 
 **A green suite does not clear this**, which is the part worth remembering. Every

@@ -24,7 +24,7 @@ beforeEach(() => {
   db = migratedSqliteDatabase(); vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(start);
   env = createTestEnv({ DB: sqliteD1(db), APP_ENV: 'production', AVALON_REGION: 'global',
     PUBLIC_API_BASE_URL: 'https://api.rallywith.ai', ALLOWED_ORIGINS: 'https://rallywith.ai',
-    TURNSTILE_SECRET_KEY: 'test-key', RESEND_API_KEY: 'test-not-a-key',
+    TURNSTILE_SECRET_KEY: 'test-key',
     DEMO_OPERATORS_JSON: JSON.stringify({ [operatorToken]: { operatorId: '00000000-0000-4000-8000-000000000001', role: 'demos' } }),
   });
 });

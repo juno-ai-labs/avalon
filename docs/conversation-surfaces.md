@@ -53,10 +53,9 @@ memory row naming a Sidekick opens it in the main window through
 `openSidekick`. The sidebar recognizes both
 legacy automation details and new Sidekick details. Attachment remove buttons
 have their own class so accessibility labels on the row do not apply button-only
-layout. Disabled email triggers hide the displayed address while preserving its
-permanent owner reservation. Workspace automation pushes invalidate the library
-and attachment REST queries in each open window, keeping cross-window authoring
-and availability changes visible without navigation.
+layout. Workspace automation pushes invalidate the library and attachment REST
+queries in each open window, keeping cross-window authoring and availability
+changes visible without navigation.
 
 ## Sidekick conversations and attachments
 

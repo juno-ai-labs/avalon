@@ -134,7 +134,7 @@ it('sends one email per notice through Cloudflare, its subject the notice title 
   const send = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: 'cf_1' }));
   const production = { ...env, APP_ENV: 'production' as const, EMAIL_NOTIFICATION_FROM: 'Rally <notify@rallywith.ai>' };
   const notice: Notice = { intentId: 'new_message:one', kind: 'new_message', title: 'Avery in Launch plan', body: 'Moved the date',
-    actorName: 'Avery', url: CANVAS_URL, workspaceId, recipientUserId: userId, parentId: canvasId, substreamId: '0', replyTo: null };
+    actorName: 'Avery', url: CANVAS_URL, workspaceId, recipientUserId: userId, parentId: canvasId, substreamId: '0' };
   expect(await sendNoticeEmail(production, notice, send)).toEqual({ outcome: 'sent' });
   expect(await sendNoticeEmail(production, notice, send)).toEqual({ outcome: 'sent' });
   expect(send).toHaveBeenCalledTimes(1);

@@ -54,6 +54,37 @@ function bootstrapEntries(database: DatabaseSync): { alarm_key: string; due_at: 
 }
 
 describe("the WorkspaceDO alarm migrations", () => {
+  it("retires receiving while keeping accepted Sidekick instructions and supported triggers", () => {
+    const database = new DatabaseSync(":memory:");
+    try {
+      apply(database, 142);
+      seedIdentity(database);
+      for (const [id, triggers] of [["mail-only", [{ type: "inbound_email" }]],
+        ["mixed", [{ type: "manual" }, { type: "inbound_email" }]]] as const) {
+        database.prepare(`INSERT INTO automation_directory
+          (automation_id,workspace_id,author_user_id,source_version,payload_hash,lifecycle,scope,title,description,projected_at,
+           accepted_definition_revision, email_address, loadable)
+          VALUES (?,?,'author',1,'fixture','active','personal','Helper','Help',1,1,'helper@example.test',0)`)
+          .run(id, WORKSPACE_ID);
+        database.prepare(`INSERT INTO sidekick_revisions
+          (sidekick_id,definition_revision,definition_json,definition_hash,ready,created_at)
+          VALUES (?,1,?,'fixture',1,0)`).run(id, JSON.stringify({ instructions: "Keep these instructions.", triggers }));
+      }
+      apply(database, 143, 142);
+      expect(database.prepare(`SELECT automation_id, loadable FROM automation_directory ORDER BY automation_id`).all())
+        .toEqual([{ automation_id: "mail-only", loadable: 1 }, { automation_id: "mixed", loadable: 0 }]);
+      const definitions = database.prepare(`SELECT definition_json FROM sidekick_revisions ORDER BY sidekick_id`).all() as { definition_json: string }[];
+      expect(definitions.map((row) => JSON.parse(row.definition_json))).toEqual([
+        { instructions: "Keep these instructions.", triggers: [] },
+        { instructions: "Keep these instructions.", triggers: [{ type: "manual" }] },
+      ]);
+      expect(() => database.prepare("SELECT email_address FROM automation_directory")).toThrow(/no such column/);
+      expect(() => database.prepare("SELECT * FROM sidekick_email_receipts")).toThrow(/no such table/);
+      expect(() => database.prepare("SELECT * FROM automation_email_rate_windows")).toThrow(/no such table/);
+      expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally { database.close(); }
+  });
+
   it("wakes only existing active configured Sidekicks when delegated source reconciliation is installed", () => {
     const database = new DatabaseSync(":memory:");
     try {

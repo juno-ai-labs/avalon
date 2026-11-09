@@ -530,8 +530,6 @@ export const WorkstreamSchema = z.object({
    */
   titleStatus: z.enum(["naming", "automatic", "settled"]).default("settled"),
   objective: z.string().max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
-  /** Stable inbound address. Null is transitional for pre-migration rows only. */
-  emailAddress: z.string().email().max(254).nullable().default(null),
   createdByUserId: IdSchema.nullable(),
   harnessStatus: HarnessStatusSchema,
   latestAttentionSequenceNumber: z.number().int().nonnegative(),
@@ -1125,7 +1123,6 @@ export const WorkstreamContextSchema = z.object({
 
 export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("manual") }),
-  z.object({ type: z.literal("inbound_email") }),
   z.object({
     type: z.literal("calendar"),
     rrule: z.string().min(1),
@@ -1571,16 +1568,10 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
   coordinatorUserId: IdSchema.nullable().optional(),
   modelOverride: z.string().min(1).nullable(),
   trigger: AutomationRunTriggerV1Schema,
-  /**
-   * The content that started the run, rendered as loop input: the email for
-   * an inbound-email run, the event for an external-event run. Only an email
-   * is also a resource.
-   */
+  /** The event or conversation message that started the run, rendered as loop input. */
   opening: z.strictObject({
     textContent: z.string().min(1),
     structuredContent: z.record(z.string(), z.unknown()),
-    resourceId: IdSchema.nullable(),
-    /** Host-derived provider references from the canonical activation event. */
   }).nullable(),
   state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
 });
@@ -1601,7 +1592,6 @@ export const AutomationSummarySchema = z.object({
   id: IdSchema,
   name: z.string(),
   description: z.string(),
-  emailAddress: z.string().email().nullable().default(null),
   scope: AutomationScopeSchema,
   status: z.enum(["draft", "active", "paused"]),
   nextRunAt: TimestampSchema.nullable(),
@@ -1614,7 +1604,7 @@ export const AutomationSummarySchema = z.object({
    */
   running: z.boolean().optional(),
   pendingQuestion: z.string().nullable().optional(),
-  triggerKinds: z.array(z.enum(["manual", "schedule", "external_event", "inbound_email"])).optional(),
+  triggerKinds: z.array(z.enum(["manual", "schedule", "external_event"])).optional(),
   /**
    * The IANA zone the schedule behind `nextRunAt` reads its wall-clock time
    * in, so a client formats `nextRunAt` the way the schedule's own summary
@@ -1667,7 +1657,7 @@ export const AutomationRunSchema = z.object({
   id: IdSchema,
   automationId: IdSchema,
   coordinatorUserId: IdSchema.nullable().optional(),
-  triggerType: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
+  triggerType: z.enum(["manual", "schedule", "external_event"]),
   plannedFor: TimestampSchema.nullable(),
   startedAt: TimestampSchema.nullable(),
   completedAt: TimestampSchema.nullable(),
@@ -2925,7 +2915,7 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * The trigger doubles as the transcript's upper bound, which is right for a
    * run a message started and wrong for a `retry`: the failed run's trigger has
    * to stay the trigger — it is what admits a suggested-work brief or an
-   * inbound email to the model — while the replay still needs to see anything
+   * event to the model — while the replay still needs to see anything
    * said since, including a correction that started no run of its own. Resolved
    * at launch rather than at projection time so a replayed attempt reads the
    * same window. Optional rather than nullable so every existing producer keeps
@@ -3816,15 +3806,8 @@ export function readStructuredFailure(error: unknown): StructuredFailureDetail |
 }
 
 /** Stored capability policy. Consumers read the persisted value, never derive it. */
-export function sidekickLoadable(definition: Pick<AutomationDraft, "triggers" | "definitionVersion">): boolean {
-  // Legacy accepted definitions include implicit email trigger configuration.
-  return definition.definitionVersion === 2 && definition.triggers.length === 0;
-}
-
-/** Legacy definitions implicitly enabled inbound email when accepted. */
-export function sidekickReceivesEmail(definition: AutomationDraft): boolean {
-  return definition.definitionVersion !== 2
-    || definition.triggers.some((trigger) => trigger.type === "inbound_email");
+export function sidekickLoadable(definition: Pick<AutomationDraft, "triggers">): boolean {
+  return definition.triggers.length === 0;
 }
 
 export const SidekickDefinitionSchema = AutomationDraftSchema;

@@ -1016,7 +1016,6 @@ branding and merge into its activity. Putting that label in the trusted model
 name was rejected because the name also reaches system-prompt headings. Future
 presentation changes must preserve both boundaries.
 
-
 ### 2026-09-10 — The Sidekicks plugin's canonical id is `rally:sidekicks`
 
 **What changed:** `GROUPED_PLUGIN_IDS` pins the keyframes glyph to

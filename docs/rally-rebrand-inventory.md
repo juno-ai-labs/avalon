@@ -26,7 +26,7 @@ This is the team's decision, not a conclusion of this survey; the reasoning
 behind it was not recorded here.
 
 [`domain-migration.md`](domain-migration.md) owns the hostnames, the deep-link
-scheme, and the conversation email domain, and is the authority on all three.
+scheme, and the public hostname configuration, and is the authority on all three.
 This document defers to it for those and covers everything else.
 
 Counts are occurrences across tracked files (`git ls-files`), taken at the
@@ -319,7 +319,7 @@ too, said Rally before it went.
 
 The two **person-notification** emails — `participant-` and
 `mention-email-service.ts` — have moved, along with configured deployments'
-`RESEND_FROM_EMAIL` and `RESEND_NOTIFICATION_FROM_EMAIL` display names, which
+`EMAIL_FROM_EMAIL` and `EMAIL_NOTIFICATION_FROM_EMAIL` display names, which
 front every template including the four above. They were taken out of order
 because their Slack halves had already moved, so one event arrived as "Open in
 Rally" in a DM and "Open in Avalon" in an inbox; and because a sender line
@@ -423,7 +423,7 @@ agents; this is the record of what each step left behind.
 ### 2026-08-25 — The person-notification emails and both Resend senders
 
 **What changed:** `participant-` and `mention-email-service.ts` say Rally, and
-`RESEND_FROM_EMAIL` / `RESEND_NOTIFICATION_FROM_EMAIL` say `Rally <…>` in both
+`EMAIL_FROM_EMAIL` / `EMAIL_NOTIFICATION_FROM_EMAIL` say `Rally <…>` in both
 regions and in `.env.example`. Section 7's remainder is now the invitation,
 automation, and digest templates.
 
@@ -679,7 +679,7 @@ inventory would put `packages/db` near the bottom on volume (35 occurrences) and
 a migration and most of the `apps/api` bulk is one env var and test fixtures.
 
 Deferred to [`domain-migration.md`](domain-migration.md) for hostnames, the
-deep-link scheme, and the work-stream email domain rather than restating them —
+deep-link scheme, and the public hostname configuration rather than restating them —
 that document already owns the retirement conditions, and two copies of a
 retirement condition is how one of them goes stale.
 

@@ -97,8 +97,6 @@ export const WORKSPACE_LOCAL_TABLES = [
   "automation_subscriptions",
   "automation_runs",
   "automation_delivery_targets",
-  "automation_email_receipts",
-  "automation_email_rate_windows",
   "automation_resources",
   // WorkspaceDO migration 28. The site-publish path writes it through this
   // facade, and the revocation walk reads it inside the object. Listed for the

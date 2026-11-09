@@ -42,9 +42,19 @@ import { SIDEKICK_SOURCE_CONNECTION_SCHEMA_STATEMENTS } from "./sidekick-source-
 import { RESOURCE_READ_PROJECTION_SQL } from '../services/resource-read-projection';
 import { WorkspaceConversationView, WORKSPACE_CONVERSATION_VIEW_MIGRATION } from "./workspace-conversation-view";
 import { ConversationViewProjectionSchema } from "./conversation-view-projection";
-import { CONNECTOR_EVENT_PEOPLE_MIGRATION, writeConnectorEventPeople, readConnectorEventPeople, copyConnectorEventPeople } from "./connector-event-people";
+import {
+  CONNECTOR_EVENT_PEOPLE_MIGRATION,
+  writeConnectorEventPeople,
+  readConnectorEventPeople,
+  copyConnectorEventPeople,
+} from "./connector-event-people";
 import { CANVA_POLL_SECONDS } from "@rally/connectors";
-import { SCOPE_GRANT_DIRECTORY_SCHEMA, applyScopeGrantDirectory, scopeGrantCandidates, ScopeGrantCandidatesRequestSchema } from "./scope-grant-directory";
+import {
+  SCOPE_GRANT_DIRECTORY_SCHEMA,
+  applyScopeGrantDirectory,
+  scopeGrantCandidates,
+  ScopeGrantCandidatesRequestSchema,
+} from "./scope-grant-directory";
 
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 import { ConversationEffectEnvelopeSchema, type ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
@@ -103,8 +113,24 @@ import {
   type InstallationMaintenanceCancel,
   type InstallationRotationPrepare,
 } from './connector-installation-protocol';
-import { createInstallation, readInstallation, readInstallations, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
-import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
+import {
+  createInstallation,
+  readInstallation,
+  readInstallations,
+  claimInstallation,
+  recordInstallationDelivery,
+  settleInstallation,
+  changeInstallation,
+  cancelInstallationMaintenance,
+  prepareInstallationMaintenance,
+  prepareInstallationRotation,
+  replaceInstallationCredentials,
+} from './connector-installation-storage';
+import {
+  MEETING_NOTES_FINALIZATION_MIGRATION,
+  MEETING_NOTES_RETIREMENT_MIGRATION,
+  applyMeetingRetirementMigrations,
+} from "./meeting-notes-retirement";
 import { AgentIdSchema, type AgentId, type RetirementParentKind } from "@rally/contracts";
 import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
@@ -169,9 +195,20 @@ import {
   AuthorizationSnapshotSchema, AuthorizationSubjectSchema, AuthorizationResourceSchema,
   admitsOrganizationWide, connectionAdmits, sidekickAdmits, type Viewer,
 } from '../services/authorization-policy';
-import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey, searchDecisionFingerprint } from '../services/search-authorization';
+import {
+  SearchAuthorizationSnapshotSchema,
+  SearchAuthorizationTargetSchema,
+  searchAuthorizationKey,
+  searchDecisionFingerprint,
+} from '../services/search-authorization';
 import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
-import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_STORAGE_TABLES, AuthorizationLocationSchema, SPACE_MERGE_EMBED_LINKS_MIGRATION } from './authorization-storage';
+import {
+  AuthorizationStorage,
+  AUTHORIZATION_STORAGE_MIGRATION,
+  AUTHORIZATION_STORAGE_TABLES,
+  AuthorizationLocationSchema,
+  SPACE_MERGE_EMBED_LINKS_MIGRATION,
+} from './authorization-storage';
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, RESOURCE_SEARCH_AUDIENCE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch, type ResourceSearchPace } from './resource-search-projection';
@@ -215,7 +252,11 @@ import {
 import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
 import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
 
-import { googleConnectorReplayCompatibility, workspaceConnectorEventContentFingerprint, workspaceConnectorEventPayloadHash } from "../services/workspace-connector-event-ingress";
+import {
+  googleConnectorReplayCompatibility,
+  workspaceConnectorEventContentFingerprint,
+  workspaceConnectorEventPayloadHash,
+} from "../services/workspace-connector-event-ingress";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import {
   recordWorkspaceScheduleFailure,
@@ -502,7 +543,6 @@ import {
   WorkspaceConnectorResourceResolveRequestSchema,
   WorkspaceDiscoveredResourcesRequestSchema,
   WorkspaceExpiredDraftReapRequestSchema,
-  WorkspaceInboundEmailResourceRequestSchema,
   WorkspaceReapableResourceObjectListRequestSchema,
   WorkspaceResourceDescriptorsRequestSchema,
   WorkspaceResourceExistsRequestSchema,
@@ -523,8 +563,6 @@ import {
   type WorkspaceDiscoveredResourcesRequest,
   type WorkspaceExpiredDraftReapRequest,
   type WorkspaceExpiredDraftReapResult,
-  type WorkspaceInboundEmailResourceRequest,
-  type WorkspaceInboundEmailResourceResult,
   type WorkspaceReapableResourceObjectList,
   type WorkspaceReapableResourceObjectListRequest,
   type WorkspaceResourceDescriptorList,
@@ -571,7 +609,6 @@ import {
   resolveWorkspaceConnectorResource,
   retireWorkspaceResourceObjectStaging,
   upsertWorkspaceDiscoveredResources,
-  upsertWorkspaceInboundEmailResource,
   workspaceResourceDescriptors,
   workspaceResourceExists,
 } from "./workspace-resources-storage";
@@ -712,10 +749,42 @@ import {
 } from "./workspace-sidekick-conversation-storage";
 import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-batch";
 import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
-import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
-import { CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_STATEMENTS, CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
-import { canvasAppearanceReporter, canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
-import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS, SIDEKICK_RUN_SEED_DROP_STATEMENTS } from "./hosted-sidekick-schema";
+import {
+  activityCounts,
+  activityPage,
+  hasActivityFor,
+  markAllActivitySeen,
+  WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS,
+} from "./workspace-activity";
+import {
+  CANVAS_ARCHIVE_CONVERSATION_ALARM,
+  CANVAS_ARCHIVE_ARTIFACT_ALARM,
+  CANVAS_ARCHIVE_STATEMENTS,
+  CANVAS_ARTIFACTS_STATEMENTS,
+  CANVAS_NAMING_ALARM_KIND,
+  CANVAS_SCHEMA_STATEMENTS,
+  CANVAS_SIDEKICK_PINS_STATEMENTS,
+  SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS,
+  RETIREMENT_GRAPH_CANVAS_MIGRATION,
+} from "./canvas-schema";
+import {
+  canvasAppearanceReporter,
+  canvasesWrittenBy,
+  canvasReaderAllows,
+  canvasSidebarRows,
+  HostedCanvas,
+  writerSidekickAdmits,
+  type CanvasRow,
+  type HostedCanvasHost,
+} from "./hosted-canvas";
+import {
+  HOSTED_SIDEKICK_SCHEMA_STATEMENTS,
+  SIDEKICK_REVIEW_SCHEMA_STATEMENTS,
+  SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS,
+  SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS,
+  SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS,
+  SIDEKICK_RUN_SEED_DROP_STATEMENTS,
+} from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
   HOSTED_SIDEKICK_ALARM_KINDS,
@@ -771,7 +840,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "automation_directory",
   "sidekick_conversation_attachments",
   // A hosted Sidekick's own rows: `HostedSidekick` is their only writer.
-  "sidekick_revisions", "sidekick_schedules", "sidekick_runs", "sidekick_email_receipts",
+  "sidekick_revisions", "sidekick_schedules", "sidekick_runs",
   "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts", "sidekick_reviews",
   "sidekick_audience", "sidekick_viewer_reads",
   // A hosted Canvas's own rows: `HostedCanvas` is their only writer.
@@ -4409,6 +4478,26 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 142,
   description: "retain a Canvas archive tombstone and remove archived Canvases from active admission",
   statements: [...CANVAS_ARCHIVE_STATEMENTS, ...MEMORY_DIGEST_CANVAS_ARCHIVE_TRIGGER],
+}, {
+  version: 143,
+  description: "retire email admission and addresses while preserving Sidekick definitions and conversations",
+  statements: [
+    `UPDATE sidekick_revisions SET definition_json = json_set(definition_json, '$.triggers',
+       json(COALESCE((SELECT json_group_array(json(value)) FROM json_each(definition_json, '$.triggers')
+         WHERE json_extract(value, '$.type') <> 'inbound_email'), '[]')))
+      WHERE EXISTS (SELECT 1 FROM json_each(definition_json, '$.triggers')
+        WHERE json_extract(value, '$.type') = 'inbound_email')`,
+    `UPDATE automation_directory SET loadable = COALESCE((SELECT
+        CASE WHEN json_array_length(definition_json, '$.triggers') = 0 THEN 1 ELSE 0 END
+        FROM sidekick_revisions WHERE sidekick_id = automation_id
+          AND definition_revision = accepted_definition_revision), loadable)`,
+    `UPDATE sidekick_runs SET opening_json = json_remove(opening_json, '$.resourceId') WHERE opening_json IS NOT NULL`,
+    `ALTER TABLE automation_directory DROP COLUMN email_address`,
+    `DROP TABLE sidekick_email_receipts`,
+    `DROP TABLE IF EXISTS automation_email_receipts`,
+    `DROP TABLE IF EXISTS automation_email_rate_windows`,
+    `DROP TABLE IF EXISTS workstream_email_receipts`,
+  ],
 }];
 
 function conversationToolEntry(conversation: {
@@ -6106,10 +6195,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async sidekickAdmitExternalEvent(input: Parameters<HostedSidekick["admitExternalEvent"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.admitExternalEvent(input));
-  }
-
-  async sidekickAdmitInboundEmail(input: Parameters<HostedSidekick["admitInboundEmail"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.admitInboundEmail(input));
   }
 
   async sidekickReadSkillSource(input: Parameters<HostedSidekick["readSkillSource"]>[0]) {
@@ -10002,21 +10087,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return listWorkspaceResourcesAwaitingSlug(this.state.storage, request.workspaceId);
   }
 
-  /**
-   * The resource for one inbound email, created or refreshed in one critical
-   * section — a fresh insert deliberately skips the follow-up refresh, which
-   * used to fire the semantic-version trigger and record a phantom second
-   * version of every newly ingested email.
-   */
-  async upsertInboundEmailResource(
-    input: WorkspaceInboundEmailResourceRequest,
-  ): Promise<WorkspaceInboundEmailResourceResult> {
-    await this.initialized;
-    const request = WorkspaceInboundEmailResourceRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return upsertWorkspaceInboundEmailResource(this.state.storage, request);
-  }
-
   /** Register the resources a provider webhook mentioned for one connection. */
   async upsertDiscoveredResources(
     input: WorkspaceDiscoveredResourcesRequest,
@@ -10589,7 +10659,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return WorkspaceDirectoryNotificationStateSchema.parse({
         authorityGeneration: canvas.authority_generation,
         listable: canvasReaderAllows(canvas, { userId: request.userId, actorRole }, sql),
-        title: canvas.title, emailAddress: null,
+        title: canvas.title,
       });
     }
     const sidekick = sql.exec<{ automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null;
@@ -10601,7 +10671,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceDirectoryNotificationStateSchema.parse({
       authorityGeneration: sidekick.authority_generation,
       listable: sidekickReaderAllows(sidekick, { userId: request.userId, actorRole }, sql),
-      title: sidekick.title, emailAddress: null,
+      title: sidekick.title,
     });
   }
 

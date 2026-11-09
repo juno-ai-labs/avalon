@@ -182,26 +182,6 @@ export const AutomationExternalEventPlanSchema = z.discriminatedUnion("kind", [
 ]);
 export type AutomationExternalEventPlan = z.infer<typeof AutomationExternalEventPlanSchema>;
 
-export const AutomationInboundEmailAdmissionSchema = z.strictObject({
-  ...Addressed,
-  emailAddress: z.string().email(),
-  resendEmailId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/u),
-  senderUserId: UserIdSchema.nullable(),
-  /**
-   * Whether the receiving mail server's verdict ties the message to its From
-   * domain (DMARC pass, or a DKIM pass, which Resend reports only for a
-   * signature aligned with the From domain). Without it the From header is
-   * only a claim, and the run would act as whoever it names.
-   */
-  senderAuthenticated: z.boolean(),
-  receivedAt: z.number().int().nonnegative(),
-  payloadRef: z.string().min(1),
-  resourceId: IdSchema,
-  textContent: z.string().min(1),
-  structuredContent: z.record(z.string(), z.unknown()),
-});
-export type AutomationInboundEmailAdmission = z.infer<typeof AutomationInboundEmailAdmissionSchema>;
-
 export const AutomationRunRequestSchema = z.strictObject({
   ...Addressed,
   runId: IdSchema,
@@ -338,7 +318,7 @@ export const SidekickRunRowProjectionSchema = z.strictObject({
   ...Addressed,
   runId: IdSchema,
   automationName: z.string().min(1).max(300),
-  triggerKind: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
+  triggerKind: z.enum(["manual", "schedule", "external_event"]),
   createdAt: z.number().int().nonnegative(),
   state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
   stepCount: z.number().int().nonnegative(),

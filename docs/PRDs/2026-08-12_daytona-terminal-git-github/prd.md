@@ -1466,5 +1466,4 @@ work. A call blocked by the breaker returns the normal model-visible
    answer is no, product scope must change; a custom gateway is not an implicit
    fallback in this PRD.
 
-
 ## Open questions

@@ -329,7 +329,6 @@ claim and operator generation still fence concurrent and reconciled attempts.
 Ace. Previously failed Resend attempts should be reconciled as part of cutover;
 the new provider does not recognize their old keys.
 
-
 ### 2026-10-11 — Pilot offer card with a per-visitor deadline
 
 **What changed:** The landing shows a pilot offer card two seconds after load:
@@ -531,13 +530,6 @@ the desktop-release site step now receives the public key too. The acknowledgeme
 sender uses the team's corrected `hi@rallywith.ai` address on the verified domain.
 Configured a Cloudflare redirect for the two retired landing hosts, preserving
 paths and queries while keeping the widget restricted to the current domain.
-
-**Why:** The team accepted these proposed numbers after the unconfigured site
-deployment stopped. The assumptions and tradeoffs are recorded above. Passing
-the key only to the standalone site workflow would still break the next desktop
-release's site build. Incoming mail is not required by the product owner.
-The old site routes still existed; redirecting at the edge prevents a dead
-signup form without reauthorizing the retired domain or adding a site Worker.
 
 **Consequences:** No acquisition caps remain unset. The provider confirms the
 outbound domain, but successful deployment and browser verification remain launch

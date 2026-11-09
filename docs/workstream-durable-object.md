@@ -102,7 +102,7 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `apps/api/src/services/sidebar-reads.ts` | `SIDEBAR_LIST_LIMIT`, the bound every sidebar list shares. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for scheduling, resource lookup and feedback. |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The shared request schemas, aggregation helpers and Queue batching every hosted parent reuses. |
-| `apps/api/src/durable-objects/hosted-conversation.ts`, `hosted-sidekick.ts`, `hosted-canvas.ts`, `automation-do-protocol.ts` | `HostedConversation`, the parent contract both kinds share, and `HostedSidekick` (definition revisions, schedules, runs and inbound-email receipts) and `HostedCanvas` (directory row and audience) inside `WorkspaceDO`; neither forwards what its children say, and each records its conversations' mentions and adds as notification intents. Owned by [`hosted-conversation-parents.md`](hosted-conversation-parents.md), [`automation-lifecycle.md`](automation-lifecycle.md) and [`canvases.md`](canvases.md). |
+| `apps/api/src/durable-objects/hosted-conversation.ts`, `hosted-sidekick.ts`, `hosted-canvas.ts`, `automation-do-protocol.ts` | `HostedConversation`, the parent contract both kinds share, and `HostedSidekick` (definition revisions, schedules, runs) and `HostedCanvas` (directory row and audience) inside `WorkspaceDO`; neither forwards what its children say, and each records its conversations' mentions and adds as notification intents. Owned by [`hosted-conversation-parents.md`](hosted-conversation-parents.md), [`automation-lifecycle.md`](automation-lifecycle.md) and [`canvases.md`](canvases.md). |
 | `packages/contracts/src/conversation-parent.ts` | The parent contract every Worker-side caller is written against: `authorizeViewer`, `authority`, `reserveChild`, `listChildren`, and the parent kind enum. |
 | `packages/contracts/src/conversation-effects.ts` | The two effect envelopes (`conversation_effect` from a child, `parent_effect` from a parent), the effect union, `conversationEffectHash`, `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT`, and `EFFECT_QUEUE_MESSAGE_MAX_BYTES`. |
 | `apps/api/src/services/conversation-parent-client.ts` | `conversationParentStub`: the stub for whichever object a conversation's parent is, for callers that need only the contract. |
@@ -1656,7 +1656,7 @@ live state reopens a finished run (see
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output keyed by an explicit transient `stream_id`, active compaction phase, and the room sequence. Canonical output identity remains the turn's `turn_id`; `active_agent_compaction` is a singleton operational checkpoint and immutable summary history remains below. |
 | `transcript_compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints reference immutable model-only facts per principal/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
-| `workstream_resource_links`, `resource_inventory_revision` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `inbound_email`, or `context`) and the authorization revision every relationship change advances. `generated` derives artifact direction; every other value derives source direction. |
+| `workstream_resource_links`, `resource_inventory_revision` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, or `context`) and the authorization revision every relationship change advances. `generated` derives artifact direction; every other value derives source direction. |
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `resident_context_blocks`, `resident_context_compactions` | The context-residency ledger: blocks delivered to this conversation, their residency and remaining prompt lifetime, pending deliveries, and the compaction events already applied. |
 
@@ -6469,20 +6469,6 @@ delivery.
 
 ### 2026-08-25 — Automation opens stay on their authorized workspace state
 
-**What changed:** Automation detail uses its first authorized subscription row
-for the stored email address and calls an internal bounded run-history reader.
-The standalone run-history route retains the subscription authorization. The
-manual, scheduled, and activity-triggered provisioners now copy subscription
-scope to each generated WorkstreamDO. One batched WorkspaceDO directory read
-filters the bounded history IDs so pre-change personal run objects remain
-visible only to their projected participants.
-
-**Why:** Re-reading the same subscription did not change the permission result,
-and re-verifying an owner-verified email route made a regional detail read wait
-on Global. A generated object's scope must also agree with the automation's
-declared user/workspace audience so its native detail, directory, socket, and
-resource checks all enforce the same rule.
-
 **Considered and rejected:** Caching Global verification and adding an
 automation-specific reader exception inside WorkstreamDO. The former keeps an
 unnecessary cross-region dependency; the latter makes stored scope cease to be
@@ -6681,16 +6667,6 @@ across everything it names, and converting it statement by statement into
 separate awaits gives that up silently — the code reads fine and every test
 passes, because nothing fails partway through in a test.
 
-`createRun` provisioned first. Two requests carrying one idempotency key both
-pass the lookup that precedes them; the loser's insert hits the unique index,
-and `controlRunInserted` is still false at that point, so the compensation block
-below does nothing. What is left is a work stream in a sidebar, with a
-`listing_epoch` bump and a reserved email address, for a run that does not
-exist and never will. Claiming the control row first makes its unique keys the
-thing that decides who provisions, before anything visible has been written.
-`main` had this order, and the activity consumer in this same stack kept it;
-only this path lost it.
-
 The audience is worse than a lost write, because what it loses is an
 *announcement*. Admitting five members as five operations and throwing on the
 fourth leaves three seated. The retry recomputes who is new against a roster
@@ -6779,7 +6755,7 @@ read before it wrote.
   `redescribe` hands back what is in force after a refusal rather than leaving
   the caller a second read of a row that can move again.
 - The batches that spanned two tables — the Slack creator reconciliation, the
-  elicitation create, the elicitation answer, the inbound-email transcript
+  elicitation create, the elicitation answer
   write — were sequences whose later statements re-stated the earlier ones'
   effects as `EXISTS` subqueries, because a batch cannot see its own rows. The
   elicitation create was the clearest: an `INSERT … SELECT … FROM workstreams`
@@ -7575,14 +7551,14 @@ the product service's, and they still bump it. There is a `test-workers/` spec
 for exactly this.
 
 **What a future change has to respect.** Two `INSERT INTO workstream_resources`
-literals and an inbound-email visibility predicate went with this slice, all
+literals and a resource visibility predicate went with this slice, all
 three already dead: the inserts sat behind `if (regional === env.DB)`, which
 requires an environment with no workspace runtime database — and production
 requires one before request dispatch — while the visibility predicate had been
 replaced by a per-row `resourceAccess` call against the workspace object in
 `6ff47e62`. That last one is worth knowing about before someone reads the
 deletion as a lost rule: **it is enforced, just not in SQL any more**, and
-`canReadInboundEmailResource` is where it lives.
+the resource access predicate is where it lives.
 
 `_runtime_workstream_resources` never had an *insert* trigger. Attaching has
 gone through the product service since before this slice, which is the clearest
@@ -7632,7 +7608,7 @@ callers are *all* cross-slice, and there are more of them than the three this
 slice first named: every `harness-run-runtime.ts` reader joins `messages` to
 `harness_runs` or `harness_run_lifecycle_events` inside one statement; Slack's
 elicitation answer guards its counter update on `EXISTS (SELECT 1 FROM
-messages)`; and inbound email's sequence claim is fenced on
+messages)`; and the sequence claim is fenced on
 `workstreams.email_address`, which makes it identity's as much as messages'.
 `workstream-resource-visibility.ts` names `messages` beside
 `workstream_resources` and belongs to the resources slice. None of them is a
@@ -8515,12 +8491,6 @@ each list are shared with the REST services rather than written a second time.
 since the authority cutover, but the sidebar still reached them through the
 Worker's REST routes, which route back into this object over RPC. The reads
 already belonged here; only the transport did not.
-
-**Considered and rejected:** Duplicating each SELECT inside the object, which
-puts two copies of one query behind one client cache with no response schema to
-catch the drift; and reconciling automation email routes inside the batch, which
-would put a Global-registry network call on the socket handler's single thread
-alongside the directory read.
 
 **Consequences:** This handler is now the object's widest synchronous read, and
 a list added to the sidebar later should join it rather than open a transport.
@@ -9598,36 +9568,6 @@ dedupe keys, and intent identities. Effects too large to deliver now fail in
 the producing transaction where the producer can shrink them. The import maps
 renamed/renumbered vocabulary (`queued`→`pending`, `*_s` columns) so legacy
 D1 rows land unchanged in meaning.
-
-### 2026-08-18 — Regional effect receipts, email receipts, and dictation admission move into WorkspaceDO
-
-**What changed:** Activity/mention effect replay receipts left D1 entirely: the
-regional Queue consumer resolves current actor/target/membership identity from
-D1, then one `applyWorkstreamRegionalEffect` RPC commits the activity event or
-notification intent *and* its receipt in a single WorkspaceDO transaction,
-sharing `workspace_workstream_effect_receipts` with the directory path. The
-unshipped `0080` migration no longer creates a D1 receipt table. WorkspaceDO's
-initial schema also gained `workstream_email_receipts` (inbound-email
-idempotency/lease) and the two `realtime_transcription_*` admission tables,
-imported, scrubbed, and fenced through the standard workspace product campaign.
-Receipt inserts now age rows older than 30 days out of the shared receipt
-table.
-
-**Why:** The D1 receipt could not commit atomically with the WorkspaceDO
-product row it acknowledged, which was exactly the split invariant 14 forbids;
-its safety already rested on the object-side idempotency guards, making the D1
-row a second authority with no second job. Email receipt leases and dictation
-concurrency caps were compare-and-set races in D1 that a serialized object
-removes outright — the transcription release path even carried a retry-delay
-loop to paper over lost D1 races.
-
-**Considered and rejected:** Keeping a composite `(workstream, generation,
-partition, source_version)` receipt axis in the object (a same-source
-re-emission under a new message ID now converges on the event dedupe key or
-intent identity instead), a separate object receipt table for regional effects
-(one inbox, one retention rule), and WorkstreamDO ownership of email receipts
-(one email may fan out to several work streams, and the ingest path already
-addresses the workspace object).
 
 **Consequences:** A crash between the atomic commit and the
 mention-opportunity snapshot enqueue is repaired by redelivery, so the enqueue

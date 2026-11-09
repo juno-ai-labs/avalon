@@ -1,4 +1,9 @@
-import { assertAudienceInOrganization, HostedConversation, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
+import {
+  assertAudienceInOrganization,
+  HostedConversation,
+  type HostedConversationIdentity,
+  type PriorChildProjection,
+} from "./hosted-conversation";
 import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
 import { sidekickRowRunState } from "./sidekick-directory-sql";
 import { waitingRunActivityRecipients } from "./workspace-activity";
@@ -42,7 +47,6 @@ import {
   WorkstreamAppearancePatchSchema,
   automationAcceptanceSelections,
   sidekickLoadable,
-  sidekickReceivesEmail,
   automationDraftAcceptanceBlocker,
   asAutomationId,
   asSubstreamId,
@@ -84,7 +88,7 @@ import {
   automationMemoryTableResult, prepareAutomationMemoryTables, type PreparedAutomationMemoryTable,
 } from "../services/memory-table-service";
 import { createWorkspaceMemoryTable, ensureWorkspaceMemoryScope } from "./workspace-memory-storage";
-import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
+
 import {
   AutomationActorRequestSchema,
   AutomationRunListRequestSchema,
@@ -93,7 +97,6 @@ import {
   type AutomationRunReadRequest,
   AutomationCreateRequestSchema,
   AutomationExternalEventAdmissionSchema,
-  AutomationInboundEmailAdmissionSchema,
   AutomationRunDefinitionRequestSchema,
   AutomationRunNowRequestSchema,
   SidekickConversationMessageRequestSchema,
@@ -118,7 +121,6 @@ import {
   type AutomationCreateRequest,
   type AutomationExternalEventAdmission,
   type AutomationExternalEventPlan,
-  type AutomationInboundEmailAdmission,
   type AutomationRunDefinitionRequest,
   type AutomationRunNowRequest,
   type AutomationRunRequest,
@@ -132,7 +134,13 @@ import {
 } from "./automation-do-protocol";
 import { RECEIVE_CHILD_EFFECTS_MAX_ENVELOPES, type DirectoryCommonEffect } from "./conversation-parent-object";
 import { sidekickAudienceAllows } from "./sidekick-audience";
-import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
+import {
+  SCHEDULED_ALARM_RETRY_BASE_MS,
+  scheduledAlarmRetryDelay,
+  type ScheduledAlarm,
+  type ScheduledAlarmOutcome,
+  type ScheduledAlarmStore,
+} from "./scheduled-alarms";
 import { conversationIdOf } from "./workspace-sidekick-conversation-storage";
 
 /**
@@ -261,7 +269,6 @@ export interface HostedSidekickRow extends Record<string, SqlStorageValue> {
   activity_source_plugin_ids_json: string;
   evaluator_projection_json: string;
   model_override: string | null;
-  email_address: string | null;
   effective_after_event_sequence: number | null;
   loadable: number;
   appearance_json: string | null;
@@ -591,10 +598,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
             title, description, next_run_at, projected_at, loadable, appearance_json,
             current_definition_revision, accepted_definition_revision, connector_bindings_json,
             default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
-            model_override, email_address, effective_after_event_sequence, authority_generation,
+            model_override, effective_after_event_sequence, authority_generation,
             stop_generation, chat_appearance_json, delegation_migrated, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, 1, 'hosted', 'draft', NULL, ?, NULL, '0', NULL, '', '', NULL, ?, 0, NULL,
-                 0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, NULL, ?, 0, NULL, 1, ?, ?)
+                 0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, ?, 0, NULL, 1, ?, ?)
          ON CONFLICT(automation_id) DO NOTHING
          RETURNING automation_id`,
         request.automationId,
@@ -1004,11 +1011,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const prepared = definition.triggers.length === 0
       ? { selections: { defaultPluginIds: [], activitySourcePluginIds: {} }, connectorBindings: {}, evaluators: [], schedules: [] }
       : await this.prepareApplication(row, revision, definition, request.actor.userId);
-    const emailRoute = sidekickReceivesEmail(definition) ? await new WorkstreamEmailRoutingService(this.env).reserveAutomation({
-      region: row.region,
-      workspaceId: row.workspace_id,
-      automationSubscriptionId: row.automation_id,
-    }) : { emailAddress: row.email_address };
     const memory = await this.prepareMemoryTables(row, revision.definition_revision, definition);
     const now = Date.now();
     this.storage.transactionSync(() => {
@@ -1034,14 +1036,13 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
             SET lifecycle = CASE WHEN lifecycle = 'paused' THEN 'paused' ELSE 'active' END,
                 accepted_definition_revision = ?, connector_bindings_json = ?, default_plugin_ids_json = ?,
                 activity_source_plugin_ids_json = ?, evaluator_projection_json = ?,
-                email_address = ?, loadable = ?, updated_at = ?, runs_since_review = 0
+                loadable = ?, updated_at = ?, runs_since_review = 0
           WHERE automation_id = ?`,
         revision.definition_revision,
         JSON.stringify(prepared.connectorBindings),
         JSON.stringify(prepared.selections.defaultPluginIds),
         JSON.stringify(prepared.selections.activitySourcePluginIds),
         JSON.stringify(prepared.evaluators),
-        emailRoute.emailAddress,
         sidekickLoadable(definition) ? 1 : 0,
         now,
         this.sidekickId,
@@ -1179,7 +1180,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
     if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
     const definition = row.accepted_definition_json ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)) : null;
-    if (!definition || (definition.triggers.length === 0 && !sidekickReceivesEmail(definition))) {
+    if (!definition || (definition.triggers.length === 0)) {
       throw new ApiError(409, "sidekick_not_runnable", "Use this Sidekick in a conversation");
     }
     const admitted = this.admitOccurrence(
@@ -1230,7 +1231,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
     if (row.lifecycle !== "active") return { route: "refused", code: "sidekick_not_active" };
     const definition = row.accepted_definition_json ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)) : null;
-    if (!definition || (definition.triggers.length === 0 && !sidekickReceivesEmail(definition))) {
+    if (!definition || (definition.triggers.length === 0)) {
       return { route: "refused", code: "sidekick_not_runnable" };
     }
     // Someone who is not a delegate, a guest among them, gets a run under
@@ -1378,93 +1379,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       admitted: true,
       outcomeCode: admitted.reused ? "sidekick_occurrence_replayed" : "sidekick_occurrence_admitted",
     };
-  }
-
-  /**
-   * Admit one inbound email, once: the receipt is keyed by the provider's
-   * message id, so a webhook retry answers from it. The run acts as the
-   * sender alone, by the rule a message in the shared conversation follows.
-   */
-  async admitInboundEmail(input: AutomationInboundEmailAdmission): Promise<{
-    admitted: boolean; duplicate: boolean; outcomeCode: string; runId: string | null;
-  }> {
-    const request = parseRpcInput(AutomationInboundEmailAdmissionSchema, input, "admit_inbound_email");
-    const readReceipt = () => first(this.sql.exec<{ run_id: string | null; outcome_code: string }>(
-      `SELECT run_id, outcome_code FROM sidekick_email_receipts WHERE sidekick_id = ? AND resend_email_id = ?`,
-      this.sidekickId, request.resendEmailId,
-    ));
-    const replay = (receipt: { run_id: string | null; outcome_code: string }) => ({
-      admitted: receipt.run_id !== null, duplicate: true, outcomeCode: receipt.outcome_code, runId: receipt.run_id,
-    });
-    // The sender's standing, read once: a guest is admitted only from a
-    // Sidekick's `people` list, on every scope, as a reader is.
-    const relationship = request.senderUserId === null ? null
-      : await this.host.readRelationship(request.workspaceId, request.senderUserId);
-    const senderRole = relationship?.status === "active" && relationship.accessClass === "member"
-      ? relationship.role ?? "member" : null;
-    const refusalFor = (row: HostedSidekickRow & { accepted_definition_json: string | null }) => {
-      const emailEnabled = row.accepted_definition_json !== null
-        && sidekickReceivesEmail(AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)));
-      return row.lifecycle !== "active"
-        ? "sidekick_not_active"
-        : !emailEnabled || row.email_address === null || row.email_address.toLowerCase() !== request.emailAddress.toLowerCase()
-          ? "sidekick_email_route_mismatch"
-          // The run acts as the sender, so the From header must be more than a claim.
-          : !request.senderAuthenticated
-            ? "email_sender_unauthenticated"
-            : request.senderUserId === null || relationship?.status !== "active"
-              || !sidekickReaderAllows(row, { userId: request.senderUserId, actorRole: senderRole }, this.sql)
-              ? "email_sender_not_authorized"
-              : null;
-    };
-    const refuse = (code: string) => {
-      this.sql.exec(
-        `INSERT OR IGNORE INTO sidekick_email_receipts
-           (sidekick_id, resend_email_id, run_id, outcome_code, payload_ref, resource_id, received_at)
-         VALUES (?, ?, NULL, ?, ?, ?, ?)`,
-        this.sidekickId, request.resendEmailId, code, request.payloadRef, request.resourceId, request.receivedAt,
-      );
-      return { admitted: false, duplicate: false, outcomeCode: code, runId: null };
-    };
-    const initial = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
-    const existing = readReceipt();
-    if (existing) return replay(existing);
-    const initialRefusal = refusalFor(initial);
-    if (initialRefusal) return refuse(initialRefusal);
-    // The run acts as its sender alone, as a message in the shared
-    // conversation does (`admitConversationMessage`): as a delegate when they
-    // are an eligible one, and otherwise under their own access as its
-    // requester. Mail from someone on the list must not borrow another
-    // delegate's access. `refusalFor` has already required a sender.
-    const sender = request.senderUserId!;
-    const coordinator = await this.coordinator(sender, [sender], false);
-    const requester = coordinator === null && await this.requesterActive(initial.workspace_id, sender) ? sender : null;
-    if (coordinator === null && requester === null) return refuse("run_no_eligible_delegate");
-    return this.storage.transactionSync(() => {
-      // Definition publication and another copy of this email can interleave
-      // while delegate authority is read. Commit only against current state.
-      const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
-      const existing = readReceipt();
-      if (existing) return replay(existing);
-      const refusal = refusalFor(row);
-      if (refusal) return refuse(refusal);
-      const now = Date.now();
-      const run = this.admitOccurrence(
-        row.accepted_definition_revision,
-        `inbound_email:${request.resendEmailId}`,
-        { kind: "inbound_email", receiptId: uuidV7(now), occurredAt: request.receivedAt },
-        { textContent: request.textContent, structuredContent: request.structuredContent, resourceId: request.resourceId },
-        coordinator ?? requester,
-        requester,
-      );
-      this.sql.exec(
-        `INSERT OR IGNORE INTO sidekick_email_receipts
-           (sidekick_id, resend_email_id, run_id, outcome_code, payload_ref, resource_id, received_at)
-         VALUES (?, ?, ?, 'admitted', ?, ?, ?)`,
-        this.sidekickId, request.resendEmailId, run.runId, request.payloadRef, request.resourceId, request.receivedAt,
-      );
-      return { admitted: true, duplicate: run.reused, outcomeCode: "admitted", runId: run.runId };
-    });
   }
 
   /** Minimal rail metadata for an already admitted receiving conversation. */
@@ -3136,7 +3050,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       name: row.title || "New Sidekick",
       loadable: row.loadable === 1,
       description: row.description,
-      emailAddress: acceptedDefinition !== null && sidekickReceivesEmail(acceptedDefinition) ? row.email_address : null,
       scope: row.scope,
       status: row.lifecycle,
       nextRunAt: iso(row.lifecycle === "active" ? row.next_run_at : null),
@@ -3153,7 +3066,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       currentDefinitionRevision: row.current_definition_revision,
       acceptedDefinitionRevision: row.accepted_definition_revision,
       runnable: acceptedDefinition !== null
-        && (acceptedDefinition.triggers.length > 0 || sidekickReceivesEmail(acceptedDefinition)),
+        && (acceptedDefinition.triggers.length > 0),
       connectorBindings: JSON.parse(row.connector_bindings_json),
       recentRuns: this.runSummaries(20),
       audience: sharedWithUserIds.length > 0 ? "people" : row.scope === "workspace" ? "workspace" : "personal",
