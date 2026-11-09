@@ -15,6 +15,9 @@ on:
       # touches only docs, the desktop app, or the site does not redeploy.
       - "apps/api/**"
       - "apps/engineering-mcp/**"
+      - "apps/mcp/**"
+      # The Rally MCP server bundles the plugin's skills (apps/mcp/src/skills.ts).
+      - "plugins/rally/skills/**"
       # The engineering MCP compiles Ace's flag-administration contract.
       - "apps/ace/src/protocol.ts"
       - "packages/**"
@@ -100,6 +103,7 @@ jobs:
               pnpm --filter @rally/api build:pricing &&
               pnpm --filter @rally/api build:artifacts &&
               pnpm --filter @rally/engineering-mcp build &&
+              pnpm --filter @rally/mcp build &&
               pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-n
             command: pnpm --filter @rally/desktop exec vitest run --shard=1/2
@@ -567,6 +571,12 @@ jobs:
           done
           echo "Engineering MCP did not expose the expected OAuth challenge" >&2
           exit 1
+
+      # Rally's user MCP server forwards its token endpoint to the Global API,
+      # so it deploys after it. docs/rally-mcp.md.
+      - name: Deploy the Rally MCP server after the Global API
+        if: env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @rally/mcp run deploy
 
       - name: Preserve exact deployment startup evidence
         if: ${{ always() }}

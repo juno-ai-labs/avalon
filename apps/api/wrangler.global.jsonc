@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   // A `.py` import is the file's text (`src/types/text-modules.d.ts`); the
   // Terminal runtime carries a vendored Python applier into the sandbox that way.
-  "rules": [{ "type": "Text", "globs": ["**/*.py"], "fallthrough": true }],
+  "rules": [{ "type": "Text", "globs": ["**/*.py", "**/*.sandbox.mjs"], "fallthrough": true }],
   "browser": { "binding": "BROWSER" },
   "workers_dev": false,
   "preview_urls": false,
@@ -21,6 +21,7 @@
     "PUBLIC_API_BASE_URL": "https://api.rallywith.ai",
     "PUBLIC_WEB_BASE_URL": "https://rallywith.ai",
     "BROWSER_APP_ORIGIN": "https://app.rallywith.ai",
+    "MCP_RESOURCE": "https://mcp.rallywith.ai/mcp",
     // Team-selected production sign-in policy: 6 digits, 10 minutes, 5 failures.
     "EMAIL_LOGIN_POLICY_JSON": "{\"otpDigits\":6,\"ttlSeconds\":600,\"maxFailedAttempts\":5}",
     "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.com",

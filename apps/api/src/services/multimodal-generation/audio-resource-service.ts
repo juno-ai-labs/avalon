@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 
 import type { Env } from "../../env";
@@ -81,7 +82,7 @@ export function createMultimodalAudioResourceStore(
       return hydratePublishedAudio(env, row);
     },
     async publish(context, input) {
-      const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", 25_000_000);
+      const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
       if (input.bytes.byteLength > maximum) {
         throw new MultimodalGenerationError(
           "resource_limit_exceeded",

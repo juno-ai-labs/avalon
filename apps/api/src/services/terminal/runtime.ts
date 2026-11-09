@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import type {
   HarnessToolContext,
   HarnessToolEffectReconciliation,
@@ -56,7 +57,7 @@ const PATH_OUTSIDE_ROOT_EXIT_CODE = 43;
  * and file-count guards the artifact design calls for are separate, still open,
  * and the team's to set.
  */
-const MAXIMUM_PUBLISH_BYTES = 25_000_000;
+const MAXIMUM_PUBLISH_BYTES = DEFAULT_MAX_ATTACHMENT_BYTES;
 const FILE_NOT_FOUND_EXIT_CODE = 44;
 const FILE_NOT_REGULAR_EXIT_CODE = 45;
 /** An edit's target no longer holds the bytes the edit was computed from. */
@@ -1353,11 +1354,11 @@ export function createDaytonaTerminalRuntime(
           { field: "filePath", reason: "Regenerate a non-empty final file beneath AVALON_RESOURCE_DIR." },
         );
       }
-      if (before.size > 25_000_000) {
+      if (before.size > MAXIMUM_PUBLISH_BYTES) {
         throw new TerminalToolError(
           "resource_limit_exceeded",
-          `The output file is ${before.size} bytes; publication allows at most 25000000 bytes. Reduce or split it before retrying.`,
-          { field: "filePath", expected: "file bytes at most 25000000" },
+          `The output file is ${before.size} bytes; publication allows at most ${MAXIMUM_PUBLISH_BYTES} bytes. Reduce or split it before retrying.`,
+          { field: "filePath", expected: `file bytes at most ${MAXIMUM_PUBLISH_BYTES}` },
         );
       }
       let bytes: Uint8Array;

@@ -759,6 +759,8 @@ export function canvasSidebarRows(
   present: ReadonlyMap<string, readonly string[]>,
   limit: number,
   report: InvalidCanvasAppearanceReport,
+  /** Only Canvases whose title contains this, ignoring case, across every Canvas rather than the first page. */
+  titleQuery: string | null = null,
 ): CanvasSidebarRow[] {
   const rows = sql.exec<CanvasRow & {
     participant: number; unread: number; pinned_position: number | null; artifact_type: string | null; artifact_mime: string | null;
@@ -797,10 +799,11 @@ export function canvasSidebarRows(
              AND written.sidekick_id = canvas.last_editor_id AND written.run_id = canvas.last_writer_run_id
        LEFT JOIN automation_directory written_by ON written_by.automation_id = written.sidekick_id
              AND written_by.lifecycle <> 'deleted'
-      WHERE canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
-         OR (?2 = 1 AND canvas.visibility = 'workspace') OR canvas.writer_sidekick_id IS NOT NULL
+      WHERE (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
+         OR (?2 = 1 AND canvas.visibility = 'workspace') OR canvas.writer_sidekick_id IS NOT NULL)
+        AND (?3 IS NULL OR instr(lower(canvas.title), lower(?3)) > 0)
       ORDER BY canvas.updated_at DESC, canvas.canvas_id`,
-    viewer.userId, viewer.member ? 1 : 0,
+    viewer.userId, viewer.member ? 1 : 0, titleQuery,
   ).toArray();
   const listed: CanvasSidebarRow[] = [];
   for (const row of rows) {

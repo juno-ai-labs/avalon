@@ -1,6 +1,6 @@
 import { newId } from "@rally/db";
 import { hostedConversationParentKind } from "../durable-objects/workstream-object-storage";
-import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
+import { asSubstreamId, asWorkspaceId, type ReadTranscriptRequest } from "@rally/contracts";
 import type {
   ConversationParentAuthorizeViewerRequest,
   ConversationParentAuthorizeViewerResult,
@@ -41,6 +41,12 @@ export class ConversationService {
     private readonly env: Env,
     private readonly auth: AuthContext,
     private readonly defer?: (promise: Promise<unknown>) => void,
+    /**
+     * Whether only a Canvas is a conversation here: an MCP client's token,
+     * which the person let read and change Canvases, never a Sidekick's
+     * conversation (`docs/rally-mcp.md`). Any other kind is not found.
+     */
+    private readonly canvasOnly = false,
   ) {}
 
   /**
@@ -73,13 +79,25 @@ export class ConversationService {
     const hosted = await workspace.resolveHostedParent({
       workspaceId: this.auth.workspaceId, parentId, ...(viewer ? { viewer } : {}),
     });
-    if (hosted.kind === "automation" || hosted.kind === "canvas") {
+    if (hosted.kind === "canvas" || (hosted.kind === "automation" && !this.canvasOnly)) {
       return {
         parent: { kind: hosted.kind, id: parentId, membershipVersion: 0, ...hosted.authority },
         ...(hosted.viewer ? { decision: hosted.viewer } : {}),
       };
     }
     throw new ApiError(404, "conversation_not_found", "Conversation not found");
+  }
+
+  /**
+   * One page of a conversation's committed participant prose, as its reader
+   * may see it: the viewer is authorized as opening it would, and the owning
+   * object formats the text, leaving out tool payloads and thinking. The
+   * engineering MCP and `GET /conversations/:parentId/text` both read here.
+   */
+  async readText(parentId: string, page: ReadTranscriptRequest) {
+    const parent = await this.authorizeViewer(parentId);
+    const client = WorkstreamObjectClient.forParent(this.env, this.auth, parent.kind, parentId);
+    return { kind: parent.kind, ...await client.readTranscript(page) };
   }
 
   /**

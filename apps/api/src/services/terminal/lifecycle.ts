@@ -19,7 +19,7 @@ import {
   stopTerminalSandbox,
   type TerminalSandboxProvider,
 } from "./provider-contract";
-import { isLegacyTerminalAliasRow, TERMINAL_WARM_STOP_MS } from "./coordinator";
+import { isLegacyTerminalAliasRow, PUBLICATION_BUILD_HOLDER, TERMINAL_WARM_STOP_MS } from "./coordinator";
 import { TerminalToolError } from "./tools";
 import type { HarnessRunPortFactory } from "../../runtime/harness-run-port";
 import { putStagedResourceObject } from "../resource-object-cleanup";
@@ -150,6 +150,9 @@ export async function reconcileDueTerminalSandbox(
     && row.operationLeaseExpiresAt
     && row.operationLeaseExpiresAt > now.getTime()
   ) {
+    // A person's publication build has no run to ask about: it is in use
+    // for as long as its lease lasts.
+    if (row.operationRunSubstreamId === PUBLICATION_BUILD_HOLDER) return { transition: "deferred" };
     // The holder's run row is in the conversation it executed in, which is
     // the sandbox's own unless a background agent holds its owner's lease.
     const holderSubstreamId = row.operationRunSubstreamId ?? substreamId;

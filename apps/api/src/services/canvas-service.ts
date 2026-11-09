@@ -1,5 +1,5 @@
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasUpdateRequest, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
+import type { CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasSidebarRow, CanvasUpdateRequest, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
@@ -107,6 +107,16 @@ export class CanvasService {
       mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
     });
     return { canvasId: asWorkstreamId(canvasId), turnId: receipt.turn.turnId };
+  }
+
+  /**
+   * The Canvases this person may open, most recently active first, as their
+   * sidebar lists them; with `titleQuery`, only those whose title contains it,
+   * found among all of them rather than the sidebar's first page.
+   */
+  async list(titleQuery?: string): Promise<CanvasSidebarRow[]> {
+    return (await this.workspace()).canvasListFor({ workspaceId: this.auth.workspaceId, userId: this.auth.userId,
+      accessClass: this.auth.role === null ? "guest" : "member", ...(titleQuery ? { titleQuery } : {}) });
   }
 
   async detail(canvasId: string): Promise<CanvasDetail> {

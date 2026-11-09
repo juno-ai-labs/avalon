@@ -27,7 +27,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/durable-objects/workspace-do.ts` | The facade: `canvasCreate`, `canvasDetail`, `canvasUpdate` (the title and the appearance), `canvasSetAudience`, `hostedConversationAuthorizationFacts`, every conversation-parent method for a Canvas id, and the Canvas branch of `createScopeInvitations`, `claimScopeInvitations`, `revokeScopeInvitation` and the invitation alarms. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Conversation object migration 83: its root row admits the `canvas` parent kind. |
 | `apps/api/src/services/canvas-service.ts` | `createCanvas`: the directory row, then the Chat's object, bootstrapped and provisioned with the creator seated; `CanvasService`, the routes' service. |
-| `apps/api/src/routes/canvases.ts` | `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title and the appearance), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`. `PUT /workspace/pinned-order` (in `routes/workspace.ts`) orders a Pinned group. |
+| `apps/api/src/routes/canvases.ts` | `GET /canvases` (the reader's list, as their sidebar socket sends it, for a client with no socket such as the [MCP server](rally-mcp.md)), `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title and the appearance), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`, `POST /canvases/:id/artifacts` (a person publishing a file or static site made elsewhere; [`rally-mcp.md`](rally-mcp.md#publishing)). `PUT /workspace/pinned-order` (in `routes/workspace.ts`) orders a Pinned group. |
 | `apps/api/src/services/integrations.ts` | `canvasRunContextMessage`: the `CANVAS CONTEXT` message a run in a Canvas's Chat is given. |
 | `apps/api/src/services/terminal/authority.ts` | `resolveTerminalPublicationHome` (a Sidekick run publishes into a Canvas) and `canvasArtifactNoter` (a publish tells its Canvas). |
 | `apps/api/src/services/conversation-service.ts`, `socket-service.ts` | Opening a Canvas's Chat: admission by the Canvas, the reader seated, and a ticket whose `pk` is `canvas`. |
@@ -276,13 +276,26 @@ one of the Thread's viewers opens the Canvas again, as its creator.
 
 ### Artifacts and versions
 
-A Canvas's artifacts are resources its conversation generated: Rally's
-`publish_resource` from the Chat publishes under the identity it always has,
-`(conversation, path)`, and the conversation is now the Canvas. The first
-publish of a path is a new resource, version 1; a later publish of the same
-path is a new version of it; a different path is another artifact. A file of
-any kind, or a directory that becomes a site or an archive, as
-[`live-web-artifacts.md`](live-web-artifacts.md) decides.
+A Canvas's artifacts come from two producers. Most are resources its
+conversation generated: Rally's `publish_resource` from the Chat publishes
+under the identity it always has, `terminal:<conversation>:<path>`, and the
+conversation is now the Canvas. The first publish of a path is a new resource,
+version 1; a later publish of the same path is a new version of it; a different
+path is another artifact. A file of any kind, or a directory that becomes a
+site or an archive, as [`live-web-artifacts.md`](live-web-artifacts.md) decides.
+
+A person can also publish a file or a static site made elsewhere, through
+`POST /canvases/:id/artifacts` (`CanvasPublicationService`, used by the
+[MCP server](rally-mcp.md#publishing) and any other client). It needs only the
+right to take part in the Canvas, and lands through the same writes as Rally's
+publish, with the person as the version's author and the Canvas's last editor.
+Its identity is `canvas:<canvasId>:<name>`, so publishing the same name again
+is a new version of it. The two namespaces never meet: a name Rally published
+from the Chat and the same name published by a person are two artifacts. A
+component or project site is built first, in the Canvas's own Terminal sandbox
+(`services/canvas-build/`), which every participant's runs share
+([`terminal-workspaces.md`](terminal-workspaces.md),
+[`security.md`](security.md#shared-canvas-sandbox)).
 `artifact_registry.workstream_id` holds the Canvas id, which is the
 conversation's parent id, so no column changes meaning. After each publish the
 Terminal's resource bridge tells the Canvas (`canvasArtifactNoter`,

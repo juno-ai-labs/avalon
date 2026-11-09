@@ -12,6 +12,8 @@
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
     "./conversation-parent": "./src/conversation-parent.ts",
     "./canvases": "./src/canvases.ts",
+    "./mcp-oauth": "./src/mcp-oauth.ts",
+    "./canvas-build": "./src/canvas-build.ts",
     "./conversation-view": "./src/conversation-view.ts",
     "./conversation-attention": "./src/conversation-attention.ts",
     "./scope-grants": "./src/scope-grants.ts",

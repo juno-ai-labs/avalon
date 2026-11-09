@@ -209,7 +209,7 @@ export async function pointArtifactAtVersion(
     region: Region;
     manifest: ArtifactManifest;
   },
-): Promise<void> {
+): Promise<{ advanced: boolean }> {
   const affinity = await workspacePlacementAffinity(env, input.workspaceId);
   const host = durableObjectStubForArtifact(
     env,
@@ -217,7 +217,7 @@ export async function pointArtifactAtVersion(
     artifactHostDOName(env.AVALON_REGION, asArtifactId(input.artifactId)),
     affinity,
   );
-  await host.recordPublish({
+  return host.recordPublish({
     artifactId: input.artifactId,
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
@@ -233,6 +233,11 @@ export async function pointArtifactAtVersion(
  * A per-workspace index for listing, the revocation fan-out, and cleanup. The
  * shared platform D1 `artifact_hostname_routes` table reserves the public stub; this
  * row records the already-reserved value beside the resource authority.
+ *
+ * Never backwards: a writer holding an older version than the row (a publish
+ * that stalled past a later one, or a retry reconciling from a stale read)
+ * changes nothing, and answers `false`. The same version again is admitted,
+ * so a retry that re-registers what it already wrote converges.
  */
 export async function registerArtifact(
   workspace: D1Database,
@@ -247,9 +252,9 @@ export async function registerArtifact(
     version: number;
     manifestRef: string;
   },
-): Promise<void> {
+): Promise<boolean> {
   const now = Date.now();
-  await workspace.prepare(
+  const written = await workspace.prepare(
     `INSERT INTO artifact_registry (
        artifact_id, workspace_id, workstream_id, resource_id, mode, stateful,
        current_version, manifest_ref, hostname_stub, created_at, updated_at
@@ -260,7 +265,9 @@ export async function registerArtifact(
        current_version = excluded.current_version,
        manifest_ref = excluded.manifest_ref,
        hostname_stub = excluded.hostname_stub,
-       updated_at = excluded.updated_at`,
+       updated_at = excluded.updated_at
+     WHERE excluded.current_version >= artifact_registry.current_version
+     RETURNING artifact_id`,
   ).bind(
     input.artifactId,
     input.workspaceId,
@@ -273,7 +280,45 @@ export async function registerArtifact(
     input.hostnameStub,
     now,
     now,
-  ).run();
+  ).first<{ artifact_id: string }>();
+  // The returned row is the witness: a refused upsert returns none
+  // (`docs/durable-object-sqlite.md#mutation-outcomes-use-returned-witnesses`).
+  return written?.artifact_id === input.artifactId;
+}
+
+/**
+ * Take version `from`, or the first free one after it, for this artifact
+ * before any of its bytes are written, and answer the version taken.
+ *
+ * Two publishes of one site that start together read the same registry
+ * version and would write the same version-immutable keys
+ * (`artifactAssetKey`), each overwriting the other's files, so whichever
+ * manifest won would serve a mix. The claim is a create-once R2 object
+ * (`If-None-Match: *`, which R2 evaluates atomically with the write, so of
+ * two concurrent claims at most one succeeds), and the version's keys are
+ * written only by its claimant. Chosen over conditional puts on every asset,
+ * which cannot tell this call's own retried upload from a rival's, and over a
+ * reservation column, which is a migration for what one object answers: it
+ * costs one write per publish and keeps the serving key layout as it is. A
+ * claim left by an attempt that failed is skipped, not reused, so versions
+ * may have gaps; nothing reads them as contiguous.
+ */
+export async function claimArtifactVersion(
+  env: Pick<Env, "PAYLOADS">,
+  input: { artifactId: string; from: number; claimant: string },
+): Promise<number> {
+  for (let version = input.from; ; version += 1) {
+    const claimed = await env.PAYLOADS.put(artifactVersionClaimKey(input.artifactId, version), input.claimant, {
+      onlyIf: new Headers({ "If-None-Match": "*" }),
+      customMetadata: { source: "artifact", artifactId: input.artifactId, version: String(version) },
+    });
+    if (claimed) return version;
+  }
+}
+
+/** Beside the version's manifest and assets, and never served: the host reads only `assets` keys. */
+function artifactVersionClaimKey(artifactId: string, version: number): string {
+  return `artifact/${artifactId}/v${version}/claim`;
 }
 
 /** The artifact a republished path already has, if it has one. */

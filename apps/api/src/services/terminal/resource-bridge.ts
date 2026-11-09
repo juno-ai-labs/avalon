@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import {
   AttachmentKindSchema,
@@ -7,7 +8,6 @@ import {
   SITE_MANIFEST_MIME_TYPE,
   artifactOrigin,
   classifyAttachmentKind,
-  ResourceSchema,
 } from "@rally/contracts";
 import { codeShaped, isCodeShaped } from "@rally/contracts/zod-diagnostics";
 import { newId, nowIso } from "@rally/db";
@@ -25,7 +25,7 @@ import {
 import { createConversationResourceLinks, createResourceObjectPort } from "../../runtime/resource-port";
 import { allocateResourceSlugBesideCreation } from "../resource-slug";
 import { ensureArtifactHostname } from "../artifact-hostname";
-import { putStagedResourceObject, releaseStagedResourceObject } from "../resource-object-cleanup";
+import { putStagedResourceObject } from "../resource-object-cleanup";
 import {
   loadVisibleWorkstreamResourcesByIds,
   type VisibleWorkstreamResourceRow,
@@ -43,6 +43,7 @@ import {
   readArtifactVersionFiles,
 } from "./site-import";
 import {
+  claimArtifactVersion,
   existingArtifactForResource,
   pointArtifactAtVersion,
   registerArtifact,
@@ -55,7 +56,16 @@ import {
   type TerminalPublishedResourceOutput,
   type TerminalPublishedSiteOutput,
 } from "./tools";
-import { AGENT_RESOURCE_TITLE_SQL } from "../agent-resource-title";
+import {
+  insertPublishedResource,
+  normalizePublishPath,
+  publicationIdentity,
+  publishedRowByIdentity,
+  PublicationWriteFailed,
+  settleStagedObject,
+  swapPublishedContent,
+  type PublishedRow,
+} from "../resource-publication";
 
 /** One captured revision, as `resource_versions` holds it. */
 interface VersionRow extends Record<string, unknown> {
@@ -67,22 +77,6 @@ interface VersionRow extends Record<string, unknown> {
   model_content_status: string | null;
   captured_at: string;
   author_run_id: string | null;
-}
-
-interface PublishedRow {
-  id: string;
-  title: string;
-  mime_type: string | null;
-  content_ref: string | null;
-  content_sha256: string | null;
-  metadata_json: string;
-  model_content_status: string | null;
-  created_at: string;
-}
-
-/** A site's row also carries its alias, which the publish result reports. */
-interface PublishedSiteRow extends PublishedRow {
-  slug: string | null;
 }
 
 function fileName(path: string): string {
@@ -124,20 +118,6 @@ function sitePublishPath(row: VisibleWorkstreamResourceRow): string | null {
   return sourcePath ? `${TERMINAL_OUTPUT_DIRECTORY}/${sourcePath}` : null;
 }
 
-/**
- * The published path as the document's identity reads it.
- *
- * `publish_resource` already resolves its argument to this shape, so
- * for a model-driven publish this is the identity function. It is applied
- * anyway because the identity has to be one derivation rather than a promise
- * that every caller normalized first: `docs/./plan.md` and `docs/plan.md` are
- * the same file beneath the resource directory, and a document whose rail entry
- * depends on which spelling a call used is the sibling problem again.
- */
-function normalizePublishPath(path: string): string {
-  return path.split("/").filter((segment) => segment && segment !== ".").join("/");
-}
-
 async function storedArtifactHasSocialPreview(
   env: Pick<Env, "PAYLOADS">,
   manifestRef: string | null,
@@ -155,28 +135,14 @@ async function storedArtifactHasSocialPreview(
 }
 
 /**
- * A published document's identity, bounded by the contract that publishes it.
- *
- * The path half is model-chosen and the tool accepts 4,096 characters of it,
- * while `ResourceSchema` bounds `providerResourceId` at 500 — so the readable
- * form is only safe while it fits. It is not a cosmetic overflow: the identity
- * is projected into `GET /workstreams/:id` and `GET /resources`, so one row
- * past the bound stops the work stream opening at all and fails the workspace's
- * resource list, and nothing in the product deletes a published row to recover.
- *
- * Past the bound the path is replaced by its digest rather than truncated.
- * Truncating would map two different long paths onto one document; the digest
- * keeps identity one-to-one with the path, which is the whole point of scoping
- * it to the path. `metadata_json.sourcePath` still carries the readable value.
+ * A published document's identity: this conversation and the path it was
+ * published from, bounded by `publicationIdentity` (the path's digest past
+ * `ResourceSchema`'s bound, never a truncation). `metadata_json.sourcePath`
+ * still carries the readable path.
  */
-const PUBLISHED_IDENTITY_MAXIMUM = ResourceSchema.shape.providerResourceId.unwrap().maxLength ?? 500;
-
 async function publishedResourceIdentity(workstreamId: string, filePath: string, substreamId = "0"): Promise<string> {
   const owner = substreamId === "0" ? workstreamId : `${workstreamId}:substream:${substreamId}`;
-  const readable = `terminal:${owner}:${normalizePublishPath(filePath)}`;
-  if (readable.length <= PUBLISHED_IDENTITY_MAXIMUM) return readable;
-  const digest = await sha256Hex(new TextEncoder().encode(normalizePublishPath(filePath)));
-  return `terminal:${owner}:sha256:${digest}`;
+  return publicationIdentity("terminal", owner, filePath);
 }
 
 function publishedOutput(row: PublishedRow, sizeBytes: number): TerminalPublishedResourceOutput {
@@ -211,153 +177,35 @@ function publishedOutput(row: PublishedRow, sizeBytes: number): TerminalPublishe
   };
 }
 
-/**
- * Swap a republished document's content onto the row it already has.
- *
- * The shape is the connector re-fetch path's: pre-register the new object in
- * the cleanup outbox, write it, then compare-and-swap the pointer against the
- * one that was read, so a lost race deletes the object it wrote rather than
- * overwriting a newer publish. What the swap does *not* do is destroy the old
- * bytes — WorkspaceDO's version triggers capture the superseded state and the
- * reaper treats a ref a version still names as active, so a revision keeps its
- * predecessor readable instead of replacing the only copy.
- */
-async function swapPublishedContent(input: {
-  workspace: D1Database;
-  env: Env;
-  workspaceId: string;
-  existing: PublishedRow;
-  filePath: string;
-  displayName?: string | undefined;
-  description?: string | undefined;
-  bytes: Uint8Array;
-  digest: string;
-  mimeType: string;
-  attachmentKind: string;
-  contentMode: string;
-  derivativeStatus: string;
-  harnessRunId: string;
-  /** The person the run acts for, when a person started it. */
-  onBehalfOfUserId: string | null;
-  effectIntentId: string;
+/** The terminal tool's refusal for a publication write that may not have committed. */
+function publishWriteFailure(error: unknown, operation: "insert" | "swap"): never {
+  if (!(error instanceof PublicationWriteFailed)) throw error;
+  throw operation === "swap"
+    ? new TerminalToolError(
+      "resource_publish_failed",
+      "The published document could not be updated. Retry publish_resource with the stable final file.",
+      { reason: "Retry the same publish_resource call so Rally can reconcile its resource identity." },
+    )
+    : new TerminalToolError(
+      "resource_publish_failed",
+      "The generated resource could not be recorded. Retry publish_resource; Rally retained cleanup ownership for the uploaded object.",
+      { reason: "Retry the same publish_resource call so Rally can reconcile its stable resource identity." },
+    );
+}
+
+/** A terminal swap: Rally's run is the author, and the effect intent is its receipt. */
+function swapTerminalContent(input: Omit<Parameters<typeof swapPublishedContent>[0], "author" | "receipt" | "objectSource" | "sourcePath"> & {
+  filePath: string; harnessRunId: string; onBehalfOfUserId: string | null; effectIntentId: string;
   publicationEventType: "resource_attached" | "resource_updated";
-}): Promise<PublishedRow> {
-  const { workspace, env, workspaceId, existing, bytes, digest } = input;
-  const timestamp = nowIso();
-  const objectRef = `${env.AVALON_REGION}/${workspaceId}/resources/${existing.id}/terminal/${digest}/${newId()}`;
-  let previousMetadata: Record<string, unknown> = {};
-  try { previousMetadata = JSON.parse(existing.metadata_json) as Record<string, unknown>; } catch { /* legacy metadata */ }
-  const description = input.description ?? (typeof previousMetadata.description === "string"
-    ? previousMetadata.description
-    : undefined);
-  // A revision that names no title keeps the one participants already know the
-  // document by; renaming it silently on every republish would be worse than
-  // ignoring the argument. One that repeats its old name keeps a person's
-  // rename (`AGENT_RESOURCE_TITLE_SQL`).
-  const title = input.displayName?.trim()
-    ? [...input.displayName.trim()].slice(0, 300).join("")
-    : null;
-  const metadata = JSON.stringify({
-    sourcePath: input.filePath,
-    size: bytes.byteLength,
-    attachmentKind: input.attachmentKind,
-    contentMode: input.contentMode,
-    publicationEffectIntentId: input.effectIntentId,
-    publicationEventType: input.publicationEventType,
-    ...(description ? { description } : {}),
-  });
-  await putStagedResourceObject({
-    database: workspace,
-    payloads: env.PAYLOADS,
-    objectRef,
-    workspaceId,
-    resourceId: existing.id,
-    objectKind: "original",
-    value: bytes,
-    options: {
-      httpMetadata: { contentType: input.mimeType },
-      customMetadata: { source: "terminal", sourcePath: input.filePath },
-    },
-    at: timestamp,
-  });
-  let swapped: PublishedRow | null;
-  try {
-    swapped = await workspace.prepare(
-      `UPDATE resources
-          SET title = ${AGENT_RESOURCE_TITLE_SQL}, mime_type = ?, content_ref = ?, content_sha256 = ?, metadata_json = ?,
-              updated_at = ?,
-              model_content_ref = NULL, model_mime_type = NULL, model_content_sha256 = NULL,
-              model_metadata_json = NULL, model_content_status = ?,
-              model_content_extractor_version = NULL, model_content_character_count = NULL,
-              model_content_extracted_at = NULL, model_content_claimed_at = NULL,
-              model_content_claim_id = NULL, model_content_error_code = NULL,
-              revision_author_kind = 'agent', revision_author_run_id = ?,
-              revision_author_user_id = NULL, revision_author_connection_id = NULL,
-              revision_cause = 'published', revision_on_behalf_of_user_id = ?
-        WHERE id = ? AND workspace_id = ? AND content_ref IS ? AND content_sha256 IS ?
-      RETURNING id, title, mime_type, content_ref, content_sha256, metadata_json,
-                model_content_status, created_at`,
-    ).bind(
-      title,
-      title,
-      title,
-      input.mimeType,
-      objectRef,
-      digest,
-      metadata,
-      timestamp,
-      input.derivativeStatus,
-      input.harnessRunId,
-      input.onBehalfOfUserId,
-      existing.id,
-      workspaceId,
-      existing.content_ref,
-      existing.content_sha256,
-    ).first<PublishedRow>();
-  } catch {
-    // The insert path below converts its failures the same way; a raw D1 error
-    // here would reach the model as the generic terminal_tool_failed with no
-    // retry guidance, for the same operation.
-    // A failed WorkspaceDO response is not evidence that its transaction
-    // failed. Keep the staged bytes so a pointer that committed before the
-    // response was lost can never name a deleted object.
-    throw new TerminalToolError(
-      "resource_publish_failed",
-      "The published document could not be updated. Retry publish_resource with the stable final file.",
-      { reason: "Retry the same publish_resource call so Rally can reconcile its resource identity." },
-    );
-  }
-  // The row itself is the witness, not a write counter. `meta.changes` on a
-  // WorkspaceDO-routed statement is workerd's physical `rowsWritten`, which this
-  // UPDATE inflates through three version triggers — see
-  // `docs/durable-object-sqlite.md`, which requires a returned witness here.
-  if (swapped?.content_ref !== objectRef) {
-    // Another publish of this document advanced the pointer first. Its content
-    // is the current one; release this call's bytes to asynchronous cleanup and
-    // report what the document now holds rather than clobbering the winner.
-    await releaseStagedResourceObject(workspace, workspaceId, objectRef)
-      .catch(() => undefined);
-    const current = await workspace.prepare(
-      `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
-              model_content_status, created_at
-         FROM resources WHERE id = ? AND workspace_id = ?`,
-    ).bind(existing.id, workspaceId).first<PublishedRow>();
-    if (current) return current;
-    throw new TerminalToolError(
-      "resource_publish_failed",
-      "The published document could not be updated. Retry publish_resource with the stable final file.",
-      { reason: "Retry the same publish_resource call so Rally can reconcile its resource identity." },
-    );
-  }
-  // `resources_track_original_after_update` already cancelled this object's
-  // pending deletion inside the same statement and enqueued the superseded one,
-  // which `resource_versions` then keeps alive. This delete is the belt for a
-  // caller whose schema predates those triggers.
-  await workspace.prepare(
-    `DELETE FROM resource_object_deletion_outbox
-      WHERE workspace_id = ? AND object_ref = ? AND cleanup_eligible = 0`,
-  ).bind(workspaceId, objectRef).run().catch(() => undefined);
-  return swapped;
+}) {
+  const { filePath, harnessRunId, onBehalfOfUserId, effectIntentId, publicationEventType, ...rest } = input;
+  return swapPublishedContent({
+    ...rest,
+    sourcePath: filePath,
+    objectSource: "terminal",
+    author: { kind: "agent", runId: harnessRunId, onBehalfOfUserId },
+    receipt: { publicationEffectIntentId: effectIntentId, publicationEventType },
+  }).catch((error: unknown) => publishWriteFailure(error, "swap"));
 }
 
 export function createTerminalResourceBridge(
@@ -459,11 +307,8 @@ export function createTerminalResourceBridge(
       throw new TerminalToolError("resource_not_found", "The existing publication is not attached to this destination. Restore its attachment before updating it.");
     }
   };
-  const publicationSelect = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
-      model_content_status, created_at, slug, resource_type FROM resources
-      WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`;
-  const publicationRow = (workspaceId: string, providerResourceId: string) => workspace.prepare(publicationSelect)
-    .bind(workspaceId, providerResourceId).first<PublishedSiteRow & { resource_type: string }>();
+  const publicationRow = (workspaceId: string, providerResourceId: string) =>
+    publishedRowByIdentity(workspace, workspaceId, providerResourceId);
   const existingPublication = async (context: HarnessToolContext, target: { parentId: string; substreamId: string },
     filePath: string, providerResourceId: string) => {
     const current = await publicationRow(context.workspaceId, providerResourceId);
@@ -796,7 +641,7 @@ export function createTerminalResourceBridge(
           { reason: "Retry once; if bytes remain unavailable, reattach the source resource." },
         );
       }
-      const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", 25_000_000);
+      const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
       if (Number.isFinite(object.size) && object.size > maximum) {
         throw new TerminalToolError("resource_limit_exceeded", `The resource is ${object.size} bytes; Terminal imports allow at most ${maximum}. Publish or attach a smaller source file.`, { field: "resourceId", expected: `resource bytes at most ${maximum}` });
       }
@@ -1015,7 +860,7 @@ export function createTerminalResourceBridge(
 
     async publishResource(context, input, bytes) {
       const target = await publicationAddress(context, input, input.providerResourceId);
-      const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", 25_000_000);
+      const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
       if (bytes.byteLength > maximum) {
         throw new TerminalToolError("resource_limit_exceeded", `The file is ${bytes.byteLength} bytes; published resources allow at most ${maximum}. Reduce or split it and retry.`, { field: "filePath", expected: `file bytes at most ${maximum}` });
       }
@@ -1077,7 +922,7 @@ export function createTerminalResourceBridge(
           await relink(replayEvent);
           return publishedOutput(settled, bytes.byteLength);
         }
-        const updated = await swapPublishedContent({
+        const updated = await swapTerminalContent({
           workspace,
           env,
           workspaceId: context.workspaceId,
@@ -1134,30 +979,21 @@ export function createTerminalResourceBridge(
         ...(input.description ? { description: input.description } : {}),
       });
       try {
-        await workspace.prepare(
-            `INSERT INTO resources
-             (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
-              content_ref, content_sha256, metadata_json, last_hydrated_at, uploaded_by_user_id,
-              attachment_status, model_content_status, created_at, updated_at,
-              revision_author_kind, revision_author_run_id, revision_cause)
-             VALUES (?, ?, 'generated_file', 'avalon_generated', ?, ?, ?, ?, ?, ?, ?, ?, 'attached', ?, ?, ?,
-                     'agent', ?, 'created')`,
-          ).bind(
-            resourceId,
-            context.workspaceId,
-            providerResourceId,
-            title,
-            mimeType,
-            objectRef,
-            digest,
-            metadata,
-            timestamp,
-            context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null,
-            derivativeStatus,
-            timestamp,
-            timestamp,
-            context.harnessRunId,
-          ).run();
+        await insertPublishedResource(workspace, {
+          resourceId,
+          workspaceId: context.workspaceId,
+          resourceType: "generated_file",
+          providerResourceId,
+          title,
+          mimeType,
+          contentRef: objectRef,
+          contentSha256: digest,
+          metadataJson: metadata,
+          uploadedByUserId: context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null,
+          modelContentStatus: derivativeStatus,
+          timestamp,
+          author: { kind: "agent", runId: context.harnessRunId, onBehalfOfUserId: null },
+        });
         await attachPublication(context, {
           resourceId,
           attachedByUserId: context.executionPrincipal.type === "user"
@@ -1177,10 +1013,7 @@ export function createTerminalResourceBridge(
       // Failure to clear a staged row cannot make a published document fail:
       // maintenance will observe the active pointer and retire the row without
       // touching R2.
-      await workspace.prepare(
-        `DELETE FROM resource_object_deletion_outbox
-          WHERE workspace_id = ? AND object_ref = ? AND cleanup_eligible = 0`,
-      ).bind(context.workspaceId, objectRef).run().catch(() => undefined);
+      await settleStagedObject(workspace, context.workspaceId, objectRef);
       // Outside the block that unwinds a failed publication: the document is
       // recorded and addressable by UUID now, and its alias is owed rather
       // than required — a reason to keep the row, never to drop it.
@@ -1285,7 +1118,12 @@ export function createTerminalResourceBridge(
       }
 
       const resourceId = settled?.id ?? newId();
-      const version = (previous?.version ?? 0) + 1;
+      // A republish claims its version before writing any byte of it, so two
+      // runs publishing the same path never write the same version's keys
+      // (`claimArtifactVersion`); a first publish's artifact id is new.
+      const version = previous
+        ? await claimArtifactVersion(env, { artifactId: previous.artifactId, from: previous.version + 1, claimant: effectIntentId })
+        : 1;
       const title = [...(input.displayName?.trim() || siteTitle(input.filePath))].slice(0, 300).join("");
       const written = await writeArtifactVersion(env, {
         workspaceId: context.workspaceId,
@@ -1326,7 +1164,7 @@ export function createTerminalResourceBridge(
       // A swap keeps the row, and with it the alias it already has.
       let slug = settled?.slug ?? null;
       if (settled) {
-        await swapPublishedContent({
+        const swapped = await swapTerminalContent({
           workspace,
           env,
           workspaceId: context.workspaceId,
@@ -1345,30 +1183,32 @@ export function createTerminalResourceBridge(
           effectIntentId,
           publicationEventType: "resource_updated",
         });
+        // Another publish of this path moved the row first: its version is the
+        // one to serve, so this one registers and points at nothing. A retry
+        // finds equal content and answers as a settled publish, or replaces it.
+        if (swapped.superseded) {
+          throw new TerminalToolError(
+            "resource_publish_conflict",
+            "Another publish of this site landed first. Retry publish_resource to publish these files over it.",
+            { reason: "A concurrent publish of the same path won the update." },
+          );
+        }
       } else {
-        await workspace.prepare(
-          `INSERT INTO resources
-           (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
-            content_ref, content_sha256, metadata_json, last_hydrated_at, uploaded_by_user_id,
-            attachment_status, model_content_status, created_at, updated_at,
-            revision_author_kind, revision_author_run_id, revision_cause)
-           VALUES (?, ?, 'generated_site', 'avalon_generated', ?, ?, ?, ?, ?, ?, ?, ?, 'attached', 'unsupported', ?, ?,
-                   'agent', ?, 'created')`,
-        ).bind(
+        await insertPublishedResource(workspace, {
           resourceId,
-          context.workspaceId,
+          workspaceId: context.workspaceId,
+          resourceType: "generated_site",
           providerResourceId,
           title,
-          SITE_MANIFEST_MIME_TYPE,
-          written.manifestRef,
-          contentDigest,
-          metadata,
+          mimeType: SITE_MANIFEST_MIME_TYPE,
+          contentRef: written.manifestRef,
+          contentSha256: contentDigest,
+          metadataJson: metadata,
+          uploadedByUserId: context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null,
+          modelContentStatus: "unsupported",
           timestamp,
-          context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null,
-          timestamp,
-          timestamp,
-          context.harnessRunId,
-        ).run();
+          author: { kind: "agent", runId: context.harnessRunId, onBehalfOfUserId: null },
+        }).catch((error: unknown) => publishWriteFailure(error, "insert"));
         await attachPublication(context, {
           resourceId,
           attachedByUserId: context.executionPrincipal.type === "user"

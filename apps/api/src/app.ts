@@ -37,8 +37,9 @@ import { speechRoutes } from "./routes/speech";
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from "./routes/telemetry";
 import { linkRoutes } from "./routes/links";
 import { telemetryOperatorRoutes } from './routes/telemetry-operations';
-import { deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
+import { connectedAppRoutes, deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
+import { mcpOAuthRoutes } from "./routes/mcp-oauth";
 import { workspaceOperatorRoutes } from './routes/workspace-operations';
 import {
   isAllowedGitHubIngressRoute,
@@ -127,6 +128,8 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/health", healthRoutes);
   app.route("/access", privateAccessRoutes);
   app.route("/auth", authRoutes);
+  // Rally's MCP authorization server; the MCP Worker forwards here (`docs/rally-mcp.md`).
+  app.route("/mcp-oauth", mcpOAuthRoutes);
   app.route("/browser",createBrowserRoutes((request,c) => {
     let executionContext;
     try { executionContext = c.executionCtx; } catch { /* Route tests have no Worker context. */ }
@@ -163,6 +166,11 @@ export function createApp(): Hono<HonoAppEnv> {
   // A support session's device is the impersonator's, not the person's.
   identityApi.use("/workspace/me/device-timezone", requireWorkspaceAuth, refuseSupportSession);
   identityApi.route("/workspace/me/device-timezone", deviceTimezoneRoutes);
+  // The person's connected MCP apps span their Organizations, which a
+  // support session in one of them must not see or end.
+  identityApi.use("/workspace/me/connected-apps", requireWorkspaceAuth, refuseSupportSession);
+  identityApi.use("/workspace/me/connected-apps/*", requireWorkspaceAuth, refuseSupportSession);
+  identityApi.route("/workspace/me/connected-apps", connectedAppRoutes);
   identityApi.route("/conversations", conversationRoutes);
   identityApi.route("/message-issues", messageIssueRoutes);
   identityApi.route("/sharing", sharingRoutes);
