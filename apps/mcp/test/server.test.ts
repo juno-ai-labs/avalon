@@ -124,6 +124,19 @@ describe("the Canvas tools", () => {
     expect(JSON.parse(body.result!.content[0]!.text)).toMatchObject({ outcome: "created", version: 1 });
   });
 
+  it("reads a just-published text artifact from its original before Rally has extracted text from it", async () => {
+    const upstream = api((request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/model-content")) {
+        return Response.json({ error: { code: "resource_version_content_unavailable", message: "This representation is unavailable for the resource version" } }, { status: 404 });
+      }
+      expect(path).toBe("/resources/0190a000-0000-7000-8000-0000000000dd/versions/1/content");
+      return new Response("deal_id,amount\nD-1,100\n", { headers: { "content-type": "text/csv" } });
+    });
+    const { body } = await rpc(upstream.binding, call("read_artifact", { resourceId: "0190a000-0000-7000-8000-0000000000dd", version: 1 }));
+    expect(body.result).toEqual({ content: [{ type: "text", text: "deal_id,amount\nD-1,100\n" }] });
+  });
+
   it("refuses to read a Sidekick's conversation as a Canvas's Chat", async () => {
     const upstream = api(() => Response.json({ kind: "automation", title: "Digest", text: "hello", throughSequence: 3, nextAfterSequence: null }));
     const { body } = await rpc(upstream.binding, call("read_canvas_chat", { canvasId: "0190a000-0000-7000-8000-000000000001" }));
