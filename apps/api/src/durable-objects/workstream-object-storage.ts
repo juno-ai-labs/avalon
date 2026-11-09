@@ -611,8 +611,10 @@ export class WorkstreamObjectStore {
    * Canvas in place, keeping its id (`services/thread-conversion-service.ts`).
    *
    * Everything else in this object that names the kind moves with it, in the
-   * same transaction: the root row, and every effect still waiting in the
-   * outbox, whose envelope names the parent by kind. Those were written for
+   * same transaction: the root row, every run's stored workflow input
+   * (`runs.execution_context_json`, which Retry and a settled run's replay
+   * parse), and every effect still waiting in the outbox, whose envelope
+   * names the parent by kind. Those were written for
    * the Thread and would otherwise be delivered after the rewrite and
    * refused by the Organization (`conversation_parent_kind_retired:workstream`)
    * until they dead-letter. The effect's hash covers the effect alone, so the
@@ -643,6 +645,15 @@ export class WorkstreamObjectStore {
           WHERE channel = ? AND state IN ('pending', 'inflight')
             AND json_extract(payload_json, '$.parentKind') = ?`,
         input.to, REGIONAL_EFFECT_CHANNEL, input.from,
+      );
+      // Every run's stored workflow input names the kind too, and
+      // `WorkstreamWorkflowInputSchema` refuses `workstream`: left, Retry on a
+      // Thread-era failed or cancelled run, and the replay of a settled one,
+      // would throw on the Canvas.
+      this.storage.sql.exec(
+        `UPDATE runs SET execution_context_json = json_set(execution_context_json, '$.parentKind', ?)
+          WHERE execution_context_json IS NOT NULL AND json_extract(execution_context_json, '$.parentKind') = ?`,
+        input.to, input.from,
       );
       return { converted: true };
     });
