@@ -274,10 +274,13 @@ describe('the Canvases and Sidekicks sections', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/sidekicks/new');
   });
 
-  it.each(['/sidekicks/triage', '/sidekicks/new'])('opens the Sidekicks dashboard from %s', (route) => {
+  it.each(['/sidekicks/triage', '/sidekicks/new', '/sidekicks'])('opens the Sidekicks dashboard from %s', (route) => {
+    useUiStore.getState().setSidebarSection('sidekicks');
     renderSidebar(workspace, route);
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
     fireEvent.click(screen.getByRole('button', { name: 'Sidekicks home' }));
     expect(screen.getByTestId('location')).toHaveTextContent(/^\/sidekicks$/);
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
   });
 
   it.each(['/canvases', '/sidekicks/triage', '/sidekicks/new', '/sidekicks/triage?run=run-1', '/sidekicks'])(
