@@ -7,12 +7,12 @@ import { MESSAGE_MAX_CHARACTERS, type WorkspaceExternalEvent } from "@rally/cont
  * wrote the automation expects the run to say something about it: the service
  * that deployed, the page that changed. Before this the run knew only the
  * event's type and could not name anything. The content is the connector's,
- * so it is marked untrusted the way an inbound email is, and the structured
+ * so it is marked untrusted as provider content is, and the structured
  * half carries the same fields for anything that reads rows rather than prose.
  */
 export function externalEventOpening(
   event: Pick<WorkspaceExternalEvent, "id" | "eventType" | "title" | "summary" | "textSnippet" | "metadata" | "occurredAt">,
-): { textContent: string; structuredContent: Record<string, unknown>; resourceId: null } {
+): { textContent: string; structuredContent: Record<string, unknown> } {
   const lines = [
     `External event: ${event.title}`,
     `Type: ${event.eventType}`,
@@ -37,6 +37,5 @@ export function externalEventOpening(
       occurredAt: event.occurredAt,
       metadata: event.metadata,
     },
-    resourceId: null,
   };
 }

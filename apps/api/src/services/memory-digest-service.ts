@@ -44,7 +44,7 @@ export type MemoryDigestTarget = MemoryConversation & { workspaceId: string };
  * A Sidekick run reads as its Sidekick (its home facts and its own). A person
  * whose own act started the run reads as themselves (the shared facts plus
  * their own), on the same reason list that carries their personal system
- * prompt. Every other run, a wake-up, a connector trigger, an inbound email, a
+ * prompt. Every other run, a wake-up, a connector trigger, a
  * background agent, or a workspace principal, reads as the conversation: what
  * every participant may, and no one person's own facts, because nobody in
  * particular asked.

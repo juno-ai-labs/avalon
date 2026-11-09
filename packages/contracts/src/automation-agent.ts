@@ -76,11 +76,6 @@ export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
     occurredAt: z.number().int().nonnegative(),
     payloadHash: z.string().min(1),
   }),
-  z.strictObject({
-    kind: z.literal("inbound_email"),
-    receiptId: IdSchema,
-    occurredAt: z.number().int().nonnegative(),
-  }),
 ]);
 export type AutomationRunTriggerV1 = z.infer<typeof AutomationRunTriggerV1Schema>;
 
@@ -128,7 +123,7 @@ export const AutomationActivationV1Schema = z.strictObject({
    * conversation, which no trigger started.
    */
   trigger: z.strictObject({
-    kind: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
+    kind: z.enum(["manual", "schedule", "external_event"]),
   }).strict().optional(),
   occurredAt: z.number().int().nonnegative(),
   /**

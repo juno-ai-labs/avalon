@@ -255,23 +255,6 @@ audience and defaults.
 
 ### Behavior first
 
-- **Scenario: project setup precedes the first turn.** Given a project with
-  participants and defaults, when a work stream is started from its plus button,
-  then audience and every default receipt settle before Workflow dispatch, D1
-  route activation, email activation, or agent execution.
-- **Scenario: setup survives the caller.** Given the create request and desktop
-  disappear after admission, when Queue/alarm work completes, then finalization
-  dispatches exactly once and the persisted **Preparing work stream…** row
-  becomes active.
-- **Scenario: cancel creation never activates the draft.** Given failed setup or
-  an in-flight claim, when cancellation is requested, then new claims stop, live
-  claims settle, regional draft state is abandoned, the Global email tombstone
-  remains, and no first turn starts.
-- **Scenario: participant revocation preempts setup.** Given a gated draft and a
-  participant removal, when revocation starts, then setup pauses, removes that
-  person from the draft, regenerates superseded resource applications, and only
-  then resumes.
-
 ### Implementation
 
 - Add `project_workstream_starts`, the draft membership generation, setup target
@@ -283,7 +266,7 @@ audience and defaults.
 - Build **New project work stream** from the ordinary composer while fixing its
   project and omitting **Needs attention** and **Suggested work**. Persist and
   restore the Preparing row with retry and cancellation.
-- Update `docs/workstream-creation.md`, `docs/workstream-email-addresses.md`,
+- Update `docs/workstream-creation.md`,
   `docs/workstream-durable-object.md`, and the Projects document.
 
 ### Gate

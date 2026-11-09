@@ -47,7 +47,6 @@ export const TELEMETRY_WORKSTREAM_CREATION_SOURCES = [
   "automation_manual",
   "automation_scheduled",
   "automation_activity",
-  "automation_inbound_email",
 ] as const;
 export type TelemetryWorkstreamCreationSource = typeof TELEMETRY_WORKSTREAM_CREATION_SOURCES[number];
 
@@ -242,7 +241,7 @@ export type TelemetryMenuBarAction = (typeof TELEMETRY_MENU_BAR_ACTIONS)[number]
 const menuBarAction = z.enum(TELEMETRY_MENU_BAR_ACTIONS);
 
 const automationTriggerType = z.enum([
-  "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook", "inbound_email",
+  "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook",
 ]);
 const automationDeliveryTargetType = z.enum(["email", "slack_agent_dm"]);
 /** Where a digest goes: an automation destination, or the person's own Personal Channel. */
@@ -1482,7 +1481,7 @@ export const TELEMETRY_EVENTS = {
     identityScopes: ["workspace-user"],
     properties: deferredZodSchema(() => z.strictObject({
       contentType: z.enum([
-        "workstream_link", "workstream_email", "workstream_id", "message_response", "code_block",
+        "workstream_link", "workstream_id", "message_response", "code_block",
         "note_summary", "note_transcript", "note_id", "automation_email", "automation_id",
       ]),
       resourceType: z.enum(["workstream", "message", "note", "automation"]),
@@ -1701,7 +1700,7 @@ export const TELEMETRY_EVENTS = {
       harnessRunId: resourceId,
       automationId: resourceId.optional(),
       runKind: z.enum(["workstream", "automation", "subagent", "system"]),
-      triggerType: z.enum(["composer", "retry", "manual", "scheduled", "activity", "inbound_email", "digest", "system"]),
+      triggerType: z.enum(["composer", "retry", "manual", "scheduled", "activity", "digest", "system"]),
       terminalState: z.enum(["completed", "needs_input", "stopped", "failed"]),
       duration: journeyDurationBucket,
       timeToFirstOutput: journeyDurationBucket,

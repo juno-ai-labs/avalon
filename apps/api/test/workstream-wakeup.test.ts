@@ -170,8 +170,6 @@ function fixture(): Fixture {
     originType: "ad_hoc",
     createdByUserId: USER_ID,
     exactState: "running",
-    emailAddress: "wake-up@automation.with-avalon.com",
-    emailRouteStatus: "active",
   });
   const objectStores = new Map<string, DatabaseSync>([[WORKSTREAM_ID, objectStore]]);
   // Settled, not running: the object enforces at most one mutating run per

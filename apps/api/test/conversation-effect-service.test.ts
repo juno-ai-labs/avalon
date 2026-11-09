@@ -1,5 +1,14 @@
 import "../../../tests/isolated-region";
-import { asAutomationId, asSubstreamId, asWorkspaceId, asWorkstreamId, DEFAULT_MEMBER_PREFERENCES, DEFAULT_NOTIFICATION_CHANNELS, type NotificationChannel, type WorkstreamId } from "@rally/contracts";
+import {
+  asAutomationId,
+  asSubstreamId,
+  asWorkspaceId,
+  asWorkstreamId,
+  DEFAULT_MEMBER_PREFERENCES,
+  DEFAULT_NOTIFICATION_CHANNELS,
+  type NotificationChannel,
+  type WorkstreamId,
+} from "@rally/contracts";
 import {
   conversationEffectHash,
   isPersonNotificationEffect,
@@ -285,7 +294,6 @@ function workspaceSyncNamespace(listable = true, mentionChannels: NotificationCh
         authorityGeneration: 1,
         listable,
         title: "Regional effects",
-        emailAddress: "regional-effects@example.com",
       })),
       // The conversation is a Canvas's Chat, so each transport carries its link.
       resolveHostedParent: vi.fn(async () => (parentKind ? { kind: parentKind, authority: { exists: true } } : { kind: null })),

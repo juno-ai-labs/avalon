@@ -306,7 +306,7 @@ The transcript copy of the same answer keeps its citations; only what leaves
 Rally is reduced.
 
 An automation's Agent-DM destination is one of the delivery targets described in
-[work-stream and automation email addresses](workstream-email-addresses.md#outbound-automation-results);
+[Sidekick run delivery](automation-lifecycle.md);
 Slack and email are delivered independently, so a failure in one is retried without holding back the other.
 
 ### App Home
@@ -546,7 +546,6 @@ not own:
 | Connector-wide adapter rules and health semantics | [`connectors.md`](connectors.md) |
 | The shared actor-identity resolution behind attribution | [`connectors.md`](connectors.md#actor-identity-and-message-attribution) |
 | The unfurl card, its audience rules, and the refresh sweep | [`links.md`](links.md) |
-| Frozen automation delivery targets | [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) |
 | The configured deployment boundary the shared ingress sits on | [`regionalization.md`](regionalization.md) |
 | The Sidekick run a bound-thread reply continues | [`automation-lifecycle.md`](automation-lifecycle.md), [`agent-harness.md`](agent-harness.md) |
 

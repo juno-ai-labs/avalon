@@ -29,10 +29,10 @@ const AutomationRunPageSchema = z.object({ items: z.array(AutomationRunSchema) }
 const CreatedAutomationSchema = z.object({ automationId: IdSchema });
 const StartedRunSchema = z.object({ runId: IdSchema, reused: z.boolean() });
 
-/** Older installed clients cannot parse empty or explicit-email trigger lists. */
+/** Older installed clients cannot parse empty trigger lists. */
 export function legacyAutomationDetail(detail: AutomationDetail) {
   if (!detail.currentDefinition) return detail;
-  const triggers = detail.currentDefinition.triggers.filter((trigger) => trigger.type !== "inbound_email");
+  const triggers = detail.currentDefinition.triggers;
   return { ...detail, currentDefinition: { ...detail.currentDefinition,
     triggers: triggers.length ? triggers : [{ type: "manual" as const }],
   } };

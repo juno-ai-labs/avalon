@@ -23,7 +23,6 @@ export const WorkspaceDirectoryNotificationStateSchema = deferredZodSchema(() =>
   authorityGeneration: z.number().int().positive(),
   listable: z.boolean(),
   title: z.string().min(1).max(500),
-  emailAddress: z.string().email().max(254).nullable(),
 }));
 
 /**

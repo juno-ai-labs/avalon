@@ -79,10 +79,6 @@ beforeEach(async () => {
       state TEXT NOT NULL, message_id TEXT, harness_run_id TEXT, error_code TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
       PRIMARY KEY (workspace_id, creator_user_id, client_message_id), UNIQUE (workstream_id))`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_routes (
       workspace_id TEXT NOT NULL, workstream_id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
       object_name TEXT NOT NULL, state TEXT NOT NULL, stage_index INTEGER NOT NULL DEFAULT 0,

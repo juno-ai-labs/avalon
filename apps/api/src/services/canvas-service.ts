@@ -1,5 +1,17 @@
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasSidebarRow, CanvasUpdateRequest, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
+import type {
+  CanvasAccess,
+  CanvasAccessDecision,
+  CanvasAccessDecisionRequest,
+  CanvasAccessRequest,
+  CanvasAccessRequestResult,
+  CanvasAudienceUpdate,
+  CanvasDetail,
+  CanvasSidebarRow,
+  CanvasUpdateRequest,
+  CreateCanvasRequest,
+  CreatedCanvas,
+} from "@rally/contracts/canvases";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
@@ -58,8 +70,6 @@ export async function createCanvas(env: Env, input: {
     participantUserIds: [input.creatorUserId],
     harnessStatus: "idle",
     titleStatus: "settled",
-    emailAddress: null,
-    emailRouteStatus: null,
     systemKind: null,
     modelOverride: null,
     now: Date.now(),

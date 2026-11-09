@@ -65,8 +65,6 @@ export async function createAutomation(env: Env, input: {
     participantUserIds: [input.authorUserId],
     harnessStatus: "idle",
     titleStatus: "settled",
-    emailAddress: null,
-    emailRouteStatus: null,
     systemKind: null,
     modelOverride: null,
     now: Date.now(),

@@ -14,7 +14,6 @@
 > [automation lifecycle](../../automation-lifecycle.md),
 > [connectors](../../connectors.md),
 > [feature flags](../../feature-flags.md),
-> [work-stream email addresses](../../workstream-email-addresses.md).
 > Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
@@ -57,8 +56,7 @@ one idea:
    this today — is deleted.
 4. **A `deliver` into a work stream wakes it.** The result is appended as a
    visible `automation_activation` message, projected to the model as a labelled
-   `role: "user"` turn, and it starts a run there, the way an inbound email
-   does.
+   `role: "user"` turn, and it starts a run there through the ordinary conversation admission path.
 
 **No new agent tool comes with any of this.** A run cannot say what its result
 was worth, because the loop that produced a result is the last thing that should
@@ -428,9 +426,7 @@ Which one a draft should use, when either could work:
 
 The distinction is not stylistic. A delivery destination cannot be redirected by
 anything that steers the run, because it is resolved from what the automation
-belongs to. A tool call's arguments come from the run, which is why
-email-triggered runs lose connector write tools entirely and why this PRD adds
-no tool that could pick an audience (non-goal 1).
+belongs to. A tool call's arguments come from the run, which is why this PRD adds no tool that could pick an audience (non-goal 1).
 
 ### The draft conversation is a work stream
 
@@ -669,7 +665,7 @@ Its `textContent` is the run's final message. Its `structuredContent` is a typed
 ```
 
 `trigger.kind` reuses `AutomationRunTriggerV1`'s vocabulary — `manual`,
-`schedule`, `external_event`, `inbound_email` — so the two never drift.
+`schedule`, `external_event` — so the two never drift.
 `runWorkstreamId` is what an "open the run" affordance needs, and
 `automationName` is frozen at delivery so a later rename does not rewrite
 history.
@@ -686,9 +682,8 @@ send a duplicate through a provider tool.
 an ordinary message in the feed, authored by **Automation** — the same row a
 person's message gets, with a name in the author slot rather than a row kind of
 its own. It takes an attention ordinal like any other arrival, and appending it
-starts a run with the activation as that run's trigger message — mechanically
-the path an inbound email into a work stream already takes, reused rather than
-rebuilt, including whatever that path already does when a run is in flight.
+starts a run with the activation as that run's trigger message — through the existing conversation admission path, including what that path
+already does when a run is in flight.
 Delivery must not invent a second answer to that question.
 
 That is the whole presentation decision, and it is deliberately the smallest one
@@ -700,7 +695,7 @@ name rides in the activation object beside the row, so a reader can be told
 *which* automation without the author slot carrying two things.
 
 The agent reads it as **untrusted evidence**, wrapped and projected
-`role: "user"` exactly as inbound mail is; **Agent behavior 1** states that in
+`role: "user"` as labelled trigger evidence; **Agent behavior 1** states that in
 full, because it is the one thing here that must not be got wrong by accident.
 The run is otherwise ordinary and holds the tools that work stream's runs always
 hold, whatever the occurrence's trigger was (**key design decision 2**).
@@ -980,7 +975,7 @@ None yet.
    nobody can reason about at acceptance time when the interesting question is
    per *occurrence* — which is what the classifier answers. Also rejected, after
    being specified: narrowing the woken run's tools when the occurrence came
-   from an inbound email or connector event. It makes two arrivals that look
+   from a connector event. It makes two arrivals that look
    identical in the transcript behave differently, spreads automation trigger
    vocabulary into the work-stream harness, and buys a containment the untrusted
    label and the standing policy already provide against text a participant
@@ -1028,7 +1023,7 @@ None yet.
    the transcript and every tool call, hidden only because
    `directory.origin_type <> 'automation'` says so. Surfacing that row is a
    boolean where creation was a receipt, a title, an audience, an opening
-   message, and a Global email-address registration — and it gives the reader
+   message — and it gives the reader
    more than a created room would. Rejected: creation, for all of that; and
    offering the arm to a `workstream` automation, which would send a participant
    out of the room that already received the result to read the same result with
@@ -1077,7 +1072,7 @@ None yet.
    values and a sentence, and fails toward delivery.
 10. **Acceptance stays human on every loop.** Giving work-stream agents the
    authoring plugin does not give them the ability to activate what they draft.
-   A run that reads an inbound email must not be able to end with a standing
+   A run that reads untrusted evidence must not be able to end with a standing
    grant of connector credentials on a schedule. Rejected: auto-accepting a
    draft the person asked for in the same turn, which is indistinguishable, at
    the point of acceptance, from a draft an injected instruction asked for.
@@ -1462,13 +1457,9 @@ own connection from the Worker that holds it.
 
 ## Security and trust model
 
-1. **Untrusted triggers can now reach a shared room, and start a run in it.** An
-   inbound email or connector event can trigger a run whose result every
-   participant reads and whose arrival wakes the room's agent. The existing
-   containment holds and is not extended: inbound email is admitted only from
-   active workspace members, email-triggered runs already lose connector write
-   tools and web access *inside the automation's own run*, and the delivered
-   body renders through `MarkdownBody` with its scheme allowlist and
+1. **Untrusted triggers can now reach a shared room, and start a run in it.** A
+   connector event can trigger a run whose result every
+   participant reads and whose arrival wakes the room's agent. The delivered body renders through `MarkdownBody` with its scheme allowlist and
    non-navigable mention chips. What reaches the room is wrapped as untrusted
    evidence behind an explicit label (**Agent behavior 1**), and the run it
    starts is an ordinary run of that work stream.
@@ -1514,8 +1505,7 @@ own connection from the Worker that holds it.
    channel or watching that issue — including people who are not in Rally. That
    capability predates this change: it is what a run's frozen
    `connectorBindings` have always allowed, authorized by whoever connected the
-   connection and bounded by its scopes, with email-triggered runs losing write
-   tools entirely. What this PRD adds is *delivery*, which reaches only the
+   connection and bounded by its scopes. What this PRD adds is *delivery*, which reaches only the
    person or the room the automation belongs to and cannot be pointed anywhere
    by anything that steers the run. Keeping the two apart is the point of
    **Delivery is not how a run acts**; a reader who thinks of a channel post as
@@ -1564,14 +1554,13 @@ represented nowhere else in that work stream, and an agent that cannot see it
 cannot do anything about it. A new type is dropped by that rule automatically,
 so admission is an explicit branch ahead of it — a check on the `message_type`,
 projecting a `modelDerivative` wrapped in a label, exactly as
-`renderUntrustedInboundEmailMessage` does for inbound mail.
+`externalEventOpening` does for connector events.
 
 **It is projected with `role: "user"`, and this is not negotiable.** A run has
 exactly one system-role message: index 0, built by
 `renderWorkstreamSystemPrompt` from the standing policy and the authorized task
 context. Every other injected context in this codebase is already a `user`
-message for the same reason — `renderUntrustedInboundEmailMessage`,
-`renderUntrustedSlackOriginMessage`, `renderTriggerActivityMessage`, and
+message for the same reason — `renderUntrustedSlackOriginMessage`, `renderTriggerActivityMessage`, and
 `renderScheduledWakeupMessage` all return `role: "user"`. Providers accept one
 system message and it is first; and more importantly, the system role *is* the
 policy layer. An activation's body routinely quotes connector content — a
@@ -1588,7 +1577,7 @@ The wrapper says what the content is and how far to trust it:
 
 **The activation that woke the run is that run's trigger message**, so it
 arrives with the attachment-content admission every trigger message gets. Unlike
-inbound email and suggested work, which are admitted *only* as the trigger,
+suggested work, which are admitted *only* as the trigger,
 earlier activations stay in the window as standing context — the agent should be
 able to consult last Monday's agenda when someone asks today. The label is
 identical either way.

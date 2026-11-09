@@ -229,7 +229,7 @@ Resource telemetry uses successful semantic operations, not generic click
 autocapture. A loaded conversation records open/switch/reopen, visibility, origin,
 and pin state. The API records creation once the conversation row commits; its
 closed source distinguishes composer, suggested work, Slack Agent, manual,
-scheduled, activity-triggered, and inbound-email automations. It derives
+scheduled and activity-triggered automations. It derives
 visibility, origin, participant count, opening-attachment count, and model
 override from stored rows. Connector attribution is the canonical connector type
 or a bounded unique list for a multi-source suggestion—never a connection or

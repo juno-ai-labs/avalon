@@ -189,7 +189,6 @@ during launch review; the team chose to launch without them.
 challenges remain unbounded by Rally. Do not describe issuance limiting as a
 fulfilled or pending launch gate. PR: [#843](https://github.com/juno-ai-labs/avalon/pull/843).
 
-
 ### 2026-09-16 — Persist proof consumption and resumable session identity
 
 **What changed:** Email links and OTPs share one challenge and one session receipt,

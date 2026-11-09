@@ -5,7 +5,6 @@ export const RESOURCE_RELATIONSHIP_TYPES = [
   "message_attachment",
   "origin",
   "generated",
-  "inbound_email",
   "context",
 ] as const;
 

@@ -124,7 +124,7 @@ one is intentionally narrow so it can ship first and alone.
    Its existing availability, region, and origin rules stand; where
    Terminal is unavailable, the guidance does not render and behavior is
    today's inline answer.
-6. **Guidance for automation, inbound-email, or delegated child runs.**
+6. **Guidance for automation, or delegated child runs.**
    Deferred. The policy renders for ordinary participant-triggered work
    stream runs only; other origins keep their current delivery-path
    behavior until those paths are taught what a published document means
@@ -225,7 +225,7 @@ old pointer.
 
 **Decided:** The policy does not render for a run carrying a `slackOrigin`.
 
-**Why:** Non-goal 6 defers automation, inbound-email and delegated child runs
+**Why:** Non-goal 6 defers automation and delegated child runs
 because their delivery paths cannot carry a document reference. Slack delivery
 cannot either, and it was not named. A Slack participant would be told a
 document exists and given no way to open it — worse than today's inline answer.

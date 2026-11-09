@@ -10,7 +10,7 @@ const CANVAS = {
   visibility: 'creator', artifactKind: null, unread: true, presentUserIds: [], pinnedPosition: null, sharedWithMe: false,
 };
 const SIDEKICK = {
-  id: '00000000-0000-7000-8000-0000000000b1', name: 'Incident triage', description: '', emailAddress: null,
+  id: '00000000-0000-7000-8000-0000000000b1', name: 'Incident triage', description: '',
   scope: 'workspace', status: 'active', nextRunAt: null, lastRunAt: null, updatedAt: '2026-11-07T09:00:00.000Z', needsInput: true,
 };
 

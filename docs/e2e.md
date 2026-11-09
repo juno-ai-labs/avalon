@@ -160,7 +160,7 @@ continue. Right-click a Canvas row, a Sidekick row and a note in the sidebar and
 
 8. Open **Notifications** and confirm **Notify me about** lists exactly Mentions, New messages, Being added, Sidekick runs, Pinned Canvas updates and Access requests, in that order, each with its channels, and no **Daily digest** section. Open the old `digest` settings deep link and confirm it lands on Notifications.
 
-9. Create an invite as an owner/admin and confirm the UI reports **Invitation emailed** only after Resend accepts the request. Verify the message is from `Rally <invites@rallywith.ai>`, contains the correct workspace, role, region, seven-day expiry, and one-time link, then copy the same link from Settings as a fallback.
+9. Create an invite as an owner/admin and confirm the UI reports **Invitation emailed** only after Cloudflare accepts the request. Verify the message is from `Rally <invites@rallywith.ai>`, contains the correct workspace, role, region, seven-day expiry, and one-time link, then copy the same link from Settings as a fallback.
 
 10. Install a workspace Google Drive connection, open a new Canvas as another active member, and confirm Drive search plus every granted Docs/Sheets read and write tool is offered without attaching a resource. Confirm another member’s personal Google connection remains unavailable and a workspace automation still receives only its explicitly bound capabilities.
 
@@ -543,19 +543,6 @@ Run this only in provider test accounts after enabling the Google APIs listed in
 Finally, revoke a test provider grant and repeat an affected read. Confirm the connection changes to **Reconnect required**, dependent work stops safely, and no token or raw provider response body appears in the desktop or logs.
 
 Pass evidence: two independently selectable preset connections, exact stored capability sets, bounded native Docs and Sheets operations, Mail/Calendar and Drive cursors, one Drive-derived Doc activity, one Drive-derived Sheet activity, one authorized automation run per tested connection, and a sanitized reconnect state. Sending email is not required for this flow.
-
-## Flow 9 — mail to a retired Thread's address
-
-1. Send to an address a Thread was issued before the Canvases and Sidekicks pivot and confirm the Global webhook acknowledges it as terminal (`email_thread_retired`) and attaches it nowhere.
-2. Send to an unknown alias and confirm the webhook is acknowledged without attaching it anywhere. Send HTML containing script-like content to a Sidekick's address and confirm Rally never renders or executes it.
-
-## Flow 10 — inbound Sidekick email
-
-1. Create personal and workspace Sidekicks with an `inbound_email` trigger in both configured deployments and confirm each exposes a permanent four-segment address from the one account-wide namespace.
-2. Send one message to each address. Confirm each owning region stores the untrusted email resource, starts exactly one run with the labelled opening message, and that a personal Sidekick refuses a sender who is not its author or the person it runs as.
-3. Replay the same Resend email ID while processing and after completion. Confirm an active lease returns a retryable response, an expired lease can be reclaimed, and the completed replay returns the original run without launching again.
-4. Pause a Sidekick and confirm mail cannot start a run. Resume it and confirm the exact same address is active again.
-5. Confirm a reservation cannot claim another owner's address, even across regions, and that removing an owner leaves a permanent tombstone. Confirm the same local part on a different accepted domain remains a distinct claim.
 
 ## PRD flow 5 — future scheduled run
 

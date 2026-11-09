@@ -122,7 +122,7 @@ export class AgentCommunicationService {
       title: args.name, objective: args.description, scope: identity.scope,
       createdByUserId: identity.created_by_user_id,
       participantUserIds: this.input.executionPrincipal.type === "user" ? [this.input.executionPrincipal.userId] : [],
-      harnessStatus: "idle", titleStatus: "settled", emailAddress: null, emailRouteStatus: null,
+      harnessStatus: "idle", titleStatus: "settled",
       systemKind: null, modelOverride: identity.model_override, now: Date.now(),
     }, executionPrincipal: this.input.executionPrincipal, rootSubstreamId });
     if (initialized.status !== 200) {

@@ -1,6 +1,10 @@
 import { asWorkspaceId, IdSchema } from "@rally/contracts";
 import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
-import { SidekickRunNotificationSchema, type PushNotificationData, type SidekickRunNotification } from "@rally/contracts/push-notifications";
+import {
+  SidekickRunNotificationSchema,
+  type PushNotificationData,
+  type SidekickRunNotification,
+} from "@rally/contracts/push-notifications";
 
 import type { Env } from "../env";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
@@ -38,8 +42,6 @@ export interface Notice {
   parentId: string;
   /** The conversation under it: `"0"` for the Chat, a run's id, or null. */
   substreamId: string | null;
-  /** The conversation's own email address, where a reply to the email continues it (a mention or an add). */
-  replyTo: string | null;
   /** The message the link opens at: a mention's or a reply's in a Canvas's Chat. */
   message?: { turnId: string; sequence: number };
 }
@@ -83,7 +85,7 @@ export async function renderNotice(env: Env, workspace: WorkspaceStub, address: 
   const notice: Notice = {
     intentId: words.intentId, kind: words.kind, title: words.title, body: words.body, actorName: words.actorName,
     url: linked.url, workspaceId: row.workspaceId, recipientUserId: row.recipientUserId, parentId: words.parentId,
-    substreamId: words.substreamId, replyTo: words.replyTo, ...(linked.message ? { message: linked.message } : {}),
+    substreamId: words.substreamId, ...(linked.message ? { message: linked.message } : {}),
   };
   return { outcome: "ready", notice };
 }
@@ -100,7 +102,7 @@ function messagePosition(turnId: string, sequence: number | undefined): { messag
 async function personNoticeWords(env: Env, row: WorkspaceNotificationIntentDelivery): Promise<NoticeWords | Exclude<NoticeRendering, { outcome: "ready" }>> {
   const context = await notificationDeliveryContext(env, row);
   if (context.outcome !== "ready") return context.outcome === "pending" ? { outcome: "pending" } : { outcome: "skipped", reason: context.reason };
-  const { effect, childId, viewer } = context;
+  const { effect, childId } = context;
   const words = effect.kind === "mention_notification"
     ? { title: `${effect.authorNameSnapshot} mentioned you in ${effect.workstreamTitleSnapshot}`, body: effect.messageText, actorName: effect.authorNameSnapshot }
     : { title: `${effect.actorNameSnapshot} added you to ${effect.workstreamTitleSnapshot}`, body: effect.workstreamObjectiveSnapshot ?? "", actorName: effect.actorNameSnapshot };
@@ -112,7 +114,6 @@ async function personNoticeWords(env: Env, row: WorkspaceNotificationIntentDeliv
     actorName: words.actorName,
     parentId: row.workstreamId,
     substreamId: childId,
-    replyTo: viewer.emailAddress?.trim() || null,
     // A mention in the Chat opens at its message; one recorded before the
     // effect carried its sequence, or in a run's conversation, opens the parent.
     ...(effect.kind === "mention_notification" && !childId ? messagePosition(effect.messageId, effect.transcriptSequence) : {}),
@@ -137,7 +138,6 @@ async function runNoticeWords(env: Env, workspace: WorkspaceStub, row: Workspace
     actorName: notice.sidekickName,
     parentId: row.workstreamId,
     substreamId: notice.runId,
-    replyTo: null,
   };
 }
 
@@ -190,7 +190,6 @@ async function parentNoticeWords(env: Env, workspace: WorkspaceStub, row: Worksp
     actorName: words.actorName,
     parentId: row.workstreamId,
     substreamId: notice.kind === "new_message" ? "0" : null,
-    replyTo: null,
     ...(notice.kind === "artifact_updated" ? { artifactId: notice.resourceId } : {}),
     ...(notice.kind === "new_message" ? messagePosition(notice.messageId, notice.messageSequence) : {}),
   };

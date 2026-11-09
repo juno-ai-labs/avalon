@@ -31,7 +31,6 @@
 | `definition_revisions` | `sidekick_revisions` | |
 | `schedules` | `sidekick_schedules` | |
 | `runs` | `sidekick_runs` | |
-| `inbound_email_receipts` | `sidekick_email_receipts` | |
 | `conversation_children` | `parent_children` | |
 | `substream_directory` | `parent_child_projections` | |
 | `substream_user_directory` | `parent_child_viewer_projections` | |
@@ -52,7 +51,6 @@ and dispatches to the hosted parent. Callers change only the stub they ask.
 | `create`, `saveDefinition`, `submitDefinition`, `apply`, `readDetail`, `setAppearance`, `pause`, `resume`, `remove`, `runNow`, `listRuns`, `claimExecutionPrincipal`, `runSeeded` | `services/automation-service.ts`; `services/integrations.ts` (drafting); `routes/dev.ts`; `services/demo-seeder.ts` |
 | `setOwningRoomArchived` | `WorkspaceDO` only. Becomes a private write. |
 | `externalEventAdmissionPlan`, `admitExternalEvent` | `services/semantic-trigger-admission.ts`, from `queues/activity-consumer.ts`, which builds the stub |
-| `admitInboundEmail` | `services/resend-inbound-email-service.ts` |
 | `readSkillSource`, `readSkillSummary` | `services/sidekick-skills.ts`, `services/workstream-service.ts` |
 | `readRunDefinition`, `readRunState` | `services/integrations.ts`, `services/slack-agent-service.ts` |
 | `continueRun` | `services/sidekick-run-continuation.ts` |
@@ -102,7 +100,6 @@ Each reads `sidekicks` plus pending directory rows during steps 1 and 2, then
 | Engineering MCP | `retry_sidekick_import` added in step 1; it and `run_sidekick_sql` removed in step 3 | [`engineering-mcp.md`](../../engineering-mcp.md), [`internal-admin-mcp-server.md`](../../internal-admin-mcp-server.md) |
 | Operations | The gate query and the retry procedure | [`runbook.md`](../../runbook.md) |
 | Queue/RPC rules | Sidekick parents no longer "keep the Queue" for authorization discovery | [`choosing-queues-or-rpc.md`](../../choosing-queues-or-rpc.md) |
-| Email, bindings, triggers | Their Sidekick addressing moves to `WorkspaceDO` | [`workstream-email-addresses.md`](../../workstream-email-addresses.md), [`external-conversation-bindings.md`](../../external-conversation-bindings.md), [`semantic-activity-triggers.md`](../../semantic-activity-triggers.md) |
 | Index | Rows whose one-line scope names `SidekickDO` | [`docs/README.md`](../../README.md) |
 
 ## Tests that bind the class

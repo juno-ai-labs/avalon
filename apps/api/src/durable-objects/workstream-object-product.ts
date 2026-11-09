@@ -224,7 +224,6 @@ interface RootRow extends SqlRow {
   archived_at: number | null;
   archive_generation: number;
   created_by_user_id: string | null;
-  email_address: string | null;
   system_kind: "digest" | null;
   title_status: "naming" | "automatic" | "settled";
   model_override: string | null;
@@ -1109,8 +1108,6 @@ export class WorkstreamObjectProductService {
     createdByUserId: string;
     participantUserIds: readonly string[];
     harnessStatus: string;
-    emailAddress: string | null;
-    emailRouteStatus: string | null;
     systemKind: string | null;
     modelOverride: string | null;
     now: number;
@@ -1309,7 +1306,6 @@ export class WorkstreamObjectProductService {
       titleStatus,
       appearance: root.appearance_json ? WorkstreamAppearanceSchema.parse(JSON.parse(root.appearance_json)) : undefined,
       objective: truncateUtf16Safe(root.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
-      emailAddress: root.email_address,
       createdByUserId: root.created_by_user_id,
       harnessStatus: harnessStatus(root.exact_state),
       latestAttentionSequenceNumber: latest,
@@ -2915,7 +2911,6 @@ export class WorkstreamObjectProductService {
       completedAt: iso(root.completed_at),
       archivedAt: iso(root.archived_at),
       archiveGeneration: root.archive_generation,
-      emailAddress: root.email_address,
       createdByUserId: root.created_by_user_id,
       titleStatus: root.title_status,
       latestAttentionOrdinal: Math.max(0, root.next_attention_ordinal - 1),
