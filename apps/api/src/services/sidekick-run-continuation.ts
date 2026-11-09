@@ -174,6 +174,26 @@ export async function sidekickRunInputRefusal(
   }));
 }
 
+/**
+ * Whether this person manages a Sidekick, with the role their membership
+ * gives them: the rule for who may drive its wizard, asked for an agent's
+ * message both where it is sent and where the shared conversation takes it.
+ * A guest has no role; somebody with no active membership manages nothing.
+ */
+export async function personManagesSidekick(
+  env: Env,
+  input: { workspaceId: string; automationId: string; userId: string },
+): Promise<boolean> {
+  const member = await env.DB.prepare(
+    "SELECT role, access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'",
+  ).bind(input.workspaceId, input.userId).first<{ role: "owner" | "admin" | "member" | null; access_class: string | null }>();
+  if (!member) return false;
+  return sidekickAllowsManager(env, {
+    workspaceId: input.workspaceId, automationId: input.automationId,
+    actor: { userId: asUserId(input.userId), actorRole: member.access_class === "guest" ? null : member.role },
+  });
+}
+
 /** What the shared conversation says when a message addressed to the Sidekick started no run. */
 export const SIDEKICK_MESSAGE_REFUSAL_TEXT: Record<SidekickConversationMessageRefusalCode, string> = {
   sidekick_not_active: "This message did not start a run because the Sidekick is not active.",
