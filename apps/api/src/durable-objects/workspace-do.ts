@@ -4849,6 +4849,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
       }));
+      // Held at 57 is terminal now: the operator RPCs that cleared the hold
+      // are gone, so an object here misses every later migration. Say so on
+      // every wake rather than fail quietly.
+      if (state.storage.sql.exec<{ version: number }>(
+        "SELECT COALESCE(MAX(version), 0) AS version FROM _sql_schema_migrations",
+      ).one().version === 57) {
+        logError(env, "workspace_meeting_retirement_held", { workspace_id: this.workspaceId() });
+      }
       this.detectUnheardLedger();
       await this.armNextAlarm();
     });

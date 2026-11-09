@@ -2120,12 +2120,11 @@ export class WorkstreamObjectProductService {
         if (userId === auth.userId || write.alreadyActive) return [viewer];
         // The epoch is what separates one add from the next: re-adding
         // somebody who was removed notifies them again, while a redelivery of
-        // this add converges on the same intent and the same activity row.
+        // this add converges on the same intent.
         //
-        // The work stream is in the identity because both things this keys are
+        // The work stream is in the identity because the intent it keys is
         // workspace-wide while the epoch is object-local and starts at zero:
-        // `workspace_activity_events.dedupe_key` is UNIQUE across the
-        // workspace, and an intent is fenced on its id and on
+        // an intent is fenced on its id and on
         // `(source_message_id, recipient_user_id, notification_kind)`. Without
         // it, adding the same person to a second work stream reuses the first
         // one's identity, and the effect is refused as a conflict and retried
@@ -2193,10 +2192,9 @@ export class WorkstreamObjectProductService {
    *
    * `epoch` is what separates one participation from the next: re-adding
    * somebody who was removed notifies them again, while a redelivery of the
-   * same add converges on one intent and one activity row. The work stream is
-   * in both identities because what they key is workspace-wide while the epoch
-   * is object-local and starts at zero — `workspace_activity_events.dedupe_key`
-   * is UNIQUE across the workspace, and an intent is fenced on its id and on
+   * same add converges on one intent. The work stream is in its identity
+   * because the intent is workspace-wide while the epoch is object-local and
+   * starts at zero: an intent is fenced on its id and on
    * `(source_message_id, recipient_user_id, notification_kind)`. Without it,
    * adding one person to a second work stream reuses the first one's identity
    * and the effect is refused as a conflict, then retried forever instead of

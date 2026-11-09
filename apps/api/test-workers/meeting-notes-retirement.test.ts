@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from 'cloudflare:workers';
 import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { deliverInferenceLakehousePointer, retiredMeetingInferenceKey } from '../src/queues/inference-lakehouse-consumer';
 import { sha256 } from '../src/lib/crypto';
 import type { InferenceLakehouseRecord } from '../src/services/inference-lakehouse';
@@ -213,9 +213,14 @@ it('keeps populated pre-retirement workspaces reachable at 57 across cold starts
   });
   const version = () => runInDurableObject(stub, (_instance, state) => state.storage.sql
     .exec<{ version: number }>('SELECT MAX(version) AS version FROM _sql_schema_migrations').one().version);
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   await evictDurableObject(stub);
   await stub.initializeWorkspace(workspaceId, 'wnam');
   expect(await version()).toBe(57);
+  // The hold is terminal now, so a held object says so on every wake.
+  expect(errors.mock.calls.map(([entry]) => entry)).toContainEqual(
+    expect.objectContaining({ event: 'workspace_meeting_retirement_held' }));
+  errors.mockRestore();
   expect(await runInDurableObject(stub, (_instance, state) => state.storage.sql
     .exec('SELECT resource_id, note_id, objects_deleted FROM retired_meeting_resources').toArray()))
     .toEqual([{ resource_id: resourceId, note_id: null, objects_deleted: 0 }]);
