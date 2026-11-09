@@ -613,7 +613,7 @@ export interface Message {
     automationName: string;
     /** The run behind it, which is also its substream under the Sidekick. */
     runId?: string;
-    trigger?: 'manual' | 'schedule' | 'external_event';
+    trigger?: 'manual' | 'schedule' | 'external_event' | 'inbound_email';
     /** Present on a run's own row in its Sidekick's shared conversation: the run as it stands. */
     run?: {
       state: 'pending' | 'running' | 'needs_input' | 'completed' | 'failed' | 'stopped';
@@ -724,7 +724,7 @@ export interface AutomationRun {
   id: string;
   automationId: string;
   coordinatorUserId?: string | null;
-  triggerType: 'manual' | 'schedule' | 'external_event';
+  triggerType: 'manual' | 'schedule' | 'external_event' | 'inbound_email';
   status: AutomationRunStatus;
   plannedFor: string | null;
   startedAt: string | null;

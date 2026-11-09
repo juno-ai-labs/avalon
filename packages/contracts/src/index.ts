@@ -1657,7 +1657,7 @@ export const AutomationRunSchema = z.object({
   id: IdSchema,
   automationId: IdSchema,
   coordinatorUserId: IdSchema.nullable().optional(),
-  triggerType: z.enum(["manual", "schedule", "external_event"]),
+  triggerType: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
   plannedFor: TimestampSchema.nullable(),
   startedAt: TimestampSchema.nullable(),
   completedAt: TimestampSchema.nullable(),

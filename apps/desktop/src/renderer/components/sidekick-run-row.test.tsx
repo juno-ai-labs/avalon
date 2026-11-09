@@ -83,6 +83,13 @@ beforeEach(() => {
 });
 
 describe('SidekickRunRow', () => {
+  it('labels historical email runs as retired', () => {
+    const message = runRow('failed', 'Earlier result');
+    message.automationActivation!.trigger = 'inbound_email';
+    renderRow(message);
+    expect(screen.getByRole('article', { name: 'Incident triage run' })).toHaveTextContent('Email (retired)');
+  });
+
   it("shows a waiting run's question on its row and answers that run", async () => {
     renderRow(runRow('needs_input'));
     const row = screen.getByRole('article', { name: 'Incident triage run' });

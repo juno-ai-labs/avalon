@@ -9,13 +9,7 @@ import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
 import { validateCompletedToolReplay } from "./completed-tool-replay";
 import { completionVerificationNudge } from "./completion-verification";
 import type { CompletionVerificationSnapshot } from "../durable-objects/completion-verification-storage";
-import {
-  AGENT_MESSAGE_CONTENT_KIND,
-  agentIdForAddress,
-  AgentIdSchema,
-  ImportedMessageProvenanceSchema,
-  SidekickReviewNoticeV1Schema,
-} from "@rally/contracts";
+import { AGENT_MESSAGE_CONTENT_KIND, agentIdForAddress, AgentIdSchema, ImportedMessageProvenanceSchema, SidekickReviewNoticeV1Schema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
@@ -28,23 +22,9 @@ import type { SidekickExecutionDelegation } from "@rally/contracts";
 import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
 import { renderSidekickReviewNotice } from "./sidekick-review-notice";
 import { ObjectPortError } from "../runtime/object-port";
-import {
-  dynamicConnectorCapability,
-  stableConnectionWireName,
-  stableWireToolName,
-  validateDynamicConnectorTools,
-  discoverDynamicConnectorTools,
-  connectorServerPresentation,
-  storedConnectorServerMetadata,
-} from "./connector-tool-inventory";
+import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools, discoverDynamicConnectorTools, connectorServerPresentation, storedConnectorServerMetadata } from "./connector-tool-inventory";
 import { ApiError } from "../lib/api-error";
-import {
-  connectorPluginViews,
-  connectorPluginBindingViews,
-  connectorPluginCanonicalId,
-  type GooglePluginBundle,
-  type ConnectorPluginView,
-} from "../lib/connector-plugin-views";
+import { connectorPluginViews, connectorPluginBindingViews, connectorPluginCanonicalId, type GooglePluginBundle, type ConnectorPluginView } from "../lib/connector-plugin-views";
 import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef } from "./sidekick-skills";
 import type { SidekickSkillSnapshot } from "@rally/contracts";
 import { assertSafePublicUrl } from '../lib/public-web-url';
@@ -1439,6 +1419,19 @@ async function projectModelProtocolTranscript(
             modelMessageContent(message),
           ].join("\n\n"),
         }, "participant_turn", message.id, message.sequenceNumber));
+      }
+      continue;
+    }
+
+    // Historical received-message openings remain readable on retry, as
+    // labelled user evidence only when selected as the trigger. No receiver
+    // writes new messages of this kind.
+    if (message.structuredContent?.kind === "inbound_email") {
+      if (message.id === input.triggerMessageId) {
+        projected.push(modelDerivative(
+          { role: "user", content: `INBOUND EMAIL:\n${modelMessageContent(message)}` },
+          "participant_turn", message.id, message.sequenceNumber,
+        ));
       }
       continue;
     }
