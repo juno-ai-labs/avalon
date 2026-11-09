@@ -2726,8 +2726,8 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 
 .settings-app-icon-card {
   background: var(--av-sys-color-surface-subtle);
-  border: 1px solid var(--av-ref-color-line-2);
   border-radius: var(--av-sys-size-radius-xl);
+  margin-top: 12px;
   overflow: hidden;
   padding: 16px;
 }
@@ -2754,7 +2754,6 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .settings-app-icon-shelf {
   align-items: end;
   background: var(--av-sys-color-surface-raised-hover);
-  border: 1px solid var(--av-ref-color-line-4);
   border-radius: calc(var(--av-sys-size-radius-xl) + 4px);
   display: flex;
   gap: 8px;
