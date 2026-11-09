@@ -508,6 +508,20 @@ preserving the sandbox ID, generation, and filesystem.
 | Unexpected metadata 404 | Preserve the ID and generation; return unavailable and reconcile again. |
 | Transitional or unknown | Preserve the identity and retry after the transition. |
 
+Creation reconciliation uses this same state handler. If a create fails and a
+stable-name lookup finds a sandbox, Rally binds its provider ID to the reserved
+generation in `starting` before restoring it. An explicitly unrecoverable
+sandbox is deleted and replaced through the existing generation transition;
+a recoverable one is restored in place. Missing recovery metadata preserves
+its identity. Preparation and policy readback still precede `running`, including
+when an interrupted acquisition resumes by the persisted ID. If provisioning
+the replacement itself returns an explicitly lost sandbox, Rally retains that
+new binding and reports a provider/snapshot repair action instead of recursively
+provisioning more generations in the same acquisition. Failed verification
+clears the reserved provider ID only after confirmed deletion. An unconfirmed
+removal keeps the preparation stage, so a retry cannot reuse an unverified
+sandbox or become stuck looking up an ID Rally already deleted.
+
 **How long a restore may take is the acquisition budget's to say.** Starting an
 archived sandbox restores its filesystem, and the Daytona call that asks for
 that also waits for it — but the two are separable, and only the request is
@@ -1415,6 +1429,19 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-09 — Creation reconciliation uses ordinary sandbox recovery
+
+**What changed:** A sandbox found after an ambiguous create is durably bound
+before entering the same restore/replacement handler as a recorded sandbox.
+Only preparation and policy verification publish the generation as running.
+
+**Why:** Dashboard run 457 repeatedly received a creation conflict for an
+existing unrecoverable sandbox. The name-lookup branch returned retry guidance
+without reaching the replacement logic the ID-lookup branch already had.
+Retries alone could never change that state; one recovery path handles both
+ways of discovering the same provider-owned identity. Unknown recoverability
+and unconfirmed deletion must continue preserving the binding and generation.
 
 ### 2026-11-09 — Fence publication against Canvas archive at the resource commit
 

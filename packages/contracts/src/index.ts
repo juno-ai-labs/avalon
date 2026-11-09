@@ -1338,6 +1338,8 @@ export const AutomationDraftSchema = z.object({
   whenToUse: z.string().optional(),
   requiredCapabilities: z.array(z.string()).default([]),
   expectedOutputs: z.array(z.string()).default([]),
+  /** Canonical conversation_list id already in Sidekick scope; never grants access. */
+  failureNotificationConversationId: z.string().min(1).nullable().optional(),
   defaultBehavior: z.record(z.string(), z.unknown()).default({}),
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),
@@ -1554,6 +1556,7 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
     instructions: z.string().min(1),
     requiredCapabilities: z.array(z.string()),
     expectedOutputs: z.array(z.string()),
+    failureNotificationConversationId: z.string().min(1).nullable().optional(),
     defaultBehavior: z.record(z.string(), z.unknown()),
     recommendedPlugins: z.array(AutomationPluginRecommendationSchema),
     memoryTables: z.array(AutomationMemoryTableSchema),

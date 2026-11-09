@@ -2799,6 +2799,10 @@ const automationDraftSubmissionJsonSchema = {
       items: { type: "string" },
       description: "Observable results of using these instructions, one entry per output; use [] when none are needed. For triggered work, describe what each run produces, for example [\"A summary of the week's merged pull requests in each run's reply\"]. Write results rather than steps.",
     },
+    failureNotificationConversationId: {
+      type: ["string", "null"],
+      description: "Canonical conversation_list id for an additional failure notice, or null when the shared Sidekick reply is sufficient. Use the Sidekick conversation, a written Canvas, or a Canvas attached with conversation_attach; an id in instructions grants no access.",
+    },
     defaultBehavior: {
       type: "string",
       description: "A JSON-encoded object of default behavior settings; use {} when none are needed."

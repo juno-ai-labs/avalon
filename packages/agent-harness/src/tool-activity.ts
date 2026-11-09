@@ -428,6 +428,11 @@ const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   agents_reply: AGENT_PROSE.reply_to_message!,
   post_result: SIDEKICK_POST_RESULT_PROSE,
   sidekick_post_result: SIDEKICK_POST_RESULT_PROSE,
+  sidekick_report_outcome: {
+    started: "Recording task outcome",
+    settled: "Recorded task outcome",
+    failed: "Could not record task outcome",
+  },
   ...CONVERSATION_PROSE,
 };
 
