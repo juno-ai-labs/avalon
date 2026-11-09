@@ -136,6 +136,8 @@ const ownerAuth: AuthContext = {
   role: "owner",
 };
 
+let emailSend = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>();
+
 function environment(database: StubDatabase, overrides: Partial<Env> = {}): Env {
   return createTestEnv({
     DB: database.binding,
@@ -148,7 +150,8 @@ function environment(database: StubDatabase, overrides: Partial<Env> = {}): Env 
     GOOGLE_OAUTH_CLIENT_SECRET: "google-client-secret",
     OAUTH_STATE_ENCRYPTION_KEY: "test-oauth-state-encryption-key",
     SESSION_SIGNING_KEY: "test-session-signing-key-with-enough-entropy",
-    RESEND_FROM_EMAIL: "Avalon <invites@with-avalon.com>",
+    EMAIL_FROM: "Avalon <invites@with-avalon.com>",
+    EMAIL: { send: (message: EmailMessageBuilder) => emailSend(message) },
     ...overrides,
   });
 }
@@ -270,11 +273,8 @@ describe("workspace invitation lifecycle", () => {
       if (dispatchReadFails && sql.includes("FROM workspace_relationship_deliveries")) throw new Error("D1 read unavailable");
       return undefined;
     });
-    const resend = vi.fn(async () => new Response(JSON.stringify({ id: "accepted-email-id" }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    }));
-    vi.stubGlobal("fetch", resend);
+    const resend = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: "accepted-email-id" }));
+    emailSend = resend;
 
     await expect(acceptInvitationForUser(
       environment(database, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
@@ -283,18 +283,14 @@ describe("workspace invitation lifecycle", () => {
     )).resolves.toBe(invitationRow.workspace_id);
 
     expect(resend).toHaveBeenCalledTimes(1);
-    const [, init] = resend.mock.calls[0] as unknown as [string, RequestInit];
-    expect(init.headers).toMatchObject({
-      "idempotency-key": `avalon-workspace-invitation/${invitationRow.id}/accepted`,
+    const body = resend.mock.calls[0]![0];
+    expect(body.headers).toMatchObject({
+      "X-Rally-Delivery-Key": `avalon-workspace-invitation/${invitationRow.id}/accepted`,
     });
-    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     expect(body).toMatchObject({
-      to: [invitationRow.invited_by_email],
+      to: invitationRow.invited_by_email,
       subject: "Invitee <Team> accepted your invitation to Avalon Studio",
-      tags: [
-        { name: "category", value: "workspace_invitation_accepted" },
-        { name: "region", value: "global" },
-      ],
+      headers: { "X-Rally-Category": "workspace_invitation_accepted", "X-Rally-Region": "global" },
     });
     expect(String(body.html)).toContain("Invitee &lt;Team&gt;");
     expect(String(body.html)).not.toContain("Invitee <Team>");
@@ -313,7 +309,7 @@ describe("workspace invitation lifecycle", () => {
       return undefined;
     });
     const resend = vi.fn();
-    vi.stubGlobal("fetch", resend);
+    emailSend = resend;
 
     await expect(acceptInvitationForUser(
       environment(database, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
@@ -342,11 +338,8 @@ describe("workspace invitation lifecycle", () => {
 
   it("emails the original inviter once after an invitation is declined", async () => {
     const database = new StubDatabase(({ sql }) => sql.includes("WHERE i.id = ?") ? invitationRow : undefined);
-    const resend = vi.fn(async () => new Response(JSON.stringify({ id: "declined-email-id" }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    }));
-    vi.stubGlobal("fetch", resend);
+    const resend = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: "declined-email-id" }));
+    emailSend = resend;
 
     await expect(declineInvitationForUser(
       environment(database, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
@@ -355,18 +348,14 @@ describe("workspace invitation lifecycle", () => {
     )).resolves.toBeUndefined();
 
     expect(resend).toHaveBeenCalledTimes(1);
-    const [, init] = resend.mock.calls[0] as unknown as [string, RequestInit];
-    expect(init.headers).toMatchObject({
-      "idempotency-key": `avalon-workspace-invitation/${invitationRow.id}/declined`,
+    const body = resend.mock.calls[0]![0];
+    expect(body.headers).toMatchObject({
+      "X-Rally-Delivery-Key": `avalon-workspace-invitation/${invitationRow.id}/declined`,
     });
-    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     expect(body).toMatchObject({
-      to: [invitationRow.invited_by_email],
+      to: invitationRow.invited_by_email,
       subject: "Invitee declined your invitation to Avalon Studio",
-      tags: [
-        { name: "category", value: "workspace_invitation_declined" },
-        { name: "region", value: "global" },
-      ],
+      headers: { "X-Rally-Category": "workspace_invitation_declined", "X-Rally-Region": "global" },
     });
   });
 
@@ -386,7 +375,7 @@ describe("workspace invitation lifecycle", () => {
     const revoked = { ...invitationRow, revoked_at: "2026-08-01T01:00:00.000Z" };
     const declinedDatabase = new StubDatabase(({ sql }) => sql.includes("WHERE i.id = ?") ? revoked : undefined);
     const resend = vi.fn();
-    vi.stubGlobal("fetch", resend);
+    emailSend = resend;
 
     await expect(declineInvitationForUser(
       environment(declinedDatabase, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
@@ -457,11 +446,8 @@ describe("workspace invitation lifecycle", () => {
       if (sql.includes("WHERE i.id = ?")) return row;
       return undefined;
     });
-    const resend = vi.fn(async () => new Response(JSON.stringify({ id: "resend-email-id" }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    }));
-    vi.stubGlobal("fetch", resend);
+    const resend = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: "resend-email-id" }));
+    emailSend = resend;
 
     const result = await new WorkspaceService(environment(database, {
       APP_ENV: "production",
@@ -470,19 +456,13 @@ describe("workspace invitation lifecycle", () => {
 
     expect(result.emailDelivery).toBe("sent");
     expect(resend).toHaveBeenCalledTimes(1);
-    const [url, init] = resend.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("https://api.resend.com/emails");
-    expect(init.method).toBe("POST");
-    expect(init.headers).toMatchObject({
-      authorization: "Bearer re_test_send_only",
-      "content-type": "application/json",
-      "idempotency-key": `avalon-workspace-invitation/${invitationRow.id}`,
-      "user-agent": "avalon-worker/0.1",
+    const body = resend.mock.calls[0]![0];
+    expect(body.headers).toMatchObject({
+      "X-Rally-Delivery-Key": `avalon-workspace-invitation/${invitationRow.id}`,
     });
-    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     expect(body).toMatchObject({
-      from: "Avalon <invites@with-avalon.com>",
-      to: [invitationRow.email],
+      from: { email: "invites@with-avalon.com", name: "Avalon" },
+      to: invitationRow.email,
     });
     expect(String(body.text)).toContain(result.inviteUrl);
     expect(String(body.html)).toContain("Research &lt;script&gt;alert(1)&lt;/script&gt;");
@@ -511,11 +491,8 @@ describe("workspace invitation lifecycle", () => {
       if (sql.includes("WHERE i.id = ?")) return enterpriseRow;
       return undefined;
     });
-    const resend = vi.fn(async () => new Response(JSON.stringify({ id: "resend-email-id" }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    }));
-    vi.stubGlobal("fetch", resend);
+    const resend = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: "resend-email-id" }));
+    emailSend = resend;
 
     // A session's own region always matches its workspace's (middleware/auth.ts
     // rejects a mismatch), so an enterprise invitation is only ever created by the enterprise
@@ -527,13 +504,12 @@ describe("workspace invitation lifecycle", () => {
     }), ownerAuth).createInvitation(invitationRow.email, "member");
 
     expect(database.runs.some((run) => run.sql.includes("INSERT INTO download_grants"))).toBe(false);
-    const [, init] = resend.mock.calls[0] as unknown as [string, RequestInit];
-    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    const body = resend.mock.calls[0]![0];
     expect(String(body.text)).not.toContain("/download/");
     expect(String(body.html)).not.toContain("Download it for macOS");
   });
 
-  it("revokes a newly persisted invitation and its download grant when Resend rejects delivery", async () => {
+  it("revokes a newly persisted invitation and its download grant when Cloudflare rejects delivery", async () => {
     const database = new StubDatabase(({ sql }) => {
       if (sql.includes("SELECT 1 AS present")) return null;
       if (sql.includes("WHERE i.id = ?")) return invitationRow;
@@ -542,10 +518,7 @@ describe("workspace invitation lifecycle", () => {
       if (sql.includes("UPDATE download_grants SET revoked_at")) return { id: "revoked-grant-id" };
       return undefined;
     });
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ message: "domain not verified" }), {
-      status: 403,
-      headers: { "content-type": "application/json" },
-    })));
+    emailSend = vi.fn(async () => { throw Object.assign(new Error("domain not verified"), { code: "E_SENDER_NOT_VERIFIED" }); });
 
     await expect(new WorkspaceService(environment(database, {
       APP_ENV: "production",
@@ -576,7 +549,7 @@ describe("workspace invitation lifecycle", () => {
       },
     );
     const resend = vi.fn();
-    vi.stubGlobal("fetch", resend);
+    emailSend = resend;
 
     await expect(new WorkspaceService(environment(database, {
       APP_ENV: "production",

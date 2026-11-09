@@ -7,18 +7,19 @@ import {
 import { ResendRegionalEmailInputSchema, parseRpcInput } from "./lib/rpc-contracts";
 import { requireWorkstreamIngress } from "./services/workstream-authority";
 
-/** Account-internal RPC surface used by the Global Resend receiving ingress. */
+/** Account-internal RPC surface used by Global Cloudflare and legacy Resend ingress. */
 export class InboundEmailRegionalBridge extends WorkerEntrypoint<Env> {
   ingestResendEmail(input: unknown) {
     return serializeResendRegionalRpcResult(async () => {
       await requireWorkstreamIngress(this.env);
-      const { targetType, workstreamId, automationSubscriptionId, ...route } =
+      const { targetType, workstreamId, automationSubscriptionId, cloudflareEmail, ...route } =
         parseRpcInput(ResendRegionalEmailInputSchema, input, "ingestResendEmail");
       // `exactOptionalPropertyTypes` distinguishes an absent key from one set to
       // `undefined`; Zod's `.optional()` produces the latter, so the optional
       // routing targets are re-attached only when they carry a value.
       return new ResendRegionalEmailService(this.env).ingest({
         ...route,
+        ...(cloudflareEmail ? { cloudflareEmail } : {}),
         ...(targetType ? { targetType } : {}),
         ...(workstreamId ? { workstreamId } : {}),
         ...(automationSubscriptionId ? { automationSubscriptionId } : {}),

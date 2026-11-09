@@ -12,6 +12,12 @@ dictation socket admission, and every Canvas's and Sidekick's
 conversation-parent state, keyed by parent id
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)).
 
+D1 migration `0127_email_delivery_receipts.sql` adds opaque sending references,
+state, attempt tokens, diagnostic codes and timestamps. It stores no recipient
+addresses or message content. The shared sender uses it for transactional claims
+and notice completion receipts; encrypted sign-in and invitation payloads remain
+with their existing authorities. See [email transport](workstream-email-addresses.md#cloudflare-transport).
+
 Each Sidekick is a conversation parent hosted in `WorkspaceDO` beside the
 Canvases: its `automation_directory` row is its definition
 row, and its revisions, schedules, runs and receipts are the `sidekick_*`
@@ -1120,6 +1126,23 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-11-09 — Persist opaque Cloudflare sending claims in D1
+
+**What changed:** Migration 0127 adds `email_delivery_receipts` with delivery
+reference, state, attempt token, diagnostic code and update time. The shared
+sender uses it to claim transactional mail and suppress completed notice sends.
+
+**Why:** Cloudflare has no provider deduplication key. Reads of unsent caller
+intents alone cannot prevent overlapping sends or recognize completed queue work.
+
+**Considered and rejected:** Copying encrypted bodies or recipient addresses into
+another ledger would add a payload authority; this table contains opaque control
+metadata and leaves each caller's existing payload storage intact.
+
+**Consequences:** Apply the ordinary migration before deploying the sender.
+There is no historical backfill: existing completion markers stay authoritative,
+and the new ledger is populated only when a pending delivery is attempted.
 
 ### 2026-11-09 — Drop the Thread, Breakout and Channel tables the Thread operations kept
 
