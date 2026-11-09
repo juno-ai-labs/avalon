@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
+  ConversationTextPageSchema,
   CreateMessageRequestSchema,
   IdSchema,
   WorkstreamMessageAdmissionReceiptSchema,
@@ -123,6 +124,27 @@ conversationRoutes.patch("/:parentId/substreams/:substreamId/read-state",
     const param = c.req.valid("param");
     const client = await new ConversationService(c.env, getWorkspaceAuth(c)).client(param.parentId, false, param.substreamId);
     return c.json(WorkstreamSchema.parse(await client.acknowledgeRead(c.req.valid("json"))));
+  });
+/**
+ * One page of the conversation's participant prose, for a client that reads
+ * text rather than the transcript's blocks (the MCP server). Omit `limit` for
+ * the transcript reader's own page size; pass `afterSequence` and
+ * `throughSequence` from a page to read the next under the same fence.
+ */
+conversationRoutes.get("/:parentId/text", zValidator("param", parentParam),
+  zValidator("query", z.strictObject({
+    afterSequence: z.coerce.number().int().nonnegative().default(0),
+    throughSequence: z.coerce.number().int().nonnegative().optional(),
+    limit: z.coerce.number().int().positive().optional(),
+  })), async (c) => {
+    c.header("Cache-Control", "no-store");
+    const query = c.req.valid("query");
+    return c.json(ConversationTextPageSchema.parse(await new ConversationService(c.env, getWorkspaceAuth(c))
+      .readText(c.req.valid("param").parentId, {
+        afterSequence: query.afterSequence,
+        ...(query.throughSequence === undefined ? {} : { throughSequence: query.throughSequence }),
+        ...(query.limit === undefined ? {} : { limit: query.limit }),
+      })));
   });
 conversationRoutes.get("/:parentId", zValidator("param", parentParam), async (c) => {
   const parentId = c.req.valid("param").parentId;

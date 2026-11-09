@@ -267,6 +267,16 @@ export const ReadTranscriptResultSchema = z.strictObject({
 });
 
 /**
+ * `GET /conversations/:parentId/text`: one page of a conversation's
+ * participant prose and which kind of parent it is, so a caller that expected
+ * a Canvas's Chat can tell it was handed a Sidekick's conversation.
+ */
+export const ConversationTextPageSchema = ReadTranscriptResultSchema.extend({
+  kind: z.enum(["automation", "canvas"]),
+});
+export type ConversationTextPage = z.infer<typeof ConversationTextPageSchema>;
+
+/**
  * What a Sidekick run's conversation spent, for its first page: model calls
  * as the provider counted them, and each tool's calls and time.
  */

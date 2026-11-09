@@ -11,7 +11,6 @@ import type { Env } from "../env";
 import { engineeringUserAuth } from "./engineering-creation";
 import { ApiError } from "../lib/api-error";
 import { ConversationService } from "./conversation-service";
-import { WorkstreamObjectClient } from "./workstream-object-client";
 
 export async function sendEngineeringMessage(env: Env, input: SendEngineeringMessageInput): Promise<SendEngineeringMessageResult> {
   const message = CreateMessageRequestSchema.parse({ ...input, clientMessageId: input.operationId });
@@ -25,18 +24,15 @@ export async function sendEngineeringMessage(env: Env, input: SendEngineeringMes
 
 export async function readEngineeringConversation(env: Env, input: ReadEngineeringConversationInput): Promise<EngineeringTextResult> {
   const auth = await engineeringUserAuth(env, input.orgId, input.userId);
-  const conversations = new ConversationService(env, auth);
-  const parent = await conversations.authorizeViewer(input.conversationId);
-  const expected = input.kind === "canvas" ? "canvas" : "automation";
-  if (parent.kind !== expected) {
-    throw new ApiError(409, "conversation_kind_mismatch", `conversation_kind_mismatch:${input.kind}`,
-      undefined, `conversation_kind_mismatch:${input.kind}`);
-  }
-  const client = WorkstreamObjectClient.forParent(env, auth, parent.kind, input.conversationId);
-  const page = await client.readTranscript({ afterSequence: input.afterSequence,
+  const page = await new ConversationService(env, auth).readText(input.conversationId, { afterSequence: input.afterSequence,
     ...(input.limit === undefined ? {} : { limit: input.limit }),
     ...(input.throughSequence === undefined ? {} : { throughSequence: input.throughSequence }),
   });
+  const expected = input.kind === "canvas" ? "canvas" : "automation";
+  if (page.kind !== expected) {
+    throw new ApiError(409, "conversation_kind_mismatch", `conversation_kind_mismatch:${input.kind}`,
+      undefined, `conversation_kind_mismatch:${input.kind}`);
+  }
   const kind = input.kind === "canvas" ? "Canvas" : "Sidekick";
   const continuation = page.nextAfterSequence === null ? "" :
     `\n\nMore history: call again with afterSequence=${page.nextAfterSequence} and throughSequence=${page.throughSequence}.`;

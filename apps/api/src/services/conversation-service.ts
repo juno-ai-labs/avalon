@@ -1,6 +1,6 @@
 import { newId } from "@rally/db";
 import { hostedConversationParentKind } from "../durable-objects/workstream-object-storage";
-import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
+import { asSubstreamId, asWorkspaceId, type ReadTranscriptRequest } from "@rally/contracts";
 import type {
   ConversationParentAuthorizeViewerRequest,
   ConversationParentAuthorizeViewerResult,
@@ -92,6 +92,18 @@ export class ConversationService {
    * conversation's); for an automation the parent's rule is wider than the
    * conversation's list, and this is what carries the parent's decision down.
    */
+  /**
+   * One page of a conversation's committed participant prose, as its reader
+   * may see it: the viewer is authorized as opening it would, and the owning
+   * object formats the text, leaving out tool payloads and thinking. The
+   * engineering MCP and `GET /conversations/:parentId/text` both read here.
+   */
+  async readText(parentId: string, page: ReadTranscriptRequest) {
+    const parent = await this.authorizeViewer(parentId);
+    const client = WorkstreamObjectClient.forParent(this.env, this.auth, parent.kind, parentId);
+    return { kind: parent.kind, ...await client.readTranscript(page) };
+  }
+
   async authorizeViewer(parentId: string, substreamId = "0"): Promise<ResolvedConversationParent> {
     const viewer: Omit<ConversationParentAuthorizeViewerRequest, "workspaceId" | "parentId"> = {
       userId: this.auth.userId,

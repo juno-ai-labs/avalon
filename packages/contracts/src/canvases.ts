@@ -144,6 +144,9 @@ export const CanvasSidebarRowSchema = CanvasSummarySchema.extend({
 });
 export type CanvasSidebarRow = z.infer<typeof CanvasSidebarRowSchema>;
 
+/** `GET /canvases`: the list one viewer's sidebar holds, most recently active first. */
+export const CanvasListSchema = z.strictObject({ items: z.array(CanvasSidebarRowSchema) });
+
 /** The Canvas list as one viewer sees it, at the list's waterline, most recently active first. */
 export const CanvasSidebarListSchema = z.strictObject({
   waterline: z.number().int().nonnegative(),

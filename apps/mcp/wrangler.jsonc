@@ -1,0 +1,20 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  // Rally's MCP server for its users: Claude, ChatGPT and other MCP clients
+  // reach Canvases here as the person who connected them. docs/rally-mcp.md.
+  "name": "rally-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    // Where a person approves a client: the browser app's consent page.
+    "BROWSER_APP_ORIGIN": "https://app.rallywith.ai"
+  },
+  "routes": [{ "pattern": "mcp.rallywith.ai", "custom_domain": true }],
+  // One API binding per configured deployment, `<bindingPrefix>_API`, named
+  // from config/regions.json; a token's region claim picks one.
+  "services": [{ "binding": "GLOBAL_API", "service": "avalon-api-global" }],
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
+}
