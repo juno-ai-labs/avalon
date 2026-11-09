@@ -105,7 +105,7 @@ the API's 401 with a message to reconnect.
 | `get_canvas` | `GET /canvases/:id` |
 | `read_canvas_chat` | `GET /conversations/:id/text`, refusing a Sidekick's conversation |
 | `list_people` | `GET /workspace/members` |
-| `read_artifact` | `GET /resources/:id/versions/:version/model-content` |
+| `read_artifact` | `GET /resources/:id/versions/:version/model-content`, else `…/content` when the original is text |
 | `create_canvas` | `POST /canvases`, the operation id as the Canvas id and the prompt's `clientMessageId` |
 | `send_canvas_message` | `POST /conversations/:id/substreams/0/messages` |
 | `update_canvas` | `PATCH /canvases/:id` |
@@ -153,6 +153,12 @@ publish makes, with the person as the revision's author (`member`):
 The answer is the artifact's id, title, kind, current version, the outcome,
 and the Canvas's link opened on it. A site with a server module (`index.js`)
 is refused: running code is Rally's to publish from its sandbox.
+
+`read_artifact` reads Rally's text form of a version, which extraction
+writes a moment after a publish; until then a version whose original is
+already text (Markdown, CSV, HTML, JSON) reads as its original, so an
+artifact can be read back the moment it is published. A PDF or a sheet
+answers that its text is not ready yet.
 
 The server's initialization instructions tell the model that Rally, the agent
 in the Canvas, does the work: a change to an artifact is a message to the

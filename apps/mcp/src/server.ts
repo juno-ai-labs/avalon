@@ -126,11 +126,22 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
     inputSchema: { resourceId: z.string().uuid(), version: z.number().int().positive() },
     annotations: read,
   }, ({ resourceId, version }) => tool("read_artifact", async () => {
-    const response = await api.send("GET", `/resources/${resourceId}/versions/${version}/model-content`);
-    const type = response.headers.get("content-type") ?? "application/octet-stream";
-    if (/^text\/|json|xml|csv|markdown|javascript/u.test(type)) return await response.text();
-    await response.body?.cancel();
-    return `This version is ${type} content, which has no text form to read here. Open the Canvas in Rally to see it.`;
+    const textual = (type: string) => /^text\/|json|xml|csv|markdown|javascript/u.test(type);
+    // Rally's text form of a version (a PDF's or a sheet's extracted text)
+    // exists once extraction has run, which is a moment after a publish. A
+    // version whose original is already text reads as itself until then.
+    const read = async (representation: "model-content" | "content") => {
+      const response = await api.send("GET", `/resources/${resourceId}/versions/${version}/${representation}`);
+      const type = response.headers.get("content-type") ?? "application/octet-stream";
+      if (textual(type)) return await response.text();
+      await response.body?.cancel();
+      return null;
+    };
+    const unavailable = (error: unknown) => error instanceof RallyApiError && error.code === "resource_version_content_unavailable";
+    const model = await read("model-content").catch((error: unknown) => { if (unavailable(error)) return null; throw error; });
+    if (model !== null) return model;
+    const original = await read("content");
+    return original ?? "This version has no text form to read yet. Rally extracts text from documents such as PDFs shortly after they are published; try again in a moment, or open the Canvas in Rally to see it.";
   }));
 
   server.registerTool("create_canvas", {
