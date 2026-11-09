@@ -337,9 +337,13 @@ posts into an email thread. The wizard's continuation note (`renderRunContinuati
   (`authorizeWizardTurn`, `sidekick_edit_requires_manager` otherwise), because
   the message starts a wizard turn with the authoring tools, which the shared
   conversation gives a person only when they manage the Sidekick. The
-  Sidekick's own runs and workers are exempt: a run's change request is how
-  the wizard hears of one. Where the message comes from is not checked: no
-  Thread owns a Sidekick. Guarded by `conversation-tools.test.ts` and
+  Sidekick's own runs are held to it too: a run under a non-manager's own
+  access, or a delegate's who does not manage it, would reach the authoring
+  tools as that person, so its change request is refused by name and the run
+  tells the person. Being an eligible delegate is not managing. Behind the door,
+  every authoring write (`saveDefinition`) checks the manager rule on the
+  turn's principal. Where the message comes from is not checked: no Thread
+  owns a Sidekick. Guarded by `conversation-tools.test.ts` and
   `sidekick-run-continuation.test.ts`.
 
 ## Boundary
@@ -426,8 +430,9 @@ grants, manager rules), not where the message comes from. Viewing it was
 first the whole check, which let any reader's agent start a wizard turn with
 the authoring tools, and a wizard turn could then message a run as if it
 were the Sidekick's own; a review found the chain. Messaging the wizard now
-also needs a manager (`authorizeWizardTurn`, `sidekick_edit_requires_manager`),
-except from the Sidekick's own runs and workers. Setup from a Thread always creates a Sidekick; an existing one is reached
+also needs the sender's principal to manage it (`authorizeWizardTurn`,
+`sidekick_edit_requires_manager`), from a run of the Sidekick's own as from
+anywhere else. Setup from a Thread always creates a Sidekick; an existing one is reached
 by its exact name through `find_sidekick`.
 
 Shipped in juno-ai-labs/avalon#1490.

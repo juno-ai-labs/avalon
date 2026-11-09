@@ -5437,7 +5437,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * What decided who may open each writer Sidekick's Canvases when this
    * instance last saw its directory row (`noteWriterReaders`). In memory: a
    * fresh instance marks the list once on a Sidekick's first touch, which
-   * costs one extra push and never a missed one.
+   * costs one extra push and never a missed one. Written inside the touching
+   * transaction, so a Sidekick call or alarm that throws forgets its entry:
+   * the write may have rolled back, and a remembered value it never committed
+   * would hide the same change when it does.
    */
   private readonly writerSidekickReaders = new Map<string, string>();
   /** Set by a hosted Canvas write that moved a directory row; the Canvas list is published after it. */
@@ -6036,6 +6039,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const sidekick = await this.hostedSidekick(automationId, workspaceId);
     try {
       return await run(sidekick);
+    } catch (error) {
+      // A throw may have rolled back a write that already told the host its
+      // Canvas readers; forget them, so the same change committed later is
+      // still pushed (once, at worst, too many).
+      this.writerSidekickReaders.delete(automationId);
+      throw error;
     } finally {
       this.publishSidekickList();
       // A no-op unless the call moved who may open the Canvases it writes (`noteWriterReaders`).
@@ -7089,6 +7098,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           if (!sidekick) return;
           try {
             return await sidekick.runAlarm(alarm, sidekickTarget.key);
+          } catch (error) {
+            // As `sidekickCall`: a rolled-back write must not leave its readers remembered.
+            this.writerSidekickReaders.delete(sidekickTarget.sidekickId);
+            throw error;
           } finally {
             this.publishSidekickList();
             this.publishCanvasList();

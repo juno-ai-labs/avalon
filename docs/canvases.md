@@ -1134,7 +1134,9 @@ it was unshared from kept their rows, until they reconnected; a fix in
 `setAudience` alone missed archive, restore and executor changes, so the mark
 sits in `touchDirectory` (`noteWriterReaders`), where any future input to the
 rule is covered too. The host's memory of the last inputs is per instance: a
-fresh instance pushes once on a Sidekick's first touch. A new hosted parent kind extends `HostedConversation`
+fresh instance pushes once on a Sidekick's first touch, and a Sidekick call
+or alarm that throws forgets that Sidekick's entry, because the memory is
+written inside a transaction the throw may have rolled back. A new hosted parent kind extends `HostedConversation`
 and is dispatched in `WorkspaceDO.hostedConversationParent`. Listing a Canvas's
 shares and grants has no route. The client (plan step A-12) draws a Canvas
 with the conversation layout: the Chat in `ConversationSurface` and the
