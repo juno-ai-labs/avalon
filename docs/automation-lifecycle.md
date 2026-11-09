@@ -601,8 +601,8 @@ retain the scheduler's backoff. Publishing a corrected revision clears obsolete
 table-materialization entries for that Sidekick.
 
 `HostedSidekick.reconcileLoadable` is the explicit object-owned operation for a future
-policy change. It reads the accepted definition, preserves legacy implicit email
-semantics, writes the capability and republishes the directory. It does not accept
+policy change. It reads the accepted definition, computes the current loading policy, writes
+the capability and republishes the directory. It does not accept
 a boolean from the caller. Consumers continue to read stored `loadable` unchanged.
 
 Memory tables remain in the Sidekick's execution scope. Publishing an instruction
@@ -2119,13 +2119,19 @@ survive as described above.
 
 **What changed:** Definition publication, scheduling, manual requests and connector
 activity remain the Sidekick admission paths. The profile shows their trigger
-summaries. Accepted zero-trigger definitions are loadable instruction sources.
+summaries. Newly published zero-trigger definitions are loadable instruction
+sources. Retirement preserves every accepted loading decision: former triggered
+or legacy implicit-trigger Sidekicks stay dormant, rather than automatically
+becoming instruction sources. A manager can explicitly republish or reconcile
+one if they want that capability.
 
 **Why:** The owner removed mail receiving from the product. Migration 143 strips
 that retired trigger from stored definitions and removes its address and receipt
 storage, while preserving the definitions and conversations. Conversation schema
 86 retains historical received resources as ordinary attachments. Frozen migration
 history remains unchanged; new admission must use the explicit trigger contract.
+Stored run provenance and activation messages still decode retired kinds, so
+history, run rows and continuation stay readable without restoring a receiver.
 
 ### 2026-11-09 — The shared conversation starts runs and shows them, a Sidekick has its own audience, and a blocked run asks and waits
 

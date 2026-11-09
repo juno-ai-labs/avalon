@@ -4,39 +4,8 @@ import { openLink } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
 import { downloadPreview } from './attachment-lightbox';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import {
-  IconArchive,
-  IconArrowLeft,
-  IconChevronRight,
-  IconChevronsRight,
-  IconDownload,
-  IconExternalLink,
-  IconEye,
-  IconFileText,
-  IconHistory,
-  IconLink,
-  IconLoader2,
-  IconPencil,
-  IconPin,
-  IconDots,
-  IconPlus,
-  IconRefresh,
-  IconUserPlus,
-  IconWindowMaximize,
-  IconX,
-} from '@tabler/icons-react';
-import {
-  ActionTile,
-  ActionTiles,
-  LevelRow,
-  TitleMenuHeader,
-  TitleMenuItem,
-  TitlePillClose,
-  TitlePillHeader,
-  openLevel,
-  useTitleMenuNav,
-  type TitlePillLevel,
-} from '@rally/ui/components/title-pill';
+import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconDownload, IconExternalLink, IconEye, IconFileText, IconHistory, IconLink, IconLoader2, IconPencil, IconPin, IconDots, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
+import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitlePillClose, TitlePillHeader, openLevel, useTitleMenuNav, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { DetailActionMenu, DetailHeaderActionsHost, type DetailHeaderAction } from './detail-header-actions';
 import type { IconGroupAction } from '@rally/ui/components/icon-group';

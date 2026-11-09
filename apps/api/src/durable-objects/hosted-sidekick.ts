@@ -1,9 +1,4 @@
-import {
-  assertAudienceInOrganization,
-  HostedConversation,
-  type HostedConversationIdentity,
-  type PriorChildProjection,
-} from "./hosted-conversation";
+import { assertAudienceInOrganization, HostedConversation, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
 import { sidekickRowRunState } from "./sidekick-directory-sql";
 import { waitingRunActivityRecipients } from "./workspace-activity";
@@ -134,13 +129,7 @@ import {
 } from "./automation-do-protocol";
 import { RECEIVE_CHILD_EFFECTS_MAX_ENVELOPES, type DirectoryCommonEffect } from "./conversation-parent-object";
 import { sidekickAudienceAllows } from "./sidekick-audience";
-import {
-  SCHEDULED_ALARM_RETRY_BASE_MS,
-  scheduledAlarmRetryDelay,
-  type ScheduledAlarm,
-  type ScheduledAlarmOutcome,
-  type ScheduledAlarmStore,
-} from "./scheduled-alarms";
+import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
 import { conversationIdOf } from "./workspace-sidekick-conversation-storage";
 
 /**
@@ -1062,7 +1051,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     await this.assertManager(row, request.actor);
     const revision = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
     const definition = revision ? AutomationDraftSchema.parse(JSON.parse(revision.definition_json)) : null;
-    // Legacy email is effective trigger configuration even when absent in JSON.
     const loadable = definition !== null && sidekickLoadable(definition);
     this.storage.transactionSync(() => {
       this.sql.exec(`UPDATE automation_directory SET loadable = ? WHERE automation_id = ?`, loadable ? 1 : 0, this.sidekickId);

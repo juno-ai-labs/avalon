@@ -1,10 +1,6 @@
 import { asWorkspaceId, IdSchema } from "@rally/contracts";
 import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
-import {
-  SidekickRunNotificationSchema,
-  type PushNotificationData,
-  type SidekickRunNotification,
-} from "@rally/contracts/push-notifications";
+import { SidekickRunNotificationSchema, type PushNotificationData, type SidekickRunNotification } from "@rally/contracts/push-notifications";
 
 import type { Env } from "../env";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";

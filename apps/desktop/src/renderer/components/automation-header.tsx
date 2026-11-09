@@ -73,6 +73,7 @@ function runTriggerLabel(run: AutomationRun): string {
     case 'manual': return 'On request';
     case 'schedule': return 'Scheduled';
     case 'external_event': return 'Event';
+    case 'inbound_email': return 'Email (retired)';
   }
 }
 
