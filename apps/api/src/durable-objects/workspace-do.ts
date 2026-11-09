@@ -4292,7 +4292,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // were folded; docs/workstream-durable-object.md#sql-only-schema-migration
   // records the fold.
   version: 135,
-  description: "the Sidekick schema for Canvases and Sidekicks: run rows in the shared conversation, run requesters, audiences and viewer reads; the demo seed column and the Thread-owned scope retire",
+  description: "the Sidekick schema for Canvases and Sidekicks: run rows in the shared conversation, run requesters, audiences and viewer reads; the demo seed column retires, and a Thread-owned Sidekick keeps its owner's audience",
   // See SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS,
   // SIDEKICK_RUN_SEED_DROP_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS and
   // docs/automation-lifecycle.md.
@@ -4302,10 +4302,20 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     ...SIDEKICK_RUN_SEED_DROP_STATEMENTS,
     ...SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS,
     // The Canvases and Sidekicks decision: a Thread no longer owns a
-    // Sidekick. The owning columns stay as dead columns (released CHECKs
-    // name them), so the row's home is cleared to satisfy the scope CHECK.
-    // A Sidekick a room archive paused under the old rule is archived, as the
-    // current rule would have left it. See
+    // Sidekick. Its audience is kept, as `convertThreadToCanvas` keeps a
+    // Thread's: a Sidekick owned by an Organization-wide Thread (and, when a
+    // Breakout owned it, an Organization-wide Breakout) becomes an
+    // Organization Sidekick; one owned by a personal Thread or a personal
+    // Breakout becomes a `people` Sidekick shared with that owner's viewers,
+    // the narrower owner's when both are personal. A viewer row is what
+    // admitted a person to a personal Thread or Breakout, so every one is
+    // kept except the author's, whom the audience never lists; admission
+    // still requires the person to be in the Organization when they read. An
+    // owner with no directory row left fails closed: the Sidekick becomes
+    // personal to its author. The owning columns stay as dead columns
+    // (released CHECKs name them), so the row's home is cleared to satisfy
+    // the scope CHECK. A Sidekick a room archive paused under the old rule is
+    // archived, as the current rule would have left it. See
     // docs/automation-lifecycle.md#creation-and-ownership.
     //
     // It bumped only the owning room's rail, and no row has one after this;
@@ -4318,7 +4328,34 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     // rather than becoming a live Organization Sidekick.
     `UPDATE automation_directory SET lifecycle = 'deleted', paused_by = NULL
       WHERE owning_room_archived_at IS NOT NULL AND lifecycle <> 'deleted'`,
-    `UPDATE automation_directory SET scope = 'workspace', owning_workstream_id = NULL, owning_substream_id = '0'
+    // A personal Breakout's viewers, whatever its Thread's scope.
+    `INSERT OR IGNORE INTO sidekick_audience (sidekick_id, user_id, added_at)
+      SELECT sidekick.automation_id, viewer.user_id, viewer.projected_at
+        FROM automation_directory sidekick
+        JOIN breakouts breakout ON breakout.workstream_id = sidekick.owning_workstream_id
+         AND breakout.substream_id = sidekick.owning_substream_id AND breakout.scope = 'personal'
+        JOIN breakout_viewers viewer ON viewer.workstream_id = breakout.workstream_id
+         AND viewer.substream_id = breakout.substream_id
+       WHERE sidekick.scope = 'workstream' AND sidekick.owning_substream_id <> '0'
+         AND viewer.user_id <> sidekick.author_user_id`,
+    // Otherwise a personal Thread's viewers.
+    `INSERT OR IGNORE INTO sidekick_audience (sidekick_id, user_id, added_at)
+      SELECT sidekick.automation_id, viewer.user_id, COALESCE(viewer.participant_added_at, viewer.projected_at)
+        FROM automation_directory sidekick
+        JOIN channels thread ON thread.workstream_id = sidekick.owning_workstream_id AND thread.scope = 'personal'
+        JOIN channel_viewers viewer ON viewer.workstream_id = thread.workstream_id
+       WHERE sidekick.scope = 'workstream' AND viewer.user_id <> sidekick.author_user_id
+         AND NOT EXISTS (SELECT 1 FROM breakouts breakout
+           WHERE breakout.workstream_id = sidekick.owning_workstream_id
+             AND breakout.substream_id = sidekick.owning_substream_id AND breakout.scope = 'personal')`,
+    `UPDATE automation_directory SET
+        scope = CASE WHEN EXISTS (SELECT 1 FROM channels thread
+            WHERE thread.workstream_id = automation_directory.owning_workstream_id AND thread.scope = 'workspace')
+          AND (automation_directory.owning_substream_id = '0' OR EXISTS (SELECT 1 FROM breakouts breakout
+            WHERE breakout.workstream_id = automation_directory.owning_workstream_id
+              AND breakout.substream_id = automation_directory.owning_substream_id AND breakout.scope = 'workspace'))
+          THEN 'workspace' ELSE 'personal' END,
+        owning_workstream_id = NULL, owning_substream_id = '0'
       WHERE scope = 'workstream'`,
   ],
 }, {

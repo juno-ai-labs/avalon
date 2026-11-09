@@ -525,9 +525,11 @@ was always "absent", and a merge, the only writer of a Channel share, is gone.
 generated in the Canvas's Chat and attached to it, so the attachment path
 already decides it.
 
-**Consequences:** A Thread-scoped Sidekick is an Organization one since
-WorkspaceDO migration 135 (plan step A-5), so its former Thread's people keep
-reading it as members do. A guest reaches a Sidekick only by being named on
+**Consequences:** A Thread-scoped Sidekick keeps its Thread's audience since
+WorkspaceDO migration 135 (plan step A-5): an Organization-wide Thread's is an
+Organization one, read as members read it, and a personal Thread's or
+Breakout's lists that owner's viewers, so its former Thread's people keep
+reading it and nobody else gains it. A guest reaches a Sidekick only by being named on
 its list, and a Canvas only from its participant list. The rule is one
 function; a reader that decides access some other way is a defect. The
 artifact door (`ArtifactOpenService`) needs no Canvas branch; it is admitted
