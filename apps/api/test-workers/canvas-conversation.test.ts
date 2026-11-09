@@ -806,6 +806,28 @@ describe("a Canvas's artifacts", () => {
     await expect(resolveTerminalPublicationHome(TEST_ENV, run, { canvas: elsewhere }))
       .rejects.toMatchObject({ code: "canvas_not_written_by_sidekick" });
   });
+
+  it("puts a Canvas a Sidekick writes on the open list of whoever its audience change admits, and takes it off whoever it drops", async () => {
+    const sidekickId = crypto.randomUUID();
+    const actor = { userId: CREATOR, actorRole: "member" as const, participantOfOwningWorkstream: false };
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
+    const runId = crypto.randomUUID();
+    const home = await resolveTerminalPublicationHome(TEST_ENV, { workspaceId: WORKSPACE_ID, parentKind: "automation", parentId: sidekickId,
+      substreamId: asSubstreamId(runId), executionPrincipal: { type: "user", userId: CREATOR } }, { title: "Weekly report" });
+    const canvasId = home!.parentId;
+    const member = await connect(MEMBER);
+    try {
+      expect(clientCanvasRows(member.frames).map((row) => row.id)).not.toContain(canvasId);
+      await workspace().sidekickSetAudience({ workspaceId: WORKSPACE_ID, automationId: sidekickId, actor,
+        update: { audience: "people", userIds: [MEMBER] } });
+      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id)).toContain(canvasId);
+      await workspace().sidekickSetAudience({ workspaceId: WORKSPACE_ID, automationId: sidekickId, actor,
+        update: { audience: "personal", userIds: [] } });
+      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id)).not.toContain(canvasId);
+    } finally {
+      member.socket.close(1000, "done");
+    }
+  });
 });
 
 describe("a link to a conversation", () => {
