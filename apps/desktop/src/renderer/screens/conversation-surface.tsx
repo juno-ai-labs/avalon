@@ -2564,7 +2564,6 @@ function ConversationSurfaceContent({
                before its first token records nothing and would otherwise read
                as following a flag it never consults. */
             model={{
-              kind: 'settled',
               model: displayedDetail.latestHarnessRun?.model ?? displayedDetail.modelOverride ?? null,
               pinned: (displayedDetail.modelOverride ?? null) !== null,
             }}

@@ -146,7 +146,6 @@ function terminalResult(row: ToolTerminalRow):
 function terminalRunKind(row: ToolTerminalRow): AgentToolStartedTelemetryInput['runKind'] {
   if (row.parent_tool_call_id) return 'subagent';
   if (row.automation_id) return 'automation';
-  if (row.origin === 'scheduled_digest') return 'system';
   return 'workstream';
 }
 

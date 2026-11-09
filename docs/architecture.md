@@ -757,9 +757,9 @@ lifecycle events, historical Iceberg snapshots, 30 days of Durable Object
 point-in-time recovery), so it is not a completed physical erasure. What
 survives: `meeting-notes-retirement.ts` and `applyMeetingRetirementMigrations`,
 which every WorkspaceDO cold start runs; `retired_meeting_resources`, whose
-content-free ids still fence stale writers out of search and publication; and
-four internal RPCs (`retiredMeetingInventory`, `purgeMeetingSearchAuthorization`,
-`purgeMeetingNoteObjects`, `finalizeMeetingRetirement`) that nothing calls.
+content-free ids still fence stale writers out of search and publication. The
+four operator RPCs that drove the cleanup were deleted once every object had
+reached 58.
 Migration 58 drops the feature tables only once its guard finds R2 and search
 cleanup complete, and is committed apart from 57 because the guard's rollback
 would otherwise undo the retirement. The telemetry, analytics and inference

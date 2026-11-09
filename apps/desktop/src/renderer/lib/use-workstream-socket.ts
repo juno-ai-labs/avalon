@@ -2055,7 +2055,6 @@ export function useWorkstreamSocket(
       reportWorkstreamSocketStarted(
         parentId,
         resolvedSocketLeaseId,
-        'substream_feed',
         attempts.current === 0 ? initialReasonRef.current : 'reconnect',
         attempts.current,
         trace.traceId,
