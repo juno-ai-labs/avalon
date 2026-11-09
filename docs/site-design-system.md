@@ -35,25 +35,27 @@ started from a blank page rather than from any earlier look.
 4. **One accent, owned by Rally.** Signal ultramarine marks Rally and the one
    thing to act on. People never wear it: Maya, Theo and Priya each have
    their own colour for cursors, bubbles and selections.
-5. **Positioning.** Every other AI tool is built for one person in one chat;
-   Rally works for one person and keeps working as people join. The hero says
-   "One place for you, your coworkers, and AI.", its kicker says "Start alone.
-   Bring your team when you're ready.", and the page closes on "Start alone.
-   Bring everyone." A reader who works alone must see that Rally is for them
-   today, and a team must see it was built for them.
-6. **Story order.** After the pivot the product is two things, so the home
-   page says that plainly ("Two parts. That's the whole product.") and then
-   explains each: Canvases, then Sidekicks, then the proof (pricing,
-   technology, team, comparisons).
-7. **Show, don't claim.** Figure 1 is a working Canvas, not a picture, and it
-   tells the solo-to-team story itself: Maya starts alone ("Only you"), Rally
-   reads her tools and drafts, she shares the Canvas ("Specific people · 3"),
-   Theo and Priya appear, Theo comments on a line, and Rally publishes a
-   second version.
-8. **Say how it scales.** The "From one to everyone" band (`#scale`) right
-   after the opening statement shows three stages, 1, 3 and 30+, each with
-   its people, what Rally does at that size, and the audience labels the
-   product shows there.
+5. **Positioning: live first, multiplayer second.** The lead idea is the
+   live artifact (a Canvas in the product): a document, spreadsheet,
+   dashboard or site that changes as work happens in connected tools,
+   because a Sidekick watching those tools publishes a new version. The
+   second idea is that a team works from that page together. The hero says
+   "Docs that update as work happens.", its kicker says "Live artifacts,
+   shared with your team", and the page closes on "Keep it live. Bring
+   everyone."
+6. **Story order.** The opening statement (documents go stale), then
+   **Live artifacts** (`#live`: something happens, a Sidekick reads it, the
+   Canvas updates, with four worked examples), then **Then, multiplayer**
+   (`#scale`: 1, 3 and 30+ people), then the two parts of the product,
+   Canvases, Sidekicks, and the proof (pricing, technology, team,
+   comparisons). The product pages follow the same order: `/canvases/`
+   leads with "Made once. Kept current." and `/sidekicks/` with "The AI that
+   keeps work current."
+7. **Show, don't claim.** Figure 1 is a working Canvas, not a picture: a
+   launch tracker that a Sidekick updates from Linear, Slack and Granola,
+   one event and one new version at a time, with the event shown beside the
+   window as it lands; then Maya asks Rally what is still open, Rally
+   answers from the page, and Theo comments on a row.
 
 ## Where the code lives
 
@@ -130,10 +132,11 @@ replaces it at build time and in the dev server.
 
 ### The Canvas demo
 
-`canvas-demo.html` is plain HTML. `site-motion.ts` steps it through seven
-states (Maya asks alone, Rally drafts, Maya shares, Theo comments, Priya asks,
-Rally publishes version two), with the audience label and the joining faces
-switching at the share step: each step adds `s<n>` to the figure, so CSS places the cursors and
+`canvas-demo.html` is plain HTML. `site-motion.ts` steps it through six
+states (Linear, Slack and Granola events, each publishing a version; Maya
+asks; Rally answers while Theo comments). The tool events sit in a rail
+(`.signals`) beside the window on a wide screen, above it on a narrow one,
+and only the newest shows on a phone: each step adds `s<n>` to the figure, so CSS places the cursors and
 swaps the artifact's version per step, and turns on every `[data-at]`
 element whose step has arrived. The loop runs only while the figure is on
 screen. The timings live in `STEP_HOLD`.
@@ -153,10 +156,15 @@ and nothing reveals or drifts.
   person's colour.
 - **Both themes, from tokens.** A colour written into a rule instead of a
   token breaks one of the two themes; check both before shipping.
-- **Solo and team, both visible.** Every page that sells Rally says it works
-  for one person and grows to a team: the hero kicker, Figure 1, the scale
-  band, the product pages' copy and the closing line. Copy that only speaks
-  to teams, or only to one person, breaks the positioning.
+- **Live first, then multiplayer.** Every page that sells Rally leads with
+  artifacts that update from activity in connected tools, and follows with
+  the team working from them, from one person to the whole organization.
+  Copy that leads with chat, or with collaboration alone, breaks the
+  positioning.
+- **Every live claim names its mechanism.** A Canvas changes because a
+  Sidekick, triggered by a schedule or an event in a connected tool,
+  publishes a new version. Do not show a Canvas changing by itself, or a
+  connector the product does not have.
 - **Product truth.** Every claim on these pages must be something the
   product does, in the product's words. The demo shows people present, a
   comment on a line and a published version, all of which ship; it does not
@@ -201,18 +209,19 @@ in light and dark, before a change ships, as the repository's rule on visible ch
 
 ## Changelog
 
-### 2026-11-09 — The site becomes "the shared page" and tells the two-part product
+### 2026-11-09 — The site becomes "the shared page" and leads with live artifacts
 
 **What changed:** The marketing site was redesigned from a blank page. One
 stylesheet now sets a new system: warm paper and ink in light and dark
 themes, Instrument Serif, Geist and Geist Mono, a single ultramarine accent
 for Rally and a colour for each person. The home page leads with an animated
-Canvas as Figure 1 that goes from one person to three, adds a "From one to
-everyone" band, and is organised around Canvases and Sidekicks;
+live Canvas as Figure 1, leads with live artifacts (Canvases a Sidekick
+updates from activity in connected tools) and follows with multiplayer;
 `/canvases/` and `/sidekicks/` were added; the blog, comparison and Trust
 Center pages took on the same system.
 
-**Why:** The pivot to Canvases and Sidekicks left the home page telling an
+**Why:** The product owner set the order: live artifacts first, multiplayer
+second. The pivot to Canvases and Sidekicks also left the home page telling an
 older story, and the dark, uppercase look matched most other AI products
 rather than setting Rally apart. A first pass on this branch borrowed the
 launch films' dark and volt style; it was set aside for a system designed

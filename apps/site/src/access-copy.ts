@@ -1,8 +1,8 @@
 /** Approved landing copy. */
 export const accessCopy = {
-  title: 'Rally · One place for you, your coworkers, and AI',
-  headline: 'One place for you, your coworkers, and AI.',
-  description: 'Rally is AI that starts with you and grows with your team. Open a Canvas on your own and make a document, a spreadsheet or a site. Share it, and your coworkers join the same conversation with the same Rally. Sidekicks do the recurring work, for you or for everyone.',
+  title: 'Rally · Docs that update as work happens',
+  headline: 'Docs that update as work happens.',
+  description: 'Rally makes documents, spreadsheets, dashboards and sites that keep themselves current. When something happens in Linear, Slack, Gmail or your other tools, Rally publishes a new version. Share a Canvas, and your whole team works from the same live page.',
 };
 
 export function renderAccessCopy(html: string): string {
