@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, render } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MessageByline } from './message-byline';
 
@@ -14,12 +14,14 @@ function partsOf(header: Element): string[] {
 // app has one above every feed, so rendering under one here is the arrangement
 // production actually uses, and it proves the nested pair coexists.
 describe('MessageByline', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 20, 3, 48));
+  });
   afterEach(() => vi.useRealTimers());
 
   it('adds calendar context as an open message passes twelve hours', async () => {
     const createdAt = new Date(2026, 9, 19, 15, 48).toISOString();
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 9, 20, 3, 48));
     const { container } = render(<MessageByline align="start" author="Rally" createdAt={createdAt} />);
 
     expect(container.querySelector('time')).toHaveTextContent(/^3:48PM$/u);
