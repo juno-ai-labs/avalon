@@ -90,12 +90,22 @@ export async function runSidekickAlarms(env: Env, workspaceId: string, region = 
  * Replace a Sidekick's connector registrations the way an apply does, and set
  * its activation boundary to the sequence they take effect after, without the
  * rest of an apply. For a test that controls the event sequence itself.
+ *
+ * With `revision`, it also takes the apply's post-commit step for that
+ * revision (its Slack sources' joins), and in every case it re-arms the
+ * workspace alarm as a hosted write does, so a Canva poll schedule the
+ * registrations enabled is due.
  */
 export async function writeSidekickRegistrations(
   env: Env, workspaceId: string, automationId: string, evaluators: readonly unknown[], region = "global",
+  revision: number | null = null,
 ): Promise<void> {
-  await runInDurableObject(sidekickWorkspace(env, workspaceId, region), (instance, state) => {
-    const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
+  await runInDurableObject(sidekickWorkspace(env, workspaceId, region), async (instance, state) => {
+    const object = instance as unknown as {
+      hostedSidekickHost: () => HostedSidekickHost;
+      afterHostedWrite: () => Promise<void>;
+    };
+    const host = object.hostedSidekickHost();
     const sidekick = new HostedSidekick(host, automationId) as unknown as {
       writeRegistrations: (evaluators: readonly unknown[]) => number;
       touchDirectory: (now: number, effectiveAfterEventSequence?: number) => void;
@@ -103,6 +113,8 @@ export async function writeSidekickRegistrations(
     // The same two steps an apply takes: replace the registrations, then
     // record the sequence they take effect after on the Sidekick's row.
     state.storage.transactionSync(() => sidekick.touchDirectory(Date.now(), sidekick.writeRegistrations(evaluators)));
+    await host.afterRegistrations(automationId, revision, evaluators);
+    await object.afterHostedWrite();
   });
 }
 
@@ -140,9 +152,7 @@ export interface SidekickDirectoryRow {
   authorUserId: string;
   runAsUserId?: string;
   lifecycle: "draft" | "active" | "paused" | "deleted";
-  scope: "personal" | "workspace" | "workstream";
-  owningWorkstreamId: string | null;
-  owningSubstreamId?: string;
+  scope: "personal" | "workspace";
   title: string;
   description: string;
   nextRunAt?: string | null;
@@ -168,23 +178,20 @@ export async function writeSidekickDirectoryRow(env: Env, row: SidekickDirectory
       host.storage.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, author_user_id, run_as_user_id, source_version, payload_hash,
-            lifecycle, scope, owning_workstream_id, owning_substream_id, title, description, next_run_at,
-            projected_at, loadable)
-         VALUES (?, ?, ?, ?, 1, 'test-row', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            lifecycle, scope, title, description, next_run_at, projected_at, loadable)
+         VALUES (?, ?, ?, ?, 1, 'test-row', ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(automation_id) DO UPDATE SET
            author_user_id = excluded.author_user_id,
            run_as_user_id = COALESCE(excluded.run_as_user_id, run_as_user_id),
            lifecycle = excluded.lifecycle,
            scope = excluded.scope,
-           owning_workstream_id = excluded.owning_workstream_id,
-           owning_substream_id = excluded.owning_substream_id,
            title = excluded.title,
            description = excluded.description,
            next_run_at = excluded.next_run_at,
            projected_at = excluded.projected_at,
            loadable = excluded.loadable`,
         row.automationId, row.workspaceId, row.authorUserId, row.runAsUserId ?? null,
-        row.lifecycle, row.scope, row.owningWorkstreamId, row.owningSubstreamId ?? "0",
+        row.lifecycle, row.scope,
         row.title, row.description, row.nextRunAt ? Date.parse(row.nextRunAt) : null, now,
         row.loadable === undefined ? null : row.loadable ? 1 : 0,
       );

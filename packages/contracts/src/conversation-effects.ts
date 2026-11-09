@@ -2,10 +2,10 @@ import { ScopeGrantSchema } from "./scope-grants";
 import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 import { WorkstreamAppearanceSchema } from "./workstream-appearance";
-import { ConversationParentKindSchema } from "./conversation-parent";
 import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema } from "./identifiers";
 import { ResourceRelationshipTypeSchema } from "./resource-relationships";
 import { HttpUrlSchema } from "./url-schemas";
+import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 
 /**
  * What a conversation tells its parent, and what a parent tells the workspace.
@@ -63,6 +63,17 @@ export const WorkstreamDirectoryCommonEffectSchema = z.object({
    * the Channel rail's list. Absent on an envelope written before it existed.
    */
   sidekickAttachmentIds: z.array(IdSchema).optional(),
+  /**
+   * A Sidekick run's tool calls so far, its steps: what the run's row in the
+   * Sidekick's shared conversation counts. Sent only by a run's conversation.
+   */
+  stepCount: z.number().int().nonnegative().optional(),
+  /**
+   * A Sidekick run's last reply in full, up to a message's own ceiling: what
+   * the run's row shows. `preview` keeps the directory's shorter cut for every
+   * other reader. Sent only by a run's conversation.
+   */
+  reply: z.string().max(MESSAGE_MAX_CHARACTERS).optional(),
   attachmentReservationReleases: z.array(z.object({
     inputId: IdSchema,
     resourceId: IdSchema,
@@ -86,6 +97,13 @@ export const WorkstreamDirectoryUserEffectSchema = z.object({
   manualUnreadFromOrdinal: z.number().int().nonnegative().nullable().optional(),
   manualUnreadGeneration: z.number().int().nonnegative().optional(),
   latestMentionAttentionOrdinal: z.number().int().nonnegative().optional(),
+  /**
+   * When this person last reported a read (`member_attention.last_seen_at`).
+   * It makes each report at an unchanged cursor a distinct effect, so the
+   * parent hears it, while a redelivery of the same report still dedupes;
+   * the parent dates the read by it. Absent from an older object.
+   */
+  lastReadAt: TimestampSchema.nullable().optional(),
 });
 
 /**
@@ -110,8 +128,13 @@ export const AutomationDirectoryEffectSchema = z.strictObject({
    */
   runAsUserId: IdSchema.optional(),
   lifecycle: z.enum(["draft", "active", "paused", "deleted"]),
+  /**
+   * `workstream` and a room are kept so an effect queued before the room
+   * scope was retired still parses; nothing writes either now, so the room
+   * defaults to none.
+   */
   scope: z.enum(["personal", "workspace", "workstream"]),
-  owningWorkstreamId: IdSchema.nullable(),
+  owningWorkstreamId: IdSchema.nullable().default(null),
   /**
    * The home conversation under `owningWorkstreamId`: `"0"` for the Channel's
    * Main conversation, a Breakout id otherwise. Optional because an effect an
@@ -172,6 +195,19 @@ export const WorkstreamMentionNotificationEffectSchema = z.strictObject({
   authorNameSnapshot: z.string().max(300),
   workstreamTitleSnapshot: ShortTextSchema,
   messageText: z.string().max(8_000),
+  /**
+   * The mentioning message's attention ordinal in its conversation, so the
+   * recipient's Activity item clears once their read cursor passes it
+   * (`docs/activity.md`). Optional: an effect emitted before it existed has
+   * none, and its item clears only by Mark all seen.
+   */
+  attentionOrdinal: z.number().int().nonnegative().optional(),
+  /**
+   * The mentioning turn's transcript sequence, so the recipient's Activity
+   * item can open the Chat at it (a turn is found by its id and sequence
+   * together). Optional for the reason `attentionOrdinal` is.
+   */
+  transcriptSequence: z.number().int().positive().optional(),
   occurredAt: TimestampSchema,
 });
 
@@ -195,6 +231,27 @@ export const WorkstreamParticipantNotificationEffectSchema = z.strictObject({
   occurredAt: TimestampSchema,
 });
 
+/**
+ * A person's message in a Canvas's Chat or a Sidekick's shared conversation,
+ * for everyone else in it to be told: one effect per message, naming its
+ * recipients, rather than one per recipient, so the message's text crosses
+ * the Queue once. The conversation names its active participants other than
+ * the author, anyone the message mentions (a mention already tells them) and
+ * anyone it seated (being added already tells them). The parent batches it
+ * (`docs/push-notifications.md`).
+ */
+export const WorkstreamNewMessageNotificationEffectSchema = z.strictObject({
+  kind: z.literal("new_message_notification"),
+  messageId: IdSchema,
+  authorUserId: IdSchema,
+  authorNameSnapshot: z.string().max(300),
+  messageText: z.string().max(8_000),
+  attentionOrdinal: z.number().int().nonnegative(),
+  transcriptSequence: z.number().int().positive(),
+  recipientUserIds: z.array(IdSchema).min(1),
+  occurredAt: TimestampSchema,
+});
+
 /** Effects a conversation (child) may produce. */
 export const ConversationEffectSchema = z.discriminatedUnion("kind", [
   WorkstreamDirectoryCommonEffectSchema,
@@ -202,6 +259,7 @@ export const ConversationEffectSchema = z.discriminatedUnion("kind", [
   WorkstreamActivityEffectSchema,
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamParticipantNotificationEffectSchema,
+  WorkstreamNewMessageNotificationEffectSchema,
 ]);
 export type ConversationEffect = z.infer<typeof ConversationEffectSchema>;
 
@@ -219,6 +277,7 @@ export const ParentEffectSchema = z.discriminatedUnion("kind", [
   WorkstreamActivityEffectSchema,
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamParticipantNotificationEffectSchema,
+  WorkstreamNewMessageNotificationEffectSchema,
 ]);
 export type ParentEffect = z.infer<typeof ParentEffectSchema>;
 
@@ -259,13 +318,24 @@ function requireViewerVersionForNotifications(
   }
 }
 
+/**
+ * The parent kind an effect envelope may carry: the hosted Canvas and Sidekick
+ * and the retired Thread (`workstream`) and Space. Wider than
+ * `ConversationParentKindSchema` on purpose: an effect from a retired parent
+ * must still parse at the Queue boundary so its receiver refuses it by name
+ * (`conversation_parent_kind_retired:<kind>`) and it retries to the
+ * dead-letter queue. A retired parent's effect is a defect to find, not
+ * traffic to drop (docs/hosted-conversation-parents.md).
+ */
+export const EffectParentKindSchema = z.enum(["workstream", "automation", "space", "canvas"]);
+
 /** One child's versioned effect, addressed to its parent. */
 export const ConversationEffectEnvelopeSchema = z.strictObject({
   kind: z.literal("conversation_effect"),
   contractVersion: z.literal(1),
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
-  parentKind: ConversationParentKindSchema,
+  parentKind: EffectParentKindSchema,
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
   generation: z.number().int().positive(),
@@ -284,7 +354,7 @@ export const ParentEffectEnvelopeSchema = z.strictObject({
   contractVersion: z.literal(1),
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
-  parentKind: ConversationParentKindSchema,
+  parentKind: EffectParentKindSchema,
   parentId: IdSchema,
   /**
    * Which conversation under this parent the effect is about, on the one class

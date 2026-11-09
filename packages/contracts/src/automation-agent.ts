@@ -3,6 +3,7 @@ import {
   IdSchema,
   UserIdSchema,
 } from "./identifiers";
+import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 
 export const AutomationIdSchema = IdSchema.brand<"AutomationId">();
 export type AutomationId = z.infer<typeof AutomationIdSchema>;
@@ -19,8 +20,43 @@ export const asAutomationId = (value: string): AutomationId => AutomationIdSchem
  * automation *is* is the room that owns a `workstream`-scoped one, and a run
  * sends there with its own tool.
  */
-export const AutomationScopeSchema = z.enum(["personal", "workspace", "workstream"]);
+export const AutomationScopeSchema = z.enum(["personal", "workspace"]);
 export type AutomationScope = z.infer<typeof AutomationScopeSchema>;
+/**
+ * A scope as stored before the `workstream` (Thread-owned) scope was retired:
+ * `workstream` reads as `personal`. For stored drafts and transcript rows,
+ * which no migration rewrites; anything written now uses
+ * `AutomationScopeSchema`. Fail closed: the stored value does not say whether
+ * its Thread was private or Organization-wide, and a draft's definition
+ * writes its suggested scope on every submission, so reading it as the
+ * Organization would widen a private Thread's Sidekick past what the
+ * directory migration kept. A manager widens it explicitly if they mean to.
+ */
+export const StoredAutomationScopeSchema = z.enum(["personal", "workspace", "workstream"])
+  .transform((scope): AutomationScope => scope === "workstream" ? "personal" : scope);
+
+/**
+ * Who a Sidekick is shared with: its author alone (`personal`), every member
+ * of the Organization (`workspace`), or its author and the people named
+ * (`people`). Beside `scope` rather than a value of it, because `scope` is
+ * stored and parsed by released clients, and a third value there would fail
+ * their whole sidebar. A `people` Sidekick is stored with scope `personal`
+ * and its list in `sidekick_audience`.
+ */
+export const SidekickAudienceSchema = z.enum(["personal", "workspace", "people"]);
+export type SidekickAudience = z.infer<typeof SidekickAudienceSchema>;
+
+/** A manager's change to who a Sidekick is shared with; `userIds` only, and always, for `people`. */
+export const SidekickAudienceUpdateSchema = z.strictObject({
+  audience: SidekickAudienceSchema,
+  userIds: z.array(UserIdSchema).default([]),
+}).superRefine((update, context) => {
+  if ((update.audience === "people") !== (update.userIds.length > 0)) {
+    context.addIssue({ code: "custom", path: ["userIds"],
+      message: "must name people exactly when the audience is people" });
+  }
+});
+export type SidekickAudienceUpdate = z.infer<typeof SidekickAudienceUpdateSchema>;
 
 export const AutomationLifecycleStateSchema = z.enum(["draft", "active", "paused", "deleted"]);
 export type AutomationLifecycleState = z.infer<typeof AutomationLifecycleStateSchema>;
@@ -105,6 +141,18 @@ export const AutomationActivationV1Schema = z.strictObject({
     provider: z.string().min(1).max(80),
     displayName: z.string().min(1).max(180),
   }).optional(),
+  /**
+   * Present on a run's own row in its Sidekick's shared conversation: the run
+   * as it stands, a projection of the Sidekick's `sidekick_runs` row. The
+   * conversation fills it in when it reads the row, so it is always current
+   * and the stored row never holds a second copy. `reply` is the run's last
+   * message once the run has stopped working (finished, or waiting on input).
+   */
+  run: z.strictObject({
+    state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
+    stepCount: z.number().int().nonnegative(),
+    reply: z.string().max(MESSAGE_MAX_CHARACTERS).nullable(),
+  }).optional(),
 });
 export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema>;
 
@@ -128,11 +176,10 @@ export const SidekickReviewNoticeV1Schema = z.strictObject({
   since: z.string().datetime({ offset: true }).nullable(),
   until: z.string().datetime({ offset: true }),
   /**
-   * Where the wizard announces a change, as the conversation tools name it:
-   * a room's Sidekick's home (its Thread's Main conversation or a Breakout),
-   * an Organization Sidekick's General Channel (or its author's Personal
-   * Channel when General is archived or absent), or a personal Sidekick's
-   * author's Personal Channel. Null when no such conversation exists yet.
+   * The Sidekick's own shared conversation (`"0"`, whose id is the
+   * Sidekick's), written on every notice. Write-only: the rendered notice no
+   * longer names it, because the review runs in that conversation and its
+   * report is the announcement. Kept so notices already in flight still parse.
    */
   announceTo: z.string().min(1).nullable(),
   /** Runs that finished in the window, by the state they finished in; `needsInput` is runs waiting, not finishes. */
@@ -186,7 +233,7 @@ export const AutomationDraftProposedV1Schema = z.strictObject({
   description: z.string().min(1).max(1200),
   /** One line per trigger, already rendered: the card shows them, not parses them. */
   triggerSummaries: z.array(z.string().min(1).max(300)).max(10),
-  suggestedScope: AutomationScopeSchema,
+  suggestedScope: StoredAutomationScopeSchema,
   /** False when the agent still has a blocking question. */
   ready: z.boolean(),
 });

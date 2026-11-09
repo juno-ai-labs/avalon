@@ -3,7 +3,6 @@ import { allowsTrustedAudioCapture } from './media-permission';
 
 describe('desktop media permission policy', () => {
   const main = { window: 'main' };
-  const sidekicks = { window: 'sidekicks' };
   const settings = { window: 'settings' };
 
   function grant(
@@ -14,22 +13,13 @@ describe('desktop media permission policy', () => {
       mediaTypes: ['audio'],
       permission: 'media',
       requestingContents: main,
-      sidekicksWindowContents: sidekicks,
       trustedRenderer: true,
       ...overrides,
     });
   }
 
-  it('allows audio capture from the main window and the Sidekicks window', () => {
+  it('allows audio capture from the main window', () => {
     expect(grant({ requestingContents: main })).toBe(true);
-    expect(grant({ requestingContents: sidekicks })).toBe(true);
-  });
-
-  it('allows Sidekicks capture after the main window has closed', () => {
-    expect(grant({
-      mainWindowContents: undefined,
-      requestingContents: sidekicks,
-    })).toBe(true);
   });
 
   it('refuses other Rally windows, missing contents, video, and untrusted origins', () => {
@@ -38,7 +28,6 @@ describe('desktop media permission policy', () => {
     expect(grant({
       mainWindowContents: undefined,
       requestingContents: undefined,
-      sidekicksWindowContents: undefined,
     })).toBe(false);
     expect(grant({ mediaTypes: ['audio', 'video'] })).toBe(false);
     expect(grant({ mediaTypes: [] })).toBe(false);

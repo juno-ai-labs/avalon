@@ -9,10 +9,7 @@ import type { z } from "zod";
 import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 type LocalOnlyTranscriptOperation =
-  | "captureSubstreamContext"
-  | "installInitialContext"
   | "prepareParticipantMessage"
-  | "prepareConversation"
   // Authenticated product operations resolve immutable human provenance and
   // join the object transaction locally; no generic RPC may impersonate one.
   | "appendParticipantMessage"
@@ -25,8 +22,6 @@ type LocalOnlyTranscriptOperation =
   | "commitRecoveredToolResult"
   | "commitActivationInputs"
   | "settlePendingSteersAtStep"
-  // Read by the object's own settlement, for the run it just finished.
-  | "absorbedSlackOrigins"
   | "activatePendingInput"
   // Reads the queue against the live Bind projection to say which input can
   // start the next cycle; only the object holding the loop can act on it.
@@ -63,12 +58,13 @@ type LocalOnlyTranscriptOperation =
   // Accepted assistant turns may enqueue regional effects in the same SQLite
   // transaction. Function callbacks cannot cross the object-port boundary.
   | "commitBindTransition"
+  // Joins the owning object's mutation transaction (a Sidekick run's row).
+  | "reviseParticipantTurnInTransaction"
   | "range";
 export type TranscriptOperation = Exclude<keyof WorkstreamTranscriptStorage, LocalOnlyTranscriptOperation>;
 export type TranscriptObjectPort = ObjectPortOf<Pick<WorkstreamTranscriptStorage, TranscriptOperation>>;
 
 const DISPATCHED_OPERATIONS = [
-  "initialContext",
   "commitBindCompaction",
   "compactionCheckpoint",
   "recordProviderBoundary",

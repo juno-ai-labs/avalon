@@ -13,7 +13,7 @@ export const WORKSPACE_PERSONAL_SYSTEM_PROMPT_MIGRATION: readonly string[] = [
   ) STRICT`,
 ];
 
-/** SubstreamAgent: a copy of WorkspaceDO's rows, written only by the refresh. */
+/** AgentLoopDO: a copy of WorkspaceDO's rows, written only by the refresh. */
 export const SUBSTREAM_PERSONAL_SYSTEM_PROMPT_MIGRATION: readonly string[] = [
   `CREATE TABLE personal_system_prompt_copies (
     user_id TEXT PRIMARY KEY,

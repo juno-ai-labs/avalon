@@ -48,6 +48,7 @@ applying for directory review.
 The single app registers both regional OAuth callbacks:
 
 - `https://api.rallywith.ai/connections/linear/callback`
+- `https://api.with-avalon.com/connections/linear/callback`
 
 It has one webhook:
 
@@ -69,7 +70,7 @@ Authorization Code with PKCE S256, in one of two actor modes:
   authorizing Linear user, are available only to that Rally member, and may
   include private teams that user can access.
 - A **workspace** Rally connection requests `actor=app`. Its tools act as Rally,
-  are available to every member of the Rally workspace, and are limited to the
+  are available to every member of the Rally Organization, and are limited to the
   teams selected while installing the app.
 
 One public Linear app supports both. A person who wants both identities authorizes
@@ -171,7 +172,7 @@ Agent-session activation requires all of the following to pass first:
 3. A durable outbound activity outbox with stable provider activity IDs across
    retries.
 4. A deterministic `👀` source-comment acknowledgement before processing, followed
-   by an immediate thought or external work-stream URL inside ten seconds.
+   by an immediate thought or external Rally conversation URL inside ten seconds.
 5. Prompt resumption based on immutable Agent Activity history.
 6. Stop-signal propagation that halts tool and model work immediately and emits
    exactly one final response or error.
@@ -229,7 +230,7 @@ scope mapping, the routing, and the native-agent gate. It does not own:
 | --- | --- |
 | The registry, manifests, and adapter rules every connector obeys | [`connectors.md`](connectors.md) |
 | The registration itself and its regional routing | [`provider-apps.md`](provider-apps.md) |
-| Which Linear activity types are declared digestible | [`connector-digestibility.md`](connector-digestibility.md) |
+| What a Linear activity type's `digestible` declaration means | [`connectors.md`](connectors.md#declaring-what-a-digest-may-read) |
 | The configured deployment boundary the shared ingress sits on | [`regionalization.md`](regionalization.md) |
 | The flag that gates the native-agent surface | [`feature-flags.md`](feature-flags.md) |
 | Credential encryption and webhook verification rules | [`security.md`](security.md) |
@@ -259,7 +260,6 @@ scope mapping, the routing, and the native-agent gate. It does not own:
 | `apps/api/test/linear-oauth.test.ts` | Both connection scopes through the shared service callback, with migrated regional and object schemas, simulated Linear endpoints, and persisted connection/attempt/routing assertions. |
 | `packages/connectors/src/linear-agent.test.ts` | The native-agent metadata: invocation modes, activity kinds, deadlines, and the `protocol_only` refusal. |
 | `apps/api/test/linear-routing.test.ts` | The organization-to-region directory and the forwarding of exact signed bytes. |
-| `packages/connectors/src/digestibility-doc.test.ts` | That every declared Linear activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 
 Run a single file from the package directory —
 `pnpm --filter @rally/connectors exec vitest run src/linear.test.ts` — the path is

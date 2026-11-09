@@ -18,8 +18,6 @@ import {
 } from './plugin-groups';
 import {
   AutomationActivationV1Schema,
-  ConversationMergeV1Schema,
-  ConversationMergedIntoV1Schema,
   AutomationDraftProposedV1Schema,
   ElicitationSchema,
   agentMessageNotice,
@@ -225,9 +223,9 @@ export function prepareDraftMentions(
 /**
  * Text the app kept without its mentions, such as a thread's description,
  * rendered the way a message is. A name already in durable
- * `[@Name](person://<id>)` form keeps that identity: the description loop
- * (`workstream-description-service.ts`) rewrites from transcript text, which
- * carries those links. Each typed `@Name` outside them that the send path
+ * `[@Name](person://<id>)` form keeps that identity: a description the retired
+ * description loop wrote came from transcript text, which carries those
+ * links. Each typed `@Name` outside them that the send path
  * would resolve becomes one too. A person who is not a member here stays as
  * written.
  */
@@ -314,6 +312,41 @@ export function upsertTranscriptMessage(messages: Message[] | undefined, message
     replacement,
     ...existing.slice(index + 1).filter((candidate) => !isSameLogicalMessage(candidate, message)),
   ];
+}
+
+/**
+ * What the snapshot's settled turns are, as one comparable key: the newest
+ * revision of each settled transcript sequence, counted and summed. A turn
+ * that settles, or a settled one revised in place (a run's row), changes it;
+ * a re-delivery, a reconnect or a streaming overlay does not. A turn still
+ * live is left out until it settles: the server revises an assistant turn on
+ * every tool's start and end, and each change of this key is a read report (an
+ * HTTP call, a Durable Object write and a list republish), so a reply owes one
+ * report when it settles, not one per tool. Live is an active turn, a turn
+ * with a block still streaming, or one `liveTurnIds` names (its
+ * `assistant_turn` overlay). The viewer's own turns are left out too: sending
+ * one already moves their cursor. Loading an older page adds turns, so it owes
+ * one report at an unchanged cursor.
+ */
+export function transcriptTurnsKey(
+  snapshot: WorkstreamTranscriptSnapshot | undefined,
+  liveTurnIds: ReadonlySet<string> = new Set(),
+  viewerUserId: string | null = null,
+): string {
+  if (!snapshot) return '';
+  const active = new Set(snapshot.activeTurns.map((turn) => turn.turnId));
+  const revisions = new Map<number, number>();
+  for (const range of snapshot.ranges) {
+    for (const turn of range.turns) {
+      if (active.has(turn.turnId) || liveTurnIds.has(turn.turnId)
+        || turn.blocks.some((block) => 'streaming' in block && block.streaming === true)
+        || (viewerUserId !== null && turn.actor === 'human' && turn.authorUserId === viewerUserId)) continue;
+      revisions.set(turn.transcriptSequence, Math.max(revisions.get(turn.transcriptSequence) ?? 0, turn.revision));
+    }
+  }
+  let sum = 0;
+  for (const revision of revisions.values()) sum += revision;
+  return `${revisions.size}:${sum}`;
 }
 
 /**
@@ -514,7 +547,13 @@ export function orderedTranscriptMessages(
               || block.messageType === 'automation_activation'
               ? block.messageType
               : 'text';
-          const messageId = elicitation.success ? elicitationMessageId(elicitation.data.id) : block.blockId;
+          // A question and the turn that answers it are two rows: the
+          // asker's, which keeps the question's id, and the person's answer
+          // (design §4 keeps both). One id for both folded the answer into
+          // the question's slot and the question was never seen again.
+          const messageId = elicitation.success
+            ? `${elicitationMessageId(elicitation.data.id)}${turn.actor === 'assistant' ? '' : ELICITATION_ANSWER_SUFFIX}`
+            : block.blockId;
           rememberOrder(messageId);
           return {
             ...base,
@@ -522,7 +561,7 @@ export function orderedTranscriptMessages(
             id: messageId,
             messageType,
             annotationContent: block.structuredContent ?? undefined,
-            text: visibleParticipantText(block.text, turn.actor),
+            text: visibleBlockText(block.text, turn.actor, block.structuredContent),
             streaming: block.streaming,
             ...(statusKind ? { statusEvent: { kind: statusKind, code: statusCode } } : {}),
             mentions: (block.mentions ?? []).map((mention) => {
@@ -543,9 +582,7 @@ export function orderedTranscriptMessages(
               : {}),
             ...(imported.success ? { importProvenance: imported.data } : {}),
             ...draftProposedFields(structured),
-            ...automationActivationFields(structured),
-            ...mergedFromFields(structured),
-            ...mergedIntoFields(structured),
+            ...automationActivationFields(structured, block.sidekickRun),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
           };
         }
@@ -790,7 +827,20 @@ export function orderedTranscriptMessages(
       };
     }
   }
+  // A question whose answer has its own row is answered, whatever its own
+  // turn still says (the asker's turn may be stored open), and draws the
+  // question alone.
+  const answers = new Map(logicalMessages.flatMap((message) =>
+    message.elicitation && message.id.endsWith(ELICITATION_ANSWER_SUFFIX)
+      ? [[message.elicitation.id, message.elicitation] as const]
+      : []));
   return logicalMessages
+    .map((message) => {
+      const answer = message.elicitation && !message.id.endsWith(ELICITATION_ANSWER_SUFFIX)
+        ? answers.get(message.elicitation.id)
+        : undefined;
+      return answer ? { ...message, elicitation: answer, elicitationAnswerFollows: true } : message;
+    })
     .sort((left, right) => {
       const leftOrder = messageOrder.get(left.id)!;
       const rightOrder = messageOrder.get(right.id)!;
@@ -802,8 +852,12 @@ export function orderedTranscriptMessages(
     .map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
 }
 
+const ELICITATION_ANSWER_SUFFIX = ':answer';
+
 function canonicalLogicalMessageKey(message: Message): string {
-  if (message.elicitation) return `elicitation:${message.elicitation.id}`;
+  if (message.elicitation) {
+    return `elicitation:${message.elicitation.id}${message.id.endsWith(ELICITATION_ANSWER_SUFFIX) ? ELICITATION_ANSWER_SUFFIX : ''}`;
+  }
   if (message.toolEvent) {
     return `tool_call:${message.toolEvent.toolCallId ?? message.toolEvent.id}`;
   }
@@ -1021,7 +1075,7 @@ export function pendingTranscriptInputOverlay(
         : input.block.messageType === 'system' ? 'system' : 'text',
       ...(elicitation ? { elicitation } : {}),
       annotationContent: input.block.structuredContent ?? undefined,
-      text: visibleParticipantText(input.block.text, input.actor),
+      text: visibleBlockText(input.block.text, input.actor, input.block.structuredContent),
       mentions: input.block.mentions?.map((mention) => ({
         type: mention.type,
         ...(mention.userId ? { personId: mention.userId } : {}),
@@ -1236,7 +1290,7 @@ export function composeTranscript(
       || !Number.isSafeInteger(transcriptSequence)
       || transcriptSequence < 1
       || transcriptSequence < previousCanonicalSequence) {
-      throw new Error('Rally received an invalid transcript order. Reopen this thread.');
+      throw new Error('Rally received an invalid transcript order. Reopen this conversation.');
     }
     previousCanonicalSequence = transcriptSequence;
     return !(
@@ -1295,6 +1349,24 @@ export function dedupeAdjacentConnectorConnectionCards(messages: readonly Messag
     rows.push(message);
   }
   return rows;
+}
+
+/**
+ * What a run's opening row says when a message in its Sidekick's shared
+ * conversation started it. The block itself is the prompt the run reads (the
+ * sender named as data, the message, how to answer), written for the model;
+ * the person reading the run already saw that message where they sent it.
+ */
+export const RUN_OPENED_BY_MESSAGE_CAPTION = 'Started by a message in the conversation.';
+
+function visibleBlockText(
+  text: string,
+  actor: Parameters<typeof visibleParticipantText>[1],
+  structured: Readonly<Record<string, unknown>> | null | undefined,
+): string {
+  return structured?.['kind'] === 'sidekick_conversation_message'
+    ? RUN_OPENED_BY_MESSAGE_CAPTION
+    : visibleParticipantText(text, actor);
 }
 
 /** The byline beside the agent message that opened a conversation. */
@@ -2840,41 +2912,9 @@ function draftProposedFields(
  * whose structured content will not parse falls back to the generic label
  * rather than rendering a half-read identity.
  */
-/** A Breakout merge's tags, read from the server-written structured content. */
-function mergedFromFields(
-  structured: Record<string, unknown>,
-): Pick<Message, 'mergedFrom'> | Record<string, never> {
-  if (structured['type'] !== 'conversation_merge') return {};
-  const parsed = ConversationMergeV1Schema.safeParse(structured);
-  if (!parsed.success) return {};
-  return {
-    mergedFrom: {
-      breakoutId: parsed.data.mergedFrom.breakoutId,
-      title: parsed.data.mergedFrom.title,
-      actingAgent: parsed.data.actingAgent,
-    },
-  };
-}
-
-/** Where this source's result was merged, read from the server-written marker row. */
-function mergedIntoFields(
-  structured: Record<string, unknown>,
-): Pick<Message, 'mergedInto'> | Record<string, never> {
-  if (structured['type'] !== 'conversation_merged_into') return {};
-  const parsed = ConversationMergedIntoV1Schema.safeParse(structured);
-  if (!parsed.success) return {};
-  return {
-    mergedInto: {
-      ...parsed.data.mergedInto,
-      messageId: parsed.data.messageId,
-      mergedByUserId: parsed.data.mergedByUserId,
-      actingAgent: parsed.data.actingAgent,
-    },
-  };
-}
-
 function automationActivationFields(
   structured: Record<string, unknown>,
+  sidekickRun?: { requesterUserId: string | null; runNumber: number | null },
 ): Pick<Message, 'automationActivation'> | Record<string, never> {
   if (structured['type'] !== 'automation_activation') return {};
   const parsed = AutomationActivationV1Schema.safeParse(structured);
@@ -2883,6 +2923,10 @@ function automationActivationFields(
     automationActivation: {
       automationId: parsed.data.automationId,
       automationName: parsed.data.automationName,
+      runId: parsed.data.runId,
+      ...(parsed.data.trigger ? { trigger: parsed.data.trigger.kind } : {}),
+      ...(parsed.data.run ? { run: parsed.data.run } : {}),
+      ...(sidekickRun ? { requesterUserId: sidekickRun.requesterUserId, runNumber: sidekickRun.runNumber } : {}),
     },
   };
 }

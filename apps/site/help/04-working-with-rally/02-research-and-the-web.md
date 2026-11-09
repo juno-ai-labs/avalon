@@ -26,7 +26,7 @@ this in the last week?" does the trick.
 
 When Rally uses what it read, it says where it came from. You can open its
 sources and check them, as described in
-[Reading Rally's answers](../02-working-in-a-channel/04-reading-rallys-answers.md).
+[Reading Rally's answers](../02-canvases/05-reading-rallys-answers.md).
 
 ### What it can and cannot read
 
@@ -53,7 +53,7 @@ sources and check them, as described in
 
 ## The built-in browser
 
-When you click a web link inside a Thread, it does not throw you out to
+When you click a web link inside a Canvas, it does not throw you out to
 Safari or Chrome. It opens in a browser panel on the right of the Rally window,
 beside the conversation. You can read the page and the chat at the same time,
 and copy from one into the other without hunting for windows.
@@ -96,11 +96,6 @@ The browser remembers sites you sign in to, from one session to the next, so
 you can sign in once and stay signed in, which helps with pages that need an
 account.
 
-The import window for bringing in a conversation from Claude or ChatGPT is
-the same kind of browser, and it shares your sign-ins with the panel. Sign in
-to claude.ai or ChatGPT in either one and you are signed in in both. See
-[Bring in a conversation from Claude or ChatGPT](../02-working-in-a-channel/08-import-from-claude-or-chatgpt.md).
-
 Some sign-ins will not work here. Sites that sign you in through a separate
 popup window that then hands back to the page do not work yet, and some sites
 block sign-in from anything they think is not a regular browser (with a
@@ -114,10 +109,10 @@ CAPTCHA, for example). Signing in to Rally itself, and connecting an app in
 
 ### Where it works, and where it does not
 
-- **Mac only.** On iPhone and in the web browser version, links open in a
-  normal browser.
-- **Only in a Thread or Breakout.** Elsewhere in the app, including a
-  conversation with a Sidekick, links open in your Mac's normal browser.
+- **Mac only.** In the web browser version, links open in a normal browser
+  tab.
+- **Only in a Canvas.** Elsewhere in the app, including a Sidekick's
+  conversation, links open in your Mac's normal browser.
 - **Only web addresses.** Links starting `http` or `https` open here. Anything
   else does not.
 - **It is your browser, not Rally's.** The agent cannot click around in it for
@@ -125,7 +120,8 @@ CAPTCHA, for example). Signing in to Rally itself, and connecting an app in
 
 ## Making the side panel wider
 
-The panel on the right holds the browser, file previews and details. When a
+The panel on the right holds what Rally made, the browser, file previews and
+details. When a
 page or document needs more room, make it wider.
 
 - **Drag** the thin divider on the panel's left edge. Its tooltip says **Drag
@@ -136,7 +132,7 @@ page or document needs more room, make it wider.
   is selected, to go back to the standard width.
 
 The panel has a minimum width, and how wide it can go depends on the size of
-your window. Rally remembers the width separately for each Thread, so a
-research Thread can have a wide panel and a chatty one a narrow one.
+your window. Rally remembers the width separately for each Canvas, so a
+spreadsheet Canvas can have a wide panel and a chatty one a narrow one.
 
 Next: [Code, data and the Terminal](03-code-files-and-the-terminal.md).

@@ -110,6 +110,11 @@ export interface ComposerMenuAction {
   icon: ReactNode;
   label: string;
   onSelect: () => void;
+  /**
+   * A mode the composer is in rather than a one-off command: the entry is a
+   * checkbox, ticked while the mode is on, and selecting it flips the mode.
+   */
+  checked?: boolean;
 }
 
 interface ComposerInputProps {
@@ -119,6 +124,8 @@ interface ComposerInputProps {
   autoFocus?: boolean;
   className?: string;
   error?: string;
+  /** The notice's title for `error`, when "Something went wrong" says less than what happened. */
+  errorTitle?: string | undefined;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   footerHint?: ReactNode;
   /** A line inside the composer, over its toolbar: what sending will do, for a host that sends somewhere unusual. */
@@ -282,6 +289,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   autoFocus = false,
   className,
   error,
+  errorTitle,
   fileInputRef,
   footerHint,
   notice,
@@ -778,7 +786,25 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                       // Disabled by hand rather than with Radix's `disabled`, which
                       // drops the item from arrow-key focus and so leaves a keyboard
                       // never reaching the tooltip that says why.
-                      const item = (
+                      const item = action.checked !== undefined ? (
+                        <DropdownMenu.CheckboxItem
+                          aria-disabled={disabled || undefined}
+                          checked={action.checked}
+                          className="menu-item composer-action-menu-item"
+                          data-disabled={disabled ? '' : undefined}
+                          key={action.label}
+                          onSelect={(event) => {
+                            if (disabled) event.preventDefault();
+                            else action.onSelect();
+                          }}
+                        >
+                          {action.icon}
+                          <span>{action.label}</span>
+                          <DropdownMenu.ItemIndicator className="composer-action-menu-check">
+                            <Check aria-hidden="true" size={15} />
+                          </DropdownMenu.ItemIndicator>
+                        </DropdownMenu.CheckboxItem>
+                      ) : (
                         <DropdownMenu.Item
                           aria-disabled={disabled || undefined}
                           className="menu-item composer-action-menu-item"
@@ -935,7 +961,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         </div>
       </div>
       {(error || dictation.error) && (
-        <ErrorNotice>{error || dictation.error}</ErrorNotice>
+        <ErrorNotice title={error ? errorTitle : undefined}>{error || dictation.error}</ErrorNotice>
       )}
       {onAttach && <input
         className="sr-only"

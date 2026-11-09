@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { harnessErrorFrames } from "../src/durable-objects/substream-agent";
+import { harnessErrorFrames } from "../src/durable-objects/agent-loop-do";
 
 /**
  * What `workstream_harness_threw` records about *where* a run died.

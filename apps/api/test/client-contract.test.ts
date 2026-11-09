@@ -4,9 +4,6 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../src/lib/api-error";
 import {
   clientOpensGuestWorkspaces,
-  clientReadsIndividualSpaces,
-  clientReadsNewMessages,
-  clientReadsResolutionSuggestions,
   requireCurrentClientContract,
   type ClientRequestHeaders,
 } from "../src/lib/client-contract";
@@ -69,8 +66,10 @@ describe("the client contract gate", () => {
     })).toBeNull();
   });
 
-  it("keeps the hierarchy readable for contract 1 desktops", () => {
-    expect(refusal({ origin: "app://rallywithai", "x-rally-client-contract": "1" })).toBeNull();
+  it("given a desktop from before the Canvases and Sidekicks pivot, when it asks, then it is told to update", () => {
+    expect(refusal({ origin: "app://rallywithai", "x-rally-client-contract": "12" })?.code).toBe("client_update_required");
+    expect(refusal({ origin: "app://rallywithai", "x-rally-client-contract": "1" })?.code).toBe("client_update_required");
+    expect(refusal({ origin: "app://rallywithai", "x-rally-client-contract": "13" })).toBeNull();
   });
 
   it("given a native client, when it declares no contract, then it is admitted", () => {
@@ -85,30 +84,5 @@ describe("whether a client opens a guest relationship", () => {
     expect([undefined, "1", "2", "3", "4", "5", "three"].map((declared) =>
       clientOpensGuestWorkspaces(request(declared === undefined ? {} : { "x-rally-client-contract": declared }))))
       .toEqual([false, false, false, false, true, true, false]);
-  });
-});
-
-describe("who is shown a Space scoped individual", () => {
-  it("is a browser build at contract 5 or later, or a native client that declares nothing", () => {
-    expect(clientReadsIndividualSpaces(request({ origin: "app://rallywithai", "x-rally-client-contract": "5" }))).toBe(true);
-    expect(clientReadsIndividualSpaces(request({}))).toBe(true);
-  });
-
-  it("is not a browser build before it, or one that declares nothing or something unreadable", () => {
-    expect(clientReadsIndividualSpaces(request({ origin: "app://rallywithai", "x-rally-client-contract": "4" }))).toBe(false);
-    expect(clientReadsIndividualSpaces(request({ origin: "app://rallywithai" }))).toBe(false);
-    expect(clientReadsIndividualSpaces(request({ origin: "app://rallywithai", "x-rally-client-contract": "5junk" }))).toBe(false);
-  });
-});
-
-
-describe("human reply compatibility after resolution suggestions", () => {
-  it("withholds reply rows from resolution-only builds while admitting both in the new build", () => {
-    const resolutionBuild = request({ origin: "app://rallywithai", "x-rally-client-contract": "10" });
-    expect(clientReadsResolutionSuggestions(resolutionBuild)).toBe(true);
-    expect(clientReadsNewMessages(resolutionBuild)).toBe(false);
-    const replyBuild = request({ origin: "app://rallywithai", "x-rally-client-contract": "11" });
-    expect(clientReadsResolutionSuggestions(replyBuild)).toBe(true);
-    expect(clientReadsNewMessages(replyBuild)).toBe(true);
   });
 });

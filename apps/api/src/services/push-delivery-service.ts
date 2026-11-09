@@ -1,3 +1,4 @@
+import type { NotificationChannel } from "@rally/contracts";
 import type { PushDeliveryMessage } from "@rally/contracts/push-notifications";
 import type { Env } from "../env";
 import { resolvePushNotificationsEnabled } from "./client-feature-flags";
@@ -19,16 +20,20 @@ export async function enqueuePushDelivery(env: Env, message: PushDeliveryMessage
 }
 
 /**
- * An Activity row for a channel other than push: queued on the same queue,
- * whose consumer reads it back and sends it. Push availability does not
- * gate it; only the queue's own binding does.
+ * Queue one recorded notice for each sink its recipient chose: a push when
+ * one of their devices can take it (`enqueuePushDelivery`), and an email.
+ * The consumer reads the choice again before sending, so a change made since
+ * this ran still holds; this read only saves queueing what nobody chose.
+ * Answers whether anything was queued.
  */
-export async function enqueueActivityDelivery(
+export async function enqueueNotice(
   env: Env,
-  message: PushDeliveryMessage & { activityItemId: string; channel: NonNullable<Extract<PushDeliveryMessage, { activityItemId: string }>["channel"]> },
-  delaySeconds = 0,
+  address: { workspaceId: string; recipientUserId: string; intentId: string },
+  channels: readonly NotificationChannel[],
 ): Promise<boolean> {
-  if (!env.PUSH_DELIVERY_QUEUE) return false;
-  await env.PUSH_DELIVERY_QUEUE.send(message, { delaySeconds });
-  return true;
+  const message = { region: env.AVALON_REGION, ...address };
+  const push = channels.includes("push") && await enqueuePushDelivery(env, message);
+  const email = channels.includes("email") && env.PUSH_DELIVERY_QUEUE !== undefined;
+  if (email) await env.PUSH_DELIVERY_QUEUE!.send({ ...message, channel: "email" } satisfies PushDeliveryMessage);
+  return push || email;
 }

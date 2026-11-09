@@ -121,7 +121,7 @@ Apollo.io uses the personal-only [hosted-MCP connector](hosted-mcp-connectors.md
 | `apps/api/src/services/user-delivery.ts` | Whether a connection is a personal delivery destination for a given user. |
 | `apps/api/src/services/connector-tool-inventory.ts` | Shared dynamic inventory validation and model-facing tool names for activation and Settings counts. |
 | `apps/api/src/lib/connector-registry.ts` | Which connectors this region registers. |
-| `apps/api/src/queues/activity-consumer.ts` | Regional Queue admission into WorkspaceDO, native connector-event retry, and the reusable routing processor, including `activityIsDigestible`. |
+| `apps/api/src/queues/activity-consumer.ts` | Regional Queue admission into WorkspaceDO, native connector-event retry, and the reusable routing processor. |
 | `apps/api/src/workflows/connector-poll.ts` | `pollCheckpointedActivityStreams` and the shared checkpoint runner. |
 | `apps/api/src/workflows/connector-event.ts` | Drain-only compatibility for connector-event Workflow instances created before the Queue-processing cutover. New events never create one. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, processing claims, and settlement. |
@@ -196,18 +196,18 @@ run's receipt authority stores it and returns a plugin-prefixed page ID. Native
 tools are opted in explicitly, while hosted MCP schemas/results remain untouched.
 
 - A personal connection can be used only by its owner principal.
-- A workspace connection is an organization capability: every ad-hoc work stream in that workspace receives all tools granted to the connection. Those tool calls execute as the workspace principal, even when the run was started by a member.
+- A workspace connection is an organization capability: every ordinary conversation in that Organization (a Canvas's Chat, a Sidekick's) receives all tools granted to the connection. Those tool calls execute as the workspace principal, even when the run was started by a member.
 - Sidekicks retain configured source bindings; delegation and the selected operation identity govern their use independently of ownership scope.
-- A work-stream participant does not expose their personal connections by joining.
+- A conversation participant does not expose their personal connections by joining.
 - Tools require both a manifest capability and a capability recorded on the connection.
 - Credentials are decrypted only for the duration of a backend operation.
 
 Sidekick event matching and delivery use that owner's eligible consent rather
-than the Sidekick's ownership scope. A Thread- or Organization-owned Sidekick
+than the Sidekick's ownership scope. An Organization-owned Sidekick (or one that a retired Thread owned)
 can receive a personal event only while the owner is an eligible delegate;
 restricted workspace events require an eligible delegate inside the real
 audience. This standing consent covers the Sidekick's configured sharing and
-existing shared history. It does not widen ordinary Thread attachments or
+existing shared history. It does not widen ordinary conversation attachments or
 connector event visibility. [Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority)
 owns the common admission policy, coordinator identity and migration.
 
@@ -303,7 +303,7 @@ preparation, and a refresh does not trigger a second authorization read before
 the provider effect. Revocation during that invocation may let it finish; the
 next creator tool checks again.
 
-The claim is scoped to adapter entry points. A few host paths need only a fresh token rather than a connection to hand an adapter — `slack-agent-service.ts`, `slack-unfurl-refresh.ts`, and `slack-notification-service.ts` each call `ensureFreshConnectorCredentials` directly to read a bot token — and the brand correctly does not apply to them. They get freshness, but not the mid-call recovery below, because they are not making a call an adapter would recover.
+The claim is scoped to adapter entry points. A few host paths need only a fresh token rather than a connection to hand an adapter — `slack-agent-service.ts` calls `ensureFreshConnectorCredentials` directly to read a bot token — and the brand correctly does not apply to it. It gets freshness, but not the mid-call recovery below, because it is not making a call an adapter would recover.
 
 Rotation is available to every connection a person has not disabled. The coordinator's lease claim, its credential reload, and the write that stores a rotated credential all admit any row except `disabled`, so a connection this database believes is broken is refreshed and rotated exactly like one it believes is fine, and the provider gets to say whether the belief was still true. A successful token refresh preserves status: it proves token liveness, not that every required scope is present. Reauthorization and explicit connection tests can heal authorization diagnoses; successful polls heal only polling diagnoses.
 
@@ -334,16 +334,15 @@ Three consequences follow, and each is load-bearing:
 
 Recovery is part of the contract too. A durable job that failed on authorization may be classified non-retryable — that is correct while a grant is dead — but something has to lift the ceiling once the connection is reauthorized, or the outage becomes permanent for every request that arrived during it. `redriveReauthorizedIngress` is the Slack example: a job whose connection has been written since the job last failed is re-queued, which is self-limiting because a job that fails again stamps itself newer than the connection.
 
-### Actor identity and work-stream attribution
+### Actor identity and message attribution
 
 The resolver preserves guest identity for attribution, using the role returned by
-its existing regional membership query. Automatic connector audience admission
-excludes guests, including on legacy conversations; a provider audience cannot
-create an unrelated grant. Slack also excludes guests from automatic creator
-seating and session assignment. Explicit scope sharing remains the admission
-path, and guests retain access to connectors within their shared workstreams.
+its existing regional membership query, and a guest match is never admitted to a
+conversation on that basis (`mayJoinWorkstream` is false for one); a provider
+audience cannot create an unrelated grant. Explicit sharing remains the admission
+path.
 
-Every connector that can start work from a provider identity resolves that identity to an
+Every connector that attributes a message to a provider identity resolves that identity to a
 Rally member through one shared mapping, `resolveConnectorActorIdentity` over
 `external_user_identities`. This is the contract for every agent connector rather than
 per-connector logic: Slack's Agent surface is the only caller wired today, and Linear's
@@ -374,113 +373,41 @@ re-recording cannot silently promote it. The write is also monotonic: a `verifie
 observation never replaces a stronger stored mapping, because a provider profile can carry an
 address belonging to a member other than the one that identity is linked to.
 
-A work stream a connector creates for a resolved member records them as its
-`created_by_user_id` and adds them as a participant with `participation_reason = 'creator'`,
-so it reads as their work rather than as workspace automation. When a mapping only arrives
-later — the member links their account or joins the workspace after the task ran — the
-connector credits their earlier ownerless work streams then, promoting the participation
-reason it recorded at the time.
-
-An existing creator is never rewritten, with one exception: an explicit account link may
-correct a creator that the same connector session's own `verified_email` guess produced. The
-link is the stronger statement about who that provider identity is, and the address it
-disagrees with can belong to somebody else. The member it displaces stays a participant.
-
-Taking a task over is not the same claim as starting it. Where a connector lets another member
-assume a task's authority, only the member the actor resolves to is credited; the one who took
-it over stays a participant.
+What a resolution is used for now is attribution of a message a provider
+delivers into a conversation: a Slack reply in a Sidekick run's bound thread is
+admitted under its external actor with the matched member beside it
+(`matchedAvalonUserId`). No connector creates a conversation, so the crediting
+of a connector-created work stream to its member (`created_by_user_id`, a
+`creator` participation, and the later promotion of ownerless ones) no longer
+runs.
 
 Attribution is not authorization. A resolved member does not authenticate the actor, does not
-expose that member's personal connections, and never changes the execution principal: an
-unlinked author's task still runs with the workspace principal. Message authorship is also
-untouched — the opening message keeps its external actor, so the transcript still shows which
-provider identity wrote it. A connector that cannot map its actor leaves the work stream
-ownerless instead of guessing a member.
+expose that member's personal connections, and never changes the execution principal. Message
+authorship is also untouched — the message keeps its external actor, so the transcript still
+shows which provider identity wrote it. A connector that cannot map its actor credits nobody
+instead of guessing a member.
 
 ### A work stream's audience is the conversation it started in
 
-`connector-workstream-audience.ts` holds the second half of the same idea, and it is
-connector-wide for the same reason: **a work stream starts with the audience of the
-conversation it came from.**
+> **Retired.** `connector-workstream-audience.ts` was deleted with the Thread
+> create paths in plan step C-2: a connector no longer opens a work stream, so
+> nothing derives one's audience. The rule it held, for whoever lets a connector
+> start a Canvas or seat a Sidekick's audience from a provider conversation: a
+> work stream started with the audience of the conversation it came from — a
+> public provider conversation stored the `workspace` scope, a private or
+> unclassifiable one the `personal` scope seated with its resolved members; a
+> conversation past the connector's own size threshold (Slack's was 50) was
+> `workspace` and seated nobody; below it the whole roster was seated whatever
+> the scope, with no Rally cap; later arrivals were seated by their own message
+> and never removed; and each message ran under whoever sent it, with nothing
+> weaker than an account link spending a member's credentials. The changelog
+> entries that shaped it are below.
 
-- A conversation the provider calls public opens a public work stream by storing the existing
-  `workspace` scope, readable by the workspace like any other. This is the branch that has to
-  *say* something: a work stream is born private, so a create that lost this scope on the way
-  through would narrow a channel's work stream to whoever happened to be resolved from it.
-- A private conversation — a private channel, a direct message, a group message — opens a
-  private work stream by storing the existing `personal` scope, whose participant room starts
-  with that conversation's resolved members. A conversation the connector cannot classify is
-  treated as private: that is the fail-closed direction, and the two mistakes do not cost the
-  same.
-- **A conversation past the connector's size threshold is `workspace` whatever its privacy
-  says, and seats nobody.** Below the threshold a conversation is a room, and modelling it as
-  one is what makes the work stream findable by exactly the people who were in it. Above it
-  that stops being true in both directions: nobody experiences a sixty-person channel as
-  private, and the participant list standing in for it is a large stale copy of a membership
-  the provider already maintains. The widening is deliberate and is the cost — such a work
-  stream is readable by workspace members who are not in that conversation — and is taken
-  because a work stream nobody can find is the worse failure at that size. It also skips the
-  identity resolution entirely, which is the expensive half of reading a roster.
-  **Each connector states its own threshold; there is no shared default**, because what counts
-  as too many is a fact about that provider's conversations rather than about Rally. Slack's
-  is `SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD`, 50. A listing that *fails* reports zero
-  and leaves the scope to the conversation's privacy, so a provider outage cannot publish a
-  private channel's work stream.
-- **The room is seated from the conversation whatever the scope says.** Scope and membership
-  answer different questions — Rally's visibility rule and the provider's are not the same
-  system, and the provider's is the one that knows what the person meant. Somebody who summons
-  Rally in a channel means the people in that channel to be in the work stream, so the roster
-  is read and seated for a public conversation exactly as for a private one. Seating people who
-  could already see it costs nothing; the alternative is a work stream that is *visible* to a
-  channel while belonging to nobody in it, which then empties itself the moment anyone narrows
-  the scope. **The whole roster goes in, and Rally caps nothing.** The create used to be
-  bounded at 25 participants, which a channel routinely exceeds and which did not degrade when
-  it did — it failed the create outright. Truncating instead would have been Rally deciding
-  that some of the people in the conversation are not in the room, which is the provider's fact
-  to state. The only bound left is the provider's own page size
-  (`SLACK_AUDIENCE_MEMBER_LIMIT`, Slack's 200), and anyone past it is seated when they reply.
-- Anybody who can reach the conversation may continue the work stream. A member who arrives
-  later is seated by their own message — **on every message, whatever the work stream's scope**,
-  because the question that admission answers is "is this person in this conversation", not
-  "is this work stream private". That is what makes a private work stream answer them rather
-  than 404 at them, and what keeps a public one's room honest as the channel's changes. Membership is only ever admitted, never revoked — somebody who leaves
-  the provider conversation keeps the work stream, because removing them is a membership
-  decision a person makes. Connector admission publishes the same `participant_added` event as
-  the in-product participant picker, so connected clients see the durable room change immediately.
-- A person the connector cannot map to a Rally account is not an obstacle. Their message is
-  recorded under their external actor, because a work stream that silently drops what somebody
-  said in the conversation it lives in is worse than one whose participant list is shorter than
-  the channel's.
+### Delivering to a person
 
-**Each message runs under the authority of whoever sent it**, resolved per message rather than
-per conversation: a member with an *account link* runs as themselves, and everybody else runs
-under the workspace principal. This is the one place the strength tiers above are load-bearing
-rather than descriptive — a run spends personal connectors, memory, and approvals made in
-somebody's name, so nothing weaker than a link may authorize one. A `verified_email` match is
-enough to credit somebody and enough to seat them in a private room; it is not enough to spend
-their credentials. Two consecutive messages in one conversation can therefore run under
-different principals, exactly as they do when two members type into the same work stream in
-Rally. How "runs as themselves" reaches the work-stream object is the connector
-principal — `principal: "connector"` on the shared auth context, set only after verifying the
-link on the delivered message; the mechanics and the invariant behind it live in
-[`slack-integration.md`](slack-integration.md#who-a-slack-work-stream-belongs-to) and the product-auth bullet of
-[`workstream-durable-object.md`](workstream-durable-object.md#invariants), and the next adapter
-that runs a member as themselves goes through the same marker.
+A connector that can deliver to a specific person declares `userDelivery` in its manifest: a `targetType`, the label and one-line description a destination choice shows, and `requiresPersonalIdentityLink`. The connections endpoint resolves it per requesting user through `apps/api/src/services/user-delivery.ts`, so a disabled connection, an unlinked installation, or a connector Rally does not register in this region carries no `userDelivery`. A connection merely marked `needs_reconnect` keeps it: the send is what discovers whether the credential still works. The scheduled digest that consumed it is retired (its tables survive in `workspace-domain-schema.ts`), so nothing in the product offers these destinations today; `resolveFrozenDeliveryIdentity`, which saved one, has no caller.
 
-Conversation rosters resolve as a batch. The connector asks D1 once for every identity it already
-knows, enriches only the unresolved provider members, and bounds that provider work by concurrency
-and one shared deadline. Do not turn roster size into one database query and one unconstrained API
-request per member: private conversations may legitimately reach the connector's 200-member cap.
-
-### Delivering a digest to a person
-
-A connector that can hand a finished digest to a specific person declares `userDelivery` in its manifest: the `targetType` stored on the digest destination, the label and one-line description the Daily digest's **Send to** choice shows, and `requiresPersonalIdentityLink`. Nothing about which providers can deliver is written into the API or the client — declaring this is what puts a connection in the digest's destination list, and a connector that declares nothing is never offered. The scheduled digest ([`digests.md`](digests.md)) is the one consumer. It used to serve personal automation results as well; automations no longer have destinations of their own — a run sends its result with the connector tools it holds, inside the loop — so a connector that starts declaring a surface becomes a digest destination without the digest changing.
-
-`requiresPersonalIdentityLink` marks the providers whose installation is workspace-wide. A team-wide bot addresses nobody on its own, so such a connection becomes a destination only for a user who has linked their own provider identity to it. `apps/api/src/services/user-delivery.ts` answers that question: it maps each delivery target type to the table recording "this Rally user is this provider user on this connection" — `slack_user_links` for `slack_agent_dm` — and is the one place a new linked provider is registered. A target type absent from that map needs no link, because its connection already belongs to one person. The connections endpoint resolves `userDelivery` per requesting user, so a disabled connection, an unlinked installation, or a connector Rally does not register in this region is simply not a destination. A connection merely marked `needs_reconnect` stays a destination: the send is what discovers whether the credential still works.
-
-Saving a **digest** destination runs the same resolution. `resolveFrozenDeliveryIdentity` asks `resolveUserDelivery` whether this connection is a destination for this user — the identical declaration, health, and identity-link test the settings screen was offered on — and only then calls the target type's entry in `FROZEN_IDENTITY_RESOLVERS` for the provider tenant and user to store. Eligibility is therefore stated once: the API cannot reject a destination the screen offered, and no rule about connection scope is written into the save path. Nothing about which providers can deliver lives in the API or the client.
-
-Slack declares `slack_agent_dm` with a required identity link. Teams or Discord would declare their own target type the same way and register it in `AutomationDeliveryTargetTypeSchema` (kept under that name because digests and receipts share it), in `PERSONAL_IDENTITY_LINKS` if the surface needs a link, in `FROZEN_IDENTITY_RESOLVERS`, and in `CONNECTOR_DELIVERIES` in `digest-delivery-service.ts` — but no schema change: `digest_delivery_targets.target_type` is checked per family (email versus connector-addressed) rather than enumerated. A target type with no resolver is refused at save rather than half-stored. The two identity columns are still named `slack_team_id` and `slack_user_id`; they hold the provider tenant and user of whichever connector owns the row, and a second connector is the point at which renaming them earns its migration.
+`requiresPersonalIdentityLink` marks the providers whose installation is workspace-wide. A team-wide bot addresses nobody on its own, so such a connection is a destination only for a user who has linked their own provider identity to it. `user-delivery.ts` maps each delivery target type to the table recording "this Rally user is this provider user on this connection" — `slack_user_links` for `slack_agent_dm` — and is the one place a new linked provider is registered. Slack declares `slack_agent_dm` with a required identity link; the type is registered in `AutomationDeliveryTargetTypeSchema`.
 
 ### Being found, and being refused
 
@@ -492,9 +419,9 @@ Two things every connector owes a run, both settled on the descriptor rather tha
 
 ### Agent activation acknowledgement
 
-Messaging-agent and native-agent adapters share `ConnectorAgentAdapter`. An adapter may implement `activationAcknowledgement(invocation)` to produce a fixed provider command; `acknowledgeConnectorAgentActivation` executes that command through the adapter after durable admission and authorization, but before context gathering, model calls, or tools. This is host control-plane behavior and is never left to model output. A retry must converge on the same provider state.
+Messaging-agent and native-agent adapters share `ConnectorAgentAdapter`. An adapter may implement `activationAcknowledgement(invocation)` to produce a fixed provider command; `acknowledgeConnectorAgentActivation` executes that command through the adapter after durable admission and authorization, before the admitted input reaches a model call or tool. This is host control-plane behavior and is never left to model output. A retry must converge on the same provider state.
 
-The hook is deliberately optional. Slack uses an `eyes` reaction on the exact triggering message and treats Slack's `already_reacted` result as success. Its operational host logs provider-side reaction failures and continues the admitted request so a supplemental acknowledgement cannot discard user work. Linear uses a `👀` reaction only when the current activation includes a source comment. A future message-oriented Teams, Discord, or GitHub agent can opt in when it has an unambiguous source object and a lightweight reaction API. Email, file, calendar, database, and ordinary resource-webhook connectors should not acknowledge activation: they have no conversational source message, and manufacturing a reply or mutation would be noisy or misleading.
+The hook is deliberately optional. Slack builds the same two steps itself (it needs the installation's configured reaction set), placing an `eyes` reaction on a reply admitted into a Sidekick run's bound thread, and treats Slack's `already_reacted` result as success. Its operational host logs provider-side reaction failures and continues the admitted request so a supplemental acknowledgement cannot discard user work. Linear uses a `👀` reaction only when the current activation includes a source comment. A future message-oriented Teams, Discord, or GitHub agent can opt in when it has an unambiguous source object and a lightweight reaction API. Email, file, calendar, database, and ordinary resource-webhook connectors should not acknowledge activation: they have no conversational source message, and manufacturing a reply or mutation would be noisy or misleading.
 
 ### External result delivery
 
@@ -506,7 +433,7 @@ reply prose from an in-memory accumulator. Slack, a future Microsoft Teams
 agent, and a future Linear comment-back path all follow the same rule.
 
 The terminal delivery boundary receives the final transcript turn identity and
-reloads that exact canonical turn from the owning work-stream object. A
+reloads that exact canonical turn from the owning conversation object. A
 `needs_input` outcome instead prefers the oldest open elicitation's canonical
 turn, because its prompt is saved in structured turn content rather than the
 text column. Only text rendered from one of those hydrated turns may become an
@@ -542,7 +469,6 @@ Sheets value reads set `truncated` when rows, cells or cell text are shortened.
 `cellTextTruncated` distinguishes shortened text: smaller ranges cannot recover
 that cell's full value. The existing per-cell and response limits are unchanged;
 shortened text does not discard following rows.
-
 
 Every Google tool parses its arguments with a strict schema, so an undeclared key is an error naming the key rather than a silently dropped intent, and every list-shaped result returns `items` with an optional `nextPageToken` so one tool's shape generalizes to the rest. Header hydration degrades per hit: a message that cannot be fetched — deleted or refused — keeps its identifiers and reports `headersUnavailable`, so one rate-limited hit in a fan-out of up to fifty costs that row rather than the whole search. A revoked grant is the exception and is raised, because reporting it per row would read as an empty mailbox rather than a connection to reconnect. Address headers are truncated at the end of the last address that fits, never mid-address, because a fragment cut inside a domain still parses as an address and would be reported as a real correspondent.
 
@@ -669,7 +595,7 @@ The production-approved Google scope set uses `drive.readonly` for Drive discove
 
 Google activity ingestion is polling-only. Gmail, Calendar, and Drive are independent named activity streams under one connection. Each commits its own provider-native high-watermark—Gmail history IDs, Calendar sync/completion tokens, or Drive change page tokens—only after its canonical activities are persisted. A transient failure in one stream preserves that stream's checkpoint without forcing successful sibling streams to replay; the scheduler uses the earliest backlog or retry deadline. Gmail and Calendar are digestible streams and Drive is not: a change feed reports a save, so a document written over an afternoon is one piece of news and dozens of events. `email.received`, `calendar.event_changed`, and `calendar.event_completed` are the digestible activity types; `email.updated` is a label or read-state change on mail already seen. Drive change polling classifies Google Workspace MIME types into `docs.document_changed` and `sheets.spreadsheet_changed`; other files produce `drive.file_changed`. Consequently `drive.read` is included in the Drive + Docs + Sheets preset and is the event source for Docs and Sheets changes. Operators can follow each normalized poll result into WorkspaceDO at `connector_event_authority_ingested`, before its Queue processing begins. Rally does not currently register Gmail Pub/Sub watches, Calendar notification channels, Drive push notifications, or any other Google webhook. Rally resource watches route the normalized polled activity and must not be confused with provider push delivery. Calendar change polling expands recurring events into instances, so one edit to a series returns every instance Google holds for it. An instance is therefore reported against its series rather than on its own: one `calendar.event_changed` activity per edit, carrying `seriesChange: true`, built from the series master — read once per changed series per poll with `events.get` — and keyed on the master's id together with the master's own `updated`. Because the content is the master's, the activity carries the series' real start and end, its link, its location, its `recurrence` rule (in `metadata`), and each guest's series-level RSVP. An instance whose `updated` is after the master's was edited on its own and is reported as that occurrence, with that occurrence's times, keyed on its own etag; an instance whose `updated` is at or before the master's belongs to the edit the master records, or to an older one it has since superseded, and either way is reported against the master as it now stands. A burst is larger than the 150 items one poll fetches, so the same identity is re-emitted on later polls and the workspace's dedupe absorbs the repeats. Two rules follow from that, and both are load-bearing. An instance is classified by comparing its own `updated` to the master's, never by how many of its siblings landed in the same chunk, or the same edit would be reported differently depending on where the page boundary fell. And the activity's content must be identical in every chunk, because a repeated identity whose payload hash differs is refused at ingest — which is exactly what building it from the master, and nothing from the instances, guarantees: the master for a given `updated` is one fixed record. When the master cannot be read (a purged series, or a body that is not the master asked for) the series is reported from a representative instance keyed on the instances' `updated`, and then carries only what every instance agrees on: no start or end, no link, no overriding location, and each guest without the per-occurrence `responseStatus`. Each Google activity type declares the attached resource its events are *about* — `sheets.spreadsheet_changed` a `google_sheet`, `docs.document_changed` a `google_doc`, `drive.file_changed` a `drive_file`, and both mail events a `gmail_thread` — because the registration reconciler builds an evaluator set from those relationships and a type that declares none routes nothing, however many watches exist. The relationship names the watched entity itself rather than a container it sits in, which is why `file` and `thread` exist beside Notion's `page` in `ConnectorResourceRelationshipSchema`.
 
-A revoked refresh grant marks the connection `needs_reconnect`. Production smoke tests should create a Gmail draft rather than send unsolicited mail. A personal Gmail send tool is available only to its owner; if an administrator creates a workspace-scoped Gmail connection through the backend, its granted send capability rolls down to every work stream like every other workspace capability.
+A revoked refresh grant marks the connection `needs_reconnect`. Production smoke tests should create a Gmail draft rather than send unsolicited mail. A personal Gmail send tool is available only to its owner; if an administrator creates a workspace-scoped Gmail connection through the backend, its granted send capability rolls down to every ordinary conversation like every other workspace capability.
 
 The two records are isolated by Rally capability checks, not by separate Google OAuth principals. Because both presets use one OAuth client with incremental authorization, Google may return a token containing scopes previously granted to that account; Rally still exposes only the capabilities recorded on the particular connection. Disconnect is local when another Google connection for that account remains. Operators must not describe the presets as provider-level credential isolation.
 
@@ -786,7 +712,7 @@ wrong answer.
 
 The GitHub plugin prompt treats metadata and code evidence as different things.
 When a repository is not named, the model searches the authorized set and
-chooses the best match from the request, work-stream context, pinned status,
+chooses the best match from the request, conversation context, pinned status,
 and recent activity rather than handing repository selection back to the
 participant or taking an arbitrary first result. It may say that verification was
 incomplete without a readable code file, but it may not conclude that there are
@@ -804,7 +730,7 @@ model can plan before acting. `read_only` is a remote boundary: it still permits
 Terminal file changes and local commits, while its repository token cannot push
 or mutate GitHub. `full_access` supplies the Terminal sandbox a short-lived,
 single-repository App token for ordinary `git` and `gh` writes. Rally prepares
-a stable word-based work-stream branch first and the plugin prompt directs the
+a stable word-based conversation branch first and the plugin prompt directs the
 model to push only that branch. Full access does not broaden the GitHub App's
 installed permission ceiling, but GitHub does not technically scope that token
 to the prepared branch.
@@ -851,7 +777,7 @@ non-shared host's `/ingest/github` still ingests synchronously through
 same verified path. Webhooks also discover durable
 repository, commit, file, issue, pull-request, release, workflow-run, and
 check-run resources so people and agents can attach provider objects directly
-to work streams without copying their content into Rally. Issue-dependency and
+to conversations without copying their content into Rally. Issue-dependency and
 sub-issue deliveries add both sides of the relationship, including
 cross-repository issues, while retaining one normalized activity per delivery.
 
@@ -877,7 +803,7 @@ returns from live `tools/list` when the plugin activates.
 
 A workspace connection remains the public integration path. A Rally owner or administrator starts the public OAuth flow and chooses the pages to share in Notion's page picker. Notion still requires `owner=user` on that public OAuth request: that identifies the human approving the installation, not Rally's execution principal. Rally stores the returned authorization as a workspace connection with no Rally user owner, and stores the authorizing Notion user only inside the encrypted credential metadata. The installed integration bot is the provider identity used for API calls, so edits and comments are attributed to Rally in Notion rather than to the person who approved the connection.
 
-Every member's ad-hoc work stream can use the granted Notion tools through the workspace principal; workspace automations still require an explicit binding. The agent can search and retrieve pages/data sources, query data sources, create pages, update or append Markdown, and read/create comments. Only pages explicitly shared during installation are visible. Notion webhook activity is normalized at workspace scope with no target user, because the event belongs to the shared bot grant rather than to its authorizer.
+Every member's ordinary conversation can use the granted Notion tools through the workspace principal; workspace automations still require an explicit binding. The agent can search and retrieve pages/data sources, query data sources, create pages, update or append Markdown, and read/create comments. Only pages explicitly shared during installation are visible. Notion webhook activity is normalized at workspace scope with no target user, because the event belongs to the shared bot grant rather than to its authorizer.
 
 Migration `0072_notion_connection_scope_split.sql` converts legacy personal
 Notion rows from the former public-integration shape into workspace connections
@@ -1146,9 +1072,8 @@ as their event; reads and claims reconstruct the full ordered list. Restoring a
 late repeat copies its people too. This avoids the old 262,144-character cell
 constraint and Cloudflare's 2 MB row limit without widening historical DDL.
 
-Suggested Work retains that complete list in sources and provenance. Its single
-bounded model view reports shown and total counts without changing the canonical
-source; see [`suggested-work.md`](suggested-work.md).
+Suggested Work, which kept that list in its provenance, was deleted on
+2026-11-07 ([`data-model.md`](data-model.md#changelog)).
 
 ### Activity ingestion
 
@@ -1198,12 +1123,12 @@ catalog, in
 
 #### Declaring what a digest may read
 
-**Nothing reads this declaration today.** The digest lists what is unread in a
-person's Activity tab (mentions, additions, thread and breakout starts, finished
-runs), and none of those are connector events, so connector activity does not
-reach the digest. The declaration is still required and still written to the
-log, kept for a future surface that tells somebody about connector activity;
-the rules below are what that surface would read.
+**Nothing reads this declaration today.** The digest it was written for is
+retired, and no connector event writes an Activity row or records the answer
+any more. The declaration is still required — the
+registry refuses a manifest without it — kept for a
+future surface that tells somebody about connector activity; the rules below
+are what that surface would read.
 
 **Every activity type a connector declares must say whether a person should be told about it in a digest, and there is no default.** `ConnectorActivityTriggerDescriptor` carries a required `digestible`, and `defineConnectorActivityTriggers` takes the event types as two lists rather than one:
 
@@ -1217,22 +1142,20 @@ activityTriggers: defineConnectorActivityTriggers("GitHub", {
 The shape is the point. There is no list meaning "I did not think about this", so adding an event type is adding it to a list, and an event type in both is refused where it is written rather than resolved silently. Ask it this way: **would a person who was away for a day want this read back to them?** A pull request opened, yes. The eleven check runs it started, no.
 
 `operational` is not a rejected event. It is verified or polled, normalized,
-routed, matched against automations and watches, considered for Suggested Work,
-and written to the activity log exactly like a digestible one — every surface
+routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface
 except the one that interrupts somebody on a schedule. Answer the digest
 question when classifying an event type, and nothing else. Most of what a
 provider emits belongs here, and that is the normal case rather than a failure:
 the GitHub manifest declares eighty-seven activity types and thirty of them are
-digestible. Every current connector's classification, one row per activity type
-with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
+digestible. The manifests are the only record of each type's classification;
+the reference table that gave a reason for every row is retired
+([its record](#retired-documents)).
 
-A **polling activity stream** declares `digestible` too, and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. **A stream can only ever withhold.** An activity is digestible when its event type says so *and* the stream that produced it agrees, so the two declarations cannot contradict each other into somebody's inbox, and a stream saying yes grants nothing on its own. `pollCheckpointedActivityStreams` stamps the withholding onto every activity a non-digestible stream returns, at the one place all polled activity passes through, so an adapter can neither forget to mark its output nor grant itself a digest it was not given.
-
-The manifest is read when the activity log is written, in `activityIsDigestible`, keyed on the event type — the one thing an activity carries all the way from the provider to the log. **Everything unknown is withheld**: a connector this region does not register, an event type a manifest has dropped, an activity older than the declaration. None of those are somebody confirming that a person wants this in their inbox, and being wrong costs one way only. The answer is stored in `workspace_activity_events.digestible`, which nothing reads today; [`digests.md`](digests.md#digestible-what-a-person-should-be-told) owns it.
+A **polling activity stream** declares `digestible` too (`ConnectorPollingActivityStream.digestible`), and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. The rule a reader would apply is that **a stream can only ever withhold**: an activity is digestible when its event type says so *and* its stream agrees, and everything unknown — a connector this region does not register, an event type a manifest has dropped — is withheld. Nothing applies either rule today: the poll runner no longer stamps the withholding, and `activityIsDigestible`, which computed the answer when the activity log was written, was deleted with the digest. `workspace_activity_events.digestible` remains in the schema with nothing writing it.
 
 #### Dropping events that say nothing new
 
-Two filters run before an event costs anything, and both drop rather than withhold: a dropped event is not stored, routed, matched against automations or watches, or offered to Suggested Work.
+Two filters run before an event costs anything, and both drop rather than withhold: a dropped event is not stored, routed, or matched against automations or watches.
 
 **GitHub continuous integration is discarded at ingress.** `isDiscardedGitHubDelivery` drops every `check_run` delivery and every `workflow_run` action except `completed`, at the Global receiver (`GitHubRoutingService.ingestGitHub`, beside `ping`) and again on the regional path, before any payload is written to R2 or any resource is inventoried. The manifest no longer declares those types, so a Sidekick cannot be drafted against a trigger that never fires. Suggested Work keeps its `github.check_run.` exclusion as a named retired prefix, because check runs stored before this change can still drain. A check run's result is still readable on demand through the Actions tools.
 
@@ -1275,17 +1198,15 @@ Manifests and facets are cross-validated at registry construction: a connector t
    cannot mistake handled work for an unmatched event. An event whose
    `metadata.externalConversationPath` resolves to an external conversation
    binding is claimed too, with no delivery row, because the binding's own
-   ingress already delivered it. Only an unclaimed event
-   enters WorkspaceDO's Suggested Work batch tables; activity-log projection is
-   unconditional. There is no semantic route into an existing work stream.
-   Admission and ranking are separate fenced Workflows whose durable product
-   results, including provenance and per-user resolutions, commit in the same
-   WorkspaceDO. The evaluator grammar is deliberately closed and deterministic,
+   ingress already delivered it. An unclaimed event goes nowhere further; it
+   reached Suggested Work's batch tables until that was deleted on 2026-11-07.
+   Activity-log projection is unconditional. There is no semantic route into an
+   existing conversation. The evaluator grammar is deliberately closed and deterministic,
    and [`automation-lifecycle.md`](automation-lifecycle.md) owns it. The Queue
    consumer then settles the authoritative event as processed or failed. A
    transient failure calls per-message `retry()` and an exhausted message enters
    the existing regional activities DLQ.
-9. Each match becomes its own message on the same regional Queue, carrying the registration, the destination, and the event inline or with a canonical-event reference for oversized context. No snippet or metadata is discarded to fit the Queue. The consumer calls `AutomationDO.admitExternalEvent` or `SubstreamAgent.appendWatchedResourceEvent`; the destination re-checks its own lifecycle and activation boundary and admits at most one occurrence per canonical event, keyed on the event id, so there is no delivery ledger and no lease to settle.
+9. Each match becomes its own message on the same regional Queue, carrying the registration, the destination, and the event inline or with a canonical-event reference for oversized context. No snippet or metadata is discarded to fit the Queue. The consumer calls WorkspaceDO's `sidekickAdmitExternalEvent` (through the semantic gate in `semantic-trigger-admission.ts`) or `AgentLoopDO.appendWatchedResourceEvent`; the destination re-checks its own lifecycle and activation boundary and admits at most one occurrence per canonical event, keyed on the event id, so there is no delivery ledger and no lease to settle.
 10. WorkspaceDO deletes a `processed` event 90 days after it was received, on its alarm's `connector_event_reap` phase; pending, processing and failed events never age out. The retention and its arithmetic are in [`workstream-durable-object.md`](workstream-durable-object.md). Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
 
 When it enqueues a delivery (step 4), provider webhook ingestion (GitHub,
@@ -1304,7 +1225,12 @@ Small first-stage events travel inline. An event above the existing 120,000-byte
 Queue envelope budget calls the same typed WorkspaceDO admission primitive
 directly, then queues the processing IDs after its canonical commit. A failed
 send replays idempotent admission before retrying the wake-up. Processing always
-reloads canonical state from WorkspaceDO.
+reloads canonical state from WorkspaceDO. The producers' pre-WorkspaceDO D1
+branches are deleted, since every deployment binds `WORKSPACE_DOS`; the
+provider-wide webhook service alone keeps its legacy branch, and so an ID-only
+producer the consumer acknowledges as `legacy_message_after_cutover`, until its
+Node suite (`test/provider-webhooks.test.ts`, which drives only that branch) is
+moved onto WorkspaceDO.
 
 Oversized matched deliveries keep registration, destination, and event identity
 in the Queue envelope and reload `textSnippet` and `metadata` through the
@@ -1338,8 +1264,7 @@ are correlation fields and should be logged.
 
 The canonical event remains the automation trigger's evidence after admission.
 Prompt construction and between-turn authorization revalidation load it from
-WorkspaceDO. Suggested Work admission also loads that authority rather than a
-scrubbed D1 `activities` row.
+WorkspaceDO rather than from a scrubbed D1 `activities` row.
 
 One normalized event is never sent to two WorkspaceDOs and is never shared
 between workspaces. Fan-out happens before normalization at the raw provider
@@ -1349,9 +1274,10 @@ A provider account installed twice in one workspace may likewise produce two
 connection-scoped events; collapsing those requires an explicit workspace-level
 product rule rather than an accidental cross-connection dedupe.
 
-The removed semantic route into an existing work stream is recorded in
-[`contextual-routing.md`](contextual-routing.md). It is not a dormant step in
-this pipeline: current processing has no classifier, card, or feedback endpoint.
+The removed semantic route into an existing work stream (Suggested context) has
+its retirement record in [Retired documents](#retired-documents).
+It is not a dormant step in this pipeline: current processing has no
+classifier, card, or feedback endpoint.
 
 A routed watch activity names the resources it matched. Their titles are in the
 message text a participant reads, so the person who sees the notification can
@@ -1374,17 +1300,9 @@ R2. D1 may store an idempotent global provider-delivery receipt needed before a
 workspace is known; WorkspaceDO is the credential, workspace-handoff, and
 normalized-event authority.
 
-#### Suggested work admission
+A connector's normalized `title`/`summary` is not independently bounded to the API contract's resource limits (`ResourceSchema` in `packages/contracts`, 300 characters for `title`). Each connector truncates to its own cap before writing `activities` — GitHub's webhook titles cap at 500 — which is wider than what the response schema accepts. The conversation objects defensively truncate at every read and write site that surfaces this data, but a new connector should not rely on that alone: keep any new title/summary truncation at or under 300/2,000 characters at the connector layer too, so a conversation never depends solely on a downstream guard to stay openable.
 
-Eligible connector activity is grouped into bounded per-member personal batch windows before the suggested-work admission agent decides whether to ignore it or create/update a work opportunity. A workspace-visible event is copied into one window per active member; the event remains workspace-visible while each inference sees only that member's authorized directory context. The model-facing JSON Schema deliberately uses only the portable structural subset: object and array shapes, primitive types, required fields, enums, and `additionalProperties: false`. Do not add string formats, string-length bounds, numeric bounds, or array-length bounds to that provider schema. Nested limits such as `linkedUsers.maxItems` can make the schema's constrained-decoding state space too large for otherwise supported Gemini structured-output endpoints, causing every admission request to fail before inference.
-
-The stricter `AdmissionResultSchema` remains authoritative after generation. It enforces UUIDs, string lengths, offsets, source counts, linked-user counts, and the four-decision cap before any result reaches persistence. This separation is intentional: the provider schema guides portable constrained generation, while Zod is Rally's trust boundary. Keep regression coverage asserting both halves whenever the admission response changes. The repository ESLint rule `avalon/provider-json-schema-complexity` statically follows schemas passed through a `jsonSchema` property and rejects excessive schema depth, node count, detailed constraints, or nested bounded-array expansion; a dynamic or imported schema that the rule cannot resolve still needs an explicit unit test.
-
-Admission failures are retried through new batch windows only while an event's attempt count is below three. Once that limit is reached the event remains failed; deploying a schema or model fix does not replay it automatically. Operators must verify the corrected admission path first, then use an explicit, bounded replay rather than resetting every activity indiscriminately.
-
-A connector's normalized `title`/`summary` is not independently bounded to the API contract's resource limits (`ResourceSchema` in `packages/contracts`, 300 characters for `title`). Each connector truncates to its own cap before writing `activities` — GitHub's webhook titles cap at 500 — which is wider than what the response schema accepts. `WorkstreamService`/`SubstreamAgent` defensively truncate at every read and write site that surfaces this data, but a new connector should not rely on that alone: keep any new title/summary truncation at or under 300/2,000 characters at the connector layer too, so a work stream never depends solely on a downstream guard to stay openable.
-
-Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot is in a conversation only where it was invited, which links the room to a Space, or where a Sidekick's Slack source names it (see [`external-conversation-bindings.md`](external-conversation-bindings.md)). Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server and its live `tools/list` surface rather than Rally's historical snapshot. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
+Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot is in a conversation only where it was invited, which links the room to nothing now, or where a Sidekick's Slack source names it (see [`external-conversation-bindings.md`](external-conversation-bindings.md)). Slack starts no conversation: a DM or mention is answered that work starts in Rally, and a reply in a Sidekick run's bound thread receives an `eyes` reaction once admitted. Optional personal authorizations use Slack's hosted MCP server and its live `tools/list` surface rather than Rally's historical snapshot. Slack delivers bounded message, reaction, file-share, channel, and membership events. Replies in bound threads go to their run; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
 
 ### Product measurement
 
@@ -1442,13 +1360,9 @@ or a log-based handoff a persistent credential in observability.*
 
 **Every rotation goes through the host, proactive and reactive alike.** A rotating refresh token is single-use, so two calls that refresh at the same moment leave the loser marking a connection `needs_reconnect` that its sibling had just rotated successfully. Use `withProviderReauthorization` on the rejection route and `refreshExpiringCredentials` on the near-expiry route; neither redeems a token beside the coordinator.
 
-**Say where the things you produce live.** A work stream that exists because of a place in a connected tool attaches that place, and the connector is the only thing that knows what the place is. Every adapter gets this for its activities without writing code — `connectorOriginFromActivity` reads the object normalization already recorded — so implement `ConnectorAdapter.origin` only for a place no activity describes, such as a provider-hosted agent session, or when the activity's own object is not the place a person would want to be sent back to. A described `resourceType` must be one the manifest declares in `resourceTypes`, and `describeConnectorOrigin` refuses one that is not: a typo there forks the resource identity for every work stream started from that place afterwards, and nothing downstream would notice. See [work-stream origin attachments](workstream-origin-attachments.md).
+**No connector starts a conversation.** A work stream started from a provider conversation used to take that conversation's audience and run each message under its own sender; both rules retired with the create paths (see [the retired section above](#a-work-streams-audience-is-the-conversation-it-started-in)). A `verified_email` match credits somebody; it never authorizes anything as them.
 
-**A work stream started from a conversation is that conversation's, not one member's.** Its visibility is the conversation's own — public for a public channel, private for anything else, including anything the connector could not classify — and a private one's participants are that conversation's members. Anybody in the conversation may continue it, and a member who arrives later is seated by their own message. *A Slack thread used to belong to whichever member happened to be linked first, and every other person in the channel — the workspace owner included — was answered with "this thread is already running with another Rally member's personal authority", in a public channel, in front of everyone.*
-
-**Authority is resolved per message, and only an account link grants it.** A run spends personal connectors, memory, and approvals made in somebody's name, so it may run as a member only where that member has authenticated to Rally and bound their provider identity to it. A `verified_email` match credits and seats somebody; it never authorizes a run as them, and a connector must not promote it to one because it makes a thread work more smoothly.
-
-**The exception: input bound to a Sidekick run follows the run, not the sender.** A reply in a provider thread bound to a Sidekick run child continues that run with its run-as user's connectors, whoever sent it, including a sender who is not a Rally member. The reply is framed to the model as labelled evidence from its sender, never as a member request, and only the Sidekick's config conversation can add the conversations a run reads or posts to. A connector opts a send into this by returning `externalConversation: { installationId, path }` on its `ConnectorToolResult`; the host binds the thread only for a run child, in the tool receipt's own transaction, and a binding already held elsewhere wins. See [`external-conversation-bindings.md`](external-conversation-bindings.md).
+**Input bound to a Sidekick run follows the run, not the sender.** A reply in a provider thread bound to a Sidekick run child continues that run with its run-as user's connectors, whoever sent it, including a sender who is not a Rally member. The reply is framed to the model as labelled evidence from its sender, never as a member request, and only the Sidekick's config conversation can add the conversations a run reads or posts to. A connector opts a send into this by returning `externalConversation: { installationId, path }` on its `ConnectorToolResult`; the host binds the thread only for a run child, in the tool receipt's own transaction, and a binding already held elsewhere wins. See [`external-conversation-bindings.md`](external-conversation-bindings.md).
 
 **Do not spend a provider round trip on something Rally already knows.** Revalidation between model turns is answered from WorkspaceDO connector state plus current D1 membership; only an activation goes to the provider. *Eight model iterations against a workspace Granola connection made roughly twenty-four provider calls per run purely to re-establish authority already recorded locally.*
 
@@ -1494,10 +1408,7 @@ It does not own:
 
 | For | Read |
 | --- | --- |
-| The retired Suggested context feature | [`contextual-routing.md`](contextual-routing.md) |
-| Which unclaimed activity becomes a home-screen suggestion | [`suggested-work.md`](suggested-work.md) |
-| One row per declared activity type, with the reason | [`connector-digestibility.md`](connector-digestibility.md) |
-| What `digestible` is kept for, now that nothing reads it | [`digests.md`](digests.md#digestible-what-a-person-should-be-told) |
+| The retired Suggested context feature | [its retirement record](#retired-documents) |
 | The registrations, secrets, and the zero-copy definition | [`provider-apps.md`](provider-apps.md) |
 | Slack's product surface and its scope inventory | [`slack-integration.md`](slack-integration.md), [`slack-permissions.md`](slack-permissions.md) |
 | Linear's protocol and native-agent gate | [`linear-integration.md`](linear-integration.md) |
@@ -1506,12 +1417,10 @@ It does not own:
 | How a run holds and narrows connector authority | [`agent-harness.md`](agent-harness.md) |
 | Why an automation sends its own results, and the one destination that is not the run's | [`automation-lifecycle.md`](automation-lifecycle.md) |
 
-Adding a personal delivery surface touches registries only, and only the
-digest's: `AutomationDeliveryTargetTypeSchema` (the name is historical; digests
-and delivery receipts share it), `PERSONAL_IDENTITY_LINKS` if the surface needs
-a link, `FROZEN_IDENTITY_RESOLVERS`, and `CONNECTOR_DELIVERIES` in
-`digest-delivery-service.ts`. Automations no longer have a delivery path to
-register with: a run sends its result through whatever connector tools it
+Adding a personal delivery surface touches registries only:
+`AutomationDeliveryTargetTypeSchema`, `PERSONAL_IDENTITY_LINKS` if the surface
+needs a link, and `FROZEN_IDENTITY_RESOLVERS`. Automations have no delivery path
+to register with: a run sends its result through whatever connector tools it
 holds, so a new surface reaches automations the moment its connector ships a
 send tool. Nothing about which providers can deliver is written into the API
 or the client.
@@ -1567,26 +1476,17 @@ now guards it.
   settlement is lease-fenced. A caught processing failure settles the event
   `failed` before requesting an individual retry; an exhausted delivery remains
   failed and enters the regional activities DLQ.
-- **Everything unknown is marked not digestible** — a connector this region does
-  not register, an event type a manifest has dropped, an activity older than the
-  declaration. Nothing reads the mark today, but a future reader inherits it. None of those are somebody confirming a person wants this in their
-  inbox, and being wrong costs one way only.
-- **A stream can only ever withhold.** An activity is digestible when its event type
-  says so *and* its stream agrees; a stream saying yes grants nothing on its own.
-- **The model-facing provider JSON Schema stays in the portable structural
-  subset** — object and array shapes, primitive types, required fields, enums,
-  `additionalProperties: false`. No string formats, string-length bounds, numeric
-  bounds, or array-length bounds: a nested limit such as `linkedUsers.maxItems` can
-  make the constrained-decoding state space too large for otherwise supported Gemini
-  structured-output endpoints, failing every admission request before inference.
-  `AdmissionResultSchema` remains authoritative afterwards and is Rally's trust
-  boundary.
+- **Every declared activity type is classified, digestible or operational, and
+  never both.** `defineConnectorActivityTriggers` refuses a contradiction where it
+  is written, and nothing defaults. No surface reads the answer today; a future
+  reader must treat everything unknown as withheld, and a stream as able only to
+  withhold.
 - **A connector truncates its own `title`/`summary` before writing `activities`.**
   Connector caps are wider than the API contract's (GitHub's webhook titles cap at
-  500 against the contract's 300), and while `WorkstreamService` and
-  `SubstreamAgent` truncate defensively at every read and write site, a new
-  connector should keep its own truncation at or under 300/2,000 characters so a
-  work stream never depends solely on a downstream guard to stay openable.
+  500 against the contract's 300), and while the conversation objects truncate
+  defensively at every read and write site, a new connector should keep its own
+  truncation at or under 300/2,000 characters so a conversation never depends
+  solely on a downstream guard to stay openable.
 - **Generic-webhook responses are specified**: `401` invalid signature, `400`
   malformed or schema-invalid, `422` disallowed event or non-member target, `409`
   identity or dedupe collision, `413` oversized, `202` new delivery, `200` a
@@ -1631,10 +1531,8 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 | `apps/api/test/connection-tool-count.test.ts` | `GET /connections` tool counts over the migrated regional database and a real `WorkspaceDO` schema, through the service and through the route: a fixed surface counted from grants with its generated page tools and no provider call, `connector_unavailable` for a connector the region does not register, a discovered count stored by creation, a policy save, the custom-MCP tools read and the released per-row endpoint, `null` (never zero) with its reason and a named log when discovery has not succeeded, the list's failed discovery attempted once across two lists, two concurrent lists starting one discovery, a failed discovery (a 5xx, a name collision) clearing the stored count and publishing it, and a discovery that finishes after a policy change or a reconnect dropped by the write fence. It also pins that the list reads owner names and the Slack identity links for `userDelivery` concurrently rather than one after the other, and lists both. Background work is awaited with `drainWaitUntil` from the Node `cloudflare:workers` stand-in rather than slept on. `apps/api/test/tool-pagination.test.ts` pins that `paginatedToolNames` and the expansion name the same tools. |
 | `apps/api/test-workers/github-delivery-queue.test.ts` | That an inline GitHub delivery survives a real Queue: the body the consumer receives passes `GitHubDeliveryQueueMessageSchema` and routes the exact signed bytes. |
 | `apps/api/test/github-routing.test.ts` | The GitHub receiver and its Queue consumer: one signature check across both, no D1 read before the reply, staging and removing a large body (including when the enqueue fails), the retry backoff and a rate limit's Retry-After, and `unrouted` acknowledged. Its regional-data-plane block runs the consumer into a real `ProviderWebhookService` over the migrated regional database and a real `WorkspaceDO` — a delivery whose first attempt failed after its receipt committed finishes on redelivery, a retried older lifecycle event does not overwrite a newer one — and once across the real `GitHubRegionalBridge`, with the argument structured-cloned as a service binding would. Nothing in it verifies a signature downstream of the receiver, because nothing in production does. |
-| `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
 | `packages/connectors/src/observability.test.ts` | The shared adapter and provider-request log layers, level selection, identifier retention, content exclusion, and fail-open observer contract. |
-| `apps/api/test-workers/message-to-output-pipeline.test.ts`, `apps/api/test/slack-workspace-assignment.test.ts` | A completed composite-id transcript turn is reloaded before terminal side effects settle; Slack never opens or appends a response stream, posts only the complete saved turn, and emits no result message when no saved turn exists. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/connector-credential-freshness.test.ts`
@@ -1681,6 +1579,54 @@ Recovery requires an explicit calendar ID (including `primary`) in the original
 arguments. An omitted default or a calendar name may resolve elsewhere after
 interruption, so it stays unresolved instead of risking a second event. Old
 creates without a recorded provider key cannot use this recovery path.
+
+## Retired documents
+
+Removed from `docs/`; the last text and changelog are recoverable as
+[`architecture.md`](architecture.md#retired-documents) describes.
+
+**`contextual-routing.md`: Suggested context (retired 2026-08-30; document
+removed 2026-11-08).** Suggested context classified unclaimed connector
+activity against an Organization's recent work streams and offered a card in
+the one it fit, which a participant accepted (attaching the resource) or
+dismissed. It was paused on 2026-08-12 as too noisy, re-enabled on 2026-08-24
+behind source-to-target audience fences, and removed on 2026-08-30 because the
+card was an unsolicited interruption not worth a destination beside watches
+and Sidekicks. Forward migrations discarded pending cards and kept accepted
+relationships as ordinary attachments, the source audience surviving as an
+immutable content fence (conversation migration 35 dropped
+`suggested_actions`). What survives in storage: `activity_suggestions` in
+regional D1 (`packages/db/migrations` 0001, 0014 and 0079), the
+`suggested_activity` relationship the desktop still normalizes to
+`attachment` (`apps/desktop/src/renderer/lib/api.ts`), and the `suggestion`
+message type the projection still filters. The lesson cited elsewhere
+([`jev-best-practices.md`](jev-best-practices.md),
+`packages/agent-harness/src/semantic-trigger-gate.ts`): its only quality
+control was "a constant compared against a number the model made up about its
+own answer", and nothing read a dismissal back. Its 2026-08-12 rework rejected
+raising the threshold (it "still compares against a self-reported score"),
+requiring non-empty `matchedEntities` ("produced by the same model whose
+judgement is in question"), and reading `digestible` as a hard gate, because
+the field "encodes three different noes and only one of them is about
+relevance". A future router over connector activity starts from those three.
+
+**`connector-digestibility.md`: what each activity type declares for a digest
+(retired 2026-11-08).** One table per connector, one row per declared
+activity type, answering "would a person who was away for a day want this
+read back to them?" with the reason. Nothing reads the answer any more: the
+digest it was written for is deleted, `activityIsDigestible` went with it,
+and the manifest summary's `digestibleActivityTypes`
+(`packages/contracts/src/index.ts`) has no consumer; the one reader of the
+document, `packages/connectors/src/digestibility-doc.test.ts`, was deleted
+with it. What survives is the declaration, still required: each manifest's
+`{ digestible, operational }` partition, refused by
+`defineConnectorActivityTriggers` (`packages/connectors/src/types.ts`) when a
+type sits in both; `ConnectorPollingActivityStream.digestible`; the
+`digestible` field of an activity trigger descriptor, which
+`packages/agent-harness/src/index.ts` deliberately leaves out of what a model
+sees; and the unwritten `workspace_activity_events.digestible` column. A future
+surface that tells somebody about connector activity reads
+[Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ## Changelog
 
@@ -1748,7 +1694,6 @@ already supply authority; plugin views supply discovery and activation.
 **Consequences:** Future Google surfaces must keep bundle tools and triggers
 separate and preserve the shared connection identity for execution and receipts.
 
-
 ### 2026-10-19 — Connection state and reauthorization remain separate
 
 **What changed:** Cards now keep a Reconnect action beside current connection
@@ -1800,7 +1745,7 @@ reprocessing. Oversized ingress commits directly through canonical admission;
 large matched deliveries reload canonical context. The meeting-notes skill owns
 lookup guidance. [`agent-attachments.md`](agent-attachments.md) owns Gmail PDF
 authorization, [`workstream-durable-object.md`](workstream-durable-object.md)
-owns roster storage, and [`suggested-work.md`](suggested-work.md) owns admission.
+owns roster storage.
 
 **Why:** Real recipient lists exceeded the old schema and the displayed error
 lost the cause. Calendar polling omitted attached transcript Docs that event
@@ -1815,7 +1760,6 @@ admission and context reads reuse the existing authority instead.
 lists fail explicitly. Queue messages preserve full event context through the
 canonical owner, and rollout enrichment preserves identity and processing state.
 Read access to an attached Doc remains the connected account's responsibility.
-
 
 ### 2026-10-19: Polling failure is not a reconnect verdict
 
@@ -2053,7 +1997,6 @@ that lives only in the card is one deletion away from existing nowhere, which
 is what nearly happened to Ashby's. Adding a paragraph back to a card re-breaks
 the row.
 
-
 ### 2026-09-19 — The GitHub single reads are declared too
 
 **What changed:** `repository.get`, `issues.get`, `pull_requests.get`,
@@ -2144,7 +2087,6 @@ and, only if the provider documents one, its format — and gets the link, the
 placeholder and the mismatch message from that. The card description is the
 plain sentence naming what the connector gives you; the scope story belongs in
 the setup modal, which has room for it.
-
 
 ### 2026-09-17 — A Granola event tells the run which note it is about
 
@@ -4354,7 +4296,7 @@ naming the place. `describeConnectorOrigin` in the connector base is the single
 entry point, `connectorOriginFromActivity` is the derivation every connector gets
 without code, and a described `resourceType` is checked against the manifest's
 `resourceTypes`. Slack is the first implementation. What the host does with the
-answer is [`workstream-origin-attachments.md`](workstream-origin-attachments.md).
+answer is [`workstream-origin-attachments.md`](workstream-durable-object.md#retired-documents).
 
 **Why:** The behaviour shipped first as Slack-specific code in an API service —
 the host knew Slack's channel-versus-thread rule, Slack's title wording, and
@@ -4449,7 +4391,7 @@ Shipped in #91.
 activity stream declares `digestible` too, and may only ever withhold — an
 activity reaches a digest when its event type says so *and* its stream agrees.
 Every registered connector is classified; the verdicts and their reasons are in
-[`connector-digestibility.md`](connector-digestibility.md), which this document
+`connector-digestibility.md` (retired), which this document
 owns.
 
 **Why:** A scheduled digest read the activity log directly, and the log could not
@@ -4470,7 +4412,7 @@ somebody's inbox.
 
 **Consequences:** Adding an activity type is now a compile error until it is
 classified, in both the manifest and
-[`connector-digestibility.md`](connector-digestibility.md) — `digestibility-doc.test.ts`
+`connector-digestibility.md` (retired) — `digestibility-doc.test.ts`
 enforces the second. Everything unknown is withheld: an unregistered connector,
 a dropped event type, an activity older than the declaration. That is deliberate
 and one-directional, but it means a misconfigured region withholds everything

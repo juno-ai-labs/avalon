@@ -125,7 +125,7 @@ describe("authentication in the complete application router", () => {
     });
   });
 
-  it("admits a guest to push registration, search, speech and Space reads", async () => {
+  it("admits a guest to push registration, search, speech and Canvas reads", async () => {
     const guestId = "00000000-0000-7000-8000-000000000004";
     database.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?, 'guest@example.com','Guest',?,?)").run(guestId, at, at);
     database.prepare("INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,joined_at) VALUES (?,?,'guest',NULL,'active',?)")
@@ -144,10 +144,10 @@ describe("authentication in the complete application router", () => {
     // check that used to refuse a guest; a malformed body is the request's fault.
     expect((await request("/search", { method: "POST", body: "{}" })).status).toBe(400);
     expect((await request("/speech", { method: "POST", body: "{}" })).status).toBe(400);
-    // A Space's Channel list is read by the listing rules for everyone.
-    expect((await request("/spaces/not-an-id/channels")).status).toBe(400);
-    // Changing a Space, and the pending invitees, stay a member's.
-    expect((await request("/spaces", { method: "POST", body: "{}" })).status).toBe(403);
+    // A Canvas is read by whoever it admits, a guest among them, so the route
+    // reaches its own validation.
+    expect((await request("/canvases/not-an-id")).status).toBe(400);
+    // The pending invitees stay a member's.
     expect((await request("/workspace/invitees")).status).toBe(403);
   });
 

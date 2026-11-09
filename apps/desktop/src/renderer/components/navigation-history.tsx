@@ -1,7 +1,7 @@
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { MarkBridge } from '@rally/ui/components/mark-bridge';
 import { TitlePillLeadingContext } from '@rally/ui/components/title-pill';
-import { useLayoutEffect, useState, type PropsWithChildren } from 'react';
+import { useLayoutEffect, useRef, useState, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 
 /** One history cursor for the shell, shared by whichever pane owns its header. */
@@ -12,11 +12,19 @@ export function NavigationHistoryProvider({ children, enabled }: PropsWithChildr
   // HashRouter owns idx; using its cursor keeps POP and replace navigations in
   // the same history as in-app links and desktop deep links.
   const state: unknown = window.history.state;
-  const index = state && typeof state === 'object' && 'idx' in state && typeof state.idx === 'number' ? state.idx : 0;
+  const stamped = state && typeof state === 'object' && 'idx' in state && typeof state.idx === 'number' ? state.idx : null;
+  // A navigation that bypassed the router (a raw `#/…` link, as a plain
+  // anchor in rendered Markdown is) pushes an entry without one. It is the
+  // entry after the one it left, so it reads as that one's successor, and is
+  // stamped so the router's next push counts on from it rather than from 0.
+  const previous = useRef(stamped ?? 0);
+  const index = stamped ?? previous.current + 1;
   const [lastIndex, setLastIndex] = useState(index);
   useLayoutEffect(() => {
-    setLastIndex((last) => action === 'PUSH' ? index : Math.max(last, index));
-  }, [action, index, location.key]);
+    if (stamped === null) window.history.replaceState({ ...(window.history.state as object | null), idx: index }, '');
+    previous.current = index;
+    setLastIndex((last) => action === 'PUSH' || stamped === null ? index : Math.max(last, index));
+  }, [action, index, location.key, stamped]);
   const mark = {
     shape: 'circle' as const,
     tint: 'var(--av-sys-color-surface-raised)',

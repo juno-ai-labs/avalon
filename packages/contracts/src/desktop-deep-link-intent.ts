@@ -2,7 +2,8 @@ import {
   ConnectorOAuthProviders,
   type ConnectorOAuthProviderValue as ConnectorOAuthProvider,
 } from "./connector-oauth-providers";
-import { isDesktopDeepLinkProtocol, SIDELINE_AUTH_CALLBACK_URI } from "./desktop-deep-link";
+import { isDesktopDeepLinkProtocol } from "./desktop-deep-link";
+import { parseMessageSearch } from "./links";
 import {
   parseWorkspaceAddressedDeepLink,
   type WorkspaceTarget,
@@ -18,15 +19,24 @@ const ERROR_PATTERN = /^[a-z0-9_-]{1,100}$/u;
 type Targeted = { target: WorkspaceTarget | null };
 
 export type DesktopDeepLinkIntent =
-  | ({ kind: "space"; spaceId: string } & Targeted)
-  | ({ kind: "workstream"; workstreamId: string; spaceId?: string; substreamId?: string; artifactId?: string } & Targeted)
-  | { kind: "new-workstream" }
+  /**
+   * A Canvas, opened onto one of its artifacts when the link names one, or
+   * at one message of its Chat (`turnId` and `sequence`, from
+   * `?turn=<turn>&sequence=<n>`) when it names that.
+   */
+  | { kind: "canvas"; canvasId: string; artifactId?: string; turnId?: string; sequence?: number; target: WorkspaceTarget }
   /** The menu bar's request row: open the main window on this request's approve-or-decline dialog. */
   | ({ kind: "access-request"; requestId: string } & Targeted)
   | ({ kind: "settings"; section: "workspace" | "members" | "connections" | "digest" } & Targeted)
   /** The main window with the sidebar showing Activity: where the digest's button lands. */
   | ({ kind: "activity" } & Targeted)
   | ({ kind: "new-automation" } & Targeted)
+  /**
+   * An Organization's own landing, as its web app URL with no hash opens it:
+   * the main window at `#/`, where the last route this device had open is
+   * restored. Addressed only; it is what that URL names.
+   */
+  | { kind: "home"; target: WorkspaceTarget }
   | { kind: "sidekick"; sidekickId: string; target: WorkspaceTarget }
   | ({ kind: "slack-link"; token: string } & Targeted)
   | { kind: "invitation"; token: string; region: WorkspaceTargetRegion }
@@ -167,32 +177,17 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
   const target = addressed?.target ?? null;
   if (url.hash || url.username || url.password || url.port) return null;
 
-  if (url.hostname === "workstreams" && url.pathname === "/new") {
-    return !target && !url.search ? { kind: "new-workstream" } : null;
-  }
-  if (url.hostname === "spaces") {
-    if (!target || url.search) return null;
-    const [encodedSpaceId = "", channelSegment, encodedWorkstreamId, childKind, encodedChildId, ...extra] = url.pathname.slice(1).split("/");
-    const spaceId = uuidFromBase58(encodedSpaceId);
-    if (!spaceId || extra.length) return null;
-    if (channelSegment === undefined) return { kind: "space", spaceId, target };
-    const workstreamId = encodedWorkstreamId ? uuidFromBase58(encodedWorkstreamId) : null;
-    const childId = encodedChildId ? uuidFromBase58(encodedChildId) : null;
-    if (channelSegment !== "channels" || !workstreamId
-      || (childKind !== undefined && ((childKind !== "breakouts" && childKind !== "artifacts") || !childId))) return null;
-    // A breakout opens beside its thread; an artifact opens its thread onto it.
-    return {
-      kind: "workstream", workstreamId, spaceId, target,
-      ...(childKind === "breakouts" && childId ? { substreamId: childId } : {}),
-      ...(childKind === "artifacts" && childId ? { artifactId: childId } : {}),
-    };
-  }
-  if (url.hostname === "workstreams") {
-    const [workstreamId = "", segment, substreamId, ...extra] = url.pathname.slice(1).split("/");
-    if (segment !== undefined && (segment !== "substreams" || !substreamId || !UUID_PATTERN.test(substreamId) || extra.length)) return null;
-    return UUID_PATTERN.test(workstreamId) && !url.search
-      ? { kind: "workstream", workstreamId, target, ...(substreamId ? { substreamId } : {}) }
-      : null;
+  if (url.hostname === "canvases") {
+    const [encodedCanvasId = "", childKind, encodedArtifactId, ...extra] = url.pathname.slice(1).split("/");
+    const canvasId = uuidFromBase58(encodedCanvasId);
+    if (!target || !canvasId || extra.length) return null;
+    if (childKind === undefined) {
+      const message = parseMessageSearch(url.searchParams);
+      return message ? { kind: "canvas", canvasId, ...message, target } : null;
+    }
+    if (url.search) return null;
+    const artifactId = childKind === "artifacts" && encodedArtifactId ? uuidFromBase58(encodedArtifactId) : null;
+    return artifactId ? { kind: "canvas", canvasId, artifactId, target } : null;
   }
   if (url.hostname === "access-requests") {
     const [requestId = "", ...extra] = url.pathname.slice(1).split("/");
@@ -208,6 +203,9 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
   }
   if (url.hostname === "activity") {
     return (url.pathname === "" || url.pathname === "/") && !url.search ? { kind: "activity", target } : null;
+  }
+  if (url.hostname === "home") {
+    return target && (url.pathname === "" || url.pathname === "/") && !url.search ? { kind: "home", target } : null;
   }
   if (url.hostname === "automations" && url.pathname === "/new") {
     return !url.search ? { kind: "new-automation", target } : null;
@@ -238,32 +236,4 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
     || url.searchParams.has("status")
   ) return parseConnectorResult(url, target);
   return parseIdentityResult(url, target);
-}
-
-/**
- * Parse a target the hosted browser handoff may open. Rally deep links retain
- * their shared application grammar; Sideline admits only its dedicated,
- * unaddressed identity callback and never becomes a Rally navigation scheme.
- */
-export function parseDesktopHandoffIntent(raw: string | URL): DesktopDeepLinkIntent | null {
-  const desktopIntent = parseDesktopDeepLinkIntent(raw);
-  if (desktopIntent) return desktopIntent;
-
-  let target: URL;
-  try {
-    target = typeof raw === "string" ? new URL(raw) : new URL(raw.toString());
-  } catch {
-    return null;
-  }
-  const sideline = new URL(SIDELINE_AUTH_CALLBACK_URI);
-  if (
-    target.protocol !== sideline.protocol
-    || target.hostname !== sideline.hostname
-    || target.pathname !== sideline.pathname
-    || target.hash
-    || target.username
-    || target.password
-    || target.port
-  ) return null;
-  return parseIdentityResult(target, null);
 }

@@ -25,7 +25,7 @@ import { ObjectPortError } from "../runtime/object-port";
 import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools, discoverDynamicConnectorTools, connectorServerPresentation, storedConnectorServerMetadata } from "./connector-tool-inventory";
 import { ApiError } from "../lib/api-error";
 import { connectorPluginViews, connectorPluginBindingViews, connectorPluginCanonicalId, type GooglePluginBundle, type ConnectorPluginView } from "../lib/connector-plugin-views";
-import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef, recommendedSidekickRefs } from "./sidekick-skills";
+import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef } from "./sidekick-skills";
 import type { SidekickSkillSnapshot } from "@rally/contracts";
 import { assertSafePublicUrl } from '../lib/public-web-url';
 import {
@@ -36,6 +36,7 @@ import {
   AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
   AVALON_MEMORY_PLUGIN_ID,
   AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
+  AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
   AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILL_TOOL_DEFINITIONS,
@@ -49,6 +50,7 @@ import {
   BUILT_IN_SKILLS,
   READING_GOOGLE_MEETING_NOTES_SKILL,
   RequestElicitationInputSchema,
+  type RequestElicitationInput,
   classifyMessageAdmission,
   canonicalToolInputHash,
   createTextDeltaBatcher,
@@ -89,7 +91,6 @@ import {
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
   AutomationDetailSchema,
-  IdSchema,
   ConnectorResourceAuthorizationHintSchema,
   ConnectorResourceAuthorizationRequestSchema,
   ModelPluginIdSchema,
@@ -122,8 +123,10 @@ import {
   type ToolDefinition,
   type WorkstreamWorkflowInput,
   AutomationRunDefinitionV1Schema,
+  CONNECTION_QUESTION_CONTINUE_ANSWER,
   ConnectorConnectionCardCatalog,
   ConnectorConnectionCardInputSchema,
+  type ConnectorConnectionCardInput,
   ConnectorConnectionStateInputSchema,
   ConnectorConnectionStateResultSchema,
   bestConnectorConnectionState,
@@ -158,9 +161,7 @@ import { connectorTextPages } from "./connector-text-pages";
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { PERSONAL_SYSTEM_PROMPT_REASONS } from "../durable-objects/personal-system-prompt";
 import { AutomationService } from "./automation-service";
-import { WorkstreamService } from "./workstream-service";
 import { ResourceService } from "./resource-service";
-import { DEMO_SEED_PROVIDER_KEY, demoSeedModelRoute, demoSeedProviderFetch } from "./demo-seed-provider";
 import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
@@ -217,10 +218,8 @@ import {
   emitAgentToolStartedTelemetry,
   emitAgentToolTerminalTelemetry,
 } from "../telemetry/tool-usage";
-import {
-  emitProductUsageTelemetry,
-  telemetryCountBucket,
-} from "../telemetry/product-usage";
+import { emitProductUsageTelemetry } from "../telemetry/product-usage";
+import { elicitationPresentedTelemetry } from "../telemetry/elicitation";
 import {
   withWorkspaceRuntimeDatabase,
 } from "./workspace-runtime-database";
@@ -280,7 +279,6 @@ import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { sidekickDelegationTools, sidekickDelegationGuidance } from "./sidekick-delegation-tools";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
-import { renderSubstreamInitialContext } from "./substream-initial-context";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
@@ -316,14 +314,13 @@ import {
 import { digestPrincipalKey, digestReaderFor, renderMemoryDigestSection } from "./memory-digest-service";
 import { automationScopeMemoryTables, createMemoryTableTools } from "./memory-table-service";
 import type { MaterializedMemoryTable } from "./memory-table-service";
-import { MAX_SESSION_IMPORT_RUN_MS, workstreamRunLimits } from "./workstream-run-policy";
+import { workstreamRunLimits } from "./workstream-run-policy";
 import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import {
   CONVERSATIONS_WIRE_PREFIX,
   conversationToolPorts,
   createConversationsPlugin,
 } from "./conversation-tools";
-import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import { CODE_PROGRAM_TOOL_TIMEOUT_MS, createCodePlugin, createCustomToolsPlugin, programTestWarnings, type CodePlugin } from "./code-mode";
 import { TerminalToolError } from "./terminal/tools";
@@ -1845,61 +1842,7 @@ function createAvalonAutomationsPlugin(
   const authorUserId = input.executionPrincipal?.type === "user"
     ? input.executionPrincipal.userId
     : null;
-  const attachmentAuth = async () => {
-    if (!authorUserId) throw new Error("sidekick_attachment_principal_required");
-    const membership = await env.DB.prepare(`SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`)
-      .bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" | null }>();
-    if (!membership) throw new Error("sidekick_attachment_membership_required");
-    return { sessionId: `run:${input.harnessRunId}`, userId: asUserId(authorUserId), workspaceId: input.workspaceId,
-      region: input.region, role: membership.role, analyticsWorkspaceId: null };
-  };
-  if (input.parentKind === "workstream") {
-    const tools: HarnessTool[] = [{
-      definition: {
-        name: "list_skill_recommendations",
-        description: "List reusable skills that can be recommended for this thread, with skillId, availability and recommendation state. This does not list agents to configure. Use load_skill with a name from the Skills catalog to load instructions now.",
-        capability: "rally.sidekick.list", mode: "read", idempotency: "safe",
-        inputSchema: z.toJSONSchema(z.strictObject({})),
-      },
-      execute: async () => {
-        const options = await new WorkstreamService(env, await attachmentAuth()).sidekickRecommendationOptions(
-          input.parentId, input.backgroundAgent ? "0" : input.substreamId ?? "0");
-        return { output: { skills: options.items.filter((item) => item.available || item.attached).map((item) => ({
-          skillId: item.id, name: item.name, description: item.description, available: item.available,
-          canRecommend: options.canManage, recommended: item.attached,
-        })) }, summary: "Listed skill recommendations" };
-      },
-    }, ...([true, false] as const).map((recommended): HarnessTool => {
-      const schema = z.strictObject({ skillId: IdSchema });
-      return {
-        definition: {
-          name: recommended ? "recommend_skill" : "unrecommend_skill",
-          description: `${recommended ? "Recommend" : "Stop recommending"} a reusable skill for this thread's future executions. Use a skillId from list_skill_recommendations. Loading instructions now still requires load_skill.`,
-          capability: `rally.sidekick.${recommended ? "attach" : "detach"}`, mode: "write", idempotency: "record_before_execute",
-          inputSchema: z.toJSONSchema(schema),
-        },
-        serial: true,
-        validateInput: (raw) => { const parsed = schema.safeParse(raw); return parsed.success ? null : parsed.error; },
-        execute: async (raw) => {
-          const { skillId } = schema.parse(raw);
-          const result = await new WorkstreamService(env, await attachmentAuth()).setSidekickRecommendation(
-            input.parentId, skillId, recommended, input.substreamId ?? "0", input.backgroundAgent ? input : undefined);
-          return { output: { skills: result.items.map((item) => ({ skillId: item.id, name: item.name,
-            description: item.description, available: item.available })),
-            note: "Recommendations apply to future executions. Call load_skill to use instructions in this execution." },
-          summary: recommended ? "Recommended a skill" : "Removed a skill recommendation" };
-        },
-      };
-    })];
-    if (delegationUser) tools.push(...sidekickDelegationTools(env, input, delegationUser, true));
-    return { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_skill_recommendations", shortWireName: "",
-      displayName: "Skill recommendations",
-      description: `Choose which reusable skills to recommend for future runs in this thread. To use a skill now, call load_skill.${delegationUser ? " Inspect and manage Sidekick delegates for Organization users." : ""}`,
-      searchAliases: ["skill", "instructions", "knowledge", "recommend", "procedure",
-        ...(delegationUser ? ["sidekick", "delegate", "delegation", "account", "consent", "allow", "withdraw"] : [])],
-      systemMessage: `Use list_skill_recommendations, recommend_skill and unrecommend_skill to manage this thread's skill recommendations. Recommendations affect future executions; call load_skill with a name from the Skills catalog to use instructions now. To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.${delegationUser ? ` ${sidekickDelegationGuidance()}` : ""}`,
-      tools, preload: false, explicit: false };
-  }
+
   /**
    * Person ids a submitted rule is allowed to name.
    *
@@ -2834,7 +2777,6 @@ export async function runWorkstreamHarness(
       memoryDigest?(principal: string): MemoryDigestFact[] | null;
       readSidekickSkills(): SidekickSkillSnapshot | null;
       assignSidekickSkillNames(sources: SidekickSkillSnapshot["sources"]): Map<string, string>;
-      attachedSidekickIds(): string[];
       saveSidekickSkills(snapshot: SidekickSkillSnapshot): void;
       activateSidekickSkill(ref: string): Promise<void>;
       projection: BindLoopProjectionState | null;
@@ -2885,6 +2827,11 @@ export async function runWorkstreamHarness(
         code: string;
       }): { turnId: string; transcriptSequence: number } | null
         | Promise<{ turnId: string; transcriptSequence: number } | null>;
+      /**
+       * Whether a person has asked this loop to stop. Read on every streamed
+       * chunk, so it is the loop's own row, read in the object that holds it.
+       */
+      stopRequested(): boolean;
       settleStep(input: {
         loopId: string;
         executionId: string;
@@ -2912,11 +2859,6 @@ export async function runWorkstreamHarness(
   // actual authority without copying connector/resource state into the agent.
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const conversationSubstreamId = input.substreamId ?? "0";
-  // A seeded run answers its own provider requests. Only the source of model
-  // bytes changes — tools, plugins, receipts and settlement are the ordinary
-  // path below, which is what makes seeded history real history rather than
-  // rows written to look like it. See `docs/demo-workspaces.md`.
-  const seedProvider = input.seed ? demoSeedProviderFetch(input.seed) : null;
   const runStartedAtMs = Date.now();
   // The archive gate was a `WHERE` clause because the read was a statement;
   // it is a test on the row here, and the row carries the object's own column
@@ -2958,14 +2900,10 @@ export async function runWorkstreamHarness(
       input,
     ));
   const storedSidekickSkills = runtime?.persistentLoop?.readSidekickSkills() ?? null;
-  const recommendationState: { preparation: Preparation<string[]> | null } = { preparation: null };
-  const readRecommendations = () => (
-    recommendationState.preparation ??= new Preparation(() => recommendedSidekickRefs(env, input))
-  ).get();
   const sidekickSourcesPreparation = new Preparation(async () => {
     const { principalIsGuest } = await authorityPreparation.get();
     return resolveSidekickSkills(env, input, principalIsGuest,
-      storedSidekickSkills?.sources.map((source) => source.id), storedSidekickSkills !== null, readRecommendations);
+      storedSidekickSkills?.sources.map((source) => source.id), storedSidekickSkills !== null);
   });
   // These are read-only preparations. Keep the healthy turn's independent work
   // overlapped; the stored outcome still wins without replaying execution.
@@ -2986,15 +2924,13 @@ export async function runWorkstreamHarness(
   if (storedSidekickSkills && storedSidekickSkills.sources.some((source) => storedSidekickSkills.activeRefs.includes(sidekickSkillRef(source.id)) && !currentSidekickSources.some((current) => current.id === source.id))) {
     throw new ApiError(403, "sidekick_access_changed", "A skill is no longer available to this execution");
   }
-  const attachedSidekickIds = new Set(runtime?.persistentLoop?.attachedSidekickIds() ?? []);
-  // No eligible sources means no recommendation can enter this snapshot. Avoid
-  // waking parent authorities for executions that cannot use any Sidekick.
-  const recommendations = storedSidekickSkills ? storedSidekickSkills.recommendedRefs ?? []
-    : currentSidekickSources.length > 0 ? await readRecommendations() : [];
+  // A fresh snapshot starts with nothing active or recommended: only a Thread
+  // attached Sidekicks to itself, and a Channel's defaults were the only
+  // recommendations. A stored snapshot keeps its own.
   const sidekickSnapshot = storedSidekickSkills ?? {
     sources: currentSidekickSources,
-    activeRefs: currentSidekickSources.filter((source) => attachedSidekickIds.has(source.id)).map((source) => sidekickSkillRef(source.id)),
-    recommendedRefs: recommendations.filter((ref) => currentSidekickSources.some((source) => sidekickSkillRef(source.id) === ref)),
+    activeRefs: [],
+    recommendedRefs: [],
   };
   if (!storedSidekickSkills) runtime?.persistentLoop?.saveSidekickSkills(sidekickSnapshot);
   const sidekickCatalog = sidekickSkillCatalog(sidekickSnapshot.sources,
@@ -3111,12 +3047,8 @@ export async function runWorkstreamHarness(
     undefined,
     input.substreamId ?? "0",
   );
-  const [initialContext, storedMessages] = await Promise.all([
-    requiresCanonicalBootstrap && priorCompaction === null
-      ? orderedTranscript.initialContext()
-      : Promise.resolve(null),
-    requiresCanonicalBootstrap
-      ? loadTriggerFencedTranscriptMessages(
+  const storedMessages = requiresCanonicalBootstrap
+      ? await loadTriggerFencedTranscriptMessages(
         transcript,
         input,
         // The transcript comes from the object rather than from a routed reader
@@ -3129,14 +3061,12 @@ export async function runWorkstreamHarness(
         ),
         priorCompaction?.compactedThroughSequence ?? -1,
       )
-      : Promise.resolve([]),
-  ]);
+      : [];
   const transcriptProjection = requiresCanonicalBootstrap
     ? await projectModelProtocolTranscript(env, input, storedMessages)
     : { messages: [], issues: [] };
   const transcriptBootstrapMs = Date.now() - transcriptBootstrapStartedAtMs;
   const rawModelMessages = [
-    ...renderSubstreamInitialContext(initialContext),
     ...(priorCompaction?.messages ?? []),
     ...transcriptProjection.messages,
   ];
@@ -3237,7 +3167,7 @@ export async function runWorkstreamHarness(
   const activeCredentialPluginIds = new Set<string>();
   // Inline child harnesses would create a second Bind loop inside this
   // substream's one persistent state machine. Keep the tool off the production
-  // surface until delegation is routed to its own durable child SubstreamAgent.
+  // surface until delegation is routed to its own durable child AgentLoopDO.
   let ambiguousToolOutcome = false;
   let suppressInferenceRequestCapture = false;
   const toolEffectIntents = createToolEffectIntents();
@@ -3326,11 +3256,7 @@ export async function runWorkstreamHarness(
       recordActivationDuration(pluginId, name, durationMs);
     }
   };
-  const runLimitsAtMs = Date.now();
-  const runLimits = workstreamRunLimits(
-    profile?.role === "session_import" ? MAX_SESSION_IMPORT_RUN_MS : undefined,
-    initialRun.started_at > 0 ? Math.max(0, runLimitsAtMs - initialRun.started_at) : 0,
-  );
+  const runLimits = workstreamRunLimits();
   const runScopeLimits = {
     ...runLimits,
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
@@ -3483,9 +3409,6 @@ export async function runWorkstreamHarness(
 
   const modelRouting = await measureStartup("model_routing_wait_ms", () => modelRoutingPreparation.get());
   startupDurations.model_routing_load_ms = modelRoutingPreparation.elapsedMs ?? 0;
-  // A seeded run is routed where the seam is: the OpenRouter client, an
-  // unbound model, no fallbacks, no Azure transport. See `demoSeedModelRoute`.
-  const seedRoute = seedProvider ? demoSeedModelRoute(modelRouting) : null;
 
   if (!runtime?.persistentLoop && await isHarnessStopped(runs, input.harnessRunId)) {
     stopController.abort("stopped_by_user");
@@ -3515,7 +3438,7 @@ export async function runWorkstreamHarness(
       persistedOutcomeMs: persistedHostOutcomePreparation.elapsedMs ?? 0,
       initialRunAuthorityMs: authorityPreparation.elapsedMs ?? 0,
       sidekickAuthorityMs: sidekickSourcesPreparation.elapsedMs ?? 0,
-      sidekickRecommendationsMs: recommendationState.preparation?.elapsedMs ?? 0,
+      // A Channel's recommended Sidekicks were the only source; none is read now.
       leaseHeartbeatMs,
       runContextMs: promptPreparation.elapsedMs ?? 0,
       transcriptBootstrapMs,
@@ -3524,7 +3447,6 @@ export async function runWorkstreamHarness(
       attachmentReplayMs: attachmentGroundingPreparation.elapsedMs ?? 0,
       transcriptBootstrapRequired: requiresCanonicalBootstrap,
       sidekickSnapshotReused: storedSidekickSkills !== null,
-      sidekickRecommendationsRead: recommendationState.preparation !== null,
     } satisfies AgentInferencePreparationBreakdown,
   });
 
@@ -3549,11 +3471,9 @@ export async function runWorkstreamHarness(
       ? { requestReceivedAt: input.telemetryRequestReceivedAt }
       : {}),
     inferenceStartEligible,
-    usage: profile?.role === "session_import"
-      ? { activity: "session_import" }
-      : input.automationRun
-        ? { activity: "sidekick_run", sidekickId: input.automationRun.automationId }
-        : { activity: "agent_run" },
+    usage: input.automationRun
+      ? { activity: "sidekick_run", sidekickId: input.automationRun.automationId }
+      : { activity: "agent_run" },
   });
   const ensureTranscriptToolParents = async (event: {
     toolCallId: string;
@@ -3749,9 +3669,6 @@ export async function runWorkstreamHarness(
         expectedInputHash: inputHash,
         policyMatches,
         expectedPolicy,
-        ...(runLimits.maxWallClockMs !== undefined ? {
-          maxWallClockMs: Math.max(0, runLimits.maxWallClockMs - (Date.now() - runLimitsAtMs)),
-        } : {}),
         plugins: harnessTools.plugins,
         context: {
           workspaceId: input.workspaceId,
@@ -3986,17 +3903,13 @@ export async function runWorkstreamHarness(
   try {
     outcome = await runHarness({
       config: {
-        // Bind refuses to construct a client without a key, and a seeded run
-        // never presents one anywhere; the stand-in keeps a sandbox without a
-        // key able to seed. Production always has the real one.
-        apiKey: seedProvider ? env.OPENROUTER_API_KEY || DEMO_SEED_PROVIDER_KEY : env.OPENROUTER_API_KEY,
-        primaryModel: seedRoute ? seedRoute.model : modelRouting.model,
-        fallbackModels: seedRoute ? seedRoute.fallbackModels : modelRouting.fallbackModels,
-        ...(!seedRoute && modelRouting.reasoningEffort ? { reasoningEffort: modelRouting.reasoningEffort } : {}),
+        apiKey: env.OPENROUTER_API_KEY,
+        primaryModel: modelRouting.model,
+        fallbackModels: modelRouting.fallbackModels,
+        ...(modelRouting.reasoningEffort ? { reasoningEffort: modelRouting.reasoningEffort } : {}),
         appName: "Rally",
-        ...(seedRoute ? {} : azureInferenceConfig(env)),
+        ...azureInferenceConfig(env),
         ...runLimits,
-        ...(seedProvider ? { fetch: seedProvider } : {}),
         toolTimeoutMs: numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
         maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
         maxCatalogTokens: runScopeLimits.maxCatalogTokens,
@@ -4247,9 +4160,9 @@ export async function runWorkstreamHarness(
       const attachmentNudge = attachmentGrounding.nudge();
       if (attachmentNudge) return attachmentNudge;
       const persistentLoop = runtime?.persistentLoop;
-      // Fixed-purpose profiles and seeded demos have their own output contract.
-      // A nonpersistent host cannot enforce a durable one-use recovery marker.
-      if (!persistentLoop || profile || input.seed) return null;
+      // Fixed-purpose profiles have their own output contract. A
+      // nonpersistent host cannot enforce a durable one-use recovery marker.
+      if (!persistentLoop || profile) return null;
       abortIfPersistentLoopStopped();
       const sidekickDefinition = input.automationRun && !input.triggerMessageId
         ? await runDefinitionPreparation.get() : null;
@@ -4497,6 +4410,13 @@ export async function runWorkstreamHarness(
     findCompletedToolResult: (toolCallId, inputHash, policyIdentity) => findCompletedToolResult(toolCallId, inputHash, policyIdentity),
     resolveToolEffectIntentId: toolEffectIntents.resolve,
     onEvent: async (event: HarnessEvent) => {
+      // A Stop ends the response being streamed at its next chunk, so the
+      // turn settles as stopped ("Response stopped before it completed")
+      // rather than streaming to its end. Only while the model streams: a tool
+      // the response already started is left to settle and keep its receipt.
+      if (runtime?.persistentLoop && event.type === "stream_delta" && runtime.persistentLoop.stopRequested()) {
+        stopController.abort("stopped_by_user");
+      }
       if (!runtime?.persistentLoop) {
         const state = await runs.run({ runId: input.harnessRunId });
         if (state?.status === "cancelled" || state?.cancellation_requested_at) {
@@ -5104,20 +5024,7 @@ export async function runWorkstreamHarness(
   const stoppedByUser = runtime?.persistentLoop
     ? outcome.status === "stopped"
     : await isHarnessStopped(runs, input.harnessRunId);
-  if (outcome.status !== "completed" && !stoppedByUser) {
-    // The member-safe terminal result deliberately strips this detail, so it
-    // must be recorded here or nowhere: a Bind run that fails before its first
-    // inference attempt leaves no other trace of why.
-    logStructuredEvent(env, "warn", "workstream_harness_run_failed", {
-      request_id: input.harnessRunId,
-      workspace_id: input.workspaceId,
-      workstream_id: input.parentId,
-      outcome_status: outcome.status,
-      failure_code: outcome.failure?.code ?? null,
-      failure_kind: outcome.failure?.kind ?? null,
-      failure_message: outcome.failure?.message?.slice(0, 500) ?? null,
-    });
-  }
+  logHarnessRunOutcome(env, input, outcome, stoppedByUser);
   // Only bytes accepted by Bind may become the durable final turn. A failed
   // partial stream has already been replaced at its reservation by a status
   // pill, so adopting the preview here would resurrect ephemeral output under
@@ -5253,6 +5160,36 @@ function principalSystemSectionFor(
  * re-rendered on every turn and must be byte-identical across a retry, and
  * SQLite is free to return two rows in either order.
  */
+/**
+ * What Rally in a Canvas's Chat is told about the Canvas: its title, its
+ * artifacts at their current versions, and how publishing works there. A
+ * derived user message, as a Sidekick run's activation context is, rather
+ * than system prompt text: the system prompt prefix is byte-stable and
+ * cached, and the artifact list changes with every publish. Keyed on the
+ * message that woke the run, so a recovered execution renders the same
+ * context, under its own source kind, so it never shares an identity with
+ * the SLACK CONTEXT keyed on that same message. `docs/canvases.md#rally-in-a-canvas-chat`.
+ */
+async function canvasRunContextMessage(env: Env, input: WorkstreamWorkflowInput): Promise<ModelMessage | null> {
+  const canvas = await (await hostedParentStub(env, input.workspaceId)).canvasContext({
+    workspaceId: input.workspaceId, canvasId: input.parentId,
+  });
+  if (!canvas) return null;
+  return modelDerivative({
+    role: "user",
+    content: `CANVAS CONTEXT (host-provided):\n${JSON.stringify({
+      canvasId: canvas.canvasId,
+      title: canvas.title,
+      artifacts: canvas.artifacts.map((artifact) => ({
+        resourceId: artifact.resourceId, title: artifact.title, kind: artifact.kind, version: artifact.version,
+      })),
+      publishing: "This conversation is a Canvas's Chat, open to everyone in the Canvas. The artifacts above are the Canvas. "
+        + "To change one, read it (read_resource, view_resource, or import_resource into the Terminal), then publish_resource the same filePath: "
+        + "that is a new version of it, attributed to you. Publishing a different filePath adds another artifact to this Canvas.",
+    })}`,
+  }, "canvas_context", input.triggerMessageId ?? input.harnessRunId);
+}
+
 async function loadRunPromptContext(
   env: Env,
   input: WorkstreamWorkflowInput,
@@ -5285,11 +5222,10 @@ async function loadRunPromptContext(
     // immutable, so nothing is frozen into the loop input beyond the reference.
     const definition = await runDefinitionPreparation.get();
     if (!definition) throw new Error("sidekick_run_reference_missing");
-    // The home, as the conversation tools name it: the Channel's Main
-    // conversation or a Breakout. Null tells the run nobody reads it in Rally.
-    const homeConversationId = definition.owningWorkstreamId === null ? null
-      : conversationIdOf({ parentId: definition.owningWorkstreamId, substreamId: definition.owningSubstreamId });
-    automationSendsOutward = definition.owningWorkstreamId === null;
+    // No Thread is a Sidekick's home any more: the run delivers its result
+    // itself, and its reply reaches the Sidekick's own conversation as its row.
+    const homeConversationId = null;
+    automationSendsOutward = true;
     automationContext = {
       sidekickId: input.automationRun.automationId,
       name: definition.definition.name,
@@ -5378,6 +5314,10 @@ async function loadRunPromptContext(
     }), "scheduled_wakeup", input.scheduledWakeupId);
   }
   if (triggerMessage) additionalMessages.push(triggerMessage);
+  if (input.parentKind === "canvas") {
+    const canvas = await canvasRunContextMessage(env, input);
+    if (canvas) additionalMessages.push(canvas);
+  }
   if (input.automationRun && input.automationContinuation) {
     // After the input that continued the run, which is already in the
     // transcript above. Keyed on that input, so a recovered execution reuses
@@ -5858,7 +5798,10 @@ async function loadHarnessTools(
     const tableTool = tool.definition.capability.startsWith("table.");
     return expandPages(tool, tableTool ? "table" : "workstream", null, tableTool ? "table" : "");
   }).filter((tool) =>
-    !routesAnswersToAgent || tool.definition.name !== AVALON_REQUEST_ELICITATION_TOOL_DEFINITION.name);
+    // Both pause on a question a person answers; where answers go to an agent
+    // instead, neither may ask one.
+    !routesAnswersToAgent || (tool.definition.name !== AVALON_REQUEST_ELICITATION_TOOL_DEFINITION.name
+      && tool.definition !== AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION));
   const corePlugins = createWorkstreamCorePlugins(coreTools);
   const workstreamPlugin = createAvalonWorkstreamPlugin(coreTools);
   const webPlugin = createAvalonWebPlugin(coreTools);
@@ -5888,8 +5831,10 @@ async function loadHarnessTools(
   const customToolsPlugin = codeMode && env.CODE_LOADER && runDefinition?.definition.customTools.length
     ? await createCustomToolsPlugin(codeMode, runDefinition.definition.customTools, { loader: env.CODE_LOADER, input })
     : null;
-  const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && (input.parentKind === "workstream"
-    || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))
+  // In a Sidekick's shared conversation the authoring tools are the wizard's,
+  // and a turn there is the wizard's only once the Sidekick routed it so.
+  const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && input.parentKind === "automation"
+    && (input.substreamId ?? "0") === "0" && input.sidekickWizard === true
     ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages, codeMode)
     : input.executionPrincipal.type === "user" ? {
       canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
@@ -5904,13 +5849,11 @@ async function loadHarnessTools(
     } : null;
   // List, read and post to Rally conversations, scoped by the loop: a
   // Breakout loop reaches its own conversation and its Channel's Main; a
-  // Sidekick's configuration conversation and runs reach its home and
-  // attachments. The only way a Sidekick run reaches a room. A run knows from
-  // its definition whether the Sidekick has a home; the configuration
-  // conversation does not read one.
+  // Sidekick's configuration conversation and runs reach its own
+  // conversation, where a post that names none lands, its home and its
+  // attachments. The only way a Sidekick run reaches a room.
   const conversationsPlugin = createConversationsPlugin(input, conversationToolPorts(env, input),
-    (tool) => expandPages(tool, CONVERSATIONS_WIRE_PREFIX, null),
-    { home: runDefinition ? runDefinition.owningWorkstreamId !== null : null });
+    (tool) => expandPages(tool, CONVERSATIONS_WIRE_PREFIX, null));
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
@@ -7189,22 +7132,7 @@ async function readRunAuthority(
       workspaceId: input.workspaceId, parentId: input.parentId, userId: input.executionPrincipal.userId,
       substreamId: asSubstreamId(input.substreamId ?? "0"), requireGrantAuthority: true,
     };
-    let access = await parent.authorizeViewer(viewer);
-    // A thread's first run can check its guest before the thread's participant
-    // handoff reaches its parent. Finish the handoff and ask once more: it
-    // imports the thread's own roster, so it admits nobody that roster does
-    // not. A handoff that cannot finish yet leaves the refusal standing.
-    if (!access.authorized && input.parentKind === "workstream") {
-      const settled = await parent.ensureParticipantAuthority({ workspaceId: asWorkspaceId(input.workspaceId),
-        parentId: input.parentId, substreamId: viewer.substreamId }).then(() => true, (error: unknown) => {
-        logStructuredEvent(env, "warn", "run_participant_handoff_unfinished", {
-          workspace_id: input.workspaceId, parent_id: input.parentId,
-          error_code: diagnosticErrorCode(error, "run_participant_handoff_unfinished"),
-        });
-        return false;
-      });
-      if (settled) access = await parent.authorizeViewer(viewer);
-    }
+    const access = await parent.authorizeViewer(viewer);
     recordOptionalTiming(onTiming, "conversation", startedAt);
     if (!access.authorized) throw new ConnectorError("unauthorized", "Shared conversation access has ended");
     if (access.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
@@ -7892,10 +7820,14 @@ export async function reenterInterruptedWriteForRecovery(
     } else {
       const userId = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
       if (!userId) return { outcome: "unknown", reason: "sidekick_delegation_user_required" };
-      const room = input.parentKind !== "automation";
-      plugin = { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: room ? "rally_skill_recommendations" : "rally_sidekicks",
-        shortWireName: room ? "" : "sidekick", description: "Sidekick delegation recovery", preload: false,
-        tools: sidekickDelegationTools(env, input, userId, room) };
+      // The presentation the live loop offered, which is the same for every
+      // user principal whatever the parent (`rally_sidekicks`, unprefixed
+      // names): a Canvas chat's call was recorded under it, so its re-entry
+      // must find the tool by that name. The room presentation this once
+      // rebuilt (`rally_skill_recommendations`) went with Threads.
+      plugin = { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks",
+        shortWireName: "sidekick", description: "Sidekick delegation recovery", preload: false,
+        tools: sidekickDelegationTools(env, input, userId, false) };
     }
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "plugin_unavailable") };
@@ -8346,11 +8278,11 @@ function createAvalonWorkstreamPlugin(tools: HarnessTool[]): HarnessPlugin | nul
     // so `workstream_` repeated the one context the run never leaves. Page IDs
     // keep the `workstream_` namespace; see `expandPages`.
     shortWireName: "",
-    displayName: "Workstream",
+    displayName: "Resources and wake-ups",
     searchAliases: ["task", "resources", "participants", "sub-agent", "wake up", "later", "remind", "schedule"],
-    description: "Read and search this thread's attached files and artifact data, and schedule or cancel a later run to carry out a task.",
+    description: "Read and search this conversation's attached files and artifact data, and schedule or cancel a later run to carry out a task.",
     systemMessage: [
-      "Use these tools only for the current authorized workstream and its attached resources.",
+      "Use these tools only for the current conversation and its attached resources.",
       "Use schedule_wakeup when work genuinely has to happen later — waiting on an external result, or a time a person named — instead of promising it in text. Do the work now when it can be done now.",
       "Write a wake-up prompt for a run that cannot see this conversation: state the task, its target, and what finishing looks like.",
       "Check list_wakeups before scheduling another wake-up so you do not duplicate one, and cancel a wake-up that a later turn made unnecessary.",
@@ -8582,7 +8514,10 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         return { output: text, summary: text };
       },
     },
-    ...(input.executionPrincipal.type === "user" && !input.automationRun ? [
+    // A Sidekick run holds these too, since 2026-11-08: a run a missing
+    // connection blocks asks for it and waits (`needs_input`) rather than
+    // finishing with the work undone. Its card is the question.
+    ...(input.executionPrincipal.type === "user" ? [
       {
         definition: AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
         validateInput: (raw: unknown) => {
@@ -8594,7 +8529,27 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
           return { output: state, summary: connectorConnectionStateSummary(state) };
         },
       } satisfies HarnessTool,
-      {
+      input.automationRun ? {
+        definition: AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
+        validateInput: (raw: unknown) => {
+          const parsed = ConnectorConnectionCardInputSchema.safeParse(raw);
+          return parsed.success ? null : parsed.error;
+        },
+        execute: async (raw: unknown, context: HarnessToolContext) => {
+          const card = ConnectorConnectionCardInputSchema.parse(raw);
+          const label = ConnectorConnectionCardCatalog[card.connectorId].label;
+          return openToolQuestion(env, input, context, "show_connector_connection", {
+            prompt: card.scope === "workspace"
+              ? `Connect ${label} for the Organization so this run can continue.`
+              : `Connect ${label} so this run can continue.`,
+            responseType: "radio",
+            options: [...RUN_CONNECTION_QUESTION_OPTIONS],
+            minimumSelections: 1,
+            maximumSelections: 1,
+            connection: card,
+          });
+        },
+      } satisfies HarnessTool : {
         definition: AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
         validateInput: (raw: unknown) => {
           const parsed = ConnectorConnectionCardInputSchema.safeParse(raw);
@@ -8611,7 +8566,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       definition: {
         name: "schedule_wakeup",
         description: [
-          "Schedule this thread to wake up later and act on a prompt you write now.",
+          "Schedule this conversation to wake up later and act on a prompt you write now.",
           "Give exactly one of delay or at.",
           "Relative example: {\"prompt\": \"Check whether the deploy finished and summarize the result\", \"delay\": \"2 hours\"}.",
           "Specific example: {\"prompt\": \"Send the launch recap\", \"at\": \"2026-08-12T17:26\", \"timezone\": \"America/Los_Angeles\"}.",
@@ -8647,7 +8602,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
               type: "string",
               minLength: 1,
               maxLength: 100,
-              description: "IANA timezone the at value is read in, for example America/Los_Angeles. Omit to use this thread's local zone, and omit whenever at carries an offset.",
+              description: "IANA timezone the at value is read in, for example America/Los_Angeles. Omit to use this conversation's local zone, and omit whenever at carries an offset.",
             },
           },
           required: ["prompt"],
@@ -8758,7 +8713,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
     {
       definition: {
         name: "list_wakeups",
-        description: "List this thread's pending wake-ups with their IDs, due times, and prompts. Check this before scheduling another one so you do not duplicate a wake-up that already exists.",
+        description: "List this conversation's pending wake-ups with their IDs, due times, and prompts. Check this before scheduling another one so you do not duplicate a wake-up that already exists.",
         capability: "workstream.wakeup.read",
         mode: "read",
         idempotency: "safe",
@@ -8786,7 +8741,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
     {
       definition: {
         name: "cancel_wakeup",
-        description: "Cancel one pending wake-up in this thread. Use the wakeupId returned by schedule_wakeup or list_wakeups.",
+        description: "Cancel one pending wake-up in this conversation. Use the wakeupId returned by schedule_wakeup or list_wakeups.",
         capability: "workstream.wakeup.write",
         mode: "write",
         idempotency: "provider_key",
@@ -8811,7 +8766,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
           const pending = await listPendingWorkstreamWakeups(scheduling);
           throw new WakeupInputError(
             "wakeup_not_found",
-            "No pending wake-up with that ID is available in this thread. Call list_wakeups and retry with one of its IDs.",
+            "No pending wake-up with that ID is available in this conversation. Call list_wakeups and retry with one of its IDs.",
             "Call list_wakeups and use one of the pending wake-up IDs.",
             pending.map((wakeup) => wakeup.wakeupId),
           );
@@ -8848,83 +8803,100 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         const result = RequestElicitationInputSchema.safeParse(raw);
         return result.success ? null : result.error;
       },
-      execute: async (raw, context) => {
-        const args = RequestElicitationInputSchema.parse(raw);
-        const providerIdempotencyKey = requireProviderIdempotencyKey(
-          "request_elicitation",
-          context.providerIdempotencyKey,
-        );
-        const id = await coreWriteEntityId("elicitation", input, providerIdempotencyKey);
-        const at = nowIso();
-        const elicitation = {
-          id, workstreamId: input.parentId, harnessRunId: input.harnessRunId,
-          prompt: args.prompt, responseType: args.responseType, options: args.options,
-          minimumSelections: args.minimumSelections, maximumSelections: args.maximumSelections,
-          targetUserId: null, status: "open" as const, answer: null,
-          answeredByUserId: null, createdAt: at, answeredAt: null,
-        };
-        // The replay check used to be a read of its own in front of the batch,
-        // because the batch could not both ask and act. It is the operation's
-        // first statement now, so a retried receipt is answered by the write
-        // that would have collided rather than by a read that might have raced
-        // it. The question is durable either way; only the event and the
-        // telemetry are skipped, because the first attempt already sent them.
-        const opened = await createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
-          .openElicitation({
-            elicitationId: id,
-            runId: input.harnessRunId,
-            toolCallId: context.toolCallId,
-            prompt: args.prompt,
-            responseType: args.responseType,
-            optionsJson: JSON.stringify(args.options),
-            minimumSelections: args.minimumSelections,
-            maximumSelections: args.maximumSelections,
-            targetUserId: null,
-            messageId: id,
-            structuredContentJson: JSON.stringify({ kind: "elicitation", elicitation }),
-            now: Date.parse(at),
-          });
-        if (opened.outcome === "exists") {
-          return {
-            output: { elicitationId: id },
-            summary: "Requested human input",
-            providerOperationId: id,
-            halt: "needs_input" as const,
-          };
-        }
-        // Announced in the room of the conversation that asked, not Main's.
-        await publishWorkstreamEvent(
-          env,
-          input.workspaceId,
-          input.parentId,
-          { type: "elicitation_created", elicitation },
-          input.substreamId ?? "0",
-        );
-        emitProductUsageTelemetry(env, {
-          workspaceId: input.workspaceId,
-          ...(input.executionPrincipal.type === 'user'
-            ? { userId: input.executionPrincipal.userId }
-            : {}),
-          name: 'elicitation_presented',
-          properties: {
-            elicitationId: id,
-            runId: input.harnessRunId,
-            workstreamId: input.parentId,
-            responseType: args.responseType,
-            optionCount: telemetryCountBucket(args.options.length),
-            surface: 'workstream',
-          },
-          operationId: input.harnessRunId,
-          eventId: id,
-        });
-        return { output: { elicitationId: id }, summary: "Requested human input", providerOperationId: id, halt: "needs_input" as const };
-      },
+      execute: async (raw, context) => openToolQuestion(env, input, context, "request_elicitation",
+        RequestElicitationInputSchema.parse(raw)),
     },
   ];
   tools.splice(2, 0, ...createFirecrawlWebTools(env));
   tools.push(...createMemoryTools(env, input));
   tools.push(...createMemoryTableTools(env, input));
   return tools;
+}
+
+/**
+ * The answers a run's connection question offers. The card connects it and
+ * answers `continue` for the person; choosing Continue is the same answer for
+ * a connection made somewhere else. The values are what the model reads.
+ */
+const RUN_CONNECTION_QUESTION_OPTIONS = [
+  { value: CONNECTION_QUESTION_CONTINUE_ANSWER, label: "Continue", description: "The connection is made; carry on with the run." },
+  { value: "declined", label: "Decline", description: "End the run, saying what is blocked." },
+] as const;
+
+/**
+ * Open one blocking question for the tool call that asked it, and pause the
+ * loop on it (`halt: "needs_input"`). `request_elicitation` asks the model's
+ * own question; a Sidekick run's `show_connector_connection` asks for a
+ * connection, the question carrying the card's selection. Both derive the
+ * question's id from the call's receipt key, so a replay converges on the one
+ * durable question instead of asking a second.
+ */
+async function openToolQuestion(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  context: HarnessToolContext,
+  toolName: "request_elicitation" | "show_connector_connection",
+  question: RequestElicitationInput & { connection?: ConnectorConnectionCardInput },
+): Promise<HarnessToolResult> {
+  const providerIdempotencyKey = requireProviderIdempotencyKey(toolName, context.providerIdempotencyKey);
+  const id = await coreWriteEntityId("elicitation", input, providerIdempotencyKey);
+  const at = nowIso();
+  const elicitation = {
+    id, workstreamId: input.parentId, harnessRunId: input.harnessRunId,
+    prompt: question.prompt, responseType: question.responseType, options: question.options,
+    minimumSelections: question.minimumSelections, maximumSelections: question.maximumSelections,
+    targetUserId: null, status: "open" as const, answer: null,
+    answeredByUserId: null, createdAt: at, answeredAt: null,
+    // A connection question is answered by its two options alone: no typed
+    // answer, and no Skip, since Decline is how a person lets the run go on without.
+    ...(question.connection ? { connection: question.connection, allowOther: false, allowSkip: false } : {}),
+  };
+  const summary = question.connection
+    ? `Asked for the ${question.connection.connectorId} ${question.connection.scope} connection`
+    : "Requested human input";
+  const halted = { output: { elicitationId: id }, summary, providerOperationId: id, halt: "needs_input" as const };
+  // The replay check used to be a read of its own in front of the batch,
+  // because the batch could not both ask and act. It is the operation's
+  // first statement now, so a retried receipt is answered by the write
+  // that would have collided rather than by a read that might have raced
+  // it. The question is durable either way; only the event and the
+  // telemetry are skipped, because the first attempt already sent them.
+  const opened = await createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
+    .openElicitation({
+      elicitationId: id,
+      runId: input.harnessRunId,
+      toolCallId: context.toolCallId,
+      prompt: question.prompt,
+      responseType: question.responseType,
+      optionsJson: JSON.stringify(question.options),
+      minimumSelections: question.minimumSelections,
+      maximumSelections: question.maximumSelections,
+      targetUserId: null,
+      messageId: id,
+      structuredContentJson: JSON.stringify({ kind: "elicitation", elicitation }),
+      now: Date.parse(at),
+    });
+  if (opened.outcome === "exists") return halted;
+  // Announced in the room of the conversation that asked, not Main's.
+  await publishWorkstreamEvent(
+    env,
+    input.workspaceId,
+    input.parentId,
+    { type: "elicitation_created", elicitation },
+    input.substreamId ?? "0",
+  );
+  emitProductUsageTelemetry(env, elicitationPresentedTelemetry({
+    workspaceId: input.workspaceId,
+    ...(input.executionPrincipal.type === 'user'
+      ? { userId: input.executionPrincipal.userId }
+      : {}),
+    elicitationId: id,
+    runId: input.harnessRunId,
+    workstreamId: input.parentId,
+    responseType: question.responseType,
+    optionCount: question.options.length,
+  }));
+  return halted;
 }
 
 const WEB_RECENCY_TO_TBS = {
@@ -9699,3 +9671,38 @@ export const __integrationTesting = {
   AttachmentGroundingGuard,
   acceptHarnessAssistantContent,
 };
+
+/**
+ * What a harness run that did not complete leaves in the log. The member-safe
+ * terminal result deliberately strips a failure's detail, so it is recorded
+ * here or nowhere: a Bind run that fails before its first inference attempt
+ * leaves no other trace of why. A run that asked and waits (`needs_input`) has
+ * not failed, so it is logged at its own code and level, and a failure search
+ * no longer finds every question a run asked. A stop the person asked for logs
+ * nothing.
+ */
+export function logHarnessRunOutcome(
+  env: Env,
+  input: Pick<WorkstreamWorkflowInput, "harnessRunId" | "workspaceId" | "parentId">,
+  outcome: { status: string; failure?: { code?: string; kind?: string; message?: string } | null | undefined },
+  stoppedByUser: boolean,
+): void {
+  if (outcome.status === "completed" || stoppedByUser) return;
+  if (outcome.status === "needs_input") {
+    logStructuredEvent(env, "info", "workstream_harness_run_waiting", {
+      request_id: input.harnessRunId,
+      workspace_id: input.workspaceId,
+      workstream_id: input.parentId,
+    });
+    return;
+  }
+  logStructuredEvent(env, "warn", "workstream_harness_run_failed", {
+    request_id: input.harnessRunId,
+    workspace_id: input.workspaceId,
+    workstream_id: input.parentId,
+    outcome_status: outcome.status,
+    failure_code: outcome.failure?.code ?? null,
+    failure_kind: outcome.failure?.kind ?? null,
+    failure_message: outcome.failure?.message?.slice(0, 500) ?? null,
+  });
+}

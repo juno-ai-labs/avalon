@@ -14,6 +14,7 @@ import { ApiError } from '../lib/api';
 import type { Workspace, WorkspaceInvitation } from '../lib/types';
 import { WorkspaceSettingsScreen } from './workspace-settings';
 import { CollaborationSessionProvider } from '../lib/collaboration-session';
+import { mountAppStylesheet } from '../test/app-stylesheet';
 
 const api = vi.hoisted(() => ({
   createWorkspaceInvitation: vi.fn(),
@@ -44,8 +45,6 @@ const api = vi.hoisted(() => ({
   getTerminalWorkspaceSettings: vi.fn(),
   previewTerminalNetworkPolicy: vi.fn(),
   applyTerminalNetworkPolicy: vi.fn(),
-  getDigestSchedule: vi.fn(),
-  updateDigestSchedule: vi.fn(),
   clientFeatureFlags: vi.fn(),
   getMyPersonalSystemPrompt: vi.fn(),
   updateMyPersonalSystemPrompt: vi.fn(),
@@ -178,13 +177,17 @@ function renderSettings(
 ): void {
   client.setQueryData(['account-onboarding', 'adam@example.com'], { eligible: false, introduced: true, revision: 1, presentation: null });
   render(
-    <Tooltip.Provider>
-      <QueryClientProvider client={client}>
-        <CollaborationSessionProvider api={api as never} host={sessionHost.current} session={null}>
-          <AccountOnboardingGate><WorkspaceSettingsScreen standaloneWindow={standaloneWindow} workspace={nextWorkspace} /></AccountOnboardingGate>
-        </CollaborationSessionProvider>
-      </QueryClientProvider>
-    </Tooltip.Provider>,
+    // The in-window route mounts the screen inside `AppShell`, whose root is
+    // `.app-shell`; the shell's phone rules are keyed on that ancestor.
+    <div className="app-shell">
+      <Tooltip.Provider>
+        <QueryClientProvider client={client}>
+          <CollaborationSessionProvider api={api as never} host={sessionHost.current} session={null}>
+            <AccountOnboardingGate><WorkspaceSettingsScreen standaloneWindow={standaloneWindow} workspace={nextWorkspace} /></AccountOnboardingGate>
+          </CollaborationSessionProvider>
+        </QueryClientProvider>
+      </Tooltip.Provider>
+    </div>,
   );
 }
 
@@ -481,6 +484,22 @@ describe('Organization settings', () => {
     expect(sheet).toHaveClass('is-mobile-open');
   });
 
+  it('draws one close on a phone while the sections sheet is open, and the menu toggle once it shuts', async () => {
+    const unmount = mountAppStylesheet({ width: 390, height: 844 });
+    try {
+      renderSettings();
+      // By its label: once it is not drawn it has left the accessibility tree.
+      const toggle = await screen.findByLabelText('Close settings sections');
+      expect(getComputedStyle(toggle).display).toBe('none');
+      expect(getComputedStyle(screen.getByRole('button', { name: 'Close settings' })).display).not.toBe('none');
+
+      fireEvent.click(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'Organization' }));
+      expect(getComputedStyle(screen.getByRole('button', { name: 'Open settings sections' })).display).toBe('inline-grid');
+    } finally {
+      unmount();
+    }
+  });
+
   it('makes the page inert under the open phone sheet and shuts it on Escape', async () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: query === '(max-width: 640px)',
@@ -613,41 +632,27 @@ describe('Organization settings', () => {
   });
 
   it('saves one kind\'s channels for every device and leaves the other kinds alone', async () => {
-    api.getDigestSchedule.mockResolvedValue({
-      id: 'digest', enabled: true, days: [1], times: [540], timezone: 'Europe/London',
-      deliveryTargets: [], nextRunAt: null, lastDeliveredAt: null,
-    });
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
     api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
     api.updateMyPreferences.mockImplementation(async () => ({ ...DEFAULT_MEMBER_PREFERENCES,
-      notify: { ...DEFAULT_NOTIFICATION_CHANNELS, newThreads: ['push', 'email'] } }));
+      notify: { ...DEFAULT_NOTIFICATION_CHANNELS, newMessages: ['push', 'email'] } }));
     renderSettings();
     fireEvent.click(await within(screen.getByRole('navigation', { name: 'Settings sections' }))
       .findByRole('button', { name: 'Notifications' }));
 
     // jsdom lays nothing out, so the row has no room for a button each and offers its menu.
-    const menu = await screen.findByRole('button', { name: 'How to tell you about new threads' });
+    const menu = await screen.findByRole('button', { name: 'How to tell you about new messages' });
+    // Kinds that announce a Thread, a Breakout or a merge are stored but not offered.
+    for (const retired of ['new threads', 'new breakouts', 'merges']) {
+      expect(screen.queryByRole('button', { name: `How to tell you about ${retired}` })).toBeNull();
+    }
     expect(menu).toHaveTextContent('Push');
     fireEvent.pointerDown(menu, { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: /^Email/u }));
 
     // Only the kind that changed, whole: a stale copy of the others must not be written back.
-    await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalledWith({ notify: { newThreads: ['push', 'email'] } }));
+    await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalledWith({ notify: { newMessages: ['push', 'email'] } }));
     await waitFor(() => expect(menu).toHaveTextContent('Push and Email'));
-  });
-
-  it('keeps Slack on screen for a person whose Slack account is not linked, so they can turn it off', async () => {
-    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
-    api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
-    // The workspace has Slack, but this person has not linked to it, so no connection offers it.
-    api.getConnections.mockResolvedValue([{ id: 'slack-one', connectorType: 'slack', scope: 'workspace',
-      displayName: 'Juno Labs', capabilities: [], status: 'healthy', settingsKind: null }]);
-    renderSettings();
-    fireEvent.click(await within(screen.getByRole('navigation', { name: 'Settings sections' }))
-      .findByRole('button', { name: 'Notifications' }));
-
-    const menu = await screen.findByRole('button', { name: 'How to tell you about mentions' });
-    await waitFor(() => expect(menu).toHaveTextContent('Push and Slack'));
   });
 
   it('saves an edited personal system prompt and offers Save only while it differs', async () => {
@@ -787,11 +792,6 @@ describe('Organization settings', () => {
       connectionId: 'mcp-one', connectionName: 'MCP One', scope: 'workspace',
       serverUrl: 'https://mcp.example.test', authMode: 'oauth', toolPolicy: 'all_tools',
       toolPolicyEditable: true, tools: [], toolsUnavailable: null,
-    });
-    api.getDigestSchedule.mockResolvedValue({
-      id: 'digest', enabled: true, days: [1], times: [540], timezone: 'Europe/London',
-      deliveryTargets: [{ type: 'email', connectionId: null, displayName: 'Adam', status: 'active', lastDeliveredAt: null }],
-      nextRunAt: null, lastDeliveredAt: null,
     });
     if (definition.availability === 'browser') sessionHost.current = 'browser';
     renderSettings();
@@ -1600,7 +1600,7 @@ describe('Organization settings', () => {
 
     const notionCard = (await screen.findByText('Notion')).closest('article');
     expect(notionCard).not.toBeNull();
-    expect(screen.getByText(/organization automations use only the connections explicitly bound to them/iu)).toBeVisible();
+    expect(screen.getByText(/Sidekicks use only the connections explicitly bound to them/iu)).toBeVisible();
     const personalButton = await enabledConnectAction(notionCard!, 'Connect for me');
     fireEvent.click(personalButton);
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
@@ -2725,7 +2725,10 @@ describe('Organization settings', () => {
     expect(await screen.findByRole('heading', { name: 'In this browser' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'On this Mac' })).toBeNull();
     // jsdom has no service worker, which is exactly the unsupported browser.
-    expect(await screen.findByText('This browser cannot show Rally notifications.')).toBeVisible();
+    const reason = await screen.findByText('This browser cannot show Rally notifications.');
+    expect(reason).toBeVisible();
+    // Inside the toggle's card, as a row of it, never loose below it.
+    expect(reason.closest('.settings-list-card')).toBe(screen.getByRole('switch', { name: /Show notifications/ }).closest('.settings-list-card'));
     expect(screen.getByRole('switch', { name: /Show notifications/ })).toBeDisabled();
   });
 
@@ -3349,18 +3352,6 @@ describe('Closing the settings window with Escape', () => {
       customDomains: [], remainingCustomSlots: 7, failureCode: null,
     });
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({}));
-    api.getDigestSchedule.mockResolvedValue({
-      id: '00000000-0000-4000-8000-000000000001',
-      enabled: true,
-      days: [1, 2, 3, 4, 5],
-      times: [9 * 60],
-      timezone: 'Europe/London',
-      deliveryTargets: [
-        { type: 'email', connectionId: null, displayName: 'adam@rally.local', status: 'active', lastDeliveredAt: null },
-      ],
-      nextRunAt: null,
-      lastDeliveredAt: null,
-    });
     getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
   });
 

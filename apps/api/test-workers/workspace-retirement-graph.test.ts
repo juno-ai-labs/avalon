@@ -24,11 +24,11 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { RETIREMENT_REFUSAL_CODE } from "../src/durable-objects/object-retirement";
 import { retireWorkspaceGraph } from "../src/services/workspace-retirement-service";
-import { workspaceDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 
@@ -47,54 +47,6 @@ function freshWorkspaceId() {
   workspaceSequence += 1;
   const suffix = (0xe100 + workspaceSequence).toString(16).padStart(4, "0");
   return asWorkspaceId(`00000000-0000-7000-8000-00000000${suffix}`);
-}
-
-/**
- * The operation table, declared here because this suite's D1 starts empty.
- *
- * The walk writes its receipt on the operation that made the workspace once
- * the graph is closed, which is what the Demos page reads; a workspace with no
- * operation is retired all the same.
- */
-async function declareDemoOperations(): Promise<void> {
-  await TEST_ENV.DB.prepare(
-    `CREATE TABLE IF NOT EXISTS demo_operations (
-       operation_id TEXT PRIMARY KEY,
-       company_name TEXT NOT NULL,
-       presenter_user_id TEXT NOT NULL,
-       pack_version TEXT NOT NULL,
-       cast_json TEXT NOT NULL,
-       workspace_id TEXT UNIQUE,
-       status TEXT NOT NULL,
-       attempt INTEGER NOT NULL,
-       failed_phase TEXT,
-       error_code TEXT,
-       error_message TEXT,
-       ready_at TEXT,
-       retired_at TEXT,
-       created_at TEXT NOT NULL,
-       updated_at TEXT NOT NULL
-     )`,
-  ).run();
-}
-
-async function publishDemo(workspaceId: string): Promise<void> {
-  await declareDemoOperations();
-  await TEST_ENV.DB.prepare(
-    `INSERT INTO demo_operations
-       (operation_id, company_name, presenter_user_id, pack_version, cast_json, workspace_id,
-        status, attempt, ready_at, created_at, updated_at)
-     VALUES (?, 'Alto Capital', ?, 'v1', '{}', ?, 'ready', 1,
-             '2026-09-05T12:05:00.000Z', '2026-09-05T12:00:00.000Z', '2026-09-05T12:05:00.000Z')
-     ON CONFLICT (operation_id) DO NOTHING`,
-  ).bind(`op-${workspaceId}`, ACTOR_ID, workspaceId).run();
-}
-
-async function registerRetiredAt(workspaceId: string): Promise<string | null> {
-  const row = await TEST_ENV.DB.prepare(
-    "SELECT retired_at FROM demo_operations WHERE workspace_id = ?",
-  ).bind(workspaceId).first<{ retired_at: string | null }>();
-  return row?.retired_at ?? null;
 }
 
 function workspaceStub(workspaceId: string): DurableObjectStub<WorkspaceDO> {
@@ -173,37 +125,6 @@ async function seedDirectory(stub: DurableObjectStub<WorkspaceDO>, workspaceId: 
 }
 
 /**
- * A Channel parent's identity and its one Main child, written the way a
- * projection and a reservation leave them. Going through `reserveChild` would
- * drag in this suite's empty D1, and what is under test here is the walk.
- */
-async function seedMainChild(stub: DurableObjectStub<WorkspaceDO>, workspaceId: string): Promise<void> {
-  await runInDurableObject(stub, (instance: WorkspaceDO, state) => {
-    state.storage.sql.exec(
-      `INSERT INTO parent_metadata
-         (parent_id, parent_kind, workspace_id, region, authority_generation, revision,
-          created_at, updated_at)
-       VALUES (?, 'workstream', ?, ?, 1, 1, ?, ?)
-       ON CONFLICT (parent_id) DO NOTHING`,
-      FIRST_ROOM_ID,
-      workspaceId,
-      TEST_ENV.AVALON_REGION,
-      Date.now(),
-      Date.now(),
-    );
-    state.storage.sql.exec(
-      `INSERT OR IGNORE INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at)
-       VALUES (?, ?, 'main', ?, ?)`,
-      FIRST_ROOM_ID,
-      asSubstreamId("0"),
-      ACTOR_ID,
-      Date.now(),
-    );
-    void instance;
-  });
-}
-
-/**
  * The real conversation namespace, counting `retireObject` calls and refusing
  * every one after `allowed` the way an overloaded object does. The overload is
  * the platform's failure and cannot be produced here, so only that call is
@@ -241,14 +162,14 @@ function countingEnv(allowed: number) {
   return { env: proxied, counter };
 }
 
-/** A further breakout under the first Channel, beside its Main child. */
-async function seedChild(stub: DurableObjectStub<WorkspaceDO>, substreamId: string, createdAt: number): Promise<void> {
+/** A further conversation under a Canvas, beside its Chat. */
+async function seedCanvasChild(stub: DurableObjectStub<WorkspaceDO>, canvasId: string, substreamId: string, createdAt: number): Promise<void> {
   await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
     state.storage.sql.exec(
-      `INSERT OR IGNORE INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at)
+      `INSERT OR IGNORE INTO sidekick_children (sidekick_id, substream_id, kind, created_by_user_id, created_at)
        VALUES (?, ?, 'child', ?, ?)`,
-      FIRST_ROOM_ID,
-      asSubstreamId(substreamId),
+      canvasId,
+      substreamId,
       ACTOR_ID,
       createdAt,
     );
@@ -265,7 +186,7 @@ describe("workspace retirement graph", () => {
       retiredAt: Date.now(),
       operationId: OPERATION_ID,
       actorUserId: ACTOR_ID,
-      reason: "demo_replaced",
+      reason: "operator_retirement",
     });
 
     // Both rooms and the automation, captured in one pass. An automation is a
@@ -309,7 +230,7 @@ describe("workspace retirement graph", () => {
       retiredAt: Date.now(),
       operationId: OPERATION_ID,
       actorUserId: ACTOR_ID,
-      reason: "demo_replaced",
+      reason: "operator_retirement",
     });
     // A resumed operation re-enters here. It must find the same graph rather
     // than a second, emptier one read from a directory that now refuses.
@@ -317,7 +238,7 @@ describe("workspace retirement graph", () => {
       retiredAt: Date.now() + 5_000,
       operationId: OPERATION_ID,
       actorUserId: ACTOR_ID,
-      reason: "demo_replaced",
+      reason: "operator_retirement",
     });
     expect(resumed.nodes).toEqual(first.nodes);
 
@@ -355,12 +276,9 @@ describe("workspace retirement graph", () => {
   it("reports an empty workspace closed rather than permanently unfinished", async () => {
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
-    await publishDemo(workspaceId);
-    // A demo whose preparation failed before it seeded anything has no work
-    // streams and no automations, so it records no graph rows. Reading
-    // completeness from the row count made that workspace incomplete on the
-    // first pass and on every pass after it, and its register row could never
-    // be marked retired.
+    // A workspace with no work streams and no automations records no graph
+    // rows. Reading completeness from the row count made it incomplete on
+    // the first pass and on every pass after it.
     await runInDurableObject(stub, (instance: WorkspaceDO, state) => {
       state.storage.sql.exec(
         `INSERT INTO workspace_identity
@@ -380,12 +298,11 @@ describe("workspace retirement graph", () => {
       retiredAt: Date.parse(COMPLETED_AT),
       operationId: OPERATION_ID,
       actorUserId: null,
-      reason: "demo_replaced",
+      reason: "operator_retirement",
     });
 
     expect(receipt.retiredParents).toBe(0);
     expect(receipt.complete).toBe(true);
-    expect(await registerRetiredAt(workspaceId)).toBe(COMPLETED_AT);
   });
 
   it("resumes over a parent that was retired but never receipted", async () => {
@@ -395,7 +312,6 @@ describe("workspace retirement graph", () => {
     // operator saw "incomplete, retire again" forever.
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
-    await declareDemoOperations();
     await seedDirectory(stub, workspaceId);
     const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" };
     await stub.beginWorkspaceRetirement(tombstone);
@@ -411,37 +327,46 @@ describe("workspace retirement graph", () => {
     expect(receipt.parents).toBe(4);
   });
 
-  it("leaves a parent whose child could not be closed unreceipted, names why, and finishes on the next pass", async () => {
-    // The one outcome that is a failure, and the only path that produces a
-    // non-empty `failed`, the receipt shape the route and the Ace page render.
+
+  it("closes a Canvas's Chat with the Organization", async () => {
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
-    await declareDemoOperations();
     await seedDirectory(stub, workspaceId);
-    await seedMainChild(stub, workspaceId);
-    const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" } as const;
+    const canvasId = "00000000-0000-7000-8000-00000000e501";
+    await stub.canvasCreate({ workspaceId, canvasId, title: "Plan", createdByUserId: ACTOR_ID, authorityGeneration: 1 });
+    const chat = TEST_ENV.SUBSTREAM_AGENTS.get(TEST_ENV.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName(TEST_ENV.AVALON_REGION, workspaceId, canvasId, "0")));
 
-    const failed = await retireWorkspaceGraph(countingEnv(0).env, { workspaceId, ...tombstone });
-    expect(failed.complete).toBe(false);
-    expect(failed.remaining).toBe(1);
-    expect(failed.failed).toEqual([
-      { parentKind: "workstream", parentId: FIRST_ROOM_ID, error: "durable_object_overloaded" },
-    ]);
+    const receipt = await retireWorkspaceGraph(TEST_ENV, { workspaceId, retiredAt: Date.now(), operationId: OPERATION_ID,
+      actorUserId: null, reason: "operator_retirement" });
 
-    const resumed = await retireWorkspaceGraph(TEST_ENV, { workspaceId, ...tombstone });
-    expect(resumed.failed).toEqual([]);
-    expect(resumed.retiredChildren).toBe(1);
-    expect(resumed.complete).toBe(true);
+    expect(receipt.failed).toEqual([]);
+    expect(receipt.complete).toBe(true);
+    expect((await stub.workspaceRetirementProgress()).nodes)
+      .toContainEqual({ parentKind: "canvas", parentId: canvasId, retired: true });
+    // The Chat's own object holds the tombstone, so nothing reaches it again.
+    expect(await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ reason: string }>(
+      "SELECT reason FROM object_retirement WHERE id = 1").toArray())).toEqual([{ reason: "operator_retirement" }]);
   });
 
   it("keeps the children a cut-off pass closed, and the next pass wakes only the rest", async () => {
     // Cut off after one child: the next object call does not come back.
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
-    await declareDemoOperations();
     await seedDirectory(stub, workspaceId);
-    await seedMainChild(stub, workspaceId);
-    await seedChild(stub, "00000000-0000-7000-8000-00000000e501", Date.now() + 1);
+    const canvasId = "00000000-0000-7000-8000-00000000e502";
+    await stub.canvasCreate({ workspaceId, canvasId, title: "Plan", createdByUserId: ACTOR_ID, authorityGeneration: 1 });
+    // A second conversation under the Canvas, after its Chat.
+    await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec(
+        `INSERT OR IGNORE INTO sidekick_children (sidekick_id, substream_id, kind, created_by_user_id, created_at)
+         VALUES (?, ?, 'child', ?, ?)`,
+        canvasId,
+        "00000000-0000-7000-8000-00000000e601",
+        ACTOR_ID,
+        Date.now() + 1,
+      );
+    });
 
     const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" } as const;
 
@@ -464,11 +389,12 @@ describe("workspace retirement graph", () => {
   it("closes one parent's children several at a time, never more than the limit", async () => {
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
-    await declareDemoOperations();
     await seedDirectory(stub, workspaceId);
-    await seedMainChild(stub, workspaceId);
-    await seedChild(stub, "00000000-0000-7000-8000-00000000e511", Date.now() + 1);
-    await seedChild(stub, "00000000-0000-7000-8000-00000000e512", Date.now() + 2);
+    const canvasId = "00000000-0000-7000-8000-00000000e510";
+    await stub.canvasCreate({ workspaceId, canvasId, title: "Plan", createdByUserId: ACTOR_ID, authorityGeneration: 1 });
+    // Two more conversations under the Canvas, beside its Chat.
+    await seedCanvasChild(stub, canvasId, "00000000-0000-7000-8000-00000000e511", Date.now() + 1);
+    await seedCanvasChild(stub, canvasId, "00000000-0000-7000-8000-00000000e512", Date.now() + 2);
     const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" } as const;
 
     const tracked = countingEnv(Number.POSITIVE_INFINITY);
@@ -478,54 +404,5 @@ describe("workspace retirement graph", () => {
     expect(receipt.retiredChildren).toBe(3);
     expect(receipt.complete).toBe(true);
     expect(tracked.counter.maxInFlight).toBe(2);
-  });
-
-  it("closes children before parents and reports the pass", async () => {
-    const workspaceId = freshWorkspaceId();
-    const stub = workspaceStub(workspaceId);
-    await publishDemo(workspaceId);
-    await seedDirectory(stub, workspaceId);
-    // A real child on one of the parents. Without it every `childrenForRetirement`
-    // answers `missing`, `retiredChildren` is zero, and the test named for
-    // closing children before parents closes no children at all.
-    await seedMainChild(stub, workspaceId);
-
-    const receipt = await retireWorkspaceGraph(TEST_ENV, {
-      workspaceId,
-      retiredAt: Date.parse(COMPLETED_AT),
-      operationId: OPERATION_ID,
-      // An internal actor, never the author of what is being closed. The spike
-      // impersonated an automation's author to make its transitions go through,
-      // which put a person's name on work they did not do.
-      actorUserId: null,
-      reason: "demo_replaced",
-    });
-
-    expect(receipt.failed).toEqual([]);
-    expect(receipt.parents).toBe(4);
-    expect(receipt.retiredParents).toBe(4);
-    // The child was found and closed, which is only possible because it was
-    // asked for before its parent was tombstoned.
-    expect(receipt.retiredChildren).toBe(1);
-    expect(receipt.complete).toBe(true);
-    expect(receipt.remaining).toBe(0);
-
-    // Every parent is closed, and the workspace with them.
-    const progress = await stub.workspaceRetirementProgress();
-    expect(progress.nodes.every((node) => node.retired)).toBe(true);
-    expect((await stub.objectRetirementState()).retired).toBe(true);
-
-    // Re-running a finished retirement is a no-op rather than a second walk.
-    const again = await retireWorkspaceGraph(TEST_ENV, {
-      workspaceId,
-      retiredAt: Date.parse(COMPLETED_AT),
-      operationId: OPERATION_ID,
-      actorUserId: null,
-      reason: "demo_replaced",
-    });
-    expect(again.retiredParents).toBe(0);
-    expect(again.complete).toBe(true);
-    // The register's retired instant is the first pass's, not the replay's.
-    expect(await registerRetiredAt(workspaceId)).toBe(COMPLETED_AT);
   });
 });

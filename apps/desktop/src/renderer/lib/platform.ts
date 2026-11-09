@@ -590,21 +590,7 @@ const browserBridge: RallyDesktopBridge = {
   onEmbeddedBrowserHostRequest() {
     return () => undefined;
   },
-  async openBrowserImport() {
-    throw new Error('The import browser needs the Rally desktop application.');
-  },
-  async getBrowserImportContext() {
-    return null;
-  },
-  onBrowserImportContextChanged() {
-    return () => undefined;
-  },
   onOrganizationListRefreshRequested() {
-    return () => undefined;
-  },
-  async completeBrowserImport() {},
-  async reportBrowserImport() {},
-  onBrowserImportProgress() {
     return () => undefined;
   },
   async exportMessage() {
@@ -698,14 +684,10 @@ const browserBridge: RallyDesktopBridge = {
     }
     return opened.length > 1;
   },
-  // A tab cannot keep a second window, so Sidekicks is a route of this one,
-  // as Settings is. See `window-surface.ts`.
-  async openSidekicks(requested) {
-    window.location.hash = requested ? `#/sidekicks/${encodeURIComponent(requested)}` : '#/sidekicks';
-  },
-  // The library is a route of this tab, so opening a Thread is navigating to it.
-  async openThread(workstreamId) {
-    window.location.hash = `#/workstreams/${encodeURIComponent(workstreamId)}`;
+  // Settings is a route of this tab, so opening a Sidekick from it is
+  // navigating to the Sidekick. See `window-surface.ts`.
+  async openSidekick(sidekickId) {
+    window.location.hash = `#/sidekicks/${encodeURIComponent(sidekickId)}`;
   },
   async openSettings(section) {
     const target = section ? `/settings?section=${encodeURIComponent(section)}` : '/settings';

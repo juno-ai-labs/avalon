@@ -8,7 +8,7 @@ covers the shared capability that makes that decision once: a SQLite-backed list
 of scheduled alarms per object, and a base class that keeps the object's single
 alarm pointed at the earliest thing on it.
 
-Read this before adding a wake reason to `WorkspaceDO` or `SubstreamAgent`
+Read this before adding a wake reason to `WorkspaceDO` or `AgentLoopDO`
 (a hosted Sidekick's entries are `WorkspaceDO`'s), before changing when any of
 them fires, and before giving another object its own alarm. The objects themselves — their
 hierarchy, schemas, sockets, and effects — belong to
@@ -47,9 +47,8 @@ selection and the event cutoffs that unchanged rows preserve.
 | `apps/api/src/durable-objects/workspace-do.ts` | Adopts it for a workspace: due schedules, resource watches, maintenance passes, Terminal deadlines, the opportunity/ranking product pass, and the three Space phases. Owns `refreshSchedule`. |
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, and `merge_suggestion` entries retain an incoming merged result through classification and drafting. Execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
-| `apps/api/src/durable-objects/hosted-parent.ts` | Channel and Space parents, which share the `WorkspaceDO` alarm: the `parent_outbox` lane, whose deadline stays derived, stored `parent_participant_projection` deliveries retried per parent/conversation/user/revision, resumable `parent_participant_migration` handoffs, and `parent_invitation_delivery`. The same alarm imports pending legacy parents and drains due breakout effects. See [`hosted-conversation-parents.md`](hosted-conversation-parents.md). |
-| `apps/api/src/durable-objects/hosted-sidekick.ts` | A hosted Sidekick's entries in `WorkspaceDO`'s store, each keyed `<sidekickId>:<key>`: `automation_schedule`, `automation_run`, `sidekick_review` (one per Sidekick, armed by run finishes; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), `sidekick_memory_tables`, and the delegation kinds. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | Adopts it for a conversation's agent: `agent_timer` entries index `workstream_wakeups`; one `terminal_observation` entry indexes its Terminal sandbox's `next_observe_at`; the retired `merge_suggestion` kind is named only so a leftover entry can be recognised. Execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | A hosted Sidekick's entries in `WorkspaceDO`'s store, each keyed `<sidekickId>:<key>`: `automation_schedule`, `automation_run`, `sidekick_review` (one per Sidekick, armed by run finishes; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), `sidekick_run_row` (`<sidekickId>:<runId>`, armed by migration 136's triggers on `sidekick_runs`, handled by `projectRunRow`), `sidekick_memory_tables`, and the delegation kinds. |
 
 ### Two kinds of wake reason
 
@@ -67,17 +66,13 @@ takes the earliest of both:
   keep-alive lease. WorkspaceDO's socket first-frame watch is one too: the
   earliest instant a socket this instance accepted should have spoken by,
   leaving out sockets already judged and held below the reset threshold
-  ([`realtime-sockets.md`](realtime-sockets.md) owns it). WorkspaceDO's Space
-  cutover is another: the
-  `space_bootstrap` row's `not_before`, which a fresh migration leaves at the
-  epoch on purpose — an Organization whose hierarchy is pending has work due
-  immediately, and that is how the fleet migration starts without anybody
-  signing in ([`spaces.md`](spaces.md) owns it). SubstreamAgent includes both
+  ([`realtime-sockets.md`](realtime-sockets.md) owns it). `AgentLoopDO` includes both
   regional-effect delivery and semantic-realtime publication outboxes
   independently, plus separate candidates
-  for executable loop work, the oldest externally unsettled terminal run, and
-  its own Terminal sandbox's next provider observation
-  ([`terminal-workspaces.md`](terminal-workspaces.md) owns it).
+  for executable loop work and the oldest externally unsettled terminal run.
+  Its Terminal sandbox's next provider observation is a stored
+  `terminal_observation` entry instead, so a failing check backs off behind
+  its own gate ([`terminal-workspaces.md`](terminal-workspaces.md) owns it).
   Every independent lane is returned so an overdue one cannot
   hide a real future deadline during the pre-work recovery arm.
 
@@ -169,7 +164,7 @@ before a full re-arm.
 
 The first arm defaults to the bounded recovery re-derivation and the second to
 the exact post-work answer. Both are hooks for one case: an object whose alarm
-*is* the worker for a reason it derives. `SubstreamAgent` is the one — its
+*is* the worker for a reason it derives. `AgentLoopDO` is the one — its
 execution lane is derived from the persistent-loop singleton, the pending input
 the loop can actually take (`nextActivationInput`, not merely the oldest one:
 a room parked on an open question has input it may not hand Bind, and waking on
@@ -252,7 +247,7 @@ post-drain refresh reconcile all four kinds:
 | `schedule` | schedule id | `schedules`, enabled with a `next_run_at` |
 | `watch` | watch id | `resource_watches`, enabled with a `next_poll_at` |
 | `maintenance` | task name | the oldest row of whichever tables that task still owes work on |
-| `terminal` | work-stream id | `channels.next_terminal_action_at` |
+| `terminal` | conversation id | `channels.next_terminal_action_at` |
 
 Runtime writes map `schedules` to `schedule`, `resource_watches` to `watch`,
 and `resources` to both `maintenance` and `watch` (deletion cascades).
@@ -281,6 +276,7 @@ itself:
 | Hand one admitted occurrence to provisioning, which opens its child conversation and starts its loop | `automation_run` (stored) | the run id |
 | Materialize the memory tables an accepted revision declares | `sidekick_memory_tables` (stored) | the revision |
 | Ask the wizard for a scheduled self-review, and send the request again until the wizard reports it admitted | `sidekick_review` (stored) | the one `review` key; armed by the tenth run finish, cancelled by pause, archive, an accepted revision and the delivery report ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)) |
+| Write one run, as it stands, into its row in the Sidekick's shared conversation | `sidekick_run_row` (stored) | the run id; armed in SQL by WorkspaceDO migration 136's triggers on every insert into `sidekick_runs` and every change to its state, summary or step count, each at `MAX(updated_at, due_at + 1)` so a change during a delivery survives the drain's delete; re-armed by `replayRunRows` with a `{"replay":true}` payload that forces the write; handled by `projectRunRow`, which reads the run at delivery ([`automation-lifecycle.md`](automation-lifecycle.md#runs-in-the-shared-conversation)) |
 
 **A handler that wants to run again later moves its own entry.** The drain
 deletes an entry at the instant that ran whatever its handler returned, and
@@ -316,7 +312,7 @@ other entries.
   uses the base with an explicit candidate override described under *Firing*:
   the execution and external-settlement lanes are derived reasons whose worker
   is this alarm. Two kinds
-  of call site still arm directly, and both are deliberate. A SubstreamAgent
+  of call site still arm directly, and both are deliberate. An `AgentLoopDO`
   arms immediately after committing a pending loop input, an unlinked execution
   receipt, or the mailbox reservation that precedes a prepared input, and
   `WorkstreamObjectStore.enqueueRegionalEffect` does the same after committing
@@ -443,7 +439,7 @@ time moved, go reconcile" entry points.
   The gate bounds the damage; the fix is always in the source — a reap must
   remove everything the due-time expression counts.
 - **A derived lane reports work its pass declines.** There is no entry to gate,
-  so before 2026-11-03 nothing stopped it: a `SubstreamAgent` whose background
+  so before 2026-11-03 nothing stopped it: a `AgentLoopDO` whose background
   agent was stopped with a message queued reported loop work at `now`, the
   claim refused it, and the alarm fired about five times a second for at least
   a week, with nothing logged. The idle hold catches the shape for every lane:
@@ -563,7 +559,13 @@ a failing target a free immediate attempt.
   runtime does not know an alarm is in progress and will deliver a real one on
   top of it — which re-enters `alarm()` and drains entries the first pass had
   not settled yet, something that cannot happen in production. Drive the drain
-  directly, or park the alarm first.
+  directly, or park the alarm first. The overlap is not always only a test
+  artefact, though: the extra Sidekick schedule run it produced also exposed a
+  production race, an entry whose schedule had moved its next occurrence into
+  the future while an earlier entry in the same pass was awaited, and
+  `executeSchedule` now refuses an occurrence that has not arrived. When a
+  forced pass changes an outcome, ask whether one real pass interleaved with an
+  RPC could change it the same way.
 - Trap: an alarm armed for `now + 1` after pending-input or execution-receipt
   admission can fire while the test is still setting up, and the loop it drains
   can settle the very rows the next assertion reads. Park it in the *same*
@@ -578,7 +580,11 @@ In Workers Logs, select the `WorkspaceDO` namespace and filter
 `event = workspace_scheduled_alarm_work_completed` with
 `crossed_recovery_horizon = true`. Group by `slowest_phase` and then
 `slowest_alarm_kind`; the latter is present only when the slowest phase is a
-stored target. Open the enclosing invocation or trace to see the ordered phase
+stored target. A stored target's kind is named when `runScheduledAlarm`
+dispatches it (`WORKSPACE_DISPATCHED_ALARM_KINDS`, built from the
+dispatcher's own constants) and is `unknown` otherwise; a hand-kept copy of
+that list once fell behind and logged every Sidekick run notice as
+`unknown`. Open the enclosing invocation or trace to see the ordered phase
 rows and Cloudflare's automatic binding spans beneath the custom phase span. If
 multiple phases tie at the maximum millisecond duration, the summary names the
 first one that completed; inspect the completion rows to see every tied phase.
@@ -591,7 +597,7 @@ not join on workspace ids or alarm keys within these phase rows: neither is
 emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
-A `SubstreamAgent`'s `substream_scheduled_alarm_failed` and `_stalled` rows
+An `AgentLoopDO`'s `substream_scheduled_alarm_failed` and `_stalled` rows
 name the conversation in `substream_id` beside `workstream_id`.
 `substream_alarm_idle_held` and `workspace_alarm_idle_held` name the object
 and the instant it was held to; they cannot name the lane, so read each

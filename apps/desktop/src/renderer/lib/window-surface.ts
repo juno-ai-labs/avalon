@@ -2,20 +2,13 @@ import { useCallback } from 'react';
 import { useShellCapabilities } from './collaboration-session';
 
 /**
- * Surfaces the Mac app opens in a window of their own: Settings, and the
- * Sidekicks library with each Sidekick's screen. A browser tab cannot open a
- * window it may keep, so there each is a route of the main window instead, and
- * the shell gives it the whole tab, as the window would have, rather than a
- * pane beside the sidebar. One list, so a surface added here is both.
- *
- * `/automations/:id` is a Sidekick's screen under its older name; links and
- * the sidebar's "run" still open it.
+ * Surfaces the Mac app opens in a window of their own: Settings. A browser
+ * tab cannot open a window it may keep, so there it is a route of the main
+ * window instead, and the shell gives it the whole tab, as the window would
+ * have, rather than a pane beside the sidebar.
  */
 export function isWindowSurfaceRoute(pathname: string): boolean {
-  return pathname === '/settings'
-    || pathname === '/sidekicks'
-    || pathname.startsWith('/sidekicks/')
-    || pathname.startsWith('/automations/');
+  return pathname === '/settings';
 }
 
 /**

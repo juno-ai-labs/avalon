@@ -445,7 +445,7 @@ function workflowInput(): WorkstreamWorkflowInput {
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
-    parentKind: "workstream",
+    parentKind: "canvas",
     parentId: WORKSTREAM_ID,
     loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
     harnessRunId: HARNESS_RUN_ID,
@@ -502,6 +502,8 @@ function automationConversationInput(): WorkstreamWorkflowInput {
     activityId: null,
     executionPrincipal: { type: "user", userId: USER_ID },
     reason: "Automation chat test",
+    // The authoring tools are the wizard's turn's, in the shared conversation.
+    sidekickWizard: true,
   };
 }
 
@@ -519,7 +521,7 @@ function manualDraft(name: string): AutomationDraft {
     recommendedPlugins: [],
     memoryTables: [],
     customTools: [],
-    suggestedScope: "workstream",
+    suggestedScope: "workspace",
     followUpQuestion: null,
     elicitation: null,
     ready: true,
@@ -539,9 +541,7 @@ function automationDetail(
     name,
     description: `${name}, on request.`,
     emailAddress: null,
-    scope: "workstream",
-    owningWorkstreamId: WORKSTREAM_ID,
-    owningThread: null,
+    scope: "workspace",
     status: "active",
     nextRunAt: null,
     lastRunAt: null,
@@ -597,8 +597,6 @@ function runDefinition(database: ToolSelectionDatabase): AutomationRunDefinition
       database.automationBindings.map((binding) => [binding.capability, binding.connection_id]),
     ),
     scope: "personal",
-    owningWorkstreamId: null,
-    owningSubstreamId: asSubstreamId("0"),
     runAsUserId: USER_ID,
     modelOverride: null,
     trigger: { kind: "manual", requestedByUserId: USER_ID },
@@ -719,8 +717,8 @@ describe("connector tools selected for harness runs", () => {
         "start_agent", "list_agents", "send_message", "reply_to_message", "stop_agent",
       ]));
     expect(selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
-      ?.tools.map((tool) => tool.definition.name)).toEqual(["list_skill_recommendations", "recommend_skill", "unrecommend_skill",
-        "sidekick_my_delegations_list", "sidekick_delegates_list", "sidekick_set_delegation"]);
+      ?.tools.map((tool) => tool.definition.name)).toEqual([
+        "my_delegations_list", "delegates_list", "set_delegation"]);
     expect(selected.tools.some((tool) => tool.definition.name === "run_subagent")).toBe(false);
   });
 
@@ -733,8 +731,8 @@ describe("connector tools selected for harness runs", () => {
     const worker = await __integrationTesting.loadHarnessTools(runtimeEnv, { ...childWorkflowInput(automationConversationInput()),
       automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } });
     expect(room.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
-      ?.tools.map((tool) => tool.definition.name)).toEqual(["list_skill_recommendations", "recommend_skill", "unrecommend_skill",
-        "sidekick_my_delegations_list", "sidekick_delegates_list", "sidekick_set_delegation"]);
+      ?.tools.map((tool) => tool.definition.name)).toEqual([
+        "my_delegations_list", "delegates_list", "set_delegation"]);
     // The wizard's background agent reads runs for it; a run's delegation worker does not.
     const sidekicks = child.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
     expect(sidekicks?.tools.map((tool) => tool.definition.name))

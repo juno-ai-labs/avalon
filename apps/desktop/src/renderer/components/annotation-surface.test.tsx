@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AnnotationDraftProvider, AnnotationChips, MessageAnnotations, useAnnotationDraft } from './artifact-annotations';
 import { sourceSelectionPoint,annotationDomRange } from '../lib/annotation-source';
@@ -8,7 +8,7 @@ const resourceId='00000000-0000-7000-8000-0000000000a1';
 /** The per-document key the surface put in the frame's script URL. */
 const keyOf=(frame:HTMLIFrameElement):string=>/annotation-frame\.js\?key=([0-9a-f]+)/u.exec(frame.getAttribute('srcdoc')??'')?.[1]??'';
 function Observe():React.JSX.Element {const draft=useAnnotationDraft();return <><AnnotationChips /><button onClick={()=>draft?.clearAccepted(draft.pins)}>Accept message</button><output data-testid="pins">{JSON.stringify(draft?.selections.map(p=>p.annotation))}</output><output data-testid="pin-ids">{draft?.pins.map((p)=>p.id).join(',')}</output></>;}
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe('annotation source picker',()=>{
   it('shows website words instead of markup in saved annotations',()=>{
     render(<MessageAnnotations content={{kind:'artifact_annotations',annotations:[{target:{resourceId,version:1,locator:{type:'element',css:'button',box:{x:0,y:0,w:1,h:1},visibleText:'Start free'}},content:{exact:'<button class="cta">Start free</button>',source:'rendered',before:'',after:'',truncated:false},comment:'Make this shorter'}]}} />);
@@ -127,6 +127,24 @@ describe('annotation source picker',()=>{
     expect(screen.getByLabelText('Pinned comment')).toHaveTextContent('Make this monthly');
     fireEvent.click(screen.getByRole('button',{name:'Remove pin 1'}));
     expect(screen.getByTestId('pins')).toHaveTextContent('[]');
+  });
+  it('moves the open editor to its selection when the document reflows under it',()=>{
+    const callbacks:Array<()=>void>=[];
+    vi.stubGlobal('ResizeObserver',class{constructor(callback:()=>void){callbacks.push(callback);}observe(){}disconnect(){}});
+    render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={4} name="Pricing.md" mimeType="text/markdown" text={'# Plans\n\n- **Starter**: $12 per seat.\n- Team: $24.\n'} /></AnnotationDraftProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
+    const item=screen.getByText('Starter').closest('li')!;
+    fireEvent.mouseMove(item);fireEvent.click(item,{detail:1,clientX:10,clientY:10});
+    const editor=()=>screen.getByRole('dialog',{name:'Comment on selection'});
+    const before=editor().style.left;
+    // The panel expands: the selection is drawn somewhere else now.
+    vi.spyOn(Element.prototype,'getBoundingClientRect').mockReturnValue(new DOMRect(200,300,100,20));
+    if(typeof Range!=='undefined')vi.spyOn(Range.prototype,'getBoundingClientRect').mockReturnValue(new DOMRect(200,300,100,20));
+    act(()=>{for(const callback of callbacks)callback();});
+    expect(editor().style.left).toBe(before);
+    act(()=>{for(const callback of callbacks)callback();});
+    expect(editor().style.left).toBe('300px');
+    expect(editor().style.top).toBe('300px');
   });
   it('adds a selection to the input only when Send confirms a nonempty comment',()=>{
     render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Note.txt" mimeType="text/plain" text="Selected words" /><Observe /></AnnotationDraftProvider>);

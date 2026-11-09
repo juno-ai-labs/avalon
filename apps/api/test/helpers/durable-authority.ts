@@ -1,4 +1,3 @@
-import { ParticipantAuthorityTransferStorage } from "../../src/durable-objects/participant-authority-transfer";
 import { DatabaseSync } from "node:sqlite";
 import { vi } from "vitest";
 import type { WorkstreamAppearance } from "@rally/contracts";
@@ -879,21 +878,6 @@ export function testIdentityOperationStub(
  * recorded instead of executed. Pair with
  * {@link openWorkstreamAuthorityForTest}.
  */
-/** A query fixture's already-delivered authority projection. Runtime transfer/recovery
- * is exercised in test-workers; these Node cases exercise real object SQL. */
-export function seedProjectedParticipants(storage: DurableObjectStorage): void {
-  const authority = new ParticipantAuthorityTransferStorage(storage);
-  if (authority.currentTransferId()) return;
-  const transferId = crypto.randomUUID();
-  const prepared = authority.prepare(transferId);
-  authority.commit(transferId);
-  for (const [index, person] of prepared.participants.entries()) authority.applyProjection({
-    transferId, userId: person.userId, revision: index + 1, active: true,
-    reason: person.reason === "creator" ? "creator" : "explicit", addedByUserId: person.addedByUserId,
-    changedAt: person.addedAt,
-  });
-}
-
 export function testSubstreamAgentsBinding(
   database: DatabaseSync,
   options: SubstreamAgentsStubOptions = {},
@@ -929,7 +913,6 @@ export function testSubstreamAgentsBinding(
       transactionSync: (body: () => unknown) => body(),
       sql: objectSqlStorage(store),
     });
-    seedProjectedParticipants(storage);
     return new WorkstreamObjectProductService(
       storage,
       new WorkstreamObjectStore(storage, "test-substream-binding", "global"),
@@ -1523,17 +1506,10 @@ export function testHarnessRunPortFactory(database: DatabaseSync): (
 
 /**
  * One conversation's resource links over its object database, as every
- * visibility read takes them. `channel` is the Channel's Main object, asked
- * only when `database` is a Breakout's.
+ * visibility read takes them.
  */
-export function testConversationResourceLinks(
-  database: DatabaseSync,
-  channel?: DatabaseSync,
-): ConversationResourceLinks {
-  return conversationResourceLinks(testResourcePort(database), () => {
-    if (!channel) throw new Error("This conversation inherited links from a Channel the test did not provide");
-    return testResourcePort(channel);
-  });
+export function testConversationResourceLinks(database: DatabaseSync): ConversationResourceLinks {
+  return conversationResourceLinks(testResourcePort(database));
 }
 
 /** The same port as a factory, for a caller that takes one. */

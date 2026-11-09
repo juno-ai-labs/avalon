@@ -1,36 +1,21 @@
-import { WorkspaceSidekickActivityEventSchema, type SidekickActivityTarget } from "@rally/contracts";
 import { WorkspaceConversationViewEventSchema, type WorkspaceConversationViewEvent } from '@rally/contracts/conversation-view';
-import { MERGE_CHANNELS_QUERY_KEY } from './use-merge-channels';
 import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
-  WorkspaceSpaceConversationsEventSchema,
-  WorkspaceSpaceSnapshotEventSchema,
-  WorkspaceNavigationStateEventSchema,
+  WorkspaceActivityListEventSchema,
+  WorkspaceCanvasListEventSchema,
   WorkspaceSidebarListEventSchema,
-  WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
-  WorkspaceReachChangedEventSchema,
   WorkspaceResourceVersionsEventSchema,
-  WorkspaceAccessRequestsEventSchema,
   WorkspaceSocketSyncEventSchema,
-  WorkspaceChannelRailsEventSchema,
-  WorkspaceSpaceChannelsEventSchema,
-  WorkspaceSocketClientEventSchema,
-  CHANNEL_RAILS_NAMED_LIMIT,
-  WorkspaceWorkstreamPageEventSchema,
-  WorkspaceWorkstreamStateEventSchema,
   WorkstreamIdSchema,
   type Region,
   type WorkstreamId,
-  type SpaceDirectory,
   type WorkspaceSidebar,
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
-  type WorkspaceWorkstreamPageEvent,
-  type WorkspaceSpaceChannelsEvent,
   safeParseSocketEvent,
 } from "@rally/contracts";
 import type { TelemetryEventProperties } from '@rally/contracts/telemetry';
@@ -52,46 +37,18 @@ import {
   useState,
   type PropsWithChildren,
 } from 'react';
-import { ApiError, mapAutomationSummary, mapWorkstreamSummary, type RallyApi } from './api';
-import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
-import { applyChannelViewerState } from './channel-viewer-state';
-import { applyChannelRails, hasRailWaterline, holdsChannelRail, nextChannelRailRequest, settleUnanswered } from './channel-rails';
+import { ApiError, mapAutomationSummary, type RallyApi } from './api';
 import { retainConversationParents } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
 import { applyPushedOrganizationUsage, organizationUsageQueryKey } from './organization-usage';
 import { desktopBridge } from './platform';
-import {
-  SPACES_QUERY_KEY,
-  INACTIVE_SPACES_QUERY_KEY,
-  SPACES_READY_QUERY_KEY,
-  PERSONAL_ORDER_QUERY_KEY,
-  PINNED_ORDER_QUERY_KEY,
-  SIDEBAR_LIST_QUERY_KEYS,
-  applyNavigationState,
-  applyVersionedSpaceSnapshot,
-  CHANNEL_FEEDS_QUERY_KEY,
-  applyVersionedSidebarList,
-  CHANNEL_STATS_QUERY_KEY,
-  MY_THREADS_QUERY_KEY,
-  ACTIVITY_QUERY_KEY,
-  channelFeedQueryKey,
-} from './sidebar-list-store';
+import { SIDEBAR_LIST_QUERY_KEYS, applyVersionedSidebarList } from './sidebar-list-store';
 import { applyResourceHeads, followResourceHeads } from './resource-heads';
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { reportTelemetryProductIntent, telemetryJourneyDuration, uuidV7 } from './telemetry';
-import type { WorkstreamSummary } from './types';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { memberPreferencesQueryKey } from './use-member-preferences';
-import { accessRequestsQueryKey, CONVERSATION_ACCESS_RECOVERY_QUERY_KEY, refreshConversationAccessPreviews } from './access-requests';
-import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
-import {
-  applyVersionedWorkstreamState,
-  applyWorkspaceWorkstreamFields,
-  workstreamSummaryState,
-  WORKSTREAM_STATE_WATERLINES_KEY,
-  WORKSPACE_DIRECTORY_WATERLINES_KEY,
-} from './workstream-state-store';
-import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { hydrateCanvasDirectory, mirrorCanvasDirectory } from './canvas-directory-cache';
 import { retainQueryData } from './retain-query-data';
 import { isSocketTicketRequestTimeoutError } from './socket-ticket-request';
 import { logWarn } from '../../common/logger';
@@ -138,21 +95,6 @@ function reportSocketContractSkew(
   }
 }
 
-type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
-
-interface PendingRailRequest {
-  resolve: (named: Set<string>) => void;
-  reject: (error: Error) => void;
-  timeout: number;
-  /** Every Channel a frame of the answer named, in any of its three lists. */
-  named: Set<string>;
-}
-
-interface PendingSpaceRequest {
-  resolve: (answer: WorkspaceSpaceChannelsEvent) => void;
-  reject: (error: Error) => void;
-  timeout: number;
-}
 type WorkspaceSocketApi = Pick<RallyApi, 'getWorkspaceSocketTicket'> & Partial<Pick<RallyApi, 'confirmSocketTicket'>>;
 export type WorkspaceSocketState = WorkspaceSyncConnectionState;
 
@@ -162,7 +104,7 @@ export type WorkspaceSocketState = WorkspaceSyncConnectionState;
  * - `publish`: the main window. It holds the socket and tells main what it
  *   hears — its connection state and each topic change — and detaches when
  *   it unmounts with no successor.
- * - `consume`: the Settings and Sidekicks windows. Each holds no socket while main reports any
+ * - `consume`: the Settings window. It holds no socket while main reports any
  *   publisher, and applies what is relayed for its own Organization through
  *   the same receivers a socket would. With no publisher (the main window
  *   closed, crashed, reloading or fallen into the error boundary) it dials its
@@ -186,90 +128,39 @@ function publishToMain(publication: WorkspaceSyncPublication): void {
  */
 let mountedRelayPublisher: object | null = null;
 
-/** One page of the work-stream directory, as every caller here receives it. */
-export interface WorkstreamPage {
-  items: WorkstreamSummary[];
-  nextCursor: string | null;
-}
-
 /**
- * What the last connect payload established, for the surfaces that page beyond
- * it.
- *
- * `generation` counts payloads rather than identifying one: a paging hook needs
- * to know that a *new* sidebar arrived, not which. `nextCursor` is the
- * directory's position after the page the payload carried.
+ * What the last connect payload established. `generation` counts payloads
+ * rather than identifying one: a surface needs to know that a *new* sidebar
+ * arrived, not which.
  */
 export interface SidebarConnect {
   generation: number;
-  nextCursor: string | null;
-  /** This connection has delivered Space authority, not only the compatible sidebar fields. */
-  spacesLive: boolean;
-  /**
-   * The payload carried no Channel rows: the directory is loaded by walking
-   * the Spaces (`walkSpaceChannels`), not by paging `list_workstreams`.
-   */
-  channelsBySpace?: boolean;
-}
-
-/**
- * A correlated directory page awaiting its answer.
- *
- * Only pages are requested now — the sidebar's first screen arrives unasked on
- * subscribe. What is left is what a person's own action asked for: scrolling
- * past the first page, and turning Debug enabled on to widen the list.
- */
-interface PendingDirectoryRequest {
-  command: ListWorkstreamsCommand;
-  resolve: (page: WorkstreamPage) => void;
-  reject: (error: Error) => void;
-  timeout: number;
 }
 
 interface WorkspaceSocketContextValue {
-  watchSidekickActivity(target: SidekickActivityTarget): () => void;
   requestConversationView(parentId: string, substreamId: string,
     receive: (event: WorkspaceConversationViewEvent) => void): () => void;
   state: WorkspaceSocketState;
   topicWaterlines: Readonly<Partial<Record<WorkspaceSyncTopic, number>>>;
   presenceUserIdsByWorkstream: Readonly<Record<string, readonly string[]>>;
   setForegroundWorkstreamId(workstreamId: string | null): void;
-  listWorkstreams(input: {
-    limit: number;
-    before?: string;
-    includeSystem: boolean;
-  }): Promise<WorkstreamPage>;
   /** The last sidebar the server sent unasked, or null before the first one. */
   sidebarConnect: SidebarConnect | null;
   /**
-   * Ask every Space for its Channel rows, and their rails, a page at a time,
-   * writing each page into the directory as it lands. The Space given to
-   * `prioritizeSpace` (else the Channel in front's) is asked alone; once its
-   * first page is in, every other Space is asked at once.
-   *
-   * Resolves with every Channel id the walk returned, or `null` when this
-   * connection's sidebar carried Channel rows and there is nothing to walk.
-   * Rejects once `signal` aborts, before asking for another page.
+   * Mark all seen: every Activity item recorded until now. Answered by the
+   * Activity push; sent only on a subscribed socket this window holds, and a
+   * no-op while it has none.
    */
-  walkSpaceChannels(signal?: AbortSignal): Promise<Set<string> | null>;
+  markAllActivitySeen(): void;
   /**
-   * The Space on screen: walked first, ahead of the rest. One that no walk
-   * has returned or is walking, such as a Space created since, is asked for
-   * now on its own.
+   * Dial again now rather than at the next backoff step, for a person looking
+   * at a list the socket has not delivered. A no-op on an open socket and in a
+   * window that relays another window's socket.
    */
-  prioritizeSpace(spaceId: string | null): void;
-  /** The Spaces a walk has returned whole. A Space missing here may still be loading. */
-  loadedSpaceIds: ReadonlySet<string>;
-  /**
-   * Ask again for these Channels' rails now, whatever the rows say: after a
-   * change this window made, before the row that reports it arrives. Rejects
-   * while the organization is not connected.
-   */
-  refreshChannelRails(workstreamIds: readonly string[]): Promise<void>;
+  retry(): void;
 }
 
 const WorkspaceSocketContext = createContext<WorkspaceSocketContextValue | null>(null);
-const COMMAND_TIMEOUT_MS = 120_000;
 
 
 function invalidateTopic(
@@ -289,86 +180,41 @@ function invalidateTopic(
     ],
     connector_oauth_attempts: [],
     terminal_policy: [['terminal-workspace-settings']],
-    digest_schedule: [['digest-schedule']],
     // The lists themselves are pushed whole by WorkspaceDO, so the topic no
     // longer names them — it carries REST details and the broader Sidekick library.
     automations: [
       ['automation'], ['automation-draft'], ['automation-runs'], ['sidekicks-library'],
-      // The workstream's owned and recommended Sidekicks, plus what its
-      // conversation loaded. A room's row never travels in the
-      // pushed sidebar list, so this topic is what tells its rails to re-read.
-      ['attached-sidekicks'], ['workstream-sidekicks'], ['recommended-sidekicks'],
     ],
-    sidekick_activity: [],
-    notes: [['note']],
-    // Projects are gone and Spaces replaced them; Space state is carried by the
-    // connect snapshot and every later `workspace_space_snapshot`. This topic
-    // survives in the contract's closed enum and can still arrive from a server
-    // mid-deployment, but it must never turn the socket into news followed by a
-    // REST read.
-    projects: [],
     resources: [['resources'], ['workstream-context']],
-    // A mention or a finished run is a new row in the Activity tab too.
-    activity: [['work-opportunities'], ACTIVITY_QUERY_KEY],
-    work_opportunities: [['work-opportunities']],
-    workstream_directory: [WORKSTREAMS_QUERY_KEY],
     viewer_preferences: [['telemetry-preference'], ['member-preferences']],
     feature_flags: [['feature-flags']],
   };
   for (const queryKey of roots[topic]) void queryClient.invalidateQueries({ queryKey });
 }
 
-/** Merge one event's topics into the per-topic waterlines a surface observes. */
+/**
+ * Merge one event's topics into the per-topic waterlines a surface observes.
+ *
+ * With `authoritative`, for the answer to a socket's `subscribe`, the answer
+ * sets the ledger rather than raising it: no topic stays above the object's
+ * position now, and every topic it names takes that position. After an object
+ * whose log went back, a max would leave the ledger where it was, and a
+ * surface keyed on a topic's waterline would never run again for it.
+ */
 function withTopicWaterline(
   current: Partial<Record<WorkspaceSyncTopic, number>>,
   topics: readonly WorkspaceSyncTopic[],
   waterline: number,
+  { authoritative = false }: { authoritative?: boolean } = {},
 ): Partial<Record<WorkspaceSyncTopic, number>> {
   const next = { ...current };
+  if (authoritative) {
+    for (const topic of Object.keys(next) as WorkspaceSyncTopic[]) next[topic] = Math.min(next[topic] ?? 0, waterline);
+    for (const topic of topics) next[topic] = waterline;
+    return next;
+  }
   for (const topic of topics) next[topic] = Math.max(waterline, next[topic] ?? 0);
   return next;
-}
-
-/**
- * Write one directory page into the shared caches and return its rows.
- *
- * Shared by the paged answer and the sidebar batch, which carry the same page
- * body and must land in the ledger the same way: a row is only as fresh as its
- * own common/viewer waterline, so the cached copy wins whenever it is newer
- * than the page that just arrived. Returning the cached row rather than the
- * one off the wire is what keeps a page from walking back a state a later
- * `workspace_workstream_state` push already advanced.
- */
-function applyDirectoryPage(
-  queryClient: ReturnType<typeof useQueryClient>,
-  page: Pick<WorkspaceWorkstreamPageEvent, 'items' | 'stateVersions' | 'directoryWaterline' | 'nextCursor'>,
-  localCacheScope: string | null,
-): WorkstreamPage {
-  const versions = new Map(page.stateVersions.map((version) => [version.workstreamId, version]));
-  const items = page.items.flatMap((row) => {
-    const workstream = mapWorkstreamSummary(row);
-    const version = versions.get(workstream.id);
-    if (!version) return [workstream];
-    const applied = applyVersionedWorkstreamState(queryClient, {
-      workstreamId: workstream.id,
-      stateVersion: version,
-      ...workstreamSummaryState(workstream),
-      visible: true,
-    });
-    // A page that lost the version comparison also loses the right to seed a
-    // row after a newer tombstone removed it. Falling back to its wire value is
-    // the archive disappear/reappear/disappear race.
-    if (!applied.visible) return [];
-    applyChannelViewerState(queryClient, row, version, localCacheScope);
-    applyWorkspaceWorkstreamFields(queryClient, workstream.id, {
-      pinPosition: workstream.pinPosition,
-      spacePins: workstream.spacePins,
-      lastAccessedAt: workstream.lastAccessedAt,
-    }, page.directoryWaterline);
-    return [queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
-      ?.find((item) => item.id === workstream.id) ?? workstream];
-  });
-  return { items, nextCursor: page.nextCursor };
 }
 
 /** One persistent Electron connection to the current workspace's WorkspaceDO. */
@@ -423,52 +269,18 @@ export function WorkspaceSocketProvider({
       if (conversationViewRequests.current.delete(requestId)) cancelRelayedConversationViewRef.current(requestId);
     };
   }, []);
-  const sidekickActivityTargets = useRef(new Map<string, { target: SidekickActivityTarget; observers: number }>());
-  const sidekickActivityRevision = useRef(0);
-  const sendSidekickActivityRef = useRef<() => void>(() => undefined);
-  const watchSidekickActivity = useCallback((target: SidekickActivityTarget): (() => void) => {
-    const key = JSON.stringify(target);
-    const existing = sidekickActivityTargets.current.get(key);
-    if (existing) existing.observers += 1;
-    else {
-      sidekickActivityTargets.current.set(key, { target, observers: 1 });
-      sendSidekickActivityRef.current();
-    }
-    return () => {
-      const entry = sidekickActivityTargets.current.get(key);
-      if (!entry || --entry.observers > 0) return;
-      sidekickActivityTargets.current.delete(key);
-      sendSidekickActivityRef.current();
-    };
-  }, []);
   const foregroundWorkstreamIdRef = useRef<WorkstreamId | null>(null);
   const reportPresenceRef = useRef<() => void>(() => undefined);
-  const scheduleRailPrefetchRef = useRef<() => void>(() => undefined);
-  const refreshChannelRailsRef = useRef<(workstreamIds: readonly string[]) => Promise<void>>(
-    () => Promise.reject(new ApiError('The organization is not connected.', 409, 'workspace_socket_unavailable')),
-  );
-  const listWorkstreamsRef = useRef<WorkspaceSocketContextValue['listWorkstreams']>(
-    () => Promise.reject(new ApiError(
-      'The organization is not connected.',
-      409,
-      'workspace_socket_unavailable',
-    )),
-  );
-  const walkSpaceChannelsRef = useRef<(signal?: AbortSignal) => Promise<Set<string> | null>>(() => Promise.resolve(null));
-  const prioritySpaceIdRef = useRef<string | null>(null);
-  const walkSpaceNowRef = useRef<(spaceId: string) => void>(() => undefined);
-  const [loadedSpaceIds, setLoadedSpaceIds] = useState<ReadonlySet<string>>(() => new Set());
+  const markAllActivitySeenRef = useRef<() => void>(() => undefined);
+  const markAllActivitySeen = useCallback((): void => markAllActivitySeenRef.current(), []);
+  const retryRef = useRef<() => void>(() => undefined);
+  const retry = useCallback((): void => retryRef.current(), []);
 
   useEffect(() => {
     if (!ownSocket) return;
     const releaseData = retainQueryData(queryClient, [
-      WORKSTREAMS_QUERY_KEY,
-      SIDEBAR_LIST_QUERY_KEYS.automations,
-      SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, SPACES_READY_QUERY_KEY,
-      PERSONAL_ORDER_QUERY_KEY, PINNED_ORDER_QUERY_KEY,
+      SIDEBAR_LIST_QUERY_KEYS.automations, SIDEBAR_LIST_QUERY_KEYS.canvases, SIDEBAR_LIST_QUERY_KEYS.activity,
       CLIENT_FEATURE_FLAGS_QUERY_KEY,
-      CONVERSATION_ACCESS_RECOVERY_QUERY_KEY,
-      WORKSTREAM_STATE_WATERLINES_KEY, WORKSPACE_DIRECTORY_WATERLINES_KEY,
     ]);
     let stopped = false;
     let permanentlyClosed = false;
@@ -510,34 +322,13 @@ export function WorkspaceSocketProvider({
     const isOffline = (): boolean => navigator.onLine === false;
     let lastWaterline = -1;
     let presenceRevision = 0;
-    const pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
-    const pendingRailRequests = new Map<string, PendingRailRequest>();
-    const pendingSpaceRequests = new Map<string, PendingSpaceRequest>();
-    /** This connection's sidebar said `channelsBySpace`. */
-    let channelsBySpace = false;
-    let railPrefetchRunning = false;
-    let railPrefetchScheduled = false;
     let subscribed = false;
+    /** Whether any socket of this provider has had its `subscribe` answered. */
+    let hadSubscribed = false;
     let conversationViewsAvailable = false;
-    /**
-     * Whether the lists in the query cache are the socket's. Until the first
-     * subscribe answer they may be the local cache's own seed, and the mirror
-     * must not write a seed back over the row it came from.
-     */
-    let directoryLive = false;
     let applicationForegrounded = false;
     let applicationFocusObservation = 0;
     let windowForegrounded = document.visibilityState === 'visible' && document.hasFocus();
-
-    let activitySentOn: WebSocket | null = null;
-    sendSidekickActivityRef.current = () => {
-      if (!subscribed || socket?.readyState !== WebSocket.OPEN) return;
-      if (sidekickActivityTargets.current.size === 0 && activitySentOn !== socket) return;
-      activitySentOn = socket;
-      sidekickActivityRevision.current += 1;
-      socket.send(JSON.stringify({ type: 'sidekick_activity', revision: sidekickActivityRevision.current,
-        targets: [...sidekickActivityTargets.current.values()].map(({ target }) => target) }));
-    };
 
     sendConversationViewRequestsRef.current = () => {
       if (!subscribed || !conversationViewsAvailable || socket?.readyState !== WebSocket.OPEN) return;
@@ -560,6 +351,10 @@ export function WorkspaceSocketProvider({
       } satisfies WorkspaceSocketClientEvent));
     };
     reportPresenceRef.current = sendPresence;
+    markAllActivitySeenRef.current = () => {
+      if (!subscribed || socket?.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ type: 'activity_mark_all_seen' } satisfies WorkspaceSocketClientEvent));
+    };
     const bridge = desktopBridge();
     const publishTopics = (topics: WorkspaceSyncRelayTopic[], waterline: number): void => {
       if (relay === 'publish') publishToMain({ type: 'topics', region, workspaceId, waterline, topics });
@@ -625,356 +420,79 @@ export function WorkspaceSocketProvider({
       }, WORKSPACE_SOCKET_HEARTBEAT_MS);
     };
     /**
-     * @returns whether the directory still needs a reconciling refetch.
+     * The Sidekick list moved: the surfaces it feeds refetch. The change that
+     * matters most to an open automation page is one the page cannot see
+     * otherwise: its chat submitting a revision, or a run finishing. No HTTP
+     * request of the desktop's is in play then, so no sync topic follows; the
+     * list is the one signal, whether it came as a push or, for one missed
+     * while the socket was away, in the answer to the next `subscribe`.
      *
-     * The payload is page one, merged over whatever is resident rather than
-     * replacing it: a reader who had scrolled keeps the pages below it instead
-     * of watching the list collapse and refill. The cost of merging is that a
-     * cached row page one no longer returns is kept, and a work stream archived
-     * while the socket was away is exactly that.
+     * Only the Sidekicks whose row moved are refetched: the list is pushed
+     * whenever any one row changes, so invalidating every open detail and its
+     * runs on each push refetched Sidekicks nothing had happened to.
      *
-     * A payload with no `nextCursor` is not page one, it is the whole
-     * directory, so a resident row missing from it is a tombstone with no other
-     * reading and the merge is replaced by the payload outright. Otherwise page
-     * one cannot say which of the two an unaccounted-for row is — a later page
-     * the reader scrolled to, or a tombstone — and the directory invalidation
-     * is left to run so the query's own full walk decides. Deciding that here
-     * would mean reproducing the server's `last_activity_at DESC,
-     * workstream_id` ordering on the client, a second copy of the cursor
-     * arithmetic that can drift from the first.
-     *
-     * A cold connect has nothing resident either way, so it asks for nothing;
-     * that is the round trip this payload exists to remove.
+     * This relies on every Sidekick change moving its row: the row's
+     * `updatedAt` is the directory's `projected_at`, which `touchDirectory`
+     * sets on every mutation, including ones only the detail shows. A change
+     * that bypassed `touchDirectory` would leave an open detail stale.
      */
-    const applyConnectedSidebar = (sidebar: WorkspaceSidebar): boolean => {
-      channelsBySpace = sidebar.channelsBySpace === true;
-      // The lists the socket does not carry. A nudge missed while the socket
-      // was away is never sent again, so a connect is when they are read again.
-      void queryClient.invalidateQueries({ queryKey: CHANNEL_FEEDS_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: ACTIVITY_QUERY_KEY });
-      if (channelsBySpace) {
-        // Every Space is loading again: the walk this starts is what says
-        // what the socket missed while it was away.
-        loadedSpaces.clear();
-        staleSpaces.clear();
-        fullWalkFinished = false;
-        setLoadedSpaceIds(new Set());
-        applyVersionedSidebarList(
-          queryClient,
-          'automations',
-          sidebar.automations.waterline,
-          sidebar.automations.items.map(mapAutomationSummary),
-        );
-        if (sidebar.spaces) {
-          applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.ordering ?? [], sidebar.spacesReady ?? true, sidebar.pinnedOrder, { pins: sidebar.pins, artifactPins: sidebar.artifactPins, channelStats: sidebar.channelStats });
-        }
-        directoryLive = true;
-        setSidebarConnect((current) => ({
-          generation: (current?.generation ?? 0) + 1,
-          nextCursor: null,
-          spacesLive: sidebar.spaces !== undefined,
-          channelsBySpace: true,
-        }));
-        // The payload carried Spaces and no Channels: the directory's own
-        // query walks them, and reconciles what it held against the walk.
-        void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-        return false;
+    const sidekickListMoved = (previous: readonly unknown[] | undefined): void => {
+      const next = queryClient.getQueryData<readonly { id: string }[]>(SIDEBAR_LIST_QUERY_KEYS.automations) ?? [];
+      const before = new Map((previous as readonly { id: string }[] | undefined ?? []).map((row) => [row.id, JSON.stringify(row)]));
+      const moved = new Set<string>();
+      for (const row of next) {
+        if (before.get(row.id) !== JSON.stringify(row)) moved.add(row.id);
+        before.delete(row.id);
       }
-      const page = applyDirectoryPage(queryClient, sidebar.workstreams, localCacheScope);
-      const returned = new Set(page.items.map((workstream) => workstream.id));
-      const unaccountedFor = (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
-        // A pending row cannot be in any answer yet, so it is not a question
-        // for the reconciling refetch; `setCachedWorkstreams` keeps it.
-        .some((workstream) => !workstream.pending && !returned.has(workstream.id));
-      const wholeDirectory = page.nextCursor === null;
-      if (wholeDirectory) setCachedWorkstreams(queryClient, () => page.items);
-      else mergeCachedWorkstreamPage(queryClient, page.items);
-      applyVersionedSidebarList(
+      for (const id of before.keys()) moved.add(id);
+      if (moved.size === 0) return;
+      for (const id of moved) {
+        void queryClient.invalidateQueries({ queryKey: ['automation', id] });
+        void queryClient.invalidateQueries({ queryKey: ['automation-runs', id] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
+      // Relayed as the `automations` topic it amounts to, so a consuming
+      // window that reads these surfaces and not the list hears it without a
+      // socket of its own.
+      publishTopics(['automations'], Math.max(lastWaterline, 0));
+    };
+    /**
+     * The sidebar rides on the answer to `subscribe`: the Sidekicks list, the
+     * Canvases list and the Activity page, each applied through the versioned
+     * receiver so a later push and this payload are ordered against one
+     * ledger. The answer is authoritative over that ledger: it is what the
+     * object holds now, read after every push an earlier socket delivered.
+     */
+    const applyConnectedSidebar = (sidebar: WorkspaceSidebar): void => {
+      const authoritative = { authoritative: true };
+      const previousSidekicks = queryClient.getQueryData<readonly unknown[]>(SIDEBAR_LIST_QUERY_KEYS.automations);
+      const sidekicksMoved = applyVersionedSidebarList(
         queryClient,
         'automations',
         sidebar.automations.waterline,
         sidebar.automations.items.map(mapAutomationSummary),
+        authoritative,
       );
-      // `spacesReady` is optional on the wire and read as ready when absent:
-      // a payload from a server that predates the cutover describes an
-      // Organization that was never going to open, not one still opening.
-      if (sidebar.spaces) {
-        applyVersionedSpaceSnapshot(
-          queryClient,
-          sidebar.spaces,
-          // Optional beside `spaces` and for the same reason: a payload from a
-          // server without the ordering describes lists with no hand
-          // arrangement, which is what an empty one draws.
-          sidebar.ordering ?? [],
-          sidebar.spacesReady ?? true,
-          sidebar.pinnedOrder,
-          { pins: sidebar.pins, artifactPins: sidebar.artifactPins, channelStats: sidebar.channelStats },
-        );
+      if (sidebar.canvases) {
+        applyVersionedSidebarList(queryClient, 'canvases', sidebar.canvases.waterline, sidebar.canvases.items, authoritative);
       }
-      directoryLive = true;
-      // The directory is the bound on the conversation cache: a conversation
-      // stays on disk for as long as its parent is a row here. Only the whole
-      // directory can say a parent is gone; page one cannot tell a later page
-      // from a tombstone, as the merge above already knows, so on a paged
-      // workspace the disk follows evictions and the child rosters instead.
-      if (localCacheScope !== null && wholeDirectory) {
+      if (sidebar.activity) {
+        applyVersionedSidebarList(queryClient, 'activity', sidebar.activity.waterline,
+          { unseenCount: sidebar.activity.unseenCount, items: sidebar.activity.items }, authoritative);
+      }
+      // A reconnect's answer that moved the list stands in for the pushes the
+      // socket missed while it was away. The first answer this window hears
+      // has nothing to stand in for: whatever it loaded, it loaded just now.
+      if (sidekicksMoved && hadSubscribed) sidekickListMoved(previousSidekicks);
+      // The lists are the bound on the conversation cache: a conversation
+      // stays on disk for as long as its Canvas or Sidekick is listed.
+      if (localCacheScope !== null) {
         void retainConversationParents(localCacheScope, new Set([
-          ...page.items.map((workstream) => workstream.id),
           ...sidebar.automations.items.map((automation) => automation.id),
+          ...(sidebar.canvases?.items ?? []).map((canvas) => canvas.id),
         ]));
       }
-      setSidebarConnect((current) => ({
-        generation: (current?.generation ?? 0) + 1,
-        nextCursor: page.nextCursor,
-        spacesLive: sidebar.spaces !== undefined,
-        channelsBySpace: false,
-      }));
-      return unaccountedFor && !wholeDirectory;
-    };
-    const sendPendingDirectoryRequests = (): void => {
-      if (socket?.readyState !== WebSocket.OPEN) return;
-      for (const entry of pendingDirectoryRequests.values()) socket.send(JSON.stringify(entry.command));
-    };
-    const rejectPendingDirectoryRequests = (error: Error): void => {
-      for (const entry of pendingDirectoryRequests.values()) {
-        window.clearTimeout(entry.timeout);
-        entry.reject(error);
-      }
-      pendingDirectoryRequests.clear();
-    };
-    const rejectPendingRailRequests = (error: Error): void => {
-      for (const entry of pendingRailRequests.values()) {
-        window.clearTimeout(entry.timeout);
-        entry.reject(error);
-      }
-      pendingRailRequests.clear();
-    };
-    const rejectPendingSpaceRequests = (error: Error): void => {
-      for (const entry of pendingSpaceRequests.values()) {
-        window.clearTimeout(entry.timeout);
-        entry.reject(error);
-      }
-      pendingSpaceRequests.clear();
-    };
-    const requestRails = (workstreamIds: string[]): Promise<Set<string>> =>
-      new Promise((resolve, reject) => {
-        if (!subscribed || socket?.readyState !== WebSocket.OPEN) {
-          reject(new ApiError('The organization is not connected.', 409, 'workspace_socket_unavailable'));
-          return;
-        }
-        const requestId = uuidV7();
-        const timeout = window.setTimeout(() => {
-          pendingRailRequests.delete(requestId);
-          reject(new ApiError('Thread details could not be loaded.', 0, 'workspace_channel_rails_timeout'));
-        }, COMMAND_TIMEOUT_MS);
-        pendingRailRequests.set(requestId, { resolve, reject, timeout, named: new Set() });
-        const command = WorkspaceSocketClientEventSchema.parse({ type: 'channel_rails', requestId, workstreamIds });
-        socket.send(JSON.stringify(command));
-      });
-    // Settle only Channels no frame named: a named one was answered, and a
-    // row that raised its waterline mid-request makes it stale again rather
-    // than settled without its rail.
-    const runRailTarget = async (workstreamIds: string[]): Promise<void> => {
-      const named = await requestRails(workstreamIds);
-      settleUnanswered(queryClient, workstreamIds.filter((id) => !named.has(id)));
-    };
-    const requestSpaceChannels = (
-      target: { spaceId: string; after?: string; rails: boolean },
-    ): Promise<WorkspaceSpaceChannelsEvent> =>
-      new Promise((resolve, reject) => {
-        if (!subscribed || socket?.readyState !== WebSocket.OPEN) {
-          reject(new ApiError('The organization is not connected.', 409, 'workspace_socket_unavailable'));
-          return;
-        }
-        const requestId = uuidV7();
-        const timeout = window.setTimeout(() => {
-          pendingSpaceRequests.delete(requestId);
-          reject(new ApiError(
-            'The thread list could not be loaded. Try again.',
-            0,
-            'workspace_space_channels_timeout',
-          ));
-        }, COMMAND_TIMEOUT_MS);
-        pendingSpaceRequests.set(requestId, { resolve, reject, timeout });
-        const command = WorkspaceSocketClientEventSchema.parse({ type: 'space_channels', requestId, ...target });
-        socket.send(JSON.stringify(command));
-      });
-    /** The Spaces not yet walked, the one on screen first. */
-    const spacesToWalk = (walked: ReadonlySet<string>): string[] => {
-      const foreground = foregroundWorkstreamIdRef.current;
-      const order = [
-        prioritySpaceIdRef.current,
-        ...(foreground === null ? [] : queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
-          ?.find((row) => row.id === foreground)?.spaceIds ?? []),
-        ...(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)?.items ?? []).map((space) => space.id),
-        ...(queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY)?.items ?? []).map((space) => space.id),
-      ];
-      return [...new Set(order.filter((spaceId): spaceId is string => spaceId !== null && !walked.has(spaceId)))];
-    };
-    /**
-     * One Space's pages, in order: each asks after the last. `onFirstPage`
-     * is called once the first page is written.
-     */
-    /**
-     * Spaces a walk has returned whole, Spaces being walked now, and loaded
-     * Spaces to ask again when they next come on screen.
-     */
-    const loadedSpaces = new Set<string>();
-    const walkingSpaces = new Set<string>();
-    const staleSpaces = new Set<string>();
-    /** Whole walks running now, and whether one has finished. */
-    let fullWalks = 0;
-    let fullWalkFinished = false;
-    const walkSpace = async (
-      spaceId: string,
-      returned: Set<string>,
-      signal: AbortSignal | undefined,
-      onFirstPage: () => void = () => undefined,
-    ): Promise<void> => {
-      walkingSpaces.add(spaceId);
-      staleSpaces.delete(spaceId);
-      try {
-        await walkSpacePages(spaceId, returned, signal, onFirstPage);
-      } finally {
-        walkingSpaces.delete(spaceId);
-      }
-      loadedSpaces.add(spaceId);
-      setLoadedSpaceIds((current) => current.has(spaceId) ? current : new Set([...current, spaceId]));
-      scheduleRailPrefetch();
-    };
-    const walkSpacePages = async (
-      spaceId: string,
-      returned: Set<string>,
-      signal: AbortSignal | undefined,
-      onFirstPage: () => void,
-    ): Promise<void> => {
-      const held = (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
-        .filter((row) => !row.pending && row.spaceIds.includes(spaceId));
-      // Rails ride along unless every Channel held here has one already;
-      // then the rows' waterlines say which moved, and those are asked for
-      // by name.
-      const rails = held.length === 0 || held.some((row) => !holdsChannelRail(queryClient, row.id));
-      let after: string | null = null;
-      do {
-        // A newer walk replaced this one: stop rather than ask twice.
-        signal?.throwIfAborted();
-        const answer: WorkspaceSpaceChannelsEvent = await requestSpaceChannels({ spaceId, ...(after ? { after } : {}), rails });
-        const page = applyDirectoryPage(queryClient, { ...answer, nextCursor: null }, localCacheScope);
-        mergeCachedWorkstreamPage(queryClient, page.items);
-        applyChannelRails(queryClient, { rails: answer.rails, oversized: [], unavailable: [] });
-        for (const item of answer.items) returned.add(item.id);
-        if (after === null) onFirstPage();
-        after = answer.nextAfter;
-      } while (after !== null && !stopped);
-    };
-    // A Space put on screen that no walk has returned (one listed since the
-    // last whole walk, such as a Space just created) or that the directory
-    // has moved under since. A whole walk still to come or running reaches it
-    // itself. A failure shows what is held and asks again next time, rather
-    // than leaving the Space loading.
-    walkSpaceNowRef.current = (spaceId) => {
-      if (!channelsBySpace || !subscribed || !fullWalkFinished || fullWalks > 0 || walkingSpaces.has(spaceId)
-        || (loadedSpaces.has(spaceId) && !staleSpaces.has(spaceId))) return;
-      void walkSpace(spaceId, new Set(), undefined).catch(() => {
-        loadedSpaces.add(spaceId);
-        staleSpaces.add(spaceId);
-        setLoadedSpaceIds((current) => current.has(spaceId) ? current : new Set([...current, spaceId]));
-      });
-    };
-    walkSpaceChannelsRef.current = async (signal) => {
-      if (!channelsBySpace) return null;
-      fullWalks += 1;
-      try {
-        const returned = await walkEverySpace(signal);
-        fullWalkFinished = true;
-        return returned;
-      } finally {
-        fullWalks -= 1;
-        // A Space put on screen while the walk ran, and listed after it looked.
-        if (prioritySpaceIdRef.current !== null) walkSpaceNowRef.current(prioritySpaceIdRef.current);
-      }
-    };
-    const walkEverySpace = async (signal: AbortSignal | undefined): Promise<Set<string>> => {
-      const returned = new Set<string>();
-      const walked = new Set<string>();
-      // The Space on screen alone, until its first page is in; then every
-      // other Space at once. Pages within a Space still follow each other,
-      // since each asks after the last. The WorkspaceDO answers one at a time
-      // either way; asking together saves a round trip per Space.
-      const [first] = spacesToWalk(walked);
-      const walks: Promise<void>[] = [];
-      if (first !== undefined) {
-        walked.add(first);
-        let firstPageIn!: () => void;
-        const firstPage = new Promise<void>((resolve) => { firstPageIn = resolve; });
-        const firstWalk = walkSpace(first, returned, signal, () => firstPageIn());
-        walks.push(firstWalk);
-        await Promise.race([firstPage, firstWalk]);
-      }
-      // Again until none is left: a Space can be listed while the walk runs.
-      for (let rest = spacesToWalk(walked); rest.length > 0 && !stopped; rest = spacesToWalk(walked)) {
-        for (const spaceId of rest) walked.add(spaceId);
-        signal?.throwIfAborted();
-        walks.push(...rest.map((spaceId) => walkSpace(spaceId, returned, signal)));
-        await Promise.all(walks);
-      }
-      await Promise.all(walks);
-      // A finished walk is the whole directory, so it can bound the
-      // conversation cache the way a whole connect page does.
-      if (!stopped && localCacheScope !== null) {
-        void retainConversationParents(localCacheScope, new Set([
-          ...returned,
-          ...(queryClient.getQueryData<{ id: string }[]>(SIDEBAR_LIST_QUERY_KEYS.automations) ?? [])
-            .map((automation) => automation.id),
-        ]));
-      }
-      return returned;
-    };
-    /**
-     * One request in flight at a time, until every rail a row has said is
-     * held. A request that fails ends the pass; the next row, reconnect or
-     * foreground change starts another.
-     */
-    const runRailPrefetch = async (): Promise<void> => {
-      if (railPrefetchRunning) return;
-      railPrefetchRunning = true;
-      try {
-        while (!stopped && subscribed) {
-          const target = nextChannelRailRequest(
-            queryClient,
-            foregroundWorkstreamIdRef.current,
-            queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [],
-            queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY),
-          );
-          if (!target) break;
-          await runRailTarget(target);
-        }
-      } catch {
-        // The rows still say what is stale; the next kick asks again.
-      } finally {
-        railPrefetchRunning = false;
-      }
-    };
-    const scheduleRailPrefetch = (): void => {
-      if (railPrefetchScheduled) return;
-      railPrefetchScheduled = true;
-      queueMicrotask(() => {
-        railPrefetchScheduled = false;
-        void runRailPrefetch();
-      });
-    };
-    scheduleRailPrefetchRef.current = scheduleRailPrefetch;
-    refreshChannelRailsRef.current = async (workstreamIds) => {
-      const served = workstreamIds.filter((id) => hasRailWaterline(queryClient, id)).slice(0, CHANNEL_RAILS_NAMED_LIMIT);
-      if (served.length === 0) return;
-      await requestRails(served);
-    };
-    const clearAgentActivity = (): void => {
-      // Running is a live claim: retain no count across a lost producer.
-      // Reset preserves observers; reconnect supplies each target's current count.
-      void queryClient.resetQueries({ queryKey: ['workstream-background-agents'] });
-      void queryClient.resetQueries({ queryKey: ['sidekick-activity'] });
+      setSidebarConnect((current) => ({ generation: (current?.generation ?? 0) + 1 }));
     };
     /** What every end of a socket's life resets, whoever ended it. */
     const releaseSocket = (): void => {
@@ -983,9 +501,6 @@ export function WorkspaceSocketProvider({
       conversationViewsAvailable = false;
       socket = null;
       setPresenceUserIdsByWorkstream({});
-      clearAgentActivity();
-      rejectPendingRailRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
-      rejectPendingSpaceRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
     };
     const cancelTicketAttempt = (): void => {
       connectGeneration += 1;
@@ -1007,6 +522,12 @@ export function WorkspaceSocketProvider({
         clearReconnect();
         void connect();
       }
+    };
+    retryRef.current = () => {
+      if (stopped || permanentlyClosed || socket?.readyState === WebSocket.OPEN) return;
+      suspended = false;
+      clearReconnect();
+      void connect();
     };
     const scheduleReconnect = (): void => {
       if (stopped || permanentlyClosed || suspended || reconnectTimer !== null) return;
@@ -1081,10 +602,6 @@ export function WorkspaceSocketProvider({
           }, WORKSPACE_SOCKET_OPEN_TIMEOUT_MS);
           reportHandshake(diagnosticAttemptId, 'transport_open', ticketRequestedAt);
           socketTelemetry.connected(attempt);
-          // A new transport has not inherited the prior one's Space snapshot.
-          // Keep cached rows visible, but withhold writes until this subscribe
-          // response (or a later Space push) establishes current authority.
-          setSidebarConnect((current) => current ? { ...current, spacesLive: false } : current);
           setState('connected');
           next.send(JSON.stringify({
             type: 'subscribe',
@@ -1092,10 +609,8 @@ export function WorkspaceSocketProvider({
             diagnosticAttemptId,
           }));
           reportHandshake(diagnosticAttemptId, 'subscribe_sent');
-          // No directory invalidation here: subscribing is answered with the
-          // whole sidebar, so a reconnect reconverges from that payload rather
-          // than from a refetch the client has to ask for.
-          sendPendingDirectoryRequests();
+          // Subscribing is answered with the whole sidebar, so a reconnect
+          // reconverges from that payload rather than from a refetch.
           scheduleHeartbeat(next);
         });
         next.addEventListener('message', (messageEvent) => {
@@ -1110,17 +625,6 @@ export function WorkspaceSocketProvider({
           } catch {
             return;
           }
-          const sidekickActivity = safeParseSocketEvent(WorkspaceSidekickActivityEventSchema, decoded);
-          if (sidekickActivity.success) {
-            const event = sidekickActivity.data;
-            if (event.revision === sidekickActivityRevision.current
-              && sidekickActivityTargets.current.has(JSON.stringify(event.target))) {
-              const key = ['sidekick-activity', event.target.parentKind, event.target.parentId, event.target.substreamId];
-              queryClient.setQueryData<{ count: number; waterline: number }>(key, (current) =>
-                current && current.waterline > event.waterline ? current : { count: event.count, waterline: event.waterline });
-            }
-            return;
-          }
           const conversationView = safeParseSocketEvent(WorkspaceConversationViewEventSchema, decoded);
           if (conversationView.success) {
             const event = conversationView.data;
@@ -1133,6 +637,9 @@ export function WorkspaceSocketProvider({
           }
           const sync = safeParseSocketEvent(WorkspaceSocketSyncEventSchema, decoded);
           if (sync.success) {
+            // The first sync on a socket is the answer to its `subscribe`:
+            // the object sends nothing else to a socket until it has answered.
+            const answersSubscribe = !subscribed;
             if (sync.data.conversationViews) conversationViewsAvailable = true;
             if (!firstSyncObserved) {
               firstSyncObserved = true;
@@ -1140,15 +647,8 @@ export function WorkspaceSocketProvider({
             }
             if (!subscribed) {
               subscribed = true;
-              // Reach nudges are not replayed. Recheck a waiting conversation
-              // if access changed while this Organization socket was away.
-              void refreshConversationAccessPreviews(queryClient);
               sendPresence();
               sendConversationViewRequestsRef.current();
-              sendSidekickActivityRef.current();
-            }
-            if (sync.data.accessRequests) {
-              queryClient.setQueryData(accessRequestsQueryKey(workspaceId), sync.data.accessRequests);
             }
             if (sync.data.viewerPreferences) {
               // Cancelled first: a REST read started before this answer holds
@@ -1171,15 +671,13 @@ export function WorkspaceSocketProvider({
             // answer to `subscribe`, and a resume where no topic moved carries
             // the waterline the client already has — so a guard that ran first
             // would drop the state this event exists to deliver.
-            const directoryNeedsReconciling = sync.data.sidebar
-              ? applyConnectedSidebar(sync.data.sidebar)
-              : false;
+            if (sync.data.sidebar) applyConnectedSidebar(sync.data.sidebar);
             // A plan-change push is not replayed: an open meter reads again.
             if (sync.data.sidebar) {
-              void queryClient.invalidateQueries({ queryKey: MERGE_CHANNELS_QUERY_KEY });
               void queryClient.invalidateQueries({ queryKey: organizationUsageQueryKey(localCacheScope) });
               publishTopics(['usage'], Math.max(lastWaterline, sync.data.waterline));
             }
+            if (answersSubscribe) hadSubscribed = true;
             if (sync.data.sidebar && !firstSidebarApplied) {
               firstSidebarApplied = true;
               if (syncTimer !== null) window.clearTimeout(syncTimer);
@@ -1188,35 +686,22 @@ export function WorkspaceSocketProvider({
               reportHandshake(diagnosticAttemptId, 'sync_applied');
               api.confirmSocketTicket?.(ticket);
             }
-            if (sync.data.sidebar) scheduleRailPrefetch();
-            if (sync.data.waterline <= lastWaterline) return;
+            // The answer, like its sidebar, is the object's position now. One
+            // below what this window holds means the object's log went back,
+            // and keeping the old cursor would drop every live event until
+            // the log climbed past it, and ask the next resume for history
+            // the object never had.
+            if (!answersSubscribe && sync.data.waterline <= lastWaterline) return;
+            const moved = sync.data.waterline !== lastWaterline;
             lastWaterline = sync.data.waterline;
-            setTopicWaterlines((current) => withTopicWaterline(current, sync.data.topics, sync.data.waterline));
+            if (!moved && sync.data.topics.length === 0) return;
+            setTopicWaterlines((current) => withTopicWaterline(current, sync.data.topics, sync.data.waterline,
+              { authoritative: answersSubscribe }));
             // Every topic, `initial` and `history_unavailable` included: those
             // name everything because this socket cannot say what moved while
             // it was away, and neither can a window relying on it.
             if (sync.data.topics.length > 0) publishTopics(sync.data.topics, sync.data.waterline);
-            for (const topic of sync.data.topics) {
-              // An event that carried the sidebar has just delivered the
-              // directory; telling the client to go and fetch it again in the
-              // same breath undoes the whole point of the payload. `initial`
-              // names every topic, so without this the connect answer is
-              // followed immediately by the `list_workstreams` it replaced.
-              // Unless the payload left a resident row unaccounted for — then
-              // the refetch is the only thing that can retire a tombstone the
-              // socket was away for.
-              if (topic === 'workstream_directory' && sync.data.sidebar && !directoryNeedsReconciling) continue;
-              // Loading a Space at a time, the directory moved somewhere this
-              // cannot see: the Space on screen is asked again now, and every
-              // other Space when it next comes on screen, rather than every
-              // desktop asking every Space at once.
-              if (topic === 'workstream_directory' && channelsBySpace) {
-                for (const spaceId of loadedSpaces) staleSpaces.add(spaceId);
-                if (prioritySpaceIdRef.current !== null) walkSpaceNowRef.current(prioritySpaceIdRef.current);
-                continue;
-              }
-              invalidateTopic(queryClient, topic);
-            }
+            for (const topic of sync.data.topics) invalidateTopic(queryClient, topic);
             return;
           }
           const presence = safeParseSocketEvent(WorkspacePresenceEventSchema, decoded);
@@ -1238,101 +723,15 @@ export function WorkspaceSocketProvider({
             publishTopics(['feature_flags'], lastWaterline);
             return;
           }
-          const recency = safeParseSocketEvent(WorkspaceWorkstreamRecencyEventSchema, decoded);
-          if (recency.success) {
-            mergeCachedWorkstreamPage(queryClient, applyDirectoryPage(queryClient, {
-              directoryWaterline: recency.data.directoryWaterline,
-              items: [recency.data.workstream], stateVersions: [recency.data.stateVersion], nextCursor: null,
-            }, localCacheScope).items);
-            scheduleRailPrefetch();
+          const canvasList = safeParseSocketEvent(WorkspaceCanvasListEventSchema, decoded);
+          if (canvasList.success) {
+            applyVersionedSidebarList(queryClient, 'canvases', canvasList.data.waterline, canvasList.data.items);
             return;
           }
-          const channelRails = safeParseSocketEvent(WorkspaceChannelRailsEventSchema, decoded);
-          if (channelRails.success) {
-            applyChannelRails(queryClient, channelRails.data);
-            const entry = pendingRailRequests.get(channelRails.data.requestId);
-            if (entry) {
-              for (const rail of channelRails.data.rails) entry.named.add(rail.workstreamId);
-              for (const oversized of channelRails.data.oversized) entry.named.add(oversized.workstreamId);
-              for (const id of channelRails.data.unavailable) entry.named.add(id);
-            }
-            if (entry && channelRails.data.final) {
-              pendingRailRequests.delete(channelRails.data.requestId);
-              window.clearTimeout(entry.timeout);
-              entry.resolve(entry.named);
-            }
-            return;
-          }
-          const spaceChannels = safeParseSocketEvent(WorkspaceSpaceChannelsEventSchema, decoded);
-          if (spaceChannels.success) {
-            const entry = pendingSpaceRequests.get(spaceChannels.data.requestId);
-            if (!entry) return;
-            pendingSpaceRequests.delete(spaceChannels.data.requestId);
-            window.clearTimeout(entry.timeout);
-            entry.resolve(spaceChannels.data);
-            return;
-          }
-          const workstreamPage = safeParseSocketEvent(WorkspaceWorkstreamPageEventSchema, decoded);
-          if (workstreamPage.success) {
-            const entry = pendingDirectoryRequests.get(workstreamPage.data.requestId);
-            if (!entry) return;
-            pendingDirectoryRequests.delete(workstreamPage.data.requestId);
-            window.clearTimeout(entry.timeout);
-            entry.resolve(applyDirectoryPage(queryClient, workstreamPage.data, localCacheScope));
-            scheduleRailPrefetch();
-            return;
-          }
-          const workstreamState = safeParseSocketEvent(WorkspaceWorkstreamStateEventSchema, decoded);
-          if (workstreamState.success) {
-            const workstream = workstreamState.data.workstream
-              ? mapWorkstreamSummary(workstreamState.data.workstream)
-              : queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
-                ?.find((item) => item.id === workstreamState.data.workstreamId);
-            const applied = applyVersionedWorkstreamState(queryClient, {
-              workstreamId: workstreamState.data.workstreamId,
-              stateVersion: workstreamState.data.stateVersion,
-              ...(workstream ? workstreamSummaryState(workstream) : {
-                common: {},
-                viewer: {},
-              }),
-              visible: workstreamState.data.workstream !== null,
-            });
-            if (workstreamState.data.workstream && applied.visible) {
-              applyChannelViewerState(
-                queryClient,
-                workstreamState.data.workstream,
-                workstreamState.data.stateVersion,
-                localCacheScope,
-              );
-              // A Channel the shared navigation lists (a guest's, or one
-              // reached through its breakouts) draws Space and ancestor
-              // presentation from that directory, which this row does not
-              // carry. The one on screen rereads it when its row moves.
-              if (workstreamState.data.workstreamId === foregroundWorkstreamIdRef.current
-                && queryClient.getQueriesData<SharedNavigationDirectory>({ queryKey: ['shared-navigation'] })
-                  .some(([, directory]) => directory?.workstreams
-                    .some((item) => item.parentId === workstreamState.data.workstreamId))) {
-                void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
-              }
-            }
-            if (applied.commonApplied) {
-              void queryClient.invalidateQueries({
-                queryKey: ['terminal-workstream', workstreamState.data.workstreamId],
-                exact: true,
-              });
-            }
-            // A tombstone says this Channel is not one this person sees, which
-            // is also what being seated in one of its breakouts, or leaving its
-            // Main, looks like from here: which of its conversations they
-            // reach may have changed, and only the conversation directory says.
-            if (workstreamState.data.workstream === null) {
-              void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
-              // A loss of visibility may be archive or membership. Ask the
-              // authoritative conversation list rather than guessing which
-              // breakouts the viewer still reaches through this parent.
-              if (!applied.visible) void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY });
-            }
-            scheduleRailPrefetch();
+          const activityList = safeParseSocketEvent(WorkspaceActivityListEventSchema, decoded);
+          if (activityList.success) {
+            applyVersionedSidebarList(queryClient, 'activity', activityList.data.waterline,
+              { unseenCount: activityList.data.unseenCount, items: activityList.data.items });
             return;
           }
           const sidebarList = safeParseSocketEvent(WorkspaceSidebarListEventSchema, decoded);
@@ -1341,55 +740,16 @@ export function WorkspaceSocketProvider({
             // opening batch writes the same two entries, and only a comparison
             // against one ledger can order the two producers.
             if (sidebarList.data.list === 'automations') {
-              applyVersionedSidebarList(
+              const previousSidekicks = queryClient.getQueryData<readonly unknown[]>(SIDEBAR_LIST_QUERY_KEYS.automations);
+              // Pushed whenever an automation's own row changes; a push the
+              // ledger drops as stale moved nothing.
+              if (applyVersionedSidebarList(
                 queryClient,
                 'automations',
                 sidebarList.data.waterline,
                 sidebarList.data.items.map(mapAutomationSummary),
-              );
-              // The list is pushed whenever an automation's own row changes,
-              // and the change that matters most to an open automation page
-              // is one the page cannot see otherwise: its chat submitting a
-              // revision. No HTTP request of the desktop's is in play then,
-              // so no sync topic follows; the list push is the one signal,
-              // and the detail surfaces it feeds refetch on it.
-              void queryClient.invalidateQueries({ queryKey: ['automation'] });
-              void queryClient.invalidateQueries({ queryKey: ['automation-runs'] });
-              void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
-              void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks'] });
-              void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks'] });
-              // Relayed as the `automations` topic it amounts to, so the
-              // Sidekicks window, which reads these surfaces and not the list,
-              // hears it without a socket of its own.
-              publishTopics(['automations'], Math.max(lastWaterline, 0));
+              )) sidekickListMoved(previousSidekicks);
             }
-            return;
-          }
-          const spaceSnapshot = safeParseSocketEvent(WorkspaceSpaceSnapshotEventSchema, decoded);
-          if (spaceSnapshot.success) {
-            applyVersionedSpaceSnapshot(
-              queryClient,
-              spaceSnapshot.data.spaces,
-              spaceSnapshot.data.ordering,
-              spaceSnapshot.data.spacesReady,
-              spaceSnapshot.data.pinnedOrder,
-              { pins: spaceSnapshot.data.pins, channelStats: spaceSnapshot.data.channelStats },
-            );
-            setSidebarConnect((current) => current ? { ...current, spacesLive: true } : current);
-            // Guest hierarchy is a separately authorized associative read.
-            // The snapshot is still the realtime nudge for a membership
-            // change, but it must never carry private Space rows itself.
-            void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
-            return;
-          }
-          const navigationState = safeParseSocketEvent(WorkspaceNavigationStateEventSchema, decoded);
-          if (navigationState.success) {
-            applyNavigationState(queryClient, navigationState.data);
-            return;
-          }
-          const accessRequests = safeParseSocketEvent(WorkspaceAccessRequestsEventSchema, decoded);
-          if (accessRequests.success) {
-            queryClient.setQueryData(accessRequestsQueryKey(workspaceId), accessRequests.data.requests);
             return;
           }
           const usage = safeParseSocketEvent(WorkspaceUsageEventSchema, decoded);
@@ -1399,64 +759,11 @@ export function WorkspaceSocketProvider({
             publishTopics(['usage'], lastWaterline);
             return;
           }
-          const reachChanged = safeParseSocketEvent(WorkspaceReachChangedEventSchema, decoded);
-          if (reachChanged.success) {
-            // Approval and direct participant adds both move reach. The waiting
-            // screen retries its socket only after its own preview admits it.
-            void refreshConversationAccessPreviews(queryClient);
-            void queryClient.invalidateQueries({ queryKey: MERGE_CHANNELS_QUERY_KEY });
-            // This person joined or left a Channel or Breakout. A member's
-            // sidebar already moved: the Channel row and the Space pages are
-            // pushed on the same flip. A guest's is the associative read,
-            // which no Space snapshot reaches, so it is read again here.
-            void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
-            return;
-          }
           const resourceVersions = safeParseSocketEvent(WorkspaceResourceVersionsEventSchema, decoded);
           if (resourceVersions.success) {
             // A resource some conversation holds has a new version: every
             // preview open on it moves to the new head.
             applyResourceHeads(queryClient, resourceVersions.data.resources);
-            return;
-          }
-          const spaceConversations = safeParseSocketEvent(
-            WorkspaceSpaceConversationsEventSchema, decoded,
-          );
-          if (spaceConversations.success) {
-            // A Channel's feed is the one list on its screen the socket does
-            // not carry, so the named Channels' feeds are read again. The
-            // count beside each id updates the sidebar without rebuilding the
-            // whole Space directory. The only
-            // coalescing is React Query's own in-flight dedupe — a burst of
-            // messages in one Space costs one refetch while it is in flight,
-            // and there is no timer here to tune.
-            for (const spaceId of spaceConversations.data.spaceIds) {
-              void queryClient.invalidateQueries({ queryKey: channelFeedQueryKey(spaceId) });
-            }
-            // Only a placement changes which threads the Threads tab, Activity
-            // and the Channel counts hold, so only a placement re-reads them
-            // now. A message in a thread already placed marks them stale,
-            // read again the next time one is shown, rather than re-reading
-            // every loaded page for every message in the Organization.
-            const refetchType = spaceConversations.data.placementChanged === false ? 'none' : 'active';
-            if (spaceConversations.data.placementChanged !== false) {
-              void queryClient.invalidateQueries({ queryKey: MERGE_CHANNELS_QUERY_KEY });
-            }
-            void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY, refetchType });
-            void queryClient.invalidateQueries({ queryKey: CHANNEL_STATS_QUERY_KEY, refetchType });
-            void queryClient.invalidateQueries({ queryKey: ACTIVITY_QUERY_KEY, refetchType });
-            if (spaceConversations.data.attentionCounts.length > 0) {
-              const counts = new Map(spaceConversations.data.attentionCounts.map((entry) => [
-                entry.spaceId,
-                entry.count,
-              ]));
-              queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
-                ...current,
-                items: current.items.map((space) => counts.has(space.id)
-                  ? { ...space, attentionCount: counts.get(space.id)! }
-                  : space),
-              } : current);
-            }
             return;
           }
           // Nothing above claimed this message, and until now that ended the
@@ -1465,7 +772,7 @@ export function WorkspaceSocketProvider({
           // `type` a schema *did* match and whose body it then rejected is a
           // contract skew between two of our own components, and dropping it
           // without a word is how a desktop built ahead of its API would show
-          // no Spaces at all with nothing anywhere saying `reach`.
+          // an empty sidebar with nothing anywhere saying why.
           //
           // The message's own `type` is what picks the schema that should have
           // read it; `describeZodIssues` then names the field it rejected,
@@ -1483,18 +790,10 @@ export function WorkspaceSocketProvider({
               ['workspace_sync', 'sync', sync],
               ['workspace_presence', 'presence', presence],
               ['workspace_feature_flags', 'feature flags', featureFlags],
-              ['workspace_workstream_recency', 'channel recency', recency],
-              ['workspace_workstream_page', 'channel page', workstreamPage],
-              ['workspace_channel_rails', 'channel rails', channelRails],
-              ['workspace_sidekick_activity', 'sidekick activity', sidekickActivity],
-              ['workspace_space_channels', 'space channels', spaceChannels],
-              ['workspace_workstream_state', 'channel state', workstreamState],
+              ['workspace_canvas_list', 'canvas list', canvasList],
+              ['workspace_activity_list', 'activity list', activityList],
               ['workspace_sidebar_list', 'sidebar list', sidebarList],
-              ['workspace_space_snapshot', 'space snapshot', spaceSnapshot],
-              ['space_conversations_changed', 'space conversations nudge', spaceConversations],
-              ['workspace_reach_changed', 'reach change', reachChanged],
               ['workspace_resource_versions', 'resource versions', resourceVersions],
-              ['workspace_access_requests', 'access requests', accessRequests],
               ['workspace_usage', 'usage', usage],
             ],
           );
@@ -1503,26 +802,10 @@ export function WorkspaceSocketProvider({
           if (socket !== next) return;
           releaseSocket();
           const accessRevoked = event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE;
-          const permanentError = accessRevoked
-            ? new ApiError(
-              'You can no longer access this organization.',
-              403,
-              'workspace_access_revoked',
-            )
-            : event.code === WORKSPACE_SOCKET_SESSION_INACTIVE_CODE
-              ? new ApiError(
-                'Your session is no longer active. Sign in again.',
-                401,
-                'workspace_session_inactive',
-              )
-              : event.code === WORKSPACE_SOCKET_INVALID_MESSAGE_CODE
-                ? new ApiError(
-                  'Rally could not complete this action because its realtime command was invalid. Restart the app and try again.',
-                  400,
-                  'workspace_socket_invalid_message',
-                )
-                : null;
-          if (permanentError) {
+          const permanent = accessRevoked
+            || event.code === WORKSPACE_SOCKET_SESSION_INACTIVE_CODE
+            || event.code === WORKSPACE_SOCKET_INVALID_MESSAGE_CODE;
+          if (permanent) {
             permanentlyClosed = true;
             if (accessRevoked) {
               onAccessRevoked?.();
@@ -1535,7 +818,6 @@ export function WorkspaceSocketProvider({
               socketTelemetry.disconnected({ attempts: attempt, retrying: false });
             }
             setState('unavailable');
-            rejectPendingDirectoryRequests(permanentError);
             return;
           }
           if (!stopped) {
@@ -1551,6 +833,14 @@ export function WorkspaceSocketProvider({
         });
       } catch (error) {
         if (stopped || generation !== connectGeneration) return;
+        // The server no longer serves this build. Dialling again cannot
+        // change that, so the loop stops and the page offers the update.
+        if (error instanceof ApiError && error.status === 426 && error.code === 'client_update_required') {
+          permanentlyClosed = true;
+          socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'ticket_failed' });
+          setState('update_required');
+          return;
+        }
         if (!stopped) {
           const offline = isOffline();
           if (offline) reportHandshake(diagnosticAttemptId, 'offline_blocked');
@@ -1574,28 +864,6 @@ export function WorkspaceSocketProvider({
       }
     };
 
-    listWorkstreamsRef.current = (input) => new Promise((resolve, reject) => {
-      const requestId = uuidV7();
-      const command: ListWorkstreamsCommand = {
-        type: 'list_workstreams',
-        requestId,
-        limit: input.limit,
-        ...(input.before ? { before: input.before } : {}),
-        includeSystem: input.includeSystem,
-      };
-      const timeout = window.setTimeout(() => {
-        pendingDirectoryRequests.delete(requestId);
-        reject(new ApiError(
-          'The thread list could not be loaded. Try again.',
-          0,
-          'workspace_directory_timeout',
-        ));
-      }, COMMAND_TIMEOUT_MS);
-      pendingDirectoryRequests.set(requestId, { command, resolve, reject, timeout });
-      sendPendingDirectoryRequests();
-      void connect();
-    });
-
     const online = (): void => {
       suspended = false;
       clearReconnect();
@@ -1603,6 +871,7 @@ export function WorkspaceSocketProvider({
       else void connect();
     };
     const offline = (): void => {
+      if (permanentlyClosed) return;
       const hadAttempt = socket !== null || connecting;
       if (pendingHandshakeDiagnostic) {
         reportHandshake(pendingHandshakeDiagnostic.id, 'offline_blocked');
@@ -1615,17 +884,6 @@ export function WorkspaceSocketProvider({
       if (hadAttempt) socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
       setState('unavailable');
       setPresenceUserIdsByWorkstream({});
-      rejectPendingDirectoryRequests(new ApiError(
-        'The thread list cannot be loaded while offline.',
-        0,
-        'workspace_directory_offline',
-      ));
-      rejectPendingRailRequests(new ApiError('Thread details cannot be loaded while offline.', 0, 'workspace_directory_offline'));
-      rejectPendingSpaceRequests(new ApiError(
-        'The thread list cannot be loaded while offline.',
-        0,
-        'workspace_directory_offline',
-      ));
       releaseSocket();
       try { retired?.close(); } catch { /* Offline already released ownership. */ }
     };
@@ -1661,33 +919,14 @@ export function WorkspaceSocketProvider({
     // The sidebar paints from the disk while the ticket and the handshake are
     // still in flight; the subscribe answer then applies over it through the
     // ordinary receivers, whose ledgers a seed never touches.
-    const localCacheMirror = localCacheScope === null
-      ? null
-      : mirrorWorkspaceDirectory(queryClient, localCacheScope, { live: () => directoryLive });
-    if (localCacheScope !== null) void hydrateWorkspaceDirectory(queryClient, localCacheScope, () => !stopped);
+    const canvasCacheMirror = localCacheScope === null ? null : mirrorCanvasDirectory(queryClient, localCacheScope);
+    if (localCacheScope !== null) void hydrateCanvasDirectory(queryClient, localCacheScope, () => !stopped);
     void connect();
     return () => {
       stopped = true;
-      localCacheMirror?.stop();
+      canvasCacheMirror?.stop();
       releaseData();
-      listWorkstreamsRef.current = () => Promise.reject(new ApiError(
-        'The organization is no longer connected.',
-        409,
-        'workspace_socket_closed',
-      ));
-      rejectPendingDirectoryRequests(new ApiError(
-        'The organization closed while loading the directory.',
-        409,
-        'workspace_socket_closed',
-      ));
-      rejectPendingRailRequests(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
-      rejectPendingSpaceRequests(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
-      walkSpaceChannelsRef.current = () => Promise.resolve(null);
-      walkSpaceNowRef.current = () => undefined;
-      scheduleRailPrefetchRef.current = () => undefined;
       sendConversationViewRequestsRef.current = () => undefined;
-      sendSidekickActivityRef.current = () => undefined;
-      refreshChannelRailsRef.current = () => Promise.reject(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
       window.removeEventListener('online', online);
       window.removeEventListener('offline', offline);
       stopPowerState();
@@ -1696,6 +935,8 @@ export function WorkspaceSocketProvider({
       document.removeEventListener('visibilitychange', observeWindowFocus);
       stopApplicationFocus();
       reportPresenceRef.current = () => undefined;
+      markAllActivitySeenRef.current = () => undefined;
+      retryRef.current = () => undefined;
       clearReconnect();
       activeTicketAbort?.abort();
       activeTicketAbort = null;
@@ -1825,11 +1066,7 @@ export function WorkspaceSocketProvider({
       if (topics.length < event.topics.length) {
         void queryClient.invalidateQueries({ queryKey: organizationUsageQueryKey(localCacheScope) });
       }
-      // The directory is socket-owned and a consumer holds none; asking its
-      // query to refetch would ask a socket this window does not have.
-      for (const topic of topics) {
-        if (topic !== 'workstream_directory') invalidateTopic(queryClient, topic);
-      }
+      for (const topic of topics) invalidateTopic(queryClient, topic);
     });
     void bridge.getWorkspaceSyncSource().then(observe, (error: unknown) => {
       // Unanswerable is treated as nobody publishing: the window falls back
@@ -1843,10 +1080,6 @@ export function WorkspaceSocketProvider({
     };
   }, [localCacheScope, queryClient, region, relay, workspaceId]);
 
-  const listWorkstreams = useCallback<WorkspaceSocketContextValue['listWorkstreams']>(
-    (input) => listWorkstreamsRef.current(input),
-    [],
-  );
   const setForegroundWorkstreamId = useCallback((workstreamId: string | null): void => {
     const parsed = WorkstreamIdSchema.safeParse(workstreamId);
     const validatedWorkstreamId = parsed.success ? parsed.data : null;
@@ -1857,20 +1090,6 @@ export function WorkspaceSocketProvider({
     // canonical socket frame is in flight.
     setPresenceUserIdsByWorkstream({});
     reportPresenceRef.current();
-    // The prefetch asks for the Channel in front first when its rail is stale.
-    scheduleRailPrefetchRef.current();
-  }, []);
-  const refreshChannelRails = useCallback(
-    (workstreamIds: readonly string[]): Promise<void> => refreshChannelRailsRef.current(workstreamIds),
-    [],
-  );
-  const walkSpaceChannels = useCallback(
-    (signal?: AbortSignal): Promise<Set<string> | null> => walkSpaceChannelsRef.current(signal),
-    [],
-  );
-  const prioritizeSpace = useCallback((spaceId: string | null): void => {
-    prioritySpaceIdRef.current = spaceId;
-    if (spaceId !== null) walkSpaceNowRef.current(spaceId);
   }, []);
   const exposedState: WorkspaceSocketState = ownSocket ? state : relayedState;
   const value = useMemo(
@@ -1879,23 +1098,15 @@ export function WorkspaceSocketProvider({
       topicWaterlines,
       presenceUserIdsByWorkstream,
       setForegroundWorkstreamId,
-      listWorkstreams,
       sidebarConnect,
-      walkSpaceChannels,
-      prioritizeSpace,
-      loadedSpaceIds,
-      refreshChannelRails,
       requestConversationView,
-      watchSidekickActivity,
+      markAllActivitySeen,
+      retry,
     }),
     [
-      listWorkstreams,
-      loadedSpaceIds,
-      prioritizeSpace,
-      walkSpaceChannels,
-      refreshChannelRails,
+      markAllActivitySeen,
+      retry,
       requestConversationView,
-      watchSidekickActivity,
       presenceUserIdsByWorkstream,
       setForegroundWorkstreamId,
       sidebarConnect,

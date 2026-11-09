@@ -218,13 +218,70 @@ export interface TitlePillLevel {
   bridge?: Omit<MarkBridgeItem, 'key' | 'onSelect'>;
 }
 
+/**
+ * A pill's title edited in place, drawn as the level's `title` while its menu
+ * is set aside. Enter saves and Escape cancels; leaving the field saves a
+ * changed title and cancels an unchanged one, as renaming in Finder does.
+ * What a save may be is the caller's server's to say, so nothing here trims
+ * or measures it: a refused save leaves the field open on what was typed,
+ * and leaving it for the refusal's notice, which takes focus, does not send
+ * the same title again.
+ */
+export function TitlePillTitleInput({ initial, label, onCancel, onSave, pending = false }: {
+  initial: string;
+  /** The field's accessible name, e.g. `Canvas title`. */
+  label: string;
+  onCancel: () => void;
+  onSave: (title: string) => void;
+  pending?: boolean;
+}): React.JSX.Element {
+  const [value, setValue] = useState(initial);
+  const input = useRef<HTMLInputElement>(null);
+  const submitted = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    input.current?.focus({ preventScroll: true });
+    input.current?.select();
+  }, []);
+  const save = (): void => {
+    submitted.current = value;
+    onSave(value);
+  };
+  const finish = (): void => {
+    if (pending || value === submitted.current) return;
+    if (value === initial) onCancel();
+    else save();
+  };
+  return <input
+    aria-label={label}
+    className="title-pill-title-input"
+    onBlur={finish}
+    onChange={(event) => setValue(event.currentTarget.value)}
+    onKeyDown={(event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+        return;
+      }
+      if (event.key !== 'Enter' || isComposingKeyEvent(event.nativeEvent)) return;
+      event.preventDefault();
+      if (!pending) save();
+    }}
+    readOnly={pending}
+    ref={input}
+    value={value}
+  />;
+}
+
 export function TitlePill({ level, variant = 'current' }: {
   level: TitlePillLevel;
   variant?: 'current' | 'ancestor';
 }): React.JSX.Element {
+  // A title the pill truncates is still readable in full on hover.
+  const tooltip = typeof level.title === 'string' && level.title ? level.title : undefined;
   const body = <>
     <span className="title-pill-icon">{level.icon}</span>
-    <span className="title-pill-title">{level.title}</span>
+    <span className="title-pill-title" title={tooltip}>{level.title}</span>
   </>;
   const [view, setView] = useState<TitleMenuView | null>(null);
   const [direction, setDirection] = useState<'in' | 'out'>('in');
@@ -256,8 +313,9 @@ export function TitlePill({ level, variant = 'current' }: {
     ? <span
       className="title-pill-title is-crumb-root"
       onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); back(); }}
+      title={tooltip}
     >{level.title}</span>
-    : <span className="title-pill-title">{level.title}</span>;
+    : <span className="title-pill-title" title={tooltip}>{level.title}</span>;
   const crumb = view ? <>
     <IconChevronRight aria-hidden="true" className="title-pill-crumb-separator" size={13} stroke={2} />
     <span className="title-pill-title title-pill-crumb" key={view.key}>{view.label}</span>
@@ -303,7 +361,7 @@ export function TitlePill({ level, variant = 'current' }: {
           </DropdownMenu.Trigger>
           {menu}
         </DropdownMenu.Root>
-        : <span className="title-pill-title">{level.title}</span>}
+        : <span className="title-pill-title" title={tooltip}>{level.title}</span>}
     </span>;
   }
   if (level.onSelect) {
@@ -409,9 +467,15 @@ export function TitlePillLeading(): React.JSX.Element | null {
  * width it also carries `PhoneHeader`: the menu button leads the ancestors,
  * and the app-wide actions lead the folded "More" menu.
  */
-export function TitlePillHeader({ actions, ancestors = [], className, current, tooltipSide, trailing }: {
+export function TitlePillHeader({ actions, align = 'center', ancestors = [], className, current, tooltipSide, trailing }: {
   /** Round buttons ahead of `trailing`, folded into a "More" dropdown at phone width. */
   actions?: readonly IconGroupAction[];
+  /**
+   * `start` puts the pill right after the leading controls (Back and Forward),
+   * as design.html §2 draws a Canvas's header; the trailing controls then keep
+   * their place at the right edge whatever the pane's width.
+   */
+  align?: 'center' | 'start';
   ancestors?: readonly TitlePillLevel[];
   className?: string;
   current: TitlePillLevel;
@@ -431,9 +495,10 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
   const headerRef = useRef<HTMLElement>(null);
   const currentRef = useRef<HTMLDivElement>(null);
   const trailingRef = useRef<HTMLDivElement>(null);
-  const { crowded, shift } = useTrailingCrowded(headerRef, currentRef, trailingRef, shownActions?.filter((action) => !action.alwaysVisible).length ?? 0);
+  // A start-aligned pill has its own column, which already keeps it clear of the trailing row.
+  const { crowded, shift } = useTrailingCrowded(headerRef, currentRef, trailingRef, shownActions?.filter((action) => !action.alwaysVisible).length ?? 0, align === 'center');
   return <header
-    className={clsx('title-pill-header window-drag', crowded && 'is-crowded', className)}
+    className={clsx('title-pill-header window-drag', crowded && 'is-crowded', align === 'start' && 'is-start', className)}
     ref={headerRef}
     style={shift ? { '--title-pill-shift': `${shift}px` } as React.CSSProperties : undefined}
   >
@@ -467,9 +532,14 @@ function useTrailingCrowded(
   currentRef: RefObject<HTMLElement | null>,
   trailingRef: RefObject<HTMLElement | null>,
   actionCount: number,
+  enabled = true,
 ): { crowded: boolean; shift: number } {
   const [state, setState] = useState({ crowded: false, shift: 0 });
   useLayoutEffect(() => {
+    if (!enabled) {
+      setState((was) => was.crowded || was.shift ? { crowded: false, shift: 0 } : was);
+      return undefined;
+    }
     const header = headerRef.current;
     const current = currentRef.current;
     const trailing = trailingRef.current;
@@ -506,7 +576,7 @@ function useTrailingCrowded(
     observer.observe(current);
     observer.observe(trailing);
     return () => observer.disconnect();
-  }, [actionCount, currentRef, headerRef, trailingRef]);
+  }, [actionCount, currentRef, enabled, headerRef, trailingRef]);
   return state;
 }
 
@@ -550,6 +620,25 @@ export function TitlePillAction({ children, label, onClick, tooltipSide }: {
   children: ReactNode; label: string; onClick: () => void; tooltipSide?: TooltipSide | undefined;
 }): React.JSX.Element {
   return <IconButton className="title-pill-action" label={label} onClick={onClick} tooltipSide={tooltipSide}>{children}</IconButton>;
+}
+
+/**
+ * A header's "⋯" button: a `TitlePillAction` that opens a menu of
+ * `TitleMenuItem`s, for a pane whose actions sit apart from its pill.
+ */
+export function TitlePillMenuAction({ children, label, tooltipSide }: {
+  children: ReactNode; label: string; tooltipSide?: TooltipSide | undefined;
+}): React.JSX.Element {
+  return <DropdownMenu.Root>
+    <DropdownMenu.Trigger asChild>
+      <IconButton className="title-pill-action" label={label} tooltipSide={tooltipSide}><Ellipsis aria-hidden="true" size={16} /></IconButton>
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Portal>
+      <DropdownMenu.Content align="end" className="menu-content title-pill-menu" collisionPadding={TITLE_MENU_COLLISION_PADDING} sideOffset={8}>
+        {children}
+      </DropdownMenu.Content>
+    </DropdownMenu.Portal>
+  </DropdownMenu.Root>;
 }
 
 /** A row of square actions under the menu's header, the most used things done to it. */

@@ -57,10 +57,10 @@ describe('superseded product header spellings', () => {
     const app = new Hono<HonoAppEnv>();
     app.use('*', async (c, next) => { c.set('auth', auth); await next(); });
     app.use('*', apiOperationTelemetry({ emit, now: () => (now += 20) }));
-    app.post('/workstreams', (c) => c.json({ ok: true }, 201));
+    app.post('/canvases', (c) => c.json({ ok: true }, 201));
     const operationId = '018f22f2-4c22-7abc-8def-0123456789ab';
 
-    const response = await app.request('/workstreams', {
+    const response = await app.request('/canvases', {
       method: 'POST', headers: { 'x-avalon-operation-id': operationId },
     }, createTestEnv({ AVALON_REGION: 'global' }));
 

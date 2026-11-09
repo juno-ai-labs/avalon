@@ -40,7 +40,6 @@ describe("the self-review notice", () => {
       "Notice from Rally, not from a person or an agent: a scheduled self-review of this Sidekick is due.",
       "The row's sentence.",
       "Every count and run above is from definition revision 3, between 2026-10-23T10:00:00.000Z and 2026-10-26T10:00:00.000Z.",
-      "Where to announce a change, as the conversation to post to: 00000000-0000-7000-8000-0000000000bb/00000000-0000-7000-8000-0000000000b1.",
       "Read exactly these runs, by id, and no others:",
       "- failed or stopped: 00000000-0000-7000-8000-0000000000f1, 00000000-0000-7000-8000-0000000000f0",
       "- waiting for input: 00000000-0000-7000-8000-0000000000e0",
@@ -49,7 +48,6 @@ describe("the self-review notice", () => {
     expect(renderSidekickReviewNotice({ ...NOTICE, since: null, announceTo: null, sample: { failed: [], needsInput: [], completed: [] } }, "First.").split("\n").slice(2))
       .toEqual([
         "Every count and run above is from definition revision 3, between creation and 2026-10-26T10:00:00.000Z.",
-        "Where to announce a change, as the conversation to post to: none.",
         "Read exactly these runs, by id, and no others:",
         "- failed or stopped: none",
         "- waiting for input: none",

@@ -31,7 +31,7 @@ beforeEach(async () => {
     env.DB.prepare("INSERT INTO users(id,name) VALUES (?,'Maya')").bind(maya),
     env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,status,role) VALUES (?,?,'active','member')").bind(workspaceId, maya),
   ]);
-  await workspace().sidekickCreate({ ...address, authorUserId: creator, scope: "workspace", owningWorkstreamId: null,
+  await workspace().sidekickCreate({ ...address, authorUserId: creator, scope: "workspace",
     authorityGeneration: 1 });
 });
 async function allowMaya(allowed: boolean) {

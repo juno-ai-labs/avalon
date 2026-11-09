@@ -5,9 +5,9 @@ shell for everyone: Organization members and guests shared into some of its
 conversations, as described in [The shell](#the-shell). A guest gets no setup or
 onboarding. Sign-in, which also claims anything shared with the person's
 address, and canonical conversation links activate the workspace and mount the shell. Local API and
-Chrome journeys cover guest entry, feed, upload/reload, multiple workstreams,
+Chrome journeys cover guest entry, feed, upload/reload, multiple conversations,
 promotion and membership removal. Production mail delivery and deployed stateful
-artifact serving remain release checks; see the guest-sharing completion audit.
+artifact serving remain release checks.
 
 ## Where the code lives
 
@@ -25,7 +25,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
 | `apps/desktop/src/renderer/lib/collaboration-session.tsx` | Collaboration-only identity/API context, optional setup capabilities, and `useShellCapabilities`: which host is drawing and whether the reader is a guest. |
-| `apps/desktop/src/renderer/lib/window-surface.ts` | The surfaces the Mac app opens in their own window (Settings, Sidekicks), which a browser tab shows as full-tab routes, and how each closes. |
+| `apps/desktop/src/renderer/lib/window-surface.ts` | The surfaces the Mac app opens in their own window (Settings), which a browser tab shows as full-tab routes, and how each closes. Sidekicks render in the main window on both hosts. |
 | `apps/desktop/src/renderer/components/mac-download-link.tsx` | The Mac app download row, the sidebar's footer item when the host is a browser tab. |
 | `packages/contracts/src/browser-session.ts` | Shared credential-free session and email exchange schemas. |
 | `apps/browser/wrangler.jsonc` | Assets and the explicit Global API service binding. |
@@ -37,15 +37,11 @@ shows a loading state before offering sign-in.
 
 ## How it works
 
-Conversation archive state is part of the shared-navigation response.
-The selected feed opens immediately while navigation loads; it has no separate
-lifecycle preflight. Archive and restore refresh that same directory query.
-
 Vite builds the client and content-addressed assets. The Worker reads the built
 HTML through the assets binding unchanged; React mounts the collaboration SPA in
 the browser. Initial HTML contains no user or scope data. Rendering a generic
 sign-in form on every server request added a second rendering path without
-providing authenticated content, so the lite client uses a static shell. The content policy allows same-origin
+providing authenticated content, so the client uses a static shell. The content policy allows same-origin
 requests and local image/media blobs so authenticated attachment bytes can render;
 this does not allow blob scripts or frames. Styles permit inline CSS because
 shared dialogs inject scroll-lock rules and components use dynamic styles, as
@@ -76,10 +72,10 @@ the proof in document memory until the person clicks Continue. Merely opening a
 link never redeems it. Reloading after removing the fragment requires reopening
 the email link or requesting another one; no proof is written to local storage.
 
-A shared conversation has no entry of its own. Its emailed link is the ordinary
-addressed Channel path, so it opens like any canonical link: signed out, the
+A shared Canvas has no entry of its own. Its emailed link is the Canvas's
+canonical link, so it opens like any other: signed out, the
 entry asks the person to sign in with the address the link was sent to; signed
-in, it opens the Organization and the conversation. Signing in is what claims
+in, it opens the Organization and the Canvas. Signing in is what claims
 the share ([scoped invitations](scope-invitations.md#claiming)), on the server,
 before the session is described, so there is no acceptance screen, button or
 request after it. An old `/invite#…` link from before this is a plain sign-in
@@ -90,10 +86,13 @@ For an unaddressed entry, the client lists the user's regional workspaces and ca
 out through the ordinary browser-session logout. Once the list is on screen it
 reads `GET /browser/workspaces/attention` and gives each row with new activity a
 count badge ([multiple workspaces](multiple-workspaces.md#the-account-menus-directory)). Workspace roots mount the shell,
-and canonical Space, Channel, Breakout and Sidekick links activate the addressed
-workspace and open in it. A copied link reaches here from the site's handoff
+and canonical Canvas and Sidekick links activate the addressed workspace and
+open in it. A retired Space, Channel, Breakout or Thread link opens nothing:
+the entry says `RETIRED_LINK_MESSAGE` (`@rally/contracts/links`, the sentence
+the desktop's deep-link error window shows too) above the
+list, or in place of the sign-in line. A copied link reaches here from the site's handoff
 page, whose **Continue in browser** keeps the path and swaps the host
-([`workstream-links.md`](workstream-links.md#the-handoff-page)). A guest sees no setup or onboarding view.
+([`links.md`](links.md#the-handoff-page)). A guest sees no setup or onboarding view.
 
 Returning focus refreshes both the root session and the selected workspace
 relationship, even when the user ID is unchanged. The feed stays mounted while
@@ -122,18 +121,11 @@ generation used for sign-out and cross-tab restoration. Long session deadlines
 are split into timer-range-safe waits by `session-timer.ts`.
 
 A guest's sidebar is the desktop sidebar fed by the workspace socket, listed
-by the same rules a member's is ([`listing-rules.md`](listing-rules.md)): the
-threads with a conversation the guest may open, and the Organization-wide
-Channels those threads sit in. Organization-wide scope admits only members, so
-a guest is told nothing of an Organization-wide thread they are not in. The shared-navigation directory adds no rows; it says which
-conversations of a Channel the guest holds. A child-only share still omits Main
-and every unshared Breakout; such a Breakout opens alone, in Main's place. The
-Channel's canonical parent in WorkspaceDO independently re-authorizes every
-thread and Breakout. The Organization root and a Channel link open the same
-landing route and Channel screen a member's do; a guest's Channel screen lists
-only the threads they may open, and no composer. A guest's
-shell holds background thread sockets as a member's does, for every thread
-whose Main is theirs (`mainReachable`).
+by the same rules a member's is ([`canvases.md`](canvases.md)): the
+Canvases shared with them and the Sidekicks they may open. A guest has no New
+Canvas or New Sidekick, and the Canvases home's empty state says a shared
+Canvas appears there. The server re-authorizes every conversation a guest
+opens.
 
 ### Google sign-in
 
@@ -168,6 +160,29 @@ shows until the person starts an email sign-in. Four choices shape it:
 
 The redirect URI must be registered on Google's identity OAuth client; the
 [runbook](runbook.md#provider-configuration) lists it.
+
+### Development sign-in
+
+Against a local API with `APP_ENV=development` and `RALLY_DEV_AUTH=true`, the
+signed-out entry also offers **Use local development account**, the desktop's
+button of the same name. The entry asks `GET /browser/dev/session` once, the
+first time the signed-out screen shows; it answers 204 only there and 404
+everywhere else, so production never draws the button. Choosing it sends
+`POST /browser/dev/session`, which opens `createDevelopmentIdentitySession`'s
+account (`adam@avalon.local`, the seed's Adam) as an ordinary browser cookie
+session with no Organization, and the entry continues as after an email
+sign-in, to the Organization list; that route writes no Organization row.
+The development Organization's name is whichever wrote the row first:
+`createDevelopmentSession` (the desktop's `POST /auth/dev/session`, which
+sends the onboarding's name, "Rally Development" by default, or its own
+default "Avalon Development" when a caller sends none) no longer renames a
+stored one, so every member and every surface read the one `workspaces.name`.
+On a stack that ran `pnpm db:seed` first, that is the seed's "Avalon Studio",
+so a developer sees that rather than the name typed at onboarding.
+
+A Canvas or Sidekick link's sign-in line names what it opens ("Sign in to open
+this Canvas."), and an Organization path's says "Sign in to open this
+Organization."; a link need not have been emailed to anyone.
 
 ### Connectors
 
@@ -204,20 +219,25 @@ that held what the old relationship could read.
 The shell reuses the desktop renderer rather than forking it. It builds an
 `AppSessionValue` over the cookie session and installs it with
 `AppSessionValueProvider`, then mounts the desktop's `AccountOnboardingGate`
-and `WorkspaceApp`: the workspace socket provider, the sidebar, the Channel feed,
-Breakouts, the details rail and the Settings route. The value carries
+and `WorkspaceApp`: the workspace socket provider, the sidebar, the Canvases and Sidekicks
+screens, the right panel and the Settings route. The value carries
 `host: "browser"`. Account onboarding is identity-scoped, so it goes through the
 `_` workspace of the cookie adapter. Anything only the Mac app can do (accepting
 a workspace invitation from the desktop flow, desktop sign-in) rejects with
 "Available in the Mac app." Creating an organization is the entry's, not the
 shell's; see below. A browser tab cannot keep a window of its own, so the
-surfaces the Mac app opens in one, Settings and Sidekicks (the library and each
-Sidekick's screen), are routes of the main window here (`#/settings`,
-`#/sidekicks`). `lib/window-surface.ts` lists them; on such a route the shell
-takes the whole tab and hides the sidebar, which stays mounted so closing the
-surface returns to the workspace without reloading it. In Settings, Application shows
-Appearance and names the Mac app for the rest, and Notifications offers
-"In this browser". The sidebar always shows **Download the Mac app** above the
+surface the Mac app opens in one, Settings, is a route of the main window here
+(`#/settings`). `lib/window-surface.ts` lists it; on that route the shell takes
+the whole tab and hides the sidebar, which stays mounted so closing the surface
+returns to the workspace without reloading it. Sidekicks (`#/sidekicks`, the
+home, and `#/sidekicks/:id`, each Sidekick) are panes beside the sidebar on
+both hosts, like any other screen. In Settings a browser drops the Desktop
+app group, whose settings are all about the Mac app, and shows Appearance in
+Account; Notifications offers "In this browser" while the
+`pushNotificationsEnabled` flag is on, and only the email choices without it.
+At phone width Settings' header has one close: the sections sheet's toggle is
+hidden while the sheet is open. The tab is named for what it shows
+("Canvases · Rally", "Settings · Rally"). The sidebar always shows **Download the Mac app** above the
 account menu, as a footer item ([`desktop-shell.md`](desktop-shell.md#the-sidebar)).
 
 What a guest may do is asked in one place, `useShellCapabilities()`, which reads
@@ -233,17 +253,22 @@ authorizes every call. `GET /workspace` answers guests too, with
 else; the rest of `/workspace` stays member-only.
 
 The desktop shell routes by hash. Before its router mounts, the shell rewrites a
-canonical Channel, Space or Sidekick link, or an addressed Channel path such as an invitation email's, into
-the workspace path plus the hash the desktop's own deep links set
-(`shellLocation`). Losing access or a 401 asks the entry to re-read the server
+canonical Canvas or Sidekick link into the workspace path plus the hash the
+desktop's own deep links navigate to (`shellLocation`): `#/canvases/:id`, with
+`?artifact=:id` when the link opens one of its artifacts, or `#/sidekicks/:id`. Losing access or a 401 asks the entry to re-read the server
 session, which unmounts the shell when the session is gone. The shell keeps
 transcripts in the local cache, so the entry wipes it alongside drafts on
 sign-out and account change.
 
-The cookie adapter forwards the member route families (`spaces`, `projects`,
-`onboarding/account`, `onboarding/organization-suggestion`, `work-opportunities`, `digest`, `push-devices`,
-`workspaces`) in addition to the ones guests use, which include `navigation`
-(the Threads tab, Channel stats, pins and Activity). The list is
+The cookie adapter forwards the families the Canvases and Sidekicks shell
+calls: `canvases`, `conversations` (a Canvas's Chat and a Sidekick's
+conversation), `sidekicks`, `automations`, `sharing`, `resources`, `search`,
+`connections`, `workspace`, `workspaces`, `push-devices`, `onboarding/account` and
+`onboarding/organization-suggestion`, with `feature-flags`, `telemetry`,
+`message-issues`, `favicons`, `speech` and `realtime`. The Thread, Channel and
+Space families (`workstreams`, `spaces`, `projects`, `navigation`,
+`work-opportunities`) and `digest` are not forwarded; the server deleted those
+routes in plan step C-1. The list is
 `BROWSER_ROUTE_FAMILIES` in `apps/api/src/routes/browser.ts`: a new route family
 the browser calls must be added there, or the browser's request for it is not
 forwarded. Each route keeps its own role
@@ -294,17 +319,16 @@ is mapped to the same-origin regional upgrade path; ticket secrets stay out of
 URLs. A completed sign-out or session replacement fences a pending native renewal
 so it cannot restore an old bearer.
 
-The shared conversation surface, workstream/automation views, Sidekick picker
-and favicon adapter consume `CollaborationSessionProvider`, not the desktop
+The shared conversation surface, the Canvas and Sidekick views and the favicon
+adapter consume `CollaborationSessionProvider`, not the desktop
 account/setup context. The desktop session provider installs this smaller
 provider around its children, retaining the same API and identity objects.
 Connector authorization cards require an explicit connector-setup capability,
 which supplies pending OAuth state and external navigation. Omitting it hides
 setup cards and avoids their catalog request; existing connector chips and tool
 execution are separate from setup. Sidekick creation likewise requires an explicit
-creation callback; without it the picker retains attachment of existing Sidekicks
-and omits the native creation action. The browser supplies both to a member and
-neither to a guest, whose routes for them refuse.
+creation callback; without it the shell offers no New Sidekick. The browser
+supplies both to a member and neither to a guest, whose routes for them refuse.
 
 Addressed conversation links select their workspace directly without waiting for the workspace list.
 
@@ -325,36 +349,22 @@ runtime suites cover guest mutation and lifecycle authority. The collaboration
 context deliberately does not expose workspace
 creation, account onboarding or desktop credential controls.
 
-The shared contextual sidebar lists Sidekicks available in the selected conversation,
-including workstream recommendations and locally loaded instructions. Its removal
-local action removes only the local attachment and leaves the workstream
-recommendation available. A separately labeled parent action removes the shared
-recommendation; an eligible loaded workspace Sidekick can also be recommended.
-These actions use the canonical conversation-addressed recommendation options,
-not Main's participant list. Owned Sidekicks are excluded from explicit
-recommendation management. Recommendations use the exact substream endpoint and query key, so
-navigating between children does not reuse another child's source visibility.
-A guest's shell offers no Sidekick authoring or setup. Guests use the scoped
-recommendation summaries for eligible owned Sidekicks as well; they do not fetch
-the member-only owned Sidekick authoring directory.
+A guest's shell offers no Sidekick authoring or setup, and does not fetch the
+member-only Sidekick authoring directory.
 
-The conversation header opens the shared email invitation panel. It accepts
-multiple email addresses separated by whitespace, commas, or semicolons, and
-sends through the existing scoped invitation API with operation identity retained
-on retry. The selected conversation is the only target: Main uses conversation
-`0`, never a workstream grant, so other substreams gain no access. Below the form
-it lists who that conversation was shared with and has not signed in yet, as
-Guest rows the sharer can remove. It has no access picker or direct-share
-management.
+A Canvas's Share dialog invites a guest by email through the shared invitation
+panel (`ScopeSharingPanel`). It accepts multiple email addresses separated by
+whitespace, commas, or semicolons, and sends through the existing scoped
+invitation API with operation identity retained on retry. The Canvas's Chat
+(`0`) is the only target. Below the form it lists who the Canvas was shared
+with and has not signed in yet, as Guest rows the sharer can remove.
 The server remains responsible for sharing authorization. No setup or onboarding
 capability is required.
 
 The conversation header also opens the selected conversation's participant controls and
 lists its attached resources. Resource selection uses the shared preview/lightbox
 and authenticated byte endpoint. The header's resource opener is bound to the
-selected conversation; the desktop parent sidebar retains a separately bound
-parent-resource opener. A child-only browser view therefore does not require
-Main's participant list or resource inventory to expose these controls.
+selected conversation.
 
 ### Shared site resources
 
@@ -384,7 +394,7 @@ that organization with the same `openWorkspace` a workspace link uses, mints the
 site's single-use access code, and replaces itself with the site's `openUrl`
 plus `?return=`. A 404 means no such site, and a 403 means the site exists but
 this account cannot read it, including a member of the Organization who is not
-in the site's Channel; the page says which, so the person knows whether to fix
+in the audience of the site's Canvas; the page says which, so the person knows whether to fix
 the link or ask for access. A failure that trying again could fix (Rally
 unreachable, a 503) offers Try again. Its decisions live in
 `apps/browser/src/site-open-decisions.ts`, apart from React, and the page is
@@ -394,7 +404,6 @@ A deployment other than Global sets its cookie only when one of its
 organizations is opened, and the lookup is what finds the organization, so a
 site in such a deployment opens only once the browser has opened one of that
 deployment's organizations. The page says so.
-
 
 ### Browser host lifecycle and content boundaries
 
@@ -413,7 +422,7 @@ cookie session. Legacy unaddressed links restore the root workspace picker.
 
 The entry scrolls independently of the shared application's fixed viewport.
 Its screens draw the desktop's sign-in card and the shared `RallyMark`,
-`Button`, `ConnectorMark` and `InlineError`. A sign-in or picker change belongs
+`Button` and `ConnectorMark`; failures use the shared error popup. A sign-in or picker change belongs
 in `@rally/ui`'s `app.css` so both hosts move together; the browser's
 `styles.css` keeps only what a web page adds.
 Every wait from page load to the shell draws `BrowserBoot`. A signed-in link
@@ -462,9 +471,8 @@ is no separate browser permission model or arbitrary forwarding destination.
 
 At phone width the shared sidebar becomes a top bar with a menu button that
 drops the navigation in as a sheet
-([`desktop-shell.md`](desktop-shell.md#at-phone-width)). Archive and
-guest promotion use the shared confirmation modal. Sharing fixes its target to
-the clicked conversation and shows only email input and submission feedback.
+([`desktop-shell.md`](desktop-shell.md#at-phone-width)). Guest promotion uses
+the shared confirmation modal.
 
 ## Invariants
 
@@ -575,7 +583,7 @@ not revoke the earlier session, so anything bound to it, such as a Web Push
 device, stays live until that session ends. The Home Screen app supports iOS
 18 and later, so a Safari tab on an iOS too old for Home Screen Web Push (before
 16.4) is still shown the Home Screen hint. It works only
-online: nothing is cached for it, and invitation and Channel links from email
+online: nothing is cached for it, and invitation and Canvas links from email
 open in Safari, not in the app.
 
 ## Testing
@@ -616,26 +624,13 @@ that starts reading member-only data for everyone shows up there.
 `apps/api/test/auth-router.test.ts` proves `GET /workspace` and the member
 directory answer a guest while the rest of `/workspace` stays refused.
 
-The conversation header exposes rename through the shared conversation
-mutation. A failed rename keeps its draft and shows the API error; success closes
-the dialog and refreshes shared navigation. Guest Main renames use the same
-exact-conversation route as child renames, without requiring full membership.
-
-The shared-navigation response carries both parent and conversation archive state.
-There is no separate lifecycle preflight. An independently archived child under an
-active parent offers Restore substream outside the feed. An archived parent shows
-Archived work stream and explains that its work stream must be restored first;
-it never sends a child restore for Main or for a parent-archived child.
-Archive/restore uses the existing child mutation and refreshes shared navigation.
+The browser shell draws the desktop's Canvas and Sidekick screens, so a
+Canvas's rename, Share dialog and title menu are the desktop's
+([`canvases.md`](canvases.md#in-the-client)).
 
 Equivalent session refreshes update the stable RallyApi with `setSession`; they
 must not close a healthy socket or reject pending command receipts. Identity,
 workspace, role or access-class changes replace the client and re-admit it.
-Responsive navigation uses shell state, closes on navigation and supplies the
-shared dismissal scrim. The header uses the shared
-icon button with Tabler `share-2`; its open state stays highlighted. Work-stream
-and substream right-click menus open the same sharing dialog for their own row.
-Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
 

@@ -80,7 +80,7 @@ export interface CreateTerminalSandboxInput {
   workspaceId: string;
   workstreamId: string;
   /**
-   * The conversation whose `SubstreamAgent` owns this sandbox. Carried as a
+   * The conversation whose `AgentLoopDO` owns this sandbox. Carried as a
    * provider label so a Daytona event can be routed back to that conversation;
    * a sandbox created before the label existed belongs to the main one.
    */

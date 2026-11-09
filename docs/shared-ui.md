@@ -1,32 +1,30 @@
 # Shared collaboration UI
 
-`@rally/ui` owns the collaboration presentation used by desktop, the lite
-browser, and the Sideline internal host. Desktop's current UI is the reference;
-each smaller host supplies fewer actions to the same components rather than
-drawing a second design.
+`@rally/ui` owns the collaboration presentation used by the desktop and browser
+hosts. Desktop's current UI is the reference; the browser mounts the same
+desktop shell ([`browser-client.md`](browser-client.md)), and a host or a guest
+with fewer capabilities supplies fewer actions to the same components rather
+than drawing a second design.
 
 ## Where the code lives
 
 - `packages/ui/src/components`: the shell pieces ([`desktop-shell.md`](desktop-shell.md):
-  title pills, the thread, Channel and Breakout menus, Breakout chips and
-  ticks, the split layout), navigation frame and rows, resource rows, Sidekick
-  section/picker, account trigger, glyphs, avatars and visual primitives — and
-  a Channel's mark, `space-icon.tsx` (`SpaceIcon`). A measured share is drawn
+  title pills and their menu building blocks), the sidebar row content
+  (`navigation.tsx`, `SidebarNavigationRowContent`), the resizing sidebar,
+  resource rows, glyphs, avatars and visual primitives. A measured share is drawn
   by `Meter` in `primitives.tsx`: a track and a fill, `role="meter"` (or
   `progressbar` for a task moving towards done) with its value attributes, a required label, and a `normal` or `warning` tone, painted
   from the `cmp.meter.*` tokens. The Organization usage line and the onboarding
   checklist both use it, so a new bar adds no CSS. The
   icon catalog's glyphs are `appearance-icons.ts` (`APPEARANCE_ICON_COMPONENTS`)
   and its sectioned grid is `icon-catalog.tsx` (`IconCatalog`), drawn by
-  `AppearancePicker`, the one picker a Space and a Channel both open.
+  `AppearancePicker`, which a Sidekick's header opens.
 - `packages/ui/src/lib`: browser-safe display helpers, theme application and
   device preferences. `packages/ui/src/styles` owns the shared styles/tokens.
 - Desktop renderer adapters retain routing, UI stores, IPC, telemetry and data
-  queries. Existing import sites re-export shared primitives during migration.
-- Sideline composes `SidelineComposer` and `SearchSelect`; its adapter owns
-  authentication, catalog reads, send requests, and native Rally handoff.
-- The next stacked browser host supplies email entry, cookie session restoration,
-  its scoped directory and selected-conversation data. Those screens are not in #824.
+  queries. Existing import sites re-export shared primitives.
+- The browser host supplies email entry and cookie session restoration, then
+  mounts the desktop shell ([`browser-client.md`](browser-client.md)).
 
 The application error boundary is shared, with host-specific error reporting.
 
@@ -108,14 +106,14 @@ error copy without those markers.
 focusable; it sets `aria-disabled`, blocks activation and shows `Tip` only for
 that explanation. `MenuActionItem` in `components/menu-action-item.tsx` owns the
 equivalent dropdown behavior, keeping explained items in the arrow-key path and
-preventing disabled selections from closing the menu. Conversation Merge/Resolve
-and Sidekick actions use this same primitive. Ordinary disabled controls still
+preventing disabled selections from closing the menu. The account menu's
+member and Sidekick actions use this same primitive. Ordinary disabled controls still
 use native disabling, and enabled text controls add no redundant tooltip.
 
 Shared components receive presentation data and callbacks. They never import an
 application, fetch authority, establish sockets or call Electron. Optional actions
-represent host capabilities; omitting setup and authoring actions keeps the browser
-lite. The common feed/composer and resource/participant dialogs remain the existing
+represent host capabilities; a host or guest omits the setup and authoring
+actions it cannot offer. The common feed/composer and resource/participant dialogs remain the existing
 ConversationSurface implementation.
 
 `Toast` is the controlled confirmation pill. Its shared presence hook also
@@ -123,46 +121,35 @@ drives conversation activity and Jump to latest; native previews honour its
 `data-native-overlay` marker through the end of its exit. Operational failures
 use acknowledged error popups.
 
-The sidebar can omit Main without inventing an accessible Main route. Browser
-participants and resources belong to the selected authorized conversation; desktop
-can continue supplying parent-owned workstream context. Directory appearance comes
-from canonical reads and preserves the existing Main-label boundary.
-Desktop and browser both mount the one non-collapsing `ResizableSidebar`
-(`collapsible={false}`) and compose the plain `SidebarFooter` with an account
-slot ([`desktop-shell.md`](desktop-shell.md)). `SidebarCollapseFooter` and the
-primitive's compact layout remain only for Sideline, the one host that still
-collapses. A host that keeps a sidebar's width (and, for Sideline, its
-collapsed state) across launches does it through `lib/sidebar-preferences.ts`
+Browser participants and resources belong to the selected authorized
+conversation. Directory appearance comes from canonical reads.
+Desktop and browser both mount `ResizableSidebar`, which only resizes, and
+compose the plain `SidebarFooter` with an account slot
+([`desktop-shell.md`](desktop-shell.md)). Its collapse toggle, compact layout
+and `SidebarCollapseFooter` were deleted (2026-11), because no host collapsed
+it any more. A host that keeps a sidebar's width (and its collapsed state, which
+the library still stores) across launches does it through `lib/sidebar-preferences.ts`
 under its own local-storage keys. A missing or unreadable width falls back to
 the default, a readable one is clamped to the sidebar's limits, a missing
 collapsed flag reads as expanded, and a refused write leaves the in-memory state
 standing.
 
 `SidebarRow` still accepts an optional count `badge`, but no host passes one:
-the Channel row's count badge was replaced by its unread treatment
-([`workstream-markers.md`](workstream-markers.md#channel-row)).
+an unread Canvas or Sidekick row says so by its unread treatment
+([`canvases.md`](canvases.md#in-the-client)).
 
-The desktop's pinned section marks itself `data-reorder-list`: a row finds the
-slots it is being measured against through that mark rather than by knowing
-whose list it is in. A drag's end reads the browser's `none` operation as a
-release nothing accepted, including Escape and release outside the list.
+The Pinned group of each list (`PinnedSection`, `useRowPinDrop`) is the
+desktop host's, in `navigation-rows.tsx`; a drag that ends without landing
+(Escape, or a release outside the list) clears its drop state. The rows and
+screens of the Canvases and Sidekicks lists are the desktop host's
+([`desktop-shell.md`](desktop-shell.md)). Nothing here fetches, and no
+component infers a capability from an omitted prop: a menu with no switch is a
+host that decided not to draw one.
 
-The shared Breakout rail, `SpaceRow` and `SpacePlacementList` were removed with
-the shell redesign. Breakouts are listed in the Channel title menu
-(`ChannelMenu`'s Breakouts level), newest activity first with
-`compareAlphabeticalTitle` breaking ties. The Space pills and the Space
-dashboard were deleted with the navigation redesign; a Channel's row and screen
-are the desktop host's ([`desktop-shell.md`](desktop-shell.md)). Nothing here
-fetches, and no component infers a capability from an omitted prop: a Channel
-menu with no privacy switch is a host that decided not to draw one.
-
-The guest browser supplies its bounded sharing projection to the same
-`ResizableSidebar`, rows, scroll regions and resize geometry as Electron. It
-still owns its browser routes, account menu, unsupported-width state and
-guest-only loading copy, and it omits management actions that the sharing
-projection cannot authorize. At the existing 920px responsive boundary and
-below, the host shows an unsupported-width state instead of presenting a
-compressed or partial hierarchy.
+A guest in the browser gets the same desktop shell, sidebar, rows and resize
+geometry as Electron; `useShellCapabilities()` tells the shell it is a guest,
+and it omits the management actions a guest cannot take. Narrow widths follow
+the shell's phone layout ([`desktop-shell.md`](desktop-shell.md#at-phone-width)).
 
 `MarkBridge` draws a row of `IdentityMark`s as one tinted glass shape, each
 mark a control with its own tooltip. The caller supplies names and actions;
@@ -190,47 +177,22 @@ editable region first, so a phone's keyboard drops.
 
 Theme application stamps the same `data-theme` attribute before rendering, and writes
 the applied canvas into any `theme-color` meta the host document carries. Desktop
-installs the native theme reporter/broadcast adapter; browser and Sideline install system
+installs the native theme reporter/broadcast adapter; browser installs system
 appearance observation. Visual primitives share the same theme subscription.
 
-Sidekick management options are requested when management controls open. Transcript
-updates continue refreshing existing attachment/recommendation state, but do not
-fetch management choices. Canonical management denial hides the picker; unresolved management capability disables
-creation and shows a loading row menu only for eligible rows. Attachment updates
-seed the selected cache and invalidate siblings without discarding the new seed.
+### People picker
 
-### People picker order
-
-The People level keeps the current participants and pending conversation
-invitations first, then requests to join. A single **Suggested** list shows at
-most five people total. Its ranking tiers are the top five collaborators in
-this Channel, the top five other collaborators in the Organization, remaining
-Members alphabetically, then Guests alphabetically. The tiers are internal
-ordering rules, not separate visible sections. Deduplication and eligibility
-filtering happen before taking the final five: current participants, inactive
-accounts and people who asked to join are excluded. Pending Organization
-invitees follow registered Members, with their Invited label. Search exposes
-all matching names and email addresses in that order, without the suggestion cap.
-
-`GET /navigation/people-ranking?channelId=…` returns ordered person ids from
-`workspace-people-ranking.ts`; [the activity log](digests.md#people-interaction-ranking)
-owns the scoring and indexed read. Thread ranking uses the route's Channel
-pane context; standalone Threads use Organization ranking alone.
-
-The title pill's `onMenuOpen` starts the host's optional ranking read before
-People is selected. People snapshots that order on entering the level: late
-responses apply on its next opening, so an Add button never moves under the
-pointer. Pending or failed reads silently keep the directory fallback usable.
-The host gates both automatic and manual reads on API, person and member
-eligibility, and shares any in-flight refresh on reopening.
+The title pill has no People level and the server ranks no people (both were
+deleted at the 2026-11 cutover). Who is in a Canvas is chosen in its Share dialog, which is desktop host code
+([`canvases.md`](canvases.md)); nothing here ranks people. The title pill's
+`onMenuOpen` ranking read and the People level's ordering snapshot went with
+them.
 
 ## Invariants
 
 - Shared components import no application, IPC, authentication or transport code.
 - Hosts reuse the same semantic styles and presentation elements.
 - Host callbacks perform mutations through existing admitted application paths.
-- Child-only sharing must not expose Main labels or resource context. Guest hosts
-  use the selected conversation socket and omit desktop parent prewarming.
 
 ## Boundary
 
@@ -253,29 +215,23 @@ Native theme reporting and cross-window IPC belong only to the desktop adapter.
 
 `pnpm --filter @rally/desktop exec vitest run
 src/renderer/components/primitives.test.tsx
-src/renderer/components/title-pill-menu.test.tsx
 src/renderer/components/automation-header.test.tsx` covers explained disabled
 buttons and the shared menu action's keyboard focus, tooltip and selection guards.
 
-`pnpm --filter @rally/desktop exec vitest run src/renderer/components/toast.test.tsx
-src/renderer/components/conversation-motion.test.tsx` covers announcements,
+`pnpm --filter @rally/desktop exec vitest run src/renderer/components/toast.test.tsx`
+covers announcements,
 retained content, interruption, reduced motion and cleanup. Real-window
 inspection covers placement, theme contrast and native preview composition.
 
-Run `pnpm lint`, `pnpm typecheck`, and `pnpm --filter @rally/desktop exec vitest run
-src/renderer/components/sidekick-picker.test.tsx
-src/renderer/components/sidekick-section.test.tsx` (as one command). The desktop
-suite imports the real shared implementations through their re-export adapters.
+Run `pnpm lint` and `pnpm typecheck`. The desktop suite imports the real shared
+implementations through their re-export adapters.
 Run `pnpm --filter @rally/desktop exec vitest run
 src/renderer/components/error-notice.test.tsx
-src/renderer/components/acknowledged-error-dialog.test.tsx
-src/renderer/components/sideline-composer.test.tsx` for the popup queue,
-acknowledgement, focus, nested-dialog behavior and Sideline message validation.
-Sideline validation uses this DOM harness because static HTML cannot represent
-a client-side popup.
+src/renderer/components/acknowledged-error-dialog.test.tsx` for the popup
+queue, acknowledgement, focus and nested-dialog behavior.
 Run `pnpm --filter @rally/desktop exec electron-vite build` and inspect the changed
-surfaces in Electron. The browser host in #825 adds Chrome verification; no second
-component test runner is needed for the same implementations.
+surfaces in Electron, and in Chrome for the browser host; no second component
+test runner is needed for the same implementations.
 
 ## Changelog
 
@@ -494,7 +450,7 @@ Shipped in #1203.
 **What changed:** `MIN_SIDEBAR_WIDTH` is 306px, up from 240px. A saved width
 below it is raised on the next launch by `sidebar-preferences.ts`'s clamp.
 
-**Why:** The attention menu ([`attention-menu.md`](attention-menu.md)) made
+**Why:** The attention menu (the attention menu, retired) made
 the top bar four buttons, five while an update waits. On macOS the bar starts
 at 100px to clear the traffic lights (82px inset plus 18px padding) and keeps
 14px on the right, which at 240px left 126px for buttons that need 192px
@@ -827,7 +783,7 @@ optional, and the row's grid keeps its third column so the two kinds line up.
 This is the only capability the component lets a host withhold; the drag
 handlers are still required, because a row that cannot be arranged is a
 different component. The reasoning is in
-[`spaces.md`](spaces.md#changelog).
+[`spaces.md`](architecture.md#changelog).
 
 ### 2026-09-19 — Space presentation is shared; hosts keep routing and authority
 

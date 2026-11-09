@@ -1,78 +1,95 @@
 # Desktop layout restoration
 
 Rally restores a person's local reading layout when the desktop app reopens. The
-Organization still owns which Channels, threads, Breakouts, and resources exist;
+Organization still owns which Canvases, Sidekicks and resources exist;
 the device remembers only the view the person chose.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/ui-store.ts` | Rail widths and collapse preferences. |
+| `apps/desktop/src/renderer/lib/ui-store.ts` | The sidebar's width and open section, and the right slot's state (`railOpen`, `railExpanded`, `railVariant`, `railWidth`, `inspector`). |
 | `apps/desktop/src/renderer/lib/rail-split.ts` | The even split an attachment or artifact panel opens or restores at. |
 | `apps/desktop/src/renderer/lib/desktop-layout.ts` | Scoped local keys and artifact panel selection. `useSemanticScroll` is still exported and tested, but nothing calls it. |
-| `apps/desktop/src/renderer/components/app-shell.tsx`, `screens/workstream-landing.tsx` | Last route save and directory-checked startup restoration. |
-| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Artifact panel selection per Channel or Breakout. |
+| `apps/desktop/src/renderer/components/app-shell.tsx`, `screens/landing.tsx`, `lib/landing.ts` | Last route save and startup restoration. |
+| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Artifact panel selection per conversation. |
 | `apps/desktop/src/main/artifact-window-state.ts`, `main-window-state.ts`, `main/index.ts` | Native artifact window registry and the display clamp shared with the main window. |
 | `apps/desktop/src/renderer/App.tsx` | Fresh content authorization for detached windows after sign-in. |
 
 ## How it works
 
-The renderer keeps the sidebar's width, its open section
-(`rally.sidebar-section`) and the Threads sort (`rally.sidebar-thread-sort`),
-the width of a thread beside its Channel (`thread-width`) and of a breakout
-beside its thread (`breakout-width`) in local storage. The Space filter
-(`rally.sidebar-space-filter`) is no longer read; the sidebar has no Spaces to
-filter by. The sidebar no longer collapses, so there is no collapsed state to
-keep. **The sidebar's scroll position is not restored**: the old sidebar kept
-the first visible row by id (`useSemanticScroll`), and the new Threads,
-Channels and Activity lists do not call it, so each opens at its top. The
-selected artifact panel is scoped to a thread and Breakout address; its resource is looked up in the freshly loaded
-conversation before the panel is drawn.
+The renderer keeps the sidebar's width and its open section
+(`rally.sidebar-section`: `canvases`, `sidekicks` or `activity`) in local storage. Keys
+written before the 2026-11 cutover are no longer read: the Threads and Channels
+sorts (`rally.sidebar-thread-sort`, `rally.sidebar-channel-sort`), the Space
+filter (`rally.sidebar-space-filter`), and the widths of a thread beside its
+Channel (`thread-width`) and of a Breakout beside its thread
+(`breakout-width`). The sidebar no longer collapses, so there is no collapsed
+state to keep. **The sidebar's scroll position is not restored**: neither list
+calls `useSemanticScroll`, so each opens at its top. The selected artifact
+panel is scoped to a conversation (`artifact-panel:<parent>:<substream>`, for
+a Canvas its Chat, `artifact-panel:<canvas>:0`); its resource is looked up in the freshly loaded conversation before the
+panel is drawn.
 
 Every attachment and artifact opens its panel at an even split with the
 conversation (`openRailAtEvenSplit`, called from `openPanel`). **No panel
 resizes the window**: the panel and the conversation share the main pane, and
-the split is half of it, in the desktop app and a browser tab alike. A
-Breakout taking over its Channel's panel splits the same pane, the room kept
-for the outgoing panel included.
+the split is half of it, in the desktop app and a browser tab alike.
 
 **The panel never floats over the conversation.** At any width above the phone
 layout (641px and up) the main pane gives up the panel's width and the panel
 sits beside it; there is no dimming layer to click away. The panel's width is
 capped by `--rail-max-slot`, which keeps `--conversation-min-width` for the
-conversation where the window allows. Where the pane cannot hold that minimum
-beside the narrowest panel, 424 + 280px (`railFillsPane` in `rail-split.ts`,
-which sets `rail-fills-pane` on the shell), the panel takes the whole pane and
-closing it is the way back. The app shell keeps its sidebar above phone width,
-so at the default 340px sidebar this is any window or tab narrower than
-1044px, the desktop app's 860px minimum included.
+conversation where the window allows. A panel opens at half the pane, so where
+the pane is narrower than two conversation minimums, 2 × 424 = 848px
+(`railFillsPane` in `rail-split.ts`, which sets `rail-fills-pane` on the
+shell), the even split would squeeze both the Chat and the panel, and the
+panel takes the whole pane instead; closing it is the way back. The rule reads
+the pane, the window less the sidebar (`mainPaneWidth`, which also follows the
+sidebar giving way in a narrow tab, [`desktop-shell.md`](desktop-shell.md#the-sidebar)),
+so at the default 416px sidebar (the 76px rail and the design's 340px list)
+this is any window or tab narrower than 1264px, and at the 476px maximum
+narrower than 1324px, the desktop app's 860px minimum included.
+A Canvas's "⋯" and pill menus offer **Open artifact** while it has one: it
+navigates onto the newest artifact as arriving does, beside the Chat, so a
+panel closed by the person comes back without leaving the Canvas.
 At phone width the panel is a full-width sheet.
 
 Switching items in a panel already open for the same conversation keeps the
 width the person dragged it to. The split itself is not saved: the width
 stored per conversation is the one last dragged to, and it is what a panel
-restored on arrival or relaunch comes back at (`restoreRail`). A conversation
+restored on arrival or relaunch comes back at (`restoreRail`). It is stored as
+the panel's share of the main pane at the time (`rally.rail-share:<scope>`),
+not as pixels, and restored as that share of the pane as it is now, held
+between `MIN_RAIL_WIDTH` and the width that leaves the conversation its
+minimum (the same bound `--rail-max-slot` draws). A panel dragged to half a
+narrow window's pane therefore comes back at half a wide one's. A pixel width
+saved before shares (`rally.rail-width:<scope>`) is still read, held inside
+the same bounds, until the next drag replaces it. A drag applies each step
+without saving it (`RailResize` with `remember: false`) and saves the width
+it ends at once, on pointer up: saving measures the pane and writes
+`localStorage`, which on every pointer move was layout and storage work per
+frame. A conversation
 with no stored width restores at the even split, the same width a click gives. Double-click or `Enter` on the panel's
 edge resets it to the even split it opened at; unlike the opening, the reset is
 the person's own act, so it is saved as the conversation's width like a drag.
 
-Every draggable edge, the sidebar's, the right panel's, and the
-split-conversation divider's, takes the same hit width,
-`--resize-hit-size` in `packages/ui/src/styles/app.css`. The sidebar's is
-centred on its line. The panel's and the divider's sit inside the panel or
-Breakout and reach only 2px over the conversation, so the transcript's
+Every draggable edge, the sidebar's and the right panel's, takes the same hit
+width, `--resize-hit-size` in `packages/ui/src/styles/app.css`. The sidebar's
+is centred on its line. The panel's sits inside the panel and reaches only 2px
+over the conversation, so the transcript's
 scrollbar beside them stays draggable. A panel holding a live site or a
 browser page is the exception: its native view covers the panel's body and
 takes the pointer from anything under it, so there the target reaches over
 the conversation instead and covers the scrollbar's last few pixels.
 
-The shell records Channel routes (`/channels/:id`, with or without an open
-thread) and lone thread routes (`/workstreams/:id`), including a breakout
-query; it omits transient search-result turn and sequence parameters. The root
-landing reopens the saved route unless a leaving screen named its thread; a
-thread that has gone shows its own unavailable state. Otherwise it opens the
-first pinned Channel, then General, then the first Channel A–Z.
+The shell records the Canvas and Sidekick routes (`/canvases`, `/canvases/:id`,
+`/sidekicks`, `/sidekicks/:id`) as `last-route`, without a query. The root
+landing reopens the saved route when it is one of those (`restorableRoute`); a
+Canvas or Sidekick that has gone falls back to its section home without a
+dialog ([`desktop-shell.md`](desktop-shell.md#the-landing-and-the-routes)). Otherwise,
+including a Channel or Thread route saved before the cutover, it opens
+`/canvases`.
 
 Each detached artifact window has a local main-process record with resource
 identity, version, title, normal bounds, and display ID. Moving or resizing
@@ -90,8 +107,9 @@ has gone away.
 ## Invariants
 
 - Local state is a view preference, never permission to read a resource. A
-  restored route waits for the directory; a detached window gets current
-  authorized content from the API before it is created.
+  restored route opens a screen that reads its own subject and shows the
+  unavailable state when the reader cannot open it; a detached window gets
+  current authorized content from the API before it is created.
 - Single-use site URLs and generated preview bytes never enter the window
   registry. Persisting either would reopen stale content or retain a credential.
 - A window's state belongs to one person and Organization. Showing another
@@ -104,7 +122,7 @@ has gone away.
 The renderer owns navigation and inline layout. Electron main owns native
 window placement. The API owns resource visibility and fresh artifact access.
 The registry is not synchronized across devices; pinned order remains
-server-owned as described in [pinning](workstream-pinning.md).
+server-owned as described in [pinning](pinning.md).
 
 ## Failure modes and limits
 
@@ -117,10 +135,11 @@ the windows the person left open.
 
 ## Testing
 
-`workstream-landing.test.tsx` checks route restoration and the landing order;
+`screens/landing.test.tsx` checks route restoration;
 `desktop-layout.test.tsx` checks the unused semantic row hook;
 `artifact-window-state.test.ts` checks the local registry and monitor clamp;
-`rail-split.test.ts` checks the width a panel opens at.
+`rail-split.test.ts` checks the width a panel opens and restores at, including
+a width saved in a narrow window restored in a wide one.
 The desktop acceptance check opens, moves, quits, and relaunches real Electron
 windows, and checks that rail positions and panels return visibly.
 
@@ -176,7 +195,6 @@ in the renderer can change it. A panel narrows the conversation, so its width
 is half the pane rather than the conversation's present width. Bringing
 growth back means rebuilding the width bookkeeping that saved state relied on
 to avoid storing a panel's width as the person's choice.
-
 
 ### 2026-10-15 — Panels open 50/50, and every edge is equally easy to grab
 

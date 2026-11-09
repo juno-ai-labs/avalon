@@ -1,7 +1,7 @@
 import "../../../tests/isolated-region";
 import { describe, expect, it } from 'vitest';
 
-import { parseDesktopDeepLinkIntent, parseDesktopHandoffIntent } from './desktop-deep-link-intent';
+import { parseDesktopDeepLinkIntent } from './desktop-deep-link-intent';
 
 const WORKSPACE_ID = '00000000-0000-7000-8000-000000000009';
 const RESOURCE_ID = '00000000-0000-7000-8000-000000000010';
@@ -10,8 +10,8 @@ const ATTEMPT_ID = 'a'.repeat(43);
 describe('desktop deep-link intent grammar', () => {
   it.each([
     {
-      raw: `rallywithai://workspace/enterprise/${WORKSPACE_ID}/workstreams/${RESOURCE_ID}`,
-      kind: 'workstream',
+      raw: `rallywithai://workspace/enterprise/${WORKSPACE_ID}/canvases/1111117Hxt1fAWDjN7Tm`,
+      kind: 'canvas',
     },
     {
       raw: `rallywithai://workspace/enterprise/${WORKSPACE_ID}/settings/connections`,
@@ -72,6 +72,14 @@ describe('desktop deep-link intent grammar', () => {
     expect(parseDesktopDeepLinkIntent('rallywithai://activity?filter=mentions')).toBeNull();
   });
 
+  it("opens an organization's landing only when the link addresses it", () => {
+    expect(parseDesktopDeepLinkIntent(`rallywithai://workspace/enterprise/${WORKSPACE_ID}/home`))
+      .toEqual({ kind: 'home', target: { region: 'enterprise', workspaceId: WORKSPACE_ID } });
+    expect(parseDesktopDeepLinkIntent('rallywithai://home')).toBeNull();
+    expect(parseDesktopDeepLinkIntent(`rallywithai://workspace/enterprise/${WORKSPACE_ID}/home/${RESOURCE_ID}`)).toBeNull();
+    expect(parseDesktopDeepLinkIntent(`rallywithai://workspace/enterprise/${WORKSPACE_ID}/home?section=canvases`)).toBeNull();
+  });
+
   it('keeps legacy unaddressed identity and connector callbacks during rollout', () => {
     expect(parseDesktopDeepLinkIntent(
       `avalon://auth/complete?ticket=${ATTEMPT_ID}&region=global&attempt=${ATTEMPT_ID}`,
@@ -79,20 +87,6 @@ describe('desktop deep-link intent grammar', () => {
     expect(parseDesktopDeepLinkIntent(
       `avalon://auth/complete?provider=linear&region=enterprise&status=denied&error=oauth_denied`,
     )).toMatchObject({ kind: 'connector-result', status: 'denied', target: null });
-  });
-
-  it('admits Sideline identity callbacks only at the hosted handoff boundary', () => {
-    const success = `sideline://auth/complete?ticket=${ATTEMPT_ID}&region=global&attempt=${ATTEMPT_ID}`;
-    const denial = `sideline://auth/complete?error=google_oauth_denied&region=global&attempt=${ATTEMPT_ID}`;
-    expect(parseDesktopDeepLinkIntent(success)).toBeNull();
-    expect(parseDesktopHandoffIntent(success)).toMatchObject({ kind: 'identity-result', status: 'ticket' });
-    expect(parseDesktopHandoffIntent(denial)).toMatchObject({ kind: 'identity-result', status: 'failed' });
-    expect(parseDesktopHandoffIntent(
-      `sideline://auth/complete?ticket=${ATTEMPT_ID}&region=global&attempt=short`,
-    )).toBeNull();
-    expect(parseDesktopHandoffIntent(
-      `sideline://auth/elsewhere?ticket=${ATTEMPT_ID}&region=global&attempt=${ATTEMPT_ID}`,
-    )).toBeNull();
   });
 
   it.each([

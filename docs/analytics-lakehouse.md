@@ -210,4 +210,4 @@ Shipped in the pull request for this change.
 
 ### 2026-09-14 — Fence retired meeting data before erasure
 
-Built-in meeting telemetry is suppressed at acceptance and again before PostHog and lakehouse delivery. Historical event schemas remain readable so an old installed client or queued pointer cannot restore retired metadata. Previously delivered rows must be deleted separately through each destination; deleting shared Parquet files or whole people would also erase unrelated activity. See [meeting retirement](meeting-notes.md).
+Built-in meeting telemetry is suppressed at acceptance and again before PostHog and lakehouse delivery. Historical event schemas remain readable so an old installed client or queued pointer cannot restore retired metadata. Previously delivered rows must be deleted separately through each destination; deleting shared Parquet files or whole people would also erase unrelated activity. See `meeting-notes.md` (retired).

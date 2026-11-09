@@ -1,21 +1,14 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
 import type { WorkspaceRelationship } from "@rally/contracts/scope-grants";
 
-import { owningChannelAdmitsMember, sidekickAdmitsMember } from "../services/authorization-policy";
+import { canvasReaderAllows, type CanvasRow } from "./hosted-canvas";
+import { admitsOrganizationWide, sidekickAdmits, type AccessClass } from "../services/authorization-policy";
 import {
   currentMemoryRevision,
   markMemoryDigestHoldersFor,
   nextMemoryRevision,
   recordMemoryDigestHolder,
 } from "./memory-digest-sync";
-import {
-  admitsOrganizationWide,
-  breakoutListedSql,
-  channelListedSql,
-  mainOpenableSql,
-  spaceListedSql,
-  type AccessClass,
-} from "./listing-rules";
 import { workspaceIdentityFencesFor } from "./workspace-domain-schema";
 import {
   digestPrincipalKey,
@@ -286,6 +279,11 @@ function conversationSubject(conversation: MemoryConversation): { kind: MemorySu
       return { kind: "sidekick", id: conversation.parentId };
     case "space":
       return { kind: "channel", id: conversation.parentId };
+    // A Canvas's Chat is stored under the subject kind its conversation
+    // shape shares with a Thread's Main, keyed by the Canvas id; renaming the
+    // stored kind means rebuilding `memory_facts` for its CHECK.
+    case "canvas":
+      return { kind: "thread", id: conversation.parentId };
   }
 }
 
@@ -295,11 +293,13 @@ type ParsedSource =
   | { kind: "thread"; workstreamId: string }
   | { kind: "breakout"; workstreamId: string; substreamId: string }
   | { kind: "space"; spaceId: string }
-  | { kind: "sidekick"; automationId: string };
+  | { kind: "sidekick"; automationId: string }
+  | { kind: "canvas"; canvasId: string };
 
 export function parseMemorySource(source: string): ParsedSource {
   if (source.startsWith("sidekick:")) return { kind: "sidekick", automationId: source.slice("sidekick:".length) };
   if (source.startsWith("space:")) return { kind: "space", spaceId: source.slice("space:".length) };
+  if (source.startsWith("canvas:")) return { kind: "canvas", canvasId: source.slice("canvas:".length) };
   const slash = source.indexOf("/");
   if (slash > 0) return { kind: "breakout", workstreamId: source.slice(0, slash), substreamId: source.slice(slash + 1) };
   return { kind: "thread", workstreamId: source };
@@ -311,25 +311,16 @@ interface SidekickRow extends Record<string, SqlStorageValue> {
   title: string;
   author_user_id: string;
   run_as_user_id: string | null;
-  owning_workstream_id: string | null;
-  owning_substream_id: string;
 }
 
 function sidekickRows(sql: SqlStorage, automationIds: readonly string[]): SidekickRow[] {
   if (automationIds.length === 0) return [];
   return sql.exec<SidekickRow>(
-    `SELECT automation_id, scope, title, author_user_id, run_as_user_id, owning_workstream_id, owning_substream_id
+    `SELECT automation_id, scope, title, author_user_id, run_as_user_id
        FROM automation_directory
       WHERE lifecycle <> 'deleted' AND ${inJsonList("automation_id")}`,
     JSON.stringify(automationIds),
   ).toArray();
-}
-
-function homeSourceOf(row: SidekickRow): string | null {
-  if (!row.owning_workstream_id) return null;
-  return row.owning_substream_id === "0"
-    ? row.owning_workstream_id
-    : `${row.owning_workstream_id}/${row.owning_substream_id}`;
 }
 
 /** A person as the object knows them: an active member or guest, or nobody. */
@@ -384,159 +375,81 @@ export function resolveReader(
 }
 
 /**
- * Which of `sources` this person may open today, in four batched reads: one
+ * The sources a reader can still open, by kind. A Thread's, Breakout's or
+ * Channel's source names a conversation retired with the rest of its
+ * Organization's Threads (plan step B-7): nobody opens it, so a fact learned
+ * there is withdrawn with no write, as a conversation made private withdraws
+ * its facts.
+ */
+function partitionSources(sources: ReadonlySet<string>): { sidekicks: string[]; canvases: string[] } {
+  const sidekicks: string[] = [];
+  const canvases: string[] = [];
+  for (const source of sources) {
+    const parsed = parseMemorySource(source);
+    if (parsed.kind === "canvas") canvases.push(parsed.canvasId);
+    else if (parsed.kind === "sidekick") sidekicks.push(parsed.automationId);
+  }
+  return { sidekicks, canvases };
+}
+
+/**
+ * Which of `sources` this person may open today, in batched reads: one
  * per source kind, each over a JSON list, never one query per fact.
  */
 function openableByPerson(sql: SqlStorage, person: ResolvedPerson, sources: ReadonlySet<string>): Set<string> {
   const open = new Set<string>();
-  const threads: string[] = [];
-  const breakouts: string[] = [];
-  const spaces: string[] = [];
-  const sidekicks: string[] = [];
-  for (const source of sources) {
-    const parsed = parseMemorySource(source);
-    if (parsed.kind === "thread") threads.push(parsed.workstreamId);
-    else if (parsed.kind === "breakout") breakouts.push(source);
-    else if (parsed.kind === "space") spaces.push(parsed.spaceId);
-    else sidekicks.push(parsed.automationId);
-  }
-  if (threads.length > 0) {
-    for (const row of sql.exec<{ workstream_id: string }>(
-      `SELECT directory.workstream_id FROM channels directory
-         LEFT JOIN channel_viewers viewer
-           ON viewer.workstream_id = directory.workstream_id
-          AND viewer.user_id = ?1
-          AND viewer.authority_generation = directory.authority_generation
-        WHERE ${inJsonList("directory.workstream_id", "?2")} AND directory.archived_at IS NULL
-          AND ${mainOpenableSql("directory", "viewer", person.accessClass, "?1")}`,
-      person.userId, JSON.stringify(threads),
-    ).toArray()) open.add(row.workstream_id);
-  }
-  if (breakouts.length > 0) {
-    for (const row of sql.exec<{ source: string }>(
-      `SELECT breakout.workstream_id || '/' || breakout.substream_id AS source FROM breakouts breakout
-         JOIN channels directory ON directory.workstream_id = breakout.workstream_id
-         LEFT JOIN channel_viewers viewer
-           ON viewer.workstream_id = directory.workstream_id
-          AND viewer.user_id = ?1
-          AND viewer.authority_generation = directory.authority_generation
-         LEFT JOIN breakout_viewers breakout_viewer
-           ON breakout_viewer.workstream_id = breakout.workstream_id
-          AND breakout_viewer.substream_id = breakout.substream_id
-          AND breakout_viewer.user_id = ?1
-          AND breakout_viewer.authority_generation = breakout.authority_generation
-        WHERE ${inJsonList("breakout.workstream_id || '/' || breakout.substream_id", "?2")}
-          AND breakout.archived_at IS NULL AND directory.archived_at IS NULL
-          AND ${channelListedSql("directory", "viewer", person.accessClass, { breakouts: true, userId: "?1" })}
-          AND ${breakoutListedSql("breakout", "breakout_viewer", person.accessClass, "?1")}`,
-      person.userId, JSON.stringify(breakouts),
-    ).toArray()) open.add(row.source);
-  }
-  if (spaces.length > 0) {
-    for (const row of sql.exec<{ space_id: string }>(
-      `SELECT space.space_id FROM spaces space
-         LEFT JOIN space_viewers viewer
-           ON viewer.space_id = space.space_id AND viewer.user_id = ?1 AND viewer.is_participant = 1
-        WHERE ${inJsonList("space.space_id", "?2")} AND space.archived_at IS NULL
-          AND ${spaceListedSql("space", "viewer", person.accessClass, { breakouts: true, userId: "?1" })}`,
-      person.userId, JSON.stringify(spaces),
-    ).toArray()) open.add(`space:${row.space_id}`);
-  }
+  const { sidekicks, canvases } = partitionSources(sources);
   if (sidekicks.length > 0) {
     const member = admitsOrganizationWide(person.accessClass);
-    const rows = sidekickRows(sql, sidekicks);
-    // A Channel-owned Sidekick is read through its home: a Thread home needs
-    // this member to be its participant (`owningChannelAdmitsMember`), a
-    // Breakout home needs the Breakout open to them. Asked once for every home.
-    const breakoutHomes = new Set<string>();
-    const threadHomes: string[] = [];
-    for (const row of rows) {
-      const home = homeSourceOf(row);
-      if (row.scope !== "workstream" || home === null) continue;
-      if (home.includes("/")) breakoutHomes.add(home); else threadHomes.push(home);
-    }
-    const openBreakoutHomes = breakoutHomes.size > 0 ? openableByPerson(sql, person, breakoutHomes) : new Set<string>();
-    const participantThreadHomes = new Set<string>();
-    if (threadHomes.length > 0 && member) {
-      for (const row of sql.exec<{ workstream_id: string }>(
-        `SELECT directory.workstream_id FROM channels directory
-           JOIN channel_viewers viewer
-             ON viewer.workstream_id = directory.workstream_id
-            AND viewer.user_id = ?1
-            AND viewer.authority_generation = directory.authority_generation
-          WHERE ${inJsonList("directory.workstream_id", "?2")} AND directory.archived_at IS NULL
-            AND viewer.is_participant = 1`,
-        person.userId, JSON.stringify(threadHomes),
-      ).toArray()) participantThreadHomes.add(row.workstream_id);
-    }
-    for (const row of rows) {
-      const home = homeSourceOf(row);
-      const readable = member && sidekickAdmitsMember({
+    const shared = new Set(sql.exec<{ sidekick_id: string }>(
+      `SELECT sidekick_id FROM sidekick_audience WHERE user_id = ?1 AND ${inJsonList("sidekick_id", "?2")}`,
+      person.userId, JSON.stringify(sidekicks),
+    ).toArray().map((row) => row.sidekick_id));
+    // Whoever the Sidekick is shared with, the rule its canonical reads apply.
+    for (const row of sidekickRows(sql, sidekicks)) {
+      if (sidekickAdmits({
         scope: row.scope,
         author: row.author_user_id === person.userId,
         executor: row.run_as_user_id === person.userId,
-      });
-      const throughHome = row.scope === "workstream" && home !== null
-        && (home.includes("/")
-          ? openBreakoutHomes.has(home)
-          : member && owningChannelAdmitsMember({ archived: false, participant: participantThreadHomes.has(home) }));
-      if (readable || throughHome) open.add(`sidekick:${row.automation_id}`);
+        shared: shared.has(row.automation_id),
+      }, member)) open.add(`sidekick:${row.automation_id}`);
     }
+  }
+  // Whoever the Canvas admits, the rule its canonical reads apply.
+  for (const row of canvasRows(sql, canvases)) {
+    if (canvasReaderAllows(row, {
+      userId: person.userId,
+      actorRole: !admitsOrganizationWide(person.accessClass) ? null : person.administrator ? "admin" : "member",
+    }, sql)) open.add(`canvas:${row.canvas_id}`);
   }
   return open;
 }
 
-/** What a Sidekick may open: itself and its home conversation. */
+function canvasRows(sql: SqlStorage, canvasIds: readonly string[]): CanvasRow[] {
+  if (canvasIds.length === 0) return [];
+  return sql.exec<CanvasRow>(
+    `SELECT * FROM canvas_directory WHERE ${inJsonList("canvas_id")}`, JSON.stringify(canvasIds),
+  ).toArray();
+}
+
+/** What a Sidekick may open: itself. */
 function openableBySidekick(sidekick: ResolvedSidekick, sources: ReadonlySet<string>): Set<string> {
   const open = new Set<string>();
   if (!sidekick.row) return open;
   const own = `sidekick:${sidekick.automationId}`;
-  const home = homeSourceOf(sidekick.row);
-  for (const source of sources) {
-    if (source === own || source === home) open.add(source);
-  }
+  if (sources.has(own)) open.add(own);
   return open;
 }
 
 /** Sources open to every member of the Organization: the audience of an Organization-wide conversation. */
 function openableByEveryMember(sql: SqlStorage, sources: ReadonlySet<string>): Set<string> {
   const open = new Set<string>();
-  const threads: string[] = [];
-  const breakouts: string[] = [];
-  const spaces: string[] = [];
-  const sidekicks: string[] = [];
-  for (const source of sources) {
-    const parsed = parseMemorySource(source);
-    if (parsed.kind === "thread") threads.push(parsed.workstreamId);
-    else if (parsed.kind === "breakout") breakouts.push(source);
-    else if (parsed.kind === "space") spaces.push(parsed.spaceId);
-    else sidekicks.push(parsed.automationId);
-  }
-  if (threads.length > 0) {
-    for (const row of sql.exec<{ workstream_id: string }>(
-      `SELECT workstream_id FROM channels
-        WHERE ${inJsonList("workstream_id")} AND archived_at IS NULL AND scope = 'workspace'`,
-      JSON.stringify(threads),
-    ).toArray()) open.add(row.workstream_id);
-  }
-  if (breakouts.length > 0) {
-    for (const row of sql.exec<{ source: string }>(
-      `SELECT breakout.workstream_id || '/' || breakout.substream_id AS source FROM breakouts breakout
-         JOIN channels directory ON directory.workstream_id = breakout.workstream_id
-        WHERE ${inJsonList("breakout.workstream_id || '/' || breakout.substream_id")}
-          AND breakout.archived_at IS NULL AND directory.archived_at IS NULL
-          AND breakout.scope = 'workspace' AND directory.scope = 'workspace'`,
-      JSON.stringify(breakouts),
-    ).toArray()) open.add(row.source);
-  }
-  if (spaces.length > 0) {
-    for (const row of sql.exec<{ space_id: string }>(
-      `SELECT space_id FROM spaces WHERE ${inJsonList("space_id")} AND archived_at IS NULL AND scope = 'workspace'`,
-      JSON.stringify(spaces),
-    ).toArray()) open.add(`space:${row.space_id}`);
-  }
+  const { sidekicks, canvases } = partitionSources(sources);
   for (const row of sidekickRows(sql, sidekicks)) {
     if (row.scope === "workspace") open.add(`sidekick:${row.automation_id}`);
+  }
+  for (const row of canvasRows(sql, canvases)) {
+    if (row.visibility === "workspace") open.add(`canvas:${row.canvas_id}`);
   }
   return open;
 }
@@ -567,57 +480,30 @@ type Audience =
   | { kind: "people"; userIds: string[] }
   | { kind: "sidekick"; automationId: string };
 
-function threadAudience(sql: SqlStorage, workstreamId: string): Audience | null {
-  const thread = sql.exec<{ scope: string; authority_generation: number; archived_at: number | null }>(
-    `SELECT scope, authority_generation, archived_at FROM channels WHERE workstream_id = ?`, workstreamId,
-  ).toArray()[0];
-  if (!thread || thread.archived_at !== null) return null;
-  if (thread.scope === "workspace") return { kind: "members" };
-  return {
-    kind: "people",
-    userIds: sql.exec<{ user_id: string }>(
-      `SELECT user_id FROM channel_viewers
-        WHERE workstream_id = ? AND authority_generation = ? AND is_participant = 1`,
-      workstreamId, thread.authority_generation,
-    ).toArray().map((row) => row.user_id),
-  };
-}
-
 function conversationAudience(sql: SqlStorage, conversation: MemoryConversation): Audience | null {
   switch (conversation.parentKind) {
-    case "workstream": {
-      if (conversation.substreamId === "0") return threadAudience(sql, conversation.parentId);
-      const breakout = sql.exec<{ scope: string; authority_generation: number; archived_at: number | null }>(
-        `SELECT scope, authority_generation, archived_at FROM breakouts WHERE workstream_id = ? AND substream_id = ?`,
-        conversation.parentId, conversation.substreamId,
-      ).toArray()[0];
-      if (!breakout || breakout.archived_at !== null) return null;
-      // An Organization-wide Breakout inherits its Thread's audience.
-      if (breakout.scope === "workspace") return threadAudience(sql, conversation.parentId);
-      return {
-        kind: "people",
-        userIds: sql.exec<{ user_id: string }>(
-          `SELECT user_id FROM breakout_viewers
-            WHERE workstream_id = ? AND substream_id = ? AND authority_generation = ? AND is_participant = 1`,
-          conversation.parentId, conversation.substreamId, breakout.authority_generation,
-        ).toArray().map((row) => row.user_id),
-      };
-    }
+    // A Thread, a Breakout and a Channel were retired (plan step B-7): no audience reads in one.
+    case "workstream":
+    case "space":
+      return null;
     case "automation":
       return sidekickRows(sql, [conversation.parentId]).length === 1
         ? { kind: "sidekick", automationId: conversation.parentId }
         : null;
-    case "space": {
-      const space = sql.exec<{ scope: string; archived_at: number | null }>(
-        `SELECT scope, archived_at FROM spaces WHERE space_id = ?`, conversation.parentId,
-      ).toArray()[0];
-      if (!space || space.archived_at !== null) return null;
-      if (space.scope === "workspace") return { kind: "members" };
+    case "canvas": {
+      const row = canvasRows(sql, [conversation.parentId])[0];
+      if (!row) return null;
+      if (row.visibility === "workspace") return { kind: "members" };
+      const writer = row.writer_sidekick_id ? sidekickRows(sql, [row.writer_sidekick_id])[0] : undefined;
+      if (writer?.scope === "workspace") return { kind: "members" };
       return {
         kind: "people",
-        userIds: sql.exec<{ user_id: string }>(
-          `SELECT user_id FROM space_viewers WHERE space_id = ? AND is_participant = 1`, conversation.parentId,
-        ).toArray().map((row) => row.user_id),
+        userIds: [...new Set([row.created_by_user_id,
+          ...sql.exec<{ user_id: string }>(`SELECT user_id FROM canvas_participants WHERE canvas_id = ?`, row.canvas_id)
+            .toArray().map((participant) => participant.user_id),
+          ...(writer ? [writer.author_user_id, ...(writer.run_as_user_id ? [writer.run_as_user_id] : []),
+            ...sql.exec<{ user_id: string }>(`SELECT user_id FROM sidekick_audience WHERE sidekick_id = ?`, writer.automation_id)
+              .toArray().map((reader) => reader.user_id)] : [])])],
       };
     }
   }
@@ -677,49 +563,19 @@ interface SubjectSet {
   channels: Array<{ id: string; title: string }>;
 }
 
-function channelsOfThread(sql: SqlStorage, workstreamId: string): Array<{ id: string; title: string }> {
-  return sql.exec<{ space_id: string; title: string }>(
-    `SELECT space.space_id, space.title FROM space_channel_memberships placement
-       JOIN spaces space ON space.space_id = placement.space_id
-      WHERE placement.workstream_id = ? AND placement.state = 'active' AND space.archived_at IS NULL
-      ORDER BY space.space_id`,
-    workstreamId,
-  ).toArray().map((row) => ({ id: row.space_id, title: row.title }));
-}
-
-/** The subjects a conversation reads: itself, its Thread, its Channels, the Organization. */
-function conversationSubjects(sql: SqlStorage, workspaceId: string, conversation: MemoryConversation): SubjectSet {
+/**
+ * The subjects a conversation reads: its own (a Canvas's Chat or a Sidekick's
+ * conversation) and the Organization's. A Channel
+ * fact is read by no conversation now that no conversation sits in a Channel;
+ * its review lists it to an administrator.
+ */
+function conversationSubjects(_sql: SqlStorage, workspaceId: string, conversation: MemoryConversation): SubjectSet {
   const keys = [subjectKey("organization", workspaceId)];
-  let channels: Array<{ id: string; title: string }> = [];
-  switch (conversation.parentKind) {
-    case "workstream": {
-      keys.push(subjectKey("thread", conversation.parentId));
-      if (conversation.substreamId !== "0") {
-        keys.push(subjectKey("breakout", `${conversation.parentId}/${conversation.substreamId}`));
-      }
-      channels = channelsOfThread(sql, conversation.parentId);
-      break;
-    }
-    case "automation": {
-      keys.push(subjectKey("sidekick", conversation.parentId));
-      const row = sidekickRows(sql, [conversation.parentId])[0];
-      if (row?.owning_workstream_id) {
-        keys.push(subjectKey("thread", row.owning_workstream_id));
-        if (row.owning_substream_id !== "0") {
-          keys.push(subjectKey("breakout", `${row.owning_workstream_id}/${row.owning_substream_id}`));
-        }
-        channels = channelsOfThread(sql, row.owning_workstream_id);
-      }
-      break;
-    }
-    case "space":
-      channels = sql.exec<{ space_id: string; title: string }>(
-        `SELECT space_id, title FROM spaces WHERE space_id = ? AND archived_at IS NULL`, conversation.parentId,
-      ).toArray().map((row) => ({ id: row.space_id, title: row.title }));
-      break;
+  if (conversation.parentKind === "automation" || conversation.parentKind === "canvas") {
+    const own = conversationSubject(conversation);
+    keys.push(subjectKey(own.kind, own.id));
   }
-  for (const channel of channels) keys.push(subjectKey("channel", channel.id));
-  return { keys, channels };
+  return { keys, channels: [] };
 }
 
 /** Organization facts reach members, workspace-scoped Sidekicks, and conversations every member reads. */
@@ -978,6 +834,7 @@ function titlesFor(sql: SqlStorage, facts: readonly MemoryFact[]): Array<{ key: 
       if (parsed.kind === "thread") want(threads, parsed.workstreamId, source);
       else if (parsed.kind === "breakout") want(breakouts, source, source);
       else if (parsed.kind === "space") want(spaces, parsed.spaceId, source);
+      else if (parsed.kind === "canvas") want(threads, parsed.canvasId, source);
       else want(sidekicks, parsed.automationId, source);
     }
   }
@@ -985,23 +842,10 @@ function titlesFor(sql: SqlStorage, facts: readonly MemoryFact[]): Array<{ key: 
   const emit = (bucket: Map<string, Set<string>>, id: string, title: string) => {
     for (const key of bucket.get(id) ?? []) titles.push({ key, title });
   };
-  if (threads.size > 0) {
-    for (const row of sql.exec<{ workstream_id: string; title: string }>(
-      `SELECT workstream_id, title FROM channels WHERE ${inJsonList("workstream_id")}`, JSON.stringify([...threads.keys()]),
-    ).toArray()) emit(threads, row.workstream_id, row.title);
-  }
-  if (breakouts.size > 0) {
-    for (const row of sql.exec<{ source: string; title: string }>(
-      `SELECT workstream_id || '/' || substream_id AS source, title FROM breakouts
-        WHERE ${inJsonList("workstream_id || '/' || substream_id")}`, JSON.stringify([...breakouts.keys()]),
-    ).toArray()) emit(breakouts, row.source, row.title);
-  }
-  if (spaces.size > 0) {
-    for (const row of sql.exec<{ space_id: string; title: string }>(
-      `SELECT space_id, title FROM spaces WHERE ${inJsonList("space_id")}`, JSON.stringify([...spaces.keys()]),
-    ).toArray()) emit(spaces, row.space_id, row.title);
-  }
+  // A retired Thread's, Breakout's or Channel's title is not read: those rows go with plan step C-7.
   for (const row of sidekickRows(sql, [...sidekicks.keys()])) emit(sidekicks, row.automation_id, row.title);
+  // A Canvas's facts sit in the `thread` bucket, keyed by the Canvas id.
+  for (const row of canvasRows(sql, [...threads.keys()])) emit(threads, row.canvas_id, row.title);
   return titles;
 }
 
@@ -1105,28 +949,19 @@ export function rememberMemoryFact(
   });
 }
 
-function ownsPersonalChannel(sql: SqlStorage, userId: string, spaceId: string): boolean {
-  return sql.exec(
-    `SELECT 1 FROM spaces WHERE space_id = ? AND scope = 'individual' AND created_by_user_id = ?`, spaceId, userId,
-  ).toArray().length > 0;
-}
-
 /**
  * Whether this reader may retract this fact, apart from being able to see it.
  * A person retracts their own facts; a participant retracts what the
  * conversation they stand in established (its own subject, or every source
  * here); a Channel's or the Organization's facts take an administrator; a
- * Sidekick retracts only what came from itself and its home. A Personal
- * Channel's facts are its owner's to retract too: nobody else is listed it,
- * so an administrator's rule alone would leave them removable by nobody. With no
+ * Sidekick retracts only what came from itself. With no
  * conversation (a person's own review, or the Organization's) only the first
  * and third rules apply. The review surface reads removability from here too.
  */
-function mayForget(sql: SqlStorage, reader: ResolvedReader, conversation: MemoryConversation | null, fact: MemoryFact): boolean {
+function mayForget(_sql: SqlStorage, reader: ResolvedReader, conversation: MemoryConversation | null, fact: MemoryFact): boolean {
   if (fact.subjectKind === "channel" || fact.subjectKind === "organization") {
     if (reader.kind !== "person") return false;
-    if (reader.administrator) return true;
-    return fact.subjectKind === "channel" && ownsPersonalChannel(sql, reader.userId, fact.subjectId);
+    return reader.administrator;
   }
   if (fact.subjectKind === "person") return reader.kind === "person" && fact.subjectId === reader.userId;
   if (conversation === null) return false;
@@ -1135,8 +970,7 @@ function mayForget(sql: SqlStorage, reader: ResolvedReader, conversation: Memory
   if (fact.subjectKind === subject.kind && fact.subjectId === subject.id) return true;
   if (fact.sourceConversations.every((source) => source === here)) return true;
   if (reader.kind !== "sidekick") return false;
-  const own = new Set([`sidekick:${reader.automationId}`, ...(reader.row ? [homeSourceOf(reader.row)] : [])]);
-  return fact.sourceConversations.every((source) => own.has(source));
+  return fact.sourceConversations.every((source) => source === `sidekick:${reader.automationId}`);
 }
 
 export function forgetMemoryFact(
@@ -1351,37 +1185,22 @@ function sweepPlacement(
   if (!audience) return null;
   const subjects = conversationSubjects(sql, workspaceId, conversation);
   let subject: MemorySweepPlacement["subject"];
-  let thread: MemorySweepPlacement["thread"] = null;
+  const thread: MemorySweepPlacement["thread"] = null;
   switch (conversation.parentKind) {
-    case "workstream": {
-      const row = sql.exec<{ title: string }>(`SELECT title FROM channels WHERE workstream_id = ?`, conversation.parentId).toArray()[0];
-      if (!row) return null;
-      if (conversation.substreamId === "0") {
-        subject = { kind: "thread", id: conversation.parentId, title: row.title };
-      } else {
-        const breakout = sql.exec<{ title: string }>(
-          `SELECT title FROM breakouts WHERE workstream_id = ? AND substream_id = ?`, conversation.parentId, conversation.substreamId,
-        ).toArray()[0];
-        if (!breakout) return null;
-        subject = { kind: "breakout", id: `${conversation.parentId}/${conversation.substreamId}`, title: breakout.title };
-        thread = { id: conversation.parentId, title: row.title };
-      }
-      break;
-    }
+    // Retired with plan step B-7; their audience is already `null` above.
+    case "workstream":
+    case "space":
+      return null;
     case "automation": {
       const row = sidekickRows(sql, [conversation.parentId])[0];
       if (!row) return null;
       subject = { kind: "sidekick", id: row.automation_id, title: row.title };
-      if (row.owning_workstream_id) {
-        const home = sql.exec<{ title: string }>(`SELECT title FROM channels WHERE workstream_id = ?`, row.owning_workstream_id).toArray()[0];
-        if (home) thread = { id: row.owning_workstream_id, title: home.title };
-      }
       break;
     }
-    case "space": {
-      const row = sql.exec<{ title: string }>(`SELECT title FROM spaces WHERE space_id = ?`, conversation.parentId).toArray()[0];
+    case "canvas": {
+      const row = canvasRows(sql, [conversation.parentId])[0];
       if (!row) return null;
-      subject = { kind: "channel", id: conversation.parentId, title: row.title };
+      subject = { kind: "thread", id: conversation.parentId, title: row.title };
       break;
     }
   }

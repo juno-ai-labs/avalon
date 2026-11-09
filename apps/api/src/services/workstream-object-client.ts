@@ -1,8 +1,7 @@
 import { uuidV7 } from "../lib/uuid-v7";
+import { hostedConversationParentKind } from "../durable-objects/workstream-object-storage";
 import { SearchLinkSchema } from '../durable-objects/conversation-link-search';
 import {
-  ConversationSuggestionActionResultSchema,
-  type ConversationSuggestionActionResult,
   ElicitationSchema,
   ParticipantSchema,
   WorkstreamResourceSchema,
@@ -21,9 +20,7 @@ import {
   type Workstream,
   type WorkstreamDetail,
   type WorkstreamTranscriptSnapshot,
-  type WorkstreamAppearancePatch,
   type WorkstreamMessageAdmissionReceipt,
-  type PreparedConversation,
 } from "@rally/contracts";
 import type {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -38,12 +35,11 @@ import { ReadTranscriptResultSchema, SidekickRunTranscriptResultSchema, type Rea
 
 import { conversationObjectName } from "../durable-objects/names";
 import type {
-  SubstreamAgent,
+  AgentLoopDO,
   SubstreamProductRequestInput,
-} from "../durable-objects/substream-agent";
+} from "../durable-objects/agent-loop-do";
 import { rpcResultBody, type DurableObjectRpcResult } from "../durable-objects/rpc-result";
 import type {
-  InitializeWorkstreamObjectRequest,
   WorkstreamObjectCreateMessageInput,
 } from "../durable-objects/workstream-object-product";
 import type { AuthContext, Env } from "../env";
@@ -62,7 +58,6 @@ const AttachedResourcesSchema = z.union([
   z.strictObject({
     ok: z.literal(true),
     linked: z.array(z.string()),
-    resources: z.array(z.strictObject({ id: z.string(), slug: z.string().optional(), title: z.string(), kind: z.string() })),
   }),
   z.strictObject({
     ok: z.literal(false),
@@ -75,18 +70,12 @@ const CreatedMessageSchema = WorkstreamMessageAdmissionReceiptSchema;
 const AnsweredElicitationSchema = z.strictObject({
   elicitation: ElicitationSchema.optional(),
 });
-const InitializedWorkstreamSchema = z.strictObject({
-  workstream: WorkstreamSchema,
-  turnId: z.string().uuid(),
-  harnessRunId: z.string().uuid().nullable(),
-});
-
 async function objectStub(
   env: Env,
   workspaceId: string,
   workstreamId: string,
   substreamId = "0",
-): Promise<DurableObjectStub<SubstreamAgent>> {
+): Promise<DurableObjectStub<AgentLoopDO>> {
   return durableObjectStubForWorkspace(
     env,
     env.SUBSTREAM_AGENTS,
@@ -194,11 +183,10 @@ export class WorkstreamObjectClient {
      *
      * Sent on every product request and checked against the object's own
      * identity before it runs anything. A conversation is addressed by id, so
-     * this is what keeps a Space id from reaching a Channel operation — see
-     * `productOperation` in `substream-agent.ts`. The plain constructor means
-     * a Channel; {@link WorkstreamObjectClient.forParent} names another kind.
+     * this is what keeps a Sidekick's id from reaching an operation meant for a
+     * Canvas's Chat — see `productOperation` in `agent-loop-do.ts`.
      */
-    private readonly parentKind: ConversationParentKind = "workstream",
+    private readonly parentKind: ConversationParentKind,
   ) {}
 
   /**
@@ -234,7 +222,7 @@ export class WorkstreamObjectClient {
       // value it already has.
       {
         ...body,
-        parentKind: this.parentKind,
+        parentKind: hostedConversationParentKind(this.parentKind),
         auth: {
           sessionId: this.auth.sessionId,
           userId: this.auth.userId,
@@ -300,15 +288,6 @@ export class WorkstreamObjectClient {
     return BootPayloadSchema.parse(await this.request({ operation: "boot" }));
   }
 
-  async initialize(input: InitializeWorkstreamObjectRequest): Promise<{
-    workstream: Workstream;
-    turnId: string;
-    harnessRunId: string | null;
-  }> {
-    return InitializedWorkstreamSchema.parse(await this.request({ operation: "initialize", input }));
-  }
-
-
   async update(input: z.infer<typeof UpdateWorkstreamRequestSchema>): Promise<Workstream> {
     return WorkstreamSchema.parse(await this.request({ operation: "update", input }));
   }
@@ -323,56 +302,15 @@ export class WorkstreamObjectClient {
     return WorkstreamSchema.parse(await this.request({ operation: "mark_unread" }));
   }
 
-  /** Mark the conversation resolved through its completion suggestion. */
-  async resolveSuggestion(suggestionId: string): Promise<ConversationSuggestionActionResult> {
-    return ConversationSuggestionActionResultSchema.parse(await this.request({ operation: "resolve_suggestion", suggestionId }));
-  }
-
-  /** Dismiss a conversation suggestion for everyone; replayed when it was already resolved. */
-  async dismissSuggestion(suggestionId: string): Promise<ConversationSuggestionActionResult> {
-    return ConversationSuggestionActionResultSchema.parse(await this.request({ operation: "dismiss_suggestion", suggestionId }));
-  }
-
   async createMessage(
     input: WorkstreamObjectCreateMessageInput,
   ): Promise<WorkstreamMessageAdmissionReceipt> {
     return CreatedMessageSchema.parse(await this.request({ operation: "create_message", input }));
   }
 
-  /**
-   * Append a Breakout's merged result to this Main conversation: the message
-   * route's admission with the server-written `merge` tag, which starts no
-   * run. `replayed` is true when this `clientMessageId` was already admitted.
-   */
-  async createMergeMessage(
-    input: WorkstreamObjectCreateMessageInput & { merge: NonNullable<WorkstreamObjectCreateMessageInput["merge"]> },
-  ): Promise<WorkstreamMessageAdmissionReceipt & { replayed: boolean }> {
-    return CreatedMessageSchema.extend({ replayed: z.boolean() }).parse(
-      await this.request({ operation: "create_message", input }),
-    );
-  }
-
-  async importedSessionSource(): Promise<{ provider: "chatgpt" | "claude" | "claude_code"; sessionId: string; url: string | null } | null> {
-    return z.strictObject({ source: z.strictObject({ provider: z.enum(["chatgpt", "claude", "claude_code"]),
-      sessionId: z.string(), url: z.string().nullable() }).nullable() }).parse(
-      await this.request({ operation: "import_source_get" })).source;
-  }
-
-  async importedSessionCheckpoint(): Promise<Array<{ sourceMessageId: string; sourceRevision: string }>> {
-    return z.strictObject({ messages: z.array(z.strictObject({ sourceMessageId: z.string(), sourceRevision: z.string() })) }).parse(
-      await this.request({ operation: "import_source_checkpoint_get" })).messages;
-  }
-
-  async updateImportedSession(operationId: string, conversation: PreparedConversation): Promise<{ added: number; updated: number }> {
-    return z.strictObject({ added: z.number().int().nonnegative(), updated: z.number().int().nonnegative() }).parse(
-      await this.request({ operation: "import_source_update", operationId, conversation }));
-  }
-
   /** Seat a reader through the conversation that owns the roster. */
-  async addParticipant(userId: string, options: { operationId?: string } = {}):
-  Promise<WorkstreamDetail["participants"][number]> {
-    return ParticipantSchema.parse(await this.request({ operation: "add_participant", userId,
-      operationId: options.operationId ?? uuidV7() }));
+  async addParticipant(userId: string): Promise<WorkstreamDetail["participants"][number]> {
+    return ParticipantSchema.parse(await this.request({ operation: "add_participant", userId }));
   }
 
   async removeParticipant(userId: string, options: { operationId?: string; owningThread?: boolean } = {}): Promise<void> {
@@ -386,10 +324,6 @@ export class WorkstreamObjectClient {
    * The Channel path for this is a socket command, which a Space has no socket
    * for. Same write, same effect, reached over the product request instead.
    */
-  async setAppearance(patch: WorkstreamAppearancePatch): Promise<void> {
-    await this.request({ operation: "set_appearance", operationId: uuidV7(), patch });
-  }
-
   async attachResource(resourceId: string): Promise<WorkstreamResource> {
     return WorkstreamResourceSchema.parse(await this.request({ operation: "attach_resource", resourceId }));
   }
@@ -399,7 +333,7 @@ export class WorkstreamObjectClient {
    * `WorkstreamObjectProduct.attachResources`. A refusal names the position.
    */
   async attachResources(resourceIds: readonly string[]): Promise<
-    | { ok: true; linked: string[]; resources: Array<{ id: string; slug?: string | undefined; title: string; kind: string }> }
+    | { ok: true; linked: string[] }
     | { ok: false; index: number; code: "resource_not_found" | "resource_access_denied" | "attachment_draft_requires_message" }
   > {
     return AttachedResourcesSchema.parse(await this.request({ operation: "attach_resources", resourceIds: [...resourceIds] }));

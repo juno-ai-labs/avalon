@@ -35,14 +35,9 @@ describe("the development seed", () => {
     expect(database.prepare(
       "SELECT COUNT(*) AS n FROM users",
     ).get()).toEqual({ n: 2 });
-    expect(database.prepare(
-      `SELECT id, workspace_id, do_identity_anchor FROM workstreams
-        WHERE id = '00000000-0000-7000-8000-000000000021'`,
-    ).get()).toEqual({
-      id: "00000000-0000-7000-8000-000000000021",
-      workspace_id: "00000000-0000-7000-8000-000000000002",
-      do_identity_anchor: 1,
-    });
+    // No conversation anchor either: the seeded Canvases and Sidekick are
+    // anchored by the creation paths the dev seed route calls.
+    expect(database.prepare("SELECT COUNT(*) AS n FROM workstreams").get()).toEqual({ n: 0 });
     // Every workspace/work-stream product table is gone. The D1 seed writes
     // only identity and routing anchors; product fixtures go through the local
     // Worker's Durable Object seed route.
@@ -103,7 +98,7 @@ describe("the development seed", () => {
     ).get()).toEqual({ phase: "durable_object_open", generation: 1 });
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM workstream_authority_routes WHERE state = 'active'",
-    ).get()).toEqual({ count: 2 });
+    ).get()).toEqual({ count: 0 });
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
   });

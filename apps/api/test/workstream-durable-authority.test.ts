@@ -2,8 +2,7 @@ import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/c
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AuthContext } from "../src/env";
-import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
+import { launchWorkstreamHarness } from "../src/services/workstream-service";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
@@ -23,14 +22,6 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
   vi.restoreAllMocks();
 });
-
-const auth: AuthContext = {
-  sessionId: "session-1",
-  userId: memberId,
-  workspaceId,
-  region: "global",
-  role: "member",
-};
 
 function seed(database: DatabaseSync): void {
   database.exec(`
@@ -52,35 +43,11 @@ function seed(database: DatabaseSync): void {
   `);
 }
 
-/** Creation still needs the regional generation and refuses an unopened stack. */
-describe("creation before the durable-object authority opens", () => {
-  it("refuses before opening an object", async () => {
-    const database = preRetirementProductSqliteDatabase();
-    databases.push(database);
-    seed(database);
-    const objectStores = new Map<string, DatabaseSync>();
-    const env = createTestEnv({
-      DB: sqliteD1(database),
-      AVALON_REGION: "global",
-      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
-    });
-
-    await expect(new WorkstreamService(env, auth).create({
-      openingMessage: "Start",
-      clientMessageId: "client-2",
-      mentions: [],
-      participantUserIds: [],
-      attachmentIds: [],
-    } as never)).rejects.toMatchObject({ status: 503, code: "workstream_maintenance" });
-    expect(objectStores.size).toBe(0);
-  });
-});
-
 describe("launching a run against the open authority", () => {
   it.each([
     { parentKind: "automation" as const, substreamId: "0", expected: "openai/gpt-6.1-sol" },
     { parentKind: "automation" as const, substreamId: "00000000-0000-7000-8000-000000000099", expected: "openai/gpt-5.6-terra" },
-    { parentKind: "workstream" as const, substreamId: "0", expected: "openai/gpt-5.6-terra" },
+    { parentKind: "canvas" as const, substreamId: "0", expected: "openai/gpt-5.6-terra" },
   ])("records the conversation's model when waking $parentKind/$substreamId", async ({ parentKind, substreamId, expected }) => {
     const database = preRetirementProductSqliteDatabase();
     databases.push(database);
@@ -145,7 +112,7 @@ describe("launching a run against the open authority", () => {
       origin: "scheduled_wakeup",
       executionPrincipal: { type: "user", userId: memberId },
       scheduledWakeupId: "00000000-0000-7000-8000-0000000000e1",
-      conversation: { parentKind: "workstream", substreamId: "0", backgroundAgent: false },
+      conversation: { parentKind: "canvas", substreamId: "0", backgroundAgent: false },
     })).rejects.toThrow(diagnostic);
 
     const objectStore = objectStores.get(workstreamId);
@@ -163,7 +130,7 @@ describe("launching a run against the open authority", () => {
       origin: "scheduled_wakeup",
       executionPrincipal: { type: "user", userId: memberId },
       scheduledWakeupId: "00000000-0000-7000-8000-0000000000e1",
-      conversation: { parentKind: "workstream", substreamId: "0", backgroundAgent: false },
+      conversation: { parentKind: "canvas", substreamId: "0", backgroundAgent: false },
     })).resolves.toBe(row.id);
     expect(workstreamObjectGet(
       objectStore,

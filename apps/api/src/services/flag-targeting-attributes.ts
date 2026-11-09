@@ -356,7 +356,7 @@ async function workstreamFacts(env: Env, subject: FlagTargetingSubject, workstre
  * Never throws: independent entity reads are cached in the isolate, and each
  * failure degrades to "no attributes from that entity". Work-stream facts are
  * the deliberate multi-hop exception: product fields come from the Channel's
- * main conversation (`SubstreamAgent`), then creator email domain is enriched from regional identity D1. The outer
+ * main conversation (`AgentLoopDO`), then creator email domain is enriched from regional identity D1. The outer
  * guard is what lets callers await this outside their own error handling — the
  * contract is structural, not a property of the current body.
  */

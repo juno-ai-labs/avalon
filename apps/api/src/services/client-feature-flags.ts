@@ -51,7 +51,6 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 export const DEVELOPER_SETTINGS_FLAG_KEY = "developer-settings";
 export const SUGGESTED_WORK_FLAG_KEY: ProductFeatureFlagKey = "suggested-work-enabled";
 export const MULTIPLE_WORKSPACES_FLAG_KEY: ProductFeatureFlagKey = "multiple-workspaces-enabled";
-export const LIVE_ARTIFACTS_FLAG_KEY: ProductFeatureFlagKey = "live-artifacts-enabled";
 
 interface ClientFeatureFlagSubject {
   userId: string;
@@ -161,20 +160,17 @@ export async function resolveClientFeatureFlagsForSubject(
     developerSettings,
     suggestedWorkEnabled,
     multipleWorkspacesEnabled,
-    liveArtifactsEnabled,
     pushNotificationsEnabled,
   ] = await Promise.all([
     resolveBooleanClientFlag(env, subject, DEVELOPER_SETTINGS_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, SUGGESTED_WORK_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, MULTIPLE_WORKSPACES_FLAG_KEY, context),
-    resolveBooleanClientFlag(env, subject, LIVE_ARTIFACTS_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, PUSH_NOTIFICATIONS_FLAG_KEY, context),
   ]);
   return {
     developerSettings,
     suggestedWorkEnabled,
     multipleWorkspacesEnabled,
-    liveArtifactsEnabled,
     pushNotificationsEnabled,
   };
 }

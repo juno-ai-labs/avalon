@@ -47,8 +47,8 @@ If you think you have found a security weakness in Rally, please tell us.
 
 1. Email **help@rallywith.ai** with the subject **Security report**.
 2. Describe:
-   - **the affected surface**: which part of Rally (the Mac app, the iPhone
-     app, the browser version, the website or a particular feature);
+   - **the affected surface**: which part of Rally (the Mac app, the
+     browser version, the website or a particular feature);
    - **the impact**: what someone could do by exploiting it;
    - **steps to reproduce it**, precise enough for someone else to follow;
    - **a safe proof of concept**, showing the problem without causing harm.

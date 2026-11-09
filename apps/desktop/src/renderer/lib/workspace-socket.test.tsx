@@ -1,39 +1,27 @@
-import { createQueryClient } from './query-client';
-import { useSidekickActivity } from './use-sidekick-activity';
-import { ComposerAgentActivity } from '../components/composer-agent-activity';
 import {
+  AutomationSummarySchema,
   ClientFeatureFlagsSchema,
-  asSpaceId,
   asSubstreamId,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSPACE_SYNC_TOPICS,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
-  WorkstreamSchema,
 } from '@rally/contracts';
-import type { ConversationAccessPreview, SpaceDirectory } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
-import { onlineManager, QueryClient, QueryClientProvider, useQuery, type InfiniteData } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { StrictMode, useEffect, type JSX, type ReactNode } from 'react';
+import { onlineManager, QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { StrictMode, useEffect, type JSX } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SpaceConversationSummary, WorkstreamSummary } from './types';
-import { applyBreakoutAppearanceReceipt, reconcileThreadNavigationRows, type WorkstreamChildDirectory } from './channel-viewer-state';
-import { mapWorkstreamSummary } from './api';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from './workspace-socket';
-import { holdCachedWorkstreamArchive, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
-import { conversationCacheKey, conversationSlice } from './conversation-cache';
+import { ApiError, mapAutomationSummary } from './api';
+import { SIDEBAR_LIST_QUERY_KEYS } from './sidebar-list-store';
+import { PushedListPending } from '../components/pushed-list-pending';
 import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
 import { LocalCacheScopeProvider } from './local-cache-scope';
 import { organizationUsageQueryKey, usageCacheSlice, useOrganizationUsage, type OrganizationUsageApi } from './organization-usage';
 import { requestSocketTicket, SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
 import { WORKSPACE_SOCKET_OPEN_TIMEOUT_MS } from '@rally/contracts/workspace-reach-watch';
-import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
-import { useMergeChannels } from './use-merge-channels';
-import { ConversationAccessRequest } from '../components/conversation-access-request';
-import { CONVERSATION_ACCESS_RECOVERY_QUERY_KEY, refreshConversationAccessPreviews } from './access-requests';
-import { MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY, type ThreadNavigationPage } from './sidebar-list-store';
 
 import type * as TelemetryModule from './telemetry';
 import type {
@@ -121,29 +109,6 @@ function handshakeTelemetry(): Array<{ kind: string; attemptId: string; phase: s
     .filter((intent) => intent.kind === 'workspace_socket_handshake');
 }
 
-function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary {
-  return {
-    id: '00000000-0000-7000-8000-000000000002',
-    title: 'Before the change',
-    titleStatus: 'settled',
-    harnessStatus: 'running',
-    latestAttentionSequenceNumber: 0,
-    readThroughSequenceNumber: 0,
-    manualUnreadFromSequenceNumber: null,
-    manualUnreadGeneration: 0,
-    hasUnread: false,
-    firstUnreadSequenceNumber: null,
-    lastActivityAt: '2026-08-17T19:00:00.000Z',
-    scope: 'workspace',
-    nextPendingWakeup: null,
-    pinPosition: null,
-    participantUserIds: [],
-    participantExtraCount: 0,
-    spaceIds: [],
-    ...overrides,
-  };
-}
-
 class FakeWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
@@ -210,10 +175,9 @@ function initialSidebarFrame() {
   return {
     type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000008',
     waterline: 8, occurredAt: '2026-08-17T20:00:00.000Z',
-    topics: ['workstream_directory'], reason: 'initial',
+    topics: ['automations'], reason: 'initial',
     sidebar: {
-      workstreams: { directoryWaterline: 8, nextCursor: null, stateVersions: [], items: [] },
-      automations: { waterline: 0, items: [] }, notes: { waterline: 0, items: [] },
+      automations: { waterline: 0, items: [] },
     },
   };
 }
@@ -469,199 +433,6 @@ describe('WorkspaceSocketProvider', () => {
     }));
   });
 
-  it('retains a socket nudge across collection until a waiting screen mounts, then releases it with the socket', async () => {
-    vi.useFakeTimers();
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const onRetry = vi.fn();
-    const api = {
-      getWorkspaceSocketTicket: async () => ({
-        url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
-        protocols: socketTicketProtocols('workspace-ticket'),
-      }),
-      viewerUserId: 'viewer-1',
-      conversationAccessPreview: async () => ({
-        kind: 'channel' as const, title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open' as const, requestPending: false, requestEmailed: false,
-      }),
-      requestConversationAccess: async () => undefined,
-    };
-    const contents = (waiting: boolean) => <QueryClientProvider client={queryClient}>
-      <WorkspaceSocketProvider region="global" api={api} workspaceId="00000000-0000-7000-8000-000000000001">
-        {waiting && <ConversationAccessRequest api={api} parentId="thread-1" substreamId="0"
-          fallback={<p>Thread unavailable</p>} onRetry={onRetry} />}
-      </WorkspaceSocketProvider>
-    </QueryClientProvider>;
-    const mounted = render(contents(false));
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    socket.send.mockImplementation((message: string) => {
-      if (message === 'ping') queueMicrotask(() => socket.dispatchEvent(new MessageEvent('message', { data: 'pong' })));
-    });
-    act(() => { socket.open(); socket.message(initialSidebarFrame()); });
-    await flushPromises();
-    // The unobserved entry's normal five-minute collection timer is almost
-    // due. A setQueryData write alone does not restart that timer.
-    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60_000 - 1_000); });
-    act(() => socket.message({ type: 'workspace_reach_changed', occurredAt: '2026-10-22T00:00:00.000Z',
-      userIds: ['00000000-0000-7000-8000-000000000003'] }));
-    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
-    mounted.rerender(contents(true));
-    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-    expect(onRetry).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('status').textContent).toBe('Opening thread…');
-    mounted.unmount();
-    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60_000 + 1); });
-    expect(queryClient.getQueryData(CONVERSATION_ACCESS_RECOVERY_QUERY_KEY)).toBeUndefined();
-  });
-
-  it('waits for an offline-paused preview to resume before consuming its access nudge', async () => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    await refreshConversationAccessPreviews(queryClient);
-    const key = ['conversation-access-preview', 'viewer-1', 'thread-1', '0'];
-    const open: ConversationAccessPreview = {
-      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open', requestPending: false, requestEmailed: false,
-    };
-    queryClient.setQueryData(key, { ...open, recoveryVersion: 1 });
-    await queryClient.invalidateQueries({ queryKey: key, refetchType: 'none' });
-    onlineManager.setOnline(false);
-    let finishPreview!: (preview: ConversationAccessPreview) => void;
-    const pending = new Promise<ConversationAccessPreview>((resolve) => { finishPreview = resolve; });
-    const api = { viewerUserId: 'viewer-1', conversationAccessPreview: vi.fn(() => pending), requestConversationAccess: async () => undefined };
-    const onRetry = vi.fn();
-    render(<QueryClientProvider client={queryClient}>
-      <ConversationAccessRequest api={api} parentId="thread-1" substreamId="0"
-        fallback={<p>Thread unavailable</p>} onRetry={onRetry} />
-    </QueryClientProvider>);
-    await flushPromises();
-    expect(queryClient.getQueryState(key)?.fetchStatus).toBe('paused');
-    expect(onRetry).not.toHaveBeenCalled();
-    expect(screen.queryByRole('status')).toBeNull();
-    act(() => onlineManager.setOnline(true));
-    await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalledTimes(1), { timeout: 5_000 });
-    await act(async () => { finishPreview(open); await pending; });
-    await vi.waitFor(() => expect(onRetry).toHaveBeenCalledTimes(1), { timeout: 5_000 });
-  });
-
-  it.each(['before-query', 'before-mount'] as const)('recovers a nudge recorded %s without retrying again after a failed reopen', async (timing) => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const key = ['conversation-access-preview', 'viewer-1', 'thread-1', '0'];
-    const open: ConversationAccessPreview = {
-      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open', requestPending: false, requestEmailed: false,
-    };
-    if (timing === 'before-mount') queryClient.setQueryData(key, { ...open, recoveryVersion: 0 });
-    await refreshConversationAccessPreviews(queryClient);
-    let finishPreview!: (preview: ConversationAccessPreview) => void;
-    const pending = new Promise<ConversationAccessPreview>((resolve) => { finishPreview = resolve; });
-    const api = {
-      viewerUserId: 'viewer-1',
-      conversationAccessPreview: vi.fn(() => pending), requestConversationAccess: async () => undefined,
-    };
-    const onRetry = vi.fn();
-    const contents = <QueryClientProvider client={queryClient}>
-      <ConversationAccessRequest api={api} parentId="thread-1" substreamId="0"
-        fallback={<p>Thread unavailable</p>} onRetry={onRetry} />
-    </QueryClientProvider>;
-    const mounted = render(contents);
-    await flushPromises();
-    expect(api.conversationAccessPreview).toHaveBeenCalledTimes(1);
-    expect(onRetry).not.toHaveBeenCalled();
-    await act(async () => { finishPreview(open); await pending; });
-    await vi.waitFor(() => expect(onRetry).toHaveBeenCalledTimes(1), { timeout: 5_000 });
-    expect(screen.getByRole('status').textContent).toBe('Opening thread…');
-    mounted.unmount();
-    onRetry.mockClear();
-    render(contents);
-    await flushPromises();
-    expect(screen.getByText('Thread unavailable')).toBeTruthy();
-    expect(onRetry).not.toHaveBeenCalled();
-  });
-
-  it.each(['refused', 'failed'] as const)('waits for a fresh preview instead of retrying cached open access when the check is %s', async (outcome) => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    let finishPreview!: (preview: ConversationAccessPreview) => void;
-    let failPreview!: (error: Error) => void;
-    const pending = new Promise<ConversationAccessPreview>((resolve, reject) => { finishPreview = resolve; failPreview = reject; });
-    const open: ConversationAccessPreview = {
-      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open', requestPending: false, requestEmailed: false,
-    };
-    const api = {
-      getWorkspaceSocketTicket: async () => ({
-        url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
-        protocols: socketTicketProtocols('workspace-ticket'),
-      }),
-      viewerUserId: 'viewer-1',
-      conversationAccessPreview: vi.fn().mockResolvedValueOnce(open).mockImplementation(() => pending),
-      requestConversationAccess: async () => undefined,
-    };
-    const onRetry = vi.fn();
-    render(<QueryClientProvider client={queryClient}>
-      <WorkspaceSocketProvider region="global" api={api} workspaceId="00000000-0000-7000-8000-000000000001">
-        <ConversationAccessRequest api={api} parentId="thread-1" substreamId="0"
-          fallback={<p>Thread unavailable</p>} onRetry={onRetry} />
-      </WorkspaceSocketProvider>
-    </QueryClientProvider>);
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => {
-      socket.open();
-      socket.message({ type: 'workspace_reach_changed', occurredAt: '2026-10-22T00:00:00.000Z',
-        userIds: ['00000000-0000-7000-8000-000000000003'] });
-    });
-    await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalledTimes(2), { timeout: 5_000 });
-    expect(onRetry).not.toHaveBeenCalled();
-    expect(screen.queryByRole('status')).toBeNull();
-    await act(async () => {
-      if (outcome === 'failed') failPreview(new Error('access check failed'));
-      else finishPreview({ ...open, access: 'requestable' });
-      await pending.catch(() => undefined);
-    });
-    if (outcome === 'failed') await screen.findByText('Thread unavailable');
-    else await screen.findByRole('button', { name: 'Request access' });
-    expect(onRetry).not.toHaveBeenCalled();
-  });
-
-  it.each(['reach', 'reconnect'] as const)('replaces an initial preview still pending when a %s nudge arrives', async (change) => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    let finishStalePreview!: (preview: ConversationAccessPreview) => void;
-    const pending = new Promise<ConversationAccessPreview>((resolve) => { finishStalePreview = resolve; });
-    const open: ConversationAccessPreview = {
-      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open', requestPending: false, requestEmailed: false,
-    };
-    const api = {
-      getWorkspaceSocketTicket: async () => ({
-        url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
-        protocols: socketTicketProtocols('workspace-ticket'),
-      }),
-      viewerUserId: 'viewer-1',
-      conversationAccessPreview: vi.fn().mockImplementationOnce(() => pending).mockResolvedValue(open),
-      requestConversationAccess: async () => undefined,
-    };
-    const onRetry = vi.fn();
-    render(<QueryClientProvider client={queryClient}>
-      <WorkspaceSocketProvider region="global" api={api} workspaceId="00000000-0000-7000-8000-000000000001">
-        <ConversationAccessRequest api={api} parentId="thread-1" substreamId="0"
-          fallback={<p>Thread unavailable</p>} onRetry={onRetry} />
-      </WorkspaceSocketProvider>
-    </QueryClientProvider>);
-    await flushPromises();
-    expect(api.conversationAccessPreview).toHaveBeenCalledTimes(1);
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => {
-      socket.open();
-      socket.message(change === 'reconnect' ? initialSidebarFrame() : {
-        type: 'workspace_reach_changed', occurredAt: '2026-10-22T00:00:00.000Z',
-        userIds: ['00000000-0000-7000-8000-000000000003'],
-      });
-    });
-    // The new request must observe the grant without waiting for the old
-    // response, whose pre-grant decision cannot be allowed back into the cache.
-    await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalledTimes(2), { timeout: 5_000 });
-    await vi.waitFor(() => expect(onRetry).toHaveBeenCalledTimes(1), { timeout: 5_000 });
-    await act(async () => { finishStalePreview({ ...open, access: 'requestable' }); await pending; });
-    expect(screen.getByRole('status').textContent).toBe('Opening thread…');
-    expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
-    expect(onRetry).toHaveBeenCalledTimes(1);
-  });
-
   it.each([
     { closeCode: 1006, label: 'retryable transport loss' },
     { closeCode: WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, label: 'permanent access loss' },
@@ -733,30 +504,18 @@ describe('WorkspaceSocketProvider', () => {
   it.each([
     {
       closeCode: WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
-      status: 403,
-      code: 'workspace_access_revoked',
-      message: 'You can no longer access this organization.',
       telemetryCause: 'access_revoked',
     },
     {
       closeCode: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
-      status: 401,
-      code: 'workspace_session_inactive',
-      message: 'Your session is no longer active. Sign in again.',
       telemetryCause: 'server_closed',
     },
     {
       closeCode: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
-      status: 400,
-      code: 'workspace_socket_invalid_message',
-      message: 'Rally could not complete this action because its realtime command was invalid. Restart the app and try again.',
       telemetryCause: 'server_closed',
     },
-  ])('reports close code $closeCode truthfully and does not reconnect', async ({
+  ])('stops for good on close code $closeCode, says why, and does not reconnect', async ({
     closeCode,
-    status,
-    code,
-    message,
     telemetryCause,
   }) => {
     vi.useFakeTimers();
@@ -766,21 +525,13 @@ describe('WorkspaceSocketProvider', () => {
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
-    let listWorkstreams: ReturnType<typeof useWorkspaceSocket>['listWorkstreams'] | null = null;
-    function Probe(): null {
-      const workspaceSocket = useWorkspaceSocket();
-      useEffect(() => {
-        listWorkstreams = workspaceSocket.listWorkstreams;
-      }, [workspaceSocket.listWorkstreams]);
-      return null;
-    }
     render(
       <QueryClientProvider client={queryClient}>
         <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
-          <Probe />
+          <div />
         </WorkspaceSocketProvider>
       </QueryClientProvider>,
     );
@@ -788,13 +539,8 @@ describe('WorkspaceSocketProvider', () => {
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
     reportTelemetryProductIntent.mockClear();
-    let result: Promise<unknown> | null = null;
-    act(() => {
-      result = listWorkstreams!({ limit: 10, includeSystem: false });
-    });
 
     act(() => socket.close(closeCode));
-    await expect(result).rejects.toMatchObject({ status, code, message });
     expect(socketTelemetry()).toEqual([{
       kind: 'realtime_socket_state',
       socket: 'workspace',
@@ -810,8 +556,8 @@ describe('WorkspaceSocketProvider', () => {
 
   it('keeps one organization socket, subscribes durably, and invalidates every organization surface', async () => {
     const queryClient = new QueryClient();
-    const recommendationKey = ['recommended-sidekicks', 'idle-workstream'];
-    queryClient.setQueryData(recommendationKey, []);
+    const runsKey = ['automation-runs', 'idle-automation'];
+    queryClient.setQueryData(runsKey, []);
     const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -874,32 +620,21 @@ describe('WorkspaceSocketProvider', () => {
       ['connector-installation'],
       ['github-repository-access'],
       ['terminal-workspace-settings'],
-      ['digest-schedule'],
       ['automation'],
       ['automation-draft'],
       ['automation-runs'],
       ['sidekicks-library'],
-      ['attached-sidekicks'],
-      ['workstream-sidekicks'],
-      ['recommended-sidekicks'],
-      ['note'],
       ['resources'],
       ['workstream-context'],
-      ['work-opportunities'],
-      ['activity'],
-      ['workstreams'],
       ['telemetry-preference'],
       ['feature-flags'],
     ]) expect(invalidatedRoots).toContain(JSON.stringify(root));
-    expect(queryClient.getQueryState(recommendationKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(runsKey)?.isInvalidated).toBe(true);
     // The two sidebar lists are pushed whole, so a topic must never invalidate
     // them: nothing would refetch, and naming them here would suggest otherwise.
-    for (const pushed of [['automations'], ['notes']]) {
+    for (const pushed of [['automations'], ['canvases']]) {
       expect(invalidatedRoots).not.toContain(JSON.stringify(pushed));
     }
-    // This event carried no sidebar, so the directory topic still means "go and
-    // read it again". The case where it does carry one is below.
-    expect(invalidatedRoots).toContain(JSON.stringify(['workstreams']));
     const invalidationCount = invalidations.mock.calls.length;
     act(() => socket.message({
       type: 'workspace_sync',
@@ -1118,12 +853,10 @@ describe('WorkspaceSocketProvider', () => {
       eventId: '00000000-0000-7000-8000-000000000008',
       waterline: 8,
       occurredAt: '2026-08-17T20:00:00.000Z',
-      topics: ['workstream_directory'],
+      topics: ['automations'],
       reason: 'initial',
       sidebar: {
-        workstreams: { directoryWaterline: 8, nextCursor: null, stateVersions: [], items: [] },
         automations: { waterline: 0, items: [] },
-        notes: { waterline: 0, items: [] },
       },
     }));
 
@@ -1244,6 +977,64 @@ describe('WorkspaceSocketProvider', () => {
       }));
       await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
       expect(FakeWebSocket.instances).toHaveLength(2);
+    });
+
+    it('says a refused handshake failed while the list is pending, and dials again when asked', async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <WorkspaceSocketProvider region="global"
+            api={{ getWorkspaceSocketTicket: vi.fn(async () => ticket) }}
+            workspaceId="00000000-0000-7000-8000-000000000001"
+          >
+            <PushedListPending label="Loading Canvases…" noun="Canvases" />
+          </WorkspaceSocketProvider>
+        </QueryClientProvider>,
+      );
+      await flushPromises();
+      expect(screen.getByText('Loading Canvases…')).toBeInTheDocument();
+      // A 403 at the handshake reaches a page as a socket that fails before it opens.
+      act(() => FakeWebSocket.instances[0]!.close(1006));
+      expect(screen.getByText('Rally can’t reach the server right now.')).toBeInTheDocument();
+      expect(screen.getByText('Your Canvases appear when Rally reconnects.')).toBeInTheDocument();
+      expect(FakeWebSocket.instances).toHaveLength(1);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+      await flushPromises();
+      // At once, not at the next backoff step.
+      expect(FakeWebSocket.instances).toHaveLength(2);
+      act(() => FakeWebSocket.instances[1]!.open());
+      expect(screen.getByText('Loading Canvases…')).toBeInTheDocument();
+    });
+
+    it('stops dialling when the server no longer serves this build, and offers the update', async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      const getWorkspaceSocketTicket = vi.fn(async () => {
+        throw new ApiError('Update Rally to continue.', 426, 'client_update_required');
+      });
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <WorkspaceSocketProvider region="global"
+            api={{ getWorkspaceSocketTicket }}
+            workspaceId="00000000-0000-7000-8000-000000000001"
+          >
+            <PushedListPending label="Loading Canvases…" noun="Canvases" />
+          </WorkspaceSocketProvider>
+        </QueryClientProvider>,
+      );
+      await flushPromises();
+      expect(screen.getByText('This version of Rally is out of date.')).toBeInTheDocument();
+      // The browser build reloads into the build the server serves.
+      expect(screen.getByRole('button', { name: 'Reload Rally' })).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+      act(() => { globalThis.dispatchEvent(new Event('offline')); globalThis.dispatchEvent(new Event('online')); });
+      await flushPromises();
+      expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
+      expect(FakeWebSocket.instances).toHaveLength(0);
+      expect(screen.getByText('This version of Rally is out of date.')).toBeInTheDocument();
+      expect(socketTelemetry()).toContainEqual(expect.objectContaining({ state: 'stopped', cause: 'ticket_failed' }));
     });
 
     it('does not give up on a socket that opened and synchronized', async () => {
@@ -1389,224 +1180,6 @@ describe('WorkspaceSocketProvider', () => {
     }]);
   });
 
-  it('applies pushed access history and rejects a delayed older page', async () => {
-    const queryClient = new QueryClient();
-    const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
-      protocols: socketTicketProtocols('workspace-ticket'),
-    }));
-    render(<QueryClientProvider client={queryClient}><WorkspaceSocketProvider region="global"
-      api={{ getWorkspaceSocketTicket }} workspaceId="00000000-0000-7000-8000-000000000001">
-      <div /></WorkspaceSocketProvider></QueryClientProvider>);
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    const page = {
-      type: 'workspace_workstream_recency',
-      directoryWaterline: 7,
-      nextCursor: null,
-      stateVersions: [{
-        workstreamId: '00000000-0000-7000-8000-000000000002',
-        commonEventId: '00000000-0000-7000-8000-000000000007',
-        viewerEventId: '00000000-0000-7000-8001-000000000004',
-        authorityGeneration: 1,
-        commonWaterline: 7,
-        viewerWaterline: 4,
-      }],
-      items: [{
-        id: '00000000-0000-7000-8000-000000000002',
-        workspaceId: '00000000-0000-7000-8000-000000000001',
-        title: 'Socket-owned directory',
-        titleStatus: 'settled',
-        objective: 'Served by WorkspaceDO SQL',
-        emailAddress: null,
-        createdByUserId: '00000000-0000-7000-8000-000000000003',
-        harnessStatus: 'running',
-        latestAttentionSequenceNumber: 4,
-        readThroughSequenceNumber: 2,
-        manualUnreadFromSequenceNumber: null,
-        manualUnreadGeneration: 0,
-        hasUnread: true,
-        youAreMentioned: true,
-        firstUnreadSequenceNumber: 3,
-        lastActivityAt: '2026-08-17T20:00:00.000Z',
-        createdAt: '2026-08-17T19:00:00.000Z',
-        updatedAt: '2026-08-17T20:00:00.000Z',
-        archivedAt: null,
-        scope: 'workspace',
-        systemKind: null,
-        nextPendingWakeup: null,
-        pinPosition: null,
-        participantUserIds: [],
-        participantExtraCount: 0,
-        spaceIds: [],
-      }],
-    };
-    const access = '2026-09-07T20:00:00.000Z';
-    const push = { type: page.type, directoryWaterline: 8, stateVersion: page.stateVersions[0],
-      workstream: { ...page.items[0], lastAccessedAt: access } };
-    act(() => socket.message(push));
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.lastAccessedAt).toBe(access);
-    act(() => socket.message({ ...push, directoryWaterline: 9,
-      workstream: { ...push.workstream, lastAccessedAt: '2026-09-08T20:00:00.000Z' } }));
-    act(() => socket.message(push));
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.lastAccessedAt)
-      .toBe('2026-09-08T20:00:00.000Z');
-  });
-
-  it('pages the authoritative channel directory over the organization socket', async () => {
-    const queryClient = new QueryClient();
-    const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-      ticket: 'workspace-ticket',
-      protocols: socketTicketProtocols('workspace-ticket'),
-    }));
-    let listWorkstreams: ReturnType<typeof useWorkspaceSocket>['listWorkstreams'] | null = null;
-    function Probe(): null {
-      const workspaceSocket = useWorkspaceSocket();
-      useEffect(() => {
-        listWorkstreams = workspaceSocket.listWorkstreams;
-      }, [workspaceSocket.listWorkstreams]);
-      return null;
-    }
-    render(
-      <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider region="global"
-          api={{ getWorkspaceSocketTicket }}
-          workspaceId="00000000-0000-7000-8000-000000000001"
-        >
-          <Probe />
-        </WorkspaceSocketProvider>
-      </QueryClientProvider>,
-    );
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-
-    let result: Promise<unknown> | null = null;
-    act(() => {
-      result = listWorkstreams!({ limit: 250, includeSystem: false });
-    });
-    const command = JSON.parse(String(socket.send.mock.calls.at(-1)?.[0])) as {
-      type: string;
-      requestId: string;
-    };
-    expect(command).toMatchObject({ type: 'list_workstreams', limit: 250, includeSystem: false });
-    act(() => socket.message({
-      type: 'workspace_workstream_page',
-      requestId: command.requestId,
-      directoryWaterline: 7,
-      nextCursor: null,
-      stateVersions: [{
-        workstreamId: '00000000-0000-7000-8000-000000000002',
-        commonEventId: '00000000-0000-7000-8000-000000000007',
-        viewerEventId: '00000000-0000-7000-8001-000000000004',
-        authorityGeneration: 1,
-        commonWaterline: 7,
-        viewerWaterline: 4,
-      }],
-      items: [{
-        id: '00000000-0000-7000-8000-000000000002',
-        workspaceId: '00000000-0000-7000-8000-000000000001',
-        title: 'Socket-owned directory',
-        titleStatus: 'settled',
-        objective: 'Served by WorkspaceDO SQL',
-        emailAddress: null,
-        createdByUserId: '00000000-0000-7000-8000-000000000003',
-        harnessStatus: 'running',
-        latestAttentionSequenceNumber: 4,
-        readThroughSequenceNumber: 2,
-        manualUnreadFromSequenceNumber: null,
-        manualUnreadGeneration: 0,
-        hasUnread: true,
-        youAreMentioned: true,
-        firstUnreadSequenceNumber: 3,
-        lastActivityAt: '2026-08-17T20:00:00.000Z',
-        createdAt: '2026-08-17T19:00:00.000Z',
-        updatedAt: '2026-08-17T20:00:00.000Z',
-        archivedAt: null,
-        scope: 'workspace',
-        systemKind: null,
-        nextPendingWakeup: null,
-        pinPosition: null,
-        participantUserIds: [],
-        participantExtraCount: 0,
-        spaceIds: [],
-      }],
-    }));
-    await expect(result).resolves.toMatchObject({
-      nextCursor: null,
-      items: [{ id: '00000000-0000-7000-8000-000000000002', title: 'Socket-owned directory' }],
-    });
-  });
-
-  it('does not let a stale directory page resurrect a row after its tombstone', async () => {
-    const queryClient = new QueryClient();
-    const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-      ticket: 'workspace-ticket',
-      protocols: socketTicketProtocols('workspace-ticket'),
-    }));
-    let listWorkstreams: ReturnType<typeof useWorkspaceSocket>['listWorkstreams'] | null = null;
-    function Probe(): null {
-      const workspaceSocket = useWorkspaceSocket();
-      useEffect(() => { listWorkstreams = workspaceSocket.listWorkstreams; }, [workspaceSocket.listWorkstreams]);
-      return null;
-    }
-    render(
-      <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider region="global" api={{ getWorkspaceSocketTicket }}
-          workspaceId="00000000-0000-7000-8000-000000000001">
-          <Probe />
-        </WorkspaceSocketProvider>
-      </QueryClientProvider>,
-    );
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    const workstream = {
-      ...summary(),
-      workspaceId: '00000000-0000-7000-8000-000000000001',
-      objective: 'Already archived',
-      emailAddress: null,
-      createdByUserId: null,
-      createdAt: '2026-09-21T11:00:00.000Z',
-      updatedAt: '2026-09-21T11:30:00.000Z',
-      archivedAt: null,
-      systemKind: null,
-    };
-    const stateVersion = {
-      commonEventId: '00000000-0000-7000-8000-000000000007',
-      viewerEventId: '00000000-0000-7000-8001-000000000004',
-      authorityGeneration: 1,
-      commonWaterline: 7,
-      viewerWaterline: 4,
-    };
-    act(() => socket.message({
-      type: 'workspace_workstream_state',
-      occurredAt: '2026-09-21T11:30:00.000Z',
-      workstreamId: workstream.id,
-      stateVersion: { ...stateVersion, commonWaterline: 8 },
-      workstream: null,
-    }));
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? []).toEqual([]);
-
-    let result: Promise<unknown> | null = null;
-    act(() => { result = listWorkstreams!({ limit: 250, includeSystem: false }); });
-    const command = JSON.parse(String(socket.send.mock.calls.at(-1)?.[0])) as { requestId: string };
-    act(() => socket.message({
-      type: 'workspace_workstream_page',
-      requestId: command.requestId,
-      directoryWaterline: 7,
-      nextCursor: null,
-      stateVersions: [{ workstreamId: workstream.id, ...stateVersion }],
-      items: [workstream],
-    }));
-
-    await expect(result).resolves.toEqual({ items: [], nextCursor: null });
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? []).toEqual([]);
-  });
-
   it('paints the whole sidebar from the subscribe answer, without asking for it', async () => {
     vi.useFakeTimers();
     const queryClient = new QueryClient();
@@ -1634,7 +1207,7 @@ describe('WorkspaceSocketProvider', () => {
       eventId: '00000000-0000-7000-8000-000000000017',
       waterline: 4,
       occurredAt: '2026-08-17T20:00:00.000Z',
-      topics: ['workstream_directory'],
+      topics: ['automations'],
       reason: 'initial',
       featureFlags: {
         developerSettings: false,
@@ -1642,46 +1215,6 @@ describe('WorkspaceSocketProvider', () => {
         controlTowerRefreshSeconds: 60,
       },
       sidebar: {
-      workstreams: {
-        directoryWaterline: 7,
-        nextCursor: null,
-        stateVersions: [{
-          workstreamId: '00000000-0000-7000-8000-000000000002',
-          commonEventId: '00000000-0000-7000-8000-000000000007',
-          viewerEventId: '00000000-0000-7000-8001-000000000004',
-          authorityGeneration: 1,
-          commonWaterline: 7,
-          viewerWaterline: 4,
-        }],
-        items: [{
-          id: '00000000-0000-7000-8000-000000000002',
-          workspaceId: '00000000-0000-7000-8000-000000000001',
-          title: 'Socket-owned directory',
-          titleStatus: 'settled',
-          objective: 'Served by WorkspaceDO SQL',
-          emailAddress: null,
-          createdByUserId: '00000000-0000-7000-8000-000000000003',
-          harnessStatus: 'running',
-          latestAttentionSequenceNumber: 4,
-          readThroughSequenceNumber: 2,
-          manualUnreadFromSequenceNumber: null,
-          manualUnreadGeneration: 0,
-          hasUnread: true,
-          youAreMentioned: true,
-          firstUnreadSequenceNumber: 3,
-          lastActivityAt: '2026-08-17T20:00:00.000Z',
-          createdAt: '2026-08-17T19:00:00.000Z',
-          updatedAt: '2026-08-17T20:00:00.000Z',
-          archivedAt: null,
-          scope: 'workspace',
-          systemKind: null,
-          nextPendingWakeup: null,
-          pinPosition: null,
-          participantUserIds: [],
-          participantExtraCount: 0,
-          spaceIds: [],
-        }],
-      },
       automations: { waterline: 3, items: [{
         id: '00000000-0000-7000-8000-000000000005',
         name: 'Monday brief',
@@ -1693,44 +1226,12 @@ describe('WorkspaceSocketProvider', () => {
         lastRunAt: null,
         updatedAt: '2026-08-17T19:00:00.000Z',
       }] },
-      notes: { waterline: 1, items: [{
-        id: '00000000-0000-7000-8000-000000000006',
-        workspaceId: '00000000-0000-7000-8000-000000000001',
-        resourceId: '00000000-0000-7000-8000-000000000009',
-        ownerUserId: '00000000-0000-7000-8000-000000000003',
-        scope: 'workspace',
-        title: 'Standup',
-        recordingStatus: 'idle',
-        recordedMs: 0,
-        startedAt: null,
-        endedAt: null,
-        generatedAt: null,
-        lastActivityAt: '2026-08-17T21:00:00.000Z',
-        createdAt: '2026-08-17T19:00:00.000Z',
-        updatedAt: '2026-08-17T21:00:00.000Z',
-        archivedAt: null,
-      }] },
       },
     }));
 
-    act(() => socket.message({
-      type: 'workspace_space_snapshot',
-      occurredAt: '2026-08-27T00:01:00.000Z',
-      spacesReady: true,
-      ordering: [],
-      spaces: {
-        active: { waterline: 4, items: [] },
-        inactive: { waterline: 4, items: [] },
-      },
-    }));
-
-    // All three painted from a frame nobody asked for.
-    expect(queryClient.getQueryData(['workstreams']))
-      .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000002' })]);
+    // Painted from a frame nobody asked for.
     expect(queryClient.getQueryData(['automations']))
       .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000005', scope: 'workspace' })]);
-    expect(queryClient.getQueryData(['notes']))
-      .toBeUndefined();
     expect(queryClient.getQueryData(['feature-flags']))
       .toMatchObject({ suggestedWorkEnabled: false });
     const handshakePhases = reportTelemetryProductIntent.mock.calls
@@ -1749,9 +1250,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(sent.map((frame) => frame.type)).toEqual(['subscribe', 'set_presence']);
     // No screen observes these entries. The workspace subscription owns the
     // directory and its ordering ledgers even when their screens are absent.
-    const keys = ['workstreams', 'automations', 'spaces', 'spaces-inactive', 'personal-order',
-      'feature-flags', 'workstream-state-waterlines', 'workspace-directory-waterlines']
-      .map((key) => [key]);
+    const keys = ['automations', 'feature-flags'].map((key) => [key]);
     const snapshot = keys.map((key) => queryClient.getQueryData(key));
     expect(snapshot.every((value) => value !== undefined)).toBe(true);
     socket.send.mockImplementation((frame: string) => {
@@ -1766,345 +1265,21 @@ describe('WorkspaceSocketProvider', () => {
     queryClient.clear();
   });
 
-  it('does not ask for the directory it was just handed', async () => {
-    const queryClient = new QueryClient();
-    const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
-    const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-      ticket: 'workspace-ticket',
-      protocols: socketTicketProtocols('workspace-ticket'),
-    }));
-    const confirmSocketTicket = vi.fn();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider region="global"
-          api={{ getWorkspaceSocketTicket, confirmSocketTicket }}
-          workspaceId="00000000-0000-7000-8000-000000000001"
-        >
-          <div />
-        </WorkspaceSocketProvider>
-      </QueryClientProvider>,
-    );
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    expect(confirmSocketTicket).not.toHaveBeenCalled();
-    invalidations.mockClear();
-
-    // `initial` names every topic, the directory among them — and carries the
-    // directory. Invalidating it here would send the client straight back for
-    // the page this event just delivered, which is the round trip the payload
-    // exists to remove.
-    act(() => socket.message({
-      type: 'workspace_sync',
-      eventId: '00000000-0000-7000-8000-00000000001a',
-      waterline: 11,
-      occurredAt: '2026-08-17T20:00:00.000Z',
-      topics: ['workstream_directory', 'workspace_profile'],
-      reason: 'initial',
-      sidebar: {
-        workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
-        automations: { waterline: 0, items: [] },
-        notes: { waterline: 0, items: [] },
-      },
-    }));
-
-    const roots = invalidations.mock.calls.map(([input]) => JSON.stringify(input?.queryKey));
-    expect(roots).not.toContain(JSON.stringify(['workstreams']));
-    // Every other topic on the same event is untouched by this.
-    expect(roots).toContain(JSON.stringify(['workspace']));
-    expect(confirmSocketTicket).toHaveBeenCalledExactlyOnceWith(await getWorkspaceSocketTicket.mock.results[0]!.value);
-  });
-
-  it('asks for the directory when the payload leaves a resident row unaccounted for', async () => {
-    const queryClient = new QueryClient();
-    // A row already resident from before the socket dropped. The reconnect
-    // payload is page one and does not carry it, which page one alone cannot
-    // explain: it is either a later page the reader had scrolled to, or a work
-    // stream archived while the socket was away. Merging keeps it either way,
-    // so the refetch has to run and let the full walk decide.
-    setCachedWorkstreams(queryClient, () => [summary({
-      id: '00000000-0000-7000-8000-0000000000ff',
-      title: 'Archived while the socket was away',
-    })]);
-    const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
-    const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-      ticket: 'workspace-ticket',
-      protocols: socketTicketProtocols('workspace-ticket'),
-    }));
-    render(
-      <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider region="global"
-          api={{ getWorkspaceSocketTicket }}
-          workspaceId="00000000-0000-7000-8000-000000000001"
-        >
-          <div />
-        </WorkspaceSocketProvider>
-      </QueryClientProvider>,
-    );
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    invalidations.mockClear();
-
-    // A `nextCursor` means this really is page one, so the resident row could
-    // still be a later page the reader had scrolled to.
-    act(() => socket.message({
-      type: 'workspace_sync',
-      eventId: '00000000-0000-7000-8000-00000000001b',
-      waterline: 12,
-      occurredAt: '2026-08-17T20:00:00.000Z',
-      topics: ['workstream_directory'],
-      reason: 'initial',
-      sidebar: {
-        workstreams: {
-          directoryWaterline: 1,
-          nextCursor: '1755460800000:00000000-0000-7000-8000-0000000000aa',
-          stateVersions: [],
-          items: [],
-        },
-        automations: { waterline: 0, items: [] },
-        notes: { waterline: 0, items: [] },
-      },
-    }));
-
-    const roots = invalidations.mock.calls.map(([input]) => JSON.stringify(input?.queryKey));
-    expect(roots).toContain(JSON.stringify(WORKSTREAMS_QUERY_KEY));
-  });
-
-  it('drops a resident row the whole directory no longer lists, without a refetch', async () => {
-    const queryClient = new QueryClient();
-    setCachedWorkstreams(queryClient, () => [summary({
-      id: '00000000-0000-7000-8000-0000000000ff',
-      title: 'Archived while the socket was away',
-    })]);
-    const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
-    const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-      ticket: 'workspace-ticket',
-      protocols: socketTicketProtocols('workspace-ticket'),
-    }));
-    render(
-      <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider region="global"
-          api={{ getWorkspaceSocketTicket }}
-          workspaceId="00000000-0000-7000-8000-000000000001"
-        >
-          <div />
-        </WorkspaceSocketProvider>
-      </QueryClientProvider>,
-    );
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    invalidations.mockClear();
-
-    // No `nextCursor`: the payload is not page one, it is the whole directory.
-    // A resident row missing from it has no second reading, so it goes here and
-    // the refetch that would have decided is not worth asking for.
-    act(() => socket.message({
-      type: 'workspace_sync',
-      eventId: '00000000-0000-7000-8000-00000000001c',
-      waterline: 13,
-      occurredAt: '2026-08-17T20:00:00.000Z',
-      topics: ['workstream_directory'],
-      reason: 'initial',
-      sidebar: {
-        workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
-        automations: { waterline: 0, items: [] },
-        notes: { waterline: 0, items: [] },
-      },
-    }));
-
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)).toEqual([]);
-    const roots = invalidations.mock.calls.map(([input]) => JSON.stringify(input?.queryKey));
-    expect(roots).not.toContain(JSON.stringify(WORKSTREAMS_QUERY_KEY));
-  });
-
-  it('takes the sidebar off a resume whose waterline is not newer', async () => {
-    const queryClient = new QueryClient();
-    const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-      ticket: 'workspace-ticket',
-      protocols: socketTicketProtocols('workspace-ticket'),
-    }));
-    render(
-      <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider region="global"
-          api={{ getWorkspaceSocketTicket }}
-          workspaceId="00000000-0000-7000-8000-000000000001"
-        >
-          <div />
-        </WorkspaceSocketProvider>
-      </QueryClientProvider>,
-    );
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-
-    const sidebar = (waterline: number, name: string) => ({
-      workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
-      automations: { waterline, items: [{
-        id: '00000000-0000-7000-8000-000000000005',
-        name,
-        description: 'Every Monday',
-        emailAddress: null,
-        scope: 'workspace' as const,
-        status: 'active' as const,
-        nextRunAt: null,
-        lastRunAt: null,
-        updatedAt: '2026-08-17T19:00:00.000Z',
-      }] },
-      notes: { waterline: 0, items: [] },
-    });
-
-    act(() => socket.message({
-      type: 'workspace_sync',
-      eventId: '00000000-0000-7000-8000-000000000018',
-      waterline: 9,
-      occurredAt: '2026-08-17T20:00:00.000Z',
-      topics: ['workstream_directory'],
-      reason: 'initial',
-      sidebar: sidebar(1, 'First'),
-    }));
-    expect(queryClient.getQueryData(['automations']))
-      .toEqual([expect.objectContaining({ name: 'First' })]);
-
-    // A reconnect where no topic moved: the server repeats the waterline the
-    // client already holds. The topic half is rightly ignored, but the sidebar
-    // rides on the same event and is the whole reason it was sent — a guard
-    // that ran before it would leave this socket on state it missed.
-    act(() => socket.message({
-      type: 'workspace_sync',
-      eventId: '00000000-0000-7000-8000-000000000019',
-      waterline: 9,
-      occurredAt: '2026-08-17T20:01:00.000Z',
-      topics: [],
-      reason: 'resume',
-      sidebar: sidebar(2, 'Caught up while away'),
-    }));
-    expect(queryClient.getQueryData(['automations']))
-      .toEqual([expect.objectContaining({ name: 'Caught up while away' })]);
-  });
-
-  it('scopes live Space authority between this connection’s open and snapshot', async () => {
-    const queryClient = new QueryClient();
-    function Probe(): JSX.Element {
-      const { sidebarConnect } = useWorkspaceSocket();
-      return <div data-testid="spaces-live">{String(sidebarConnect?.spacesLive ?? false)}</div>;
-    }
-    render(
-      <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider region="global"
-          api={{ getWorkspaceSocketTicket: vi.fn(async () => ({
-            url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-            ticket: 'workspace-ticket',
-            protocols: socketTicketProtocols('workspace-ticket'),
-          })) }}
-          workspaceId="00000000-0000-7000-8000-000000000001"
-        >
-          <Probe />
-        </WorkspaceSocketProvider>
-      </QueryClientProvider>,
-    );
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-
-    act(() => socket.message({
-      type: 'workspace_sync',
-      eventId: '00000000-0000-7000-8000-000000000018',
-      waterline: 1,
-      occurredAt: '2026-08-17T20:00:00.000Z',
-      topics: ['workstream_directory'],
-      reason: 'initial',
-      sidebar: {
-        workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
-        automations: { waterline: 0, items: [] },
-        notes: { waterline: 0, items: [] },
-      },
-    }));
-    expect(screen.getByTestId('spaces-live')).toHaveTextContent('false');
-
-    act(() => socket.message({
-      type: 'workspace_space_snapshot',
-      occurredAt: '2026-08-17T20:01:00.000Z',
-      spacesReady: true,
-      ordering: [],
-      spaces: {
-        active: { waterline: 1, items: [] },
-        inactive: { waterline: 1, items: [] },
-      },
-    }));
-    expect(screen.getByTestId('spaces-live')).toHaveTextContent('true');
-
-    // The next transport is connected before its subscribe response arrives.
-    // Its open event must revoke the previous transport's snapshot meanwhile.
-    act(() => socket.open());
-    expect(screen.getByTestId('spaces-live')).toHaveTextContent('false');
-  });
-
-  it('subscribes composer targets and consumes versioned socket counts through reconnect and unmount', async () => {
-    const queryClient = new QueryClient();
-    const target = { parentKind: 'workstream' as const, parentId: '00000000-0000-7000-8000-000000000002', substreamId: '0' };
-    const other = { parentKind: 'space' as const, parentId: '00000000-0000-7000-8000-000000000003', substreamId: '0' };
-    function Count(): JSX.Element { return <div data-testid="sidekick-count">{useSidekickActivity(target) ?? 'unknown'}</div>; }
-    const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-      ticket: 'workspace-ticket', protocols: socketTicketProtocols('workspace-ticket'),
-    }));
-    const view = (show: boolean) => <QueryClientProvider client={queryClient}>
-      <WorkspaceSocketProvider region="global" api={{ getWorkspaceSocketTicket }}
-        workspaceId="00000000-0000-7000-8000-000000000001">{show && <Count />}</WorkspaceSocketProvider>
-    </QueryClientProvider>;
-    const rendered = render(view(true));
-    await flushPromises();
-    let socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    const sync = { type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000008',
-      waterline: 8, occurredAt: '2026-08-17T20:01:00.000Z', topics: ['sidekick_activity'], reason: 'initial' };
-    act(() => socket.message(sync));
-    const commands = () => socket.send.mock.calls.map(([raw]) => JSON.parse(String(raw)) as { type: string; revision: number; targets: unknown[] })
-      .filter((command) => command.type === 'sidekick_activity');
-    expect(commands().at(-1)).toMatchObject({ type: 'sidekick_activity', revision: 1, targets: [target] });
-    const event = { type: 'workspace_sidekick_activity', revision: 1, target, waterline: 8, count: 2 };
-    act(() => socket.message(event));
-    await flushPromises();
-    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('2'));
-    act(() => socket.message({ ...event, waterline: 7, count: 0 }));
-    act(() => socket.message({ ...event, target: other, waterline: 9, count: 10 }));
-    await flushPromises();
-    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('2'));
-    act(() => socket.message({ ...event, waterline: 10, count: 0 }));
-    await flushPromises();
-    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('0'));
-    // A transport's new subscribe answer re-registers the retained composer target.
-    act(() => { socket.close(1012); window.dispatchEvent(new Event('online')); });
-    await flushPromises();
-    socket = FakeWebSocket.instances[1]!;
-    act(() => socket.open());
-    act(() => socket.message({ ...sync, waterline: 11 }));
-    expect(commands().at(-1)).toMatchObject({ revision: 2, targets: [target] });
-    act(() => socket.message({ ...event, revision: 1, waterline: 12, count: 5 }));
-    await flushPromises();
-    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('unknown'));
-    act(() => socket.message({ ...event, revision: 2, waterline: 12, count: 1 }));
-    await flushPromises();
-    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('1'));
-    rendered.rerender(view(false));
-    expect(commands().at(-1)).toMatchObject({ revision: 3, targets: [] });
-  });
-
-  it('refetches an open automation page when its list row is pushed', async () => {
+  it('refetches an open automation page when its list row is pushed, and not one whose row stayed', async () => {
     const queryClient = new QueryClient();
     const automationId = '00000000-0000-7000-8000-000000000005';
+    const untouchedId = '00000000-0000-7000-8000-000000000006';
+    const untouched = {
+      id: untouchedId, name: 'Incident triage', description: '', emailAddress: null, scope: 'workspace' as const,
+      status: 'active' as const, nextRunAt: null, lastRunAt: null, updatedAt: '2026-08-17T18:00:00.000Z',
+    };
+    queryClient.setQueryData(SIDEBAR_LIST_QUERY_KEYS.automations, [mapAutomationSummary(AutomationSummarySchema.parse(untouched))]);
+    queryClient.setQueryData(['automation', untouchedId], { id: untouchedId, currentDefinition: null });
+    queryClient.setQueryData(['automation-runs', untouchedId], []);
     queryClient.setQueryData(['automation', automationId], { id: automationId, currentDefinition: null });
     queryClient.setQueryData(['automation-runs', automationId], []);
     queryClient.setQueryData(['sidekicks-library'], []);
     queryClient.setQueryData(['sidekick-activity', 'workstream', 'room', '0'], 0);
-    queryClient.setQueryData(['attached-sidekicks', 'room'], []);
-    queryClient.setQueryData(['workstream-sidekicks', 'room'], []);
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
@@ -2144,15 +1319,16 @@ describe('WorkspaceSocketProvider', () => {
         nextRunAt: null,
         lastRunAt: null,
         updatedAt: '2026-08-17T19:00:00.000Z',
-      }],
+      }, untouched],
     }));
 
     expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(true);
+    // Its row is the same as before the push: nothing happened to it.
+    expect(queryClient.getQueryState(['automation', untouchedId])?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(['automation-runs', untouchedId])?.isInvalidated).toBe(false);
     expect(queryClient.getQueryState(['automation-runs', automationId])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['sidekicks-library'])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['sidekick-activity', 'workstream', 'room', '0'])?.isInvalidated).toBe(false);
-    expect(queryClient.getQueryState(['attached-sidekicks', 'room'])?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(['workstream-sidekicks', 'room'])?.isInvalidated).toBe(true);
   });
 
   it('drops a sidebar list whose version is not newer than the one applied', async () => {
@@ -2213,86 +1389,170 @@ describe('WorkspaceSocketProvider', () => {
       .toEqual([expect.objectContaining({ name: 'Newer still' })]);
   });
 
-  it('applies active and archived space state from the socket and drops an older snapshot', async () => {
+  it('resubscribes everything on a reconnect and applies what the new socket sends, even from an object rebuilt behind it', async () => {
+    vi.useFakeTimers();
     const queryClient = new QueryClient();
+    const automationId = '00000000-0000-7000-8000-000000000005';
+    const parentId = '00000000-0000-7000-8000-000000000020';
+    queryClient.setQueryData(['automation', automationId], { id: automationId });
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
+    // A conversation preview the window asked for and has not been answered.
+    let oauthWaterline: number | undefined;
+    function Preview(): null {
+      const { requestConversationView, topicWaterlines } = useWorkspaceSocket();
+      useEffect(() => requestConversationView(parentId, '0', () => undefined), [requestConversationView]);
+      oauthWaterline = topicWaterlines.connector_oauth_attempts;
+      return null;
+    }
     render(
       <QueryClientProvider client={queryClient}>
         <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
-          <div />
+          <Preview />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const sidekick = (name: string) => ({
+      id: automationId, name, description: 'Every Monday', emailAddress: null, scope: 'workspace',
+      status: 'active', nextRunAt: null, lastRunAt: null, updatedAt: '2026-08-17T19:00:00.000Z',
+    });
+    const answer = (waterline: number, listWaterline: number, name: string, reason: string, topics: string[] = []) => ({
+      type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000017', waterline,
+      occurredAt: '2026-08-17T20:00:00.000Z', topics, reason, conversationViews: true,
+      sidebar: {
+        automations: { waterline: listWaterline, items: [sidekick(name)] },
+        canvases: { waterline: listWaterline, items: [] },
+        activity: { waterline: listWaterline, unseenCount: 0, items: [] },
+      },
+    });
+    const pushSidekicks = (socket: FakeWebSocket, waterline: number, name: string) => socket.message({
+      type: 'workspace_sidebar_list', occurredAt: '2026-08-17T20:01:00.000Z',
+      list: 'automations', waterline, items: [sidekick(name)],
+    });
+    const sentFrames = (socket: FakeWebSocket) => socket.send.mock.calls
+      .map(([frame]) => String(frame)).filter((frame) => frame !== 'ping')
+      .map((frame) => JSON.parse(frame) as Record<string, unknown>);
+
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.open());
+    act(() => first.message(answer(40, 30, 'Monday brief', 'resume')));
+    act(() => pushSidekicks(first, 31, 'Monday brief, renamed'));
+    act(() => first.message({
+      type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000019', waterline: 41,
+      occurredAt: '2026-08-17T20:00:30.000Z', topics: ['connector_oauth_attempts'], reason: 'change',
+    }));
+    expect(oauthWaterline).toBe(41);
+    expect(queryClient.getQueryData(['automations'])).toEqual([expect.objectContaining({ name: 'Monday brief, renamed' })]);
+    expect(sentFrames(first).map((frame) => frame.type)).toEqual(['subscribe', 'set_presence', 'conversation_view']);
+    // The page has read again since that push.
+    queryClient.setQueryData(['automation', automationId], { id: automationId });
+    expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(false);
+
+    // The API restarts: the transport drops without a close code of its own.
+    act(() => first.close(1006));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    await flushPromises();
+    const second = FakeWebSocket.instances[1]!;
+    act(() => second.open());
+    expect(sentFrames(second)).toEqual([expect.objectContaining({ type: 'subscribe', afterWaterline: 41 })]);
+
+    // The object came back with its counters behind what this window holds,
+    // as a local API restarted over rebuilt state does. Its answer is what
+    // the object holds now, so it replaces the lists rather than losing to
+    // the window's older ledger.
+    act(() => second.message(answer(3, 2, 'Rebuilt brief', 'history_unavailable', [...WORKSPACE_SYNC_TOPICS])));
+    expect(queryClient.getQueryData(['automations'])).toEqual([expect.objectContaining({ name: 'Rebuilt brief' })]);
+    // The topic ledger is set to the object's position too, so a surface
+    // keyed on a topic's waterline runs again rather than waiting past 41.
+    expect(oauthWaterline).toBe(3);
+    // Every subscription the window held is sent again on the new socket.
+    expect(sentFrames(second).map((frame) => frame.type)).toEqual(['subscribe', 'set_presence', 'conversation_view']);
+    expect(sentFrames(second).find((frame) => frame.type === 'conversation_view')).toMatchObject({ parentId, substreamId: '0' });
+    // The answer moved the Sidekick list, standing in for a push the dropped
+    // socket missed, so the open Sidekick page reads again.
+    expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(true);
+
+    // And the live updates keep coming: a push below the old ledger's 31,
+    // and a topic below the old log's 41, each apply.
+    act(() => pushSidekicks(second, 3, 'Live after the restart'));
+    expect(queryClient.getQueryData(['automations'])).toEqual([expect.objectContaining({ name: 'Live after the restart' })]);
+    queryClient.setQueryData(['workspace'], { id: 'workspace' });
+    act(() => second.message({
+      type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000018', waterline: 4,
+      occurredAt: '2026-08-17T20:02:00.000Z', topics: ['workspace_profile'], reason: 'change',
+    }));
+    expect(queryClient.getQueryState(['workspace'])?.isInvalidated).toBe(true);
+    queryClient.clear();
+  });
+
+  it('applies the subscribe answer\'s Activity page, then only a newer push, and sends Mark all seen', async () => {
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    let markAllSeen: (() => void) | undefined;
+    function Probe(): null {
+      markAllSeen = useWorkspaceSocket().markAllActivitySeen;
+      return null;
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider region="global"
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <Probe />
         </WorkspaceSocketProvider>
       </QueryClientProvider>,
     );
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
-
-    const space = {
-      id: '00000000-0000-7000-8000-0000000000f2',
-      name: 'Hiring',
-      iconKey: 'briefcase',
-      colorKey: 'blue',
-      scope: 'personal',
-      status: 'active',
-      systemRole: null,
-      revision: 1,
-      reach: 'participant',
-      participants: [],
-      channelCount: 0,
-      defaultResourceIds: [],
-      defaultSidekickIds: [],
-      createdAt: '2026-08-27T00:00:00.000Z',
-      updatedAt: '2026-08-27T00:00:00.000Z',
-    };
+    const item = (seen: boolean) => ({
+      id: 'mention:00000000-0000-7000-8000-0000000000a1:00000000-0000-7000-8000-0000000000a2',
+      kind: 'mention', parentKind: 'canvas', parentId: '00000000-0000-7000-8000-0000000000a3', parentTitle: 'Launch plan',
+      substreamId: '0', messageId: '00000000-0000-7000-8000-0000000000a1', messageSequence: 7, runId: null,
+      actor: { kind: 'person', id: '00000000-0000-7000-8000-0000000000a4' }, preview: 'Please review the plan',
+      createdAt: '2026-11-08T10:00:00.000Z', seen,
+    });
     act(() => socket.message({
-      type: 'workspace_space_snapshot',
-      occurredAt: '2026-08-27T00:01:00.000Z',
-      spacesReady: true,
-      // Required on this event and optional on the connect payload: a server
-      // that sends this message is a server that has the ordering.
-      ordering: [{ container: { kind: 'space', id: space.id }, itemIds: [] }],
-      spaces: {
-        active: { waterline: 4, items: [space] },
-        inactive: { waterline: 4, items: [] },
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000017',
+      waterline: 4,
+      occurredAt: '2026-11-08T10:00:00.000Z',
+      topics: [],
+      reason: 'initial',
+      sidebar: {
+        automations: { waterline: 3, items: [] },
+        activity: { waterline: 5, unseenCount: 1, items: [item(false)] },
       },
     }));
-    expect(queryClient.getQueryData(['spaces'])).toEqual({ waterline: 4, items: [space] });
-    expect(queryClient.getQueryData(['spaces-inactive'])).toEqual({ waterline: 4, items: [] });
-    expect(queryClient.getQueryData(['personal-order']))
-      .toEqual([{ container: { kind: 'space', id: space.id }, itemIds: [] }]);
+    expect(queryClient.getQueryData(['activity'])).toEqual({ unseenCount: 1, items: [item(false)] });
 
-    act(() => socket.message({
-      type: 'workspace_space_snapshot',
-      occurredAt: '2026-08-27T00:02:00.000Z',
-      spacesReady: false,
-      ordering: [],
-      spaces: {
-        active: { waterline: 3, items: [] },
-        inactive: { waterline: 3, items: [{ ...space, status: 'archived' }] },
-      },
-    }));
-    expect(queryClient.getQueryData(['spaces'])).toEqual({ waterline: 4, items: [space] });
-    expect(queryClient.getQueryData(['spaces-inactive'])).toEqual({ waterline: 4, items: [] });
-    // The dropped snapshot's `spacesReady` is dropped with it: an older payload
-    // must not put the organization-opening state back over a finished cutover.
-    expect(queryClient.getQueryData(['spaces-ready'])).toBe(true);
-    // And its ordering, for the same reason: the arrangement on screen must
-    // not be replaced by one a stale payload carried.
-    expect(queryClient.getQueryData(['personal-order']))
-      .toEqual([{ container: { kind: 'space', id: space.id }, itemIds: [] }]);
+    const push = (waterline: number, seen: boolean) => socket.message({
+      type: 'workspace_activity_list', occurredAt: '2026-11-08T10:01:00.000Z', waterline,
+      unseenCount: seen ? 0 : 1, items: [item(seen)],
+    });
+    // Not newer than the subscribe answer's version: dropped.
+    act(() => push(5, true));
+    expect(queryClient.getQueryData(['activity'])).toEqual({ unseenCount: 1, items: [item(false)] });
+    act(() => push(6, true));
+    expect(queryClient.getQueryData(['activity'])).toEqual({ unseenCount: 0, items: [item(true)] });
+
+    act(() => markAllSeen?.());
+    const sent = socket.send.mock.calls.map(([frame]) => JSON.parse(String(frame)) as { type: string });
+    expect(sent.at(-1)).toEqual({ type: 'activity_mark_all_seen' });
   });
 
-  // A required field added to a pushed event fails every receiver that predates
-  // it, and the handler's schema chain drops what it cannot read either way. A
-  // desktop running ahead of its API would therefore show no Spaces at all,
-  // with nothing anywhere naming the field that was missing.
   it('names the field when a pushed event this build knows the type of does not parse', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const queryClient = new QueryClient();
@@ -2316,41 +1576,19 @@ describe('WorkspaceSocketProvider', () => {
     act(() => socket.open());
     warn.mockClear();
 
-    // The skew this is about: an API that predates `reach`, whose Space rows
-    // arrive without it.
+    // The skew this is about: a Canvas row from an API that predates a
+    // field this build requires.
     act(() => socket.message({
-      type: 'workspace_space_snapshot',
+      type: 'workspace_canvas_list',
       occurredAt: '2026-08-27T00:01:00.000Z',
-      spacesReady: true,
-      ordering: [],
-      spaces: {
-        active: {
-          waterline: 4,
-          items: [{
-            id: '00000000-0000-7000-8000-0000000000f2',
-            name: 'Hiring',
-            iconKey: 'briefcase',
-            colorKey: 'blue',
-            scope: 'personal',
-            status: 'active',
-            systemRole: null,
-            revision: 1,
-            participants: [],
-            channelCount: 0,
-            defaultResourceIds: [],
-            defaultSidekickIds: [],
-            createdAt: '2026-08-27T00:00:00.000Z',
-            updatedAt: '2026-08-27T00:00:00.000Z',
-          }],
-        },
-        inactive: { waterline: 4, items: [] },
-      },
+      waterline: 4,
+      items: [{ id: '00000000-0000-7000-8000-0000000000f2' }],
     }));
 
-    expect(queryClient.getQueryData(['spaces'])).toBeUndefined();
+    expect(queryClient.getQueryData(['canvases'])).toBeUndefined();
     const line = warn.mock.calls.map((call) => String(call[0])).join('\n');
-    expect(line).toContain('space snapshot');
-    expect(line).toContain('reach');
+    expect(line).toContain('canvas list');
+    expect(line).toContain('title');
 
     // A message whose type no schema here knows is the ordinary
     // forward-compatible case and says nothing at all.
@@ -2363,1049 +1601,25 @@ describe('WorkspaceSocketProvider', () => {
   // The Space dashboard's page is fetched, not pushed, so WorkspaceDO sends a
   // nudge naming the Spaces to read again rather than the rows. This is the
   // only thing that invalidates that entry while the screen is open.
-  it('invalidates only the named Channels\' feeds, the Threads list, the Channel counts and Activity when a nudge arrives', async () => {
-    const queryClient = new QueryClient();
-    queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, {
-      waterline: 1,
-      items: [{
-        id: asSpaceId('00000000-0000-7000-8000-0000000000f2'),
-        name: 'Hiring',
-        iconKey: 'briefcase',
-        colorKey: 'blue',
-        scope: 'workspace',
-        status: 'active',
-        systemRole: null,
-        revision: 1,
-        reach: 'organization',
-        participants: [],
-        channelCount: 2,
-        attentionCount: 0,
-        defaultResourceIds: [],
-        defaultSidekickIds: [],
-        createdAt: '2026-08-27T00:00:00.000Z',
-        updatedAt: '2026-08-27T00:00:00.000Z',
-      }],
-    });
-    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
-    const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-      ticket: 'workspace-ticket',
-      protocols: socketTicketProtocols('workspace-ticket'),
-    }));
-    render(
-      <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider region="global"
-          api={{ getWorkspaceSocketTicket }}
-          workspaceId="00000000-0000-7000-8000-000000000001"
-        >
-          <div />
-        </WorkspaceSocketProvider>
-      </QueryClientProvider>,
-    );
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    invalidate.mockClear();
-
-    act(() => socket.message({
-      type: 'space_conversations_changed',
-      occurredAt: '2026-08-27T00:01:00.000Z',
-      spaceIds: [
-        '00000000-0000-7000-8000-0000000000f2',
-        '00000000-0000-7000-8000-0000000000f3',
-      ],
-      attentionCounts: [
-        { spaceId: '00000000-0000-7000-8000-0000000000f2', count: 3 },
-        { spaceId: '00000000-0000-7000-8000-0000000000f3', count: 1 },
-      ],
-    }));
-
-    const keys = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
-    // The named Channels' feeds, the Threads tab's list, which a placement
-    // can add to, the Channels tab's thread counts, and Activity, which lists
-    // the thread starts a placement brings. A Channel the nudge
-    // did not name is a feed this change cannot have moved, and refetching it
-    // would be one wasted page read per message in the Organization.
-    expect(keys).toEqual([
-      ['channel-feed', '00000000-0000-7000-8000-0000000000f2'],
-      ['channel-feed', '00000000-0000-7000-8000-0000000000f3'],
-      ['merge-channels'],
-      ['my-threads'],
-      ['channel-stats'],
-      ['activity'],
-    ]);
-    expect(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)?.items[0]?.attentionCount).toBe(3);
-  });
-
-  it('reads guest navigation and eligible merge Channels again when reach changes', async () => {
-    const queryClient = new QueryClient();
-    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
-    const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-      ticket: 'workspace-ticket',
-      protocols: socketTicketProtocols('workspace-ticket'),
-    }));
-    render(
-      <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider region="global"
-          api={{ getWorkspaceSocketTicket }}
-          workspaceId="00000000-0000-7000-8000-000000000001"
-        >
-          <div />
-        </WorkspaceSocketProvider>
-      </QueryClientProvider>,
-    );
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    invalidate.mockClear();
-
-    act(() => socket.message({
-      type: 'workspace_reach_changed',
-      occurredAt: '2026-09-24T00:00:00.000Z',
-      userIds: ['00000000-0000-7000-8000-000000000003'],
-    }));
-    await flushPromises();
-
-    // A member's Channel rows and Space pages are pushed on the same flip, so
-    // the associative read a guest's sidebar is drawn from is the one to redo.
-    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
-      ['merge-channels'], ['shared-navigation'], ['conversation-access-preview'],
-    ]);
-  });
-
-  it.each([
-    ['thread', '0', 'reach', true],
-    ['breakout', '00000000-0000-7000-8000-0000000000b1', 'reach', true],
-    ['thread', '0', 'reconnect', true],
-    ['breakout', '00000000-0000-7000-8000-0000000000b1', 'reconnect', true],
-    ['thread', '0', 'reach', false],
-  ] as const)('retries a waiting %s (%s) after %s (request sent: %s)', async (kind, substreamId, change, requested) => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    let admitted = false;
-    const onRetry = vi.fn();
-    const api = {
-      getWorkspaceSocketTicket: async () => ({
-        url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
-        protocols: socketTicketProtocols('workspace-ticket'),
-      }),
-      viewerUserId: 'viewer-1',
-      conversationAccessPreview: vi.fn(async () => ({
-        kind: substreamId === '0' ? 'channel' as const : 'breakout' as const,
-        title: 'Launch plan', appearance: null, markId: 'thread-1',
-        access: admitted ? 'open' as const : 'requestable' as const, requestPending: false, requestEmailed: false,
-      })),
-      requestConversationAccess: async () => undefined,
-    };
-    render(<QueryClientProvider client={queryClient}>
-      <WorkspaceSocketProvider region="global" api={api} workspaceId="00000000-0000-7000-8000-000000000001">
-        <ConversationAccessRequest api={api} parentId="thread-1" substreamId={substreamId}
-          fallback={<p>Opening thread</p>} onRetry={onRetry} />
-      </WorkspaceSocketProvider>
-    </QueryClientProvider>);
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => { socket.open(); socket.message(initialSidebarFrame()); });
-    const requestButton = await screen.findByRole('button', { name: 'Request access' });
-    if (requested) {
-      fireEvent.click(requestButton);
-      await screen.findByRole('button', { name: 'Try again' });
-    }
-    await flushPromises();
-    api.conversationAccessPreview.mockClear();
-    const reach = {
-      type: 'workspace_reach_changed', occurredAt: '2026-10-22T00:00:00.000Z',
-      userIds: ['00000000-0000-7000-8000-000000000003'],
-    };
-    // A refreshed preview that still refuses access must not retry the socket.
-    act(() => socket.message(reach));
-    await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalledTimes(1), { timeout: 5_000 });
-    expect(onRetry).not.toHaveBeenCalled();
-    admitted = true;
-    if (change === 'reach') {
-      act(() => socket.message(reach));
-    } else {
-      act(() => {
-        socket.close();
-        window.dispatchEvent(new Event('online'));
-      });
-      await flushPromises();
-      const reconnected = FakeWebSocket.instances.at(-1)!;
-      expect(reconnected).not.toBe(socket);
-      // The waterline did not advance while disconnected: recovery must run
-      // before the duplicate-waterline guard drops this subscribe answer.
-      act(() => { reconnected.open(); reconnected.message(initialSidebarFrame()); });
-    }
-    await vi.waitFor(() => expect(onRetry).toHaveBeenCalledTimes(1), { timeout: 5_000 });
-    expect(api.conversationAccessPreview).toHaveBeenLastCalledWith('thread-1', substreamId);
-    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
-    expect(screen.getByRole('status').textContent).toBe(`Opening ${kind}…`);
-    expect(screen.queryByText('Opening thread')).toBeNull();
-  });
-
-
-  it.each(['placement', 'reach', 'reconnect'] as const)('refreshes the open Thread merge targets after a %s change', async (change) => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    let eligible = false;
-    const api = {
-      getWorkspaceSocketTicket: async () => ({
-        url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
-        protocols: socketTicketProtocols('workspace-ticket'),
-      }),
-      mergeChannels: async () => ({ channels: eligible ? [{ id: '00000000-0000-7000-8000-0000000000f2', name: 'GTM' }] : [] }),
-    };
-    function Probe(): JSX.Element {
-      const ids = useMergeChannels(api, 'thread-1', true);
-      return <output data-testid="merge-targets">{ids === undefined ? 'loading' : ids.join(',') || 'none'}</output>;
-    }
-    render(<QueryClientProvider client={queryClient}>
-      <WorkspaceSocketProvider region="global" api={api} workspaceId="00000000-0000-7000-8000-000000000001">
-        <Probe />
-      </WorkspaceSocketProvider>
-    </QueryClientProvider>);
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    await vi.waitFor(() => expect(screen.getByTestId('merge-targets').textContent).toBe('none'), { timeout: 5000 });
-    eligible = true;
-    const event = change === 'placement' ? {
-      type: 'space_conversations_changed', occurredAt: '2026-10-19T00:00:00.000Z',
-      spaceIds: ['00000000-0000-7000-8000-0000000000f2'], attentionCounts: [], placementChanged: true,
-    } : change === 'reach' ? {
-      type: 'workspace_reach_changed', occurredAt: '2026-10-19T00:00:00.000Z',
-      userIds: ['00000000-0000-7000-8000-000000000003'],
-    } : {
-      type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000018', waterline: 9,
-      occurredAt: '2026-10-19T00:00:00.000Z', topics: [], reason: 'resume',
-      sidebar: {
-        workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
-        automations: { waterline: 0, items: [] }, notes: { waterline: 0, items: [] },
-      },
-    };
-    act(() => socket.message(event));
-    await vi.waitFor(() => expect(screen.getByTestId('merge-targets').textContent).toBe('00000000-0000-7000-8000-0000000000f2'), { timeout: 5000 });
-    eligible = false;
-    act(() => socket.message(event));
-    await vi.waitFor(() => expect(screen.getByTestId('merge-targets').textContent).toBe('none'), { timeout: 5000 });
-  });
-
-  it('fails an in-flight directory page immediately when the desktop goes offline', async () => {
-    let online = true;
-    vi.spyOn(navigator, 'onLine', 'get').mockImplementation(() => online);
-    const queryClient = new QueryClient();
-    const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-      ticket: 'workspace-ticket',
-      protocols: socketTicketProtocols('workspace-ticket'),
-    }));
-    let listWorkstreams: ReturnType<typeof useWorkspaceSocket>['listWorkstreams'] | null = null;
-    function Probe(): null {
-      const workspaceSocket = useWorkspaceSocket();
-      useEffect(() => {
-        listWorkstreams = workspaceSocket.listWorkstreams;
-      }, [workspaceSocket.listWorkstreams]);
-      return null;
-    }
-    render(
-      <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider region="global"
-          api={{ getWorkspaceSocketTicket }}
-          workspaceId="00000000-0000-7000-8000-000000000001"
-        >
-          <Probe />
-        </WorkspaceSocketProvider>
-      </QueryClientProvider>,
-    );
-    await flushPromises();
-    act(() => FakeWebSocket.instances[0]!.open());
-    const result = listWorkstreams!({ limit: 20, includeSystem: false });
-    const rejection = expect(result).rejects.toMatchObject({ code: 'workspace_directory_offline' });
-
-    online = false;
-    act(() => window.dispatchEvent(new Event('offline')));
-
-    await rejection;
-  });
-});
-
-describe('a Channel\'s breakouts and background agents on the organization socket', () => {
-  /**
-   * These used to arrive on one Channel control socket per held Channel. They
-   * now ride the Organization socket's Channel rows, so these tests drive the
-   * real provider with the frames the server sends and read the caches the
-   * Channel screen and the composer observe.
-   */
-  const workstreamId = '00000000-0000-7000-8000-000000000002';
-  const workspaceId = '00000000-0000-7000-8000-000000000001';
-  const creator = '00000000-0000-7000-8000-000000000013';
-  const kept = '00000000-0000-7000-8000-000000000021';
-  const dropped = '00000000-0000-7000-8000-000000000022';
-
-  function child(substreamId: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
-    return {
-      substreamId, title: 'Breakout', createdByUserId: creator,
-      createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z', ...extra,
-    };
-  }
-
-  function row(extra: Record<string, unknown> = {}): Record<string, unknown> {
-    return {
-      id: workstreamId, workspaceId, title: 'Channel', titleStatus: 'settled', objective: '',
-      emailAddress: null, createdByUserId: null, harnessStatus: 'completed',
-      latestAttentionSequenceNumber: 4, readThroughSequenceNumber: 2, manualUnreadFromSequenceNumber: null,
-      manualUnreadGeneration: 0, hasUnread: false, youAreMentioned: false, firstUnreadSequenceNumber: null,
-      lastActivityAt: '2026-08-17T20:00:00.000Z', createdAt: '2026-08-17T19:00:00.000Z',
-      updatedAt: '2026-08-17T20:00:00.000Z', archivedAt: null, scope: 'workspace', systemKind: null,
-      nextPendingWakeup: null, pinPosition: null, participantUserIds: [], participantExtraCount: 0, spaceIds: [],
-      ...extra,
-    };
-  }
-
-  function version(commonWaterline: number): Record<string, unknown> {
-    return {
-      commonEventId: `00000000-0000-7000-8000-${commonWaterline.toString(16).padStart(12, '0')}`,
-      viewerEventId: '00000000-0000-7000-8001-000000000004',
-      authorityGeneration: 1,
-      commonWaterline,
-      viewerWaterline: 4,
-    };
-  }
-
-  function stateFrame(commonWaterline: number, extra: Record<string, unknown> | null): Record<string, unknown> {
-    return {
-      type: 'workspace_workstream_state',
-      occurredAt: '2026-08-17T20:00:00.000Z',
-      workstreamId,
-      stateVersion: version(commonWaterline),
-      workstream: extra === null ? null : row(extra),
-    };
-  }
-
-  function sidebarFrame(extra: Record<string, unknown>): Record<string, unknown> {
-    return {
-      type: 'workspace_sync',
-      eventId: '00000000-0000-7000-8000-000000000017',
-      waterline: 4,
-      occurredAt: '2026-08-17T20:00:00.000Z',
-      topics: ['workstream_directory'],
-      reason: 'initial',
-      sidebar: {
-        workstreams: {
-          directoryWaterline: 7, nextCursor: null,
-          stateVersions: [{ workstreamId, ...version(7) }],
-          items: [row(extra)],
-        },
-        automations: { waterline: 1, items: [] },
-        notes: { waterline: 1, items: [], nextCursor: null },
-      },
-    };
-  }
-
-  async function connect(
-    queryClient: QueryClient,
-    scope: string | null = null,
-    content: ReactNode = <div />,
-  ): Promise<FakeWebSocket> {
-    const api = {
-      getWorkspaceSocketTicket: vi.fn(async () => ({
-        url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-        ticket: 'workspace-ticket',
-        protocols: socketTicketProtocols('workspace-ticket'),
-      })),
-    };
-    const provider = (
-      <WorkspaceSocketProvider region="global" api={api} workspaceId={workspaceId}>{content}</WorkspaceSocketProvider>
-    );
-    render(
-      <QueryClientProvider client={queryClient}>
-        {scope === null ? provider : <LocalCacheScopeProvider scope={scope}>{provider}</LocalCacheScopeProvider>}
-      </QueryClientProvider>,
-    );
-    await flushPromises();
-    // One socket for the Organization, and nothing else: no Channel socket.
-    expect(FakeWebSocket.instances).toHaveLength(1);
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    return socket;
-  }
-
-  function children(queryClient: QueryClient): WorkstreamChildDirectory | undefined {
-    return queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId]);
-  }
-
-  function railsSent(socket: FakeWebSocket): Record<string, unknown>[] {
-    return socket.send.mock.calls
-      .map(([frame]) => JSON.parse(String(frame)) as Record<string, unknown>)
-      .filter((frame) => frame['type'] === 'channel_rails');
-  }
-
-  function railAnswer(requestId: unknown, railWaterline: number, extra: Record<string, unknown> = {}): Record<string, unknown> {
-    return {
-      type: 'workspace_channel_rails',
-      requestId,
-      rails: [{
-        workstreamId, railWaterline, participantUserIds: [creator],
-        sidekicks: { owned: [], recommended: [], attached: [] }, resources: [],
-      }],
-      oversized: [], unavailable: [], nextAfter: null, final: true,
-      ...extra,
-    };
-  }
-
-  it('asks for a Channel rail once its row says one, holds the answer, and asks again when the row moves it', async () => {
-    const queryClient = new QueryClient();
-    const socket = await connect(queryClient);
-    act(() => socket.message(sidebarFrame({ railWaterline: 3 })));
-    await flushPromises();
-    const [first] = railsSent(socket);
-    expect(first).toMatchObject({ workstreamIds: [workstreamId] });
-
-    act(() => socket.message(railAnswer(first!['requestId'], 3)));
-    await flushPromises();
-    expect(queryClient.getQueryData(['channel-rail', workstreamId]))
-      .toMatchObject({ railWaterline: 3, rail: { participantUserIds: [creator] } });
-    expect(railsSent(socket)).toHaveLength(1);
-
-    act(() => socket.message(stateFrame(8, { railWaterline: 4 })));
-    await flushPromises();
-    expect(railsSent(socket)).toHaveLength(2);
-  });
-
-  it('keeps a rail it was just answered when a row raises the waterline mid-request, and asks again', async () => {
-    const queryClient = new QueryClient();
-    const socket = await connect(queryClient);
-    act(() => socket.message(sidebarFrame({ railWaterline: 5 })));
-    await flushPromises();
-    const [first] = railsSent(socket);
-
-    // The attach that moved the rail lands before the answer does.
-    act(() => socket.message(stateFrame(8, { railWaterline: 6 })));
-    act(() => socket.message(railAnswer(first!['requestId'], 5)));
-    await flushPromises();
-
-    expect(queryClient.getQueryData(['channel-rail', workstreamId]))
-      .toMatchObject({ railWaterline: 5, rail: { participantUserIds: [creator] } });
-    const [, second] = railsSent(socket);
-    expect(second).toMatchObject({ workstreamIds: [workstreamId] });
-  });
-
-  describe('loading Channels a Space at a time', () => {
-    const general = '00000000-0000-4000-8000-000000000031';
-    const design = '00000000-0000-4000-8000-000000000032';
-    const other = '00000000-0000-7000-8000-000000000003';
-
-    function spaceSent(socket: FakeWebSocket): Record<string, unknown>[] {
-      return socket.send.mock.calls
-        .map(([frame]) => JSON.parse(String(frame)) as Record<string, unknown>)
-        .filter((frame) => frame['type'] === 'space_channels');
-    }
-
-    function spaceAnswer(
-      requestId: unknown,
-      rows: Record<string, unknown>[],
-      nextAfter: string | null,
-      rails: Record<string, unknown>[] = [],
-    ): Record<string, unknown> {
-      return {
-        type: 'workspace_space_channels', requestId, directoryWaterline: 7, items: rows,
-        stateVersions: rows.map((item) => ({ workstreamId: item['id'], ...version(7) })), rails, nextAfter,
-      };
-    }
-
-    function bySpaceSidebar(): Record<string, unknown> {
-      const frame = sidebarFrame({});
-      const sidebar = frame['sidebar'] as Record<string, unknown>;
-      return {
-        ...frame,
-        sidebar: {
-          ...sidebar,
-          workstreams: { directoryWaterline: 7, nextCursor: null, stateVersions: [], items: [] },
-          channelsBySpace: true,
-        },
-      };
-    }
-
-    async function connectWithProbe(queryClient: QueryClient): Promise<{
-      socket: FakeWebSocket;
-      api: () => ReturnType<typeof useWorkspaceSocket>;
-    }> {
-      let current: ReturnType<typeof useWorkspaceSocket> | null = null;
-      function Probe(): null {
-        current = useWorkspaceSocket();
-        return null;
-      }
-      const socket = await connect(queryClient, null, <Probe />);
-      return { socket, api: () => current! };
-    }
-
-    it('asks the Space on screen alone, then every other Space at once, and takes rows and rails from each answer', async () => {
-      const archive = '00000000-0000-4000-8000-000000000033';
-      const queryClient = new QueryClient();
-      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }, { id: design }] });
-      queryClient.setQueryData(['spaces-inactive'], { waterline: 1, items: [{ id: archive }] });
-      const { socket, api } = await connectWithProbe(queryClient);
-      act(() => socket.message(bySpaceSidebar()));
-      await flushPromises();
-      expect(api().sidebarConnect?.channelsBySpace).toBe(true);
-
-      act(() => api().prioritizeSpace(design));
-      let walked!: Promise<Set<string> | null>;
-      act(() => { walked = api().walkSpaceChannels(); });
-      await flushPromises();
-      // Alone until its first page is in.
-      expect(spaceSent(socket)).toHaveLength(1);
-      const [first] = spaceSent(socket);
-      expect(first).toMatchObject({ spaceId: design, rails: true });
-      expect(first).not.toHaveProperty('after');
-
-      act(() => socket.message(spaceAnswer(first!['requestId'], [row({ spaceIds: [design], railWaterline: 2 })], workstreamId, [{
-        workstreamId, railWaterline: 2, participantUserIds: [creator],
-        sidekicks: { owned: [], recommended: [], attached: [] }, resources: [],
-      }])));
-      await flushPromises();
-      // Painted as it lands, before the walk is over.
-      expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.map((item) => item.id))
-        .toEqual([workstreamId]);
-      // Its next page, and every other Space, all in flight together.
-      const inFlight = spaceSent(socket).slice(1);
-      expect(inFlight.map((frame) => [frame['spaceId'], frame['after'] ?? null])).toEqual([
-        [design, workstreamId], [general, null], [archive, null],
-      ]);
-      const [designNext, generalFirst, archiveFirst] = inFlight;
-      // Answered out of order: each Space follows only its own pages.
-      act(() => socket.message(spaceAnswer(archiveFirst!['requestId'], [], null)));
-      act(() => socket.message(spaceAnswer(generalFirst!['requestId'], [row({ id: other, spaceIds: [general] })], null)));
-      act(() => socket.message(spaceAnswer(designNext!['requestId'], [], null)));
-      await expect(walked).resolves.toEqual(new Set([workstreamId, other]));
-      await flushPromises();
-      expect(spaceSent(socket)).toHaveLength(4);
-
-      expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.map((item) => item.id).sort())
-        .toEqual([workstreamId, other].sort());
-      expect(queryClient.getQueryData(['channel-rail', workstreamId]))
-        .toMatchObject({ railWaterline: 2, rail: { participantUserIds: [creator] } });
-      // Set as each Space's walk ends, after the answer's `act` has returned,
-      // so the render carrying it is the scheduler's, not `act`'s: wait for it.
-      await vi.waitFor(() => expect(api().loadedSpaceIds).toEqual(new Set([design, general, archive])));
-      // The rail came with its row, so nothing is asked for by name.
-      expect(railsSent(socket)).toEqual([]);
-    });
-
-    it('keeps the rows it holds when the sidebar carries none, and leaves out rails it already holds', async () => {
-      const queryClient = new QueryClient();
-      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }, { id: design }] });
-      setCachedWorkstreams(queryClient, [summary({ id: workstreamId, spaceIds: [general] })]);
-      queryClient.setQueryData(['channel-rail', workstreamId], { railWaterline: 1, rail: null });
-      const { socket, api } = await connectWithProbe(queryClient);
-      act(() => socket.message(bySpaceSidebar()));
-      await flushPromises();
-      expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.map((item) => item.id))
-        .toEqual([workstreamId]);
-
-      let walked!: Promise<Set<string> | null>;
-      act(() => { walked = api().walkSpaceChannels(); });
-      await flushPromises();
-      const [first] = spaceSent(socket);
-      expect(first).toMatchObject({ spaceId: general, rails: false });
-      act(() => socket.message(spaceAnswer(first!['requestId'], [row({ spaceIds: [general] })], null)));
-      await flushPromises();
-      const [, second] = spaceSent(socket);
-      expect(second).toMatchObject({ spaceId: design, rails: true });
-      act(() => socket.message(spaceAnswer(second!['requestId'], [], null)));
-      await expect(walked).resolves.toEqual(new Set([workstreamId]));
-    });
-
-    it('stops a walk a newer one replaced, before asking for another page', async () => {
-      const queryClient = new QueryClient();
-      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }, { id: design }] });
-      const { socket, api } = await connectWithProbe(queryClient);
-      act(() => socket.message(bySpaceSidebar()));
-      await flushPromises();
-      const controller = new AbortController();
-      let walked!: Promise<Set<string> | null>;
-      act(() => { walked = api().walkSpaceChannels(controller.signal); });
-      const settled = walked.then(() => 'resolved', () => 'rejected');
-      await flushPromises();
-      const [first] = spaceSent(socket);
-      controller.abort();
-      act(() => socket.message(spaceAnswer(first!['requestId'], [], null)));
-      await expect(settled).resolves.toBe('rejected');
-      expect(spaceSent(socket)).toHaveLength(1);
-    });
-
-    it('asks for a Space put on screen that no walk has returned, such as one created since', async () => {
-      const queryClient = new QueryClient();
-      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }] });
-      const { socket, api } = await connectWithProbe(queryClient);
-      act(() => socket.message(bySpaceSidebar()));
-      await flushPromises();
-      let walked!: Promise<Set<string> | null>;
-      act(() => { walked = api().walkSpaceChannels(); });
-      await flushPromises();
-      const [first] = spaceSent(socket);
-      act(() => socket.message(spaceAnswer(first!['requestId'], [], null)));
-      await walked;
-
-      // Created after the walk, and opened.
-      queryClient.setQueryData(['spaces'], { waterline: 2, items: [{ id: general }, { id: design }] });
-      act(() => api().prioritizeSpace(design));
-      await flushPromises();
-      const [, created] = spaceSent(socket);
-      expect(created).toMatchObject({ spaceId: design });
-      act(() => socket.message(spaceAnswer(created!['requestId'], [], null)));
-      await vi.waitFor(() => expect(api().loadedSpaceIds).toEqual(new Set([general, design])));
-      // Loaded now: putting it on screen again asks nothing.
-      act(() => api().prioritizeSpace(general));
-      act(() => api().prioritizeSpace(design));
-      await flushPromises();
-      expect(spaceSent(socket)).toHaveLength(2);
-    });
-
-    it('asks only the Space on screen again when the directory moves, and the others when they come on screen', async () => {
-      const queryClient = new QueryClient();
-      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }, { id: design }] });
-      const { socket, api } = await connectWithProbe(queryClient);
-      act(() => socket.message(bySpaceSidebar()));
-      await flushPromises();
-      act(() => api().prioritizeSpace(general));
-      let walked!: Promise<Set<string> | null>;
-      act(() => { walked = api().walkSpaceChannels(); });
-      await flushPromises();
-      act(() => socket.message(spaceAnswer(spaceSent(socket)[0]!['requestId'], [], null)));
-      await flushPromises();
-      act(() => socket.message(spaceAnswer(spaceSent(socket)[1]!['requestId'], [], null)));
-      await walked;
-      await flushPromises();
-      expect(spaceSent(socket)).toHaveLength(2);
-
-      // Somebody else pinned something: the directory moved.
-      act(() => socket.message({
-        type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000018', waterline: 9,
-        occurredAt: '2026-08-17T20:01:00.000Z', topics: ['workstream_directory'], reason: 'change',
-      }));
-      await flushPromises();
-      expect(spaceSent(socket).slice(2).map((frame) => frame['spaceId'])).toEqual([general]);
-      act(() => socket.message(spaceAnswer(spaceSent(socket)[2]!['requestId'], [], null)));
-      await flushPromises();
-      // Every Space stays loaded: what is held keeps painting.
-      await vi.waitFor(() => expect(api().loadedSpaceIds).toEqual(new Set([general, design])));
-
-      act(() => api().prioritizeSpace(design));
-      await flushPromises();
-      expect(spaceSent(socket).slice(3).map((frame) => frame['spaceId'])).toEqual([design]);
-    });
-
-    it('treats every Space as loading again when a reconnect\'s sidebar arrives', async () => {
-      const queryClient = new QueryClient();
-      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }] });
-      const { socket, api } = await connectWithProbe(queryClient);
-      act(() => socket.message(bySpaceSidebar()));
-      await flushPromises();
-      let walked!: Promise<Set<string> | null>;
-      act(() => { walked = api().walkSpaceChannels(); });
-      await flushPromises();
-      act(() => socket.message(spaceAnswer(spaceSent(socket)[0]!['requestId'], [], null)));
-      await walked;
-      await vi.waitFor(() => expect(api().loadedSpaceIds).toEqual(new Set([general])));
-
-      act(() => socket.message(bySpaceSidebar()));
-      await flushPromises();
-      expect(api().loadedSpaceIds).toEqual(new Set());
-    });
-
-    it('walks nothing when the sidebar carried Channel rows', async () => {
-      const queryClient = new QueryClient();
-      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }] });
-      const { socket, api } = await connectWithProbe(queryClient);
-      act(() => socket.message(sidebarFrame({ spaceIds: [general] })));
-      await flushPromises();
-      await expect(api().walkSpaceChannels()).resolves.toBeNull();
-      expect(spaceSent(socket)).toEqual([]);
-    });
-  });
-
-  it('asks for no rail when rows carry no rail waterline', async () => {
-    const queryClient = new QueryClient();
-    const socket = await connect(queryClient);
-    act(() => socket.message(sidebarFrame({})));
-    await flushPromises();
-    expect(railsSent(socket)).toEqual([]);
-  });
-
-  const activityTarget = { parentKind: 'workstream' as const, parentId: workstreamId, substreamId: '0' };
-  function Indicators(): JSX.Element {
-    const background = useQuery<Record<string, number> | null>({
-      queryKey: ['workstream-background-agents', workstreamId],
-      queryFn: async () => null, enabled: false, initialData: null,
-    });
-    return <>
-      <ComposerAgentActivity count={background.data?.['0']} />
-      <ComposerAgentActivity count={useSidekickActivity(activityTarget)} kind="sidekick" />
-    </>;
-  }
-
-  it('ignores a delayed close from a retired socket after its replacement receives fresh activity', async () => {
-    const queryClient = new QueryClient();
-    const api = () => ({
-      getWorkspaceSocketTicket: vi.fn(async () => ({
-        url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-        ticket: 'workspace-ticket', protocols: socketTicketProtocols('workspace-ticket'),
-      })),
-    });
-    const view = (client: ReturnType<typeof api>) => (
-      <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider region="global" api={client} workspaceId={workspaceId}><Indicators /></WorkspaceSocketProvider>
-      </QueryClientProvider>
-    );
-    const rendered = render(view(api()));
-    await flushPromises();
-    const retired = FakeWebSocket.instances[0]!;
-    act(() => retired.open());
-    // Native close events are asynchronous and may arrive after the next owner mounts.
-    vi.spyOn(retired, 'close').mockImplementation(() => undefined);
-    rendered.rerender(view(api()));
-    await flushPromises();
-    const replacement = FakeWebSocket.instances[1]!;
-    act(() => replacement.open());
-    act(() => replacement.message(sidebarFrame({ backgroundAgentCounts: { '0': 2 } })));
-    act(() => replacement.message({ type: 'workspace_sidekick_activity', revision: 1, target: activityTarget, waterline: 8, count: 1 }));
-    expect(await screen.findByRole('status', { name: '1 Sidekick running' })).toBeInTheDocument();
-    act(() => retired.dispatchEvent(new CloseEvent('close', { code: 1000 })));
-    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toEqual({ '0': 2 });
-    expect(screen.getByRole('status', { name: '1 Sidekick running' })).toBeInTheDocument();
-  });
-
-  it('hides running indicators on disconnect and restores only fresh counts after reconnect', async () => {
-    const queryClient = new QueryClient();
-    const target = { parentKind: 'workstream' as const, parentId: workstreamId, substreamId: '0' };
-    let socket = await connect(queryClient, null, <Indicators />);
-    act(() => socket.message(sidebarFrame({ backgroundAgentCounts: { '0': 1 } })));
-    const activity = { type: 'workspace_sidekick_activity', revision: 1, target, waterline: 8, count: 1 };
-    act(() => socket.message(activity));
-    expect(await screen.findByRole('status', { name: '1 background agent running' })).toBeInTheDocument();
-    expect(screen.getByRole('status', { name: '1 Sidekick running' })).toBeInTheDocument();
-
-    act(() => socket.close(1012));
-    await waitFor(() => expect(screen.queryByRole('status', { name: /running/u })).not.toBeInTheDocument());
-    act(() => window.dispatchEvent(new Event('online')));
-    await flushPromises();
-    socket = FakeWebSocket.instances[1]!;
-    act(() => socket.open());
-    expect(screen.queryByRole('status', { name: /running/u })).not.toBeInTheDocument();
-    act(() => socket.message(sidebarFrame({ backgroundAgentCounts: { '0': 2 } })));
-    expect(await screen.findByRole('status', { name: '2 background agents running' })).toBeInTheDocument();
-    act(() => socket.message({ ...activity, revision: 2, waterline: 9, count: 2 }));
-    expect(await screen.findByRole('status', { name: '2 Sidekicks running' })).toBeInTheDocument();
-  });
-
-  it('takes the breakouts and running agents from the connect sidebar and keeps them with no screen open', async () => {
-    vi.useFakeTimers();
-    const queryClient = createQueryClient();
-    const socket = await connect(queryClient);
-    // Keep the producer live while time advances, as the Worker's automatic pong does.
-    socket.send.mockImplementation((frame) => {
-      if (frame === 'ping') queueMicrotask(() => socket.dispatchEvent(new MessageEvent('message', { data: 'pong' })));
-    });
-    act(() => socket.message(sidebarFrame({
-      privateChildren: [child(kept)], privateChildrenWaterline: 2, backgroundAgentCounts: { [kept]: 1 },
-    })));
-    // Nothing observes either entry, which is the Channel nobody has opened
-    // yet. Default garbage collection would drop both after five minutes.
-    await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
-    expect(children(queryClient)?.privateChildren).toEqual([child(kept)]);
-    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toEqual({ [kept]: 1 });
-  });
-
-  it('updates cached breakout resolution and removes archived breakouts from every navigation page using accepted rosters', async () => {
-    const queryClient = new QueryClient();
-    const socket = await connect(queryClient);
-    const parent: SpaceConversationSummary = { ...mapWorkstreamSummary(WorkstreamSchema.parse(row())), kind: 'channel', breakoutOf: null };
-    const breakout: SpaceConversationSummary = {
-      ...parent, id: kept, kind: 'breakout', resolved: false,
-      breakoutOf: { workstreamId, substreamId: kept, title: parent.title },
-    };
-    queryClient.setQueryData(MY_THREADS_QUERY_KEY, {
-      pages: [{ items: [parent], pinned: [breakout], nextCursor: 'page-2' }, { items: [breakout], pinned: [], nextCursor: null }],
-      pageParams: [null, 'page-2'],
-    });
-    const navigation = () => queryClient.getQueryData<InfiniteData<ThreadNavigationPage>>(MY_THREADS_QUERY_KEY)!;
-    act(() => socket.message(stateFrame(5, { privateChildren: [child(kept)], privateChildrenWaterline: 1 })));
-    // Resolution moves the roster's waterline independently of Main's state version.
-    act(() => socket.message(stateFrame(5, { privateChildren: [child(kept, { resolved: true })], privateChildrenWaterline: 2 })));
-    expect(navigation().pages[0]?.pinned?.[0]?.resolved).toBe(true);
-    expect(navigation().pages[1]?.items[0]?.resolved).toBe(true);
-    expect(reconcileThreadNavigationRows(queryClient, [breakout])[0]?.resolved).toBe(true);
-    act(() => socket.message(stateFrame(6, { privateChildren: [], privateChildrenWaterline: 1 })));
-    expect(navigation().pages[1]?.items).toHaveLength(1);
-    act(() => socket.message(stateFrame(7, { privateChildren: [], privateChildrenWaterline: 3 })));
-    expect(navigation().pages.map((page) => page.items.map((item) => item.id))).toEqual([[workstreamId], []]);
-    expect(navigation().pages[0]?.pinned).toEqual([]);
-    // A REST page requested before the archive cannot restore its older child row.
-    expect(reconcileThreadNavigationRows(queryClient, [breakout])).toEqual([]);
-  });
-
-  it.each(['local archive', 'remote archive', 'membership loss'] as const)('reconciles navigation after a %s tombstone without treating every visibility loss as an archive', async (change) => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const parent: SpaceConversationSummary = { ...mapWorkstreamSummary(WorkstreamSchema.parse(row())), kind: 'channel', breakoutOf: null };
-    const breakout: SpaceConversationSummary = {
-      ...parent, id: kept, kind: 'breakout',
-      breakoutOf: { workstreamId, substreamId: kept, title: parent.title },
-    };
-    let authoritativeRows = [parent, breakout];
-    queryClient.setQueryData(MY_THREADS_QUERY_KEY, { pages: [{ items: authoritativeRows, pinned: authoritativeRows, nextCursor: null }], pageParams: [null] });
-    function Probe(): JSX.Element {
-      const navigation = useQuery({
-        queryKey: MY_THREADS_QUERY_KEY, staleTime: Infinity,
-        queryFn: async () => ({ pages: [{ items: authoritativeRows, pinned: authoritativeRows, nextCursor: null }], pageParams: [null] }),
-      });
-      return <output data-testid="navigation-rows">{navigation.data?.pages.flatMap((page) => page.items.map((item) => item.id)).join(',') || 'none'}</output>;
-    }
-    const socket = await connect(queryClient, null, <Probe />);
-    act(() => socket.message(stateFrame(5, { privateChildren: [child(kept)], privateChildrenWaterline: 1 })));
-    if (change === 'local archive') {
-      act(() => holdCachedWorkstreamArchive(queryClient, { ...parent, archivedAt: '2026-10-21T12:00:00.000Z' }));
-      expect(queryClient.getQueryData<InfiniteData<ThreadNavigationPage>>(MY_THREADS_QUERY_KEY)?.pages[0]?.items).toEqual([]);
-    }
-    authoritativeRows = change === 'membership loss' ? [breakout] : [];
-    act(() => socket.message(stateFrame(6, null)));
-    if (change === 'local archive') {
-      expect(queryClient.getQueryData<InfiniteData<ThreadNavigationPage>>(MY_THREADS_QUERY_KEY)?.pages[0]?.pinned).toEqual([]);
-    }
-    await vi.waitFor(() => expect(screen.getByTestId('navigation-rows').textContent).toBe(change === 'membership loss' ? kept : 'none'));
-    const navigation = queryClient.getQueryData<InfiniteData<ThreadNavigationPage>>(MY_THREADS_QUERY_KEY)!;
-    expect(navigation.pages[0]?.pinned?.map((item) => item.id)).toEqual(change === 'membership loss' ? [kept] : []);
-    act(() => socket.message(stateFrame(5, {})));
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.some((item) => item.id === workstreamId)).not.toBe(true);
-    expect(navigation.pages[0]?.items.some((item) => item.archivedAt)).toBe(false);
-  });
-
-  it('applies a pushed roster in waterline order and leaves it alone when a row does not say', async () => {
-    const queryClient = new QueryClient();
-    const socket = await connect(queryClient);
-    act(() => socket.message(stateFrame(5, { privateChildren: [child(kept)], privateChildrenWaterline: 2 })));
-    expect(children(queryClient)?.privateChildren).toEqual([child(kept)]);
-    // Older roster: dropped on its own waterline even though the row is newer.
-    act(() => socket.message(stateFrame(6, { privateChildren: [], privateChildrenWaterline: 1 })));
-    expect(children(queryClient)?.privateChildren).toEqual([child(kept)]);
-    // A row with no roster (an older server, or a parent not imported yet) is silent about it.
-    act(() => socket.message(stateFrame(7, {})));
-    expect(children(queryClient)?.privateChildren).toEqual([child(kept)]);
-    act(() => socket.message(stateFrame(8, { privateChildren: [], privateChildrenWaterline: 3 })));
-    expect(children(queryClient)?.privateChildren).toEqual([]);
-  });
-
-  it('evicts the roster and the running count when the Channel is withdrawn from this viewer', async () => {
-    const queryClient = new QueryClient();
-    const socket = await connect(queryClient);
-    act(() => socket.message(stateFrame(5, {
-      privateChildren: [child(kept)], privateChildrenWaterline: 2, backgroundAgentCounts: { '0': 2 },
-    })));
-    expect(children(queryClient)?.privateChildren).toHaveLength(1);
-    // The revocation the control socket used to send as a 1008 close is the
-    // row's tombstone here; the Organization socket stays open for the sidebar.
-    act(() => socket.message(stateFrame(6, null)));
-    expect(children(queryClient)).toBeUndefined();
-    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toBeUndefined();
-    expect(socket.readyState).toBe(FakeWebSocket.OPEN);
-  });
-
-  it('holds a receipt-backed breakout appearance until the parent projection catches up', async () => {
-    const queryClient = new QueryClient();
-    const socket = await connect(queryClient);
-    const original = child(kept, { appearance: { icon: 'orbit', color: 'green' } });
-    act(() => socket.message(stateFrame(4, { privateChildren: [original], privateChildrenWaterline: 2 })));
-    applyBreakoutAppearanceReceipt(queryClient, workstreamId, kept, {
-      baseline: { icon: 'orbit', color: 'green' },
-      expected: { icon: 'orbit', color: 'purple' },
-    });
-    // An equal-waterline row may have been serialized before the receipt.
-    act(() => socket.message(stateFrame(5, { privateChildren: [original], privateChildrenWaterline: 2 })));
-    expect(children(queryClient)?.privateChildren?.[0]?.appearance).toEqual({ icon: 'orbit', color: 'purple' });
-    expect(children(queryClient)?.appearanceOverlays).toHaveProperty(kept);
-    const projected = child(kept, { appearance: { icon: 'orbit', color: 'purple' } });
-    act(() => socket.message(stateFrame(6, { privateChildren: [projected], privateChildrenWaterline: 3 })));
-    expect(children(queryClient)?.privateChildren?.[0]?.appearance).toEqual({ icon: 'orbit', color: 'purple' });
-    expect(children(queryClient)?.appearanceOverlays).toBeUndefined();
-  });
-
-  it('forgets a cached breakout the roster no longer lists, and keeps the ones it does', async () => {
-    const scope = 'global:00000000-0000-7000-8000-000000000001';
-    await clearAllLocalCache();
-    const cached = {
-      detail: {
-        ...summary({ id: workstreamId }), createdAt: '2026-08-17T18:00:00.000Z',
-        participants: [], viewers: [], resources: [], connections: [], backgroundTasks: [],
-      },
-      transcript: {
-        snapshotId: '00000000-0000-7000-8000-000000000777', snapshotThrough: 0, eventSequence: 0,
-        snapshotAtUtc: '2026-08-17T19:00:00.000Z', unreadAnchorSequence: null, unreadReason: 'no_unread' as const,
-        ranges: [], activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
-      },
-      initialContext: null,
-      cachedAt: '',
-    };
-    for (const substreamId of ['0', kept, dropped]) {
-      await conversationSlice.write(scope, conversationCacheKey(workstreamId, substreamId), cached, workstreamId);
-    }
-    const queryClient = new QueryClient();
-    const socket = await connect(queryClient, scope);
-    act(() => socket.message(stateFrame(4, { privateChildren: [child(kept)], privateChildrenWaterline: 2 })));
-    const expected = [conversationCacheKey(workstreamId, '0'), conversationCacheKey(workstreamId, kept)].sort();
-    await vi.waitFor(async () => {
-      expect((await conversationSlice.entries(scope)).map((entry) => entry.key).sort()).toEqual(expected);
-    }, { timeout: 2_000 });
-    // A stale row the guard rejects lists nothing; the disk follows the kept roster.
-    act(() => socket.message(stateFrame(5, { privateChildren: [], privateChildrenWaterline: 1 })));
-    await flushPromises();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect((await conversationSlice.entries(scope)).map((entry) => entry.key).sort()).toEqual(expected);
-  });
 });
 
 describe('the organization socket over the local cache', () => {
   const scope = 'global:00000000-0000-7000-8000-000000000001';
-  const remembered = '00000000-0000-7000-8000-000000000002';
-  const forgotten = '00000000-0000-7000-8000-000000000003';
 
-  function syncPayload(ids: readonly string[]): Record<string, unknown> {
+  function syncPayload(): Record<string, unknown> {
     return {
       type: 'workspace_sync',
       eventId: '00000000-0000-7000-8000-000000000017',
       waterline: 4,
       occurredAt: '2026-08-17T20:00:00.000Z',
-      topics: ['workstream_directory'],
+      topics: ['automations'],
       reason: 'initial',
       sidebar: {
-        workstreams: {
-          directoryWaterline: 7,
-          nextCursor: null,
-          stateVersions: ids.map((id, index) => ({
-            workstreamId: id,
-            commonEventId: `00000000-0000-7000-8000-00000000001${index}`,
-            viewerEventId: `00000000-0000-7000-8001-00000000001${index}`,
-            authorityGeneration: 1,
-            commonWaterline: 7,
-            viewerWaterline: 4,
-          })),
-          items: ids.map((id) => ({
-            id,
-            workspaceId: '00000000-0000-7000-8000-000000000001',
-            title: 'Live row',
-            titleStatus: 'settled',
-            objective: '',
-            emailAddress: null,
-            createdByUserId: null,
-            harnessStatus: 'completed',
-            latestAttentionSequenceNumber: 0,
-            readThroughSequenceNumber: 0,
-            manualUnreadFromSequenceNumber: null,
-            manualUnreadGeneration: 0,
-            hasUnread: false,
-            youAreMentioned: false,
-            firstUnreadSequenceNumber: null,
-            lastActivityAt: '2026-08-17T20:00:00.000Z',
-            createdAt: '2026-08-17T19:00:00.000Z',
-            updatedAt: '2026-08-17T20:00:00.000Z',
-            archivedAt: null,
-            scope: 'workspace',
-            systemKind: null,
-            nextPendingWakeup: null,
-            pinPosition: null,
-            participantUserIds: [],
-            participantExtraCount: 0,
-            spaceIds: [],
-          })),
-        },
         automations: { waterline: 1, items: [] },
-        notes: { waterline: 1, items: [], nextCursor: null },
       },
     };
   }
 
-  it('paints the remembered sidebar before the socket connects, then takes the socket\'s, and forgets what it no longer lists', async () => {
-    await clearAllLocalCache();
-    await workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, {
-      workstreams: [summary({ id: remembered, title: 'Remembered row' }), summary({ id: forgotten, title: 'Archived elsewhere' })],
-      automations: [],
-      spaces: { waterline: 2, items: [] },
-      inactiveSpaces: { waterline: 2, items: [] },
-      ordering: [],
-      breakouts: {},
-      rails: {},
-    });
-    const conversation = {
-      detail: {
-        ...summary({ id: remembered }), createdAt: '2026-08-17T19:00:00.000Z',
-        participants: [], viewers: [], resources: [], connections: [], backgroundTasks: [],
-      },
-      transcript: {
-        snapshotId: '00000000-0000-7000-8000-000000000777', snapshotThrough: 0, eventSequence: 0,
-        snapshotAtUtc: '2026-08-17T19:00:00.000Z', unreadAnchorSequence: null, unreadReason: 'no_unread' as const,
-        ranges: [], activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
-      },
-      initialContext: null,
-      cachedAt: '',
-    };
-    await conversationSlice.write(scope, conversationCacheKey(remembered, '0'), conversation, remembered);
-    await conversationSlice.write(scope, conversationCacheKey(forgotten, '0'), {
-      ...conversation, detail: { ...conversation.detail, id: forgotten },
-    }, forgotten);
-
-    const queryClient = new QueryClient();
-    const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-      ticket: 'workspace-ticket',
-      protocols: socketTicketProtocols('workspace-ticket'),
-    }));
-    render(
-      <QueryClientProvider client={queryClient}>
-        <LocalCacheScopeProvider scope={scope}>
-          <WorkspaceSocketProvider region="global"
-            api={{ getWorkspaceSocketTicket }}
-            workspaceId="00000000-0000-7000-8000-000000000001"
-          >
-            <div />
-          </WorkspaceSocketProvider>
-        </LocalCacheScopeProvider>
-      </QueryClientProvider>,
-    );
-
-    // Before the socket has even opened, the sidebar has its rows.
-    await vi.waitFor(() => {
-      expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.map((row) => row.title))
-        .toEqual(['Remembered row', 'Archived elsewhere']);
-    }, { timeout: 2_000 });
-    expect(queryClient.getQueryData(['spaces'])).toEqual({ waterline: 2, items: [] });
-    const socket = FakeWebSocket.instances[0]!;
-    expect(socket.readyState).toBe(FakeWebSocket.CONNECTING);
-
-    act(() => socket.open());
-    // Page one of a longer directory cannot say the missing row is gone:
-    // it may simply be on a later page. Nothing leaves the disk on it.
-    const pageOne = syncPayload([remembered]);
-    const sidebar = pageOne['sidebar'] as { workstreams: Record<string, unknown> };
-    act(() => socket.message({
-      ...pageOne,
-      sidebar: { ...sidebar, workstreams: { ...sidebar.workstreams, nextCursor: '1755460800000:00000000-0000-7000-8000-0000000000aa' } },
-    }));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect((await conversationSlice.entries(scope)).map((entry) => entry.key).sort())
-      .toEqual([conversationCacheKey(forgotten, '0'), conversationCacheKey(remembered, '0')].sort());
-
-    act(() => socket.message(syncPayload([remembered])));
-
-    // The whole directory replaces the seed outright, and the conversation of
-    // the row it no longer lists is gone from the disk.
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.map((row) => `${row.id}:${row.title}`))
-      .toEqual([`${remembered}:Live row`]);
-    await vi.waitFor(async () => {
-      expect((await conversationSlice.entries(scope)).map((entry) => entry.key)).toEqual([conversationCacheKey(remembered, '0')]);
-    }, { timeout: 2_000 });
-    await vi.waitFor(async () => {
-      const row = await workspaceDirectorySlice.read(scope, DIRECTORY_CACHE_KEY);
-      expect(row?.workstreams.map((item) => item.title)).toEqual(['Live row']);
-    }, { timeout: LOCAL_CACHE_WRITE_COALESCE_MS + 2_000 });
-  });
   it('reads the meter again on every subscribe answer, and writes one pushed after a plan change into the read and the disk', async () => {
     await clearAllLocalCache();
     const queryClient = new QueryClient();
@@ -3440,7 +1654,7 @@ describe('the organization socket over the local cache', () => {
     act(() => socket.open());
 
     // A plan change made while this socket was away is not replayed.
-    act(() => socket.message(syncPayload([])));
+    act(() => socket.message(syncPayload()));
     expect(queryClient.getQueryState(usageKey)?.isInvalidated).toBe(true);
 
     act(() => socket.message({ type: 'workspace_usage', occurredAt: '2026-10-03T00:01:00.000Z', usage: growth }));
@@ -3546,11 +1760,9 @@ describe('the organization-sync relay between windows', () => {
       topics: WORKSPACE_SYNC_TOPICS,
       reason: 'initial',
       sidebar: {
-        workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
         automations: { waterline: 1, items: [] },
-        notes: { waterline: 1, items: [], nextCursor: null },
       },
-      featureFlags: { liveArtifactsEnabled: false },
+      featureFlags: { suggestedWorkEnabled: false },
     }));
     act(() => socket.message({
       type: 'workspace_sync',
@@ -3563,15 +1775,17 @@ describe('the organization-sync relay between windows', () => {
     act(() => socket.message({
       type: 'workspace_feature_flags',
       occurredAt: '2026-08-17T20:00:02.000Z',
-      changedFlag: 'live-artifacts-enabled',
-      flags: ClientFeatureFlagsSchema.parse({ liveArtifactsEnabled: true }),
+      changedFlag: 'suggested-work-enabled',
+      flags: ClientFeatureFlagsSchema.parse({ suggestedWorkEnabled: true }),
     }));
     act(() => socket.message({
       type: 'workspace_sidebar_list',
       occurredAt: '2026-08-17T20:00:03.000Z',
       list: 'automations',
       waterline: 2,
-      items: [],
+      // A row that moved: a push that changes no row relays nothing.
+      items: [{ id: '00000000-0000-7000-8000-000000000005', name: 'Weekly changelog', description: '', emailAddress: null,
+        scope: 'workspace', status: 'active', nextRunAt: null, lastRunAt: null, updatedAt: '2026-08-17T19:00:00.000Z' }],
     }));
     act(() => socket.message({
       type: 'workspace_usage',
@@ -3597,7 +1811,7 @@ describe('the organization-sync relay between windows', () => {
       { type: 'topics', region, workspaceId, waterline: 8, topics: [...WORKSPACE_SYNC_TOPICS] },
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['member_directory'] },
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['feature_flags'] },
-      // The Sidekicks window reads what the list push refetches, not the list.
+      // A consuming window reads what the list push refetches, not the list.
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['automations'] },
       // The meter travels by value on the socket and by name on the relay.
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['usage'] },

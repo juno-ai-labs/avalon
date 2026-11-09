@@ -514,7 +514,6 @@ export class ProviderWebhookService {
       input.routingUserId,
     );
     const matchedConnections = connections;
-    const matchedWorkspaceIds = [...new Set(connections.map((connection) => connection.workspaceId))];
     if (input.filterConnections) {
       connections = await input.filterConnections(connections);
     }
@@ -695,7 +694,6 @@ export class ProviderWebhookService {
         queueActivities,
       );
       await this.publishConnectionChanges(matchedConnections, ["connector_connections", "resources"]);
-      await this.publishWorkspaceChanges(matchedWorkspaceIds, ["activity"]);
       return {
         accepted: true,
         duplicate,
@@ -732,7 +730,6 @@ export class ProviderWebhookService {
       queueActivities,
     );
     await this.publishConnectionChanges(matchedConnections, ["connector_connections", "resources"]);
-    await this.publishWorkspaceChanges(matchedWorkspaceIds, ["activity"]);
     return {
       accepted: true,
       duplicate,
@@ -761,23 +758,6 @@ export class ProviderWebhookService {
         : [...new Set(matched.flatMap((connection) => (connection.ownerUserId ? [connection.ownerUserId] : [])))];
       try {
         await publishWorkspaceSync(this.env, workspaceId, topics, owners ? { audienceUserIds: owners } : undefined);
-      } catch (error) {
-        logWarn(this.env, "provider_webhook_workspace_sync_publish_failed", {
-          workspace_id: workspaceId,
-          topics,
-          reason: error instanceof Error ? error.message : "unknown",
-        });
-      }
-    }));
-  }
-
-  private async publishWorkspaceChanges(
-    workspaceIds: readonly string[],
-    topics: Parameters<typeof publishWorkspaceSync>[2],
-  ): Promise<void> {
-    await Promise.all(workspaceIds.map(async (workspaceId) => {
-      try {
-        await publishWorkspaceSync(this.env, workspaceId, topics);
       } catch (error) {
         logWarn(this.env, "provider_webhook_workspace_sync_publish_failed", {
           workspace_id: workspaceId,

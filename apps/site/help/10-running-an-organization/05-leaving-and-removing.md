@@ -51,20 +51,6 @@ hand over an Organization and step away, write to
 [help@rallywith.ai](mailto:help@rallywith.ai), and say which Organization it
 is and who should take it over.
 
-### Leaving from your iPhone
-
-On the iPhone app, open **Settings**, and under **Organization** tap **Leave
-this organization**. Rally asks **Leave this organization?** Tap **Leave** to
-confirm, or **Cancel**.
-
-The dialog says you will stop seeing the Organization *on this device*, but
-leaving from the phone ends your membership everywhere, exactly as it does from
-the Mac.
-
-The iPhone cannot close an Organization. If you are its last member, leaving
-from the phone fails with **Couldn't leave this organization.** Use the Mac, as
-described next.
-
 ## The last person out: closing an Organization
 
 When you are the only member left, the Mac changes the wording to make the
@@ -96,14 +82,10 @@ What closing does:
 
 ## Removing someone from an Organization
 
-Settings has no button for removing a member today. The buttons on the members
-list change roles (see [Roles](01-roles.md)); taking away administrator rights
-does not remove anyone.
-
-To remove a person, write to [help@rallywith.ai](mailto:help@rallywith.ai),
-naming the Organization and the person. Two rules apply however it is done: an
-administrator cannot remove the owner, and nobody removes themselves (they
-leave instead, as above).
+An owner or administrator removes someone by suspending them: in **Settings →
+Members**, click **…** on their row and choose **Suspend**, as described in
+[Roles](01-roles.md#suspend-someone). Two rules apply: an administrator cannot
+remove the owner, and nobody removes themselves (they leave instead, as above).
 
 For someone who has not joined yet, revoke their invitation instead, as
 described in [Inviting people](02-inviting-people.md).
@@ -113,8 +95,8 @@ described in [Inviting people](02-inviting-people.md).
 Removal takes effect without a warning to the person removed.
 
 - Within a few seconds, every Rally window they have open, on every device,
-  loses the Organization. Threads, Breakouts, Sidekick conversations and open
-  live pages all stop.
+  loses the Organization. Canvases, Sidekick conversations and open live pages
+  all stop.
 - On their Mac, Rally signs that Organization out, deletes its unsent drafts
   and the copies of its conversations kept on the computer, closes any of its
   artifacts popped out into their own windows, and moves to their next
@@ -132,21 +114,17 @@ Rally cannot reach back into someone's computer for things that already left
 the app. Text they copied, files they downloaded and screenshots they took stay
 with them.
 
-## When access to one Thread ends
+## When access to one Canvas ends
 
-Access can also end for a single conversation, for instance when someone is
-taken out of a private Thread or a guest's share is revoked (see
-[Who can see what](../03-spaces-and-breakouts/04-who-can-see-what.md)).
+Access can also end for a single Canvas, for instance when someone is taken
+out of its people or it stops being open to the whole Organization (see
+[Who can see what](../02-canvases/08-who-can-see-what.md)).
 
 The open window stops updating and does not try to reconnect. Rally deletes the
-copy of that Thread, and every Breakout under it, that it kept on the computer.
-A member sees the Thread's name with a **Request access** button, which emails
-whoever created it (see
-[Who can see what](../03-spaces-and-breakouts/04-who-can-see-what.md)). A guest
-sees **Thread could not be opened** (or **Sidekick could not be opened**) with
-a **Try again** button, which will keep failing, because the access is gone
-rather than the connection. The Thread's row leaves their sidebar shortly
-afterwards.
+copy of that Canvas it kept on the computer, and shows **You don't have access
+to this Canvas**, with **Request access** for a member who wants back in. The same
+happens for a Sidekick that is no longer shared with them. The row leaves their
+sidebar shortly afterwards.
 
 ## Signing out is different
 

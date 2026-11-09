@@ -18,7 +18,7 @@ import {
   TERMINAL_TOOL_NAMES,
   type TerminalToolExecutors,
 } from "./contract";
-import { resolveTerminalPublicationHome, resolveTerminalRunScope, workspaceAgentOwnerLookup, type TerminalRunScope } from "./authority";
+import { canvasArtifactNoter, resolveTerminalPublicationHome, resolveTerminalRunScope, workspaceAgentOwnerLookup, type TerminalRunScope } from "./authority";
 import { TerminalSandboxCoordinator } from "./coordinator";
 import { createHarnessRunPortFactory } from "../../runtime/harness-run-port";
 import { createResourcePortFactory } from "../../runtime/resource-port";
@@ -162,10 +162,21 @@ export async function createAvalonTerminalPlugin(
     ? await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, asWorkspaceId(input.workspaceId),
       workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)))
     : null;
+  // The run's own view: a run a non-delegate asked for names its requester
+  // rather than the Sidekick's delegates.
   const readDelegation = async () => SidekickExecutionDelegationSchema.parse(
-    await sidekickWorkspace!.sidekickReadExecutionDelegation({ workspaceId: input.workspaceId, automationId: input.parentId }),
+    await sidekickWorkspace!.sidekickReadExecutionDelegation({ workspaceId: input.workspaceId, automationId: input.parentId,
+      ...(input.automationRun?.runId ? { runId: input.automationRun.runId } : {}) }),
   );
   const initialDelegation = options.delegation !== undefined ? options.delegation : sidekickWorkspace ? await readDelegation() : null;
+  // A run a non-delegate asked for acts only as them, and the Sidekick's
+  // shared Terminal files are reached only through someone it acts for, so
+  // the run gets no Terminal: tools that could only refuse, and an activation
+  // that would log a failure for every such run, help nobody.
+  if (initialDelegation?.requesterUserId) {
+    ownedProvider?.[Symbol.dispose]();
+    return null;
+  }
   // Consent refreshes at inventory boundaries; files remain Sidekick-owned.
   const assertSandboxPrincipal = (context: HarnessToolContext): void => {
     if (!sidekickWorkspace) return;
@@ -283,13 +294,16 @@ export async function createAvalonTerminalPlugin(
       env,
       terminalPort,
       inObjectResourceAttacher,
-      input.parentKind === "automation" ? () => resolveTerminalPublicationHome(env, input) : null,
+      input.parentKind === "automation" ? (request) => resolveTerminalPublicationHome(env, input, request) : null,
       // A background agent imports what its own conversation has attached into
       // its owner's sandbox; the import records that conversation so the
       // revocation check asks it, not the owner's.
       scope.runSubstreamId === scope.authoritySubstreamId ? null : scope.runSubstreamId,
       runRequesterUserId(input),
       scope.authoritySubstreamId,
+      // A Canvas's Chat publishes into its Canvas as Rally; a Sidekick run into
+      // the Canvas it writes, as the Sidekick.
+      canvasArtifactNoter(env, input),
   );
   const runtime = createDaytonaTerminalRuntime(
     terminalPort,

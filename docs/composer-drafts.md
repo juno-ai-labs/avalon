@@ -1,7 +1,7 @@
 # Composer drafts
 
 Every Rally composer keeps what the user has entered on the device until it is
-sent or cleared. Closing a work stream, walking to another screen, or quitting
+sent or cleared. Closing a Canvas, walking to another screen, or quitting
 Rally mid-sentence does not cost the sentence, and it does not cost the files that
 were dropped next to it or confirmed artifact comments. Unconfirmed comment
 selections remain transient.
@@ -20,29 +20,36 @@ the attachment hook, or the cache itself.
 | `apps/desktop/src/renderer/lib/use-draft-text.ts` | The text half: hydration, the debounce, the two commits, `releaseDraft`. |
 | `apps/desktop/src/renderer/lib/use-file-attachments.ts` | The attachment half: restore, re-upload, the ten-file settle. |
 | `apps/desktop/src/renderer/lib/app-session.tsx` | Watches the session and calls `clearAllDrafts` on a scope change. |
-| `apps/desktop/src/renderer/components/workstream-composer.tsx`, `components/channel-composer.tsx`, `screens/conversation-surface.tsx` | The surfaces that cache: the composer of an existing conversation (a thread's or an automation's, keyed by the parent id) and a Channel's composer, which starts a thread. |
+| `apps/desktop/src/renderer/components/workstream-composer.tsx`, `screens/conversation-surface.tsx` | The surfaces that cache: the composer of an existing conversation, a Canvas's Chat or a Sidekick's, keyed by the parent id. |
 
 ### Which surfaces cache a draft
 
-Two surfaces cache a draft, and they are the only ones that do:
+These surfaces cache a draft, and they are the only ones that do:
 
 | Surface | Component | Cache key |
 | --- | --- | --- |
-| A conversation's composer, a work stream's or an automation's | `ConversationSurface` through `WorkstreamComposer` | `workspace:<region>:<workspaceId>:workstream:<parentId>`, the parent being the work stream or the automation |
-| A Channel's composer | `ChannelComposer` | `workspace:<region>:<workspaceId>:new-workstream:space:<channelId>`, `newWorkstreamDraftKey` plus the Channel's id |
+| A Sidekick's conversation | `ConversationSurface` through `WorkstreamComposer` | `workspace:<region>:<workspaceId>:workstream:<parentId>`, the parent being the Sidekick (storage: automation) |
+| A Canvas's Chat | `ConversationSurface` with `parentKind: "canvas"` | `workspace:<region>:<workspaceId>:canvas:<canvasId>`, `canvasDraftKey`; its annotation scope is `canvas:<canvasId>`, which `annotationDraftKeyForScope` maps back for a detached artifact window |
 
-`common/draft-keys.ts` is the single place those strings are built. A draft's text and
+`common/draft-keys.ts` is the single place those strings are built; `ConversationSurface` picks the family by parent kind through `conversationDraftKey` and `conversationAnnotationScope`, and a Sidekick's shared conversation stays in the work-stream family it has always used, so no released draft moves. A draft's text and
 its attachments share one key, so the two halves of a composer can never drift
 apart, and the launchers are scoped by regional workspace identity so switching
 workspaces does not surface another workspace's words even if configured deployments hold
 the same workspace UUID.
 
-**New automation** caches nothing: `/automations/new` calls `POST /automations`
-and replaces itself with `/automations/:id`, so the first sentence is typed into
+**New Sidekick** caches nothing: `/sidekicks/new` calls `POST /automations`
+and replaces itself with `/sidekicks/:id`, so the first sentence is typed into
 a conversation that already has its durable id. `draft-keys.ts` still builds
 the `new-automation` keys and `draft-cache.ts` still migrates their legacy
 spellings, because a released build may have rows under them; no screen writes
 them now.
+
+The same holds for the Channel composer and the Thread and Breakout screens,
+which the client cutover deleted: only the Canvas and Sidekick families are
+written. The `new-workstream` builder and the `:substream:` suffix in
+`common/draft-keys.ts` stay, as does the legacy migration, so drafts already
+stored under them expire on the ordinary schedule rather than being deleted on
+upgrade.
 
 ### What is stored, and where
 
@@ -78,7 +85,7 @@ network check on each keystroke. Dirty and restored records retain their origina
 sort position. Detached transfers carry the captured edit generation and preserve
 comments edited, removed, or sent while an image upload is in flight.
 
-Annotations use the same conversation/breakout or Channel launcher key as text.
+Annotations use the same conversation key as text.
 Detached windows receive that key from main's registered window identity, filter
 it to their own artifact, and preserve IDs through acknowledged transfers. They
 share the draft rather than deleting it on transfer; the actual message receipt
@@ -98,7 +105,7 @@ hours after upload (`DRAFT_ATTACHMENT_TTL_HOURS`). Local drafts therefore expire
 attachment never points at a resource that has already been swept.
 
 The clock runs from the last **edit**, not the last visit. Hydration deliberately
-does not write back what it just read; otherwise opening a work stream daily would
+does not write back what it just read; otherwise opening a Canvas daily would
 restamp its row forever and the draft would never expire.
 
 Reads filter expired rows. The first composer mounted in an application run also
@@ -176,9 +183,9 @@ accepted-send cleanup; closing the app discards them.
 
 ### What is not cached
 
-- Automation drafts under construction: the definition revisions, the
+- Sidekick drafts under construction: the definition revisions, the
   conversation, and the plugin or activity-source choices. Only the input
-  component is cached; the conversation is the automation's own substream `0`
+  component is cached; the conversation is the Sidekick's own substream `0`
   and the revisions live on its hosted Sidekick
   ([`automation-lifecycle.md`](automation-lifecycle.md)). The plugin and
   activity-source choices are cached nowhere, because they are re-derived from
@@ -224,7 +231,7 @@ own:
 | For | Read |
 | --- | --- |
 | The automation a New automation conversation belongs to | [`automation-lifecycle.md`](automation-lifecycle.md) |
-| The create path a submitted draft becomes | [`workstream-creation.md`](workstream-creation.md) |
+| The create path a submitted draft becomes | [`canvases.md`](canvases.md) |
 | Draft resources, their upload endpoint, and the 24-hour reaper | [`data-model.md`](data-model.md), [`architecture.md`](architecture.md) |
 | What may be written under `userData` at all | [`security.md`](security.md) |
 | The transcript and directory a screen paints from before its socket answers, which is a separate database with a separate lifetime | [`local-cache.md`](local-cache.md) |

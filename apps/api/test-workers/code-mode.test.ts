@@ -10,28 +10,25 @@
  * receipts and the run are the real ones.
  */
 
+import { createCanvas } from "../src/services/canvas-service";
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
-import {
-  bootstrapWorkstreamRuntimeEnvironment,
-  provisionWorkstreamObject,
-} from "../src/services/workstream-runtime-database";
+
 import { GatewaySession, finishProgram, runProgram } from "../src/services/code-mode";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { hostedParentStub } from "./helpers/hosted-parent";
-import { useOpenRouterDouble } from "./helpers/openrouter-double";
+
+import { memberInputs, useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000c0d0");
 const AUTHOR_ID = asUserId("00000000-0000-7000-8000-00000000c0d1");
 const SESSION_ID = "00000000-0000-7000-8000-00000000c0d2";
-const NOW = "2026-10-31T10:00:00.000Z";
 const TEST_ENV: Env = env;
 const RUN_SETTLE_TIMEOUT_MS = 20_000;
 
@@ -79,7 +76,7 @@ return 1;
 useSelectedModel();
 useHeldEffectQueue();
 const provider = useOpenRouterDouble((call) => {
-  const latest = call.messages.filter((message) => message.role === "user").at(-1);
+  const latest = memberInputs(call).at(-1);
   const prompt = JSON.stringify(latest?.content ?? "");
   const current = call.messages.slice(call.messages.lastIndexOf(latest!));
   const toolResults = current.filter((message) => message.role === "tool")
@@ -107,17 +104,7 @@ function roomConversation() {
 }
 
 async function seedRoom(): Promise<void> {
-  await hostedParentStub(env, WORKSPACE_ID).reserveChild({
-    workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: asSubstreamId("0"), kind: "main",
-    createdByUserId: AUTHOR_ID, authorityGeneration: 1,
-    directory: { title: "Numbers", description: "", scope: "personal", systemKind: null, emailAddress: null, titleStatus: "settled", createdAt: NOW },
-  });
-  await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, ROOM_ID, "workstream");
-  await provisionWorkstreamObject(TEST_ENV, {
-    workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, title: "Numbers", objective: "", scope: "personal",
-    createdByUserId: AUTHOR_ID, participantUserIds: [AUTHOR_ID], harnessStatus: "idle", titleStatus: "settled",
-    emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
-  });
+  await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: AUTHOR_ID, canvasId: ROOM_ID, title: "Numbers" });
 }
 
 interface RunRow extends Record<string, SqlStorageValue> { run_id: string; status: string; error_json: string | null; terminalized_at: number | null }
@@ -177,7 +164,7 @@ beforeEach(async () => {
 
 describe("code_execute on workerd", () => {
   it("runs a program whose nested calls are receipts of their own and returns only its value", async () => {
-    const response = await post(roomConversation(), "/internal/product", { operation: "create_message", auth: AUTH,
+    const response = await post(roomConversation(), "/internal/product", { operation: "create_message", parentKind: "canvas", auth: AUTH,
       input: { text: "CODE_MODE_SUM please", clientMessageId: crypto.randomUUID(), mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } });
     expect(response.status).toBe(200);
     const run = await settledRun();
@@ -209,7 +196,7 @@ describe("code_execute on workerd", () => {
   });
 
   async function failedProgram(keyword: string): Promise<{ code: string | undefined; error: string }> {
-    const response = await post(roomConversation(), "/internal/product", { operation: "create_message", auth: AUTH,
+    const response = await post(roomConversation(), "/internal/product", { operation: "create_message", parentKind: "canvas", auth: AUTH,
       input: { text: `CODE_MODE_SUM ${keyword}`, clientMessageId: crypto.randomUUID(), mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } });
     expect(response.status).toBe(200);
     expect(await settledRun()).toMatchObject({ status: "completed" });

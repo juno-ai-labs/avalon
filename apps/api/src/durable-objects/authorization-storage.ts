@@ -9,7 +9,9 @@ export const AuthorizationLocationSchema = z.strictObject({
   // hidden conversation has no place in the authorization universe, and
   // `projectAuthorization` refuses one before it reaches here. This is the
   // second fence, and the one that names the field if the first is ever removed.
-  parentKind: z.enum(['workstream', 'automation']),
+  // A Canvas's Chat is a hosted conversation like a Sidekick's, and its
+  // artifacts are admitted through it.
+  parentKind: z.enum(['workstream', 'automation', 'canvas']),
   mutationAt: z.number().int().nonnegative().optional(),
   revision: z.number().int().nonnegative(), validatedAt: z.number().int().nonnegative(),
   resourceIds: z.array(IdSchema),
@@ -121,7 +123,7 @@ export class AuthorizationStorage {
  * which owns the Channel, in the same commit as the merge, so it is the record.
  */
 export function authorizationLocations(sql: SqlStorage, resourceId: string) {
-  return sql.exec<{ parent_id: string; substream_id: string; parent_kind: 'workstream' | 'automation' | 'space' }>(
+  return sql.exec<{ parent_id: string; substream_id: string; parent_kind: 'workstream' | 'automation' | 'space' | 'canvas' }>(
     'SELECT parent_id, substream_id, parent_kind FROM authorization_locations WHERE resource_id = ? ORDER BY parent_id, substream_id',
     resourceId,
   ).toArray().map((row) => ({ parentId: row.parent_id, substreamId: row.substream_id, parentKind: row.parent_kind }));

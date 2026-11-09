@@ -96,7 +96,7 @@ export class MenuBarController {
       }));
       // Every waiting conversation, not the five the menu draws: the number is
       // the sidebar's, and the sidebar counts them all.
-      this.tray.setTitle(signedIn ? menuBarTitle(content.accessRequests.length + content.attention.length) : '');
+      this.tray.setTitle(signedIn ? menuBarTitle(content.attention.length) : '');
     } catch (error) {
       this.dependencies.logWarning('could not rebuild the menu bar item', error);
     }

@@ -105,6 +105,21 @@ export const TranscriptTextBlockSchema = z.object({
   attachments: z.array(TranscriptAttachmentSchema).optional(),
   messageType: z.enum(["text", "system", "elicitation", "suggestion", "automation_activation"]).optional(),
   structuredContent: z.record(z.string(), z.unknown()).nullable().optional(),
+  /**
+   * On a Sidekick run's row in its shared conversation: who the run is and
+   * who asked for it, beside the row's `structuredContent.run` (its live
+   * state), which is a strict object an older client would refuse a new key
+   * on. Here an older client strips it. `requesterUserId` is the person whose
+   * own request started the run, or null for a trigger's: while the run is
+   * pending or running the row is not news to them (the conversation has
+   * seated them at it), and a client mirrors that rather than marking it
+   * unread. `runNumber` is the run's ordinal among its Sidekick's runs,
+   * oldest first ("Run 412"), or null on a row no projection has numbered.
+   */
+  sidekickRun: z.object({
+    requesterUserId: z.string().min(1).nullable(),
+    runNumber: z.number().int().positive().nullable(),
+  }).optional(),
 });
 
 export const TranscriptToolBlockSchema = z.object({

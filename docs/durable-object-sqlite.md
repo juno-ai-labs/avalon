@@ -5,7 +5,7 @@ Objects. It covers the platform semantics that are easy to mistake for D1 or
 ordinary application SQLite, and the repository practices that keep state
 transitions correct as schemas and indexes change.
 
-Read the owning module document as well. For the work-stream hierarchy that is
+Read the owning module document as well. For the conversation hierarchy that is
 [`workstream-durable-object.md`](workstream-durable-object.md); for shared alarm
 coordination it is [`durable-object-alarms.md`](durable-object-alarms.md).
 
@@ -16,9 +16,9 @@ defines which ordered state machine owns the data, and its SQLite database is
 private to that object instance.
 
 - Choose an object key that matches the consistency domain. In Rally, a
-  WorkspaceDO owns workspace-wide product state, including every Channel and
-  Space parent keyed by `parent_id`, a SubstreamAgent owns one conversation, and
-  each agent object owns its own execution state.
+  WorkspaceDO owns workspace-wide product state, including every Canvas and
+  Sidekick parent keyed by `parent_id`, an `AgentLoopDO` owns one conversation,
+  and each agent object owns its own execution state.
 - Do not make cross-object SQL joins or foreign keys. Cross-authority
   relationships travel as IDs through typed RPC, Queue messages, projections,
   receipts, and version fences.
@@ -54,7 +54,7 @@ objects today.
   SQLite transaction.
 - Prefer `STRICT` tables, explicit `NOT NULL` and `CHECK` constraints, stable
   primary keys, and foreign keys only within the same object database.
-- Store time consistently with the owning schema. Work-stream-down native
+- Store time consistently with the owning schema. Conversation-down native
   schemas use integer Unix milliseconds, while WorkspaceDO's imported
   workspace schema retains ISO strings; do not mix representations within one
   table or state machine.
@@ -64,7 +64,15 @@ objects today.
 - A migration must preserve data and invariants for an object upgrading from
   every previously shipped version. A fresh-schema test is not enough.
 - Never edit an already shipped migration. Add the next version so existing and
-  newly created objects converge on the same schema.
+  newly created objects converge on the same schema. A version that has not
+  shipped is the branch's own and may be edited or folded into its neighbours
+  before it ships; folding is worth it when a tail creates a table and then
+  alters or copies it, because every object pays the whole tail at its first
+  wake. Which versions have shipped is pinned by a literal fingerprint test
+  per object class (`workspace-do-schema.test.ts`,
+  `workstream-object-schema.test.ts`); move its line forward when a branch
+  ships, never back. A fold must leave the final schema identical, columns,
+  constraints, indexes and triggers alike.
 - **Do not rely on `foreignKeys: "disabled_during_rebuild"` for a new
   migration.** `PRAGMA foreign_keys = OFF` is silently a no-op once anything in
   the same object event has touched SQLite, which by the time the runner reaches
@@ -98,7 +106,7 @@ first unreceipted version.
 
 The ledger itself is created inside the first pending group. Migration hashes
 include execution mode because mode changes semantics; the one pre-mode
-published work-stream migration carries an explicit legacy marker only because
+published conversation-object migration carries an explicit legacy marker only because
 its old wrapper already ran it under the identical mode. Tests cover rollback,
 resume, invalid legacy declarations, and hash mismatch warnings. A recorded
 implementation hash that differs from the current migration emits the structured
@@ -118,7 +126,7 @@ production lifecycle and because a forward migration must begin from the
 committed graph a deployed object actually contains.
 
 This behavior is shared by every Rally object with an implementation-hash
-receipt: `SubstreamAgent`,
+receipt: `AgentLoopDO`,
 `WorkspaceDO`, and `ArtifactHostDO` all call
 this runner. The migration tracker's `MigrationRegistry` uses a separate
 version-only bootstrap, `MigrationProbeDO` is intentionally empty, and an
@@ -366,6 +374,8 @@ target. Route such a read through a typed WorkspaceDO method or
 `withWorkspaceRuntimeDatabase`; inside WorkspaceDO itself use `runWorkspaceSql`
 or `localWorkspaceEnv`, because `withWorkspaceRuntimeDatabase` without the local
 executor calls the object back.
+
+## Changelog
 
 ### 2026-09-21 — A migration fingerprint cannot take an object offline
 

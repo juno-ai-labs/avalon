@@ -35,7 +35,7 @@ the connection's stable plugin wire name, or `workstream` / `table` for built-in
 The four words reuse Rally's frozen word lists. A unique constraint detects
 collisions and allocation retries; a slug is a lookup key, not a credential.
 
-The owning SubstreamAgent stores the opaque arguments beside its tool receipts,
+The owning AgentLoopDO stores the opaque arguments beside its tool receipts,
 not in D1, a connector instance, model context, or an in-memory map. Issuance is
 unique per producing receipt and output slot. A page becomes usable only when
 that receipt completes. Claims are fenced synchronous transactions. An executing

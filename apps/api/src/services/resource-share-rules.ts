@@ -1,13 +1,10 @@
-import type { MergeEmbed } from "@rally/contracts";
-
 import type { AuthContext, Env } from "../env";
 import { createAccessContext, requireAuthorizedRead } from "./authorization-service";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 /**
- * Whether a person may share a resource into a conversation or a Channel: the
- * one set of rules every attach and every merge applies, so a fix to one is a
- * fix to all (docs/conversation-merge.md). The resource exists in this
+ * Whether a person may share a resource into a conversation: the one set of
+ * rules every attach applies, so a fix to one is a fix to all. The resource exists in this
  * Organization, the person may read it where the caller asks for that, a
  * personal connection's resource is only its owner's to share, and an upload
  * is shared only once it was sent.
@@ -59,14 +56,4 @@ export async function resolveShareableResources(
     rows.set(resourceId, row);
   }
   return { ok: true, rows };
-}
-
-/** How a merge stores what it embeds: each resource's id, alias, title and kind. */
-export function mergeEmbedsOf(rows: ReadonlyMap<string, Record<string, unknown>>): MergeEmbed[] {
-  return [...rows.entries()].map(([id, row]) => ({
-    id,
-    ...(row.slug == null ? {} : { slug: String(row.slug) }),
-    title: String(row.title).slice(0, 500),
-    kind: String(row.resource_type).slice(0, 100),
-  }));
 }

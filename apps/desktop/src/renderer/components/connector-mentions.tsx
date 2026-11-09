@@ -10,9 +10,8 @@ import {
   type ConnectorResourceAuthorizationRequest,
 } from '@rally/contracts';
 import { Check, AlertTriangle, LoaderCircle, Minus, Plug } from 'lucide-react';
-import { createContext, useContext, useEffect, useState } from 'react';
-import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
-import { useUpdateStatus } from '../lib/use-downloaded-update';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { useUpdateRally } from './update-rally-action';
 import { useOptionalCollaborationSession, type CollaborationSessionValue, type ConnectorSetupCapability } from '../lib/collaboration-session';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
@@ -84,37 +83,17 @@ export function ConnectorConnectionUpdateCard(): React.JSX.Element | null {
 }
 
 function ResolvedConnectorConnectionUpdateCard(): React.JSX.Element {
-  const desktop = desktopServicesAvailable();
-  const status = useUpdateStatus(desktop);
-  const busy = status?.kind === 'checking' || status?.kind === 'downloading';
-  const update = useMutation({
-    mutationFn: async () => {
-      if (!desktop) {
-        globalThis.location.reload();
-        return;
-      }
-      const bridge = desktopBridge();
-      const current = await bridge.getUpdateStatus();
-      if (current.kind === 'downloaded') {
-        await bridge.installDownloadedUpdate();
-      } else if (current.kind === 'idle') {
-        await bridge.checkForUpdates();
-      }
-    },
-  });
+  const update = useUpdateRally();
   return (
     <article aria-label="Connector update required" className="connector-connection-card">
       <div className="connector-connection-card-header">
         <span aria-hidden="true" className="provider-icon"><Plug size={24} /></span>
         <div className="connector-connection-card-body">
           <strong>Connector not recognized</strong>
-          <p>{desktop ? 'Update Rally to connect this account.' : 'Reload Rally to connect this account.'}</p>
+          <p>{update.desktop ? 'Update Rally to connect this account.' : 'Reload Rally to connect this account.'}</p>
         </div>
-        <Button className="connector-connection-card-action button-primary" disabled={update.isPending || busy} onClick={() => update.mutate()}>
-          {status?.kind === 'checking' ? 'Checking…'
-            : status?.kind === 'downloading' ? 'Downloading…'
-              : status?.kind === 'downloaded' ? 'Restart to update'
-                : desktop ? 'Update Rally' : 'Reload Rally'}
+        <Button className="connector-connection-card-action button-primary" disabled={update.disabled} onClick={update.run}>
+          {update.label}
         </Button>
       </div>
       {update.error ? <ErrorNotice occurrence={update.error}>{update.error.message}</ErrorNotice> : null}
@@ -241,7 +220,7 @@ export function ConnectorResourceAuthorizationCard({ request, latchedAuthorized 
       </div>
       {!succeeded && status === 'denied' ? <ErrorNotice automatic={false} detailsLabel="Authorization details">Authorization was not granted. Try again when you’re ready.</ErrorNotice> : null}
       {!succeeded && status === 'failed' ? <ErrorNotice automatic={false} detailsLabel="Authorization details">Rally could not confirm the authorization. Try again.</ErrorNotice> : null}
-      {!succeeded && !setup ? <p>Open this thread in Rally desktop to authorize editing.</p> : null}
+      {!succeeded && !setup ? <p>Open this conversation in Rally desktop to authorize editing.</p> : null}
       {!succeeded && (personalOwnerRequired || connectionUnavailable) ? <p>Only the owner of this connection can authorize editing.</p> : null}
       {!succeeded && mutation.error && status !== 'failed' ? <ErrorNotice occurrence={mutation.error}>Rally could not start authorization. Try again.</ErrorNotice> : null}
     </article>
@@ -266,9 +245,16 @@ export function connectorConnectionCardProvider(
  * connector-card primitive while keeping Rally's own tokens and trusted
  * connector catalog.
  */
-export function ConnectorConnectionCard({ latchedConnected = false, onConnected, request }: {
+export function ConnectorConnectionCard({ latchedConnected = false, onConnected, onNewlyConnected, request }: {
   latchedConnected?: boolean;
   onConnected?: (selectionKey: string) => void;
+  /**
+   * Called once when the connection this card shows goes from not connected to
+   * connected while the card is open, and never for one connected when it
+   * opened: a question this card answers must not answer itself for a viewer
+   * whose own connection was already there.
+   */
+  onNewlyConnected?: () => void;
   request: ConnectorConnectionCardInput;
 }): React.JSX.Element | null {
   const collaboration = useOptionalCollaborationSession();
@@ -278,6 +264,7 @@ export function ConnectorConnectionCard({ latchedConnected = false, onConnected,
     <ResolvedConnectorConnectionCard
       latchedConnected={latchedConnected}
       onConnected={onConnected}
+      onNewlyConnected={onNewlyConnected}
       provider={provider}
       request={request}
       collaboration={collaboration}
@@ -286,9 +273,10 @@ export function ConnectorConnectionCard({ latchedConnected = false, onConnected,
   );
 }
 
-function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provider, request, collaboration, setup }: {
+function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, onNewlyConnected, provider, request, collaboration, setup }: {
   latchedConnected: boolean;
   onConnected?: (selectionKey: string) => void;
+  onNewlyConnected?: (() => void) | undefined;
   provider: OAuthConnectorProviderCatalogEntry;
   request: ConnectorConnectionCardInput;
   collaboration: CollaborationSessionValue;
@@ -329,6 +317,18 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
   useEffect(() => {
     if (liveConnected) onConnected?.(selectionKey);
   }, [liveConnected, onConnected, selectionKey]);
+  // Seen not connected (with the list loaded) while this card is open.
+  const sawMissing = useRef(false);
+  useEffect(() => {
+    if (connections === undefined) return;
+    if (!liveConnected) {
+      sawMissing.current = true;
+      return;
+    }
+    if (!sawMissing.current) return;
+    sawMissing.current = false;
+    onNewlyConnected?.();
+  }, [connections, liveConnected, onNewlyConnected]);
   const awaiting = pendingConnectorOAuth?.source === 'conversation'
     && pendingConnectorOAuth.provider === provider.provider
     && pendingConnectorOAuth.connectorId === request.connectorId

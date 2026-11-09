@@ -1,4 +1,5 @@
 import { newId } from "@rally/db";
+import { hostedConversationParentKind } from "../durable-objects/workstream-object-storage";
 import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import type {
   ConversationParentAuthorizeViewerRequest,
@@ -56,8 +57,8 @@ export class ConversationService {
   }
 
   /**
-   * `resolveParent`, and for a hosted Channel the viewer's decision from the
-   * same call when a viewer is named.
+   * `resolveParent`, and the viewer's decision from the same call when a
+   * viewer is named. A retired Thread's or Channel's id is not found.
    */
   private async resolveParentFor(
     parentId: string,
@@ -72,15 +73,9 @@ export class ConversationService {
     const hosted = await workspace.resolveHostedParent({
       workspaceId: this.auth.workspaceId, parentId, ...(viewer ? { viewer } : {}),
     });
-    if (hosted.kind === "workstream") {
+    if (hosted.kind === "automation" || hosted.kind === "canvas") {
       return {
-        parent: { kind: "workstream", id: parentId, membershipVersion: 0, ...hosted.authority },
-        ...(hosted.viewer ? { decision: hosted.viewer } : {}),
-      };
-    }
-    if (hosted.kind === "automation") {
-      return {
-        parent: { kind: "automation", id: parentId, membershipVersion: 0, ...hosted.authority },
+        parent: { kind: hosted.kind, id: parentId, membershipVersion: 0, ...hosted.authority },
         ...(hosted.viewer ? { decision: hosted.viewer } : {}),
       };
     }
@@ -113,7 +108,10 @@ export class ConversationService {
         ...viewer,
       }));
     if (!decision.authorized) throw new ApiError(404, "conversation_not_found", "Conversation not found");
-    if (parent.kind === "automation") {
+    // A hosted conversation (a Sidekick's or a Canvas's) admits by its
+    // parent's audience, which is wider than the conversation's own list, so
+    // the admitted reader is seated before anything is issued.
+    if (parent.kind === "automation" || parent.kind === "canvas") {
       try {
         await createIdentityObjectPort(this.env, this.auth.workspaceId, parentId, undefined, substreamId)
           .admitParticipant({
@@ -180,19 +178,11 @@ export class ConversationService {
     substreamId = "0",
     afterSequence?: number,
     speculative = false,
-    readsResolutionSuggestions = false,
   ) {
     const [parent, authority] = await Promise.all([
       this.authorizeViewer(parentId, substreamId),
       requireWorkstreamIngress(this.env),
     ]);
-    // A work stream's own object refuses every read of an archived room, boot
-    // included, so a ticket for one would open a socket that never gets a
-    // frame. Refuse it the way the boot does. An automation's conversation
-    // stays readable after its archive; only its writes are refused.
-    if (parent.kind === "workstream" && parent.archived) {
-      throw new ApiError(404, "conversation_not_found", "Conversation not found");
-    }
     // Minted here rather than inside the issuer so the route can log the id the
     // room will report consuming; see `docs/performance-tracing.md`.
     const ticketId = newId();
@@ -207,7 +197,6 @@ export class ConversationService {
       speculative,
       {
         issuedAt,
-        readsResolutionSuggestions,
         admission: {
           authorityGeneration: authority.generation,
           role: this.auth.role,
@@ -277,7 +266,7 @@ export class ConversationService {
         );
         const prepared = await stub.prepareSocketAdmission({
           workspaceId: this.auth.workspaceId,
-          parentKind: input.parent.kind,
+          parentKind: hostedConversationParentKind(input.parent.kind),
           workstreamId: input.parent.id,
           substreamId: asSubstreamId("0"),
           userId: this.auth.userId,

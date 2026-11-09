@@ -99,7 +99,7 @@ export async function publishConversationViews(
   const now = Date.now();
   const next = nextConversationViewAt(sql);
   if (next === null || next > now) return;
-  // The same durable retry gate as thread_backfill: Queue exhaustion or a lost
+  // A durable retry gate: Queue exhaustion or a lost
   // acknowledgement cannot leave a claim stuck forever. Retries are idempotent.
   sql.exec(`UPDATE conversation_view_changes SET in_flight_revision = NULL, in_flight_until = NULL
     WHERE in_flight_until <= ?`, now);

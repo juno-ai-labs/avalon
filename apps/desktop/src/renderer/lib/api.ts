@@ -1,55 +1,35 @@
 import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { connectorAuthorizationStatus } from '@rally/contracts';
 import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
-import type { Annotation } from '@rally/contracts';
+
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
-import { SharedDirectorySchema, SharedNavigationDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
-import { MemberPreferencesSchema, MemoryForgetResponseSchema, MemoryReviewSchema, PersonalSystemPromptSchema, type MemoryForgetResponse, type MemoryReview, SessionImportRunSchema, type MemberPreferences, type MemberPreferencesUpdate, type SessionImportPreview } from "@rally/contracts";
+import { WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
+import { MemberPreferencesSchema, MemoryForgetResponseSchema, MemoryReviewSchema, PersonalSystemPromptSchema, type MemoryForgetResponse, type MemoryReview, type MemberPreferences, type MemberPreferencesUpdate } from "@rally/contracts";
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
-import {
-  ActivityPageSchema,
-  ChannelFeedItemSchema,
-  ConversationMergeChannelsSchema,
-  ConversationMergeResultSchema,
-  type ConversationMergeChannels,
-  type ConversationMergeRequest,
-  type ConversationMergeResult,
-  ChannelFeedPageSchema,
-  type ChannelMessage,
-  MyThreadsPageSchema,
-  ChannelStatsListSchema,
-  ChannelStatsSchema,
-  type ChannelStats,
-  type ChannelStatsList,
-  PinListSchema,
-  PeopleRankingSchema,
-  type PeopleRanking,
-  ArtifactPinListSchema,
-  type ActivityEvent,
-  type ActivityFilter,
-  type ActivityPage,
-  type PinKind,
-  type PinList,
-  type ArtifactPinList,
-} from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
 import { AccountOnboardingSchema, OrganizationNameSuggestionSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type OrganizationNameSuggestion, type UpdateAccountOnboarding } from "@rally/contracts";
-import { ConversationAccessDecisionResultSchema, ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, type ConversationAccessDecisionResult, type ConversationAccessPreview } from "@rally/contracts";
+
 import { SupportAccessSchema, type SupportAccess } from "@rally/contracts";
 import { UserTimezoneSchema, type UserTimezone } from "@rally/contracts";
 
-type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
 import {
-  ConversationSuggestionActionResultSchema,
-  type ConversationSuggestionActionResult,
+  CanvasAccessDecisionSchema,
+  CanvasAccessRequestResultSchema,
+  CanvasAccessSchema,
+  CanvasDetailSchema,
+  CreatedCanvasSchema,
+  type CanvasAccess,
+  type CanvasAccessDecision,
+  type CanvasAccessRequestResult,
+  type CanvasAudienceUpdate,
+  type CanvasDetail,
+  type CreateCanvasRequest,
+  type CreatedCanvas,
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationExecutionPrincipalClaimSchema,
   AutomationRunSchema as WireAutomationRunSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
-  WorkstreamAutomationSummarySchema as WireWorkstreamAutomationSummarySchema,
-  WorkstreamBatchAcceptedSchema as WireWorkstreamBatchAcceptedSchema,
-  WorkstreamBatchPreviewSchema as WireWorkstreamBatchPreviewSchema,
   ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
   ConnectionSchema as WireConnectionSchema,
   CustomMcpConnectionSettingsSchema as WireCustomMcpConnectionSettingsSchema,
@@ -58,7 +38,7 @@ import {
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
   ConnectorResourceAuthorizationStartSchema as WireConnectorResourceAuthorizationStartSchema,
   CursorPageSchema,
-  ParticipantSchema as WireParticipantSchema,
+  type ParticipantSchema as WireParticipantSchema,
   PendingWorkspaceInvitationSchema as WirePendingWorkspaceInvitationSchema,
   ResourceSchema as WireResourceSchema,
   WorkstreamResourceSchema as WireWorkstreamResourceSchema,
@@ -68,15 +48,12 @@ import {
   WorkspaceInvitationPreviewSchema as WireWorkspaceInvitationPreviewSchema,
   WorkspaceInvitationSchema as WireWorkspaceInvitationSchema,
   WorkspaceInviteeSchema,
-  SpaceInviteesSchema,
   type WorkspaceInvitee,
   WorkspaceSchema as WireWorkspaceSchema,
   TerminalWorkspaceSettingsSchema as WireTerminalWorkspaceSettingsSchema,
   TerminalNetworkPolicyPreviewSchema as WireTerminalNetworkPolicyPreviewSchema,
   WorkstreamBootSchema as WireWorkstreamBootSchema,
-  DigestScheduleSchema as WireDigestScheduleSchema,
   WorkstreamSchema as WireWorkstreamSchema,
-  WorkOpportunityPageSchema as WireWorkOpportunityPageSchema,
   type AutomationDraft as WireAutomationDraft,
   type AutomationRun as WireAutomationRun,
   type BackgroundTask as WireBackgroundTask,
@@ -95,41 +72,21 @@ import {
   type WorkstreamResource as WireWorkstreamResource,
   type User as WireUser,
   type Workstream as WireWorkstream,
-  type WorkstreamBatchFilter,
-  type WorkstreamBatchUpdate,
   type WorkstreamDetail as WireWorkstreamDetail,
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
-  ChannelAccessSchema as WireChannelAccessSchema,
-  ContainerOrderSchema as WireContainerOrderSchema,
-  SpaceSummarySchema as WireSpaceSummarySchema,
-  MoveChannelBetweenSpacesResultSchema as WireMoveChannelBetweenSpacesResultSchema,
-  type ChannelAccess,
-  type ContainerOrder,
-  type CreateSpaceRequest,
-  type SpaceSummary,
-  type UpdateSpacePresentationRequest,
-  type SpaceScope,
   type WorkstreamAppearancePatch,
   ConnectionTestResponseSchema,
   ConnectorInstallationMutationResponseSchema,
   ConnectorInstallationReadResponseSchema,
   ConnectorInstallationSetupResponseSchema,
   OnboardingJourneySchema,
-  SidekickAttachmentsSchema,
-  SidekickRecommendationOptionsSchema,
-  type SidekickAttachment,
-  type UpdateOnboardingJourney
+  type UpdateOnboardingJourney,
 } from '@rally/contracts';
-import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
+
 import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from '@rally/contracts/http-headers';
 import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@rally/contracts/search';
 import { socketTicketProtocols, socketUrlWithoutTicket } from '@rally/contracts/socket-tickets';
-import {
-  SubstreamCreationResultSchema,
-  SubstreamPreparationPreviewSchema,
-  type SubstreamCreationResult,
-  type SubstreamPreparationPreview,
-} from '@rally/contracts/substream-creation';
+
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 import { OrganizationUsageSchema, type OrganizationUsage, type PlanId } from '@rally/contracts/usage';
 import type { ZodType } from 'zod';
@@ -149,16 +106,11 @@ import type { TelemetrySurfaceEntrypoint } from './telemetry';
 import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
 import { isPastedText } from './pasted-text';
 import type {
-  AgentModelOverride,
-  DigestDeliveryTargetType,
   AutomationDetail,
   AutomationRun,
   AutomationScope,
   AutomationSummary,
-  WorkstreamAutomationSummary,
   BackgroundTask,
-  CreatedWorkstream,
-  DigestSchedule,
   ElicitationData,
   HarnessStatus,
   Participant,
@@ -170,7 +122,6 @@ import type {
   WorkspaceInvitationPreview,
   PendingWorkspaceInvitation,
   ResourcePage,
-  SpaceConversationSummary,
   WorkspaceMember,
   WorkstreamConnection,
   WorkstreamBoot,
@@ -178,7 +129,6 @@ import type {
   ResourceVersion,
   WorkstreamResource,
   WorkstreamSummary,
-  WorkOpportunity,
   TerminalWorkspaceSettings,
   TerminalNetworkPolicyPreview,
 } from './types';
@@ -285,22 +235,11 @@ const wireInviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) 
  * those rather than refusing the page, so a client that updates before the API
  * still opens the Channel. Remove once every region serves thread rows only.
  */
-const wireChannelFeedPageSchema = ChannelFeedPageSchema.extend({
-  items: z.array(z.union([ChannelFeedItemSchema, z.object({ kind: z.literal('locked') }).passthrough()])),
-});
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
 const wireExecutionPrincipalClaimSchema = AutomationExecutionPrincipalClaimSchema;
-const wireWorkstreamAutomationPageSchema = z.object({
-  items: z.array(WireWorkstreamAutomationSummarySchema),
-});
 const wireConnectionPageSchema = z.object({ items: z.array(WireConnectionSchema) });
 const wireAutomationRunPageSchema = z.object({ items: z.array(WireAutomationRunSchema) });
 const createdAutomationSchema = z.object({ automationId: z.string() });
-const createWorkstreamResponseSchema = z.object({
-  workstream: WireWorkstreamSchema,
-  turnId: z.string(),
-  harnessRunId: z.string().nullable(),
-}).strict();
 const runNowResponseSchema = z.object({
   runId: z.string(),
   reused: z.boolean(),
@@ -351,6 +290,7 @@ export function mapResourceVersion(revision: WireResourceRevision): ResourceVers
     version: revision.version,
     capturedAt: revision.createdAt,
     author: revision.author,
+    authorName: revision.authorName ?? null,
     cause: revision.cause,
     contentAvailable: revision.contentAvailable,
     // The version's own title and type, not the resource's. A rename or a
@@ -432,17 +372,11 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
       ? { ...workstream.nextPendingWakeup }
       : null,
     pinPosition: workstream.pinPosition,
-    spacePins: workstream.spacePins.map((pin) => ({ ...pin })),
     // Only WorkspaceDO owns this field. Child responses omit it and must not
     // erase a newer directory-waterlined visit when callers merge the result.
     ...(workstream.lastAccessedAt !== undefined ? { lastAccessedAt: workstream.lastAccessedAt } : {}),
     participantUserIds: [...workstream.participantUserIds],
     participantExtraCount: workstream.participantExtraCount,
-    // Every Space this Channel sits in. The sidebar renders one placement per
-    // id, all of them opening this same row.
-    spaceIds: [...workstream.spaceIds],
-    breakoutAttentionCount: workstream.breakoutAttentionCount ?? 0,
-    ...(workstream.mainWithheld ? { mainWithheld: true as const } : {}),
     preview: workstream.objective,
   };
 }
@@ -531,7 +465,7 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
 
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
   switch (trigger.type) {
-    case 'manual': return 'Manual';
+    case 'manual': return 'On request';
     case 'inbound_email': return 'When an email arrives';
     case 'calendar': return trigger.summary;
     case 'interval': return trigger.summary;
@@ -574,36 +508,19 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     description: automation.description,
     ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     scope: mapAutomationScope(automation.scope),
-    ...(automation.owningWorkstreamId ? { owningWorkstreamId: automation.owningWorkstreamId } : {}),
-    ...(automation.owningThread ? { owningThread: automation.owningThread } : {}),
     status: automation.status,
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
     ...(automation.lastRunAt ? { lastRunAt: automation.lastRunAt } : {}),
     updatedAt: automation.updatedAt,
-  };
-}
-
-/**
- * The rail's rows.
- *
- * Written out rather than delegating to {@link mapAutomationSummary} with an
- * invented scope: the wire row has no scope, and manufacturing one to throw
- * away would put a value in the type that no caller may trust.
- */
-export function mapWorkstreamAutomationSummary(
-  automation: z.infer<typeof WireWorkstreamAutomationSummarySchema>,
-): WorkstreamAutomationSummary {
-  return {
-    id: automation.id,
-    loadable: automation.loadable,
-    ...(automation.appearance ? { appearance: automation.appearance } : {}),
-    name: automation.name,
-    description: automation.description,
-    ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
-    status: automation.status,
-    ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
-    ...(automation.lastRunAt ? { lastRunAt: automation.lastRunAt } : {}),
-    updatedAt: automation.updatedAt,
+    ...(automation.unread === undefined ? {} : { unread: automation.unread }),
+    ...(automation.needsInput === undefined ? {} : { needsInput: automation.needsInput }),
+    ...(automation.pinnedPosition === undefined ? {} : { pinnedPosition: automation.pinnedPosition }),
+    ...(automation.audience === undefined ? {} : { audience: automation.audience }),
+    ...(automation.runState === undefined ? {} : { runState: automation.runState }),
+    ...(automation.running === undefined ? {} : { running: automation.running }),
+    ...(automation.pendingQuestion ? { pendingQuestion: automation.pendingQuestion } : {}),
+    ...(automation.triggerKinds ? { triggerKinds: automation.triggerKinds } : {}),
+    ...(automation.scheduleTimeZone ? { scheduleTimeZone: automation.scheduleTimeZone } : {}),
   };
 }
 
@@ -621,6 +538,8 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     connectorBindings: { ...detail.connectorBindings },
     triggerSummaries: (detail.currentDefinition?.triggers ?? []).map(triggerSummary),
     recentRuns: detail.recentRuns.map(mapAutomationRun),
+    ...(detail.sharedWithUserIds === undefined ? {} : { sharedWithUserIds: detail.sharedWithUserIds }),
+    ...(detail.canvases === undefined ? {} : { canvases: detail.canvases }),
   };
 }
 
@@ -971,27 +890,6 @@ export class RallyApi {
     return this.request(`/workspace/memory/${encodeURIComponent(factId)}`, { method: 'DELETE', schema: MemoryForgetResponseSchema });
   }
 
-  /** What Rally remembers about a Thread (its Main, `"0"`) or one of its Breakouts. */
-  getConversationMemory(workstreamId: string, substreamId: string, signal?: AbortSignal): Promise<MemoryReview> {
-    return this.request(`/workstreams/${encodeURIComponent(workstreamId)}/memory?substreamId=${encodeURIComponent(substreamId)}`, { schema: MemoryReviewSchema, signal });
-  }
-
-  forgetConversationMemory(workstreamId: string, substreamId: string, factId: string): Promise<MemoryForgetResponse> {
-    return this.request(
-      `/workstreams/${encodeURIComponent(workstreamId)}/memory/${encodeURIComponent(factId)}?substreamId=${encodeURIComponent(substreamId)}`,
-      { method: 'DELETE', schema: MemoryForgetResponseSchema },
-    );
-  }
-
-  /** What Rally remembers about a Channel. */
-  getChannelMemory(spaceId: string, signal?: AbortSignal): Promise<MemoryReview> {
-    return this.request(`/spaces/${encodeURIComponent(spaceId)}/memory`, { schema: MemoryReviewSchema, signal });
-  }
-
-  forgetChannelMemory(spaceId: string, factId: string): Promise<MemoryForgetResponse> {
-    return this.request(`/spaces/${encodeURIComponent(spaceId)}/memory/${encodeURIComponent(factId)}`, { method: 'DELETE', schema: MemoryForgetResponseSchema });
-  }
-
   getMyTimezone(signal?: AbortSignal): Promise<UserTimezone> {
     return this.request('/workspace/me/timezone', { schema: UserTimezoneSchema, signal });
   }
@@ -1057,23 +955,6 @@ export class RallyApi {
     return this.request('/workspace/terminal/network-policy/apply', {
       method: 'POST', body: input, schema: WireTerminalWorkspaceSettingsSchema,
     });
-  }
-
-  async getDigestSchedule(signal?: AbortSignal): Promise<DigestSchedule> {
-    return this.request('/digest', { schema: WireDigestScheduleSchema, signal });
-  }
-
-  /**
-   * Replaces the digest wholesale. A partial update could not express "no days"
-   * or "no destinations", and both are things someone can legitimately mean.
-   */
-  async updateDigestSchedule(input: {
-    enabled: boolean;
-    days: number[];
-    times: number[];
-    deliveryTargets: Array<{ type: DigestDeliveryTargetType; connectionId: string | null }>;
-  }): Promise<DigestSchedule> {
-    return this.request('/digest', { method: 'PUT', body: input, schema: WireDigestScheduleSchema });
   }
 
   /**
@@ -1228,31 +1109,6 @@ export class RallyApi {
     await this.requestVoid(`/onboarding/invitations/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
-  async getAttachedSidekicks(workstreamId: string, signal?: AbortSignal, substreamId = '0'): Promise<SidekickAttachment[]> {
-    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
-  }
-
-  async removeAttachedSidekick(workstreamId: string, sidekickId: string, substreamId = '0'): Promise<SidekickAttachment[]> {
-    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekicks/${encodeURIComponent(sidekickId)}`, { method: 'DELETE', schema: SidekickAttachmentsSchema })).items;
-  }
-
-  async getRecommendedSidekicks(workstreamId: string, signal?: AbortSignal, substreamId = '0'): Promise<SidekickAttachment[]> {
-    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/recommended-sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
-  }
-
-  getSidekickRecommendationOptions(workstreamId: string, substreamId = '0', signal?: AbortSignal) {
-    return this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekick-recommendation-options`, {
-      signal, schema: SidekickRecommendationOptionsSchema,
-    });
-  }
-
-  async setRecommendedSidekick(workstreamId: string, sidekickId: string, attached: boolean, substreamId = '0'): Promise<SidekickAttachment[]> {
-    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/recommended-sidekicks/${encodeURIComponent(sidekickId)}`, {
-      method: attached ? 'PUT' : 'DELETE', schema: SidekickAttachmentsSchema,
-    })).items;
-  }
-
-
   async getSidekicks(signal?: AbortSignal): Promise<AutomationSummary[]> {
     const result = await this.request('/sidekicks', { signal, schema: wireAutomationPageSchema });
     return result.items.map(mapAutomationSummary);
@@ -1289,35 +1145,6 @@ export class RallyApi {
     });
   }
 
-  async getSharedDirectory(signal?: AbortSignal) {
-    return this.request('/sharing/directory', { schema: SharedDirectorySchema, signal });
-  }
-
-  async getSharedNavigationDirectory(signal?: AbortSignal) {
-    return this.request('/sharing/navigation?attention=1&shell=1&resolution=1', { schema: SharedNavigationDirectorySchema, signal });
-  }
-
-  /**
-   * What one work stream owns: the Sidekicks created in it, whose managers are
-   * its participants. Its own rail and the library are where these are listed.
-   *
-   * Under `/sidekicks` rather than `/automations`, which serves the same rows
-   * through the same handler: a new client reads the Sidekick surface, and the
-   * legacy prefix exists for installed builds that cannot parse a modern
-   * detail. A caller who is not a participant is refused, so a viewer's 403 is
-   * an answer about them rather than about the room.
-   */
-  async getWorkstreamSidekicks(
-    workstreamId: string,
-    signal?: AbortSignal,
-  ): Promise<WorkstreamAutomationSummary[]> {
-    const page = await this.request(
-      `/sidekicks/workstream/${encodeURIComponent(workstreamId)}`,
-      { schema: wireWorkstreamAutomationPageSchema, signal },
-    );
-    return page.items.map(mapWorkstreamAutomationSummary);
-  }
-
   /**
    * "New automation": the object and its conversation, and nothing else.
    *
@@ -1337,7 +1164,6 @@ export class RallyApi {
       method: 'POST', body: { allowed, operationId }, schema: SidekickDelegationMutationResultSchema,
     });
   }
-
 
   async acceptAutomation(id: string): Promise<AutomationDetail> {
     const raw = await this.request(`/sidekicks/${encodeURIComponent(id)}/accept`, {
@@ -1360,6 +1186,77 @@ export class RallyApi {
       method: 'POST',
       schema: wireExecutionPrincipalClaimSchema,
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Canvases (docs/canvases.md). A Canvas's Chat is an ordinary conversation,
+  // opened by its id as any conversation is; these are the Canvas's own reads
+  // and writes.
+  // -------------------------------------------------------------------------
+
+  /**
+   * A new Canvas with no artifacts; `prompt` is the "Start from a prompt"
+   * card's first message. The id is minted here, so a retry of this request
+   * answers the Canvas the first made rather than making a second.
+   */
+  createCanvas(input: CreateCanvasRequest = {}): Promise<CreatedCanvas> {
+    return this.request('/canvases', {
+      method: 'POST', body: { ...input, canvasId: input.canvasId ?? uuidV7() }, schema: CreatedCanvasSchema,
+    });
+  }
+
+  /** The Canvas as this person sees it: its row, who it is shared with, and its artifacts. */
+  getCanvas(id: string, signal?: AbortSignal): Promise<CanvasDetail> {
+    return this.request(`/canvases/${encodeURIComponent(id)}`, { schema: CanvasDetailSchema, signal });
+  }
+
+  /**
+   * Asked only after `getCanvas` answered not found: whether the Canvas exists
+   * in this person's Organization for them to ask into (`requestable`, never
+   * its title), and their own request if they made one. A Canvas that exists
+   * nowhere of theirs answers 404 `canvas_not_found`.
+   */
+  getCanvasAccess(id: string, signal?: AbortSignal): Promise<CanvasAccess> {
+    return this.request(`/canvases/${encodeURIComponent(id)}/access`, { schema: CanvasAccessSchema, signal });
+  }
+
+  /** Ask the Canvas's deciders to let this person in; a second ask while one is pending answers that one. */
+  requestCanvasAccess(id: string, message?: string): Promise<CanvasAccessRequestResult> {
+    return this.request(`/canvases/${encodeURIComponent(id)}/access-requests`, {
+      method: 'POST', body: message ? { message } : {}, schema: CanvasAccessRequestResultSchema,
+    });
+  }
+
+  /** A decider's Approve or Deny of one person's pending request, answering the request's state. */
+  decideCanvasAccess(id: string, userId: string, decision: 'approve' | 'deny'): Promise<CanvasAccessDecision> {
+    return this.request(`/canvases/${encodeURIComponent(id)}/access-requests/${encodeURIComponent(userId)}/decision`, {
+      method: 'POST', body: { decision }, schema: CanvasAccessDecisionSchema,
+    });
+  }
+
+  /** Retitle a Canvas; anyone the Canvas admits may. The server trims and bounds the title. */
+  renameCanvas(id: string, title: string): Promise<CanvasDetail> {
+    return this.request(`/canvases/${encodeURIComponent(id)}`, { method: 'PATCH', body: { title }, schema: CanvasDetailSchema });
+  }
+
+  /** Choose a Canvas's icon, its colour, or both; anyone the Canvas admits may. A null field goes back to the default. */
+  setCanvasAppearance(id: string, appearance: WorkstreamAppearancePatch): Promise<CanvasDetail> {
+    return this.request(`/canvases/${encodeURIComponent(id)}`, { method: 'PATCH', body: { appearance }, schema: CanvasDetailSchema });
+  }
+
+  /** Change who can open a Canvas; its creator's, an administrator's, or its Sidekick's manager's. */
+  setCanvasAudience(id: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {
+    return this.request(`/canvases/${encodeURIComponent(id)}/audience`, { method: 'POST', body: update, schema: CanvasDetailSchema });
+  }
+
+  /** Pin a Canvas in, or out of, the Canvas list's Pinned group. */
+  async setCanvasPinned(id: string, pinned: boolean): Promise<void> {
+    await this.requestVoid(`/canvases/${encodeURIComponent(id)}/pin`, { method: 'POST', body: { pinned } });
+  }
+
+  /** Pin a Sidekick in, or out of, the Sidekick list's Pinned group. */
+  async setSidekickPinned(id: string, pinned: boolean): Promise<void> {
+    await this.requestVoid(`/sidekicks/${encodeURIComponent(id)}/pin`, { method: 'POST', body: { pinned } });
   }
 
   async getAutomation(id: string, signal?: AbortSignal): Promise<AutomationDetail> {
@@ -1426,285 +1323,6 @@ export class RallyApi {
     return result;
   }
 
-  async getWorkOpportunities(signal?: AbortSignal): Promise<WorkOpportunity[]> {
-    const page = await this.request('/work-opportunities?limit=4', {
-      schema: WireWorkOpportunityPageSchema,
-      signal,
-    });
-    return page.items;
-  }
-
-  async recordWorkOpportunityImpressions(opportunityIds: string[]): Promise<void> {
-    await this.requestVoid('/work-opportunities/impressions', {
-      method: 'POST',
-      body: { opportunityIds, surface: 'workspace_home' },
-    });
-  }
-
-  async dismissWorkOpportunity(id: string, version?: number, position?: number): Promise<void> {
-    const query = new URLSearchParams({ surface: 'workspace_home' });
-    if (version != null) query.set('version', String(version));
-    if (position != null) query.set('position', String(position));
-    await this.requestVoid(`/work-opportunities/${encodeURIComponent(id)}?${query.toString()}`, { method: 'DELETE' });
-  }
-
-  async startWorkOpportunity(
-    id: string,
-    version: number,
-    idempotencyKey: string,
-    surface: 'workspace_home',
-    position?: number,
-  ): Promise<CreatedWorkstream> {
-    const response = await this.request(`/work-opportunities/${encodeURIComponent(id)}/start`, {
-      method: 'POST',
-      body: { version, idempotencyKey, surface, ...(position == null ? {} : { position }) },
-      schema: createWorkstreamResponseSchema,
-    });
-    return {
-      workstream: mapWorkstreamSummary(response.workstream),
-      turnId: response.turnId,
-      clientMessageId: `opportunity:${id}:v${version}`,
-      createdAt: response.workstream.createdAt,
-      harnessRunId: response.harnessRunId,
-    };
-  }
-
-  createSpace(input: CreateSpaceRequest): Promise<SpaceSummary> {
-    return this.request('/spaces', {
-      method: 'POST',
-      body: input,
-      schema: WireSpaceSummarySchema,
-    });
-  }
-
-  updateSpacePresentation(id: string, input: UpdateSpacePresentationRequest): Promise<SpaceSummary> {
-    return this.request(`/spaces/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: input,
-      schema: WireSpaceSummarySchema,
-    });
-  }
-
-  /**
-   * The Space's whole audience: its scope and its whole participant set.
-   *
-   * `participantUserIds` is a plain `string[]` rather than the contract's
-   * branded `UserId[]`. The ids a screen holds come from the member directory
-   * as strings, and branding them at every call site would be a cast that
-   * proves nothing — the server parses this body against the branded schema,
-   * which is the check that counts.
-   */
-  /** The Organization invitees a Space lists by address, to whoever may edit it. */
-  async getSpaceInvitees(id: string, signal?: AbortSignal): Promise<string[]> {
-    const page = await this.request(`/spaces/${encodeURIComponent(id)}/invitees`, { schema: SpaceInviteesSchema, signal });
-    return page.items.map((item) => item.email);
-  }
-
-  /**
-   * Change a Channel's scope and participants. `null` when this person took
-   * themselves out of a private Channel, which no longer exists for them.
-   */
-  updateSpaceAudience(
-    id: string,
-    input: { scope: SpaceScope; participantUserIds: string[]; inviteeEmails?: string[] },
-  ): Promise<SpaceSummary | null> {
-    return this.request(`/spaces/${encodeURIComponent(id)}/audience`, {
-      method: 'PATCH',
-      body: input,
-      schema: WireSpaceSummarySchema,
-      emptyAs: null,
-    });
-  }
-
-  /** Recommend a Sidekick to every thread started in this Channel (a Space default). */
-  addSpaceSidekick(id: string, sidekickId: string): Promise<SpaceSummary> {
-    return this.request(`/spaces/${encodeURIComponent(id)}/defaults`, {
-      method: 'POST',
-      body: { kind: 'sidekick', targetId: sidekickId },
-      schema: WireSpaceSummarySchema,
-    });
-  }
-
-  removeSpaceSidekick(id: string, sidekickId: string): Promise<SpaceSummary> {
-    return this.request(
-      `/spaces/${encodeURIComponent(id)}/defaults/sidekick/${encodeURIComponent(sidekickId)}`,
-      { method: 'DELETE', schema: WireSpaceSummarySchema },
-    );
-  }
-
-  archiveSpace(id: string): Promise<SpaceSummary> {
-    return this.request(`/spaces/${encodeURIComponent(id)}/archive`, {
-      method: 'POST',
-      schema: WireSpaceSummarySchema,
-    });
-  }
-
-  restoreSpace(id: string): Promise<SpaceSummary> {
-    return this.request(`/spaces/${encodeURIComponent(id)}/restore`, {
-      method: 'POST',
-      schema: WireSpaceSummarySchema,
-    });
-  }
-
-  /**
-   * One container's order for the signed-in person: the Organization's Spaces,
-   * one Space's Channels, or one Channel's Breakouts.
-   *
-   * At the workspace level rather than under `/spaces`, because two of the
-   * three containers are not Spaces. The answer is what the authority actually
-   * stored — a request may name an item that container does not hold — and the
-   * lists themselves arrive on the workspace socket, which this write
-   * republishes to every session this person has open.
-   */
-  reorderContainer(order: ContainerOrder): Promise<ContainerOrder> {
-    return this.request('/workspace/order', {
-      method: 'PUT',
-      body: order,
-      schema: WireContainerOrderSchema,
-    });
-  }
-
-  /**
-   * One page of a Channel's feed (a stored Space's threads), newest placement
-   * first. A thread this person may not open is not listed.
-   */
-  async getChannelFeed(channelId: string, cursor: string | null, signal?: AbortSignal): Promise<ChannelFeedPageView> {
-    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
-    const page = await this.request(`/spaces/${encodeURIComponent(channelId)}/feed${query}`, {
-      schema: wireChannelFeedPageSchema,
-      ...(signal ? { signal } : {}),
-    });
-    return {
-      items: page.items.flatMap((item): ChannelFeedPageView['items'] => {
-        if (!('placedAt' in item)) return [];
-        if (item.kind === 'message') {
-          return [{
-            kind: 'message',
-            placedAt: item.placedAt,
-            message: item.message,
-            ...(item.attentionSequenceNumber === undefined ? {} : { attentionSequenceNumber: item.attentionSequenceNumber }),
-          }];
-        }
-        if (item.kind !== 'thread') return [];
-        return [{
-          kind: 'thread',
-          placedAt: item.placedAt,
-          attentionSequenceNumber: item.attentionSequenceNumber,
-          thread: mapWorkstreamSummary(item.thread),
-        }];
-      }),
-      nextCursor: page.nextCursor,
-      latestAttentionSequenceNumber: page.latestAttentionSequenceNumber,
-    };
-  }
-
-  /** One page of the threads and breakouts this person takes part in or pinned, newest activity first. */
-  async getMyThreads(cursor: string | null, signal?: AbortSignal): Promise<{
-    items: SpaceConversationSummary[];
-    nextCursor: string | null;
-    /** Every pinned row this person may list, on the first page; empty after it. */
-    pinned: SpaceConversationSummary[];
-  }> {
-    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
-    const page = await this.request(`/navigation/threads${query}`, {
-      schema: MyThreadsPageSchema,
-      ...(signal ? { signal } : {}),
-    });
-    const row = (conversation: (typeof page.items)[number]): SpaceConversationSummary => ({
-      ...mapWorkstreamSummary(conversation),
-      kind: conversation.kind,
-      breakoutOf: conversation.breakoutOf,
-    });
-    return { items: page.items.map(row), nextCursor: page.nextCursor, pinned: page.pinned.map(row) };
-  }
-
-  getChannelStats(signal?: AbortSignal): Promise<ChannelStatsList> {
-    return this.request('/navigation/channel-stats', { schema: ChannelStatsListSchema, ...(signal ? { signal } : {}) });
-  }
-
-  getPeopleRanking(channelId: string | null, signal?: AbortSignal): Promise<PeopleRanking> {
-    const query = channelId === null ? '' : `?${new URLSearchParams({ channelId })}`;
-    return this.request(`/navigation/people-ranking${query}`, { schema: PeopleRankingSchema, signal });
-  }
-
-  /**
-   * Acknowledge a Channel read through a placement, answered with the
-   * person's whole `ChannelStats` row for it, which replaces the row held in
-   * the channel-stats cache.
-   */
-  acknowledgeChannelRead(channelId: string, readThroughSequenceNumber: number): Promise<ChannelStats> {
-    return this.request(`/spaces/${encodeURIComponent(channelId)}/read-state`, {
-      method: 'PATCH',
-      body: { readThroughSequenceNumber },
-      schema: ChannelStatsSchema,
-    });
-  }
-
-  setPinned(kind: PinKind, id: string, pinned: boolean, parentId?: string): Promise<PinList> {
-    const path = `/navigation/pins/${kind}/${encodeURIComponent(id)}`;
-    return pinned
-      ? this.request(path, { method: 'PUT', body: parentId ? { parentId } : {}, schema: PinListSchema })
-      : this.request(path, { method: 'DELETE', schema: PinListSchema });
-  }
-
-  reorderPins(kind: PinKind, ids: readonly string[]): Promise<PinList> {
-    return this.request('/navigation/pins', { method: 'PUT', body: { kind, ids }, schema: PinListSchema });
-  }
-
-  /** Pin an artifact generated in a thread's Main, or unpin it; answered with every artifact pin. */
-  setArtifactPinned(id: string, pinned: boolean, threadId?: string): Promise<ArtifactPinList> {
-    const path = `/navigation/artifact-pins/${encodeURIComponent(id)}`;
-    return pinned
-      ? this.request(path, { method: 'PUT', body: { threadId }, schema: ArtifactPinListSchema })
-      : this.request(path, { method: 'DELETE', schema: ArtifactPinListSchema });
-  }
-
-  reorderArtifactPins(ids: readonly string[]): Promise<ArtifactPinList> {
-    return this.request('/navigation/artifact-pins', { method: 'PUT', body: { ids }, schema: ArtifactPinListSchema });
-  }
-
-  getActivity(cursor: string | null, only: ActivityFilter | null = null, signal?: AbortSignal): Promise<ActivityPage> {
-    const params = new URLSearchParams();
-    if (cursor !== null) params.set('cursor', cursor);
-    if (only !== null) params.set('only', only);
-    const query = params.size === 0 ? '' : `?${params.toString()}`;
-    return this.request(`/navigation/activity${query}`, { schema: ActivityPageSchema, ...(signal ? { signal } : {}) });
-  }
-
-  markActivitySeen(seenThrough: string): Promise<void> {
-    return this.requestVoid('/navigation/activity/seen', { method: 'PUT', body: { seenThrough } });
-  }
-
-  /** What the person did that settles Activity rows; see `ActivityEventSchema`. */
-  recordActivityEvents(events: readonly ActivityEvent[]): Promise<void> {
-    return this.requestVoid('/navigation/activity/events', { method: 'POST', body: { events } });
-  }
-
-  moveChannelBetweenSpaces(sourceSpaceId: string, targetSpaceId: string, workstreamId: string) {
-    return this.request(
-      `/spaces/${encodeURIComponent(targetSpaceId)}/channels/${encodeURIComponent(workstreamId)}/move`,
-      {
-        method: 'POST',
-        body: { sourceSpaceId },
-        schema: WireMoveChannelBetweenSpacesResultSchema,
-      },
-    );
-  }
-
-  /**
-   * Every source that currently grants a reader access to one Channel.
-   *
-   * What **Manage access** renders. Listed rather than merged, because removing
-   * one source is only legal when the others still cover the readers it
-   * supplied.
-   */
-  channelAccess(workstreamId: string, signal?: AbortSignal): Promise<ChannelAccess> {
-    return this.request(`/workstreams/${encodeURIComponent(workstreamId)}/access`, {
-      schema: WireChannelAccessSchema,
-      ...(signal ? { signal } : {}),
-    });
-  }
-
   /**
    * The server-decided values this device is allowed to see, for the signed-in
    * person. The main process polls the same route for Application → Developer;
@@ -1713,74 +1331,6 @@ export class RallyApi {
    */
   clientFeatureFlags(signal?: AbortSignal): Promise<ClientFeatureFlags> {
     return this.request('/feature-flags', { schema: WireClientFeatureFlagsSchema, signal });
-  }
-
-  async renameWorkstream(id: string, title: string): Promise<WorkstreamSummary> {
-    const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: { title },
-      schema: WireWorkstreamSchema,
-    });
-    return mapWorkstreamSummary(workstream);
-  }
-
-  /**
-   * Narrow a work stream to the people in it, or open it to the workspace.
-   *
-   * `personal` keeps the work stream readable to its participants — who may
-   * still add anyone else in the workspace to it — and to nobody else.
-   */
-  async setWorkstreamScope(id: string, scope: 'personal' | 'workspace'): Promise<WorkstreamSummary> {
-    const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: { scope },
-      schema: WireWorkstreamSchema,
-    });
-    return mapWorkstreamSummary(workstream);
-  }
-
-  /**
-   * Take a work stream out of every listing, for everyone who could see it.
-   *
-   * The same `PATCH` a rename and a visibility change use, because being
-   * archived is a field of the work stream rather than a lifecycle of its own.
-   * The row that comes back is the archived one; nothing here removes it from
-   * the sidebar, because WorkstreamDO answers this write with a directory
-   * tombstone and `applyVersionedWorkstreamState` drops the row and its detail
-   * query off the back of that — the same path an archive from another window
-   * already takes.
-   */
-  async archiveWorkstream(id: string): Promise<WorkstreamSummary> {
-    const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: { archived: true },
-      schema: WireWorkstreamSchema,
-    });
-    return mapWorkstreamSummary(workstream);
-  }
-
-  async previewWorkstreamBatch(
-    filter: WorkstreamBatchFilter,
-  ): Promise<{ matchedCount: number; matchedNoteCount: number }> {
-    const result = await this.request('/workstreams/batch/preview', {
-      method: 'POST',
-      body: { filter },
-      schema: WireWorkstreamBatchPreviewSchema,
-    });
-    return { matchedCount: result.matchedCount, matchedNoteCount: result.matchedNoteCount };
-  }
-
-  async applyWorkstreamBatch(
-    operationId: string,
-    filter: WorkstreamBatchFilter,
-    update: WorkstreamBatchUpdate,
-  ): Promise<{ enqueuedCount: number; archivedNoteCount: number }> {
-    const result = await this.request('/workstreams/batch', {
-      method: 'POST',
-      body: { operationId, filter, update },
-      schema: WireWorkstreamBatchAcceptedSchema,
-    });
-    return { enqueuedCount: result.enqueuedCount, archivedNoteCount: result.archivedNoteCount };
   }
 
   /**
@@ -1806,151 +1356,6 @@ export class RallyApi {
       schema: WireWorkstreamSchema,
     });
     return mapWorkstreamSummary(workstream);
-  }
-
-  /** By hand, from the sidebar, where the row's dot is Main's. */
-  async markWorkstreamUnread(id: string): Promise<WorkstreamSummary> {
-    const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}/read-state/mark-unread`, {
-      method: 'POST',
-      schema: WireWorkstreamSchema,
-    });
-    return mapWorkstreamSummary(workstream);
-  }
-
-  /** Reserve a Channel for a conversation import and start the agent that reads it. */
-  async startSessionImport(input: { sourceUrl: string; title: string; spaceIds: string[]; clientMessageId: string }): Promise<SessionImportRun> {
-    return this.request('/workstreams/import/runs', { method: 'POST', body: input, schema: SessionImportRunSchema });
-  }
-
-  /** Start the import agent again on a Channel imported before. */
-  async startSessionImportUpdate(workstreamId: string): Promise<SessionImportRun> {
-    return this.request(`/workstreams/${encodeURIComponent(workstreamId)}/import/runs`, { method: 'POST', body: {}, schema: SessionImportRunSchema });
-  }
-
-  /** Open a reserved Channel with the conversation the agent read. */
-  async completeSessionImport(
-    workstreamId: string,
-    preview: SessionImportPreview,
-    input: { clientMessageId: string; spaceIds: string[] },
-  ): Promise<string> {
-    const result = await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/import/complete`, {
-      method: 'POST', body: { ...preview, ...input }, schema: createWorkstreamResponseSchema,
-    });
-    return result.workstream.id;
-  }
-
-  /** Reserve a Breakout of a thread for a conversation import and start the agent that reads it. */
-  async startBreakoutImport(workstreamId: string, input: { sourceUrl: string; title: string; clientMessageId: string }): Promise<SessionImportRun> {
-    return this.request(`/workstreams/${encodeURIComponent(workstreamId)}/import/breakouts/runs`, {
-      method: 'POST', body: input, schema: SessionImportRunSchema,
-    });
-  }
-
-  /** Open the reserved Breakout with the conversation the agent read; resolves with its id. */
-  async completeBreakoutImport(
-    workstreamId: string,
-    preview: SessionImportPreview,
-    input: { clientMessageId: string },
-  ): Promise<string> {
-    const result = await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/import/breakouts/complete`, {
-      method: 'POST', body: { ...preview, ...input }, schema: SubstreamCreationResultSchema,
-    });
-    return result.substreamId;
-  }
-
-  /**
-   * Stop an import's agent; a new Channel that never opened is discarded with
-   * it, and a new Breakout's reservation is cancelled (`breakout`).
-   */
-  async discardSessionImport(workstreamId: string, input: { substreamId: string; clientMessageId: string | null; breakout?: boolean }): Promise<void> {
-    await this.requestVoid(`/workstreams/${encodeURIComponent(workstreamId)}/import/discard`, {
-      method: 'POST', body: input,
-    });
-  }
-
-  /** Take back a failed start's import by its create key alone. */
-  async abandonSessionImport(input: { clientMessageId: string }): Promise<void> {
-    await this.requestVoid('/workstreams/import/abandon', { method: 'POST', body: input });
-  }
-
-  async importedSessionSource(workstreamId: string): Promise<{ provider: 'chatgpt' | 'claude' | 'claude_code'; sessionId: string; url: string | null } | null> {
-    const result = await this.request(`/workstreams/${workstreamId}/import/source`, {
-      schema: z.strictObject({ source: z.strictObject({ provider: z.enum(['chatgpt', 'claude', 'claude_code']),
-        sessionId: z.string(), url: z.string().nullable() }).nullable() }),
-    });
-    return result.source;
-  }
-
-  async updateImportedSession(workstreamId: string, preview: SessionImportPreview, clientMessageId: string): Promise<{ added: number; updated: number }> {
-    return this.request(`/workstreams/${workstreamId}/import/update`, { method: 'POST',
-      body: { ...preview, clientMessageId },
-      schema: z.strictObject({ added: z.number().int().nonnegative(), updated: z.number().int().nonnegative() }) });
-  }
-
-  async createWorkstream(input: {
-    /**
-     * The id the caller already listed this Channel under. The server creates
-     * it under the same id, or refuses with `workstream_id_unavailable`.
-     */
-    workstreamId?: string;
-    title?: string;
-    openingMessage: string;
-    participantIds: string[];
-    /**
-     * The Spaces this Channel is being started in.
-     *
-     * Empty means General, which is what the top-level composer means: every
-     * Channel has a home, and the server places one that names no Space rather
-     * than the client having to choose.
-     */
-    spaceIds?: string[];
-    mentions?: MentionIdentity[];
-    attachmentIds?: string[];
-    annotations?: Annotation[];
-    modelOverride?: AgentModelOverride;
-    /** The caller's open `workstream_create` trace id, when it has one. */
-    requestId?: string;
-    /** Creation lineage retained through the destination's send-ready paint. */
-    operationId?: string;
-  }): Promise<CreatedWorkstream> {
-    const mentions = input.openingMessage.includes('@') || (input.mentions?.length ?? 0) > 0
-      ? await this.messageMentionPayload(input.openingMessage, input.mentions)
-      : [];
-    const participantUserIds = [...new Set([
-      ...input.participantIds,
-      ...mentions.flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []),
-    ])];
-    const clientMessageId = crypto.randomUUID();
-    const operationId = input.operationId ?? uuidV7();
-    reportTelemetryProductIntent({ kind: 'workstream_create_requested', entrypoint: 'composer', operationId });
-    reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
-    const response = await this.request('/workstreams', {
-      method: 'POST',
-      headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
-      body: {
-        ...(input.workstreamId ? { workstreamId: input.workstreamId } : {}),
-        ...(input.title ? { title: input.title } : {}),
-        ...(input.spaceIds && input.spaceIds.length > 0 ? { spaceIds: input.spaceIds } : {}),
-        openingMessage: input.openingMessage,
-        participantUserIds,
-        clientMessageId,
-        attachmentIds: input.attachmentIds ?? [],
-        ...(input.annotations?.length ? {annotations:input.annotations} : {}),
-        ...(mentions.length > 0 ? { mentions } : {}),
-        // Omitted rather than sent as null when nothing was pinned, so the work
-        // stream stays on whatever `agent-model-workstream` serves it.
-        ...(input.modelOverride ? { modelOverride: input.modelOverride } : {}),
-      },
-      schema: createWorkstreamResponseSchema,
-      ...(input.requestId ? { requestId: input.requestId } : {}),
-    });
-    return {
-      workstream: mapWorkstreamSummary(response.workstream),
-      turnId: response.turnId,
-      clientMessageId,
-      createdAt: response.workstream.createdAt,
-      harnessRunId: response.harnessRunId,
-    };
   }
 
   /**
@@ -2251,33 +1656,6 @@ export class RallyApi {
     return this.request('/message-issues', { method: 'POST', body: input, schema: MessageIssueReceiptSchema });
   }
 
-  /** The Channels this thread can merge into, earliest placement first. */
-  async mergeChannels(threadId: string): Promise<ConversationMergeChannels> {
-    return this.request(`/conversations/${encodeURIComponent(threadId)}/merge-channels`, {
-      schema: ConversationMergeChannelsSchema,
-    });
-  }
-
-  /**
-   * Merge-back (docs/conversation-merge.md): with `breakoutId`, that Breakout's
-   * result into this Thread; without it, this Thread's result into one of its
-   * Channels. A retry with the same `clientMessageId` writes nothing again.
-   */
-  async mergeConversation(
-    threadId: string,
-    { mentions: selected, ...request }: Omit<ConversationMergeRequest, 'mentions'> & { mentions?: MentionIdentity[] },
-  ): Promise<ConversationMergeResult> {
-    // A Breakout merge keeps its mentions, resolved the way a message's are.
-    const mentions = request.breakoutId !== undefined && (request.body.includes('@') || (selected?.length ?? 0) > 0)
-      ? await this.messageMentionPayload(request.body, selected)
-      : [];
-    return this.request(`/conversations/${encodeURIComponent(threadId)}/merge`, {
-      method: 'POST',
-      body: { ...request, ...(mentions.length > 0 ? { mentions } : {}) },
-      schema: ConversationMergeResultSchema,
-    });
-  }
-
   async attachResource(parentId: string, resourceId: string): Promise<WorkstreamDetail> {
     await this.request(`/conversations/${encodeURIComponent(parentId)}/resources`, {
       method: 'POST',
@@ -2301,171 +1679,8 @@ export class RallyApi {
     });
   }
 
-  async prepareSubstream(parentId: string, input: {
-    operationId: string;
-    throughTurnId: string | null;
-  }): Promise<SubstreamPreparationPreview> {
-    return this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/prepare`, {
-      method: 'POST',
-      headers: { [RALLY_HEADERS.OPERATION_ID]: input.operationId },
-      body: input,
-      schema: SubstreamPreparationPreviewSchema,
-    });
-  }
-
-  /**
-   * Create the prepared substream, with the message that starts it.
-   *
-   * The opening message travels with the confirmation rather than following it
-   * over the child's socket: the child does not exist until this answers, so a
-   * message sent afterwards would be a second thing to retry, and a failure
-   * between the two would leave an empty substream standing for words that
-   * were never said.
-   */
-  async confirmSubstream(
-    parentId: string,
-    operationId: string,
-    opening?: {
-      clientMessageId: string;
-      text: string;
-      mentions?: MentionIdentity[];
-      attachmentIds?: string[];
-      confirmedParticipantUserIds?: string[];
-    },
-    /**
-     * Pins every run of the created substream to one model, as
-     * `createWorkstream` does for a work stream. Sent only when the launch
-     * composer's developer-mode selector named one; null leaves the substream
-     * unpinned and following the `agent-model-workstream` flag.
-     *
-     * A sibling of the opening message rather than a field inside it: the pin
-     * belongs to the child, not to the turn that starts it.
-     */
-    modelOverride: AgentModelOverride | null = null,
-  ): Promise<SubstreamCreationResult> {
-    const mentions = opening && (opening.text.includes('@') || (opening.mentions?.length ?? 0) > 0)
-      ? await this.messageMentionPayload(opening.text, opening.mentions)
-      : [];
-    return this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/confirm`, {
-      method: 'POST',
-      headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
-      body: {
-        operationId,
-        ...(opening ? {
-          opening: {
-            clientMessageId: opening.clientMessageId,
-            text: opening.text,
-            mentions,
-            attachmentIds: opening.attachmentIds ?? [],
-            confirmedParticipantUserIds: opening.confirmedParticipantUserIds ?? [],
-          },
-        } : {}),
-        ...(modelOverride ? { modelOverride } : {}),
-      },
-      schema: SubstreamCreationResultSchema,
-    });
-  }
-
-  /** Mark the conversation resolved through its completion suggestion. */
-  async resolveSuggestion(parentId: string, substreamId: string, suggestionId: string): Promise<ConversationSuggestionActionResult> {
-    return this.request(
-      `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/suggestions/${encodeURIComponent(suggestionId)}/resolve`,
-      { method: 'POST', schema: ConversationSuggestionActionResultSchema },
-    );
-  }
-
-  /** Dismiss a conversation suggestion for everyone (docs/conversation-suggestions.md). */
-  async dismissSuggestion(parentId: string, substreamId: string, suggestionId: string): Promise<ConversationSuggestionActionResult> {
-    return this.request(
-      `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/suggestions/${encodeURIComponent(suggestionId)}/dismiss`,
-      { method: 'POST', schema: ConversationSuggestionActionResultSchema },
-    );
-  }
-
-  async cancelSubstream(parentId: string, operationId: string): Promise<void> {
-    await this.requestVoid(`/conversations/${encodeURIComponent(parentId)}/substreams/cancel`, {
-      method: 'POST', headers: { [RALLY_HEADERS.OPERATION_ID]: operationId }, body: { operationId },
-    });
-  }
-
-  async addSubstreamParticipant(parentId: string, substreamId: string, userId: string): Promise<void> {
-    await this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/participants`, {
-      method: 'POST',
-      body: { userId, operationId: uuidV7() },
-      schema: MutatePrivateChildParticipantResultSchema,
-    });
-  }
-
-  async removeSubstreamParticipant(parentId: string, substreamId: string, userId: string): Promise<void> {
-    await this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/participants/remove`, {
-      method: 'POST',
-      body: { userId, operationId: uuidV7() },
-      schema: MutatePrivateChildParticipantResultSchema,
-    });
-  }
-
-  /** Name, mark and whether this person can open it: asked only once the socket refuses. */
-  async conversationAccessPreview(parentId: string, substreamId: string): Promise<ConversationAccessPreview> {
-    return this.request(`${this.substreamPath(parentId, substreamId)}/access-preview`, {
-      schema: ConversationAccessPreviewSchema,
-    });
-  }
-
-  /** Emails the creator a one-click approval. */
-  async requestConversationAccess(parentId: string, substreamId: string): Promise<void> {
-    await this.request(`${this.substreamPath(parentId, substreamId)}/access-requests`, {
-      method: 'POST',
-      schema: ConversationAccessRequestResultSchema,
-    });
-  }
-
-  /** The approver settles a request: from the attention menu, or the menu bar's modal. */
-  async decideConversationAccess(requestId: string, decision: 'approve' | 'decline'): Promise<ConversationAccessDecisionResult> {
-    return this.request(`/conversations/access-requests/${encodeURIComponent(requestId)}/${decision}`, {
-      method: 'POST',
-      schema: ConversationAccessDecisionResultSchema,
-    });
-  }
-
-  /** The child's title converges over its feed and parent control sockets. */
-  async renameSubstream(parentId: string, substreamId: string, title: string): Promise<void> {
-    await this.requestVoid(this.substreamPath(parentId, substreamId), {
-      method: 'PATCH', body: { title },
-    });
-  }
-
-  /** Resolve the parent-owned registry entry; its socket publishes the new state. */
-  async resolveConversation(parentId: string, substreamId: string): Promise<void> {
-    await this.requestVoid(this.substreamPath(parentId, substreamId), {
-      method: 'PATCH', body: { resolved: true },
-    });
-  }
-
-  /** Take a substream out of its members' sidebars, or put it back. */
-  async setSubstreamArchived(parentId: string, substreamId: string, archived: boolean): Promise<void> {
-    await this.requestVoid(this.substreamPath(parentId, substreamId), {
-      method: 'PATCH', body: { archived },
-    });
-  }
-
   private substreamPath(parentId: string, substreamId: string): string {
     return `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}`;
-  }
-
-  async addParticipant(id: string, userId: string): Promise<WorkstreamDetail> {
-    await this.request(`/workstreams/${encodeURIComponent(id)}/participants`, {
-      method: 'POST',
-      body: { userId },
-      schema: WireParticipantSchema,
-    });
-    return this.getConversation(id);
-  }
-
-  async removeParticipant(id: string, userId: string): Promise<void> {
-    await this.requestVoid(
-      `/workstreams/${encodeURIComponent(id)}/participants/${encodeURIComponent(userId)}`,
-      { method: 'DELETE' },
-    );
   }
 
   /**
@@ -2976,13 +2191,3 @@ export class RallyApi {
 
 }
 
-/** A Channel feed page with its threads in the client's row shape. */
-export interface ChannelFeedPageView {
-  items: Array<
-    | { kind: 'thread'; placedAt: string; attentionSequenceNumber: number; thread: WorkstreamSummary }
-    | { kind: 'message'; placedAt: string; message: ChannelMessage; attentionSequenceNumber?: number }
-  >;
-  nextCursor: string | null;
-  /** The Channel's latest attention sequence number as the first page was read; null on a later page. */
-  latestAttentionSequenceNumber: number | null;
-}

@@ -14,7 +14,7 @@ builders whose unavoidable completeness assertion lives in one place.
 | `scripts/type-assertion-boundaries.test.mjs` | Regression tests for those ESLint rules. |
 | `apps/api/test/helpers/cloudflare-test.ts` | Typed builders for partial `Env`, D1, Durable Object, R2, Queue, AI, Flagship, and Images doubles. |
 | `apps/release-retention/test/helpers/cloudflare-test.ts` | The retention Worker's corresponding R2 builder. |
-| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | An example of a typed state boundary: every write to the work-stream query cache. |
+| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | An example of a typed state boundary: every write to the conversation query cache. |
 
 ## How it works
 
@@ -102,6 +102,8 @@ When adding a platform builder, add a failing direct-cast example and a passing
 builder example to `scripts/type-assertion-boundaries.test.mjs`. Do not silence
 the rule at a call site; extend the centralized helper only when the missing
 surface is genuinely a platform-runtime gap.
+
+## Changelog
 
 ### 2026-08-12 — Type escapes became explicit boundaries
 

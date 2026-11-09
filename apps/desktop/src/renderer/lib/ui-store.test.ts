@@ -39,8 +39,8 @@ describe('context rail state', () => {
     expect(window.localStorage.getItem('rally.sidebar-width')).toBe('306');
 
     useUiStore.getState().setSidebarWidth(900);
-    expect(useUiStore.getState().sidebarWidth).toBe(400);
-    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('400');
+    expect(useUiStore.getState().sidebarWidth).toBe(476);
+    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('476');
   });
 
   it('opens the requested contextual variant and resets stale detail state', () => {
@@ -86,7 +86,7 @@ describe('sidebar width', () => {
 
   it('starts a device that never resized the sidebar at the design width', async () => {
     const { useUiStore: fresh } = await import('./ui-store');
-    expect(fresh.getState().sidebarWidth).toBe(340);
+    expect(fresh.getState().sidebarWidth).toBe(416);
   });
 
   it('keeps a width the person dragged to over the design width', async () => {
@@ -96,7 +96,7 @@ describe('sidebar width', () => {
   });
 });
 
-describe('sidebar thread sort', () => {
+describe('sidebar section', () => {
   // Read as a restarted app would: the module is re-imported over storage the
   // previous run left behind.
   beforeEach(() => {
@@ -108,45 +108,23 @@ describe('sidebar thread sort', () => {
     vi.resetModules();
   });
 
-  it('starts most recent first on a device that never chose', async () => {
+  it('starts on Canvases on a device that never chose', async () => {
     const { useUiStore: fresh } = await import('./ui-store');
-    expect(fresh.getState().threadSort).toBe('recent');
+    expect(fresh.getState().sidebarSection).toBe('canvases');
   });
 
-  it('comes back to the order chosen before a restart', async () => {
+  it('comes back to the section chosen before a restart', async () => {
     const { useUiStore: first } = await import('./ui-store');
-    first.getState().setThreadSort('alphabetical');
+    first.getState().setSidebarSection('sidekicks');
 
     vi.resetModules();
     const { useUiStore: restarted } = await import('./ui-store');
-    expect(restarted.getState().threadSort).toBe('alphabetical');
-  });
-});
-
-describe('sidebar channel sort', () => {
-  // Read as a restarted app would: the module is re-imported over storage the
-  // previous run left behind.
-  beforeEach(() => {
-    window.localStorage.clear();
-    vi.resetModules();
-  });
-  afterEach(() => {
-    window.localStorage.clear();
-    vi.resetModules();
+    expect(restarted.getState().sidebarSection).toBe('sidekicks');
   });
 
-  it('starts A to Z on a device that never chose', async () => {
+  it('opens on Canvases where a section the rail no longer has was stored', async () => {
+    window.localStorage.setItem('rally.sidebar-section', 'channels');
     const { useUiStore: fresh } = await import('./ui-store');
-    expect(fresh.getState().channelSort).toBe('alphabetical');
-  });
-
-  it('comes back to the order chosen before a restart, apart from the thread sort', async () => {
-    const { useUiStore: first } = await import('./ui-store');
-    first.getState().setChannelSort('needs_you');
-
-    vi.resetModules();
-    const { useUiStore: restarted } = await import('./ui-store');
-    expect(restarted.getState().channelSort).toBe('needs_you');
-    expect(restarted.getState().threadSort).toBe('recent');
+    expect(fresh.getState().sidebarSection).toBe('canvases');
   });
 });

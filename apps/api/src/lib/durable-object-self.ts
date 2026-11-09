@@ -2,10 +2,10 @@
  * The one place a Durable Object is allowed to recognize itself.
  *
  * Avalon's shared services address an object by *role* — "the WorkspaceDO for
- * this workspace", "the SubstreamAgent that owns this work stream" — because
+ * this workspace", "the AgentLoopDO that owns this work stream" — because
  * almost every caller is a Worker, a queue consumer, or a Workflow, for which
  * that is the only way to reach it. The objects then grew inward: a work
- * stream's whole agent loop runs inside its `SubstreamAgent`, and a workspace's
+ * stream's whole agent loop runs inside its `AgentLoopDO`, and a workspace's
  * schedule runs inside its `WorkspaceDO`. Those same helpers now run *inside*
  * the object they are addressing, and each call left the object over RPC and
  * came straight back in.
@@ -40,7 +40,7 @@ export interface DurableObjectSelfReference<T extends RpcDurableObject> {
    * Binding, jurisdiction, and name together decide which object a name means,
    * so the binding has to match as well as the name: a logical name is not
    * unique across bindings (the deleted `WorkstreamDO` and a Channel's main
-   * `SubstreamAgent` shared one).
+   * `AgentLoopDO` shared one).
    *
    * Identity is also what makes the lookup below type-safe: two references to
    * the same binding object are the same `DurableObjectNamespace<T>`, so a

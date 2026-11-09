@@ -84,7 +84,7 @@ describe('the workspaces tab', () => {
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ region: 'enterprise', confirmWorkspaceId: WORKSPACE_ID });
     // The aftermath names what closed, the form is gone, and the row is marked.
     expect(container.textContent).toContain('Retired');
-    expect(container.textContent).toContain('All 3 work streams and automations in the enterprise workspace are closed; this pass closed 3 of them, with 4 conversations under them. 1 queued effect will never publish.');
+    expect(container.textContent).toContain('All 3 Canvases, Sidekicks, Channels and Threads in the enterprise workspace are closed; this pass closed 3 of them, with 4 conversations under them. 1 queued effect will never publish.');
     expect(container.querySelector('.retire-receipt')?.textContent).toContain(WORKSPACE_ID);
     expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent?.includes('Retire workspace'))).toBe(false);
     expect(container.querySelector('.workspaces > button.retired')).not.toBeNull();
@@ -115,9 +115,9 @@ describe('the workspaces tab', () => {
     // and the failed node, the id stays typed, and the button asks again.
     expect(container.querySelector('.retire-receipt')).toBeNull();
     expect(container.querySelector('.workspaces > button.retired')).toBeNull();
-    expect(container.querySelector('.retire-incomplete')?.textContent).toContain('1 of 3 work streams and automations is still open');
+    expect(container.querySelector('.retire-incomplete')?.textContent).toContain('1 of 3 Canvases, Sidekicks, Channels and Threads is still open');
     expect(container.querySelector('.retire-incomplete')?.textContent).toContain('closed 2 of them and 2 conversations under them');
-    expect(container.querySelector('.retire-incomplete')?.textContent).toContain(OTHER_ID);
+    expect(container.querySelector('.retire-incomplete li')?.textContent).toContain(`Thread ${OTHER_ID}`);
     expect(container.querySelector<HTMLInputElement>('input[placeholder="Paste the workspace id"]')!.value).toBe(WORKSPACE_ID);
     expect(buttonContaining('Retire again').disabled).toBe(false);
 

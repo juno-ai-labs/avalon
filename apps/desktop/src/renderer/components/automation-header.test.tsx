@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom';
 import type * as PlatformModule from '../lib/platform';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -91,30 +92,27 @@ describe('AutomationHeader', () => {
     await waitFor(() => expect(handlers.onAppearanceChange).toHaveBeenCalledWith({ icon: 'rocket' }));
   });
 
-  it('keeps Pause visible but unavailable while a draft is being set up', () => {
-    const handlers = renderHeader(draft);
+  it('offers a draft no Pause and no delegation, and says which details are still empty', () => {
+    renderHeader(draft, { delegation: <section>Delegation allowed</section> });
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('New automation');
     expect(screen.getByText('Draft')).toBeInTheDocument();
     expect(screen.getByText('Only you')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create' })).toBeNull();
-    const pause = screen.getByRole('button', { name: 'Pause' });
-    expect(pause).toHaveAttribute('aria-disabled', 'true');
-    fireEvent.click(pause);
-    expect(handlers.onPause).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
+    expect(screen.queryByText('Delegation allowed')).toBeNull();
     expect(screen.queryByText('Make it work for you')).toBeNull();
     expect(screen.queryByText(/Ask for changes in the conversation/u)).toBeNull();
-    expect(screen.getByRole('heading', { name: 'When to expect it' })).toBeVisible();
-    expect(screen.getByText('No timing details yet.')).toBeVisible();
+    for (const block of ['Wakes on', 'Uses', 'Writes to']) {
+      expect(screen.getByRole('region', { name: block })).toHaveTextContent(`${block}Nothing yet`);
+    }
   });
 
-  it.each(['draft', 'deleted'] as const)('explains why %s Sidekicks cannot be paused', async (lifecycle) => {
-    renderHeader({ ...draft, lifecycle });
+  it('explains why an archived Sidekick cannot be paused', async () => {
+    renderHeader({ ...draft, lifecycle: 'deleted' });
     fireEvent.keyDown(document.body, { key: 'Tab' });
     fireEvent.focus(screen.getByRole('button', { name: 'Pause' }));
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(lifecycle === 'draft'
-      ? 'Finish setting up this Sidekick in the conversation before you can pause it.'
-      : 'This Sidekick has been archived and can no longer be paused.');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('This Sidekick has been archived and can no longer be paused.');
   });
 
   it('keeps the lifecycle control visible and inert while an action is pending', () => {
@@ -199,7 +197,7 @@ describe('AutomationHeader', () => {
     );
     expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
     expect(screen.getByText('Active')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'When to expect it' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Wakes on' })).toBeVisible();
     const email = screen.getByText('weekly-changelog@automation.rallywith.ai');
     expect(email).not.toBeVisible();
     fireEvent.click(screen.getByText('Email this Sidekick'));
@@ -219,15 +217,15 @@ describe('AutomationHeader', () => {
       runnable: true,
     });
     expect(screen.getByRole('list', { name: 'Triggers' })).toHaveTextContent('When an email arrives');
-    expect(screen.queryByText('No timing details yet.')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Wakes on' })).not.toHaveTextContent('Nothing yet');
   });
 
   it('shows the next scheduled time even without current trigger summaries', () => {
     renderHeader({ ...draft, lifecycle: 'active', nextRunAt: '2026-09-08T12:00:00.000Z', triggerSummaries: [] });
-    expect(screen.getByText('When to expect it')).toBeVisible();
+    expect(screen.getByText('Wakes on')).toBeVisible();
     expect(document.querySelector('.automation-runs-next')).toHaveTextContent(/^Next /u);
     expect(screen.queryByRole('list', { name: 'Triggers' })).toBeNull();
-    expect(screen.queryByText('No timing details yet.')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Wakes on' })).not.toHaveTextContent('Nothing yet');
   });
 
   it('offers Pause on an active automation and Resume on a paused one', () => {
@@ -266,7 +264,7 @@ describe('AutomationHeader', () => {
     const onCopyLink = vi.fn<() => Promise<void>>(async () => { throw new Error('denied'); });
     renderHeader(draft, { onCopyLink });
     fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy sidekick link' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy link' }));
     expect(await screen.findByText('The Sidekick link could not be copied.')).toBeVisible();
     expect(onCopyLink).toHaveBeenCalledOnce();
   });
@@ -405,25 +403,29 @@ describe('AutomationHeader', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run history' })).toBeNull());
     expect(screen.queryByRole('list', { name: 'Runs' })).toBeNull();
   });
+});
 
-  it('names the owning Thread in the scope badge and opens it', () => {
-    const threadId = '0191c0de-0000-7000-8000-00000000cafe';
-    renderHeader({
-      ...draft,
-      scope: 'workstream',
-      owningWorkstreamId: threadId,
-      owningThread: { id: threadId, title: 'Release room', appearance: { icon: 'rocket', color: 'purple' } },
-    });
-
-    expect(screen.queryByText('Thread')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Release room' }));
-    expect(openThread).toHaveBeenCalledWith(threadId);
-  });
-
-  it('says only "Thread" when the reader was not told which one', () => {
-    renderHeader({ ...draft, scope: 'workstream', owningWorkstreamId: '0191c0de-0000-7000-8000-00000000cafe' });
-
-    expect(screen.getByText('Thread')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Release room/ })).toBeNull();
+describe('what a Sidekick profile says it reaches', () => {
+  it('names who it is shared with, the connections it uses and the Canvases it writes to', () => {
+    render(
+      <Tooltip.Provider><MemoryRouter>
+        <AutomationHeader
+          automation={{
+            ...draft, lifecycle: 'active', status: 'active', audience: 'people', sharedWithUserIds: ['user-2', 'user-3'],
+            currentDefinition: { ...definition, recommendedPlugins: [{ pluginId: 'plugin_pagerduty', recommendedTools: [], reason: 'Alerts' }] },
+            canvases: [{
+              id: '00000000-0000-7000-8000-0000000000c1', title: 'Checkout latency · Nov 6', createdByUserId: '00000000-0000-7000-8000-0000000000a1',
+              createdAt: '2026-11-06T10:00:00.000Z', updatedAt: '2026-11-06T10:34:00.000Z', lastEditor: { kind: 'sidekick', id: 'automation-1' },
+              writerSidekickId: 'automation-1', visibility: 'creator',
+            }] as NonNullable<AutomationDetail['canvases']>,
+          }}
+          {...actions()}
+        />
+      </MemoryRouter></Tooltip.Provider>,
+    );
+    expect(screen.getByText('Shared · 3 people')).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Connections it uses' })).getByText('Pagerduty')).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Canvases it writes to' })).getByRole('link', { name: 'Checkout latency · Nov 6' }))
+      .toHaveAttribute('href', '/canvases/00000000-0000-7000-8000-0000000000c1');
   });
 });

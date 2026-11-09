@@ -9,7 +9,7 @@
  *
  * Everything but the two providers is real: the Sidekick, its run child and
  * persistent loop, the Organization's WorkspaceDO with its bindings and Slack
- * ingress jobs, the Breakout's SubstreamAgent, and `SlackAgentService` itself.
+ * ingress jobs, the Breakout's AgentLoopDO, and `SlackAgentService` itself.
  * The model is the OpenRouter double; Slack's Web API is a double layered over
  * it that answers `auth.test`, `chat.postMessage` and `users.info`. The Slack event is
  * handed to the service the way the signed HTTP route hands it over, and its
@@ -21,6 +21,7 @@
  * the production ordering the continuation has to survive.
  */
 
+import { createCanvas } from "../src/services/canvas-service";
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -44,14 +45,10 @@ import type { Env } from "../src/env";
 import { encryptString } from "../src/lib/crypto";
 import { createAutomation } from "../src/services/automation-service";
 import { SlackAgentService } from "../src/services/slack-agent-service";
-import {
-  bootstrapConversationChildRuntime,
-  bootstrapWorkstreamRuntimeEnvironment,
-  provisionWorkstreamObject,
-} from "../src/services/workstream-runtime-database";
+
 import { deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { useOpenRouterDouble } from "./helpers/openrouter-double";
+import { memberInputs, useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { runSidekickAlarms } from "./helpers/sidekick";
@@ -94,7 +91,7 @@ const DEFINITION: AutomationDraft = {
   recommendedPlugins: [],
   memoryTables: [],
   customTools: [],
-  suggestedScope: "workstream",
+  suggestedScope: "workspace",
   followUpQuestion: null,
   elicitation: null,
   ready: true,
@@ -109,7 +106,7 @@ const DEFINITION: AutomationDraft = {
 let opening: "send" | { read: string } = "send";
 const provider = useOpenRouterDouble((call) => {
   if (call.messages.at(-1)?.role === "tool") return { say: "Done." };
-  const lastUser = text(call.messages.filter((message) => message.role === "user").at(-1)?.content);
+  const lastUser = text(memberInputs(call).at(-1)?.content);
   if (lastUser.startsWith("This run is continuing because")) {
     return { callTool: { name: "conversation_post", arguments: { text: FORWARDED_TEXT } } };
   }
@@ -208,7 +205,6 @@ function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-
 function conversation(parentId: string, substreamId: SubstreamId | "0" = "0") {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     conversationObjectName("global", WORKSPACE_ID, parentId, substreamId)));
@@ -280,63 +276,14 @@ async function seedSlackConnection(): Promise<void> {
 }
 
 async function seedRoom(): Promise<void> {
-  await workspace().reserveChild({
-    workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: asSubstreamId("0"), kind: "main",
-    createdByUserId: AUTHOR_ID, authorityGeneration: 1,
-    directory: { title: "Investors", description: "", scope: "personal", systemKind: null, emailAddress: null,
-      titleStatus: "settled", createdAt: NOW },
-  });
-  await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, ROOM_ID, "workstream");
-  await provisionWorkstreamObject(TEST_ENV, {
-    workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, title: "Investors", objective: "", scope: "personal",
-    createdByUserId: AUTHOR_ID, participantUserIds: [AUTHOR_ID], harnessStatus: "idle", titleStatus: "settled",
-    emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
-  });
+  await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: AUTHOR_ID, canvasId: ROOM_ID, title: "Investors" });
   await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
 }
 
-/** A ready private Breakout of the room, made the way creation makes one. */
-async function seedBreakout(title: string): Promise<SubstreamId> {
-  const parent = workspace();
-  const operationId = crypto.randomUUID();
-  const recipe = {
-    policy: { revision: "test-empty-v1", strategy: { id: "empty", version: 1 }, config: {} },
-    capture: "none" as const,
-    parts: [],
-  };
-  const reserved = await parent.beginPrivateChildPreparation({
-    workspaceId: WORKSPACE_ID, parentId: ROOM_ID, operationId, creatorUserId: AUTHOR_ID, title,
-    sourceSubstreamId: "0" as const, sourceThroughTurnId: null, recipe,
-    membershipInitializer: { plugin: { id: "creator-only", version: 1 }, config: {}, memberUserIds: [AUTHOR_ID] },
-  });
-  const hash = "0".repeat(64);
-  await parent.savePreparedPrivateChildContext({
-    workspaceId: WORKSPACE_ID, parentId: ROOM_ID, operationId,
-    preparedContext: { schemaVersion: 1, recipe, recipeHash: hash, capture: null, captureHash: null, parts: [], contentHash: hash },
-  });
-  await parent.claimPrivateChildConfirmation({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID, operationId, actorUserId: AUTHOR_ID });
-  await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "workstream", ROOM_ID, reserved.substreamId);
-  await provisionWorkstreamObject(TEST_ENV, {
-    workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: reserved.substreamId,
-    title, objective: "", scope: "personal", createdByUserId: AUTHOR_ID,
-    participantUserIds: [AUTHOR_ID], harnessStatus: "idle", titleStatus: "settled", emailAddress: null,
-    emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
-  });
-  await conversation(ROOM_ID, reserved.substreamId).installPreparedSubstreamContext({
-    workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: reserved.substreamId, operationId,
-  });
-  await parent.setPrivateChildTerminalStatus({
-    workspaceId: WORKSPACE_ID, parentId: ROOM_ID, operationId, status: "ready", errorCode: null,
-  });
-  await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID, reserved.substreamId));
-  return reserved.substreamId;
-}
-
-/** A room Sidekick whose home is `home`, applied, projected, and given the Slack plugin by default. */
-async function seedSidekick(home: SubstreamId): Promise<void> {
+/** An Organization Sidekick, applied, projected, and given the Slack plugin by default. */
+async function seedSidekick(): Promise<void> {
   await createAutomation(TEST_ENV, {
-    workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workstream",
-    owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId: AUTOMATION_ID
+    workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workspace", automationId: AUTOMATION_ID
   });
   const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
   await workspace().sidekickSubmitDefinition({ ...addressed, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
@@ -426,8 +373,9 @@ interface PostRow extends Record<string, SqlStorageValue> {
   structured_content_json: string;
 }
 
-async function homeState(home: SubstreamId) {
-  return runInDurableObject(conversation(ROOM_ID, home), (_instance, state) => ({
+/** The Sidekick's own shared conversation, where a post naming none lands. */
+async function homeState() {
+  return runInDurableObject(conversation(AUTOMATION_ID), (_instance, state) => ({
     posts: state.storage.sql.exec<PostRow>(
       `SELECT id, client_message_id, message_type, content, structured_content_json
          FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'conversation-post:%'`,
@@ -448,8 +396,7 @@ beforeEach(async () => {
 
 describe("a Sidekick's Slack request, answered in its thread, forwarded home", () => {
   it("sends, binds, continues on the reply, posts home once, leaves a later DM alone, and is readable later", async () => {
-    const home = await seedBreakout("Weekly call");
-    await seedSidekick(home);
+    await seedSidekick();
 
     // 1. The run DMs Adam with the workspace bot; the receipt commits and the
     //    thread's binding reaches the Organization once the outbox drains.
@@ -501,14 +448,14 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
       ).one());
     expect(trigger).toEqual({ author_type: "external", content: REPLY_TEXT });
     const continuedCall = provider.calls.find((call) =>
-      text(call.messages.filter((message) => message.role === "user").at(-1)?.content) === CONTINUATION_NOTE);
+      text(memberInputs(call).at(-1)?.content) === CONTINUATION_NOTE);
     expect(continuedCall, "the continued run never reached the model with its note").toBeDefined();
     expect(continuedCall!.messages.some((message) => text(message.content).includes(REPLY_TEXT))).toBe(true);
 
     // 3. The continued run posted with no conversation named: one message in
-    //    the home Breakout, as the Sidekick, marked as Adam's from Slack, and
-    //    the Breakout's own agent was not woken.
-    const posted = await homeState(home);
+    //    the Sidekick's own conversation, as the Sidekick, marked as Adam's
+    //    from Slack, and that conversation's own agent was not woken.
+    const posted = await homeState();
     expect(posted.posts).toHaveLength(1);
     const [post] = posted.posts;
     expect(post).toMatchObject({ message_type: "automation_activation", content: FORWARDED_TEXT });
@@ -521,19 +468,18 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
     // leave the one message.
     expect(await founderSays("EvE2EReply", { text: REPLY_TEXT, ts: "1790000050.000200", threadTs: REQUEST_TS }))
       .toEqual({ ok: true, duplicate: true });
-    expect(await conversation(ROOM_ID, home).appendConversationPost({
-      schemaVersion: 1, workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: home,
+    expect(await conversation(AUTOMATION_ID).appendConversationPost({
+      schemaVersion: 1, workspaceId: WORKSPACE_ID, parentKind: "automation", workstreamId: AUTOMATION_ID, substreamId: "0",
       clientMessageId: post!.client_message_id, text: post!.content,
       post: JSON.parse(post!.structured_content_json),
     })).toEqual({ outcome: "replayed", code: "conversation_post_replayed", messageId: post!.id });
-    expect((await homeState(home)).posts).toHaveLength(1);
+    expect((await homeState()).posts).toHaveLength(1);
     expect(await executions(runId)).toHaveLength(2);
 
     // 4. The request's run has finished, so a top-level message in the bot DM
     //    is no longer redirected to its thread (the prompt applies only while
-    //    the run is open; slack-workspace-assignment.test.ts covers it). It is
-    //    ordinary Agent work, which this fixture's installation, holding no
-    //    Agent grant, refuses; either way it reaches no run.
+    //    the run is open). It is a new conversation, which Slack no longer
+    //    starts, so it reaches no run.
     //    The run child has finished; the Sidekick must hear it before the DM
     //    arrives, or the run still reads as open and the prompt is right.
     await expect.poll(async () => {
@@ -542,7 +488,13 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
     }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe("completed");
     const postsBefore = slackCalls.filter((call) => call.method === "chat.postMessage").length;
     await founderSays("EvE2EStray", { text: "Also, one more thing", ts: "1790000060.000300" }).catch(() => undefined);
-    expect(slackCalls.filter((call) => call.method === "chat.postMessage").slice(postsBefore)).toEqual([]);
+    // Rally starts no work from Slack, so the stray DM hears that once, in its
+    // own thread, and nothing reaches the run.
+    expect(slackCalls.filter((call) => call.method === "chat.postMessage").slice(postsBefore)).toMatchObject([{
+      method: "chat.postMessage",
+      body: { thread_ts: "1790000060.000300",
+        text: "Rally no longer starts work from Slack. Start a Canvas in Rally, or set up a Sidekick to work from Slack for you." },
+    }]);
     expect(await executions(runId)).toHaveLength(2);
     expect(await runInDurableObject(runChild(runId), (_instance, state) =>
       state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM pending_loop_inputs`).one().count)).toBe(0);
@@ -554,12 +506,12 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
       claims: state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM slack_agent_thread_claims`).one().count,
     }))).toEqual({ bindings: 1, sessions: 0, claims: 0 });
-    expect((await homeState(home)).posts).toHaveLength(1);
+    expect((await homeState()).posts).toHaveLength(1);
 
     // 5. A later run reads its home and finds the forwarded answer, with where
     //    it came from.
     await deliverChildEffects(TEST_ENV, runChild(runId));
-    opening = { read: `${ROOM_ID}/${home}` };
+    opening = { read: AUTOMATION_ID };
     const callsBefore = provider.calls.length;
     const laterRunId = await startRun();
     expect((await settled(laterRunId, 1))[0]!.status).toBe("completed");
@@ -572,6 +524,6 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
     expect(readResult).toContain(`"provider":"slack"`);
     expect(readResult).toContain(`"name":"Adam"`);
     await deliverChildEffects(TEST_ENV, runChild(laterRunId));
-    await deliverChildEffects(TEST_ENV, conversation(ROOM_ID, home));
+    await deliverChildEffects(TEST_ENV, conversation(AUTOMATION_ID));
   }, 90_000);
 });

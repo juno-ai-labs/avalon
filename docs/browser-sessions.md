@@ -63,8 +63,10 @@ A request-local bearer is minted internally; ordinary API middleware authenticat
 that target once using the same checks as desktop. It is never returned to JavaScript. The
 adapter strips cookies and development identity headers from the forwarded
 request and overwrites caller-supplied Authorization. Only named product route
-families are forwarded; authentication/token issuance, internal operations and
-onboarding routes are excluded. Existing product authorization still decides
+families are forwarded, the ones the Canvases and Sidekicks shell calls
+(`BROWSER_ROUTE_FAMILIES`, listed in [`browser-client.md`](browser-client.md));
+authentication/token issuance, internal operations, onboarding routes and the
+retired Thread, Channel and Space families are excluded. Existing product authorization still decides
 which scopes the caller may read or mutate. Message-issue submissions use this
 same adapter; [message issues](message-issues.md) owns their access and storage.
 

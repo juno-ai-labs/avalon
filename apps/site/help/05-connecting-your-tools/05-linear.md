@@ -32,13 +32,13 @@ Linear offers both kinds of connection.
 
 ## Starting Sidekicks from Linear
 
-With the Organization connection in place, a change in Linear, such as a new issue or a new comment, can start a Sidekick. You might have one that tidies up every new bug report, or one that posts a note in a Thread when an issue moves to Done. [Triggers and schedules](../07-sidekicks/03-triggers-and-schedules.md) shows how to set one up.
+With the Organization connection in place, a change in Linear, such as a new issue or a new comment, can start a Sidekick. You might have one that tidies up every new bug report, or one that updates a release Canvas when an issue moves to Done. [Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md) shows how to set one up.
 
 ## Things to try
 
 - "What is still open in the Mobile team's current project?"
 - "Create a Linear issue for the broken export button, priority high, in the Web team."
-- "Move the onboarding copy issue to In Review and add a comment linking this Thread."
+- "Move the onboarding copy issue to In Review and add a comment linking this Canvas."
 - "Summarise what changed in our Linear issues this week."
 
 ## When it stops working

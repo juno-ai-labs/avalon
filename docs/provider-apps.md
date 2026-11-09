@@ -178,7 +178,7 @@ install state.
 | Homepage URL | `https://rallywith.ai` |
 | Setup URL | `https://github.rallywith.ai/connections/github/setup` |
 | Webhook URL | `https://github.rallywith.ai/ingest/github` |
-| Webhook secret | The shared local `GITHUB_WEBHOOK_SECRET` value (or the existing `GITHUB_WEBHOOK_SECRET_GLOBAL` value while migrating) |
+| Webhook secret | The shared `GITHUB_WEBHOOK_SECRET` value |
 | Installability | Any account |
 
 Set repository permissions to **Metadata: read**, **Contents: read and write**, **Issues:
@@ -218,7 +218,7 @@ authorization and proves that the authorizing user can access that installation.
 
 Register `linear.json` as one public Linear OAuth app. Public distribution permits
 installation by other workspaces; listing it in Linear's integration directory is a
-separate review. The manifest registers both regional callback URLs and the single
+separate review. The manifest registers the regional callback URLs and the single
 webhook URL `https://linear.rallywith.ai/ingest/linear`. It is the
 production-safe resource configuration and intentionally does not subscribe to
 `AgentSessionEvent` or `AppUserNotification`.
@@ -233,7 +233,7 @@ must match this table:
 | Developer | Juno AI Labs |
 | Developer URL | `https://rallywith.ai` |
 | Description | Match `display.description` in [`linear.json`](../config/provider-apps/linear.json) |
-| Redirect URIs | Both `rallywith.ai` callbacks followed by both `with-avalon.com` compatibility callbacks from `linear.json` |
+| Redirect URIs | The `rallywith.ai` callback followed by the `with-avalon.com` compatibility callback, both from `linear.json` |
 | Webhook URL | `https://linear.rallywith.ai/ingest/linear` |
 | Publicly available | Enabled |
 
@@ -242,7 +242,7 @@ not create a second app or rotate credentials for this public-identity change.
 
 Rally uses Authorization Code with PKCE S256. The same public app requests
 `actor=user` for a personal, owner-only connection and `actor=app` for a workspace
-connection whose capabilities roll down to every Rally workspace member. The
+connection whose capabilities roll down to every member of the Rally Organization. The
 selected, workspace-only `linear.agent` capability requests `app:assignable` and
 `app:mentionable`, making Rally a delegatable and mentionable app user, plus
 `write` so the host can immediately acknowledge activation with a reaction.
@@ -260,8 +260,8 @@ connections also participate in organization routing, but the regional Worker mu
 prove the owner's access to the signed resource or a signed parent with that
 personal token before creating an owner-only activity.
 
-Store the same client ID, client secret, and webhook signing secret in both
-regional Workers. `linear-native-agent.preview.json` is a later configuration
+Store the same client ID, client secret, and webhook signing secret in every
+configured regional Worker. `linear-native-agent.preview.json` is a later configuration
 snapshot for that **same app**, applied only after the native-session acceptance
 gate passes—not a separate preview registration. Its Rally name and description
 already match the live app; its preview-only scopes and events remain unapplied
@@ -296,7 +296,7 @@ configured deployments:
 | Redirect URI | `https://notion.rallywith.ai/connections/notion/callback` |
 | Webhook URL | Run `pnpm notion:webhook:prepare` and paste the URL it copies |
 
-A Rally workspace owner or administrator initiates installation. The authorize
+An owner or administrator of the Rally Organization initiates installation. The authorize
 URL deliberately uses Notion's `owner=user`, because public OAuth needs a human
 approver and page picker; do not change that parameter to model Rally scope.
 Rally stores the resulting bot grant as a workspace connection with no user
@@ -346,12 +346,12 @@ Install the platform login client **only on the Global Worker**:
 
 - `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`
 
-Install the separate Google service connector client in **both** regional Workers,
-so each region can complete connector OAuth and refresh connector tokens:
+Install the separate Google service connector client in **every** configured
+regional Worker (Global is the only one today), so each region can complete connector OAuth and refresh connector tokens:
 
 - `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID`, `GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET`
 
-configured deployments share one public GitHub App identity and webhook secret:
+Configured deployments share one public GitHub App identity and webhook secret:
 
 - `GITHUB_APP_ID`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`,
   `GITHUB_APP_SLUG`, `GITHUB_WEBHOOK_SECRET`
@@ -360,16 +360,16 @@ configured deployments share one public GitHub App identity and webhook secret:
 - `GITHUB_APP_SLUG` must equal the live GitHub URL slug exactly. The current value
   is `rally-with-ai` in configured deployments.
 
-configured deployments share one public Linear app identity and webhook secret:
+Configured deployments share one public Linear app identity and webhook secret:
 
 - `LINEAR_OAUTH_CLIENT_ID`, `LINEAR_OAUTH_CLIENT_SECRET`, `LINEAR_WEBHOOK_SECRET`
 
-configured deployments share one public Slack Marketplace app identity and request-signing
+Configured deployments share one public Slack Marketplace app identity and request-signing
 secret:
 
 - `SLACK_APP_ID`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET`
 
-configured deployments share the same single public Notion connection identity:
+Configured deployments share the same single public Notion connection identity:
 
 - `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_INTEGRATION_ID` —
   identical in configured deployments, because there is one connection. Webhook setup has

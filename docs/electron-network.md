@@ -1,16 +1,17 @@
 # Electron network requests
 
-Rally and Sideline share an upload bridge that keeps request failures inside the
+Rally's Electron main process has an upload bridge that keeps request failures inside the
 request's promise. It uses Chromium's network stack, default Electron session,
 proxy configuration, certificate checks, and credentials policy.
 
 ## Where the code lives
 
-`packages/electron-network/src/index.ts` exports `createElectronFetch`. Each
-Electron main process creates it with `net` and routes its application fetches
-through it, including telemetry and native crash uploads. Both Electron Vite
-configurations bundle the workspace package into the main-process output; a
-packaged app must not try to load its TypeScript source from node_modules.
+`packages/electron-network/src/index.ts` exports `createElectronFetch`. The
+desktop app's main process (`apps/desktop/src/main/index.ts`) creates it with
+`net` and routes its application fetches through it, including telemetry and
+native crash uploads. `apps/desktop/electron.vite.config.ts` bundles the
+workspace package into the main-process output; a packaged app must not try to
+load its TypeScript source from node_modules.
 
 ## How it works
 

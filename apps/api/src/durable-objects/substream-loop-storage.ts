@@ -1,4 +1,4 @@
-/** Durable singleton execution-loop authority owned by one SubstreamAgent. */
+/** Durable singleton execution-loop authority owned by one AgentLoopDO. */
 
 import { enqueueSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 

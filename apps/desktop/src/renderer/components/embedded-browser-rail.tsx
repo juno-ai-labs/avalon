@@ -11,6 +11,7 @@ import {
 } from './embedded-browser-view';
 import { IconButton } from './primitives';
 import { RailSurface } from './rail-surface';
+import type { RailResize } from './rail-resize-handle';
 
 export function EmbeddedBrowserRail({
   leaving = false,
@@ -20,7 +21,7 @@ export function EmbeddedBrowserRail({
 }: {
   leaving?: boolean;
   onClose: () => void;
-  onResize: (width: number) => void;
+  onResize: RailResize;
   width: number;
 }): React.JSX.Element {
   const { state, active, error, command } = useEmbeddedBrowser();

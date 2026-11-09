@@ -163,6 +163,7 @@ export interface TerminalResourceBridge {
   publishedKindForPath(
     context: HarnessToolContext,
     filePath: string,
+    input?: { canvas?: string | undefined; displayName?: string | undefined },
   ): Promise<"site" | "archive" | "file" | null>;
 }
 
@@ -703,7 +704,7 @@ export function createDaytonaTerminalRuntime(
     // hold. The other direction — an archive that grew an entry file — is the
     // archive fallback's own recovery and upgrades freely.
     assertKindTransitionAllowed(
-      await resources.publishedKindForPath(context, input.filePath),
+      await resources.publishedKindForPath(context, input.filePath, input),
       resolved.kind,
     );
     const totalBytes = entries.reduce((total, entry) => total + entry.sizeBytes, 0);

@@ -18,7 +18,7 @@ const RESULT = { columns: ["answer"], rows: [{ answer: 1 }], rowsRead: 1, rowsWr
  */
 describe("engineering SQL result wire compatibility", () => {
   it("accepts a result that omits every per-object-kind id", () => {
-    // What `run_workspace_sql` and `run_substream_sql`
+    // What `run_workspace_sql` and `run_canvas_sql`
     // send. Byte-identical to what a build predating the Sidekick and artifact
     // tools expects, which is the whole point of omitting rather than nulling.
     expect(EngineeringSqlLookupSchema.parse({

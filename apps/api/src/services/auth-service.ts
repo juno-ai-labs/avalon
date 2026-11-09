@@ -4,7 +4,7 @@ import { isConfiguredRegion } from "@rally/contracts/regions";
 import { createRemoteJWKSet, jwtVerify, SignJWT, type JWTPayload } from "jose";
 import { newId, nowIso } from "@rally/db";
 import { asUserId, asWorkspaceId, RefreshTokenSchema, IdSchema, WorkspaceSchema, type Region, type Session } from "@rally/contracts";
-import { isDesktopDeepLinkProtocol, SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
+import { isDesktopDeepLinkProtocol } from "@rally/contracts/desktop-deep-link";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { browserOrigin, browserReturnUrl } from "../lib/browser-origin";
@@ -188,7 +188,6 @@ export async function verifyAccessToken(env: Env, token: string): Promise<Omit<I
 function allowedReturnUri(env: Env, candidate: string | undefined): string {
   const expected = new URL(env.DESKTOP_DEEP_LINK_URI);
   const value = new URL(candidate ?? env.DESKTOP_DEEP_LINK_URI);
-  if (value.toString() === SIDELINE_AUTH_CALLBACK_URI) return value.toString();
   if (
     !isDesktopDeepLinkProtocol(value.protocol)
     || value.host !== expected.host
@@ -422,11 +421,15 @@ export class AuthService {
          VALUES (?, 'development-user', 'dev@avalon.local', 'Adam', NULL, ?, ?)
          ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`,
       ).bind(DEVELOPMENT_USER_ID, at, at),
+      // The name is whichever wrote the row first (the seed's, on a seeded
+      // stack): a later sign-in keeps it, so the desktop's (which sends its
+      // onboarding name) and a bare POST (which takes this default) no longer
+      // rename the Organization under each other's members.
       this.env.DB.prepare(
         `INSERT INTO workspaces (id, name, slug, region, timezone, created_by_user_id, created_at, updated_at)
          VALUES (?, ?, 'avalon-development', ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
-           name = excluded.name, updated_at = excluded.updated_at, abandoned_at = NULL`,
+           updated_at = excluded.updated_at, abandoned_at = NULL`,
       ).bind(
         DEVELOPMENT_WORKSPACE_ID,
         workspaceName.trim(),

@@ -3,7 +3,7 @@
  *
  * A run needs several durable authorities — the work stream's messages, its
  * resources, its harness runs, its receipts, its Terminal — and every one of
- * them lives in the `SubstreamAgent` that owns the work stream. When the run
+ * them lives in the `AgentLoopDO` that owns the work stream. When the run
  * executes inside that object none of them needs a stub, a name, or a round
  * trip; when it executes anywhere else, all of them do.
  *
@@ -53,7 +53,7 @@ export type LocalAuthorityExecutor = (
 ) => Promise<{ ok?: boolean; value?: unknown; error?: string }>;
 
 /**
- * The authorities a `SubstreamAgent` can serve without leaving the isolate.
+ * The authorities an `AgentLoopDO` can serve without leaving the isolate.
  *
  * One name per object port, and the ports are the eight in this directory plus
  * Terminal, whose port predates them. A caller supplies what it owns; anything

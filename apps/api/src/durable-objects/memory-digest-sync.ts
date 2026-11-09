@@ -1,6 +1,8 @@
 import { WorkspaceIdSchema } from "@rally/contracts";
+import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
+import { ApiError } from "../lib/api-error";
 
 import {
   MemoryConversationSchema,
@@ -157,6 +159,65 @@ export const MEMORY_DIGEST_SYNC_MIGRATION: readonly string[] = [
   ...Object.values(MEMORY_DIGEST_SYNC_TRIGGERS).flat(),
 ];
 
+const MEMORY_DIGEST_TRIGGER_STATEMENTS = Object.values(MEMORY_DIGEST_SYNC_TRIGGERS).flat();
+
+/**
+ * Part of WorkspaceDO migration 137: a holder may be a Canvas's Chat. The CHECK on
+ * `parent_kind` cannot widen in place, so the table is copied. Every trigger
+ * above reads the table by name in its body, and SQLite refuses to rename a
+ * table into place while a trigger names one that does not exist, so the
+ * triggers are dropped first and put back with the same text afterwards.
+ */
+export const MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION: readonly string[] = [
+  ...MEMORY_DIGEST_TRIGGER_STATEMENTS.map((statement) =>
+    `DROP TRIGGER IF EXISTS ${/^CREATE TRIGGER (\S+)/u.exec(statement)![1]}`),
+  `CREATE TABLE memory_digest_holders_v136 (
+    conversation TEXT PRIMARY KEY,
+    parent_kind TEXT NOT NULL CHECK (parent_kind IN ('workstream', 'automation', 'space', 'canvas')),
+    parent_id TEXT NOT NULL,
+    substream_id TEXT NOT NULL,
+    refreshed_at INTEGER NOT NULL
+  ) STRICT`,
+  "INSERT INTO memory_digest_holders_v136 SELECT * FROM memory_digest_holders",
+  "DROP TABLE memory_digest_holders",
+  "ALTER TABLE memory_digest_holders_v136 RENAME TO memory_digest_holders",
+  ...MEMORY_DIGEST_TRIGGER_STATEMENTS,
+];
+
+/**
+ * Part of WorkspaceDO migration 137: the copy-sync triggers for the parents that
+ * remain, which `MEMORY_DIGEST_SYNC_TRIGGERS` (written for Threads and
+ * Channels, and hashed into migrations 117 and 137) never covered. A Canvas
+ * changing who may open it (`canvasReaderAllows` reads its visibility, its
+ * creator and the Sidekick that writes it) or being deleted marks every
+ * holder; a participant joining marks that Canvas's holders, and one leaving
+ * also marks every copy holding a fact learned there. A Sidekick's people
+ * list is what `sidekickAdmits` reads, so a change marks every holder.
+ */
+const CANVAS_HOLDERS = (row: "NEW" | "OLD") => `parent_kind = 'canvas' AND parent_id = ${row}.canvas_id`;
+export const MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION: readonly string[] = [
+  `CREATE TRIGGER memory_digest_canvas_visibility AFTER UPDATE OF visibility, created_by_user_id, writer_sidekick_id ON canvas_directory
+   WHEN OLD.visibility IS NOT NEW.visibility OR OLD.created_by_user_id IS NOT NEW.created_by_user_id
+     OR OLD.writer_sidekick_id IS NOT NEW.writer_sidekick_id BEGIN
+     ${MARK_ALL}
+   END`,
+  `CREATE TRIGGER memory_digest_canvas_delete AFTER DELETE ON canvas_directory BEGIN
+     ${MARK_ALL}
+   END`,
+  `CREATE TRIGGER memory_digest_canvas_participant_insert AFTER INSERT ON canvas_participants BEGIN
+     ${markWhere(CANVAS_HOLDERS("NEW"))}
+   END`,
+  `CREATE TRIGGER memory_digest_canvas_participant_delete AFTER DELETE ON canvas_participants BEGIN
+     ${markWhere(`(${CANVAS_HOLDERS("OLD")}) OR ${holdersOfFactsFrom("source.value = 'canvas:' || OLD.canvas_id")}`)}
+   END`,
+  `CREATE TRIGGER memory_digest_sidekick_audience_insert AFTER INSERT ON sidekick_audience BEGIN
+     ${MARK_ALL}
+   END`,
+  `CREATE TRIGGER memory_digest_sidekick_audience_delete AFTER DELETE ON sidekick_audience BEGIN
+     ${MARK_ALL}
+   END`,
+];
+
 /** Advance `memory_revision` inside the caller's transaction and answer the new value. */
 export function nextMemoryRevision(sql: SqlStorage): number {
   return sql.exec<{ revision: number }>(
@@ -200,12 +261,21 @@ export function recordMemoryDigestHolder(
   input: { conversation: MemoryConversation; principal: string; factIds: readonly string[]; now: number },
 ): void {
   const key = memoryConversationKeyOf(input.conversation);
-  sql.exec(
-    `INSERT INTO memory_digest_holders(conversation, parent_kind, parent_id, substream_id, refreshed_at)
-       VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(conversation) DO UPDATE SET refreshed_at = excluded.refreshed_at`,
-    key, input.conversation.parentKind, input.conversation.parentId, input.conversation.substreamId, input.now,
-  );
+  try {
+    sql.exec(
+      `INSERT INTO memory_digest_holders(conversation, parent_kind, parent_id, substream_id, refreshed_at)
+         VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(conversation) DO UPDATE SET refreshed_at = excluded.refreshed_at`,
+      key, input.conversation.parentKind, input.conversation.parentId, input.conversation.substreamId, input.now,
+    );
+  } catch (error) {
+    // The table's CHECK names the conversation kinds that may hold a copy. A
+    // kind it does not admit (a Canvas, before migration 137) failed every
+    // refresh under one generic reason; say which kind it was.
+    if (!(error instanceof Error) || !/CHECK constraint failed/u.test(error.message)) throw error;
+    throw new ApiError(500, "memory_digest_holder_kind_unadmitted", "This conversation kind cannot hold a memory digest copy",
+      undefined, codeShaped(`memory_digest_holder_kind_unadmitted:${input.conversation.parentKind}`));
+  }
   sql.exec("DELETE FROM memory_digest_holder_facts WHERE conversation = ? AND principal = ?", key, input.principal);
   sql.exec(
     `INSERT INTO memory_digest_holder_facts(conversation, principal, fact_id)
@@ -317,24 +387,22 @@ export function releaseMemoryDigestSync(sql: SqlStorage, conversation: string, r
 
 /**
  * Whether the conversation is still live in this object's directory
- * projection: a thread (and, for a Breakout, the Breakout too) not archived, a
- * Channel not archived, a Sidekick not deleted.
+ * projection: a Sidekick not deleted, a Canvas not deleted. A Thread's or a
+ * Channel's conversation is never live: its object refuses a stored
+ * `workstream` or `space` parent with `conversation_parent_kind_retired`, so a
+ * digest pushed to it could never land, and settling it here deletes the
+ * holder row the migration-117 triggers on the Thread tables keep marking.
  */
 function conversationLive(sql: SqlStorage, conversation: MemoryConversation): boolean {
   const exists = (query: string, ...bindings: string[]) => sql.exec(query, ...bindings).toArray().length > 0;
   switch (conversation.parentKind) {
-    case "workstream": {
-      const thread = exists("SELECT 1 FROM channels WHERE workstream_id = ? AND archived_at IS NULL", conversation.parentId);
-      if (!thread || conversation.substreamId === "0") return thread;
-      return exists(
-        "SELECT 1 FROM breakouts WHERE workstream_id = ? AND substream_id = ? AND archived_at IS NULL",
-        conversation.parentId, conversation.substreamId,
-      );
-    }
+    case "workstream":
+    case "space":
+      return false;
     case "automation":
       return exists("SELECT 1 FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'", conversation.parentId);
-    case "space":
-      return exists("SELECT 1 FROM spaces WHERE space_id = ? AND archived_at IS NULL", conversation.parentId);
+    case "canvas":
+      return exists("SELECT 1 FROM canvas_directory WHERE canvas_id = ?", conversation.parentId);
   }
 }
 

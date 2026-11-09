@@ -2,6 +2,29 @@ import type { DurableObjectStorage } from "@cloudflare/workers-types";
 import { AgentIdSchema, type AgentId } from "@rally/contracts";
 
 /** Workspace-local communication scope. Ownership is separate from membership. */
+
+/** An agent id is `<parentKind>/<parentId>/<substreamId>`; a Thread's or Space's names a retired parent. */
+function retiredAgentKind(value: string): string | null {
+  const kind = value.split("/", 1)[0];
+  return kind === "workstream" || kind === "space" ? kind : null;
+}
+
+/**
+ * A stored agent id that must be live. A Thread-era row (an agent of a
+ * retired Thread or Space) is refused by name, as a domain result, rather than
+ * as a schema failure.
+ */
+function storedAgentId(value: string): AgentId {
+  const retired = retiredAgentKind(value);
+  if (retired) throw new AgentTeamError(`conversation_parent_kind_retired:${retired}`);
+  return AgentIdSchema.parse(value);
+}
+
+/** A listed member: a Thread-era row is left out, since its agent can no longer be reached. */
+function liveAgentId(value: string): AgentId[] {
+  return retiredAgentKind(value) ? [] : [AgentIdSchema.parse(value)];
+}
+
 export const AGENT_TEAM_SCHEMA = [
   `CREATE TABLE agent_teams (
     team_id TEXT PRIMARY KEY,
@@ -36,7 +59,8 @@ export interface AgentMessageRoute {
 }
 
 type AgentTeamErrorCode = "agent_ownership_conflict" | "agent_ownership_cycle" | "agent_not_teammate"
-  | "agent_message_identity_conflict" | "agent_message_not_received";
+  | "agent_message_identity_conflict" | "agent_message_not_received"
+  | `conversation_parent_kind_retired:${string}`;
 class AgentTeamError extends Error {
   constructor(readonly code: AgentTeamErrorCode) { super(code); }
 }
@@ -92,7 +116,7 @@ export class AgentTeamStorage {
     this.assertMember(teamId, requester);
     return this.storage.sql.exec<{ agent_id: string }>(
       "SELECT agent_id FROM agent_team_members WHERE team_id = ? ORDER BY agent_id", teamId,
-    ).toArray().map((row) => AgentIdSchema.parse(row.agent_id));
+    ).toArray().flatMap((row) => liveAgentId(row.agent_id));
   }
 
   /** A shared member never joins the rosters of the teams it belongs to. */
@@ -137,7 +161,7 @@ export class AgentTeamStorage {
     const row = this.storage.sql.exec<{ owner_agent_id: string }>(
       "SELECT owner_agent_id FROM agent_delegations WHERE agent_id = ?", agent,
     ).toArray()[0];
-    return row ? AgentIdSchema.parse(row.owner_agent_id) : null;
+    return row ? storedAgentId(row.owner_agent_id) : null;
   }
 
   ownedDescendants(owner: AgentId): AgentId[] {
@@ -147,7 +171,7 @@ export class AgentTeamStorage {
         UNION
         SELECT child.agent_id FROM agent_delegations child JOIN owned ON child.owner_agent_id = owned.agent_id
       ) SELECT agent_id FROM owned ORDER BY agent_id`, owner,
-    ).toArray().map((row) => AgentIdSchema.parse(row.agent_id));
+    ).toArray().flatMap((row) => liveAgentId(row.agent_id));
   }
 
   private message(messageId: string): AgentMessageRoute | null {
@@ -155,8 +179,8 @@ export class AgentTeamStorage {
       team_id: string; sender_agent_id: string; recipient_agent_id: string;
     }>("SELECT team_id, sender_agent_id, recipient_agent_id FROM agent_message_routes WHERE message_id = ?", messageId).toArray()[0];
     return row ? {
-      messageId, teamId: row.team_id, senderAgentId: AgentIdSchema.parse(row.sender_agent_id),
-      recipientAgentId: AgentIdSchema.parse(row.recipient_agent_id),
+      messageId, teamId: row.team_id, senderAgentId: storedAgentId(row.sender_agent_id),
+      recipientAgentId: storedAgentId(row.recipient_agent_id),
     } : null;
   }
 

@@ -221,6 +221,8 @@ links at all. The desktop trust boundary that admits these IPC calls is owned by
   `window.rally.showDeepLinkError('…')` from the main window with a long message,
   and confirm the button is still on screen.
 
+## Changelog
+
 ### 2026-09-01 — Connectivity failures give a retryable remedy
 
 **What changed:** Target activation distinguishes an unreachable service from

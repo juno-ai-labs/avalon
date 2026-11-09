@@ -22,7 +22,6 @@ import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import { type SidekickMentionTarget, useSidekickMentions } from '../lib/sidekick-mentions';
 import type { WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket';
-import { ComposerAgentActivity } from './composer-agent-activity';
 import { STOPPING_LABEL } from './agent-work-timing';
 import type { AttachmentPreview } from './attachments';
 import { ComposerInput, type ComposerMenuAction, type ComposerModelControl } from './composer-input';
@@ -103,7 +102,6 @@ interface WorkstreamComposerProps {
   annotationsEnabled?: boolean;
   /** The key the unsent draft is cached under; see `lib/draft-keys.ts`. */
   draftKey: string;
-  substreamId?: string;
   members: WorkspaceMember[];
   /**
    * People invited to the Organization who have not joined. Offered after the
@@ -138,6 +136,8 @@ interface WorkstreamComposerProps {
    */
   sendBlocked?: boolean;
   error?: string;
+  /** See `ComposerInput`'s `errorTitle`; it titles `error` only. */
+  errorTitle?: string | undefined;
   attachments: PendingAttachment[];
   onSend: (
     text: string,
@@ -155,8 +155,6 @@ interface WorkstreamComposerProps {
   onRemoveAttachment: (localId: string) => void;
   onRetryAttachment: (localId: string) => void;
   onStop: () => Promise<void>;
-  backgroundAgentCount?: number | null;
-  runningSidekickCount?: number | null;
 }
 
 interface PendingMentionConfirmation {
@@ -180,7 +178,7 @@ const BASE_COMMANDS: ComposerCommand[] = [
 ];
 
 export function WorkstreamComposer({
-  placeholder = 'Message the thread…',
+  placeholder = 'Message Rally…',
   annotationsEnabled = true,
   ariaLabel,
   className,
@@ -195,7 +193,6 @@ export function WorkstreamComposer({
   api,
   workstream,
   draftKey,
-  substreamId = '0',
   members,
   invitees = NO_INVITEES,
   sharedInviteeEmails = NO_SHARED,
@@ -205,6 +202,7 @@ export function WorkstreamComposer({
   uploading,
   sendBlocked = false,
   error,
+  errorTitle,
   attachments,
   onSend,
   onAttach,
@@ -213,8 +211,6 @@ export function WorkstreamComposer({
   onRemoveAttachment,
   onRetryAttachment,
   onStop,
-  backgroundAgentCount,
-  runningSidekickCount,
 }: WorkstreamComposerProps): React.JSX.Element {
   const inheritedAnnotationDraft = useAnnotationDraft();
   const annotationDraft = annotationsEnabled ? inheritedAnnotationDraft : null;
@@ -594,10 +590,6 @@ export function WorkstreamComposer({
           ))}
         </div>
       )}
-      <div>
-        <ComposerAgentActivity count={backgroundAgentCount} />
-        <ComposerAgentActivity count={runningSidekickCount} kind="sidekick" />
-      </div>
       <ComposerInput
         api={api}
         ariaLabel={ariaLabel ?? placeholder.replace(/…$/u, '')}
@@ -606,6 +598,7 @@ export function WorkstreamComposer({
         autoFocus={autoFocus}
         {...(className ? { className } : {})}
         error={!annotationPayloadValid ? 'These pins are too large to send together.' : annotationAttachmentCount + attachments.length > MAX_ATTACHMENTS ? 'Send no more than 10 images and attachments together.' : error}
+        errorTitle={annotationPayloadValid && annotationAttachmentCount + attachments.length <= MAX_ATTACHMENTS ? errorTitle : undefined}
         {...(footerHint ? { footerHint } : {})}
         {...(notice ? { notice } : {})}
         {...(toolsAccessory ? { toolsAccessory } : {})}
@@ -677,8 +670,8 @@ export function WorkstreamComposer({
 
       <Modal
         description={confirmationNames.length > 1
-          ? `${confirmationNames.join(', ')} are not currently participants. Would you like to add them with this message? If you do not add them, they will not be able to see the mentions or this ${substreamId === '0' ? 'thread' : 'breakout'}.`
-          : `${confirmationNames[0] ?? 'This person'} is not currently a participant. Would you like to add them with this message? If you do not add them, they will not be able to see the mention or this ${substreamId === '0' ? 'thread' : 'breakout'}.`}
+          ? `${confirmationNames.join(', ')} are not currently participants. Would you like to add them with this message? If you do not add them, they will not be able to see the mentions or this Canvas.`
+          : `${confirmationNames[0] ?? 'This person'} is not currently a participant. Would you like to add them with this message? If you do not add them, they will not be able to see the mention or this Canvas.`}
         footer={
           <>
             <Button disabled={confirming} onClick={() => setPendingConfirmation(null)}>Cancel</Button>

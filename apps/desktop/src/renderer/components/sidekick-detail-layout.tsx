@@ -1,14 +1,33 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
-import { ChevronLeft } from 'lucide-react';
-import { Link } from 'react-router-dom';
 
-/** The profile and conversation scroll independently; switching views keeps the chat mounted. */
-export function SidekickDetailLayout({ overview, children }: { overview: ReactNode; children: ReactNode }): React.JSX.Element {
-  const [view, setView] = useState<'conversation' | 'details'>('conversation');
+/** What the header needs to offer the details at a width where they do not fit beside the conversation. */
+export interface SidekickDetailHeaderContext {
+  /** The details are not beside the conversation, so the header offers a way to them. */
+  compact: boolean;
+  detailsOpen: boolean;
+  toggleDetails: () => void;
+}
+
+/**
+ * A Sidekick open, laid out as design §4 draws it and as a Canvas is: one
+ * header over the main column (the title pill with Back and Forward, the face
+ * pile), the conversation under it, and the details in a column on the right.
+ * Where both do not fit, the details take the conversation's place under the
+ * same header, and the header's Details button switches between them; the
+ * conversation stays mounted either way, so an unsent message survives.
+ */
+export function SidekickDetailLayout({ header, details, children }: {
+  header: (context: SidekickDetailHeaderContext) => ReactNode;
+  details: ReactNode;
+  children: ReactNode;
+}): React.JSX.Element {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const container = useRef<HTMLElement>(null);
   const [compact, setCompact] = useState(false);
-  // 340px profile + 560px conversation: measure the host, including inside AppShell.
+  // The details column (340px) beside a conversation of 560px, the narrowest a
+  // composer and a run row read at: measured on the host, which inside the
+  // shell is narrower than the window.
   useLayoutEffect(() => {
     const element = container.current;
     if (!element) return;
@@ -18,18 +37,10 @@ export function SidekickDetailLayout({ overview, children }: { overview: ReactNo
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const conversationVisible = !compact || view === 'conversation';
-  return <main ref={container} data-compact={compact} className="sidekick-detail" data-view={view}>
-    <nav aria-label="Sidekick navigation" className="sidekick-navigation window-drag">
-      <Link className="sidekick-back window-no-drag" to="/sidekicks"><ChevronLeft aria-hidden="true" size={18} />Sidekicks</Link>
-      <div className="sidekick-view-switch window-no-drag" role="group" aria-label="Sidekick view">
-        <button type="button" aria-pressed={view === 'conversation'} onClick={() => setView('conversation')}>Conversation</button>
-        <button type="button" aria-pressed={view === 'details'} onClick={() => setView('details')}>Details</button>
-      </div>
-    </nav>
-    <div className="sidekick-detail-body">
-      <aside inert={compact && view !== 'details'} aria-hidden={compact && view !== 'details'} aria-label="Sidekick details" className="sidekick-profile">{overview}</aside>
-      <section inert={!conversationVisible} aria-hidden={!conversationVisible} aria-label="Sidekick conversation" className="sidekick-conversation"><ConversationVisibilityContext value={conversationVisible}>{children}</ConversationVisibilityContext></section>
-    </div>
+  const showingDetails = compact && detailsOpen;
+  return <main ref={container} data-compact={compact} className="sidekick-detail" data-view={showingDetails ? 'details' : 'conversation'}>
+    <div className="sidekick-detail-header window-drag">{header({ compact, detailsOpen: showingDetails, toggleDetails: () => setDetailsOpen((open) => !open) })}</div>
+    <section inert={showingDetails} aria-hidden={showingDetails} aria-label="Sidekick conversation" className="sidekick-conversation"><ConversationVisibilityContext value={!showingDetails}>{children}</ConversationVisibilityContext></section>
+    <aside inert={compact && !showingDetails} aria-hidden={compact && !showingDetails} aria-label="Sidekick details" className="sidekick-profile">{details}</aside>
   </main>;
 }

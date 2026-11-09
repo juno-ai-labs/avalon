@@ -6,8 +6,7 @@ import { isComposingKeyEvent } from './ime';
  * opt into it.
  *
  * Opt-in is the point, and worth reading as a limit rather than a description:
- * a window answers Escape only by installing the hook below. Settings and the
- * Sidekicks window do. The meeting and deep-link-error windows deliberately do
+ * a window answers Escape only by installing the hook below. Settings does. The meeting and deep-link-error windows deliberately do
  * not, so this module is not "what every secondary window does" — it is what a
  * window gets when it asks.
  *
@@ -36,12 +35,12 @@ import { isComposingKeyEvent } from './ime';
  * question it answers — *would closing cost the person text they cannot get
  * back?* — has a different answer per surface. Settings passes its visible pane:
  * it applies every change immediately, has no undo, and a half-written
- * invitation or API key has nowhere to come from once the window is gone. The
- * Sidekicks window passes nothing: its one writing surface is a conversation
- * composer, whose text and attachments are cached on the device and restored on
- * the next visit (see `docs/composer-drafts.md`), so a sweep there would buy
- * almost nothing and would leave Escape permanently dead in every conversation
- * that holds a draft.
+ * invitation or API key has nowhere to come from once the window is gone. A
+ * window whose one writing surface is a conversation composer would pass
+ * nothing: the composer's text and attachments are cached on the device and
+ * restored on the next visit (see `docs/composer-drafts.md`), so a sweep there
+ * would buy almost nothing and would leave Escape permanently dead in every
+ * conversation that holds a draft.
  *
  * *Almost* nothing, and the gap is worth stating rather than implying. The cache
  * debounces its write by 250ms and commits the rest on React unmount, which a

@@ -2,10 +2,8 @@ import "../../../../tests/isolated-region";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WorkstreamSummary } from './lib/types';
 import type { DesktopSession } from '../common/desktop';
 import { SessionGate } from './App';
-import { setCachedWorkstreams } from './lib/workstreams-cache';
 import { ApiError } from './lib/api';
 import {
   abandonPendingWorkstreamFeedOpen,
@@ -54,8 +52,8 @@ vi.mock('./screens/onboarding', () => ({
   SignInScreen: () => <div>sign in screen</div>,
 }));
 vi.mock('./components/app-shell', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
-vi.mock('./screens/channel', () => ({ ChannelScreen: () => <div>channel screen</div> }));
-vi.mock('./screens/workstream', () => ({ WorkstreamScreen: () => <div>workstream</div> }));
+vi.mock('./screens/canvas', () => ({ CanvasScreen: () => <div>canvas screen</div> }));
+vi.mock('./screens/canvases-home', () => ({ CanvasesHomeScreen: () => <div>canvases home</div> }));
 vi.mock('./screens/automation', () => ({ AutomationScreen: () => <div>automation</div> }));
 vi.mock('./screens/workspace-settings', () => ({
   WorkspaceSettingsScreen: ({ workspace }: { workspace: { name: string; timezone: string } }) => (
@@ -94,7 +92,6 @@ const completeWorkspaceSession: DesktopSession = {
 
 function renderGate(): QueryClient {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  setCachedWorkstreams(queryClient, []);
   render(<QueryClientProvider client={queryClient}><SessionGate /></QueryClientProvider>);
   return queryClient;
 }
@@ -139,47 +136,23 @@ describe('SessionGate identity-first ordering', () => {
     };
     renderGate();
 
-    // With no Channels the landing waits inside the shell for General.
     expect(await screen.findByRole('main')).toBeVisible();
     expect(sessionState.getOnboardingState).not.toHaveBeenCalled();
   });
 
-  it('starts organization admission and the landing feeds while organization details are pending', async () => {
+  it('starts organization admission while organization details are pending', async () => {
     sessionState.session = { ...identitySession, workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' } };
     const profile = { id: 'workspace-1', name: 'Rally Studio', region: 'global', currentUser: { id: 'user-1', email: 'adam@example.com', name: 'Adam', role: 'owner' } };
     let finishProfile!: (value: typeof profile) => void;
     sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise((resolve) => { finishProfile = resolve; }));
-    const client = renderGate();
+    renderGate();
     expect(screen.getByText('Opening organization…')).toBeVisible();
     expect(sessionState.api.getWorkspace).toHaveBeenCalledTimes(1);
     expect(sessionState.api.getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
-    const id = '00000000-0000-7000-8000-000000000031';
-    // The workspace provider's canonical directory write can land before REST.
-    const first: WorkstreamSummary = {
-      id, title: 'First channel', titleStatus: 'settled', scope: 'workspace',
-      harnessStatus: 'completed', latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
-      manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
-      firstUnreadSequenceNumber: null, lastActivityAt: '2025-01-01T12:00:00Z',
-      lastAccessedAt: '2026-09-09T12:00:00Z',
-      pinPosition: null, nextPendingWakeup: null, participantUserIds: [], participantExtraCount: 0,
-      spaceIds: [],
-    };
-    // Recently viewed wins the landing even outside the five most active rows.
-    const recent = Array.from({ length: 5 }, (_, index) => ({ ...first,
-      id: `00000000-0000-7000-8000-${String(index + 40).padStart(12, '0')}`,
-      lastActivityAt: '2026-09-09T13:00:00Z', lastAccessedAt: '2026-09-08T12:00:00Z',
-    }));
-    act(() => setCachedWorkstreams(client, [first, ...recent]));
-    await waitFor(() => expect(sessionState.api.getSocketTicket).toHaveBeenCalledTimes(6));
-    expect(sessionState.api.getSocketTicket.mock.calls.some(([target]) => target === id)).toBe(true);
-    expect(sessionState.api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
-    expect(screen.getByText('Opening organization…')).toBeVisible();
     await act(async () => { finishProfile(profile); });
-    // The landing opens a Channel, so it waits on the Channel list the socket
-    // has not delivered here; the thread sockets above were warmed regardless.
-    expect(await screen.findByText('Opening channels…')).toBeVisible();
+    // The landing opens the Canvases home, on the one Organization socket.
+    expect(await screen.findByText('canvases home')).toBeVisible();
     expect(sessionState.api.getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
-    expect(sessionState.api.getSocketTicket).toHaveBeenCalledTimes(6);
     expect(sessionState.api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
   });
 
@@ -234,8 +207,8 @@ describe('SessionGate identity-first ordering', () => {
   });
 
   it.each([
-    ['/channels/00000000-0000-7000-8000-00000000a001', 'channel screen'],
-    ['/workstreams/00000000-0000-7000-8000-000000000031', 'workstream'],
+    ['/canvases/00000000-0000-7000-8000-00000000a001', 'canvas screen'],
+    ['/sidekicks/00000000-0000-7000-8000-000000000031', 'automation'],
   ])('preserves explicit route %s', async (route, destination) => {
     window.history.replaceState({}, '', `/#${route}`);
     sessionState.session = {
@@ -245,6 +218,24 @@ describe('SessionGate identity-first ordering', () => {
     renderGate();
     expect(await screen.findByText(destination)).toBeVisible();
     expect(window.location.hash).toBe(`#${route}`);
+  });
+
+  it.each([
+    '/channels/00000000-0000-7000-8000-00000000a001/threads/00000000-0000-7000-8000-00000000a002',
+    '/spaces/00000000-0000-7000-8000-00000000a001',
+    '/workstreams/00000000-0000-7000-8000-000000000031?substream=2',
+    '/projects/launch',
+    '/activity',
+    '/artifacts',
+  ])('opens the Canvases home from the removed route %s', async (route) => {
+    window.history.replaceState({}, '', `/#${route}`);
+    sessionState.session = {
+      ...identitySession,
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
+    };
+    renderGate();
+    expect(await screen.findByText('canvases home')).toBeVisible();
+    expect(window.location.hash).toBe('#/canvases');
   });
 
   it('does not poll members while the WorkspaceDO socket owns invalidation', async () => {
@@ -287,7 +278,7 @@ describe('SessionGate identity-first ordering', () => {
       currentUser: { id: 'user-1', email: 'adam@example.com', name: 'Adam', role: 'owner' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    expect(await screen.findByText('workstream')).toBeVisible();
+    expect(await screen.findByText('canvases home')).toBeVisible();
 
     const retryAttempt = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 60_100);
     expect(retryAttempt).not.toBe(firstAttempt);
@@ -408,7 +399,7 @@ describe('SessionGate identity-first ordering', () => {
       workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
     };
 
-    it.each(['sidekicks', 'settings'] as const)(
+    it.each(['settings'] as const)(
       'closes the %s window while the organization profile is still in flight',
       async (surface) => {
         const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
@@ -426,7 +417,7 @@ describe('SessionGate identity-first ordering', () => {
 
     it('closes the window from the service-setup error, which is the same dead end', async () => {
       const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
-      window.history.replaceState({}, '', '/?surface=sidekicks');
+      window.history.replaceState({}, '', '/?surface=settings');
       sessionState.session = workspaceSession;
       sessionState.api.getWorkspace.mockRejectedValueOnce(new Error('Regional service unavailable.'));
       renderGate();
@@ -439,7 +430,7 @@ describe('SessionGate identity-first ordering', () => {
 
     it('ends a Pong game on Escape before closing the window, and closes it on the next', async () => {
       const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
-      window.history.replaceState({}, '', '/?surface=sidekicks');
+      window.history.replaceState({}, '', '/?surface=settings');
       sessionState.session = workspaceSession;
       sessionState.api.getWorkspace.mockRejectedValueOnce(new Error('Regional service unavailable.'));
       renderGate();

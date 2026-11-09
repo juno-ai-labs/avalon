@@ -191,7 +191,7 @@ describes how to work assumes a person is present to end the work.
 
 This one has no analogue in the sibling docs, because tools and skills inherit
 it from the prompt. Rally's authority is four layers: platform policy, then
-authorized work-stream and automation configuration, then the current human
+authorized conversation and automation configuration, then the current human
 request, then explicitly untrusted provider, resource, and tool data. The
 rendering is what makes the layering real:
 
@@ -265,7 +265,7 @@ the same question. Three habits, the same byte-stability discipline
 ### 14. Consistency across the prompt family
 
 A model generalizes across prompts the way it generalizes across a tool family.
-Use one name for one concept everywhere — the same word for a work stream, the
+Use one name for one concept everywhere — the same word for a conversation, the
 same word for the agent, the same framing for untrusted data — across policy,
 classifier prompts, and plugin system messages. A synonym introduced in one
 prompt is a tax paid in every run that renders both.

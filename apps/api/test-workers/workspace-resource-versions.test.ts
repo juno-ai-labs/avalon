@@ -1,7 +1,8 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * `workspace_resource_versions`, on real workerd.
+ * `workspace_resource_versions`, on real workerd: a Canvas's artifact has a
+ * new head, and everyone who may open the Canvas is told.
  *
  * The event is a socket message and nothing else, so the suite opens real
  * workspace sockets and reads what each is sent. Every producer writes a
@@ -10,34 +11,25 @@
  * write hook that drains the ledger runs as it does in production.
  */
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { reset } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asUserId,
   asWorkspaceId,
-  asWorkstreamId,
-  WorkspaceNavigationStateEventSchema,
   WorkspaceResourceVersionsEventSchema,
   WorkspaceSocketSyncEventSchema,
   type ResourceHead,
   type UserId,
-  type WorkstreamId,
 } from "@rally/contracts";
-import {
-  conversationEffectHash,
-  ParentEffectEnvelopeSchema,
-  type ParentEffect,
-} from "@rally/contracts/conversation-effects";
 
-import { linkSpaceResources } from "../src/durable-objects/authorization-storage";
 import { workspaceDOName } from "../src/durable-objects/names";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000e300");
 const OWNER = asUserId("00000000-0000-7000-8000-00000000e301");
 const MEMBER = asUserId("00000000-0000-7000-8000-00000000e302");
-const OPEN_THREAD = asWorkstreamId("00000000-0000-7000-8000-00000000e303");
-const PRIVATE_THREAD = asWorkstreamId("00000000-0000-7000-8000-00000000e304");
+const OPEN_CANVAS = "00000000-0000-7000-8000-00000000e303";
+const PRIVATE_CANVAS = "00000000-0000-7000-8000-00000000e304";
 const REPORT = "00000000-0000-7000-8000-00000000e3a1";
 const COMP_TABLE = "00000000-0000-7000-8000-00000000e3a2";
 const LATE = "00000000-0000-7000-8000-00000000e3a3";
@@ -91,63 +83,28 @@ async function establishWorkspace(): Promise<void> {
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
 }
 
-function thread(title: string, scope: "personal" | "workspace", resourceId: string): ParentEffect {
-  return {
-    kind: "directory_common",
-    title,
-    description: "",
-    preview: "",
-    scope,
-    state: "idle",
-    systemKind: null,
-    lastActivityAt: "2026-10-18T00:00:00.000Z",
-    completedAt: null,
-    archivedAt: null,
-    createdByUserId: OWNER,
-    latestAttentionOrdinal: 0,
-    unreadTrackingStartOrdinal: 0,
-    createdAt: "2026-10-18T00:00:00.000Z",
-    updatedAt: "2026-10-18T00:00:00.000Z",
-    resourceLinks: [{ resourceId, watchEnabled: false, relationshipType: "generated" }],
-  };
-}
-
-function participant(userId: UserId): ParentEffect {
-  return {
-    kind: "directory_user",
-    userId,
-    isParticipant: true,
-    participantAddedAt: "2026-10-18T00:00:00.000Z",
-    unreadCount: 0,
-    youAreMentioned: false,
-    unseen: false,
-    listable: true,
-    seenAttentionOrdinal: 0,
-    manualUnreadFromOrdinal: null,
-    manualUnreadGeneration: 0,
-    latestMentionAttentionOrdinal: 0,
-  };
-}
-
-async function project(workstreamId: WorkstreamId, effects: readonly ParentEffect[], sourceVersion = 1): Promise<void> {
-  await workspace().applyWorkstreamDirectoryEffects({
-    workspaceId: WORKSPACE_ID,
-    envelopes: effects.map((effect) => ParentEffectEnvelopeSchema.parse({
-      kind: "parent_effect",
-      contractVersion: 1,
-      region: "global",
-      workspaceId: WORKSPACE_ID,
-      parentKind: "workstream",
-      parentId: workstreamId,
-      generation: 1,
-      messageId: nextId("e3"),
-      partitionKey: effect.kind === "directory_user" ? `user:${effect.userId}` : "common",
-      sourceVersion,
-      requiredProjectionVersion: null,
-      payloadHash: conversationEffectHash(effect),
-      effect,
-    })),
-  });
+/**
+ * A Canvas created by the owner, with the artifacts its conversation
+ * generated, through the RPCs production uses: the create, the audience
+ * change, and the note a publish makes (`services/terminal/authority.ts`).
+ * The note is the seam this suite guards: it is what `publishResourceVersions`
+ * reads.
+ */
+const created = new Set<string>();
+async function canvas(canvasId: string, title: string, visibility: "creator" | "workspace", resourceIds: readonly string[]): Promise<void> {
+  if (!created.has(canvasId)) {
+    created.add(canvasId);
+    await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId, title, createdByUserId: OWNER, authorityGeneration: 1 });
+    if (visibility === "workspace") {
+      await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: OWNER, actorRole: "member" },
+        update: { visibility: "workspace", userIds: [] } });
+    }
+  }
+  for (const resourceId of resourceIds) {
+    const { noted } = await workspace().canvasNoteArtifact({ workspaceId: WORKSPACE_ID, canvasId, resourceId,
+      editor: { kind: "rally", id: null } });
+    expect(noted).toBe(true);
+  }
 }
 
 async function runSql(sql: string, params: Array<string | number | null>): Promise<void> {
@@ -182,8 +139,8 @@ async function republish(
 
 let ticketSequence = 0;
 
-/** A subscribed workspace socket recording every resource-version event and artifact pin list it is sent. */
-async function connect(userId: UserId): Promise<{ heads: ResourceHead[][]; pins: Array<Array<[string, number, boolean]>> }> {
+/** A subscribed workspace socket recording every resource-version event it is sent. */
+async function connect(userId: UserId): Promise<{ heads: ResourceHead[][] }> {
   ticketSequence += 1;
   const response = await workspace().fetch("https://workspace.test/socket", {
     headers: {
@@ -201,16 +158,12 @@ async function connect(userId: UserId): Promise<{ heads: ResourceHead[][]; pins:
   }
   const socket = response.webSocket;
   socket.accept();
-  const received = { heads: [] as ResourceHead[][], pins: [] as Array<Array<[string, number, boolean]>> };
+  const received = { heads: [] as ResourceHead[][] };
   const subscribed = new Promise<void>((resolve) => {
     socket.addEventListener("message", (event) => {
       const data = JSON.parse(String(event.data)) as unknown;
       const versions = WorkspaceResourceVersionsEventSchema.safeParse(data);
       if (versions.success) received.heads.push(versions.data.resources);
-      const navigation = WorkspaceNavigationStateEventSchema.safeParse(data);
-      if (navigation.success && navigation.data.artifactPins) {
-        received.pins.push(navigation.data.artifactPins.map((pin) => [pin.id, pin.currentVersion, pin.unread]));
-      }
       if (WorkspaceSocketSyncEventSchema.safeParse(data).success) resolve();
     });
   });
@@ -222,15 +175,16 @@ async function connect(userId: UserId): Promise<{ heads: ResourceHead[][]; pins:
 beforeEach(async () => {
   await reset();
   sequence = 0;
+  created.clear();
   await establishWorkspace();
   await storeResource(REPORT, "Launch report");
   await storeResource(COMP_TABLE, "Comp table");
-  await project(OPEN_THREAD, [thread("Launch", "workspace", REPORT), participant(OWNER)]);
-  await project(PRIVATE_THREAD, [thread("Comp bands", "personal", COMP_TABLE), participant(OWNER)]);
+  await canvas(OPEN_CANVAS, "Launch", "workspace", [REPORT]);
+  await canvas(PRIVATE_CANVAS, "Comp bands", "creator", [COMP_TABLE]);
 });
 
 describe("workspace_resource_versions", () => {
-  it("tells everyone who can open the thread that a resource has a new version, with its new head", async () => {
+  it("tells everyone who can open the Canvas that a resource has a new version, with its new head", async () => {
     const owner = await connect(OWNER);
     const member = await connect(MEMBER);
 
@@ -251,12 +205,12 @@ describe("workspace_resource_versions", () => {
     });
   });
 
-  it("names a resource in a private thread only to the people who may open it", async () => {
+  it("names an artifact of a creator-only Canvas only to the people who may open it", async () => {
     const owner = await connect(OWNER);
     const member = await connect(MEMBER);
 
     await republish(COMP_TABLE, "v2", 7, "2026-10-18T01:00:00.000Z");
-    // The open thread's version reaches both sockets, which bounds the wait
+    // The open Canvas's version reaches both sockets, which bounds the wait
     // for the member's silence about the private one.
     await republish(REPORT, "v2", 42, "2026-10-18T01:00:01.000Z");
 
@@ -269,12 +223,9 @@ describe("workspace_resource_versions", () => {
   it("announces a version of any cause, a rename included, and stays quiet for a resource's first version", async () => {
     const member = await connect(MEMBER);
 
-    // A link can name a resource before its row arrives, so the first version
-    // is written while a thread the member opens already links it.
-    await project(OPEN_THREAD, [{ ...thread("Launch", "workspace", REPORT), resourceLinks: [
-      { resourceId: REPORT, watchEnabled: false, relationshipType: "generated" },
-      { resourceId: LATE, watchEnabled: false, relationshipType: "generated" },
-    ] } as ParentEffect], 2);
+    // An artifact can be recorded before its row arrives, so the first version
+    // is written while a Canvas the member opens already lists it.
+    await canvas(OPEN_CANVAS, "Launch", "workspace", [LATE]);
     await storeResource(LATE, "Late");
     await expect(workspace().renameResource({
       workspaceId: WORKSPACE_ID,
@@ -290,46 +241,8 @@ describe("workspace_resource_versions", () => {
     })]]);
   });
 
-  it("tells a pinner of a republish but not of a refetch, from the same ledger that moves every preview", async () => {
-    await expect(workspace().changeArtifactPin({
-      workspaceId: WORKSPACE_ID, userId: MEMBER, itemId: REPORT, threadId: OPEN_THREAD, pinned: true,
-    })).resolves.toMatchObject({ ok: true });
-    const member = await connect(MEMBER);
-
-    // A pin counts only versions written after it was made.
-    const later = (seconds: number) => new Date(Date.now() + seconds * 1_000).toISOString();
-    await republish(REPORT, "v2", 42, later(1), "refetched");
-    await republish(REPORT, "v3", 43, later(2));
-
-    await vi.waitFor(() => {
-      expect(member.heads.flat().map((head) => head.version)).toEqual([2, 3]);
-      expect(member.pins).toEqual([[[REPORT, 3, true]]]);
-    });
-  });
-
-  it("tells a reader of a Channel a merge shared a resource with, though they cannot open its thread", async () => {
-    const reserved = await workspace().reserveSpace({
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      space: { name: "Pricing", iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
-    });
-    if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
-    // What a merge writes for each embed it shares.
-    await runInDurableObject(workspace(), (_instance, state) => {
-      linkSpaceResources(state.storage.sql, reserved.space.id, [COMP_TABLE]);
-    });
-    const member = await connect(MEMBER);
-
-    await republish(COMP_TABLE, "v2", 7, "2026-10-18T01:00:00.000Z");
-
-    await vi.waitFor(() => expect(member.heads.flat().map((head) => head.resourceId)).toEqual([COMP_TABLE]));
-  });
-
   it("leaves out an unlisted resource, which no conversation advertises", async () => {
-    await project(OPEN_THREAD, [{ ...thread("Launch", "workspace", REPORT), resourceLinks: [
-      { resourceId: REPORT, watchEnabled: false, relationshipType: "generated" },
-      { resourceId: LATE, watchEnabled: false, relationshipType: "generated" },
-    ] } as ParentEffect], 2);
+    await canvas(OPEN_CANVAS, "Launch", "workspace", [LATE]);
     await storeResource(LATE, "Recovery backup", { size: 10, listing: "unlisted" });
     const member = await connect(MEMBER);
 

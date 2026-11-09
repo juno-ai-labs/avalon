@@ -1,4 +1,3 @@
-import type { SidekickAttachment } from '@rally/contracts';
 import { createContext, useContext, useMemo, type PropsWithChildren } from 'react';
 
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from './sidebar-list-store';
@@ -38,22 +37,6 @@ export function sidekickMentionDirectory(sidekicks: readonly SidekickMentionTarg
 }
 
 /**
- * A conversation's own Sidekicks, in its Sidekicks section's order: owned,
- * attached, recommended. An attachment or recommendation carries no
- * publication status, only `available`; one that is not available, and that
- * the owned list cannot vouch for, may be a draft, so it is left out.
- */
-export function conversationSidekickMentions(
-  owned: readonly SidekickMentionTarget[] | undefined,
-  attached: readonly SidekickAttachment[] | undefined,
-  recommended: readonly SidekickAttachment[] | undefined,
-): SidekickMentionTarget[] {
-  const ownedIds = new Set((owned ?? []).map((sidekick) => sidekick.id));
-  const loadable = (sidekick: SidekickAttachment): boolean => sidekick.available || ownedIds.has(sidekick.id);
-  return [...(owned ?? []), ...(attached ?? []).filter(loadable), ...(recommended ?? []).filter(loadable)];
-}
-
-/**
  * The Sidekicks a reader can name with `@` here, and whose `sidekick://`
  * links draw as chips. Empty outside a provider, which leaves the list
  * without a Sidekicks group and every such link as its label text.
@@ -67,7 +50,7 @@ export const SidekickMentionContext = createContext<SidekickMentionDirectory>(EM
  * where a conversation has it attached or recommends it (`SidekickMentionScope`).
  */
 export function SidekickMentionProvider({ children }: PropsWithChildren): React.JSX.Element {
-  const sidekicks = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
+  const sidekicks = useSocketOwnedList<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
   const directory = useMemo(
     () => sidekickMentionDirectory((sidekicks ?? []).filter((sidekick) => sidekick.scope === 'workspace')),
     [sidekicks],

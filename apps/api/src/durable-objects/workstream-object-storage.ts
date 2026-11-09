@@ -1,5 +1,5 @@
 import type { Region } from "@rally/contracts/regions";
-import { ConversationParentKindSchema, type ConversationParentKind } from "@rally/contracts/conversation-parent";
+import { z } from "zod";
 import {
   AgentCompactionStateSchema,
   InferenceDelayStateSchema,
@@ -12,13 +12,14 @@ import {
   type ServerSocketEvent,
   type WorkspaceId,
 } from "@rally/contracts";
-import { z } from "zod";
 
+import { ApiError } from "../lib/api-error";
 import { uuidV7 } from "../lib/uuid-v7";
 import { applyWorkstreamObjectSchema } from "./workstream-object-schema";
 import {
   ConversationEffectEnvelopeSchema,
   ConversationEffectSchema,
+  EffectParentKindSchema,
   conversationEffectHash,
   isPersonNotificationEffect,
   type ConversationEffect,
@@ -81,7 +82,7 @@ interface ProjectionKeyRow extends Record<string, SqlStorageValue> {
 interface AuthorityRow extends Record<string, SqlStorageValue> {
   workstream_key: string;
   parent_workspace_key: string;
-  parent_kind: ConversationParentKind;
+  parent_kind: StoredConversationParentKind;
   region: Region;
   authority_mode: string;
   authority_generation: number;
@@ -98,18 +99,43 @@ export interface RegionalEffectCommand {
   dependsOnProjectionKey?: string;
 }
 
+/** The parents a conversation object is hosted under. */
+export const HostedConversationParentKindSchema = z.enum(["automation", "canvas"]);
+/**
+ * Every kind a stored root row may name: the hosted two and the retired
+ * Thread (`workstream`) and Space parents, which only the retirement readers
+ * see. Wider than `ConversationParentKindSchema` on purpose, and the same set
+ * an effect envelope may carry, since a stored root is what addresses one.
+ */
+const StoredConversationParentKindSchema = EffectParentKindSchema;
+type StoredConversationParentKind = z.infer<typeof StoredConversationParentKindSchema>;
+export type HostedConversationParentKind = z.infer<typeof HostedConversationParentKindSchema>;
+
+/** A stored parent kind, refusing the retired Thread and Space kinds by name. */
+export function hostedConversationParentKind(stored: string): HostedConversationParentKind {
+  if (stored === "workstream" || stored === "space") {
+    // The message is the code with the kind: a Durable Object RPC hop keeps
+    // only the message, and the kind is what an operator needs.
+    throw new ApiError(409, "conversation_parent_kind_retired", `conversation_parent_kind_retired:${stored}`,
+      undefined, `conversation_parent_kind_retired:${stored}`);
+  }
+  return HostedConversationParentKindSchema.parse(stored);
+}
+
 /**
  * What this conversation object is: the workspace it lives in and the parent
  * it belongs to. `parentId` is stored in the root row's `workstream_key`
  * column (the name predates typed parents and is held by released migration
  * text); `parentKind` says whether that id names a work stream, an automation,
- * or a Space. The read parses it through `ConversationParentKindSchema`, so a
- * kind the contract does not know is named at this boundary rather than
- * degrading to `workstream`.
+ * or a Space. Only a Sidekick (`automation`) or a Canvas is hosted now; a
+ * stored `workstream` or `space` names a conversation whose parent was retired
+ * (plan step B-7), and reading it is refused with
+ * `conversation_parent_kind_retired:<kind>` rather than served as a parent
+ * that no longer exists.
  */
 export interface WorkstreamObjectIdentity {
   workspaceId: WorkspaceId;
-  parentKind: ConversationParentKind;
+  parentKind: HostedConversationParentKind;
   parentId: string;
 }
 
@@ -552,6 +578,18 @@ export class WorkstreamObjectStore {
   }
 
   identity(): WorkstreamObjectIdentity | null {
+    const stored = this.identityForRetirement();
+    return stored ? { ...stored, parentKind: hostedConversationParentKind(stored.parentKind) } : null;
+  }
+
+  /**
+   * The stored identity with its parent kind unnarrowed, for the two callers
+   * that must reach a conversation whose parent was retired: the operator
+   * dump before a Thread is retired (`conversationTranscriptText`) and the
+   * constructor, which has to stay constructible so `retireObject` can close
+   * it. Everything else reads {@link identity}, which refuses those kinds.
+   */
+  identityForRetirement(): (Omit<WorkstreamObjectIdentity, "parentKind"> & { parentKind: StoredConversationParentKind }) | null {
     const row = first(this.storage.sql.exec<{
       workstream_key: string;
       parent_workspace_key: string;
@@ -561,10 +599,64 @@ export class WorkstreamObjectStore {
     ));
     if (!row) return null;
     return {
-      parentKind: ConversationParentKindSchema.parse(row.parent_kind),
+      parentKind: StoredConversationParentKindSchema.parse(row.parent_kind),
       parentId: row.workstream_key,
       workspaceId: asWorkspaceId(row.parent_workspace_key),
     };
+  }
+
+  /**
+   * Rewrite the stored parent kind of a retired Thread's conversation to
+   * `canvas`, the one conversion there is: a Thread with artifacts becomes a
+   * Canvas in place, keeping its id (`services/thread-conversion-service.ts`).
+   *
+   * Everything else in this object that names the kind moves with it, in the
+   * same transaction: the root row, every run's stored workflow input
+   * (`runs.execution_context_json`, which Retry and a settled run's replay
+   * parse), and every effect still waiting in the outbox, whose envelope
+   * names the parent by kind. Those were written for
+   * the Thread and would otherwise be delivered after the rewrite and
+   * refused by the Organization (`conversation_parent_kind_retired:workstream`)
+   * until they dead-letter. The effect's hash covers the effect alone, so the
+   * envelope's kind can change under it. Nothing else here keys on the kind:
+   * the authority row is read from SQL on every enqueue, and the identity on
+   * every read.
+   *
+   * Any other transition is refused with
+   * `conversation_parent_kind_conversion_unsupported:<from>:<to>`. Idempotent:
+   * a conversation already `canvas` answers `converted: false`.
+   */
+  convertParentKind(input: { workspaceId: string; parentId: string; from: string; to: string }): { converted: boolean } {
+    const unsupported = (from: string) => new ApiError(409, "conversation_parent_kind_conversion_unsupported",
+      `conversation_parent_kind_conversion_unsupported:${from}:${input.to}`, undefined,
+      `conversation_parent_kind_conversion_unsupported:${from}:${input.to}`);
+    if (input.from !== "workstream" || input.to !== "canvas") throw unsupported(input.from);
+    return this.storage.transactionSync(() => {
+      const stored = this.identityForRetirement();
+      if (!stored) throw new Error("conversation_parent_kind_conversion_identity_missing");
+      if (stored.workspaceId !== input.workspaceId || stored.parentId !== input.parentId) {
+        throw new Error("conversation_parent_kind_conversion_identity_mismatch");
+      }
+      if (stored.parentKind === input.to) return { converted: false };
+      if (stored.parentKind !== input.from) throw unsupported(stored.parentKind);
+      this.storage.sql.exec(`UPDATE workstream SET parent_kind = ? WHERE id = 1`, input.to);
+      this.storage.sql.exec(
+        `UPDATE durable_outbox SET payload_json = json_set(payload_json, '$.parentKind', ?)
+          WHERE channel = ? AND state IN ('pending', 'inflight')
+            AND json_extract(payload_json, '$.parentKind') = ?`,
+        input.to, REGIONAL_EFFECT_CHANNEL, input.from,
+      );
+      // Every run's stored workflow input names the kind too, and
+      // `WorkstreamWorkflowInputSchema` refuses `workstream`: left, Retry on a
+      // Thread-era failed or cancelled run, and the replay of a settled one,
+      // would throw on the Canvas.
+      this.storage.sql.exec(
+        `UPDATE runs SET execution_context_json = json_set(execution_context_json, '$.parentKind', ?)
+          WHERE execution_context_json IS NOT NULL AND json_extract(execution_context_json, '$.parentKind') = ?`,
+        input.to, input.from,
+      );
+      return { converted: true };
+    });
   }
 
   databaseSize(): number {

@@ -143,15 +143,22 @@ revocation.
 
 A background row's trailing indicator is a count badge, the sidebar's unread
 red with white digits (`ActivityCountBadge` in `@rally/ui`), showing the
-attention read's `readerAttentionCount`: the conversations unread, unseen or
-mentioning the person. It is the same number as that Organization's attention
-menu and dock badge, it reads 99+ past two digits, and a zero shows nothing.
-An agent waiting on input (`needs_input`) with nothing unread counts zero, as in
-the attention menu.
-When some of those conversations are waiting on the person, the strongest
-reason, in the order WorkspaceDO ranks them, is the badge's tooltip and part of
-the row's accessible name. The browser's organization list shows the same
-badge, read through `GET /browser/workspaces/attention` (below).
+attention read's `readerAttentionCount`: that Organization's unseen Activity,
+by the rule its Activity rail badge counts. It is the same number as that
+Organization's Activity badge and the badge its pushes set, it reads 99+ past
+two digits, and a zero shows nothing; the row's accessible name says
+"3 new in Activity". When some of those rows are Sidekick runs waiting on the
+person (`waitingForYou`, the unseen `needs_input` rows), or the strongest
+reason WorkspaceDO ranks is a mention, that is the badge's tooltip and part of
+the row's accessible name ("2 Sidekick runs waiting for your input", "You were
+mentioned"). `attention()` ranks the reason a waiting run (`needs_input`), then
+an unseen mention (`mentioned`, with `waitingForYou` still the runs alone),
+then anything else unseen (`unseen`). A failed
+read keeps the last counts and says "Counts last updated <when>" on one line. The Mac reads
+each Organization with its stored credential; the browser, which holds none,
+reads them all through its identity cookie (`getWorkspaceAttention` on the app
+session, one shared `GET /browser/workspaces/attention` per refresh), as its
+organization list does (below).
 
 ### Switching
 
@@ -185,9 +192,9 @@ held instead. The account
 menu's create action does not refetch the directory afterwards: the landing
 remounts the shell, and the new one reads discovery itself.
 
-A switch that changed the workspace always lands on the new work-stream page.
-A work stream open in the previous workspace must never be looked up in the
-next one, which is what the route would otherwise do; only an addressed link
+A switch that changed the workspace always lands on the new workspace's
+landing route. A Canvas or Sidekick open in the previous workspace must never
+be looked up in the next one, which is what the route would otherwise do; only an addressed link
 opens a specific destination, and it resets the route itself.
 
 A switch or a creation that finds no identity credential on this device signs
@@ -234,8 +241,8 @@ The renderer mounts one WorkspaceDO socket for the active workspace. Background
 workspaces get no sockets and expose no items across the boundary. Their stored
 credential may call `GET /workspace/attention`, which returns an addressed
 count, its highest-priority reason, an unread-activity boolean, and
-`readerAttentionCount` (the sidebar attention menu's count; Apple push uses it
-as `aps.badge`). Focus and account-menu opening refresh the projection. The fixed periodic cadence and any
+`readerAttentionCount` (the unseen Activity count; a push uses it as its
+badge). Focus and account-menu opening refresh the projection. The fixed periodic cadence and any
 device workspace cap remain `LIMIT UNSET`; do not invent either number. There is
 currently no periodic refresh: focus and menu opening are the only refresh
 triggers until the team chooses a cadence.
@@ -259,13 +266,12 @@ carries `(region, workspace_id)`. It is a routing coordinate, not a capability.
 The native shape is
 `rallywithai://workspace/<region>/<workspace-id>/<destination-host>/<destination-path>`.
 Its distinct host makes a desktop build from before this contract reject the
-link; a query-addressed shape is forbidden because an older work-stream parser
-would ignore those coordinates and open relative to the active workspace.
-
-Work-stream destinations may append `/substreams/<child-id>` to select a private
-child. The canonical HTTPS link, website handoff and desktop intent preserve that
-suffix; after workspace activation the renderer opens the parent route with its
-`substream` selection. The normal child membership check still applies.
+link; a query-addressed shape is forbidden because an older parser would
+ignore those coordinates and open relative to the active workspace. The
+destinations a link can name today are a Canvas (optionally one of its
+artifacts) and a Sidekick (`DesktopDeepLinkIntent` in
+`packages/contracts/src/desktop-deep-link-intent.ts`); a Sidekick run is
+opened from the Sidekick, not addressed by a link of its own.
 
 When a person opens one, the desktop first asks main whether the target is the
 active workspace. If it is, main answers with the session already in use and
@@ -289,7 +295,7 @@ wording and does not tell a revoked member to check their connection.
 
 Settings opens in a separate window. When an addressed Settings, connector, or
 Slack handoff changes workspaces, the main window behind it moves to that
-workspace's new-work-stream landing page; closing Settings can therefore never
+workspace's landing route; closing Settings can therefore never
 reveal a resource route retained from the previous workspace. A handoff to the
 already-active workspace preserves the main window's route.
 
@@ -391,10 +397,7 @@ Composer dictation remains tied to its composer lifecycle.
 - A stored workspace stays on the account menu whether or not discovery can be
   reached. Only a complete discovery that no longer lists it, a departure, a
   revocation of its credential, or sign-out removes it. A complete discovery
-  omits the demo template and an unpublished demo candidate on purpose, so a
-  device that opened either while it was reachable reconciles its stored
-  credential away on the next complete answer; that is the withholding working
-  as designed, not a lost membership.
+  lists every active membership; nothing is withheld.
 - The active workspace's row on the account menu takes its name from
   `GET /workspace`, not from discovery. Discovery is rerun by no sync topic,
   while the `workspace_profile` topic refreshes that read when an
@@ -450,14 +453,12 @@ workspace IDs and gain only the nullable `workspaces.abandoned_at` lifecycle
 column. `platform_workspace_operations` journals UUIDv7 create/accept operations;
 the desktop retains one operation ID until its request reaches a terminal
 answer, so a transport retry reaches the same journal row. The regional create
-path also serves demo preparation and Engineering MCP through
-`createWorkspaceForMember` — the same rows, journal, placement check and
-object initialization as `create`, with no session — journaled under the demo
-operation's own id (or the Engineering MCP creation UUID). An optional initial
+path also serves Engineering MCP through `createWorkspaceForMember` — the same
+rows, journal, placement check and object initialization as `create`, with no
+session — journaled under the Engineering MCP creation UUID. An optional initial
 member list is validated first and committed with the owner in the same batch;
 ordinary member seating runs after initialization and on replay. The journal keys on the
-id's identity, not its version
-([`demo-workspaces.md`](demo-workspaces.md#preparing-a-demo)).
+id's identity, not its version.
 
 The desktop's encrypted version-2 envelope stores one identity credential and a
 map of regional workspace credentials. Its presentation file stores only the
@@ -493,7 +494,6 @@ that duplicates the membership entrance and can leave partial membership setup.
 
 **Consequences:** Callers retry the original creation and member list. Memberships
 commit together; unfinished Channel seating is resumed rather than re-created.
-
 
 ### 2026-10-12: A retired refresh token lasts until its successor is used
 
@@ -589,7 +589,6 @@ shell's own account menu still shows no background counts: the browser
 platform refuses attention for any Organization but the active one, and
 moving it onto the new route is a separate change.
 
-
 ### 2026-10-07: Creating an organization takes fewer round trips, and lands like a switch
 
 **What changed:** `finishWorkspaceSetup` marks its creation pending and lands
@@ -602,7 +601,7 @@ operation and the preference in parallel, `begin` and `reserve` are each one
 batch, and activation, completion and eligibility run together after the
 region commits; the region refreshes a returning user in one batch and creates
 the Organization, its session row and General's anchor in one more
-([`spaces.md`](spaces.md) has General's half).
+(`spaces.md` (retired) has General's half).
 
 **Why:** Creating an organization was slower than switching to one. Most of
 the server's serial round trips read rows the same request had written or
@@ -718,7 +717,7 @@ one, so it never meets the member-only paths above. A push registration belongs
 to the account in a deployment, so a guest workspace's notifications still reach
 a device a membership there registered. A new Electron path that calls a
 member-only route must check guest first; `desktop-guest-collaboration.test.tsx` mounts the real `App` for a guest in
-the main, Settings and Sidekicks windows and fails on any such request. The
+the main and Settings windows and fails on any such request. The
 browser's list of other deployments' workspaces uses the same discovery, so it
 now includes guest relationships there too.
 
@@ -736,7 +735,7 @@ unpublished demo whatever its status, so an abandoned one never appears.
 **Why:** A demo workspace is the presenter's own — owner membership, journal,
 placement and object exactly as if they had created it — but a session minted
 on their behalf by an operator is a credential nobody signed in for. Owned by
-[`demo-workspaces.md`](demo-workspaces.md).
+`demo-workspaces.md`.
 
 ### 2026-09-07 — Discovery withholds the demo template and an unpublished candidate
 
@@ -750,7 +749,7 @@ holds the cast's real connections — in their switcher. The filter is the
 regional API's, keyed by the demo operation rows, so the desktop changes
 nothing; but the invariant above that a complete discovery removes a stored
 workspace now has two deliberate cases. Owned by
-[`demo-workspaces.md`](demo-workspaces.md).
+`demo-workspaces.md`.
 
 **Consequences:** `endedStoredWorkspaces` treats an absence from a complete
 discovery as a lost membership; for these two workspaces that is the intended

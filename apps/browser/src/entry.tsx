@@ -12,7 +12,7 @@ import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspaceAtten
 import { browserRequest, BrowserApiError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
 
-import { parseSidekickLinkPathTarget, parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
+import { RETIRED_LINK_MESSAGE, isRetiredLinkPath, parseLinkPathTarget } from "@rally/contracts/links";
 
 import { UuidV7Schema } from "@rally/contracts/telemetry";
 import { OrganizationNameSuggestionSchema, WorkspaceIdSchema, parseArtifactSiteOpenPath } from "@rally/contracts";
@@ -67,6 +67,9 @@ type Proof = { region: string; challengeId: string; credential: string; redempti
  * draws the same mark in the same place, so the hand-off between them is
  * invisible.
  */
+
+/** What the entry screen says for a link to something deleted with Channels and Threads. */
+
 export function BrowserBoot(): React.JSX.Element {
   return <main className="onboarding-shell entry"><div className="boot-mark" role="status" aria-label="Opening Rally"><RallyMark /></div></main>;
 }
@@ -105,6 +108,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     }
   }, []);
   const [destination, setDestination] = useState<{ region: string; workspaceId: string } | null>(null);
+  // A Space, Channel, Breakout or Thread link, opened here directly rather
+  // than through the site's handoff page: nothing it named is left to open.
+  const [retiredLink] = useState(() => isRetiredLinkPath(location.pathname));
   // A protected site sent the person here to sign in and come back to it.
   const [siteTarget] = useState(() => {
     const target = parseArtifactSiteOpenPath(location.pathname);
@@ -120,6 +126,13 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [challenge, setChallenge] = useState<{ id: string; redemptionId: string } | null>(null);
   // The signed-out screen leads with Google and opens the email form on request.
   const [emailChosen, setEmailChosen] = useState(false);
+  // Whether this API offers the development account (`GET /dev/session`
+  // answers 204 only in development with RALLY_DEV_AUTH): asked once, the
+  // first time the signed-out screen shows.
+  const [developmentAccount, setDevelopmentAccount] = useState(false);
+  const developmentAccountAsked = useRef(false);
+  // What a Canvas or Sidekick link opens, for the sign-in page to name it.
+  const [linkKind] = useState(() => parseLinkPathTarget(location.pathname)?.kind ?? null);
   const [proof, setProof] = useState<Proof | null>(null);
   const [session, setSession] = useState<BrowserSession | null>(null);
   // Null until the list has loaded, so a fresh sign-in never says nothing was
@@ -177,10 +190,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     const workspacePath = /^\/app\/workspaces\/([^/]+)\/([^/]+)\/?$/u.exec(location.pathname);
     const workspaceTarget = workspacePath ? z.object({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema })
       .safeParse({ region: workspacePath[1], workspaceId: workspacePath[2] }) : null;
-    const parsedTarget = parseWorkstreamLinkPathTarget(location.pathname) ?? parseSpaceLinkPathTarget(location.pathname)
-      ?? parseSidekickLinkPathTarget(location.pathname);
-    const target = parsedTarget?.region && parsedTarget.workspaceId ? parsedTarget
-      : workspaceTarget?.success ? workspaceTarget.data : null;
+    const target = parseLinkPathTarget(location.pathname) ?? (workspaceTarget?.success ? workspaceTarget.data : null);
     if (target?.region && ConfiguredRegionSchema.safeParse(target.region).success) setDestination(target);
     const fragment = new URLSearchParams(location.hash.slice(1));
     const googleError = fragment.get("google_error");
@@ -333,9 +343,19 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     signupViewed.current = true;
     void browserRequest(IDENTITY_REGION, '/signup/view', z.undefined(), { flowId: signupFlow.current }).catch(() => undefined);
   }, [checking, session, proof, challenge]);
+  useEffect(() => {
+    if (checking || session || developmentAccountAsked.current) return;
+    developmentAccountAsked.current = true;
+    browserRequest(IDENTITY_REGION, "/dev/session", z.undefined())
+      .then(() => setDevelopmentAccount(true), () => undefined);
+  }, [checking, session]);
 
   async function redeem(input: { challengeId: string; redemptionId: string; method: "otp" | "magic"; credential: string }) {
-    const current = await browserRequest(proof?.region ?? IDENTITY_REGION, "/email/redeem", BrowserSessionSchema, input);
+    const sessionRegion = proof?.region ?? IDENTITY_REGION;
+    await adopt(await browserRequest(sessionRegion, "/email/redeem", BrowserSessionSchema, input), sessionRegion);
+  }
+  /** Take a session a sign-in just issued in `sessionRegion`, as a restored one is taken. */
+  async function adopt(current: BrowserSession, sessionRegion: string) {
     const read = ++sessionRead.current;
     await clearAllDrafts();
     if (read !== sessionRead.current) return;
@@ -344,7 +364,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     // A destination in another deployment is opened from there, with its own
     // session and user id. Leave that to the restore path, which activates it
     // through Global, rather than showing this deployment's session first.
-    if (destination && destination.region !== (proof?.region ?? IDENTITY_REGION)) {
+    if (destination && destination.region !== sessionRegion) {
       // The opening screen covers the restore; the spent code's card must not.
       setChecking(true);
       refreshSession.current?.(false);
@@ -354,9 +374,19 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     rememberSignupFlow(null);
     setSession(current);
     if (!destination) {
-      const listRegion = proof?.region ?? IDENTITY_REGION;
-      const result = await browserRequest(listRegion, "/workspaces", BrowserWorkspacesSchema);
-      if (read === sessionRead.current) setListed({ region: listRegion, workspaces: result.workspaces });
+      const result = await browserRequest(sessionRegion, "/workspaces", BrowserWorkspacesSchema);
+      if (read === sessionRead.current) setListed({ region: sessionRegion, workspaces: result.workspaces });
+    }
+  }
+  async function useDevelopmentAccount() {
+    if (busy) return;
+    setBusy(true); setError(null); setGoogleNotice(null);
+    try {
+      await adopt(await browserRequest(IDENTITY_REGION, "/dev/session", BrowserSessionSchema, {}), IDENTITY_REGION);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The development account could not be opened.");
+    } finally {
+      setBusy(false);
     }
   }
   async function submit(event: FormEvent) {
@@ -478,23 +508,25 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       {session && !proof ? <>
         <h1>Your organizations</h1>
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
-        {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the conversation…" : "Loading your organizations…"}</p>
+        {retiredLink && <p className="entry-lead" role="status">{RETIRED_LINK_MESSAGE}</p>}
+        {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the link…" : "Loading your organizations…"}</p>
           : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) => {
             const count = activity?.userId === session.user.id ? activity.counts.get(`${workspace.region}:${workspace.id}`) ?? 0 : 0;
             return <a aria-label={count > 0 ? `${workspace.name}, ${activityCountLabel(count)}` : undefined} className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ActivityCountBadge count={count} /><ChevronRight aria-hidden="true" size={16} /></a>;
           })}</nav>
           : <>
             <p className="entry-lead">{session.user.email} is not part of an organization, and nothing has been shared with it yet.</p>
-            <p className="entry-lead">Ask a teammate to share a thread or Breakout with you, or create a new organization.</p>
+            <p className="entry-lead">Ask a teammate to share a Canvas or a Sidekick with you, or create a new organization.</p>
             <Button className="button-primary signin-button" type="button" disabled={busy} onClick={() => { setError(null); setCreating(true); }}><Building2 aria-hidden="true" size={16} />Create an organization</Button>
           </>}
         <button className="text-button onboarding-signout" disabled={busy} onClick={() => { void signOut(); }} type="button">Sign out</button>
       </> : <>
         <h1>{proof ? "Confirm your sign-in" : challenge ? "Check your email" : "Welcome to Rally"}</h1>
-        <p>{proof ? "Continue to your shared conversations." : challenge ? iosStandalone() ? `Enter the code sent to ${email}.` : `Enter the code sent to ${email}, or open the sign-in link in that email.` : destination ? "Sign in with the email address the link was sent to." : siteTarget ? "Sign in to open this site." : "Your team, your work, and Rally. All in one place."}</p>
+        <p>{proof ? "Continue to what was shared with you." : challenge ? iosStandalone() ? `Enter the code sent to ${email}.` : `Enter the code sent to ${email}, or open the sign-in link in that email.` : linkKind === "canvas" ? "Sign in to open this Canvas." : linkKind === "sidekick" ? "Sign in to open this Sidekick." : destination ? "Sign in to open this Organization." : siteTarget ? "Sign in to open this site." : retiredLink ? RETIRED_LINK_MESSAGE : "Your team, your work, and Rally. All in one place."}</p>
         {!proof && !challenge && !emailChosen ? <>
           <Button className="button-primary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}><ConnectorMark mark="google" />Continue with Google</Button>
           <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => setEmailChosen(true)}><Mail aria-hidden="true" size={16} />Continue with email</Button>
+          {developmentAccount && <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => { void useDevelopmentAccount(); }}>Use local development account</Button>}
         </> : <form onSubmit={(event) => { void submit(event); }}>
           {!proof && (challenge ? <label className="onboarding-field"><span>Sign-in code</span><span className="onboarding-input-wrap"><KeyRound aria-hidden="true" size={16} /><input key="otp" autoComplete="one-time-code" inputMode="numeric" required value={code} onChange={(event) => setCode(event.target.value)} /></span></label>
             : <label className="onboarding-field"><span>Email</span><span className="onboarding-input-wrap"><Mail aria-hidden="true" size={16} /><input key="email" type="email" autoComplete="email" placeholder="you@company.com" required value={email} onChange={(event) => setEmail(event.target.value)} /></span></label>)}

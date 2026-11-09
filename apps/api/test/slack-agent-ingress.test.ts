@@ -5,7 +5,7 @@ import { ConnectorError } from "@rally/connectors";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
-import { slackChannelIsExternallyShared, workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
+import { linkUnfurlBlocks, slackChannelIsExternallyShared, slackUnfurlLinkTargets } from "../src/services/slack-workstream-card";
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
@@ -94,32 +94,16 @@ class IngressDatabase {
     ).run(id, INGRESS_WORKSPACE, INGRESS_CONNECTION, bodyHash);
   }
 
-  seedSessionThread(channelId: string, threadTs: string): void {
-    this.objectDatabase.prepare(
-      `INSERT INTO slack_agent_sessions
-         (id, workspace_id, connection_id, linked_user_id, execution_scope,
-          slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
-          opening_client_message_id, workstream_id, invocation_kind, channel_type,
-          context_json, created_at, updated_at)
-       VALUES (?, ?, ?, NULL, 'workspace', 'T1', 'U1', ?, ?, 'seed', ?, 'app_mention',
-               'public', '{}', '2026-01-01', '2026-01-01')`,
-    ).run(
-      `session-${channelId}-${threadTs}`,
-      INGRESS_WORKSPACE,
-      INGRESS_CONNECTION,
-      channelId,
-      threadTs,
-      `workstream-${channelId}-${threadTs}`,
-    );
-    // The thread's route, as migration 85 carries every session's thread key
-    // into a binding and as creating a session writes one beside it.
+  /** A thread bound to a Sidekick run, as the run's own send binds it. */
+  seedBoundThread(channelId: string, threadTs: string): void {
     this.objectDatabase.prepare(
       `INSERT INTO external_conversation_bindings
          (installation_id, path_json, target_kind, space_id, parent_kind, parent_id, substream_id,
           state, suspended_reason, claim_key, created_at, updated_at)
-       VALUES ('slack:T1', json_array(?, ?), 'conversation', NULL, 'workstream', ?, '0',
+       VALUES ('slack:T1', json_array(?, ?), 'conversation', NULL, 'automation',
+               '00000000-0000-7000-8000-0000000c1e40', '00000000-0000-7000-8000-0000000c1e41',
                'active', NULL, NULL, '2026-01-01', '2026-01-01')`,
-    ).run(channelId, threadTs, `workstream-${channelId}-${threadTs}`);
+    ).run(channelId, threadTs);
   }
 
   seedPendingPrompt(channelId: string, threadTs: string, slackUserId: string): void {
@@ -247,14 +231,6 @@ describe("Slack Agent durable ingress", () => {
       "CUNKNOWN",
       "channel",
     )).resolves.toEqual({ channelType: "unknown", channelName: null, failure: "missing_scope" });
-    expect(__slackAgentTesting.slackChannelResolutionDenial("missing_scope")).toMatchObject({
-      reconnectRequired: true,
-      text: expect.stringContaining("reconnect the Slack workspace"),
-    });
-    expect(__slackAgentTesting.slackChannelResolutionDenial("lookup_failed")).toMatchObject({
-      reconnectRequired: false,
-      text: expect.stringContaining("couldn’t verify whether this Slack channel is public or private"),
-    });
     expect(__slackAgentTesting.modalPromptSource(undefined)).toBeNull();
     expect(__slackAgentTesting.modalPromptSource("not-json")).toBeNull();
   });
@@ -287,15 +263,6 @@ describe("Slack Agent durable ingress", () => {
       ],
     });
     expect(message.text).toHaveLength(2_000);
-  });
-
-  it("extracts event-only Slack search authorization without adding it to source context", () => {
-    expect(__slackAgentTesting.slackEventSearchAuthorization({
-      action_token: "1786130000.abcdef.event-token",
-      text: "find the latest project update",
-    })).toEqual({ actionToken: "1786130000.abcdef.event-token" });
-    expect(__slackAgentTesting.slackEventSearchAuthorization({ text: "no token" })).toBeUndefined();
-    expect(__slackAgentTesting.slackEventSearchAuthorization({ action_token: "" })).toBeUndefined();
   });
 
   it("returns modal field errors synchronously", async () => {
@@ -397,6 +364,26 @@ describe("Slack Agent durable ingress", () => {
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ jobId: "command:command-body" }));
   });
 
+  it("answers /rally help with what Slack does now, and queues nothing", async () => {
+    const database = new IngressDatabase();
+    const send = vi.fn(async () => undefined);
+    const service = new SlackAgentService(environment(database, send));
+
+    await expect(service.processCommand({
+      team_id: "T1",
+      user_id: "U1",
+      command: "/rally",
+      text: "help",
+      channel_id: "C1",
+      channel_name: "general",
+      trigger_id: "trigger-1",
+    }, "help-body")).resolves.toEqual({
+      response_type: "ephemeral",
+      text: "Rally no longer starts work from Slack. Start a Canvas in Rally, or set up a Sidekick to work from Slack for you. Open Rally's App Home to connect your account, see your Sidekicks and what they are waiting on, and manage notifications.",
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("does not acknowledge an event until its regional queue publish succeeds", async () => {
     const database = new IngressDatabase();
     let releaseQueue!: () => void;
@@ -441,10 +428,10 @@ describe("Slack Agent durable ingress", () => {
     expect(send).not.toHaveBeenCalled();
     expect(database.jobCount()).toBe(0);
 
-    database.seedSessionThread("C1", "1.0");
-    await expect(service.processEvent(channelMessagePayload("EvSession", "continue", "1.0"), "session-hash"))
+    database.seedBoundThread("C1", "1.0");
+    await expect(service.processEvent(channelMessagePayload("EvBound", "continue", "1.0"), "bound-hash"))
       .resolves.toEqual({ ok: true });
-    expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ jobId: "event:EvSession" }));
+    expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ jobId: "event:EvBound" }));
 
     await expect(service.processEvent(
       channelMessagePayload("EvBroadcast", "continue publicly", "1.0", "thread_broadcast"),
@@ -635,216 +622,147 @@ function environment(database: IngressDatabase, send: (body: unknown) => Promise
   });
 }
 
-describe("work-stream link unfurl card", () => {
-  const url = "https://with-avalon.com/app/workstreams/019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
+describe("Rally link unfurl card", () => {
+  const url = "https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/canvas/1111117Hxt1fAWDjN7TX";
+  const cardText = (blocks: Record<string, unknown>[]) => String((blocks[0] as { text: { text: string } }).text.text);
 
-  function cardText(blocks: Record<string, unknown>[]): string {
-    const section = blocks[0] as { text?: { text?: string } };
-    return String(section.text?.text ?? "");
-  }
-
-  it("shows title, status, and last activity", () => {
-    const blocks = workstreamUnfurlBlocks({
-      title: "Daily product brief",
-      harnessStatus: "needs_input",
-      lastActivityAt: "2026-08-10T12:00:00.000Z",
-    }, url);
-
-    const text = cardText(blocks);
-    // The emoji leads the title so the state reads before the text does; the
-    // word follows in the detail line so the emoji is never the only carrier.
-    expect(text).toContain(`:warning: *<${url}|Daily product brief>*`);
-    expect(text.split("\n")[1]).toMatch(/^Needs input · /u);
-    // Rendered in each reader's own timezone, and it cannot rot into a lie the
-    // way a baked "24m ago" would on a card that is never re-rendered.
-    expect(text).toContain(`<!date^${Math.floor(Date.parse("2026-08-10T12:00:00.000Z") / 1000)}^`);
-    expect(text).not.toContain("ago");
+  it("links the title and escapes what would otherwise inject mrkdwn", () => {
+    expect(cardText(linkUnfurlBlocks("Launch <plan> & notes", url))).toBe(`*<${url}|Launch &lt;plan&gt; &amp; notes>*`);
   });
 
-  it("omits the origin for an ad-hoc work stream", () => {
-    const text = cardText(workstreamUnfurlBlocks({
-      title: "Pricing restructure",
-      harnessStatus: "running",
-      lastActivityAt: "2026-08-10T12:00:00.000Z",
-    }, url));
-
-    expect(text).toContain(":large_green_circle: *<");
-    expect(text.split("\n")[1]).toMatch(/^Running · /u);
-    expect(text).not.toContain("via ");
-  });
-
-  it("badges a failed work stream, which is as actionable as one needing input", () => {
-    const text = cardText(workstreamUnfurlBlocks({
-      title: "Board decision",
-      harnessStatus: "failed",
-      lastActivityAt: "2026-08-10T12:00:00.000Z",
-    }, url));
-
-    expect(text).toContain(":red_circle: *<");
-    expect(text.split("\n")[1]).toMatch(/^Failed · /u);
-  });
-
-  it("shows no status badge for a settled work stream", () => {
-    // "Completed" is not something a reader can act on, and a card is only
-    // rewritten when its badge changes — so a settled work stream would carry
-    // that label indefinitely. Only the actionable states say anything.
-    for (const harnessStatus of ["completed", "scheduled", "idle"]) {
-      const text = cardText(workstreamUnfurlBlocks({
-        title: "Daily product brief",
-        harnessStatus,
-        lastActivityAt: "2026-08-10T12:00:00.000Z",
-      }, url));
-
-      expect(text.startsWith("*<"), harnessStatus).toBe(true);
-      expect(text, harnessStatus).not.toMatch(/Completed|Scheduled|Idle/u);
-      expect(text.split("\n")[1], harnessStatus).toMatch(/^Updated /u);
-    }
-  });
-
-  it("escapes a title that would otherwise inject mrkdwn", () => {
-    const text = cardText(workstreamUnfurlBlocks({
-      title: "<https://evil.example|Click me> & co",
-      harnessStatus: "completed",
-      lastActivityAt: null,
-    }, url));
-
-    expect(text).toContain("&lt;https://evil.example|Click me&gt; &amp; co");
-    expect(text).not.toContain("<https://evil.example");
-  });
-
-  it("survives a work stream with no title, unknown status, and no activity stamp", () => {
-    const text = cardText(workstreamUnfurlBlocks({
-      title: "   ",
-      harnessStatus: "some_future_status",
-      lastActivityAt: "not-a-date",
-    }, url));
-
-    expect(text).toBe(`*<${url}|Untitled work stream>*`);
-  });
-
-  it("falls back to an anonymous card when no summary is available", () => {
-    const blocks = workstreamUnfurlBlocks(null, url);
-    const text = cardText(blocks);
-
-    expect(text).toContain("*Rally*");
-    expect(text).not.toContain("Needs input");
+  it("falls back to an anonymous card when there is no title", () => {
+    const blocks = linkUnfurlBlocks(null, url);
+    expect(cardText(blocks)).toContain("*Rally*");
     expect(JSON.stringify(blocks)).toContain(url);
   });
 
-  it("always offers the same open action, summary or not", () => {
-    for (const blocks of [
-      workstreamUnfurlBlocks(null, url),
-      workstreamUnfurlBlocks({
-        title: "Daily product brief",
-        harnessStatus: "failed",
-        lastActivityAt: null,
-      }, url),
-    ]) {
+  it("always offers the same open action, titled or not", () => {
+    for (const blocks of [linkUnfurlBlocks(null, url), linkUnfurlBlocks("Daily product brief", url)]) {
       expect(blocks.at(-1)).toEqual({
         type: "actions",
-        elements: [{
-          type: "button",
-          text: { type: "plain_text", text: "Open in Rally" },
-          url,
-          action_id: "rally_open_unfurl",
-        }],
+        elements: [{ type: "button", text: { type: "plain_text", text: "Open in Rally" }, url, action_id: "rally_open_unfurl" }],
       });
     }
   });
 });
 
-describe("App Home task rows", () => {
-  it("skips a row it cannot link instead of failing the whole App Home", () => {
-    const webBase = "https://with-avalon.com";
-    const workspaceId = "00000000-0000-7000-8000-000000000001";
-    const good = "019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
+describe("App Home", () => {
+  const webBase = "https://rallywith.ai";
+  const workspaceId = "00000000-0000-7000-8000-000000000001";
+  const common = {
+    description: "Brief",
+    emailAddress: null,
+    scope: "personal",
+    status: "active",
+    nextRunAt: null,
+    lastRunAt: null,
+    updatedAt: "2026-11-08T00:00:00.000Z",
+  };
+  const sidekicks = (items: Record<string, unknown>[]) => __slackAgentTesting.sidekicksForHome(items);
+  const home = (items: Record<string, unknown>[]) => __slackAgentTesting.linkedHome(
+    "Ada", sidekicks(items), webBase, "global", workspaceId, null, null,
+  );
+  const texts = (blocks: Record<string, unknown>[]) => blocks.flatMap((block) => {
+    const text = (block.text as { text?: string } | undefined)?.text;
+    const elements = Array.isArray(block.elements) ? block.elements as { text?: string | { text?: string } }[] : [];
+    return [
+      ...(text ? [text] : []),
+      ...elements.map((element) => typeof element.text === "string" ? element.text : element.text?.text ?? ""),
+    ];
+  });
+  const headers = (blocks: Record<string, unknown>[]) => blocks
+    .filter((block) => block.type === "header")
+    .map((block) => (block.text as { text: string }).text);
+  // What a member reads, and every action id a view carries.
+  const retiredLabels = /Start a task|Needs attention & recent tasks|automation|Try now|Summarize this thread/iu;
+  const actionIds = (blocks: Record<string, unknown>[]) => [...JSON.stringify(blocks).matchAll(/"action_id":"([^"]+)"/gu)].map((match) => match[1]);
 
-    // Minting a link throws on a non-UUID by design. In a list that must stay
-    // a per-row cost: the throw would otherwise escape views.publish and take
-    // account linking down with it.
-    const blocks = __slackAgentTesting.linkedHome(
-      logEnv,
-      "Ada",
-      [
-        { id: "workstream-ownerless", title: "Unlinkable", harness_status: "running" },
-        { id: good, title: "Quarterly planning", harness_status: "needs_input", url: "https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/CduMrko5vpzwph2okTVLJ" },
-      ],
-      [],
-      webBase,
-      "global",
-      workspaceId,
-      null,
-      null,
+  it("names what Rally does from Slack, the Sidekicks, and nothing it no longer offers", () => {
+    const blocks = home([{
+      ...common, id: "00000000-0000-7000-8000-00000000000e", name: "Daily <brief>", lastRunAt: "2026-11-07T09:00:00.000Z",
+    }]);
+
+    expect(headers(blocks)).toEqual(["Welcome, Ada", "Sidekicks"]);
+    expect(texts(blocks)).toContain("A Sidekick can work from Slack for you: it can start from Slack activity and send what it finds back here. Mentioning Rally or sending it a DM does not start work; start a Canvas or set up a Sidekick in Rally.");
+    expect(texts(blocks)).toContain(
+      "*<https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7Tj/|Daily &lt;brief&gt;>*\nActive · <!date^1794042000^Last run {date_short_pretty} at {time}|Last run 2026-11-07 09:00 UTC>",
     );
-
-    const rendered = JSON.stringify(blocks);
-    expect(rendered).toContain(`${webBase}/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/CduMrko5vpzwph2okTVLJ`);
-    expect(rendered).toContain("Quarterly planning");
-    expect(rendered).not.toContain("Unlinkable");
+    const actions = blocks.find((block) => block.type === "actions") as { elements: { text: { text: string }; action_id: string }[] };
+    expect(actions.elements.map((element) => [element.text.text, element.action_id])).toEqual([
+      ["Create Sidekick", "rally_create_automation"],
+      ["Notifications", "rally_preferences"],
+    ]);
+    expect(texts(blocks).join("\n")).toContain("<https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/help/|Help>");
+    expect(texts(blocks).join("\n")).not.toMatch(retiredLabels);
+    expect(actionIds(blocks)).toEqual(["rally_create_automation", "rally_preferences", "rally_open_personal_tools"]);
   });
 
-  it("leaves drafts and workspace automations out of the App Home list", () => {
-    const common = {
-      description: "Brief",
-      emailAddress: null,
-      nextRunAt: null,
-      lastRunAt: null,
-      updatedAt: "2026-08-11T00:00:00.000Z",
-      updateAvailable: false,
-    };
-    const rows = __slackAgentTesting.personalAutomationsForHome([
-      { ...common, id: "00000000-0000-7000-8000-00000000000e", name: "Daily brief", scope: "personal", status: "active" },
-      { ...common, id: "00000000-0000-7000-8000-00000000000f", name: "Half-written monitor", scope: "personal", status: "draft" },
-      { ...common, id: "00000000-0000-7000-8000-000000000010", name: "Team brief", scope: "workspace", status: "active" },
+  it("lists a waiting Sidekick's question under Needs input, and a delegation wait without one", () => {
+    const blocks = home([
+      { ...common, id: "00000000-0000-7000-8000-00000000000e", name: "Daily brief", runState: "needs_input", needsInput: true, pendingQuestion: "Which inbox should I read?" },
+      { ...common, id: "00000000-0000-7000-8000-00000000000f", name: "Revenue analyst", status: "paused", needsInput: true, pendingQuestion: null },
+      { ...common, id: "00000000-0000-7000-8000-000000000010", name: "Team digest", scope: "workspace", runState: "working" },
     ]);
 
-    expect(rows.map((row) => row.name)).toEqual(["Daily brief"]);
+    expect(headers(blocks)).toEqual(["Welcome, Ada", "Needs input", "Sidekicks"]);
+    const body = texts(blocks);
+    expect(body).toContain("*<https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7Tj/|Daily brief>*\nWhich inbox should I read?");
+    expect(body).toContain("*<https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7Tk/|Revenue analyst>*\nOpen it in Rally to see what it needs.");
+    expect(body).toContain("*<https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7Tk/|Revenue analyst>*\n:warning: Needs input · Not run yet");
+    expect(body).toContain("*<https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7Tm/|Team digest>*\n:large_green_circle: Working · Not run yet");
+  });
+
+  it("shows no Needs input section when nothing waits, and says so when there are no Sidekicks", () => {
+    const blocks = home([]);
+    expect(headers(blocks)).toEqual(["Welcome, Ada", "Sidekicks"]);
+    expect(texts(blocks)).toContain("No Sidekicks yet. Create one in Rally to have it work from Slack for you.");
+  });
+
+  it("leaves drafts out and keeps the Organization's Sidekicks the sidebar lists", () => {
+    expect(sidekicks([
+      { ...common, id: "00000000-0000-7000-8000-00000000000e", name: "Daily brief" },
+      { ...common, id: "00000000-0000-7000-8000-00000000000f", name: "Half-written monitor", status: "draft" },
+      { ...common, id: "00000000-0000-7000-8000-000000000010", name: "Team brief", scope: "workspace" },
+    ]).map((row) => row.name)).toEqual(["Daily brief", "Team brief"]);
+  });
+
+  it("offers the unlinked member what Rally does from Slack and no example prompts", () => {
+    const blocks = __slackAgentTesting.unlinkedHome();
+    expect(headers(blocks)).toEqual(["Meet Rally"]);
+    expect(texts(blocks)).toContain("A Sidekick can work from Slack for you: it can start from Slack activity and send what it finds back here. Mentioning Rally or sending it a DM does not start work; start a Canvas or set up a Sidekick in Rally.");
+    expect(texts(blocks).join("\n")).not.toMatch(retiredLabels);
+    expect(actionIds(blocks)).toEqual(["rally_connect"]);
   });
 });
 
-describe("recording shared work-stream links for refresh", () => {
-  const workstreamId = "019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
-  const summary = {
-    title: "Quarterly planning",
-    harnessStatus: "running",
-    lastActivityAt: "2026-08-10T12:00:00.000Z",
-  };
+describe("which shared links get a card", () => {
+  const scope = { webBaseUrls: ["https://rallywith.ai", "https://with-avalon.com"], region: "global", workspaceId: "00000000-0000-7000-8000-000000000001" };
+  const canvas = "https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/";
+  const sidekick = "https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7TY/";
 
-  it("records a link with the exact URL Slack reported", () => {
-    const url = `https://with-avalon.com/app/workstreams/${workstreamId}`;
-
-    expect(__slackAgentTesting.recordableUnfurlLinks(
-      logEnv,
-      new Map([[url, workstreamId]]),
-      new Map([[workstreamId, summary]]),
-    )).toEqual([{ url, workstreamId, summary }]);
+  it("reads this Organization's Canvas and Sidekick links on either site domain, by the URL Slack reported", () => {
+    expect(slackUnfurlLinkTargets([{ url: canvas }, { url: sidekick }], scope)).toEqual(new Map([
+      [canvas, { kind: "canvas", region: "global", workspaceId: "00000000-0000-7000-8000-000000000001", canvasId: "00000000-0000-7000-8000-000000000002" }],
+      [sidekick, { kind: "sidekick", region: "global", workspaceId: "00000000-0000-7000-8000-000000000001", sidekickId: "00000000-0000-7000-8000-000000000003" }],
+    ]));
   });
 
-  it("skips an over-long link rather than storing a key that can never match", () => {
-    // Reachable through the legacy handoff form, which tolerates extra
-    // fragment parameters. Truncating to fit the column would store a URL that
-    // no longer matches the message's link, so every later refresh would look
-    // successful while the posted card stayed stale.
-    const overLong = `https://with-avalon.com/open#target=${encodeURIComponent(
-      `avalon://workstreams/${workstreamId}`,
-    )}&x=${"a".repeat(2_100)}`;
-    expect(overLong.length).toBeGreaterThan(2_000);
-
-    expect(__slackAgentTesting.recordableUnfurlLinks(
-      logEnv,
-      new Map([[overLong, workstreamId]]),
-      new Map([[workstreamId, summary]]),
-    )).toEqual([]);
+  it("leaves another Organization's, a retired Breakout's and a look-alike host's links to Slack", () => {
+    expect(slackUnfurlLinkTargets([
+      { url: "https://rallywith.ai/app/global/1111117Hxt1fAWDjN7Te/cv/1111117Hxt1fAWDjN7TX/" },
+      { url: "https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY/b/1111117Hxt1fAWDjN7TZ" },
+      { url: "https://with-avalon.com/app/workstreams/019fec70-fba0-7b0e-9f7a-3dd1ef56520f" },
+      { url: "https://evil.example/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/" },
+      { url: 42 },
+    ], scope).size).toBe(0);
   });
 
-  it("records nothing for a link whose card showed no summary", () => {
-    const url = `https://with-avalon.com/app/workstreams/${workstreamId}`;
-
-    expect(__slackAgentTesting.recordableUnfurlLinks(
-      logEnv,
-      new Map([[url, workstreamId]]),
-      new Map(),
-    )).toEqual([]);
+  it("names the Canvas on its card, linked to the URL Slack reported, and nothing more", () => {
+    expect(linkUnfurlBlocks("Q4 board deck", canvas)).toEqual([
+      { type: "section", text: { type: "mrkdwn", text: `*<${canvas}|Q4 board deck>*` } },
+      { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open in Rally" }, url: canvas, action_id: "rally_open_unfurl" }] },
+    ]);
+    expect(JSON.stringify(linkUnfurlBlocks(null, canvas))).not.toContain("Q4 board deck");
   });
 });
 

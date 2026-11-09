@@ -30,9 +30,8 @@ import {
   type InvitationEmailDelivery,
 } from "./invitation-email-service";
 import { dispatchWorkspaceRelationshipChanges } from "./workspace-relationship-delivery";
-import { publishWorkspaceSync, seatSpaceInvitee } from "./workspace-realtime-service";
+import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { SlackAgentService } from "./slack-agent-service";
-import { rebuildDigestSchedulesForTimezone } from "./digest-service";
 import { workspaceDOName } from "../durable-objects/names";
 import { PersonalSystemPromptRecordSchema } from "../durable-objects/personal-system-prompt";
 import { forgetReviewedMemory, readMemoryReview } from "./memory-review-service";
@@ -239,7 +238,7 @@ export async function acceptInvitationForUser(
         workspace_id: invitation.workspace_id, user_id: user.id,
         error: diagnosticErrorCode(error, "workspace_relationship_dispatch_failed"),
       }));
-    await adoptSlackWorkstreamsForMember(env, invitation.workspace_id, user);
+    await recordSlackIdentityForMember(env, invitation.workspace_id, user);
     return invitation.workspace_id;
   }
 
@@ -294,13 +293,6 @@ export async function acceptInvitationForUser(
       logWarn(env, "search_authorization_member_push_failed", { workspace_id: invitation.workspace_id, user_id: user.id,
         error_code: error instanceof Error ? error.message : "unknown" });
     }
-    // Spaces that listed this address before they joined now seat them. A
-    // failure leaves them out of those Spaces, and the warning is the notice.
-    try { await seatSpaceInvitee(env, invitation.workspace_id, user.id, invitation.email); }
-    catch (error) {
-      logWarn(env, "space_invitee_seat_failed", { workspace_id: invitation.workspace_id, user_id: user.id,
-        error_code: error instanceof Error ? error.message : "unknown" });
-    }
     await notifyInvitationResolution(env, invitation, user, "accepted");
     await emitInvitationTerminal(env, invitation, {
       userId: asUserId(user.id),
@@ -309,25 +301,25 @@ export async function acceptInvitationForUser(
       workspaceBound: true,
     }).catch(() => undefined);
   }
-  await adoptSlackWorkstreamsForMember(env, invitation.workspace_id, user);
+  await recordSlackIdentityForMember(env, invitation.workspace_id, user);
   return invitation.workspace_id;
 }
 
-async function adoptSlackWorkstreamsForMember(
+async function recordSlackIdentityForMember(
   env: Env,
   workspaceId: string,
   user: { id: string; email: string },
 ): Promise<void> {
   try {
-    await new SlackAgentService(env).assignWorkspaceWorkstreamsForMember(
+    await new SlackAgentService(env).recordSlackIdentityForMember(
       workspaceId,
       user.id,
       user.email,
     );
   } catch (error) {
-    // Membership acceptance is authoritative. Slack adoption is a recoverable
-    // convenience and can also run when the member explicitly links Slack.
-    logWarn(env, "slack_workspace_workstream_adoption_failed", {
+    // Membership acceptance is authoritative. The Slack identity is a
+    // recoverable convenience the member's explicit link also records.
+    logWarn(env, "slack_member_identity_record_failed", {
       workspace_id: workspaceId,
       user_id: user.id,
       reason: error instanceof Error ? error.message : "unknown",
@@ -504,7 +496,6 @@ export class WorkspaceService {
     )
       .bind(timezone, followDevice ? "client" : "user", nowIso(), this.auth.userId)
       .run();
-    await rederiveDigestsForTimezone(this.env, this.auth.userId, timezone);
     const row = await this.env.DB.prepare(
       "SELECT id, email, name, avatar_url, timezone, created_at FROM users WHERE id = ?",
     ).bind(this.auth.userId).first<Record<string, unknown>>();
@@ -950,8 +941,6 @@ export class WorkspaceService {
     );
   }
 
-
-
   async promoteGuest(userId: string, input: { incarnation: string; expectedRevision: number }) {
     if (this.auth.role !== "owner" && this.auth.role !== "admin") {
       throw new ApiError(403, "forbidden", "Only an owner or admin can promote a guest");
@@ -1283,25 +1272,6 @@ export async function previewInvitation(env: Env, token: string): Promise<Worksp
   };
 }
 
-/**
- * A digest's times are wall-clock times in its owner's day, so moving timezone
- * moves every occurrence — in every workspace they belong to, since this is one
- * column for the whole account. The configuration is unchanged; the instants it
- * resolves to are not, and those live in derived `schedules` rows the workspace
- * alarm reads.
- */
-async function rederiveDigestsForTimezone(env: Env, userId: string, timezone: string): Promise<void> {
-  await rebuildDigestSchedulesForTimezone(env, { userId, timezone }).catch((error: unknown) => {
-    // The timezone itself is saved, and the cron reconciler rebuilds any
-    // derived row whose timezone disagrees with the account. Failing the
-    // request here would lose the timezone to fix a thing that self-heals.
-    logWarn(env, "digest_schedule_rederive_failed", {
-      user_id: userId,
-      reason: error instanceof Error ? error.message : "unknown",
-    });
-  });
-}
-
 /** The account's timezone, and whether it follows the device. */
 export async function readUserTimezone(env: Env, userId: string): Promise<UserTimezone> {
   const row = await env.DB.prepare("SELECT timezone, timezone_source FROM users WHERE id = ?")
@@ -1316,11 +1286,10 @@ export async function readUserTimezone(env: Env, userId: string): Promise<UserTi
  * is never overwritten and a report that changes nothing writes nothing.
  */
 export async function reportDeviceTimezone(env: Env, userId: string, timezone: string): Promise<UserTimezone> {
-  const moved = await env.DB.prepare(
+  await env.DB.prepare(
     `UPDATE users SET timezone = ?, updated_at = ?
       WHERE id = ? AND timezone_source = 'client' AND timezone <> ?
       RETURNING id`,
   ).bind(timezone, nowIso(), userId, timezone).first<{ id: string }>();
-  if (moved) await rederiveDigestsForTimezone(env, userId, timezone);
   return readUserTimezone(env, userId);
 }

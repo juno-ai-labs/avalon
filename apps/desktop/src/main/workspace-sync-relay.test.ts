@@ -38,8 +38,8 @@ describe('WorkspaceSyncRelay', () => {
     const { relay: subject, delivered } = relay();
     subject.publish({ type: 'topics', region, workspaceId, waterline: 4, topics: ['member_directory'] });
     subject.publish({ type: 'state', region, workspaceId, state: 'connected' });
-    subject.publish({ type: 'topics', region, workspaceId: otherWorkspaceId, waterline: 4, topics: ['notes'] });
-    subject.publish({ type: 'topics', region: 'enterprise', workspaceId, waterline: 4, topics: ['notes'] });
+    subject.publish({ type: 'topics', region, workspaceId: otherWorkspaceId, waterline: 4, topics: ['automations'] });
+    subject.publish({ type: 'topics', region: 'enterprise', workspaceId, waterline: 4, topics: ['automations'] });
     expect(delivered).toEqual([{ type: 'source', revision: 1, source: { region, workspaceId, state: 'connected' } }]);
   });
 
@@ -49,11 +49,11 @@ describe('WorkspaceSyncRelay', () => {
     subject.publish({ type: 'state', region: 'enterprise', workspaceId, state: 'connected' });
     // The first region's late detach is stale: it does not end the second's.
     subject.publish({ type: 'detach', region, workspaceId });
-    subject.publish({ type: 'topics', region: 'enterprise', workspaceId, waterline: 2, topics: ['notes'] });
+    subject.publish({ type: 'topics', region: 'enterprise', workspaceId, waterline: 2, topics: ['automations'] });
     expect(delivered).toEqual([
       { type: 'source', revision: 1, source: { region, workspaceId, state: 'connected' } },
       { type: 'source', revision: 2, source: { region: 'enterprise', workspaceId, state: 'connected' } },
-      { type: 'topics', region: 'enterprise', workspaceId, waterline: 2, topics: ['notes'] },
+      { type: 'topics', region: 'enterprise', workspaceId, waterline: 2, topics: ['automations'] },
     ]);
   });
 
@@ -85,7 +85,7 @@ describe('WorkspaceSyncRelay', () => {
       .toThrow('workspace_sync_publication_invalid:workspaceId:');
     expect(() => subject.publish({ type: 'topics', region, workspaceId, waterline: 1, topics: ['secrets'] }))
       .toThrow('workspace_sync_publication_invalid:topics.0:');
-    expect(() => subject.publish({ type: 'topics', region, workspaceId, waterline: -1, topics: ['notes'] }))
+    expect(() => subject.publish({ type: 'topics', region, workspaceId, waterline: -1, topics: ['automations'] }))
       .toThrow('workspace_sync_publication_invalid:waterline:');
     expect(() => subject.publish({ type: 'topics', region, workspaceId, waterline: 1, topics: [] }))
       .toThrow('workspace_sync_publication_invalid:topics:');

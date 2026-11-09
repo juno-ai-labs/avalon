@@ -20,7 +20,7 @@ describe('Oopsie reports', () => {
     render(<Tooltip.Provider><MessageIssueProvider api={client} target={target}>
       <MessageActions subject="message" telemetry={{ messageId: 'turn-1:text:0', turnId: 'turn-1' }} text="User words" textActions={false} />
     </MessageIssueProvider></Tooltip.Provider>);
-    fireEvent.click(screen.getByRole('button', { name: 'Oopsie' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Oopsie: report a problem with this message' }));
     expect(screen.getByRole('dialog', { name: 'Something go wrong?' })).toBeInTheDocument();
     expect(screen.getByText('Let us know what you expected so we can improve Rally.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Start voice input' })).toBeInTheDocument();
@@ -35,7 +35,7 @@ describe('Oopsie reports', () => {
     rerender(<Tooltip.Provider><MessageIssueProvider api={api()} target={target}>
       <AssistantMessageContent telemetry={{ messageId: 'empty-turn', workstreamId: target.parentId }} text="" />
     </MessageIssueProvider></Tooltip.Provider>);
-    expect(screen.getByRole('button', { name: 'Oopsie' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Oopsie: report a problem with this message' })).toBeVisible();
   });
 
   it.each(['button', 'Enter'])('closes immediately after %s submission and stays closed if delivery fails', async (trigger) => {
@@ -46,7 +46,7 @@ describe('Oopsie reports', () => {
     render(<Tooltip.Provider><MessageIssueProvider api={client} target={target}>
       <MessageActions telemetry={{ messageId: 'turn-1:text:0', turnId: 'turn-1' }} text="Answer" />
     </MessageIssueProvider></Tooltip.Provider>);
-    fireEvent.click(screen.getByRole('button', { name: 'Oopsie' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Oopsie: report a problem with this message' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe the issue' }), { target: { value: 'I expected a useful answer.' } });
     if (trigger === 'Enter') {
       const input = screen.getByRole('textbox', { name: 'Describe the issue' });

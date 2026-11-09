@@ -2,7 +2,7 @@
 import { ensureAuditSchema } from "./audit-fixture";
 
 /**
- * Fixtures for driving a `SubstreamAgent` through its real entry points.
+ * Fixtures for driving an `AgentLoopDO` through its real entry points.
  *
  * The object's own tables are the seam these tests work against: an object with
  * no `workstream` row has no identity, and an execution receipt cannot be admitted
@@ -121,7 +121,7 @@ export function runInput(
   return WorkstreamWorkflowInputSchema.parse({
     region: "global",
     workspaceId: WORKSPACE_ID,
-    parentKind: "workstream",
+    parentKind: "canvas",
     parentId: WORKSTREAM_ID,
     substreamId: "0",
     loopId: LOOP_ID,
@@ -138,7 +138,7 @@ export function runInput(
 export function seedWorkstreamRoot(
   state: DurableObjectState,
   now = 1,
-  identity: { workspaceId?: string; workstreamId?: string } = {},
+  identity: { workspaceId?: string; workstreamId?: string; parentKind?: "automation" | "canvas" } = {},
 ): void {
   const workspaceId = identity.workspaceId ?? WORKSPACE_ID;
   const workstreamId = identity.workstreamId ?? WORKSTREAM_ID;
@@ -149,14 +149,14 @@ export function seedWorkstreamRoot(
        exact_state, state_reason_code, next_sequence_number, next_attention_ordinal,
        unread_tracking_start_ordinal, authority_epoch, scope_epoch,
        source_authorization_floor, listing_epoch, deletion_epoch, run_revision,
-       created_at, last_people_activity_at, state_changed_at, updated_at
+       created_at, last_people_activity_at, state_changed_at, updated_at, parent_kind
      ) VALUES (
        1, ?, ?, NULL, 0, 'global',
        'authoritative', 1, 'Fixture', '', '', 'workspace',
        'idle', 'seeded', 1, 1,
        0, 0, 0,
        0, 0, 0, 0,
-       ?, ?, ?, ?
+       ?, ?, ?, ?, ?
      ) ON CONFLICT(id) DO NOTHING`,
     workstreamId,
     workspaceId,
@@ -164,6 +164,9 @@ export function seedWorkstreamRoot(
     now,
     now,
     now,
+    // A schema older than migration 83 admits no `canvas` parent; a test
+    // seeding one at such a version names a Sidekick's instead.
+    identity.parentKind ?? "canvas",
   );
   state.storage.sql.exec(
     `INSERT INTO substreams

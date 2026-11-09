@@ -1,12 +1,9 @@
 import { NavigationHistoryProvider } from './navigation-history';
-import { AccessRequestDialog } from './access-request-dialog';
 import { AddMembersDialog } from './add-members-dialog';
 import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
-import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
 import type { WorkspaceAttention } from '@rally/contracts';
-import type { ClientSession } from '@rally/contracts/client-session';
-import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { SearchResult } from '@rally/contracts/search';
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PropsWithChildren, useContext } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { DesktopWorkspaceOnboardingState, DesktopWorkspaceSummary } from '../../common/desktop';
@@ -22,29 +19,24 @@ import { useShellCapabilities } from '../lib/collaboration-session';
 import { isWindowSurfaceRoute } from '../lib/window-surface';
 import { MacDownloadLink } from './mac-download-link';
 import { MAC_APP_DOWNLOADABLE } from '../lib/browser-connectors';
-import { useAttentionItems } from '../lib/attention-items';
-import { useDockBadge } from '../lib/dock-badge';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { openLink } from '../lib/browser-rail-links';
-import { associativeWorkstreamsForSidebar, conversationDirectoryQueryKey } from '../lib/conversation-directory';
 import { desktopBridge } from '../lib/platform';
 import { useSupportWorkspaces } from '../lib/use-support-workspaces';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
+import { restorableRoute } from '../lib/landing';
 import { uuidV7 } from '../lib/telemetry';
-import type { Workspace, WorkstreamSummary } from '../lib/types';
+import type { Workspace } from '../lib/types';
 import { useRailFillsPane } from '../lib/rail-split';
 import { SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
-import { useSpaceDirectories } from '../lib/use-space-directories';
-import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import { activeRealtimeWorkstreamId } from '../lib/workspace-workstream-sockets';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
-import { channelDestination, openWorkstreamId } from '../lib/workstream-landing';
-import { heldChannelBreakouts, isWorkstreamChildrenQueryKey, type ChannelBreakoutLists } from '../lib/channel-viewer-state';
+import { canvasTurnRoute, openCanvasId } from '../lib/canvases';
+import { sidekickTurnRoute } from '../lib/sidekick-status';
 import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
-import { SearchModal, type SearchPlace } from './search-modal';
-import { NavigationSidebar } from './navigation-sidebar';
+import { SearchModal } from './search-modal';
+import { NavigationSidebar, useRailDockBadge } from './navigation-sidebar';
 import { PHONE_NAVIGATION_CONTROL, PhoneHeaderContext, type PhoneHeader } from '@rally/ui/components/title-pill';
 import { useSheetOpener } from '../lib/sheet-opener';
 import { IconSearch } from '@tabler/icons-react';
@@ -90,6 +82,17 @@ export function windowControlsShellClass(platform: string | undefined): string {
 }
 
 
+/**
+ * Where a message search result opens: a Canvas's Chat opens the Canvas at
+ * the turn, a Sidekick's conversation (its shared one or a run's) opens the
+ * Sidekick on that conversation at the turn.
+ */
+export function messageResultRoute(target: Extract<SearchResult['location'], { kind: 'message' }>): string {
+  return target.parentKind === 'automation'
+    ? sidekickTurnRoute(target.workstreamId, target.substreamId, target.turnId, target.transcriptSequence)
+    : canvasTurnRoute(target.workstreamId, target.turnId, target.transcriptSequence);
+}
+
 export function invitationAccountMismatch(invitationEmail: string, accountEmail: string): string | null {
   if (invitationEmail.toLocaleLowerCase('en-US') === accountEmail.toLocaleLowerCase('en-US')) return null;
   return `This invitation is for ${invitationEmail}. Sign in with that account to continue.`;
@@ -98,55 +101,18 @@ export function invitationAccountMismatch(invitationEmail: string, accountEmail:
 /** How long the panes take to fade up on a new workspace; matches `workspace-enter` in `app.css`. */
 const WORKSPACE_ENTER_MS = 320;
 
-/**
- * Whether the active workspace shell has a Space rail. A session without an
- * active workspace never mounts this shell; null remains enabled for the
- * legacy startup frame.
- */
-export function spacesEnabledForSession(session: ClientSession | null): boolean {
-  return session === null || session.workspace !== undefined;
-}
-
-/**
- * The Channels search lists, each followed by its Breakouts: the ones the
- * socket holds for this reader as a member (`held`), and the ones a grant
- * reaches, which only the shared navigation directory lists. A Channel still
- * being created is left to the caller to drop.
- */
-export function searchChannelPlaces(
-  channels: readonly WorkstreamSummary[],
-  held: ChannelBreakoutLists,
-  directory: SharedNavigationDirectory | undefined,
-): SearchPlace[] {
-  const shared = new Map((directory?.workstreams ?? []).map((entry) => [entry.parentId, entry.conversations]));
-  return channels.flatMap((channel): SearchPlace[] => {
-    const breakouts = new Map<string, { title: string; appearance?: WorkstreamSummary['appearance'] }>();
-    for (const conversation of shared.get(channel.id) ?? []) {
-      if (conversation.substreamId !== '0' && !conversation.archived) breakouts.set(conversation.substreamId, conversation);
-    }
-    for (const breakout of held[channel.id] ?? []) breakouts.set(breakout.substreamId, breakout);
-    return [
-      { kind: 'channel', id: channel.id, name: channel.title, substreamId: channel.associativeSubstreamId, appearance: channel.appearance },
-      ...[...breakouts].map(([substreamId, breakout]): SearchPlace => ({
-        kind: 'breakout', id: substreamId, channelId: channel.id, channelName: channel.title,
-        name: breakout.title, appearance: breakout.appearance, channelAppearance: channel.appearance })),
-    ];
-  });
-}
-
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
   const personalPresentation = useContext(MemberPresentationContext).get(workspace.currentUser.id);
   const {
     acceptInvitation,
     activateWorkspace,
     api,
-    clearPendingAccessRequest,
     clearPendingInvitation,
     declineInvitation,
     finishWorkspaceSetup,
     getOnboardingState,
+    getWorkspaceAttention,
     invitationApi,
-    pendingAccessRequestId,
     pendingInvitation,
     abandonAccountSignIn,
     runtime,
@@ -158,11 +124,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     endSupportSession,
   } = useAppSession();
   const { host, guest: guestSession } = useShellCapabilities();
-  const accessRequests = useAccessRequests(workspace.id);
-  const decideAccessRequest = useDecideAccessRequest(api ?? null, workspace.id);
-  // A request row chosen in the attention menu; the menu bar's arrives as
-  // `pendingAccessRequestId` instead. Either opens the one dialog.
-  const [openAccessRequestId, setOpenAccessRequestId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [addMembersOpen, setAddMembersOpen] = useState(false);
   // Inviting is an administrator's; the server refuses anyone else. The
@@ -183,14 +144,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const navigate = useNavigate();
   const location = useLocation();
   useEffect(() => {
-    const path = location.pathname;
-    // A Channel, a thread under one, or a thread on its own: what reopens next time.
-    if (!/^\/channels\/[^/]+(\/threads\/[^/]+)?$/.test(path) && !/^\/workstreams\/[^/]+$/.test(path)) return;
-    const breakout = new URLSearchParams(location.search).get('substream');
-    writeLayout(layoutKey(workspace.id, workspace.currentUser.id, 'last-route'),
-      breakout ? `${path}?substream=${encodeURIComponent(breakout)}` : path);
-  }, [location.pathname, location.search, workspace.id, workspace.currentUser.id]);
-  const queryClient = useQueryClient();
+    // A Canvas or a Sidekick, or either home: what reopens next time.
+    const path = restorableRoute(location.pathname);
+    if (path) writeLayout(layoutKey(workspace.id, workspace.currentUser.id, 'last-route'), path);
+  }, [location.pathname, workspace.id, workspace.currentUser.id]);
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
   const railLeaving = useUiStore((state) => state.railLeaving);
@@ -213,59 +170,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       onSelect: () => setSearchOpen(true),
     }],
   }), [api, openNavigation]);
-  const spacesEnabled = spacesEnabledForSession(session);
   // The main pane keeps room for a sidebar that is still fading out.
   const showShellRail = railOpen || railLeaving;
   const railFillsPane = useRailFillsPane(sidebarWidth);
   const railExpanded = useUiStore((state) => state.railExpanded);
-  // Nothing here loads the sidebar. Subscribing to the workspace socket is
-  // answered with the whole of it — the first page of work streams, the
-  // Sidekicks and the notes — and WorkspaceDO pushes each list again whenever
-  // it changes a row. This query exists for what a person asks for afterwards:
-  // scrolling past page one, or widening the list with Debug enabled.
-  const workstreams = useWorkstreamsQuery();
-  const { active: spaces } = useSpaceDirectories();
-  const associativeNavigation = useQuery({
-    queryKey: conversationDirectoryQueryKey(workspace.id),
-    queryFn: ({ signal }) => api!.getSharedNavigationDirectory(signal),
-    enabled: Boolean(api),
-    // Says which conversation a Channel the socket lists opens on when Main is
-    // not this person's. Refreshed by the socket's own signals — a Channel's
-    // tombstone, a listed Channel's metadata frame — not on every focus.
-    refetchOnWindowFocus: false,
-  });
-  const sidebarWorkstreams = useMemo(
-    () => associativeWorkstreamsForSidebar(associativeNavigation.data, workstreams.data),
-    [associativeNavigation.data, workstreams.data],
-  );
-  const { items: attentionItems, breakoutListsLoaded } = useAttentionItems(sidebarWorkstreams);
-  // The menu only says "nothing" once every Channel is loaded: the Space walk
-  // has finished, no page is left unread, and the walk did not fail.
-  const attentionComplete = workstreams.data !== undefined && !workstreams.hasMore
-    && !workstreams.isFetching && !workstreams.isError;
-  // A Breakout list still on its way would make the count a floor, and the
-  // dock would then lower the badge APNs set from the full count.
-  // The attention button's number: waiting conversations and access requests.
-  useDockBadge(attentionItems.length + accessRequests.length, attentionComplete && breakoutListsLoaded);
+  // The dock badge is the rail's counts added up, sent once both lists arrive.
+  useRailDockBadge();
   const downloadedUpdate = useDownloadedUpdate();
-  // While search is open, a Breakout list the socket writes re-reads the
-  // places, so a Breakout created or renamed meanwhile shows at once.
-  const [breakoutListsVersion, setBreakoutListsVersion] = useState(0);
-  useEffect(() => {
-    if (!searchOpen) return;
-    return queryClient.getQueryCache().subscribe((event) => {
-      if (event.type === 'updated' && isWorkstreamChildrenQueryKey(event.query.queryKey)) setBreakoutListsVersion((version) => version + 1);
-    });
-  }, [searchOpen, queryClient]);
-  const searchChannels = useMemo(() => {
-    if (!searchOpen) return [];
-    const channels = sidebarWorkstreams.filter((channel) => !channel.pending);
-    return searchChannelPlaces(channels, heldChannelBreakouts(queryClient, channels.map((channel) => channel.id)),
-      associativeNavigation.data);
-    // `breakoutListsVersion` is how a Breakout list written to the cache reaches this read.
-  }, [searchOpen, sidebarWorkstreams, associativeNavigation.data, breakoutListsVersion, queryClient]);
-  const searchSpaces = useMemo(() => (spaces.data?.items ?? []).map((space): SearchPlace => (
-    { kind: 'space', id: space.id, name: space.name, iconKey: space.iconKey, colorKey: space.colorKey })), [spaces.data]);
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
   const workspaceDirectory = useQuery<DesktopWorkspaceOnboardingState>({
@@ -331,8 +242,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const backgroundWorkspaces = knownWorkspaces.filter((candidate) => (
     candidate.id !== workspace.id || candidate.region !== workspace.region
   ));
-  // Attention is read with each workspace's own stored credential, so only the
-  // rows this device holds one for can answer. A row discovery listed that was
+  // Attention is read with each workspace's own stored credential on the Mac
+  // (the browser's identity cookie stands in for one), so only the rows this
+  // device holds one for can answer. A row discovery listed that was
   // never opened here has none, and asking would fail the whole batch. A guest
   // relationship is refused the attention route, so its row shows no count.
   const attentionWorkspaces = backgroundWorkspaces.filter((candidate) => (
@@ -346,7 +258,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     queryFn: async () => Object.fromEntries(await Promise.all(attentionWorkspaces.map(async (candidate) => (
       [
         desktopWorkspaceIdentityKey(candidate.region, candidate.id),
-        await desktopBridge().getWorkspaceAttention({ region: candidate.region, workspaceId: candidate.id }),
+        await getWorkspaceAttention({ region: candidate.region, workspaceId: candidate.id }),
       ] as const
     )))),
     enabled: multipleWorkspacesEnabled && attentionWorkspaces.length > 0,
@@ -410,10 +322,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   ].filter(Boolean).join(' ');
   const { setForegroundWorkstreamId } = useWorkspaceSocket();
 
-  const activeWorkstreamId = openWorkstreamId(location.pathname);
-  // A pending Channel may not be in the Organization's directory yet, and
-  // WorkspaceDO records presence naming one it has not listed as no Channel.
-  const foregroundWorkstreamId = activeRealtimeWorkstreamId(activeWorkstreamId, workstreams.data);
+  // A Canvas id is a conversation-parent id, so presence names the open
+  // Canvas the way it named an open Thread (`docs/canvases.md`, Presence).
+  const foregroundWorkstreamId = openCanvasId(location.pathname);
   useEffect(() => {
     setForegroundWorkstreamId(foregroundWorkstreamId);
   }, [foregroundWorkstreamId, setForegroundWorkstreamId]);
@@ -430,18 +341,14 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const shellStyle = {
     '--rail-width': `${railWidth}px`,
     '--conversation-min-width': `${SIDEBAR_CONTENT_MIN_WIDTH}px`,
-    '--av-cmp-sidebar-width': `${sidebarWidth}px`,
+    // Above phone width the sidebar gives way before the pane drops under the
+    // conversation's minimum, so a 641 to 840px tab keeps a readable pane.
+    '--av-cmp-sidebar-width': `min(${sidebarWidth}px, calc(100vw - ${SIDEBAR_CONTENT_MIN_WIDTH}px))`,
   } as CSSProperties;
 
   return (
     <>
       <AddMembersDialog api={api ?? null} open={addMembersOpen} onClose={() => setAddMembersOpen(false)} />
-      <AccessRequestDialog
-        api={api ?? null}
-        onClose={() => { setOpenAccessRequestId(null); clearPendingAccessRequest(); }}
-        requestId={openAccessRequestId ?? pendingAccessRequestId}
-        workspaceId={workspace.id}
-      />
       <div className={shellClassName} style={shellStyle}>
       <NavigationSidebar
         onOpenSearch={api ? () => setSearchOpen(true) : undefined}
@@ -547,12 +454,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         )}
         downloadedUpdate={downloadedUpdate}
         workspace={workspace}
-        attentionItems={attentionItems}
-        attentionComplete={attentionComplete}
-        accessRequests={accessRequests}
-        accessDecisionFailed={decideAccessRequest.isError}
-        onDecideAccessRequest={(request, decision) => decideAccessRequest.mutate({ id: request.id, decision })}
-        onOpenAccessRequest={(request) => setOpenAccessRequestId(request.id)}
       />
         <span aria-live="polite" className="sr-only">
           {switchingWorkspace ? `Opening ${switchingWorkspace.name}…` : ''}
@@ -566,16 +467,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       {api && <SearchModal key={`${workspace.id}:${workspace.currentUser.id}`} workspaceId={`${workspace.id}:${workspace.currentUser.id}`}
         open={searchOpen} onOpenChange={setSearchOpen}
         search={(request, signal) => api.searchWorkspace(request, signal)}
-        channels={searchChannels} spaces={spacesEnabled ? searchSpaces : undefined}
-        onSelectPlace={(place) => {
-          if (place.kind === 'space') navigate(`/spaces/${encodeURIComponent(place.id)}`);
-          else if (place.kind === 'breakout') navigate(channelDestination({ id: place.channelId, associativeSubstreamId: place.id }));
-          else navigate(channelDestination({ id: place.id, associativeSubstreamId: place.substreamId }));
-        }}
         onSelect={(result) => {
           const target = result.location;
           if (target.kind === 'message') {
-            navigate(`/workstreams/${target.workstreamId}?substream=${encodeURIComponent(target.substreamId)}&turn=${encodeURIComponent(target.turnId)}&sequence=${target.transcriptSequence}`);
+            navigate(messageResultRoute(target));
           } else if (target.kind === 'link') {
             void openLink(target.url);
           } else {

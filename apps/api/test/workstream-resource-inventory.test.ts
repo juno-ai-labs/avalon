@@ -399,7 +399,7 @@ describe("work-stream compaction resource inventory", () => {
       },
     };
 
-    await expect(loadVisibleWorkstreamResourceInventory(database, conversationResourceLinks(shifting, () => shifting), {
+    await expect(loadVisibleWorkstreamResourceInventory(database, conversationResourceLinks(shifting), {
       workspaceId: "1629dee4-8cc4-4531-81f9-b2be8614e062",
       workstreamId: WORKSTREAM,
       principal: { type: "user", userId: asUserId("4b2a1529-867b-4d69-8685-b1722ccd0149") },

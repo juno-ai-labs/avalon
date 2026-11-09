@@ -35,9 +35,9 @@ are in
 Each call site emits next to where its cost is already known; searching for
 `emitInferenceUsage` lists them. The turn-disposition classifier's JEV calls
 are recorded as `turn_disposition_classifier` through the classifier
-diagnostic sink, and the words a suggestion carries as `suggestion_draft`
-through `runStructuredInference`; both are the Organization's, like the other
-classifier and structured activities ([`conversation-suggestions.md`](conversation-suggestions.md)). Two rules keep new callers metered:
+diagnostic sink, and are the Organization's, like the other classifier and
+structured activities. `suggestion_draft` stays in the activity enum for rows
+written before conversation suggestions were deleted; nothing produces it now. Two rules keep new callers metered:
 `runStructuredInference` requires an `activity`, and an agent attempt whose
 turn ID carries `:compaction:` is metered as `context_compaction`.
 
@@ -118,8 +118,9 @@ next, clamped to the last day of a short month, in UTC.
 | Growth | $250 a month | $125 |
 
 The weekly quota is twice the monthly price, divided by four
-(`INCLUDED_USAGE_MULTIPLIER`). The meter turns the warning colour below 20%
-left (`LOW_QUOTA_PERCENT`). Overage is priced at cost. All three are product
+(`INCLUDED_USAGE_MULTIPLIER`). Both meters, Settings' and the account menu's,
+fill in the text colour and turn the warning colour below 20% left
+(`LOW_QUOTA_PERCENT`). Overage is priced at cost. All three are product
 decisions, set in `packages/contracts/src/usage.ts`.
 
 Every workspace starts on Starter. An administrator changes the plan from the

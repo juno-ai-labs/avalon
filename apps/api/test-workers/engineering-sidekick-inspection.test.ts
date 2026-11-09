@@ -23,7 +23,7 @@ import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridg
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { hostedParentStub } from "./helpers/hosted-parent";
+
 import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 
@@ -61,27 +61,10 @@ async function seedRegionalDatabase(): Promise<void> {
 }
 
 /**
- * A work stream that owns an active route and no directory row: the id shape
- * the Sidekick tools must refuse.
+ * A conversation id that owns an active route and has no parent the
+ * Organization hosts: the id shape the Sidekick tools must refuse.
  */
 async function seedRoom(): Promise<void> {
-  await hostedParentStub(env, WORKSPACE_ID).reserveChild({
-    workspaceId: WORKSPACE_ID,
-    parentId: ROOM_ID,
-    substreamId: asSubstreamId("0"),
-    kind: "main",
-    createdByUserId: AUTHOR_ID,
-    authorityGeneration: 1,
-    directory: {
-      title: "Release room",
-      description: "",
-      scope: "personal",
-      systemKind: null,
-      emailAddress: null,
-      titleStatus: "settled",
-      createdAt: NOW,
-    },
-  });
   await env.DB.prepare(`INSERT INTO workstream_authority_routes
     (workspace_id, workstream_id, generation, object_name, state, source_fence_sequence, updated_at)
     VALUES (?, ?, 1, ?, 'active', 0, ?)`)
@@ -94,7 +77,6 @@ async function createSidekick(): Promise<void> {
     workspaceId: WORKSPACE_ID,
     authorUserId: AUTHOR_ID,
     scope: "personal",
-    owningWorkstreamId: null,
     automationId: SIDEKICK_ID,
   });
   // Its directory row is written in the Organization object by the create
@@ -161,7 +143,7 @@ describe("engineering inspection of a Sidekick", () => {
       value: {
         region: "global",
         workspaceId: WORKSPACE_ID,
-        items: [{ sidekickId: SIDEKICK_ID, lifecycle: "draft", scope: "personal", owningWorkstreamId: null }],
+        items: [{ sidekickId: SIDEKICK_ID, lifecycle: "draft", scope: "personal" }],
       },
     });
   });
@@ -177,16 +159,30 @@ describe("engineering inspection of a Sidekick", () => {
     const inspection = bridge();
     const query = { sql: "SELECT 1 AS one", bindings: [] };
 
-    expect(await inspection.runSubstreamSql({
-      workspaceId: WORKSPACE_ID, workstreamId: SIDEKICK_ID, substreamId: runId, authorityGeneration: 1, query,
+    expect(await inspection.runConversationSql({
+      workspaceId: WORKSPACE_ID, conversationId: SIDEKICK_ID, substreamId: runId, authorityGeneration: 1, query,
     })).toMatchObject({ found: true, value: { workstreamId: SIDEKICK_ID, substreamId: runId, result: { rows: [{ one: 1 }] } } });
-    expect(await inspection.runSubstreamSql({
-      workspaceId: WORKSPACE_ID, workstreamId: SIDEKICK_ID, substreamId: "00000000-0000-7000-8000-00000000ef17", authorityGeneration: 1, query,
+    expect(await inspection.runConversationSql({
+      workspaceId: WORKSPACE_ID, conversationId: SIDEKICK_ID, substreamId: "00000000-0000-7000-8000-00000000ef17", authorityGeneration: 1, query,
     })).toEqual({ found: false });
     // A room's unregistered conversation is not looked up as a Sidekick's.
-    expect(await inspection.runSubstreamSql({
-      workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: runId, authorityGeneration: 1, query,
+    expect(await inspection.runConversationSql({
+      workspaceId: WORKSPACE_ID, conversationId: ROOM_ID, substreamId: runId, authorityGeneration: 1, query,
     })).toEqual({ found: false });
+  });
+
+  it("posts to and reads a Sidekick's shared conversation by the Sidekick's id, and refuses it read as a Canvas", async () => {
+    await createSidekick();
+    const inspection = bridge();
+    const text = "Operator note for the Sidekick's readers.";
+    const sent = await inspection.sendMessage({ orgId: WORKSPACE_ID, userId: AUTHOR_ID, conversationId: SIDEKICK_ID,
+      operationId: "00000000-0000-7000-8000-00000000ef19", text, recordOnly: true }, OPERATOR);
+    expect(sent.receipt.turn.clientMessageId).toBe("00000000-0000-7000-8000-00000000ef19");
+    const read = await inspection.readConversation({ orgId: WORKSPACE_ID, userId: AUTHOR_ID, kind: "sidekick", conversationId: SIDEKICK_ID });
+    expect(read.text).toMatch(/^Sidekick: /u);
+    expect(read.text).toContain(text);
+    await expect(inspection.readConversation({ orgId: WORKSPACE_ID, userId: AUTHOR_ID, kind: "canvas", conversationId: SIDEKICK_ID }))
+      .rejects.toThrow("engineering_operation_failed:conversation_kind_mismatch");
   });
 
   it("pauses and resumes a Sidekick as a user who manages it, through the app's own path", async () => {

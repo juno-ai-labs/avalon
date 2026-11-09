@@ -1,18 +1,27 @@
 import { ErrorNotice } from '../components/primitives';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { PanelRight, Pencil, X } from 'lucide-react';
+import { IconHistory, IconLink, IconPin, IconPinnedOff, IconPlayerPlay } from '@tabler/icons-react';
+import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { CanvasMark } from '../components/canvas-mark';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import type { AutomationDetail } from '../lib/types';
-import { SidekickDetailLayout } from '../components/sidekick-detail-layout';
+import { SidekickDetailLayout, type SidekickDetailHeaderContext } from '../components/sidekick-detail-layout';
+import { useSidekickList } from '../components/sidekick-sidebar-section';
+import { AutomationGlyph } from '../components/workstream-glyph';
+import { canvasRoute } from '../lib/canvases';
+import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
-import { Button, EmptyState, OpeningState } from '../components/primitives';
-import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
-import { useCloseWindowSurface } from '../lib/window-surface';
-import { copySidekickLink } from '../lib/copy-workstream-link';
-import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import { Button, EmptyState, IconButton, OpeningState } from '../components/primitives';
+import { useCollaborationSession } from '../lib/collaboration-session';
+import { copyLink } from '../lib/copy-link';
+import { useDocumentTitle } from '../lib/document-title';
+import { useRestoredRouteFallback } from '../lib/landing';
 import { ConversationSurface } from './conversation-surface';
 import { SidekickDelegation, useSidekickDelegates } from '../components/sidekick-delegation';
+import { sidekickRunLabel, useSidekickRunNumber } from '../components/sidekick-run-row';
 
 /**
  * One route host for automations.
@@ -25,29 +34,49 @@ import { SidekickDelegation, useSidekickDelegates } from '../components/sidekick
 export function AutomationScreen(): React.JSX.Element {
   const { id } = useParams();
   if (id === undefined || id === 'new') return <NewAutomationScreen />;
-  return <AutomationDetailScreen id={id} />;
+  // Keyed by the Sidekick, so an error or a pending action shown for one is
+  // not carried over to the next one opened in its place.
+  return <AutomationDetailScreen id={id} key={id} />;
 }
 
-/**
- * A failed Sidekick screen's way on. In a browser tab the screen fills the tab
- * with the sidebar hidden (`lib/window-surface.ts`), so it also offers the way
- * out the Mac app's window chrome gives there.
- */
+/** A failed Sidekick screen's way on; the sidebar beside it is the way out. */
 function ErrorActions({ onRetry }: { onRetry: () => void }): React.JSX.Element {
-  const { host } = useShellCapabilities();
-  const close = useCloseWindowSurface();
   return (
     <div className="empty-state-actions">
       <Button onClick={onRetry}>Try again</Button>
-      {host === 'browser' && <Button onClick={close}>Close</Button>}
     </div>
   );
+}
+
+/**
+ * Whether the viewer manages this Sidekick, as `HostedSidekick.managerAllows`
+ * decides it for the scopes a client can see: its author, the person it runs
+ * as, or an owner or admin of the Organization for an Organization Sidekick.
+ * Only what the composer marks follows from it; the server decides again.
+ */
+function viewerManagesSidekick(
+  detail: AutomationDetail,
+  session: ReturnType<typeof useCollaborationSession>['session'],
+): boolean {
+  const userId = session?.user.id;
+  if (!userId) return false;
+  if (detail.authorUserId === userId || detail.runAsUserId === userId) return true;
+  const role = session?.workspace?.role;
+  return detail.scope === 'workspace' && (role === 'owner' || role === 'admin');
 }
 
 function NewAutomationScreen(): React.JSX.Element {
   const { api } = useCollaborationSession();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
+  // A draft already in this person's list is the one New Sidekick reopens:
+  // drafts are theirs alone ("Only you") until saved, and a second one,
+  // named "New Sidekick" like the first, was indistinguishable from it. The
+  // list is the workspace socket's; without a socket there is no list to ask.
+  const socket = useOptionalWorkspaceSocket();
+  const rows = useSidekickList();
+  const listKnown = !socket || rows !== undefined;
+  const draft = rows?.find((row) => row.status === 'draft');
   // One request per visit, held in a ref rather than started by the effect
   // directly: React mounts an effect twice in development, and a request
   // started by the first run and abandoned by its cleanup would create an
@@ -55,21 +84,21 @@ function NewAutomationScreen(): React.JSX.Element {
   // the re-run simply waits on it.
   const creation = useRef<Promise<{ automationId: string }> | null>(null);
   useEffect(() => {
-    if (!api) return;
+    if (!api || !listKnown) return;
     let mounted = true;
-    creation.current ??= api.createAutomation();
+    creation.current ??= draft ? Promise.resolve({ automationId: draft.id }) : api.createAutomation();
     creation.current
       .then(({ automationId }) => {
         if (mounted) void navigate(`/sidekicks/${automationId}`, { replace: true });
       })
       .catch((cause: unknown) => {
         if (!mounted) return;
-        setError(cause instanceof Error ? cause.message : 'The automation could not be created.');
+        setError(cause instanceof Error ? cause.message : 'The Sidekick could not be created.');
       });
     return () => {
       mounted = false;
     };
-  }, [api, error, navigate]);
+  }, [api, draft, error, listKnown, navigate]);
   if (error) {
     return (
       <div className="screen-error-state screen-with-titlebar">
@@ -91,12 +120,15 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const delegates = useSidekickDelegates(id);
+  const sidekickRows = useSidekickList();
   const automation = useQuery({
     queryKey: ['automation', id],
     queryFn: ({ signal }) => api!.getAutomation(id, signal),
     enabled: Boolean(api),
     staleTime: 5_000,
   });
+  const leaving = useRestoredRouteFallback(automation.error, '/sidekicks');
+  useDocumentTitle(automation.data ? automation.data.currentDefinition?.name ?? automation.data.name : undefined);
   const runs = useQuery({
     queryKey: ['automation-runs', id],
     queryFn: ({ signal }) => api!.getAutomationRuns(id, signal),
@@ -119,10 +151,6 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
     onSuccess: (_result, action) => {
       void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
       if (action === 'archive') {
-        // Archiving stops open runs, including one provisioned ahead of its
-        // planned time, so refresh the work-stream directory as well as the
-        // Sidekick library.
-        void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
         // Replacing rather than pushing, so Back cannot return to an
         // automation that is no longer served.
         queryClient.removeQueries({ queryKey: ['automation', id] });
@@ -169,6 +197,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
     queue.current = result.catch(() => undefined);
     return result;
   };
+  if (leaving) return <OpeningState label="Opening Sidekicks…" />;
   if (automation.error) {
     return (
       <div className="screen-error-state screen-with-titlebar">
@@ -182,33 +211,185 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
       </div>
     );
   }
-  if (!automation.data) return <OpeningState label="Opening Sidekick…" />;
+  // The list row is enough to mount the conversation, which is what takes
+  // longest to open: it starts at once and the header and details fill in
+  // when the detail read answers, rather than everything waiting for it.
+  const row = sidekickRows?.find((candidate) => candidate.id === id);
   const detail = automation.data;
+  if (!detail && !row) return <OpeningState label="Opening Sidekick…" />;
+  const conversation = detail
+    ? { id, name: detail.currentDefinition?.name ?? detail.name, draft: detail.lifecycle === 'draft', canvases: detail.canvases ?? [],
+      manages: viewerManagesSidekick(detail, session) }
+    : { id, name: row!.name, draft: row!.status === 'draft', canvases: [], manages: false };
+  const copySidekickLink = async (): Promise<void> => {
+    if (!session?.workspace) throw new Error('No active organization');
+    await copyLink({ kind: 'sidekick', region: session.workspace.region, workspaceId: session.workspace.id, sidekickId: id });
+  };
   return (
-    <SidekickDetailLayout key={id} overview={<AutomationHeader
+    <SidekickDetailLayout key={id} details={!detail ? <OpeningState label="Opening Sidekick…" /> : <AutomationHeader
       automation={detail}
       delegateNames={new Map([...(delegates.data?.delegates ?? []), ...(delegates.data?.creator ? [delegates.data.creator] : [])].map((person) => [person.userId, person.displayName]))}
       delegation={<SidekickDelegation id={id} />}
       error={act.error?.message}
       onAppearanceChange={setAppearance}
       onArchive={() => act.mutateAsync('archive').then(() => undefined)}
-      onCopyLink={async () => {
-        if (!session?.workspace) throw new Error('No active organization');
-        await copySidekickLink({ region: session.workspace.region, workspaceId: session.workspace.id }, id);
-      }}
+      onCopyLink={copySidekickLink}
       onPause={() => act.mutate('pause')}
       onResume={() => act.mutate('resume')}
       onRunNow={() => act.mutate('run')}
       pending={act.isPending ? act.variables : null}
       runs={runs.data}
       runsError={runs.error?.message}
+    />} header={(context) => <SidekickHeader
+      context={context}
+      detail={detail ?? { id, name: row!.name, currentDefinition: null, ...(row!.appearance ? { appearance: row!.appearance } : {}) }}
+      onCopyLink={copySidekickLink}
+      onRunNow={detail?.lifecycle === 'active' && !act.isPending ? () => act.mutate('run') : undefined}
     />}>
-      <ConversationSurface
-        parentId={id}
-        parentKind="automation"
-        renderHeader={() => <header className="sidekick-conversation-heading"><h2>Conversation</h2></header>}
-        substreamId="0"
-      />
+      <SidekickConversation {...conversation} />
     </SidekickDetailLayout>
   );
+}
+
+/**
+ * The Sidekick's one header, at every width: its pill (its glyph and name,
+ * opening the menu a Canvas's pill opens) after Back and Forward, and who is
+ * here. While a run is open the pill is the run's, with the Sidekick's as the
+ * crumb before it that leads back to the shared conversation. Where the
+ * details do not fit beside the conversation, a Details button switches to
+ * them under this same header.
+ */
+function SidekickHeader({ context, detail, onCopyLink, onRunNow }: {
+  context: SidekickDetailHeaderContext;
+  /** The detail, or what the list row already says of it while the detail is read. */
+  detail: Pick<AutomationDetail, 'id' | 'name' | 'appearance'> & { currentDefinition: { name: string } | null };
+  onCopyLink: () => Promise<void>;
+  /** Absent while the Sidekick cannot start a run; the details say why. */
+  onRunNow: (() => void) | undefined;
+}): React.JSX.Element {
+  // No presence here: the workspace socket records only an open Canvas as
+  // anyone's foreground (`set_presence`), so a Sidekick never has any.
+  const { api } = useCollaborationSession();
+  const [search, setSearch] = useSearchParams();
+  const runId = search.get('run');
+  const name = detail.currentDefinition?.name ?? detail.name;
+  const row = useSidekickList()?.find((candidate) => candidate.id === detail.id);
+  const pinned = row?.pinnedPosition != null;
+  const [menuError, setMenuError] = useState<string | null>(null);
+  const mark = <span className="sidekick-pill-mark"><AutomationGlyph {...(detail.appearance ? { appearance: detail.appearance } : {})} id={detail.id} /></span>;
+  const sidekickLevel: TitlePillLevel = {
+    key: `sidekick:${detail.id}`,
+    icon: mark,
+    title: name,
+    label: `Sidekick menu: ${name}`,
+    menu: <>
+      {api && row && <TitleMenuItem icon={pinned ? <IconPinnedOff aria-hidden="true" size={16} stroke={1.8} /> : <IconPin aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
+        setMenuError(null);
+        api.setSidekickPinned(detail.id, !pinned).catch(() => setMenuError('The Sidekick could not be pinned. Try again.'));
+      }}>{pinned ? 'Unpin' : 'Pin'}</TitleMenuItem>}
+      <TitleMenuItem disabled={!onRunNow} icon={<IconPlayerPlay aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => onRunNow?.()}>Run now</TitleMenuItem>
+      <TitleMenuItem icon={<IconLink aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
+        setMenuError(null);
+        void onCopyLink().catch(() => setMenuError('The Sidekick link could not be copied.'));
+      }}>Copy link</TitleMenuItem>
+    </>,
+  };
+  // The run's pill names it as the row it was opened from does ("Run 6"). A
+  // link that already knew the number, such as a Canvas card's "run #5",
+  // carries it in the route's state, so the pill is numbered before the
+  // shared conversation that numbers it has loaded.
+  const linked = (useLocation().state as { runNumber?: unknown } | null)?.runNumber;
+  const runLabel = sidekickRunLabel(useSidekickRunNumber(detail.id, runId) ?? (typeof linked === 'number' ? linked : null));
+  const current: TitlePillLevel = runId
+    ? { key: `run:${runId}`, icon: <IconHistory aria-hidden="true" size={16} stroke={1.8} />, title: runLabel, label: runLabel }
+    : sidekickLevel;
+  // Back to the shared conversation replaces the history entry, so Back
+  // leaves the Sidekick rather than reopening the run.
+  const ancestors: TitlePillLevel[] = runId
+    ? [{ ...sidekickLevel, menu: undefined, label: `Back to ${name}`, onSelect: () => setSearch({}, { replace: true }) }]
+    : [];
+  return <>
+    {menuError && <ErrorNotice>{menuError}</ErrorNotice>}
+    <TitlePillHeader
+      // A run reads as the Sidekick's pill and then the run's, side by side
+      // after Back and Forward as a Canvas and its artifact do; centred, the
+      // run's pill floated alone mid-header, apart from the Sidekick it
+      // belongs to. The shared conversation keeps its centred pill.
+      align={runId ? 'start' : 'center'}
+      ancestors={ancestors}
+      current={current}
+      trailing={<span className="canvas-header-trailing">
+        {context.compact && <IconButton aria-pressed={context.detailsOpen} className="title-pill-action" label="Sidekick details" onClick={context.toggleDetails}>
+          <PanelRight aria-hidden="true" size={16} />
+        </IconButton>}
+      </span>}
+    />
+  </>;
+}
+
+
+/**
+ * The Sidekick's shared conversation (substream `"0"`), or one run's own
+ * conversation while `?run=` names it. Everyone the Sidekick is shared with
+ * talks here; a message addressed to the Sidekick starts a run, whose row the
+ * server writes into this feed. A manager edits the Sidekick from the same
+ * composer by switching on Edit Sidekick, which marks each message
+ * `intent: "edit_sidekick"` for the wizard; nobody else is offered it, and
+ * the server refuses the mark from anyone else. A draft has nothing to run
+ * yet, so a manager opens one already editing.
+ */
+function SidekickConversation({ id, name, draft, canvases, manages }: {
+  id: string; name: string; draft: boolean; canvases: NonNullable<AutomationDetail['canvases']>; manages: boolean;
+}): React.JSX.Element {
+  const [search] = useSearchParams();
+  const runId = search.get('run');
+  const [editing, setEditing] = useState(draft);
+  if (runId) {
+    return <ConversationSurface
+      key={`run:${runId}`}
+      parentId={id}
+      parentKind="automation"
+      // No composer: a message to the Sidekick goes in the shared
+      // conversation, where it starts the next run. A question the run asked
+      // keeps its answer form here, as it does on the run's row there.
+      withoutComposer
+      renderHeader={() => <header className="sidekick-conversation-heading" />}
+      substreamId={runId}
+    />;
+  }
+  const edit = manages && editing;
+  return <ConversationSurface
+    {...(manages ? { composerMenuActions: [{
+      checked: editing,
+      icon: <Pencil aria-hidden="true" />,
+      label: 'Edit Sidekick',
+      onSelect: () => setEditing((current) => !current),
+    }] } : {})}
+    composerPlaceholder={edit ? 'Describe a change to this Sidekick…' : `Message ${name} and the team…`}
+    conversationName={name}
+    // At the composer, where the mode applies, with the way out beside it;
+    // Escape leaves it too.
+    {...(edit ? {
+      composerNotice: <span className="sidekick-editing-badge" role="status">
+        <Pencil aria-hidden="true" size={13} />Editing this Sidekick
+        <button aria-label="Stop editing this Sidekick" className="sidekick-editing-close" onClick={() => setEditing(false)} type="button"><X aria-hidden="true" size={13} /></button>
+      </span>,
+      onComposerCancel: () => setEditing(false),
+    } : {})}
+    key="shared"
+    messageIntent={edit ? 'edit_sidekick' : undefined}
+    parentId={id}
+    parentKind="automation"
+    // Always an element: the surface's grid gives its first row to the header,
+    // and an empty one keeps the feed in the row that scrolls.
+    renderHeader={() => <header className="sidekick-conversation-heading">
+      {canvases.length > 0 && <ul aria-label="Canvases it made" className="sidekick-canvas-cards">
+        {canvases.map((canvas) => <li key={canvas.id}><Link className="sidekick-canvas-card" to={canvasRoute(canvas.id)}>
+          <CanvasMark kind={null} size={28} />
+          <span><strong>{canvas.title}</strong><small>Canvas</small></span>
+        </Link></li>)}
+      </ul>}
+    </header>}
+    substreamId="0"
+  />;
 }

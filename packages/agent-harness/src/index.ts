@@ -76,7 +76,7 @@ export * from "./prompts";
 export * from "./completion-verification";
 export { classifyMessageAdmission, classifyMessageContinuation, classifyMessageContinuationWithTypeSafe } from "./message-continuation";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
-export { AmbiguousExternalWriteError, isAzureBoundModel } from "./bind-runtime";
+export { AmbiguousExternalWriteError } from "./bind-runtime";
 export {
   formatToolArgumentValidationError,
   modelToolArgumentSchema,
@@ -2803,7 +2803,7 @@ const automationDraftSubmissionJsonSchema = {
     expectedOutputs: {
       type: "array",
       items: { type: "string" },
-      description: "Observable results of using these instructions, one entry per output; use [] when none are needed. For triggered work, describe what each run produces, for example [\"A summary posted to the Thread\"]. Write results rather than steps.",
+      description: "Observable results of using these instructions, one entry per output; use [] when none are needed. For triggered work, describe what each run produces, for example [\"A summary of the week's merged pull requests in each run's reply\"]. Write results rather than steps.",
     },
     defaultBehavior: {
       type: "string",
@@ -2862,8 +2862,8 @@ const automationDraftSubmissionJsonSchema = {
     },
     suggestedScope: {
       type: "string",
-      enum: ["personal", "workspace", "workstream"],
-      description: "The scope already selected for this Sidekick. Preserve it; do not ask the person to choose again. Before first publication, change between personal and workspace only when explicitly requested. Published scope and workstream ownership cannot change. personal uses the run-as person's connections; workspace uses shared Organization connections; workstream belongs to its owning Thread and follows that Thread's management permissions."
+      enum: ["personal", "workspace"],
+      description: "The scope already selected for this Sidekick. Preserve it; do not ask the person to choose again. Before first publication, change between personal and workspace only when explicitly requested. Published scope cannot change. personal uses the run-as person's connections; workspace uses shared Organization connections."
     },
     ready: {
       type: "boolean",
@@ -3799,6 +3799,35 @@ export const AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION = {
 } as const satisfies ToolDefinition;
 
 /**
+ * The same card, asked as a question in a Sidekick run.
+ *
+ * A run has nobody reading along as it works, so a card it showed and then
+ * finished past was a run that ended `completed` with the work undone. In a run
+ * the card is the question: it opens an elicitation that carries the
+ * selection, the run waits in `needs_input`, and the answer (made by
+ * connecting, by choosing Continue, or by declining) resumes it. The model
+ * reads the same name and input as everywhere else; only the promise differs,
+ * and a write with a provider key because the question's identity is derived
+ * from that key, as `request_elicitation`'s is.
+ */
+export const AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION = {
+  ...AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
+  description: [
+    "Ask for a connection this run needs, and pause the run until a person answers.",
+    "Call only after get_connector_connection_state returns reconnect_required or not_connected and the missing connection blocks the task.",
+    "Use the same connectorId, and the scope the task needs. Briefly explain what is blocked before this call.",
+    "The person sees a question with a card that connects it. The answer is continue once they connected it, or declined.",
+    "On continue, call get_connector_connection_state again and retry the work. On declined, end the run with one final message saying what is blocked and how to recover.",
+    "Never create an authorization URL or ask for credentials.",
+  ].join(" "),
+  mode: "write",
+  idempotency: "provider_key",
+  get inputSchema() {
+    return connectorConnectionCardInputJsonSchema();
+  },
+} as const satisfies ToolDefinition;
+
+/**
  * The automation architect's own tools, as data.
  *
  * Split out of `compileAutomation` so the schema guard can reach them: they are
@@ -4728,7 +4757,7 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   // smaller conversation is a real next action and starting one is the member's
   // to take — while the window Rally had wrong is an operator's, which is why
   // the sentence still asks for the request ID.
-  context_length_exceeded: "This conversation is longer than the selected model will accept. Start a new thread to continue, and copy the request ID for support",
+  context_length_exceeded: "This conversation is longer than the selected model will accept. Start a new Canvas to continue, and copy the request ID for support",
   // Separable by remedy: the member can remove the attachment or pick another
   // model, which no other code tells them.
   model_input_unsupported: "The selected model cannot read part of this message, such as an attached image or file. Remove it or use a different model, and copy the request ID for support",
@@ -4813,6 +4842,4 @@ export const __testing = {
 
 export * from "./prepared-content";
 export * from "./jev";
-export * from "./opening-message";
 export * from "./semantic-trigger-gate";
-export * from "./turn-disposition";
