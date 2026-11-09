@@ -111,9 +111,9 @@ their invariants are described in [Agent communication](agent-communication.md).
 
 ## Sidekick loading and attachment storage
 
-SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Conversation migration 43 adds `sidekick_execution_skills` for retry-stable instruction snapshots; the `sidekick_attachments` table it added beside it, which only a Thread's conversation wrote, is dropped by conversation migration 86. `parent_sidekicks` in `WorkspaceDO` (a Channel's default Sidekicks) stays for the Thread retirement and nothing writes it. Existing namespace lookup keys remain unchanged.
+SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Conversation migration 43 adds `sidekick_execution_skills` for retry-stable instruction snapshots; the `sidekick_attachments` table it added beside it, which only a Thread's conversation wrote, is dropped by conversation migration 86. `parent_sidekicks` in `WorkspaceDO` (a Channel's default Sidekicks) was dropped by migration 141. Existing namespace lookup keys remain unchanged.
 
-WorkspaceDO migration 86 adds `sidekick_conversation_attachments` (`automation_id`, `parent_kind`, `parent_id`, `substream_id`, `attached_by_user_id`, `attached_at`), the conversations a Sidekick may read and post to beyond its own; migration 137 widens `parent_kind` to admit `canvas`, the only kind now attached. It is typed-RPC only, and it is not `parent_sidekicks`, which recorded skill loading. The same migration's `automation_directory.owning_substream_id` is a dead column. [`conversation-tools.md`](conversation-tools.md) and [`automation-lifecycle.md`](automation-lifecycle.md) own them.
+WorkspaceDO migration 86 adds `sidekick_conversation_attachments` (`automation_id`, `parent_kind`, `parent_id`, `substream_id`, `attached_by_user_id`, `attached_at`), the conversations a Sidekick may read and post to beyond its own; migration 137 widens `parent_kind` to admit `canvas`, the only kind now attached, and migration 141 deletes the rows that named a Thread. It is typed-RPC only, and it is not the dropped `parent_sidekicks`, which recorded skill loading. The same migration's `automation_directory.owning_substream_id` is a dead column. [`conversation-tools.md`](conversation-tools.md) and [`automation-lifecycle.md`](automation-lifecycle.md) own them.
 
 WorkspaceDO migration 85 adds `external_conversation_bindings`, keyed by provider installation (`slack:<team>`, deliberately not a `connector_connections` row, so a binding survives a reconnect) and a JSON path of provider identifiers: a thread binds to a Sidekick run child. Room bindings are no longer written or read. It is typed-RPC only. [`external-conversation-bindings.md`](external-conversation-bindings.md) owns it.
 
@@ -320,10 +320,10 @@ typed query topics, and for a per-person change the people it was sent to; it
 never embeds the underlying row. Membership, invitations,
 user profiles, placement routes, and migration control remain D1 authorities.
 
-`WorkspaceDO.parent_metadata` was different: one row per retired Channel or
-Space, it was the parent's identity, generation and revision; what Main said
-about the parent lived on its `channels` or `spaces` row. Child title and
-lifecycle lived in `parent_children`, whose nullable
+`WorkspaceDO.parent_metadata` was different, until migration 141 dropped it:
+one row per retired Channel or Space, it was the parent's identity, generation
+and revision; what Main said about the parent lived on its `channels` or
+`spaces` row. Child title and lifecycle lived in `parent_children`, whose nullable
 `archived_at` is independent of creation readiness. Archive retains membership
 and transcript while excluding the child from the visible directory. A WebSocket
 snapshot includes nulls so a client can delete a former email,
@@ -384,13 +384,13 @@ SQL joins.
   add and Sidekick run notice they were sent, keyed by its notification
   intent's id, and `workspace_activity_seen`, their Mark all seen, in
   `WorkspaceDO` (migration 140, [`activity.md`](activity.md#data-model)).
-- The retired Thread, Channel and Breakout state — `channels`,
-  `channel_viewers`, `spaces`, `space_viewers`, `breakouts`,
-  `breakout_viewers` and the `parent_*` tables — stays in `WorkspaceDO` after
-  migration 139 because the Thread retirement's inventory reads it; nothing
-  else does ([`workspace-retirement.md`](workspace-retirement.md)). Migration
-  64 dropped the Project tables, and 139 dropped the Space ledgers, the
-  Thread pins, order, access and resource links, and the batch dispatches.
+- The retired Thread, Channel and Breakout state is gone. Migration 64
+  dropped the Project tables, 139 the Space ledgers, the Thread pins, order
+  and access, and the batch dispatches, and 141 the directories and their
+  viewers, the `parent_*` tables only a Thread or a Channel used, and a
+  Thread's resource links, once the operator had retired every Thread
+  ([`workspace-retirement.md`](workspace-retirement.md)). A Canvas's shares
+  still live in `parent_*` tables, below.
 - **What the Thread era left.** The shipped migrations are the map of the
   Thread, Channel, Space and Project tables as they were; this list says only
   what is still in the schema. WorkspaceDO migration 64 dropped the eight
@@ -401,15 +401,22 @@ SQL joins.
   Thread pins and orders (`workspace_workstream_pins`, `workspace_pinned_order`,
   `workspace_container_order`), `workspace_workstream_access`,
   `conversation_access_requests`, the Channel colour and rail ledgers, the
-  batch dispatches and the import-reservation reclaim. What remains unwritten
-  are the directory tables migration 72 renamed (`channels`, `channel_viewers`,
-  `breakouts`, `breakout_viewers`, `spaces`, `space_viewers`) and the `parent_*`
-  tables of the retired Channel and Space host
-  ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), which
-  the Thread retirement's inventory reads, and
-  `workspace_workstream_effect_receipts`, the Thread host's effect inbox. The
-  partial unique index on `spaces.system_role` that made General singular
-  stays with its table.
+  batch dispatches and the import-reservation reclaim. Migration 141
+  (`THREAD_ERA_PARENTS_DROP_MIGRATION`) dropped what 139 kept for the Thread
+  operations: the directory tables migration 72 renamed (`channels`,
+  `channel_viewers`, `breakouts`, `breakout_viewers`, `spaces`,
+  `space_viewers`) with their memory digest and search triggers, the
+  `parent_*` tables of the retired Channel and Space host
+  ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)) that
+  only a Thread or a Channel used, `workspace_workstream_resource_links`,
+  `workspace_workstream_effect_receipts` (the Thread host's effect inbox),
+  `digest_schedules`, `slack_agent_sessions`, `slack_agent_feedback` and
+  `external_registration_generations`. It kept the `parent_*` tables a
+  Canvas's share primitive writes under the Canvas's id (invitations, grants
+  and their operation, revision, import, participant target and delivery
+  tables) and `parent_children`, which `ScopeGrantStorage` joins on every
+  grant it writes; a Thread's `authorization_locations` and
+  `conversation_view_*` rows stay too.
 - `member_personal_system_prompts` (migration 88) is each member's personal
   system prompt for this Organization, copied into each conversation object's
   `personal_system_prompt_copies` (its migration 72); see
@@ -500,9 +507,8 @@ SQL joins.
   conversation, author, input, and resource identity. The upload is marked
   attached, and the effect's exact input/resource reservations removed, in the
   same transaction that records the attachment (for a Thread, the
-  `workspace_workstream_resource_links` projection did this; migration 139
-  keeps that table because `convert_threads_to_canvases` reads it and
-  `deleteRetiredThreadParent` deletes a Thread's rows);
+  `workspace_workstream_resource_links` projection did this until migration
+  141 dropped it);
   failed preparation uses an idempotent typed release RPC. AgentLoopDO's
   `pending_attachment_reservation_recovery` is only the cross-object recovery
   obligation, not a second resource or message authority.
@@ -576,8 +582,8 @@ column catalog; what follows is only what WorkspaceDO still holds.
   candidate selection and on `(destination kind, destination key, state)` for
   replacement. A Sidekick's set is replaced whole inside its own transaction
   (`writeSidekickRegistrations`), which orders its writes; the
-  `external_registration_generations` fence the retired projection RPC kept is
-  no longer read or written. `effective_after_event_sequence` is the cutoff, so an event admitted before
+  `external_registration_generations` fence the retired projection RPC kept
+  was dropped by migration 141. `effective_after_event_sequence` is the cutoff, so an event admitted before
   the call is never matched by a rule that did not exist when it arrived.
   Removed rows are reaped after a day.
 - There is no delivery ledger. `matchExternalEventDestinations` returns one
@@ -701,7 +707,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   the Activity log it fed is retired, and migration 139 dropped
   `workspace_activity_events` and its targets, reads and pushes.
   `WorkspaceDO.workspace_workstream_effect_receipts`, the Thread host's inbox,
-  is unwritten since 2026-11-07; migration 139 left it in place.
+  was unwritten from 2026-11-07 and migration 141 dropped it.
 - WorkspaceDO `workstream_notification_intents` temporarily retains a bounded
   person-notification payload — a mention, or somebody added to the
   conversation — and the Sidekick run pushes (Needs input, finished;
@@ -716,7 +722,10 @@ column catalog; what follows is only what WorkspaceDO still holds.
 - The Thread-era Activity log and the digests are gone: migration 139 dropped
   `workspace_activity_events` with its targets, reads and pushes, and every
   digest table except `digest_schedules`, kept empty because a foreign key on
-  `schedules` names it. Their shapes are in the shipped migrations. Activity as
+  `schedules` named it. Migration 141 rebuilt `schedules` without
+  `digest_schedule_id`, so a schedule is a connector poll's or an automation
+  subscription's, and dropped `digest_schedules`. Their shapes are in the
+  shipped migrations. Activity as
   it is now is `workspace_activity_items` and `workspace_activity_seen`
   (migration 140), above.
 
@@ -758,14 +767,14 @@ column catalog; what follows is only what WorkspaceDO still holds.
   written.
 
 - `slack_installation_routes` is the opaque Global team-to-region directory;
-  `slack_user_links`, `slack_agent_sessions`, and durable `slack_ingress_jobs`
+  `slack_user_links` and durable `slack_ingress_jobs`
   remain regional — meaning *per region rather than Global*, not *in regional
-  D1*. All three are WorkspaceDO tables, reached through
+  D1*. Both are WorkspaceDO tables, reached through
   `withWorkspaceRuntimeDatabase`; regional D1 has not had them since migration
   0090. Reading the distinction the other way is what produced the
   `slackUserIsLinked` incident below, and again the automation delivery-target
-  500 of 2026-08-31. A session row is delivery state (status, reaction, who
-  started the thread); where a Slack message routes is decided by
+  500 of 2026-08-31. `slack_agent_sessions`, a Thread's Slack delivery state,
+  was dropped by migration 141; where a Slack message routes is decided by
   `external_conversation_bindings`, below. Each AgentLoopDO's
   `run_absorbed_slack_origins` (its migration 73) recorded the Slack origin of
   every steer a Thread's run absorbed; nothing writes or reads it since plan
@@ -1014,6 +1023,12 @@ and deletion promotion. The real-workerd suites in
 `apps/api/test-workers/resource-object-cleanup.test.ts` cover constructor
 migration, object isolation, eviction, compaction state, pagination, agent
 checkpoint behavior, routed cleanup SQL, and actual R2 retention/deletion.
+`apps/api/test-workers/workspace-thread-parents-drop-migration.test.ts`
+upgrades an object populated at v140 through migration 141 and proves the
+Thread tables and triggers are gone while the connector poll's `schedules`
+row (every column), its index and fence triggers, a Canvas, its share rows,
+`parent_children`, a Thread's `authorization_locations` and
+`conversation_view_*` rows survive, with `foreign_key_check` clean.
 These tests are required because the regional D1 suite cannot validate
 object-local SQLite lifecycle semantics.
 
@@ -1047,12 +1062,13 @@ its rows.
 `WorkspaceDO` are keyed by `parent_id`. A Canvas's guest share writes them, and
 the claim's directory step adds the guest to `canvas_participants`; the grant
 is the share's receipt, not who may read
-([`scope-invitations.md`](scope-invitations.md)). The other `parent_*` grant
-and audience tables (`parent_grant_operations`, the participant migration and
-delivery tables, `parent_direct_audience`, `parent_space_sources`,
-`parent_space_readers`, `parent_access_operations`) held a Channel's roster
-handoff and Space-derived access; nothing writes them now, and they stay with
-the Thread retirement's inventory.
+([`scope-invitations.md`](scope-invitations.md)). `ScopeGrantStorage` also
+writes the grant operations, imports and revision, and the participant target
+and delivery tables, and joins `parent_children`, so migration 141 kept all of
+them. The other `parent_*` audience tables held a Channel's roster handoff and
+Space-derived access: `parent_participant_migrations` went with migration 141,
+and `parent_direct_audience`, `parent_space_sources`, `parent_space_readers`
+and `parent_access_operations` with migration 94.
 
 ## Usage metering
 
@@ -1087,6 +1103,54 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-11-09 — Drop the Thread, Breakout and Channel tables the Thread operations kept
+
+**What changed:** WorkspaceDO migration 141 (`THREAD_ERA_PARENTS_DROP_MIGRATION`
+in `retired-workspace-schema.ts`) drops `channels`, `channel_viewers`,
+`breakouts`, `breakout_viewers`, `spaces` and `space_viewers` with their memory
+digest and search authorization triggers, the `parent_*` tables only a Thread
+or a Channel used (metadata, child projections and receipts, state clock and
+changes, outbox, Breakout preparations and members, participant migrations,
+connector admissions, recommended Sidekicks) with the Breakout member freeze
+triggers, `workspace_workstream_resource_links`, `digest_schedules`,
+`slack_agent_sessions`, `slack_agent_feedback`,
+`external_registration_generations` and
+`workspace_workstream_effect_receipts`, and deletes a Sidekick's attachments to
+a Thread. It first rebuilds `schedules` without `digest_schedule_id`, copying
+every other row and putting back its index and workspace fence triggers. The
+last readers went in the same change: the authorization backfill's and the
+workspace retirement graph's `channels` and `spaces` reads, the in-place
+discovery of a hosted Channel's children, a Channel's recommended Sidekicks in
+the skill read, and the inspection bridge's Thread child lookup.
+
+**Why:** Migration 139 kept these only so `dump_thread_transcripts`,
+`convert_threads_to_canvases` and `retire_threads` could find every Thread
+conversation object. The operator ran all three in every live Organization on
+2026-11-09, `channels` and `spaces` read empty, and the operations are removed
+in the same change, so nothing is left to read the tables.
+
+**Considered and rejected:** Dropping every `parent_*` table, as plan section 9
+listed. A Canvas's share primitive writes eight of them under the Canvas's own
+id (invitations, grants and their operation, import, revision, participant
+target and delivery tables), and `ScopeGrantStorage` joins `parent_children` on
+every grant it writes, so a claimed share would fail with `no such table`.
+Keeping `digest_schedules` empty, as 139 did: the rebuild of a table nothing
+references is a copy and a rename, and an empty parent kept only for a foreign
+key is the stale table 0090 warned about. Narrowing the
+`sidekick_conversation_attachments` CHECK to `canvas`: a table copy to forbid a
+value nothing writes.
+
+**Consequences:** `parent_children` and the eight share tables stay keyed by
+`parent_id`; a later cleanup that wants them gone has to move the Canvas share
+onto tables of its own first. A schedule is a connector poll's or an automation
+subscription's, by its CHECK. A Thread's `authorization_locations` and
+`conversation_view_*` rows stay, as plan section 9 decided. The D1 authority
+tables and D1 `workstreams` are unchanged: Canvas and Sidekick creation read
+them.
+
+Shipped in juno-ai-labs/avalon#TBD. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/plan.md`.
 
 ### 2026-11-09 — The Thread, Channel, Thread-era Activity and demo storage loses its code; what is dropped and what waits
 
