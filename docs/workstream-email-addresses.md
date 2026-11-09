@@ -514,7 +514,7 @@ registry, and what happens to mail addressed to one. It does not own:
 | `apps/api/test/email.test.ts` | Native sender payloads, production-only sending, and provider outcome classification. |
 | `apps/api/test-workers/cloudflare-email.test.ts` | On real workerd: streamed byte limits, content-derived Global receipts, and maintenance refusal. |
 | `apps/api/test/email-markdown.test.ts` | The shared renderer: the structure these emails use, escaping, refused link targets, and the plain-text preview line. |
-| `apps/api/test-workers/hosted-sidekick.test.ts` | On real workerd: that applying a revision reserves and stores the address, and that `admitInboundEmail` admits once, answers a retry from its receipt, and refuses a stranger. |
+| `apps/api/test-workers/hosted-sidekick.test.ts` | On real workerd: that applying a revision reserves and stores the dedicated-domain address, and that `admitInboundEmail` admits once, answers a retry from its receipt, and refuses unauthenticated senders and strangers. |
 | `apps/api/test/health-env-contract.test.ts` | That the probe says when notification mail is falling back to the transactional sender. |
 
 Run one with
