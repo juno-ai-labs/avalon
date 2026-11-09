@@ -407,7 +407,13 @@ never read an owner. The route revalidates the workspace session before
 returning. The index returns candidate identifiers, the canonical text and the
 display attributes the owning object wrote beside it. Excerpts
 contain UTF-16 source ranges and excerpt-relative highlight ranges; React renders
-matching spans as text. Selecting a message hydrates its canonical sequence and
+matching spans as text. A message result's location names its parent's kind
+(`parentKind`, `canvas` or `automation`): the index keeps none, so the route
+reads it from the searcher's own groups, where a parent whose `sidekick:<id>`
+group the searcher holds is a Sidekick and any other is a Canvas (the two
+kinds' ids never collide). A Canvas hit opens the Canvas at the turn; a
+Sidekick hit opens the Sidekick on the conversation it was said in (`?run=`
+for a run's). Selecting a message hydrates its canonical sequence and
 positions the transcript. Selecting a file opens `/search/resources/:id/preview`, which repeats attachment
 authority and session checks after loading, and refuses a changed source. That
 preview does not yet scroll to the matching range.
@@ -744,6 +750,14 @@ first. The authorization projection has no trigger on a Canvas's or Sidekick's
 audience and no read-path consumer, so its snapshots do not follow audience
 changes; member search computes the audience live, which is what makes that
 safe.
+
+A message result's location gained `parentKind`. A Sidekick's turns are
+indexed under its group, so they reached search, but the client routed every
+message hit to `canvasTurnRoute` and dropped its substream, so a Sidekick hit
+opened as a missing Canvas. The kind is derived from the searcher's groups
+rather than written to the index: the groups already decide admission, and a
+new index attribute would need a re-projection of every committed turn before
+old rows carried it.
 
 Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 

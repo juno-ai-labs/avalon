@@ -10,7 +10,7 @@ const result: SearchResult = {
   id: 'message-1', category: 'messages', title: 'Customer research', sourceLabel: 'Customer research',
   occurredAt: null, excerpt: 'Alex Danilowicz replied', excerptStart: 0,
   highlights: [{ start: 5, end: 10 }], revision: '1',
-  location: { kind: 'message', workstreamId: '00000000-0000-7000-8000-000000000001',
+  location: { kind: 'message', parentKind: 'canvas', workstreamId: '00000000-0000-7000-8000-000000000001',
     substreamId: '0', turnId: 'turn-1', transcriptSequence: 1, range: { start: 5, end: 10 } },
 };
 /**
