@@ -3879,7 +3879,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
           workspaceId: identity.workspaceId,
           automationId: identity.parentId,
           runId: authorityRunId,
-          sender: continuationSender(pending, JSON.parse(pending.authorization_json), identity.parentId),
+          sender: continuationSender(pending, JSON.parse(pending.authorization_json)),
         });
         // The answer took an RPC, and the loop may have moved meanwhile: a
         // second input admitted behind this one bumps its revision. Acting on
