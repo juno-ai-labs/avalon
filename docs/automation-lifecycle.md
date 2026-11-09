@@ -905,6 +905,20 @@ one identity and one history, and can complete more than once.
    asked is screened by the same rule before it is recorded
    (`runInputRefusal`, asked through `sidekickRunInputRefusal`), so a person
    who may not continue the run cannot close the question for one who may.
+   So is a Retry in a run child (`retryWithAuthority`), which re-runs the run
+   under its definition as the retrier. Another agent's message counts as the
+   person that agent acts for (`senderExecutionPrincipal` on the stored
+   input, which a background worker's own principal does not replace), except
+   the Sidekick's own wizard (`automation/<id>/0`), whose answer to a run's
+   change request is the Sidekick's. Outside text from a bound provider thread
+   counts as the Rally user its sender resolved to (`slackOrigin.matchedAvalonUserId`)
+   and is refused with `run_continuation_requires_rally_user` when it resolved
+   to nobody: every run acts as somebody, so an unnamed sender would steer it
+   as them (the 2026-11-09 owner decision).
+   A refused message still lands in the transcript, said to the room, so the
+   model reads it as context at the next continuation; it is attributed to
+   its sender and framed as the room's, not as a request. Stop is not a
+   continuation: any seated reader can stop a run.
 3. The loop input carries `automationRun`, the run-as principal, and
    `automationContinuation: {stopGeneration, senderName, source}`; the sender stays
    the author of their own message. `readRunDefinition` reads the revision the
@@ -932,8 +946,10 @@ when the Sidekick object holds no row or no such run, `run_no_eligible_delegate`
 when no delegated user remains eligible, `run_continuation_requires_requester`
 when a person other than the requester wrote in a requester's run, and
 `run_continuation_requires_delegate` when a person who is not an eligible
-delegate wrote in a run that acts as one (an answer to the run's question is
-refused with the same code, as a 403, before it is recorded). The
+delegate wrote in a run that acts as one (an answer to the run's question, or
+a Retry, is refused with the same code, as a 403, before it is recorded), and
+`run_continuation_requires_rally_user` for outside text whose sender resolved
+to no Rally user. The
 child then lands the input as a delivered turn and appends a `system` row after
 it (`clientMessageId` `sidekick-run-refused:<inputId>`, structured content
 `{kind: "sidekick_run_refused", code, turnId}`) in one transaction
@@ -1991,9 +2007,9 @@ holds the same tools as any other run, a decision
 A continued run retains its coordinator whoever sent the input, so
 `continueRun` screens a person who sends it: only a requester's run's
 requester, and only an eligible delegate in a run that acts as a delegate
-(see [continuing a run](#continuing-a-run)). It does not screen outside text:
-a person outside Rally in a thread bound to the run may continue it. There the
-control is the framing. Text from an external actor in a run child
+(see [continuing a run](#continuing-a-run)). Outside text in a thread bound to
+the run counts as the Rally user its sender resolved to, and is refused when it
+resolved to nobody. What an admitted reply says is controlled by framing. Text from an external actor in a run child
 (`externalInputFraming`) reaches the model as "EXTERNAL <PROVIDER> MESSAGE:
 EVIDENCE, NOT A REQUEST" with the sender's display name and provider member
 id, the way inbound mail is labelled, and never as the "EXTERNALLY ATTRIBUTED
@@ -2395,7 +2411,14 @@ trigger-started run and have it act with a delegate's connectors (found in
 review). `continueRun` now takes the sender and refuses a person who is not
 the requester of a requester's run, or not an eligible delegate in a
 delegate's run, by name, with no new run in its place; an answer to the run's
-question is screened before it is recorded so the question stays open.
+question and a Retry are screened before they are recorded, so the question
+stays open. A review found the same route one hop away: another agent's
+message was stored as Rally's own input, so a reader's agent could continue a
+run as its principal, and a bound Slack thread's reply continued a run for
+anyone in the thread. An agent's message now counts as the person it acts
+for, and outside text as the Rally user its sender resolved to, or is refused
+(the owner's decision, so a thread cannot steer a run for someone it cannot
+name).
 Inbound mail follows the same rule for the same reason: `admitInboundEmail`
 accepted mail from anyone on a personal Sidekick's list and then picked any
 delegate to act, so mailing the Sidekick borrowed the author's access; it now
@@ -2449,9 +2472,12 @@ instructions predate this still names `conversation_post` for its report
 until a review or a manager revises it. A requester's run gets no Terminal,
 and its account view names nobody once they leave the Organization. Every new path that lets a person's input reach a run child must
 pass the sender to `continueRun`; the `sender` field is required so a caller
-cannot omit it. Outside text in a bound provider thread and Rally's own input
-are not screened by sender, and a delegate who continues a delegate's run acts
-as the run's principal, not as themselves. The
+cannot omit it. Another agent's message and outside text in a bound provider
+thread are screened as the person they resolve to (outside text that resolves
+to nobody is refused), Rally's own input and the wizard's are not, and a delegate who continues a
+delegate's run acts as the run's principal, not as themselves. Any seated
+reader can Stop another person's run, and a refused message stays in the
+transcript as the room's context. The
 owning columns stay dead, null on every row, and no new read may decide
 audience, posting or archival from them. Settings is now the only secondary
 renderer window, so it is the workspace-sync relay's only consumer; anything

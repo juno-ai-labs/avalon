@@ -3533,7 +3533,10 @@ export class WorkstreamObjectProductService {
         executionPrincipal: input.executionPrincipal,
         confirmedParticipantUserIds: [],
         reason: input.origin,
-        ...("agentExchange" in input ? { agentExchange: input.agentExchange } : {}),
+        ...("agentExchange" in input ? {
+          agentExchange: input.agentExchange,
+          senderExecutionPrincipal: input.senderExecutionPrincipal ?? input.executionPrincipal,
+        } : {}),
         parentHarnessRunId: null,
         slackOrigin: null,
         slackSearchAuthorization: null,
@@ -5048,6 +5051,16 @@ export class WorkstreamObjectProductService {
     }
     if (loop.status === "executing") {
       throw new ApiError(409, "harness_already_running", "This thread already has an active run");
+    }
+    // A retry in a Sidekick run re-runs it under the run's definition as the
+    // retrier, so it is refused by the rule that refuses their message there.
+    const identity = this.objectStore.identity();
+    const sidekickRunId = identity?.parentKind === "automation" ? this.sidekickAuthorityRunId() : "0";
+    if (identity && sidekickRunId !== "0") {
+      const refusal = await this.sidekickRunInputRefusal({
+        workspaceId: auth.workspaceId, automationId: identity.parentId, runId: sidekickRunId, userId: auth.userId,
+      });
+      if (refusal) throw new ApiError(403, refusal, "Only the people this run acts for can retry it");
     }
     const latest = first(this.storage.sql.exec<{
       run_id: string;

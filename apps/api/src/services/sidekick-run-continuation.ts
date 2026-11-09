@@ -1,4 +1,6 @@
 import {
+  agentIdForAddress,
+  asSubstreamId,
   asUserId,
   asWorkspaceId,
   ExternalActorSchema,
@@ -49,14 +51,46 @@ export async function continueSidekickRun(
   }));
 }
 
+const SenderAuthorizationSchema = z.looseObject({
+  agentExchange: z.looseObject({ senderAgentId: z.string() }).optional(),
+  senderExecutionPrincipal: z.unknown().optional(),
+  executionPrincipal: z.unknown().optional(),
+  slackOrigin: z.looseObject({ matchedAvalonUserId: z.string().nullable().optional() }).nullable().optional(),
+});
+const UserPrincipalSchema = z.looseObject({ type: z.literal("user"), userId: z.string().min(1) });
+
 /**
- * Who sent a queued input, as `continueSidekickRun` asks. A person's input
- * names them; outside text from a bound provider thread and Rally's own input
- * name only their kind.
+ * Who sent a queued input, as `continueSidekickRun` asks, from the input's
+ * actor and its stored authorization:
+ *
+ * - a person's own message or answer names them;
+ * - outside text from a bound provider thread names the Rally user the
+ *   provider identity resolved to, or nobody (`external`);
+ * - another agent's message names the person that agent acts for, so a
+ *   reader's agent cannot do what the reader may not, except the Sidekick's
+ *   own wizard (`automation/<id>/0`), whose replies to a run's change request
+ *   are the Sidekick's own;
+ * - anything else is Rally's own (`system`).
  */
-export function continuationSender(pending: { actor: string; author_user_id: string | null }): SidekickRunContinuationSender {
+export function continuationSender(
+  pending: { actor: string; author_user_id: string | null },
+  authorization: unknown,
+  sidekickId: string,
+): SidekickRunContinuationSender {
   if (pending.actor === "human" && pending.author_user_id !== null) return { kind: "person", userId: asUserId(pending.author_user_id) };
-  return pending.actor === "external" ? { kind: "external" } : { kind: "system" };
+  const stored = SenderAuthorizationSchema.safeParse(authorization);
+  const fields = stored.success ? stored.data : {};
+  if (pending.actor === "external") {
+    const matched = fields.slackOrigin?.matchedAvalonUserId;
+    return matched ? { kind: "person", userId: asUserId(matched) } : { kind: "external" };
+  }
+  if (fields.agentExchange) {
+    const wizard = agentIdForAddress({ parentKind: "automation", parentId: sidekickId, substreamId: asSubstreamId("0") });
+    if (fields.agentExchange.senderAgentId === wizard) return { kind: "system" };
+    const principal = UserPrincipalSchema.safeParse(fields.senderExecutionPrincipal ?? fields.executionPrincipal);
+    if (principal.success) return { kind: "person", userId: asUserId(principal.data.userId) };
+  }
+  return { kind: "system" };
 }
 
 /**
@@ -102,6 +136,7 @@ export const SIDEKICK_RUN_REFUSAL_TEXT: Record<SidekickRunContinuationRefusalCod
   run_no_eligible_delegate: "This message did not continue the run because no delegated user is available. Add a delegate with access to continue.",
   run_continuation_requires_requester: "This message did not continue the run because the run acts for the person who started it, and only they can continue it.",
   run_continuation_requires_delegate: "This message did not continue the run because it acts with access shared with this Sidekick, and only people who share theirs can continue it.",
+  run_continuation_requires_rally_user: "This message did not continue the run because its sender is not linked to a Rally account that may continue it.",
 };
 
 /**
