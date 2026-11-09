@@ -15,6 +15,9 @@ import {
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
   type SetEngineeringSidekickPausedResult,
+  RetireEngineeringOrgInputSchema,
+  RetireEngineeringOrgResultSchema,
+  type RetireEngineeringOrgResult,
   type EngineeringTextResult,
   CreateEngineeringOrgInputSchema,
   CreateEngineeringOrgResultSchema,
@@ -94,6 +97,7 @@ import { createEngineeringOrg, createEngineeringChannel, createEngineeringThread
 import { sendEngineeringMessage, readEngineeringChannel, readEngineeringConversation, listEngineeringUserChannels, listEngineeringUserConversations } from "./services/engineering-messages";
 import { auditedEngineeringWrite } from "./services/engineering-audit";
 import { setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
+import { retireWorkspaceForOperator } from "./services/workspace-retirement-service";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
   id: z.string(),
@@ -286,6 +290,24 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         representedUserId: request.userId, operationId: crypto.randomUUID(), sidekickId: request.sidekickId,
       }, async () => SetEngineeringSidekickPausedResultSchema.parse(await setEngineeringSidekickPaused(this.env, request)),
       (result) => ({ lifecycle: result.lifecycle }));
+    });
+  }
+
+  async retireOrg(input: unknown, operator: unknown): Promise<RetireEngineeringOrgResult> {
+    return this.productOperation("retireOrg", async () => {
+      const request = RetireEngineeringOrgInputSchema.parse(input);
+      const trusted = EngineeringOperatorSchema.parse(operator);
+      // Ace's own door, so the D1 fence, the graph walk and the demo register
+      // stamp are the same; no user is represented, since an operator closes it.
+      // A pass is resumable rather than idempotent: a fresh ID pairs this
+      // call's audit rows, and the walk resumes from what it recorded.
+      return auditedEngineeringWrite(this.env, trusted, {
+        action: "retire_org", orgId: request.orgId, operationId: crypto.randomUUID(),
+      }, async () => RetireEngineeringOrgResultSchema.parse({
+        region: this.env.AVALON_REGION,
+        workspaceId: request.orgId,
+        ...await retireWorkspaceForOperator(this.env, request.orgId, { operatorId: trusted.subject }),
+      }), (result) => ({ complete: result.complete, remaining: result.remaining }));
     });
   }
 

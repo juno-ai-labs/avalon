@@ -7,7 +7,7 @@ It recreates the useful part of Cloudflare's dashboard database console through
 standard MCP tools at `https://mcp.internal.rallywith.ai/mcp`, including deliberate
 repair writes. It also reads and changes the feature flags and agent model
 routes that Ace manages, through Ace, and runs read-only queries against the
-Global analytical lakehouses and the account's Workers Logs and Traces. Product tools create Organizations, Channels and Threads, send messages,
+Global analytical lakehouses and the account's Workers Logs and Traces. Product tools create and retire Organizations, create Channels and Threads, send messages,
 read participant-visible text, and list the selected user's Channels, Threads
 and Breakouts through the same services as the app. It is not a product API and it is never
 available to Rally users by virtue of product membership.
@@ -77,6 +77,7 @@ The regional bridge uses D1 only for identity and routing:
 | `create_thread` | Resolve the Organization in exactly one region | WorkstreamObjectCreationService, placement, opening turn and normal agent run |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause or resume, which call HostedSidekick in WorkspaceDO |
+| `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, Ace's retirement door: the D1 fence, then the graph walk over every object |
 | `read_channel` | Resolve the Organization in exactly one region | SpaceService summary and authorized Channel feed |
 | `list_channels` | Resolve the Organization in exactly one region | SpaceService.list and the workspace socket's active Channel directory |
 | `list_threads`, `list_breakouts` | Resolve the Organization in exactly one region | SpaceService.listChannels with kind and all-visible filters in the ordinary paginated reader |
@@ -256,6 +257,23 @@ and `resume` as the app's buttons, as the selected user, so HostedSidekick
 decides who may manage the Sidekick and refuses with its own codes. Both are
 idempotent, so they take no `operationId`; the bridge mints one per call only
 to pair the attempt and result audit rows.
+
+### Retiring an Organization
+
+`retire_org` calls `retireWorkspaceForOperator`, the same function behind Ace's
+Retire button, through a bridge method, `retireOrg`. So the region check,
+`workspaces.abandoned_at`, the tombstones, the resumable walk and the demo
+register's `retired_at` are all
+[`workspace-retirement.md`](workspace-retirement.md)'s, unchanged. The Access
+subject goes into the pass as its operator id, so the region's
+`workspace_retirement_pass` log names who closed it, and the audit pair targets
+the Organization rather than a represented user, since no user acts.
+
+It takes no typed confirmation. In Ace that is a page ceremony for a person;
+here the caller is a client that would fill both fields from the same value,
+and the tool's destructive annotation is what asks the client to check first.
+A receipt with `complete: false` means parts are still open; calling again
+resumes the walk.
 
 ### User-visible lists
 
@@ -514,6 +532,11 @@ before execution.
 workspace is inventoried as active, resolves at the open generation, and
 and executes against its initialized WorkspaceDO from regional identity alone.
 
+`apps/api/test-workers/engineering-org-retirement.test.ts` retires an
+Organization through the bridge and reads back the D1 fence, the tombstone, the
+demo register stamp and the audit pair; an id the region does not hold is
+refused as `workspace_not_found` and audited as failed.
+
 `apps/api/test-workers/engineering-sidekick-inspection.test.ts` lists a
 Sidekick created through the real path and reaches its run conversation only
 through the Sidekick's own registry.
@@ -570,7 +593,8 @@ therefore equivalent to database-console access across both Rally regions.
 It also grants read access to every lakehouse row, including the raw prompts,
 connector data and model output in `llm_inference`, which the
 [runbook's handling rules](runbook.md#inspecting-a-runs-raw-inference) cover.
-Access membership also grants every Worker's logs and traces. Cloudflare
+Access membership also grants every Worker's logs and traces, and retiring
+any Organization for good. Cloudflare
 records the full request URL on invocation logs and spans, which carries a
 connector OAuth callback's one-time `code` and a WebSocket `ticket`, and the
 platform's Durable Object SQL spans carry their bindings, which for Avalon
@@ -623,6 +647,28 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-11-09 — Retire an Organization
+
+**What changed:** `retire_org` retires an Organization through a new bridge
+method, `retireOrg`, which calls Ace's operator door,
+`retireWorkspaceForOperator`. The audit helper's represented user is now
+optional; a write without one targets the Organization.
+
+**Why:** An engineer had to retire the live demos and the demo template, and
+only Ace's workspaces tab could. The console offered SQL, and retiring by hand
+is not a row update: the walk closes every object child-first, tombstones each,
+and stamps the demo register, so a hand-written `abandoned_at` would leave every
+room, Sidekick and socket still running.
+
+**Considered and rejected:** Calling Ace over a Service Binding, as the flag
+tools do. Those go through Ace because Ace holds the Flagship token and fans
+out the client notice; retirement has no such step in Ace, and the door already
+runs in the regional Worker the bridge lives in. Asking for the id twice, as
+Ace does, for the reason in [Retiring an Organization](#retiring-an-organization).
+
+**Consequences:** Access membership now also grants permanent closure of any
+Organization. A change to the retirement door changes this tool with it.
 
 ### 2026-11-06 — Pause and resume a Sidekick
 
