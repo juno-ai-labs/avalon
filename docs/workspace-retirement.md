@@ -261,7 +261,9 @@ Main `0` and every child the parent registry, its projections or the Breakout
 directory knows. Main is always named, as `childrenForRetirement` names it,
 because a Space created before 2026-09-26 has a hidden one. A Canvas is a
 `canvas_directory` row and a Sidekick an `automation_directory` row; neither is
-read.
+read, and an id that has a `canvas_directory` row is left out even while its
+`channels` row stands: that is a Thread the conversion below made a Canvas of
+and stopped before deleting its rows, and its Main is the Canvas's Chat.
 
 **The dump comes first.** `dump_thread_transcripts` writes each conversation's
 committed transcript to `PAYLOADS` as text, under
@@ -293,9 +295,17 @@ and this one reads it through `identityForRetirement`.
   a subrequest ceiling is the failure on a very large one, and the receipts
   written so far survive it.
 
-**Then the retirement.** `retire_threads` is refused with
-`thread_retirement_dump_incomplete`, before anything is touched, unless every
-conversation in the inventory has its dump. Then, parent by parent, children
+**Then the retirement.** `retire_threads` is refused, before anything is
+touched, with `thread_retirement_conversion_pending` while
+`threadConversionInventory` below still names a Thread with an artifact, and
+with `thread_retirement_dump_incomplete` unless every conversation in the
+inventory has its dump. The first guard is what makes the order **dump,
+convert, retire** a rule rather than advice: retired first, a Thread with
+artifacts would lose the Chat its Canvas keeps, and its artifacts the
+conversation their readers open them through. A Thread the conversion refuses
+(`thread_conversion_no_creator`) keeps the retirement refused until an
+operator repairs its rows; nothing meant to survive is retired by default.
+Then, parent by parent, children
 before parents: each conversation object is tombstoned through `retireObject`
 (reason `thread_retirement`, no user), which clears its alarms and closes its
 sockets with `1008` exactly as the workspace walk does, and only once all of
@@ -818,7 +828,16 @@ D1 anchor and route need no rewrite. The alternative, creating new Canvases
 and copying the conversation and artifacts into them, was rejected because
 every id-keyed table would need a rewrite.
 
-**What a future change must respect:** the order is dump, convert, retire. The
+Review of #1490 found the order was advice only: `retire_threads` checked
+only the dumps, so run before the conversion it orphaned every artifact, and
+run after a partly failed one it tombstoned the Chat of a live Canvas, which
+keeps the Thread's id. It is now refused while a candidate remains
+(`thread_retirement_conversion_pending`), and its inventory leaves out any id
+`canvas_directory` holds. Letting the retirement skip candidates instead was
+rejected: a Thread it skipped would stay a Thread nothing can open.
+
+**What a future change must respect:** the order is dump, convert, retire, and
+`retire_threads` enforces it. The
 conversion is the only path that changes a conversation's stored parent kind,
 and only from `workstream` to `canvas`. Anything new that keys on a Thread's
 Main by its Thread-era name (a source string, a parent kind) has to be carried

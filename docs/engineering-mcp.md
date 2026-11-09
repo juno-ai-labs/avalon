@@ -258,8 +258,10 @@ that retire an Organization's Threads, Breakouts and Channels after the cutover
 to Canvases and Sidekicks, run in that order. The dump writes each of their
 conversations to R2 as text and reports `conversations`, `dumped`, `skipped`
 (already in R2) and `failed`, a stable code per conversation. The retirement
-is refused (`engineering_operation_failed:thread_retirement_dump_incomplete`)
-until every conversation has its dump, then retires the conversation objects
+is refused (`engineering_operation_failed:thread_retirement_conversion_pending`)
+while `convert_threads_to_canvases` below still has a Thread to convert, and
+(`engineering_operation_failed:thread_retirement_dump_incomplete`) until every
+conversation has its dump, then retires the conversation objects
 and deletes their rows, and reports `parents`, `conversations`,
 `retiredParents`, `retiredConversations`, `retainedOutbox` and `failed`; a
 rerun over a finished Organization reports zeros. It is annotated destructive.
@@ -685,7 +687,9 @@ the operator needs the candidate list, and each one's dump state, before
 committing an Organization.
 
 **What a future change must respect:** run it after the dump and before
-`retire_threads`; the retirement deletes every Thread it finds.
+`retire_threads`, which is refused with `thread_retirement_conversion_pending`
+while a candidate remains: before that guard, a retirement run first deleted
+the Threads this exists to keep.
 
 Shipped in juno-ai-labs/avalon#1490.
 
