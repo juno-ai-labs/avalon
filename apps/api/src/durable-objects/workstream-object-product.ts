@@ -7,6 +7,8 @@ import { AGENT_MESSAGE_CONTENT_KIND } from "@rally/contracts";
 import { WorkstreamAppearanceSchema } from "@rally/contracts";
 import { renderAgentMessage } from "../services/agent-message-content";
 import { renderSidekickReviewNotice } from "../services/sidekick-review-notice";
+import { continuationSender } from "../services/sidekick-run-continuation";
+import type { SidekickRunContinuationSender } from "./automation-do-protocol";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
@@ -442,6 +444,31 @@ export class WorkstreamObjectProductService {
   sidekickRunInputRefusal: (input: {
     workspaceId: string; automationId: string; runId: string; userId: string;
   }) => Promise<string | null> = () => Promise.reject(new Error("sidekick_run_input_check_unavailable"));
+
+  /**
+   * Whether this sender's input may continue the execution running under
+   * this Sidekick: for a run (`runId` not `"0"`), the rule `continueRun`
+   * applies; for the shared conversation, whether they manage the Sidekick.
+   * Set by the conversation object.
+   */
+  sidekickSenderMaySteer: (input: {
+    workspaceId: string; automationId: string; runId: string; sender: SidekickRunContinuationSender;
+  }) => Promise<boolean> = () => Promise.reject(new Error("sidekick_steer_check_unavailable"));
+
+  /**
+   * Whether an input asking to steer may join the execution already running
+   * here. Outside a Sidekick, always. Under one, only when its sender passes
+   * the check the claim would apply to them (`sidekickSenderMaySteer`); any
+   * other input queues, and the claim gives it its refusal, so text from
+   * somebody the execution does not act for never reaches it mid-turn.
+   */
+  private async steerAllowed(workspaceId: string, sender: SidekickRunContinuationSender): Promise<boolean> {
+    const identity = this.objectStore.identity();
+    if (identity?.parentKind !== "automation") return true;
+    return this.sidekickSenderMaySteer({
+      workspaceId, automationId: identity.parentId, runId: this.sidekickAuthorityRunId(), sender,
+    });
+  }
 
   /** The Sidekick run this conversation's input answers to: its own, or a worker's root run; `"0"` for none. */
   private sidekickAuthorityRunId(): string {
@@ -3293,12 +3320,17 @@ export class WorkstreamObjectProductService {
       includeAttachmentContents: true,
     });
     if (!bindMessage) throw new Error("pending_input_bind_payload_invalid");
-    return { participant, bindPayloadJson: canonicalModelMessageJson(bindMessage) };
+    // Outside text steers what is running only when its sender, the Rally
+    // user their provider identity resolved to, may continue it (`steerAllowed`).
+    const queueInstead = input.runMode === "steer" && !await this.steerAllowed(input.workspaceId,
+      continuationSender({ actor: "external", author_user_id: null },
+        { slackOrigin: "slackOrigin" in input ? input.slackOrigin ?? null : null }));
+    return { participant, bindPayloadJson: canonicalModelMessageJson(bindMessage), queueInstead };
   }
 
   private completePreparedExternalMessage(
     input: AdmitExternalMessageInput | AnswerExternalElicitationInput,
-    prepared: { participant: PreparedParticipantMessage; bindPayloadJson: string },
+    prepared: { participant: PreparedParticipantMessage; bindPayloadJson: string; queueInstead: boolean },
     expectedLoopId: string,
   ) {
     const currentLoop = this.loops.loop();
@@ -3308,7 +3340,7 @@ export class WorkstreamObjectProductService {
     return this.loops.completeInputPreparation({
       inputId: input.messageId,
       preparedTurnId: input.messageId,
-      mode: input.runMode,
+      mode: prepared.queueInstead ? "queue" : input.runMode,
       actor: "external",
       authorUserId: null,
       authorNameSnapshot: null,
@@ -3381,6 +3413,13 @@ export class WorkstreamObjectProductService {
         messageId: preparation.input_id,
         now: preparation.created_at,
       });
+      // Agent messages enter at a safe tool boundary when their sender may
+      // continue what is running; scheduled activations always wait.
+      const steer = "agentExchange" in input && await this.steerAllowed(input.workspaceId,
+        continuationSender({ actor: "system", author_user_id: null }, {
+          agentExchange: input.agentExchange,
+          senderExecutionPrincipal: input.senderExecutionPrincipal ?? input.executionPrincipal,
+        }));
       const admitted = this.storage.transactionSync(() => {
         if (this.root().archived_at !== null) throw new Error("workstream_archived");
         const concurrentCanonical = first(this.storage.sql.exec<{ id: string; created_at: number }>(
@@ -3397,7 +3436,7 @@ export class WorkstreamObjectProductService {
           return { kind: "pending" as const, input: concurrentPending, inserted: false };
         }
         const completed = this.completePreparedSystemActivation(
-          { ...input, messageId: preparation.input_id, now: preparation.created_at },
+          { ...input, messageId: preparation.input_id, now: preparation.created_at }, steer,
           prepared,
           preparation.loop_id,
         );
@@ -3489,6 +3528,7 @@ export class WorkstreamObjectProductService {
 
   private completePreparedSystemActivation(
     input: AdmitSystemActivationInput,
+    steer: boolean,
     prepared: { participant: PreparedParticipantMessage; attachments: PendingInputAttachmentDescriptor[]; bindPayloadJson: string },
     expectedLoopId: string,
   ) {
@@ -3499,9 +3539,8 @@ export class WorkstreamObjectProductService {
     return this.loops.completeInputPreparation({
       inputId: input.messageId,
       preparedTurnId: input.messageId,
-      // Agent messages enter at a safe tool boundary; scheduled activations
-      // wait for the current execution. Neither interrupts in-flight work.
-      mode: "agentExchange" in input ? "steer" : "queue",
+      // Neither interrupts in-flight work; see `steerAllowed`.
+      mode: steer ? "steer" : "queue",
       actor: "system",
       authorUserId: null,
       authorNameSnapshot: null,
@@ -4039,6 +4078,11 @@ export class WorkstreamObjectProductService {
       createdAtUtc: new Date(now).toISOString(),
       attentionOrdinal: root.next_attention_ordinal,
     });
+    // A person's message in the Sidekick's shared conversation always waits
+    // for the claim, which decides who answers it (wizard or a run); in a run
+    // it steers only when they may continue the run (`steerAllowed`).
+    const steer = shouldInvoke && !sharedSidekickConversation && (input.runMode ?? "queue") === "steer"
+      && await this.steerAllowed(auth.workspaceId, { kind: "person", userId: asUserId(auth.userId) });
     if (shouldInvoke || waitsForInputAhead) {
       const modelAttachments: ModelAttachmentSource[] = attachmentRows.map((row) => ({
         id: String(row.id),
@@ -4178,10 +4222,7 @@ export class WorkstreamObjectProductService {
         const result = this.loops.completeInputPreparation({
           inputId: messageId,
           preparedTurnId: messageId,
-          // The Sidekick's shared conversation decides who answers when its
-          // loop takes the message (wizard or a run), so nothing there may
-          // steer a turn already running past that decision.
-          mode: shouldInvoke && !sharedSidekickConversation ? input.runMode ?? "queue" : "queue",
+          mode: steer ? "steer" : "queue",
           startsRun: shouldInvoke,
           actor: "human",
           authorUserId: auth.userId,

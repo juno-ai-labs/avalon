@@ -201,6 +201,7 @@ import {
   continuationSender,
   continuationSource,
   continueSidekickRun,
+  personManagesSidekick,
   routeSidekickConversationMessage,
   sidekickAllowsManager,
   sidekickRunInputRefusal,
@@ -1132,6 +1133,14 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         actor: { userId: asUserId(input.actor.userId), actorRole: input.actor.actorRole },
       });
       this.product.sidekickRunInputRefusal = (input) => sidekickRunInputRefusal(env, input);
+      // The claim's own checks, asked early: the shared conversation's
+      // manager rule for an agent's message, a run's `continueRun` rule.
+      this.product.sidekickSenderMaySteer = async ({ workspaceId, automationId, runId, sender }) => {
+        if (sender.kind === "system") return runId !== "0";
+        if (sender.kind !== "person") return false;
+        if (runId === "0") return personManagesSidekick(env, { workspaceId, automationId, userId: sender.userId });
+        return await sidekickRunInputRefusal(env, { workspaceId, automationId, runId, userId: sender.userId }) === null;
+      };
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
       this.residentContext = new WorkstreamResidentContextStorage(state.storage);
@@ -3912,6 +3921,33 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       // conversation, and its row here carries the reply. Whatever activates here past this
       // point is the wizard's, and only such a turn loads the authoring tools.
       const sharedSidekickConversation = identity.parentKind === "automation" && externalSubstreamId === "0" && !background;
+      // Another agent's message there starts a wizard turn, with the
+      // authoring tools, so it is taken only when the person that agent acts
+      // for manages the Sidekick, as where it was sent (`authorizeWizardTurn`).
+      // Rally's own input (the review notice) carries no agent exchange.
+      if (sharedSidekickConversation && pending.actor === "system" && authorization.agentExchange) {
+        const agentSender = continuationSender(pending, JSON.parse(pending.authorization_json));
+        const manages = agentSender.kind === "person" && await personManagesSidekick(this.env, {
+          workspaceId: identity.workspaceId, automationId: identity.parentId, userId: agentSender.userId,
+        });
+        const current = this.loop.loop();
+        if (!current || current.status !== "idle" || current.revision !== loop.revision
+          || this.transcript.nextActivationInput(loop.loop_id)?.input_id !== pending.input_id) {
+          return this.claimPersistentLoopExecution();
+        }
+        if (!manages) {
+          await this.landInputWithoutRun(loop, pending, {
+            clientMessageId: `sidekick-message-refused:${pending.input_id}`,
+            text: SIDEKICK_MESSAGE_REFUSAL_TEXT.sidekick_edit_requires_manager,
+            structuredContent: { kind: "sidekick_message_refused", code: "sidekick_edit_requires_manager", turnId: pending.prepared_turn_id },
+          });
+          logInfo(this.env, "sidekick_conversation_message_refused", {
+            workspace_id: identity.workspaceId, automation_id: identity.parentId, input_id: pending.input_id,
+            code: "sidekick_edit_requires_manager",
+          });
+          return this.claimPersistentLoopExecution();
+        }
+      }
       const sender = sharedSidekickConversation && pending.actor === "human" && pending.author_user_id !== null
         ? pending.author_user_id : null;
       if (sender !== null) {

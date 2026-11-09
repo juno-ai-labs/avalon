@@ -934,6 +934,19 @@ one identity and one history, and can complete more than once.
    model reads it as context at the next continuation; it is attributed to
    its sender and framed as the room's, not as a request. Stop is not a
    continuation: any seated reader can stop a run.
+   Input asking to steer (join the execution already running at its next
+   tool boundary) is held to the same rule before it is admitted, because a
+   steered input never reaches the claim: `WorkstreamObjectProductService.steerAllowed`
+   admits it as steer only when its sender passes the check the claim would
+   apply (`sidekickSenderMaySteer`: in a run, `continueRun`'s rule; in the
+   shared conversation, managing the Sidekick, for an agent's message). Any
+   other input queues, and the claim refuses it by its code, so a requester
+   still steers their own run while text from someone the execution does not
+   act for never reaches it mid-turn. The same decision serves a person's
+   message, an agent's and outside text. A person's message in `"0"` always
+   queues, since the claim decides who answers it, and an agent's message
+   there is taken only when the person it acts for manages the Sidekick
+   (refused `sidekick_edit_requires_manager` otherwise).
 3. The loop input carries `automationRun`, the run-as principal, and
    `automationContinuation: {stopGeneration, senderName, source}`; the sender stays
    the author of their own message. `readRunDefinition` reads the revision the
