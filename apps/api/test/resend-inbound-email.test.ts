@@ -624,7 +624,7 @@ describe("regional Resend email ingestion", () => {
       id: RESEND_EMAIL_ID, from: "Owner <owner@example.com>", to: [EMAIL_ADDRESS], subject: "Run again",
       text: "Process this message.", authentication, attachments: [],
     }), { status: 200, headers: { "content-type": "application/json" } }));
-    const admitInboundEmail = vi.fn(async (..._args: unknown[]) => ({
+    const admitInboundEmail = vi.fn(async () => ({
       admitted: false, duplicate: false, outcomeCode: "email_sender_unauthenticated", runId: null,
     }));
     const service = new ResendRegionalEmailService(
@@ -632,7 +632,8 @@ describe("regional Resend email ingestion", () => {
       { fetch: fetcher, now: () => NOW },
     );
     await service.ingest(automationRegionalInput());
-    expect(admitInboundEmail.mock.calls[0]?.[0]).toMatchObject({ senderUserId: OWNER_USER_ID, senderAuthenticated: expected });
+    expect((admitInboundEmail.mock.calls[0] as unknown[] | undefined)?.[0])
+      .toMatchObject({ senderUserId: OWNER_USER_ID, senderAuthenticated: expected });
   });
 
   it("lets the automation refuse a stranger, after the message is kept for its receipt", async () => {
