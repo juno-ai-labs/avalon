@@ -181,7 +181,7 @@ describe("prompt renderers", () => {
       },
       canvasTitle: {
         actual: renderCanvasTitleMessages("Can you draft a launch plan for the Oslo coffee pop-up next month?"),
-        hash: "5266b0be008c932e07176316557db93831d4b5cf21b3d98a8b9ccf37d281d160",
+        hash: "790870b4ee99de6d3523b313f5636fa60b43636031868cd469e2b33608043bbe",
       },
       compactionCheckpoint: {
         actual: renderCompactionCheckpointContent(
@@ -203,7 +203,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "bf135d87508467c2543be8f4dfbd156115c2e51e4ac17affbb937d1f2c10d2c1",
+        hash: "cc809f65694208ab735cf6a2ff838b27294b0b6afb7cb9c3f6bdb7a688f516c4",
       },
     };
 
@@ -305,6 +305,8 @@ describe("prompt renderers", () => {
     // and a run with no data reports that rather than inventing numbers.
     expect(prompt).toContain("A data report is always delivered, and this rule outranks the saved instructions.");
     expect(prompt).toContain("never fill the gap with estimates or remembered numbers");
+    // The tie-break with the access rule: a source missing for want of access is asked for first.
+    expect(prompt).toContain("a source that fails for missing access is the access rule's case below, so ask and wait first.");
     expect(prompt).toContain("When the person declines, or neither tool is available, report the unresolved problem once in this activation's final message");
     expect(prompt).toContain("do not claim delivery");
     expect(prompt).not.toContain("# Result delivery");
@@ -464,11 +466,12 @@ describe("prompt renderers", () => {
     expect(system!.content).toContain("two to four words, thirty characters or less");
     expect(system!.content).toContain("drop the words that frame the work before the detail that identifies it");
     // "Sentence case" alone produced "Logo For Oslo Coffee".
+    expect(system!.content).toContain("Count the characters before you answer.");
     expect(system!.content).toContain("Use sentence case");
     expect(system!.content).toContain("Never capitalize every word");
     expect(system!.content).toContain("never add a specific the message does not contain");
     // The cut lands on a whole code point: the first emoji survives, the second does not.
-    expect(opening!.content).toBe(`Untrusted opening message:\n${"a".repeat(CANVAS_TITLE_OPENING_CHARACTERS - 1)}😀`);
+    expect(JSON.parse(opening!.content)).toEqual({ openingMessage: `${"a".repeat(CANVAS_TITLE_OPENING_CHARACTERS - 1)}😀` });
   });
 
   it("bounds each sweep message and marks a window the conversation continues past", () => {

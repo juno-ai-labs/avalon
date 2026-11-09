@@ -286,7 +286,7 @@ describe("the rally:memory tools", () => {
     expect((await tool(env, "member-open", "forget").execute({ factId: shared.factId }, "receipt-forget-2")).output)
       .toMatchObject({ factId: shared.factId, retractedAt: expect.any(String) });
     await expect(tool(env, "member-open", "forget").execute({ factId: "fact-org" }, "receipt-forget-3"))
-      .rejects.toMatchObject({ code: "memory_fact_not_forgettable", details: { reason: expect.stringContaining("organization") } });
+      .rejects.toMatchObject({ code: "memory_fact_not_forgettable", details: { reason: expect.stringContaining("This Organization-wide fact can be forgotten only by an administrator") } });
     // An owner is an administrator and may.
     expect((await tool(env, "owner-open", "forget").execute({ factId: "fact-org" }, "receipt-forget-4")).output)
       .toMatchObject({ factId: "fact-org" });

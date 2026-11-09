@@ -8278,11 +8278,11 @@ function createAvalonWorkstreamPlugin(tools: HarnessTool[]): HarnessPlugin | nul
     // so `workstream_` repeated the one context the run never leaves. Page IDs
     // keep the `workstream_` namespace; see `expandPages`.
     shortWireName: "",
-    displayName: "Workstream",
+    displayName: "Resources and wake-ups",
     searchAliases: ["task", "resources", "participants", "sub-agent", "wake up", "later", "remind", "schedule"],
-    description: "Read and search this thread's attached files and artifact data, and schedule or cancel a later run to carry out a task.",
+    description: "Read and search this conversation's attached files and artifact data, and schedule or cancel a later run to carry out a task.",
     systemMessage: [
-      "Use these tools only for the current authorized workstream and its attached resources.",
+      "Use these tools only for the current conversation and its attached resources.",
       "Use schedule_wakeup when work genuinely has to happen later — waiting on an external result, or a time a person named — instead of promising it in text. Do the work now when it can be done now.",
       "Write a wake-up prompt for a run that cannot see this conversation: state the task, its target, and what finishing looks like.",
       "Check list_wakeups before scheduling another wake-up so you do not duplicate one, and cancel a wake-up that a later turn made unnecessary.",
@@ -8566,7 +8566,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       definition: {
         name: "schedule_wakeup",
         description: [
-          "Schedule this thread to wake up later and act on a prompt you write now.",
+          "Schedule this conversation to wake up later and act on a prompt you write now.",
           "Give exactly one of delay or at.",
           "Relative example: {\"prompt\": \"Check whether the deploy finished and summarize the result\", \"delay\": \"2 hours\"}.",
           "Specific example: {\"prompt\": \"Send the launch recap\", \"at\": \"2026-08-12T17:26\", \"timezone\": \"America/Los_Angeles\"}.",
@@ -8602,7 +8602,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
               type: "string",
               minLength: 1,
               maxLength: 100,
-              description: "IANA timezone the at value is read in, for example America/Los_Angeles. Omit to use this thread's local zone, and omit whenever at carries an offset.",
+              description: "IANA timezone the at value is read in, for example America/Los_Angeles. Omit to use this conversation's local zone, and omit whenever at carries an offset.",
             },
           },
           required: ["prompt"],
@@ -8713,7 +8713,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
     {
       definition: {
         name: "list_wakeups",
-        description: "List this thread's pending wake-ups with their IDs, due times, and prompts. Check this before scheduling another one so you do not duplicate a wake-up that already exists.",
+        description: "List this conversation's pending wake-ups with their IDs, due times, and prompts. Check this before scheduling another one so you do not duplicate a wake-up that already exists.",
         capability: "workstream.wakeup.read",
         mode: "read",
         idempotency: "safe",
@@ -8741,7 +8741,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
     {
       definition: {
         name: "cancel_wakeup",
-        description: "Cancel one pending wake-up in this thread. Use the wakeupId returned by schedule_wakeup or list_wakeups.",
+        description: "Cancel one pending wake-up in this conversation. Use the wakeupId returned by schedule_wakeup or list_wakeups.",
         capability: "workstream.wakeup.write",
         mode: "write",
         idempotency: "provider_key",
@@ -8766,7 +8766,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
           const pending = await listPendingWorkstreamWakeups(scheduling);
           throw new WakeupInputError(
             "wakeup_not_found",
-            "No pending wake-up with that ID is available in this thread. Call list_wakeups and retry with one of its IDs.",
+            "No pending wake-up with that ID is available in this conversation. Call list_wakeups and retry with one of its IDs.",
             "Call list_wakeups and use one of the pending wake-up IDs.",
             pending.map((wakeup) => wakeup.wakeupId),
           );
