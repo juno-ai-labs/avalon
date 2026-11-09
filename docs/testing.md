@@ -823,10 +823,12 @@ create-effects case can invoke the real product `initialize` mutation
 without the endpoint's later execution-receipt activation. An elicitation-answer
 case can use a settled parent-run row when run execution is not the subject. If
 the run really has to complete, install the double, and give the run a model to
-route to: `wrangler.test.jsonc` deliberately leaves `OPENROUTER_PRIMARY_MODEL`
-unset so a run nobody meant to reach inference cannot, and a file that installs
+route to. A file that installs
 the double calls `useSelectedModel()` from `./helpers/selected-model` at file
-scope so its runs do not die on an empty route plan before they reach it.
+scope. It selects one synthetic model with an explicitly empty fallback list
+and restores both environment variables after each test. Deployment defaults
+now supply a route even when model variables are unset; the explicit override
+keeps a scripted failure from falling through to a successful second reply.
 
 ```ts
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
