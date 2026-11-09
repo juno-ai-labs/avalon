@@ -290,17 +290,16 @@ included.
   message, alarm or workflow behind it, so an interrupted pass waits for somebody
   to ask again. That is sized for the workspaces it was built for, which have a
   handful of parents; the receipt it answers with says what remains, and the
-  operator asks again. A pass on a large workspace is cut off before it
-  answers: in production the bridge invocation was cancelled at about 240s
-  (where that cutoff comes from is not established), and the engineering MCP
-  stops waiting at 60s while the pass keeps running. Because each child is
-  receipted, every pass moves forward, so asking again converges. Two passes
-  must not overlap: both walk the same unreceipted children. Before asking
-  again, wait for the previous pass's `EngineeringInspectionBridge.jsrpc`
-  invocation log to show it ended.
+  operator asks again. A pass on a large workspace can be cut off before it
+  answers; each child is receipted, so asking again still converges. Do not
+  run passes that overlap: both walk the same unreceipted children. A pass has
+  ended when its `EngineeringInspectionBridge.jsrpc` invocation log appears.
 - **Stranded outbox rows are counted, not drained.** Draining means publishing
   out of a closed workspace; moving them means deciding whose they now are. The
-  count is what distinguishes retained residue from work still in flight.
+  count is what distinguishes retained residue from work still in flight. It
+  counts only the objects this pass woke: receipted parents and receipted
+  children are skipped, so their stranded rows are not in a later pass's
+  receipt.
 - **A parent the directory names but holds no rows for** answers `missing`,
   has no children, and is receipted; the Organization's tombstone already
   fences its id.
@@ -387,7 +386,7 @@ closes, which is the case a construction-only fix does not reach.
 | --- | --- | --- |
 | Every gated object's SQLite | `object_retirement` | One row. The tombstone: instant, operation, actor, reason. |
 | WorkspaceDO SQLite | `workspace_retirement_graph` | One row per parent, with a nullable `retired_at` receipt. |
-| WorkspaceDO SQLite | `workspace_retirement_children` | One row per conversation the walk closed, keyed by `(parent_id, substream_id)`, the conversation object's identity whatever its parent's kind. Written only after that object confirmed its tombstone (migration 135). |
+| WorkspaceDO SQLite | `workspace_retirement_children` | One row per conversation the walk closed, keyed by `(parent_id, substream_id)`. |
 
 The tombstone lives in the object rather than D1 because the gate answers during
 constructor recovery, before anything cross-authority could be consulted. Both
@@ -479,7 +478,9 @@ grow mid-walk.
 
 **Consequences:** One extra WorkspaceDO RPC per child, small next to waking the
 child. A child receipt is keyed by parent id and substream id, not parent kind,
-because that pair alone names the conversation object. Anything that lists a
+because that pair alone names the conversation object. `retainedOutbox` now
+skips receipted children as it already skipped receipted parents, so it counts
+one pass, not the whole retirement. Anything that lists a
 parent's children for retirement now sees only the open ones. Nothing re-invokes
 an interrupted walk yet, and two overlapping passes still duplicate work.
 
