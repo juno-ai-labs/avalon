@@ -9,6 +9,7 @@ import { cookieClientSession } from "./session";
 import { createRoot } from "react-dom/client";
 import { BrowserBoot, BrowserEntry } from "./entry";
 import { ConnectionComplete } from "./connection-complete";
+import { MCP_CONSENT_PATH, McpConsent } from "./mcp-consent";
 import { installNotificationOpen } from "./notification-open";
 import "./styles.css";
 import '@rally/ui/styles/app.css';
@@ -32,5 +33,7 @@ if (!root) throw new Error("Browser root is missing");
 createRoot(root).render(<ErrorNoticeProvider><AppErrorBoundary onError={(error) => reportJavascriptError(error, "react_boundary")}>
   {location.pathname === "/connections/complete"
     ? <ConnectionComplete />
+    : location.pathname === MCP_CONSENT_PATH
+    ? <McpConsent />
     : <BrowserEntry renderCollaboration={(region, session, onSignOut, onRevalidate) => <BrowserCollaboration onSignOut={onSignOut} onRevalidate={onRevalidate} key={`${region}:${session.user.id}:${session.workspace?.id}:${session.workspace?.accessClass ?? "member"}`} region={region} session={session} />} />}
 </AppErrorBoundary></ErrorNoticeProvider>);

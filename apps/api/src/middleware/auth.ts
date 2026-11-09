@@ -12,7 +12,7 @@ import type {
 import { ApiError } from "../lib/api-error";
 import { requestDeferral } from "../lib/defer";
 import { logWarn } from "../observability/logger";
-import { verifyAccessToken } from "../services/auth-service";
+import { verifyAudiencedAccessToken } from "../services/auth-service";
 import { recordSupportAction } from "../services/support-access";
 
 type Context = Parameters<MiddlewareHandler<HonoAppEnv>>[0];
@@ -65,6 +65,16 @@ async function touchLastSeen(env: Env, workspaceId: string, userId: string): Pro
   }
 }
 
+/**
+ * The product routes an MCP client's token reaches (`docs/rally-mcp.md`):
+ * Canvases, their Chats and artifacts, sharing, and the Organization's
+ * profile and roster, which an audience change names people from. Account,
+ * token, onboarding, settings, connector and every other route answer
+ * `mcp_route_unavailable`. Inside these, the person's ordinary role and the
+ * Canvas's audience decide, exactly as they do for the app.
+ */
+const MCP_ROUTE_FAMILIES = /^\/(?:(?:canvases|conversations|sharing|resources)(?:\/|$)|workspace(?:\/members)?$)/u;
+
 export async function authenticate(c: Context): Promise<IdentityAuthContext> {
   if (c.env.APP_ENV === "development" && c.env.RALLY_DEV_AUTH === "true") {
     // Parsed, not cast: a malformed development header is a request that
@@ -98,7 +108,10 @@ export async function authenticate(c: Context): Promise<IdentityAuthContext> {
   if (!authorization?.startsWith("Bearer ")) {
     throw new ApiError(401, "authentication_required", "A valid Rally session is required");
   }
-  const claims = await verifyAccessToken(c.env, authorization.slice(7));
+  const { claims, audience } = await verifyAudiencedAccessToken(c.env, authorization.slice(7), ["desktop", "mcp"]);
+  if (audience === "mcp" && !MCP_ROUTE_FAMILIES.test(c.req.path)) {
+    throw new ApiError(403, "mcp_route_unavailable", "This Rally operation is not available to an MCP client");
+  }
   return authenticateSession(c.env, claims, (membership) => c.set('requestMembership', membership));
 }
 

@@ -1,0 +1,12 @@
+{
+  "name": "rally",
+  "description": "Rally's plugins for Claude Code.",
+  "owner": { "name": "Juno AI Labs Inc" },
+  "plugins": [
+    {
+      "name": "rally",
+      "source": "./plugins/rally",
+      "description": "Create, update, share and maintain Rally Canvases through Rally's MCP server."
+    }
+  ]
+}

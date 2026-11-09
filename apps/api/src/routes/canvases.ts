@@ -10,6 +10,7 @@ import {
   CanvasAccessSchema,
   CanvasAudienceUpdateSchema,
   CanvasDetailSchema,
+  CanvasListSchema,
   CanvasUpdateRequestSchema,
   CreateCanvasRequestSchema,
   CreatedCanvasSchema,
@@ -37,6 +38,11 @@ const requesterParam = namedZValidator("canvas_access_requester", "This is not a
  */
 export const canvasRoutes = new Hono<HonoAppEnv>();
 canvasRoutes.use("*", requireWorkspaceAuth);
+// The reader's Canvas list, for a client that holds no workspace socket.
+canvasRoutes.get("/", async (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json(CanvasListSchema.parse({ items: await new CanvasService(c.env, getWorkspaceAuth(c)).list() }));
+});
 canvasRoutes.post("/", zValidator("json", CreateCanvasRequestSchema), async (c) =>
   c.json(CreatedCanvasSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).create(c.req.valid("json"))), 201));
 canvasRoutes.get("/:id", canvasIdParam, async (c) => {
