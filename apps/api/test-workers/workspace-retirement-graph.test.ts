@@ -132,7 +132,7 @@ async function seedDirectory(stub: DurableObjectStub<WorkspaceDO>, workspaceId: 
  */
 function countingEnv(allowed: number) {
   const agents = TEST_ENV.SUBSTREAM_AGENTS;
-  const counter = { retires: 0 };
+  const counter = { retires: 0, inFlight: 0, maxInFlight: 0 };
   const namespace = {
     idFromName: (name: string) => agents.idFromName(name),
     idFromString: (id: string) => agents.idFromString(id),
@@ -140,11 +140,16 @@ function countingEnv(allowed: number) {
     get: (id: DurableObjectId) => {
       const real = agents.get(id);
       return {
-        retireObject: (tombstone: Parameters<typeof real.retireObject>[0]) => {
+        retireObject: async (tombstone: Parameters<typeof real.retireObject>[0]) => {
           counter.retires += 1;
-          return counter.retires > allowed
-            ? Promise.reject(new Error("durable_object_overloaded"))
-            : real.retireObject(tombstone);
+          if (counter.retires > allowed) throw new Error("durable_object_overloaded");
+          counter.inFlight += 1;
+          counter.maxInFlight = Math.max(counter.maxInFlight, counter.inFlight);
+          try {
+            return await real.retireObject(tombstone);
+          } finally {
+            counter.inFlight -= 1;
+          }
         },
       };
     },
@@ -155,6 +160,20 @@ function countingEnv(allowed: number) {
       : Reflect.get(target, property, receiver),
   });
   return { env: proxied, counter };
+}
+
+/** A further conversation under a Canvas, beside its Chat. */
+async function seedCanvasChild(stub: DurableObjectStub<WorkspaceDO>, canvasId: string, substreamId: string, createdAt: number): Promise<void> {
+  await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
+    state.storage.sql.exec(
+      `INSERT OR IGNORE INTO sidekick_children (sidekick_id, substream_id, kind, created_by_user_id, created_at)
+       VALUES (?, ?, 'child', ?, ?)`,
+      canvasId,
+      substreamId,
+      ACTOR_ID,
+      createdAt,
+    );
+  });
 }
 
 describe("workspace retirement graph", () => {
@@ -367,4 +386,23 @@ describe("workspace retirement graph", () => {
     expect(second.retiredChildren).toBe(1);
   });
 
+  it("closes one parent's children several at a time, never more than the limit", async () => {
+    const workspaceId = freshWorkspaceId();
+    const stub = workspaceStub(workspaceId);
+    await seedDirectory(stub, workspaceId);
+    const canvasId = "00000000-0000-7000-8000-00000000e510";
+    await stub.canvasCreate({ workspaceId, canvasId, title: "Plan", createdByUserId: ACTOR_ID, authorityGeneration: 1 });
+    // Two more conversations under the Canvas, beside its Chat.
+    await seedCanvasChild(stub, canvasId, "00000000-0000-7000-8000-00000000e511", Date.now() + 1);
+    await seedCanvasChild(stub, canvasId, "00000000-0000-7000-8000-00000000e512", Date.now() + 2);
+    const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" } as const;
+
+    const tracked = countingEnv(Number.POSITIVE_INFINITY);
+    const receipt = await retireWorkspaceGraph(tracked.env, { workspaceId, ...tombstone, childConcurrency: 2 });
+
+    expect(receipt.failed).toEqual([]);
+    expect(receipt.retiredChildren).toBe(3);
+    expect(receipt.complete).toBe(true);
+    expect(tracked.counter.maxInFlight).toBe(2);
+  });
 });
