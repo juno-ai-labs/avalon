@@ -832,7 +832,8 @@ conversation branch before each model-facing operation. GitHub cannot scope an
 installation token to one branch, so branch discipline is explicit model
 guidance rather than a custom proxy or claimed technical boundary. Policy
 changes invalidate the cached expiry and force credential rotation before the
-next command.
+next command, and in a Canvas a different person's operation clears the
+credential first ([shared Canvas sandbox](#shared-canvas-sandbox)).
 
 #### Shared Canvas sandbox
 
@@ -856,13 +857,45 @@ This widens trust inside a Canvas, and the widening is accepted, not fenced:
   ([Canvas publication](canvases.md#artifacts-and-versions)).
   A guest cannot start a project build, which runs the publisher's own
   `package.json` scripts with no model in between and beside the selected
-  repository's checkout and GitHub credentials
+  repository's checkout
   (`canvas_build_project_members_only`). A guest's component build runs only
   the pinned toolchain on their code; the toolchain itself is cached in the
   sandbox, so it is within the "code crosses people" widening above.
+- **A member's project build runs its dependencies' code.** Install scripts
+  are off (`--ignore-scripts`), but `npm run build` runs the build tool and
+  every package it loads, fetched from npm at publish time (ranges float
+  without a lockfile), beside the Canvas's checkout and the publishing
+  member's own GitHub access, with no model in between. A compromised
+  package release would run there. The team accepted this on 2026-11-09
+  rather than drop project builds or require a lockfile; a component build
+  is fenced instead by the pinned toolchain and the bundler's input check.
+
+**GitHub credentials do not cross people.** They are the one thing in the
+sandbox that is a person's grant rather than the Canvas's work: the
+installation token behind `GITHUB_READ_BASIC` and `GH_TOKEN`, the checkout's
+`http.<url>.extraheader` that names it, and the write token
+`publish_branch_and_pr` mounts and leaves in place. The sandbox row records
+whose they are (`credential_principal_key`), written before a mount so a mount
+that failed part-way still counts. When the principal acting differs from that
+record, the coordinator clears the Daytona secrets and the header, under the
+operation lease and before anything of the new principal's runs, then hands
+the record to them; their own bootstrap then mounts their grant under the rules
+that already decide one. A clear that fails refuses the operation
+(`repository_credentials_not_cleared`) rather than run beside the old
+credentials. The same person acting again changes nothing. A publication build
+acts as the publishing person and is covered by the same rule; a build mounts
+no credential of its own. The rule is in `coordinator.ts`
+(`holdsAnotherPrincipalsCredentials`).
+
+What the clear does not reach is code: a process an earlier person's command
+left running can use the next person's credentials while they are mounted,
+because Daytona substitutes the placeholders for any process in the sandbox.
+That is the "code crosses people" widening above, not a credential leak, and
+nothing here fences it.
 
 Nothing tags a sandbox file with the person or connector it came from, and
-nothing scans or resets the sandbox between people. The fences that remain are
+apart from the GitHub credentials nothing scans or resets the sandbox between
+people. The fences that remain are
 the Canvas's audience (only someone the Canvas admits can run in it), the
 selected repository's connector policy, and the import check: a resource
 imported into the sandbox that the acting person can no longer read through the
@@ -1316,11 +1349,17 @@ tokens carry the `rally-mcp` audience and reach only an exact route list,
 Canvas conversations and a Canvas's own artifacts, and a person can list and
 disconnect the apps they connected from Settings. Separately, a Canvas's
 sandbox identity is now the Canvas, so files and code written by one
-participant's run reach every other participant's runs there.
+participant's run reach every other participant's runs there. GitHub
+credentials do not: they are cleared before a different person's operation
+runs, and an operation whose clear fails is refused.
 
 **Why:** People want to use Rally from Claude and ChatGPT, and a token that
 reached the whole product API would hold more than the consent page asks for.
-The shared sandbox is the team's 2026-11-09 product decision; the reasoning is
+The shared sandbox is the team's 2026-11-09 product decision. Sharing it left
+the last person's GitHub credentials mounted for every other participant, a
+guest included, to use with an ordinary command; the team decided to clear
+them on a person change only, so the same person acting again pays nothing.
+The reasoning is
 in [`terminal-workspaces.md`](terminal-workspaces.md#changelog) and
 [`rally-mcp.md`](rally-mcp.md#changelog).
 
@@ -1330,7 +1369,9 @@ socket tickets included, rather than only the calls the tools make.
 
 **Consequences:** A new MCP tool must add its exact route to `MCP_ROUTES`. A
 personal connector's output is no longer private to its owner inside a Canvas;
-a change that assumes it is must fence it. A person sees their connected apps
+a change that assumes it is must fence it. A new way to mount a credential in a
+Canvas sandbox must record its principal before mounting
+(`recordCredentialMount`), or the clear will not know to remove it. A person sees their connected apps
 in Settings and can disconnect one, which ends its session at once; a route
 that lists or ends grants must keep matching them on the caller's own user id
 and stay out of `MCP_ROUTES`.

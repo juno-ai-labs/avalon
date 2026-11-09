@@ -1199,6 +1199,108 @@ describe("Terminal sandbox coordinator", () => {
     await expect(owner.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
   });
 
+  describe("GitHub credentials in a Canvas's shared sandbox", () => {
+    const OTHER = asUserId("00000000-0000-4000-8000-0000000000b0");
+    const credentialHolder = (objectStore: DatabaseSync) => workstreamObjectGet(
+      objectStore, "SELECT credential_principal_key FROM terminal_workspace WHERE id = 1",
+    );
+    /** The first person's credential, mounted the way bootstrap mounts it: attributed first. */
+    async function mountedFor(objectStore: DatabaseSync, userId: string) {
+      await testTerminalPortFactory(objectStore)(WORKSPACE_ID, WORKSTREAM_ID)
+        .recordCredentialMount({ generation: 1, principalKey: `user:${userId}`, now: 1 });
+    }
+    const headerClears = (provider: TerminalSandboxProvider) => vi.mocked(provider.runUtilityCommand).mock.calls
+      .filter(([, input]) => input.operation === "repository.credentials.clear");
+
+    it("clears another person's credentials before their operation and hands the slot to them", async () => {
+      const { env, objectStore, provider, clock } = fixture();
+      const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+      const first = await coordinator.acquire(context());
+      await mountedFor(objectStore, USER_ID);
+      await coordinator.release(context());
+
+      // The first person's handle is no longer theirs to act on once someone else has.
+      await expect(coordinator.acquire(context(OTHER))).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
+      expect(provider.clearGitHubReadAccess).toHaveBeenCalledExactlyOnceWith("sandbox-1");
+      expect(headerClears(provider)).toEqual([["sandbox-1", expect.objectContaining({ cwd: "/workspace" })]]);
+      expect(credentialHolder(objectStore)).toEqual({ credential_principal_key: `user:${OTHER}` });
+      expect(provider.deleteSandbox).not.toHaveBeenCalled();
+      await coordinator.release(context(OTHER));
+      await expect(coordinator.claimForOperation(context(), first)).resolves.toBe("stale");
+    });
+
+    it("leaves the same person's credentials alone, however often they act", async () => {
+      const { env, objectStore, provider, clock } = fixture();
+      const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+      const sandbox = await coordinator.acquire(context());
+      await mountedFor(objectStore, USER_ID);
+      await coordinator.release(context());
+
+      await expect(coordinator.claimForOperation(context(), sandbox)).resolves.toBe("held");
+      await coordinator.release(context());
+      await coordinator.acquire(context());
+      expect(provider.clearGitHubReadAccess).not.toHaveBeenCalled();
+      expect(headerClears(provider)).toEqual([]);
+      expect(credentialHolder(objectStore)).toEqual({ credential_principal_key: `user:${USER_ID}` });
+    });
+
+    it.each([
+      ["the provider's secrets", "secrets"],
+      ["the checkout's authorization header", "header"],
+    ] as const)("refuses the next person's operation when %s cannot be cleared", async (_label, failing) => {
+      const { env, objectStore, provider, clock } = fixture();
+      const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+      await coordinator.acquire(context());
+      await mountedFor(objectStore, USER_ID);
+      await coordinator.release(context());
+      if (failing === "secrets") vi.mocked(provider.clearGitHubReadAccess).mockRejectedValueOnce(new Error("secret_list_forbidden"));
+      else vi.mocked(provider.runUtilityCommand).mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "" });
+
+      await expect(coordinator.acquire(context(OTHER))).rejects.toMatchObject({
+        code: "repository_credentials_not_cleared",
+        details: { reason: expect.stringContaining(failing === "secrets" ? "secret_list_forbidden" : "checkout_header_clear_failed") },
+      });
+      // Still attributed to the first person, so the next attempt clears again.
+      expect(credentialHolder(objectStore)).toEqual({ credential_principal_key: `user:${USER_ID}` });
+    });
+
+    it("clears them before a publication build, which acts as the publishing person", async () => {
+      const { env, objectStore, provider, clock } = fixture();
+      const runsPort = () => testHarnessRunPort(objectStore);
+      const owner = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+      await owner.acquire(context());
+      await mountedFor(objectStore, USER_ID);
+      await owner.release(context());
+      const builder = new TerminalSandboxCoordinator(
+        env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+        undefined, false, undefined,
+        { parentKind: "canvas", backgroundAgent: false, runSubstreamId: PUBLICATION_BUILD_HOLDER, authoritySubstreamId: "0", runsPort },
+      );
+      const buildId = "00000000-0000-4000-8000-0000000000b1";
+
+      await builder.acquire({ ...context(OTHER), harnessRunId: buildId, toolCallId: buildId });
+      expect(provider.clearGitHubReadAccess).toHaveBeenCalledExactlyOnceWith("sandbox-1");
+      expect(credentialHolder(objectStore)).toEqual({ credential_principal_key: `user:${OTHER}` });
+    });
+
+    it("keeps a Sidekick's credentials across its eligible delegates", async () => {
+      const { env, objectStore, provider, clock } = fixture();
+      const scope = { parentKind: "automation" as const, backgroundAgent: false, runSubstreamId: "0", authoritySubstreamId: "0",
+        runsPort: () => testHarnessRunPort(objectStore), sharedFileUserId: USER_ID };
+      const coordinator = new TerminalSandboxCoordinator(
+        env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+        undefined, false, undefined, scope,
+      );
+      await coordinator.acquire(context());
+      await mountedFor(objectStore, USER_ID);
+      await coordinator.release(context());
+
+      await coordinator.acquire(context(OTHER));
+      expect(provider.clearGitHubReadAccess).not.toHaveBeenCalled();
+      expect(credentialHolder(objectStore)).toEqual({ credential_principal_key: `user:${USER_ID}` });
+    });
+  });
+
   it.each([false, true])("retains pre-delegation Sidekick files for another eligible coordinator (background=%s)", async (backgroundAgent) => {
     const { objectStore, env, provider, clock } = fixture();
     const child = "00000000-0000-4000-8000-000000000088";
