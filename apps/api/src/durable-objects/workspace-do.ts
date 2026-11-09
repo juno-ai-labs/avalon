@@ -5225,6 +5225,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * - the resource locations in its Main, which decide who reads the
    *   artifacts in it, and a Sidekick's attachment to its Main.
    *
+   * Answers the Canvas's artifacts too, so the conversion carries those a
+   * Breakout attached into the Chat before it retires the Breakout.
+   *
    * Just before the Canvas's row is made, the Thread's own share rows
    * (`CANVAS_SHARE_TABLES`: its invitations and grants) are deleted, since the
    * Canvas keys its own by the same id and the conversion's sweep leaves those
@@ -5234,7 +5237,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * is (`created: false`). The carry-over is idempotent and runs every pass,
    * so a pass interrupted between the two finishes it.
    */
-  async convertThreadToCanvas(input: { workspaceId: string; threadId: string; title: string }): Promise<{ created: boolean }> {
+  async convertThreadToCanvas(input: { workspaceId: string; threadId: string; title: string }): Promise<{
+    created: boolean; artifactResourceIds: string[];
+  }> {
     const canvas = await this.hostedCanvas(input.threadId, input.workspaceId);
     return this.canvasWrite(() => {
       const sql = this.state.storage.sql;
@@ -5310,7 +5315,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             WHERE parent_kind = 'workstream' AND parent_id = ? AND substream_id = '0'`, input.threadId,
         );
       });
-      return { created };
+      const artifactResourceIds = sql.exec<{ resource_id: string }>(
+        "SELECT resource_id FROM canvas_artifacts WHERE canvas_id = ? ORDER BY resource_id", input.threadId,
+      ).toArray().map((row) => row.resource_id);
+      return { created, artifactResourceIds };
     });
   }
 
