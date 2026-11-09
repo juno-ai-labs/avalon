@@ -922,9 +922,10 @@ one identity and one history, and can complete more than once.
    turn) is refused with `run_continuation_requires_rally_user`. An agent's
    message to the wizard is admitted only when the person it acts for manages
    the Sidekick (`sidekick_edit_requires_manager` otherwise), the rule a
-   person's message in the shared conversation follows; the Sidekick's own
-   runs and workers are exempt, since a change request is how the wizard
-   learns of one. Outside text from a bound provider thread
+   person's message in the shared conversation follows, a run's change
+   request included: a run acting for someone who does not manage the
+   Sidekick (its requester, or a delegate who is not a manager) is refused
+   and tells the person. Outside text from a bound provider thread
    counts as the Rally user its sender resolved to (`slackOrigin.matchedAvalonUserId`)
    and is refused with `run_continuation_requires_rally_user` when it resolved
    to nobody: every run acts as somebody, so an unnamed sender would steer it
