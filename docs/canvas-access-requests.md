@@ -138,8 +138,8 @@ from the same write.
 ## Failure modes and limits
 
 - **No cap on requests.** A member may ask again after each denial, and each
-  new request tells every decider. The earlier access-request limits
-  (`git show 3df4150^:apps/api/src/services/access-request-limits.ts`) bounded
+  new request tells every decider. The early-access sign-up limits
+  (`apps/api/src/services/access-request-limits.ts`, a different module) bound
   anonymous email sign-ups by IP and mail budget, which this is not; a cap on
   requests per person would be a number for the team to set
   ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)),
