@@ -49,7 +49,7 @@ describe('FlagAdministration', () => {
       defaultVariation: 'on',
       flag: { key: 'push-notifications-enabled', enabled: true, default_variation: 'on', rules: [] },
     });
-    expect(flags.find((flag) => flag.key === 'suggested-work-enabled')?.flag).toBeNull();
+    expect(flags.find((flag) => flag.key === 'multiple-workspaces-enabled')?.flag).toBeNull();
     expect(flags.map((flag) => flag.key)).not.toContain('agent-model-workstream');
   });
 

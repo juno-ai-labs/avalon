@@ -490,12 +490,10 @@ behave:
 | Flag key | Type | Default | Decides |
 | --- | --- | --- | --- |
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
-| `suggested-work-enabled` | boolean | `false` | Still served; it gated the Suggested Work surfaces, which are deleted, so no client reads it |
 | `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
-false,
-"suggestedWorkEnabled": false, "multipleWorkspacesEnabled": false }` — resolved for the
+false, "multipleWorkspacesEnabled": false }` — resolved for the
 signed-in person. It answers under *identity* auth rather than workspace auth:
 eligibility belongs to the account, and a device that has not chosen an
 workspace yet still has to be told the feature is off rather than read a
@@ -663,8 +661,8 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   `client-feature-flags.ts` describes the person, evaluates the flag, and serves
   the answer; changing who is in is a flag change with a changelog entry, not a
   deploy.
-- **Product Boolean flag names explain true.** `suggested-work-enabled` maps
-  to `suggestedWorkEnabled`; a bare or negatively named Boolean invites one
+- **Product Boolean flag names explain true.** `multiple-workspaces-enabled` maps
+  to `multipleWorkspacesEnabled`; a bare or negatively named Boolean invites one
   layer to invert another.
 - **A product-flag notification carries a key, never a value.** Two people in
   one workspace may match different rules, so WorkspaceDO evaluates each user
@@ -802,8 +800,7 @@ identical. Staging a rollout per region does not need a second app either:
 `region` is in the evaluation context, so a targeting rule reaches one region.
 
 Ace automatically ensures all eight `agent-model-*` JSON flags plus
-`meeting-recording-enabled`, `suggested-work-enabled`,
-`multiple-workspaces-enabled`, and `push-notifications-enabled` exist on every
+`multiple-workspaces-enabled` and `push-notifications-enabled` exist on every
 merge-to-main deployment. It seeds model flags from the checked-in Worker
 defaults and does not overwrite an existing definition. Every product flag
 defaults off except `push-notifications-enabled`, which defaults **on** for

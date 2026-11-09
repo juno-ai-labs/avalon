@@ -134,7 +134,6 @@ export const ModelValidationRequestSchema = z.object({
  * keep its `ensureFlag` calls in step with this table by hand.
  */
 export const MANAGED_FLAGS = [
-  { key: 'suggested-work-enabled', label: 'Suggested Work Enabled', description: 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'multiple-workspaces-enabled', label: 'Multiple Workspaces Enabled', description: 'True shows workspace switching, invitations, creation, and background attention in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'push-notifications-enabled', label: 'Push Notifications Enabled', description: 'True enables Apple push delivery and the desktop Notifications setting for everyone from launch; false pauses push for the targeted users.', defaultVariation: 'on' },
 ] as const;

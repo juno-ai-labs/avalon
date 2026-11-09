@@ -447,8 +447,6 @@ export const GOOGLE_MAIL_CALENDAR_CAPABILITIES = [
 export const ClientFeatureFlagsSchema = z.object({
   /** Whether Application → Developer may be offered on this device. */
   developerSettings: z.boolean().default(false),
-  /** Whether Suggested Work surfaces are shown in Electron for this person. */
-  suggestedWorkEnabled: z.boolean().default(false),
   /** Whether Electron offers workspace switching and plural workspace setup. */
   multipleWorkspacesEnabled: z.boolean().default(false),
   pushNotificationsEnabled: z.boolean().default(false),
@@ -456,7 +454,6 @@ export const ClientFeatureFlagsSchema = z.object({
 
 /** Product flags Ace is allowed to manage and publish to connected clients. */
 export const ProductFeatureFlagKeySchema = z.enum([
-  "suggested-work-enabled",
   "multiple-workspaces-enabled",
   "push-notifications-enabled",
 ]);
