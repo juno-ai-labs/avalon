@@ -215,11 +215,37 @@ export const AutomationRunDefinitionRequestSchema = AutomationRunRequestSchema.e
 export type AutomationRunDefinitionRequest = z.infer<typeof AutomationRunDefinitionRequestSchema>;
 
 /** Why input to a Sidekick run child did not continue the run. */
+/**
+ * Who sent the input that would continue a run, as the run child's queue
+ * recorded it: a person (their own message or an answer to a question the run
+ * asked), outside text from a provider thread bound to the run, or Rally
+ * itself (a scheduled wake-up, a worker's report, an agent's message). The
+ * Sidekick decides from it whether that input may continue the run; see
+ * `HostedSidekick.continueRun`.
+ */
+export const SidekickRunContinuationSenderSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("person"), userId: UserIdSchema }),
+  z.strictObject({ kind: z.literal("external") }),
+  z.strictObject({ kind: z.literal("system") }),
+]);
+export type SidekickRunContinuationSender = z.infer<typeof SidekickRunContinuationSenderSchema>;
+
+export const SidekickRunContinuationRequestSchema = z.strictObject({
+  ...Addressed,
+  runId: IdSchema,
+  sender: SidekickRunContinuationSenderSchema,
+});
+export type SidekickRunContinuationRequest = z.infer<typeof SidekickRunContinuationRequestSchema>;
+
 export const SidekickRunContinuationRefusalCodeSchema = z.enum([
   "sidekick_paused",
   "sidekick_deleted",
   "run_not_found",
   "run_no_eligible_delegate",
+  /** A person other than its requester wrote in a run that acts under the requester's own access. */
+  "run_continuation_requires_requester",
+  /** A person who is not an eligible delegate wrote in a run that acts under a delegate's access. */
+  "run_continuation_requires_delegate",
 ]);
 export type SidekickRunContinuationRefusalCode = z.infer<typeof SidekickRunContinuationRefusalCodeSchema>;
 

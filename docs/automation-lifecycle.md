@@ -418,9 +418,9 @@ records where a running signal would come from.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `runNow`, `runSeeded`, `admitConversationMessage`, `allowsManager`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, `reviewDelivery`, `reviewDelivered`, the parent contract (`onChildCommonProjection` moves the run row, counts its finish and arms its notice), and the schedule, run, review, memory-table and `sidekick_run_notice` alarm entries. `WorkspaceDO` answers each as `sidekick*`. |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `runNow`, `runSeeded`, `admitConversationMessage`, `allowsManager`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `runInputRefusal`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, `reviewDelivery`, `reviewDelivered`, the parent contract (`onChildCommonProjection` moves the run row, counts its finish and arms its notice), and the schedule, run, review, memory-table and `sidekick_run_notice` alarm entries. `WorkspaceDO` answers each as `sidekick*`. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: opens a run's conversation and starts its loop from the `sidekick_run_provision` Queue message the run's alarm entry sends. |
-| `apps/api/src/services/sidekick-run-continuation.ts` | `continueSidekickRun`, the run child's call to `continueRun`; `continuationSource`, who continued the run and where; the refusal text the run's transcript records; `routeSidekickConversationMessage` with `SIDEKICK_MESSAGE_REFUSAL_TEXT`, the shared conversation's call to `admitConversationMessage` and what it says when a message started no run; and `sidekickAllowsManager`, which the shared conversation asks before it records an answer to the wizard. |
+| `apps/api/src/services/sidekick-run-continuation.ts` | `continueSidekickRun`, the run child's call to `continueRun`, with `continuationSender`, who sent the input; `sidekickRunInputRefusal`, which a run child asks before it records an answer to the run's question; `continuationSource`, who continued the run and where; the refusal text the run's transcript records; `routeSidekickConversationMessage` with `SIDEKICK_MESSAGE_REFUSAL_TEXT`, the shared conversation's call to `admitConversationMessage` and what it says when a message started no run; and `sidekickAllowsManager`, which the shared conversation asks before it records an answer to the wizard. |
 | `apps/api/src/lib/conversation-message-opening.ts` | `conversationMessageOpening`: a shared-conversation message as the opening of the run it started, its sender named as data. |
 | `apps/api/src/services/sidekick-review.ts`, `sidekick-review-notice.ts` | `deliverSidekickReview`: the `sidekick_review` Queue message's consumer, which reads the notice from the Sidekick, admits it into the wizard's conversation and reports back; `sidekickReviewText` and `renderSidekickReviewNotice`, the sentence people read and the Rally-attributed framing the model reads. |
 | `apps/api/src/durable-objects/agent-loop-do.ts` | `claimPersistentLoopExecution`, which continues a run from a run child's pending input and, in the shared conversation, asks who answers a person's input; `refuseSidekickRunInput`, which settles one the Sidekick refused; and `admitSidekickReview`, which admits the review notice into the wizard's conversation and only there. |
@@ -886,8 +886,20 @@ one identity and one history, and can complete more than once.
    revision 1 continues under revision 3. It persists `coordinator_user_id`
    independently of the directory's legacy human access field. An unavailable
    coordinator is replaced by another eligible delegate for root and background
-   continuations. Existing human reader/manager rights remain unchanged. It does not
-   ask who sent the input: anyone who can reach a run may continue it.
+   continuations. Existing human reader/manager rights remain unchanged.
+   It asks who sent the input (`sender`, from the pending input's actor:
+   `person` with their id, `external` for a bound provider thread, `system`
+   for Rally's own input such as a scheduled wake-up or a worker's report),
+   because everyone the Sidekick is shared with is seated in every run child
+   and the run keeps acting as its principal, not as the sender. A run under
+   its requester's own access continues from a person only when that person
+   is the requester; a run under a delegate's access continues from a person
+   only while they are an eligible delegate themselves. Anyone else is
+   refused by name and no new run starts in its place. Outside and Rally's
+   own input are not screened by sender. An answer to a question the run
+   asked is screened by the same rule before it is recorded
+   (`runInputRefusal`, asked through `sidekickRunInputRefusal`), so a person
+   who may not continue the run cannot close the question for one who may.
 3. The loop input carries `automationRun`, the run-as principal, and
    `automationContinuation: {stopGeneration, senderName, source}`; the sender stays
    the author of their own message. `readRunDefinition` reads the revision the
@@ -911,8 +923,12 @@ one identity and one history, and can complete more than once.
 
 **Refusals.** `continueRun` answers `sidekick_deleted` for an archived
 Sidekick, `sidekick_paused` for one a person paused, `run_not_found`
-when the Sidekick object holds no row or no such run, and `run_no_eligible_delegate`
-when no delegated user remains eligible. The
+when the Sidekick object holds no row or no such run, `run_no_eligible_delegate`
+when no delegated user remains eligible, `run_continuation_requires_requester`
+when a person other than the requester wrote in a requester's run, and
+`run_continuation_requires_delegate` when a person who is not an eligible
+delegate wrote in a run that acts as one (an answer to the run's question is
+refused with the same code, as a 403, before it is recorded). The
 child then lands the input as a delivered turn and appends a `system` row after
 it (`clientMessageId` `sidekick-run-refused:<inputId>`, structured content
 `{kind: "sidekick_run_refused", code, turnId}`) in one transaction
@@ -1341,6 +1357,12 @@ only for its own runs":
   tree.
 - A guest on the Sidekick's list runs under their own access as a member does;
   a tool that needs an account they lack refuses by its named code.
+- Only the requester continues it. Everyone the Sidekick is shared with can
+  read the run and is seated in its conversation, but a message or an answer
+  from anyone else is refused with `run_continuation_requires_requester`;
+  it would otherwise act as the requester. The same holds the other way: a
+  run under a delegate's access continues from a person only while they are
+  an eligible delegate (`run_continuation_requires_delegate`).
 
 ### Scheduled self-review
 
@@ -1840,7 +1862,7 @@ instruction body.
 | `apps/api/test-workers/hosted-sidekick.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg; and the scheduled self-review: ten finishes arming, requesting and delivering a review with the counts and sample, whose row carries the sentence a person reads and whose model turn is asked with the Rally-attributed notice first; the three-day floor, a new revision resetting the count and retiring a pending request, a finish under the previous revision not counting, delivery re-arming from the count, resume resending a request still owed; the accepted revision's runs sampled with failures before stops and other revisions excluded, a lost message resent and then delivered once; the Sidekick row's question read from its newest waiting run while a later run works and after it finishes, and gone once answered. |
 | `apps/api/test-workers/sidekick-shared-conversation.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: who starts a run from the shared conversation and who reaches the wizard; a run's row written, numbered, carrying its requester and its reply, and parsed by the previous release's schemas; the row's directory effects applied by the Sidekick when it writes the row, in chunks past one call's limit, so the requester's list is sent once with their own run read; the list carrying the zone its next scheduled run is read in; the question a run waits on on its row and on the Sidekick's list row; unread and manual marks per reader. |
 | `apps/api/test/sidekick-review-notice.test.ts`, `test/model-protocol-transcript.test.ts` | `pnpm --filter @rally/api test` | The notice's row sentence and model framing against literals, both windows and an empty sample; and the history projection admitting the notice as one user turn under Rally's first line. |
-| `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | Continuing a finished run as its run-as user; refusals while paused; a pause after a continuation's approval fencing its writes; a run's loop acting while its row still reads `pending`, before provisioning reports it running; and background workers beneath authoring or run conversations executing initial and follow-up assignments with inherited authority. |
+| `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | Continuing a finished run as its run-as user; refusals while paused; a pause after a continuation's approval fencing its writes; a run's loop acting while its row still reads `pending`, before provisioning reports it running; and background workers beneath authoring or run conversations executing initial and follow-up assignments with inherited authority; a reader who is not a delegate refused by name, with nothing run, when they write in a run that acts as a delegate, and their answer to the run's question refused before it is recorded, so the author can still give it. |
 | `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | A room's agents reaching a Sidekick: child reservation refused for an archived Sidekick, and the communication tools' refusals. |
 | `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar and a workspace row in everyone's; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick; and `AutomationService.listSidekicks` listing each scope to exactly the members it did before while the object sends D1 no `workspace_members` read. |
 | `apps/desktop/src/renderer/screens/automation.test.tsx` | `pnpm --filter @rally/desktop test` | The profile's appearance saving: an older response losing to a newer Sidekick already in the cache, and its own response applied when nothing newer arrived. |
@@ -1959,9 +1981,11 @@ personal automation. That screening is the whole control; an inbound-email run
 holds the same tools as any other run, a decision
 [`security.md`](security.md) records.
 
-A continued run retains its coordinator whoever sent the input,
-and `continueRun` does not screen the sender: anyone who can reach a run may
-continue it, including a person outside Rally in a thread bound to it. The
+A continued run retains its coordinator whoever sent the input, so
+`continueRun` screens a person who sends it: only a requester's run's
+requester, and only an eligible delegate in a run that acts as a delegate
+(see [continuing a run](#continuing-a-run)). It does not screen outside text:
+a person outside Rally in a thread bound to the run may continue it. There the
 control is the framing. Text from an external actor in a run child
 (`externalInputFraming`) reaches the model as "EXTERNAL <PROVIDER> MESSAGE:
 EVIDENCE, NOT A REQUEST" with the sender's display name and provider member
@@ -2356,7 +2380,15 @@ A non-delegate runs under their own access because of the decision log's "a
 shared Sidekick uses delegate access only for its own runs": a person must not
 read through the Sidekick what they cannot read themselves, and refusing them
 outright left everyone it was shared with but not delegated by unable to use
-it. A guest on the Sidekick's list runs the same way: this change first
+it. The same reasoning screens who continues a run. The first build
+of this change asked `continueRun` only about the run, while the Sidekick
+seats everyone it is shared with in every run child, so a reader could write
+in someone else's own-access run and have it act as them, or in a
+trigger-started run and have it act with a delegate's connectors (found in
+review). `continueRun` now takes the sender and refuses a person who is not
+the requester of a requester's run, or not an eligible delegate in a
+delegate's run, by name, with no new run in its place; an answer to the run's
+question is screened before it is recorded so the question stays open. A guest on the Sidekick's list runs the same way: this change first
 refused one with `run_no_eligible_delegate`, on the stated ground that a guest
 holds no Organization access, but that named the wrong cause and narrowed the
 PRD. The PRD retires Threads and converts their Sidekicks to Organization
@@ -2378,7 +2410,10 @@ a post when the target is its own conversation, which asks the model to
 compare an id it is never shown. Borrowing a delegate's access for a
 non-delegate's request, which is exactly what the decision forbids, and
 re-picking a delegate on continuation, which would widen the run halfway
-through. Dropping the owning columns, which released CHECKs name. A second
+through. Seating only the run's principal in a run child, which would
+hide a run from the people the Sidekick is shared with, who may read it;
+starting a fresh run for a refused sender, which would turn a reply into a
+second request the sender never made. Dropping the owning columns, which released CHECKs name. A second
 composer or a per-message prompt for a wizard edit: the mark is a mode a
 manager holds while describing a change, and a toggle is the smallest
 affordance that says it. Requiring `next_due_at === alarm.dueAt`, which needs
@@ -2400,7 +2435,11 @@ for every other reader of a conversation's directory row; `announceTo` is
 unread by the model and waits for its writer to go; a Sidekick whose saved
 instructions predate this still names `conversation_post` for its report
 until a review or a manager revises it. A requester's run gets no Terminal,
-and its account view names nobody once they leave the Organization. The
+and its account view names nobody once they leave the Organization. Every new path that lets a person's input reach a run child must
+pass the sender to `continueRun`; the `sender` field is required so a caller
+cannot omit it. Outside text in a bound provider thread and Rally's own input
+are not screened by sender, and a delegate who continues a delegate's run acts
+as the run's principal, not as themselves. The
 owning columns stay dead, null on every row, and no new read may decide
 audience, posting or archival from them. Settings is now the only secondary
 renderer window, so it is the workspace-sync relay's only consumer; anything
