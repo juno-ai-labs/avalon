@@ -825,8 +825,8 @@ case can use a settled parent-run row when run execution is not the subject. If
 the run really has to complete, install the double, and give the run a model to
 route to. A file that installs
 the double calls `useSelectedModel()` from `./helpers/selected-model` at file
-scope. It selects one synthetic model with an explicitly empty fallback list
-and restores both environment variables after each test. Deployment defaults
+scope. It selects one synthetic model for both primary and smarter model groups, with
+an explicitly empty fallback list, and restores the variables after each test. Deployment defaults
 now supply a route even when model variables are unset; the explicit override
 keeps a scripted failure from falling through to a successful second reply.
 

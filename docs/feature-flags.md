@@ -46,8 +46,9 @@ deployments, but the new server does not publish it.
 
 | Roles | Default model | Shared override |
 | --- | --- | --- |
-| `workstream`, `inline_child`, `memory_sweep`, `sidekick_authoring` | `openai/gpt-6.1-sol` | `OPENROUTER_PRIMARY_MODEL` |
-| `workstream_naming` | `openai/gpt-5.6-terra` | `OPENROUTER_CLASSIFIER_MODEL` |
+| `workstream`, `inline_child`, `memory_sweep`, `sidekick_run` | `openai/gpt-5.6-terra` | `OPENROUTER_PRIMARY_MODEL` |
+| `sidekick_wizard` | `openai/gpt-6.1-sol` | `OPENROUTER_SMARTER_MODEL` |
+| `workstream_naming` | `openai/gpt-5.6-terra` | `OPENROUTER_FASTER_MODEL` |
 
 `OPENROUTER_FALLBACK_MODELS` overrides the default `google/gemini-3.8-flash`
 fallback. It is a comma-separated ordered list; an explicitly empty string
@@ -58,7 +59,7 @@ role's value replaces its complete route, including ordered fallbacks and
 optional `reasoningEffort` (`low`, `medium`, or `high`):
 
 ```dotenv
-AGENT_MODEL_ROUTING_JSON='{"workstream":{"model":"openai/gpt-6.1-sol","fallbackModels":[],"reasoningEffort":"low"}}'
+AGENT_MODEL_ROUTING_JSON='{"workstream":{"model":"openai/gpt-5.6-terra","fallbackModels":[],"reasoningEffort":"low"}}'
 ```
 
 Omitting `fallbackModels` in a role override means no fallbacks. Roles omitted
@@ -90,7 +91,13 @@ pin uses the conversation role's configured route; an unknown stored pin logs
 Pins belong to the conversation that was created with them. A Sidekick run
 copies its definition's pin through
 `provisionSidekickRun`; its authoring Main and background authoring agents use
-`sidekick_authoring`, while occurrences and delegation workers use `workstream`.
+`sidekick_wizard`, while occurrences and delegation workers use `sidekick_run`.
+Canvas conversations use `workstream`. Scheduled Sidekick admission selects
+`sidekick_run` before the run child exists, so its recorded model agrees with
+the role the execution resolves. The former `sidekick_authoring` JSON key is
+renamed to `sidekick_wizard`; deployments using that override must rename it.
+The shared naming-model override is now `OPENROUTER_FASTER_MODEL`; rename any
+existing `OPENROUTER_CLASSIFIER_MODEL` deployment variable to the new name.
 The conversation's served-model pill retains its existing behavior. See
 [`automation-lifecycle.md`](automation-lifecycle.md).
 
@@ -156,9 +163,13 @@ model choices, pin/provider catalogs, and reasoning defaults share that module
 so both the API and agent harness read one source. Cloudflare evaluation,
 targeting lookups, remote administration, provisioning, and Queue-based flag
 updates are removed.
-Conversation pins and client response contracts are preserved. The classifier default is `openai/gpt-5.6-terra`; explicit deployment and
-per-role overrides retain precedence. The structured-model default remains
-Terra in the catalog, but its former roles were retired on main.
+Conversation pins and client response contracts are preserved. Primary runs use
+Terra, while the smarter model group keeps the Sidekick wizard on Sol. Wizard
+and run roles are independently configurable as `sidekick_wizard` and
+`sidekick_run`, including scheduling and delegation. The faster model group also
+defaults to `openai/gpt-5.6-terra`; explicit deployment and
+per-role overrides retain precedence. The unused structured-model constant was
+removed with its retired roles.
 
 **Why:** Feature configuration should be straightforward to review and run locally,
 without depending on Cloudflare's feature flag service. Shared placement lets

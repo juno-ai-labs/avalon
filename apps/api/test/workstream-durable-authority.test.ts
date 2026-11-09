@@ -46,7 +46,7 @@ function seed(database: DatabaseSync): void {
 describe("launching a run against the open authority", () => {
   it.each([
     { parentKind: "automation" as const, substreamId: "0", expected: "openai/gpt-6.1-sol" },
-    { parentKind: "automation" as const, substreamId: "00000000-0000-7000-8000-000000000099", expected: "openai/gpt-5.6-terra" },
+    { parentKind: "automation" as const, substreamId: "00000000-0000-7000-8000-000000000099", expected: "deepseek/deepseek-v4-pro" },
     { parentKind: "canvas" as const, substreamId: "0", expected: "openai/gpt-5.6-terra" },
   ])("records the conversation's model when waking $parentKind/$substreamId", async ({ parentKind, substreamId, expected }) => {
     const database = preRetirementProductSqliteDatabase();
@@ -58,7 +58,8 @@ describe("launching a run against the open authority", () => {
       DB: sqliteD1(database), AVALON_REGION: "global",
       AGENT_MODEL_ROUTING_JSON: JSON.stringify({
         workstream: { model: "openai/gpt-5.6-terra", fallbackModels: [] },
-        sidekick_authoring: { model: "openai/gpt-6.1-sol", fallbackModels: [] },
+        sidekick_wizard: { model: "openai/gpt-6.1-sol", fallbackModels: [] },
+        sidekick_run: { model: "deepseek/deepseek-v4-pro", fallbackModels: [] },
       }),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
     });

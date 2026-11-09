@@ -53,18 +53,18 @@ export const noDirectOpenRouterClientRule = {
 
 const MODEL_ENV_NAMES = new Set([
   "OPENROUTER_PRIMARY_MODEL",
+  "OPENROUTER_SMARTER_MODEL",
   "OPENROUTER_FALLBACK_MODELS",
-  "OPENROUTER_CLASSIFIER_MODEL",
-  "OPENROUTER_STRUCTURED_MODEL",
+  "OPENROUTER_FASTER_MODEL",
 ]);
 
 export const noDirectModelEnvReadRule = {
   meta: {
     type: "problem",
-    docs: { description: "Keep model selection behind the per-agent flag resolver." },
+    docs: { description: "Keep model selection behind the per-agent configuration resolver." },
     schema: [],
     messages: {
-      directModelEnv: "Read model configuration through resolveAgentModelRouting(); direct {{name}} access bypasses per-agent flags and rollout bucketing.",
+      directModelEnv: "Read model configuration through resolveAgentModelRouting(); direct {{name}} access bypasses per-agent model configuration.",
     },
   },
   create(context) {

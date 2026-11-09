@@ -92,7 +92,7 @@ export async function provisionSidekickRun(env: Env, message: SidekickRunProvisi
   const model = pinned ?? await scheduledWorkstreamModel(env, {
     workspaceId: run.workspaceId,
     workstreamId: run.automationId,
-  });
+  }, "sidekick_run");
   const runs = createHarnessRunObjectPort(env, run.workspaceId, run.automationId, undefined, run.runId);
   const executionPrincipal = { type: "user" as const, userId: asUserId(run.runAsUserId) };
   if (!await runs.run({ runId: run.harnessRunId })) {
