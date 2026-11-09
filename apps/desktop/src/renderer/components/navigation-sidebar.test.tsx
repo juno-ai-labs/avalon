@@ -11,6 +11,7 @@ import { applyVersionedSidebarList, type ActivityList } from '../lib/sidebar-lis
 import type { AutomationSummary, Workspace } from '../lib/types';
 import { RESTORED_ROUTE } from '../lib/landing';
 import { useUiStore } from '../lib/ui-store';
+import { ActivityHomeScreen } from '../screens/activity-home';
 import { NavigationSidebar } from './navigation-sidebar';
 
 /*
@@ -84,6 +85,7 @@ function renderSidebar(person: Workspace = workspace, route: InitialEntry = '/',
         <Routes>
           {/* The app's landing: a launch starts at "/" and is sent to the Canvases home. */}
           {landing && <Route element={<Navigate replace to="/canvases" />} path="/" />}
+          <Route element={<><ActivityHomeScreen /><Location /></>} path="/activity" />
           <Route element={<Location />} path="*" />
         </Routes>
       </MemoryRouter>
@@ -522,14 +524,50 @@ describe('the Activity section', () => {
       expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks\/triage$/u);
     });
 
-    it('opens nothing for an empty feed, nor for the first row to arrive after it', async () => {
-      const client = renderSidebar(workspace, '/canvases', { unseenCount: 0, items: [] });
+    it('replaces the pane with the empty Activity page and keeps the previous artifact in history', async () => {
+      const canvasWithArtifact = `/canvases/${CANVAS}?artifact=00000000-0000-7000-8000-0000000000ab`;
+      const client = renderSidebar(workspace, canvasWithArtifact, { unseenCount: 0, items: [] });
       pick(/Activity/);
-      expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/activity$/u);
+      expect(screen.getByText('No activity yet')).toBeInTheDocument();
       await act(async () => { applyVersionedSidebarList(client, 'activity', 2, page); });
-      await waitFor(() => expect(rows()).toHaveLength(3));
-      await act(async () => {});
-      expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
+      expect(await screen.findByText('Select an activity item')).toBeInTheDocument();
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/activity$/u);
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      expect(screen.getByTestId('address')).toHaveTextContent(canvasWithArtifact);
+    });
+
+    it('opens the Activity page when the first list on a default landing is empty', async () => {
+      useUiStore.getState().setSidebarSection('activity');
+      const client = renderSidebar(workspace, '/', undefined, true, true);
+      await act(async () => { applyVersionedSidebarList(client, 'activity', 1, { unseenCount: 0, items: [] }); });
+      expect(await screen.findByText('No activity yet')).toBeInTheDocument();
+      expect(screen.getByTestId('location')).toHaveAttribute('data-navigation', 'REPLACE');
+    });
+
+    it('keeps an explicit Activity home open even when the feed has rows', () => {
+      renderSidebar(workspace, '/activity', page);
+      expect(screen.getByText('Select an activity item')).toBeInTheDocument();
+      expect(rows()).toHaveLength(3);
+      pick(/Activity/);
+      expect(screen.getByTestId('address')).toHaveTextContent(TOP);
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      expect(screen.getByText('Select an activity item')).toBeInTheDocument();
+    });
+
+    it('opens the top row on launch when the restored Activity page has items', () => {
+      useUiStore.getState().setSidebarSection('activity');
+      renderSidebar(workspace, { pathname: '/activity', state: RESTORED_ROUTE }, page);
+      expect(screen.getByTestId('address')).toHaveTextContent(TOP);
+      expect(screen.getByTestId('location')).toHaveAttribute('data-navigation', 'REPLACE');
+    });
+
+    it('opens the top row when a guest re-enters Activity from the Sidekicks list', () => {
+      renderSidebar({ ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } }, '/activity', page);
+      pick(/Sidekicks/);
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/activity$/u);
+      pick(/Activity/);
+      expect(screen.getByTestId('address')).toHaveTextContent(TOP);
     });
 
     it('does not move the pane for a row arriving on top while Activity stays open', async () => {
@@ -575,16 +613,19 @@ describe('the Activity section', () => {
       expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
     });
 
-    it('at phone width, when its sheet is closed without opening anything', () => {
+    it.each(['/canvases', '/activity'])('at phone width, closes the sheet to reveal empty Activity from %s', (route) => {
       const width = window.innerWidth;
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
       try {
-        renderSidebar(workspace, '/canvases', { unseenCount: 0, items: [] });
-        fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-        fireEvent.click(within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Activity/ }));
+        const guest = { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' as const } };
+        renderSidebar(guest, route, { unseenCount: 0, items: [] });
+        fireEvent.click(within(screen.getByRole('complementary', { name: 'Rally navigation' })).getByRole('button', { name: 'Open navigation' }));
+        const rail = within(screen.getByRole('navigation', { name: 'Sections' }));
+        fireEvent.click(rail.getByRole('button', { name: /Sidekicks/ }));
+        fireEvent.click(rail.getByRole('button', { name: /Activity/ }));
 
-        fireEvent.keyDown(window, { key: 'Escape' });
-
+        expect(screen.getByText('No activity yet')).toBeInTheDocument();
+        expect(useUiStore.getState().sidebarOpen).toBe(false);
         expect(useUiStore.getState().sidebarSection).toBe('activity');
       } finally {
         Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
@@ -770,10 +811,10 @@ describe('the Activity section', () => {
     });
   });
 
-  it('says how it fills when there is nothing yet, and offers Mark all seen only with something unseen', () => {
+  it('shows a short empty-list message and disables Mark all seen without unseen items', () => {
     useUiStore.getState().setSidebarSection('activity');
     renderSidebar(workspace, '/', { unseenCount: 0, items: [] });
-    expect(screen.getByText('Nothing yet. Mentions, new messages, Canvases you are added to, Sidekick runs that need you or finish, updates to Canvases you pinned, requests to open a Canvas and answers to yours show up here.')).toBeInTheDocument();
+    expect(screen.getByText('Nothing yet')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Mark all seen' })).toBeDisabled();
   });
 
