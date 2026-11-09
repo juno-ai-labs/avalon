@@ -184,11 +184,8 @@ export async function retireWorkspaceGraph(
         const childReceipt = await conversation.retireObject(tombstone);
         receipt.retainedOutbox += childReceipt.retainedOutbox;
         receipt.retiredChildren += 1;
-        // Receipted one at a time, because a parent can hold more children
-        // than one invocation can close: a demo's parent with a few hundred
-        // conversations outlived two passes, each cancelled at about 240s, and
-        // each started that parent's children over from the first. A receipted
-        // child is left out of the next pass's listing.
+        // Receipted per child so a pass cut off inside a large parent resumes
+        // at the next child.
         await workspace.recordRetiredChild({
           parentId: node.parentId,
           substreamId: child.substreamId,
