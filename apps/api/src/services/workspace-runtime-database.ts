@@ -71,8 +71,6 @@ export const WORKSPACE_LOCAL_TABLES = [
   // generic statement reaches the object and is refused by name, rather than
   // falling through to regional D1 as a misleading `no such table`.
   "slack_agent_contexts",
-  "slack_agent_feedback",
-  "slack_agent_sessions",
   "external_conversation_bindings",
   // Still executed generically, deliberately: the schedule's alarm-target
   // derivation reads these tables' due times through the object's local
@@ -109,9 +107,6 @@ export const WORKSPACE_LOCAL_TABLES = [
   // one would mean every directory publish failing after its bytes had already
   // landed in the bucket.
   "artifact_registry",
-  // Emptied and kept by WorkspaceDO migration 139: `schedules` still names it
-  // in a foreign key. Routed so an accidental statement reaches the object.
-  "digest_schedules",
   // Shared: the workspace scheduler and the connector-poll paths still route
   // their statements here.
   "schedules",
@@ -157,8 +152,8 @@ const WORKSPACE_LOCAL_TABLE_PATTERNS = WORKSPACE_LOCAL_TABLES.map((table) => ({
  * one of these alongside a local table is asking two databases one question.
  * The list is deliberately short and explicit rather than "everything not in
  * `WORKSPACE_LOCAL_TABLES`": the object also holds tables that list does not
- * name — `channels`, `work_opportunities`,
- * `workspace_activity_events` and their neighbours — and treating those as
+ * name — `canvas_directory`, `sidekick_runs`,
+ * `workspace_activity_items` and their neighbours — and treating those as
  * regional would refuse statements that are correct today.
  *
  * These are the ones a workspace-local query actually reaches for: the person
@@ -182,7 +177,7 @@ const WORKSPACE_EXTERNAL_TABLE_PATTERNS = WORKSPACE_EXTERNAL_TABLES.map((table) 
   table,
   // The boundaries keep each name to itself: `workspaces` would otherwise
   // match inside `workspace_members`, and `sessions` inside
-  // `slack_agent_sessions`.
+  // `realtime_transcription_sessions`.
   //
   // What they do not do is tell a table name from any other bare word in the
   // statement. This matches the whole text, so a column alias

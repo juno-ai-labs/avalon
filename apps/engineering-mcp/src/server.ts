@@ -10,11 +10,6 @@ import {
   SendEngineeringMessageResultSchema,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
-  ThreadRetirementOperationInputSchema,
-  DumpThreadTranscriptsResultSchema,
-  RetireThreadsResultSchema,
-  ConvertThreadsToCanvasesInputSchema,
-  ConvertThreadsToCanvasesResultSchema,
   RetireEngineeringOrgInputSchema,
   RetireEngineeringOrgResultSchema,
   ReadEngineeringConversationInputSchema,
@@ -242,14 +237,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
       await (await organizationBinding(request.orgId)).setSidekickPaused({ ...request, paused }, principal))));
   }
 
-  /** The typed confirmation, checked here before any region is asked and again by the region. */
-  function confirmedOrg(request: { orgId: string; confirm: string }): string {
-    if (request.confirm !== request.orgId) {
-      throw new InspectionRefusal("thread_retirement_unconfirmed", "confirm must equal orgId; nothing was changed");
-    }
-    return request.orgId;
-  }
-
   server.registerTool("retire_org", {
     description: "Retire an Organization permanently, through the same door as Ace's Retire button: nobody can sign in to it, every Canvas, Sidekick and socket in it stops, and nothing reopens. There is no undo. Members simply lose it. The result reports complete: false while parts are still open; call again with the same orgId to resume the walk.",
     inputSchema: RetireEngineeringOrgInputSchema.unwrap().shape,
@@ -257,34 +244,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }, (request) => tool(principal, "retire_org", { workspace_id: request.orgId },
     async () => RetireEngineeringOrgResultSchema.parse(
       await (await organizationBinding(request.orgId)).retireOrg(request, principal))));
-
-  server.registerTool("dump_thread_transcripts", {
-    description: "Write every Thread, Breakout and Channel conversation of orgId to R2 as room-visible text, under retired-conversations/<orgId>/<parentId>/<substreamId>.txt, before retire_threads deletes them. Canvases and Sidekicks are never dumped. A conversation already in R2 is skipped, so repeat the call to resume. confirm must equal orgId. Returns counts: conversations, dumped, skipped, and failed with a code per conversation.",
-    inputSchema: ThreadRetirementOperationInputSchema.unwrap().shape,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "dump_thread_transcripts", { workspace_id: request.orgId }, async () => {
-    const orgId = confirmedOrg(request);
-    return DumpThreadTranscriptsResultSchema.parse(await (await organizationBinding(orgId)).dumpThreadTranscripts(request, principal));
-  }));
-
-  server.registerTool("retire_threads", {
-    description: "Irreversibly delete every Thread, Breakout and Channel of orgId: each conversation object is retired and their rows deleted. Canvases, Sidekicks, resources and memory stay. Refused (thread_retirement_dump_incomplete) unless dump_thread_transcripts has written every conversation it would retire. Repeat the call to resume; once done it changes nothing. confirm must equal orgId. Returns counts and failed with a code per Thread or Channel.",
-    inputSchema: ThreadRetirementOperationInputSchema.unwrap().shape,
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "retire_threads", { workspace_id: request.orgId }, async () => {
-    const orgId = confirmedOrg(request);
-    return RetireThreadsResultSchema.parse(await (await organizationBinding(orgId)).retireThreads(request, principal));
-  }));
-
-  server.registerTool("convert_threads_to_canvases", {
-    description: "Make every Thread of orgId that has an artifact (made in it, or linked to it) a Canvas in place, keeping its id: the Thread's conversation becomes the Canvas's Chat, its viewers its participants and its artifacts the Canvas's. Its Breakouts are retired as retire_threads retires them. dryRun (the default) only lists the candidates with their artifact, participant and undumped-conversation counts. An apply (dryRun false) needs confirm equal to orgId, and is refused (thread_retirement_dump_incomplete) unless dump_thread_transcripts has written every conversation of every candidate. Run it before retire_threads. Repeat to resume; once done it lists no candidates. Returns the candidates and counts: converted, alreadyConverted, failed with a code per Thread, and artifactsWithoutThread.",
-    inputSchema: ConvertThreadsToCanvasesInputSchema.unwrap().shape,
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "convert_threads_to_canvases", { workspace_id: request.orgId }, async () => {
-    const orgId = request.dryRun === false ? confirmedOrg({ orgId: request.orgId, confirm: request.confirm ?? "" }) : request.orgId;
-    return ConvertThreadsToCanvasesResultSchema.parse(
-      await (await organizationBinding(orgId)).convertThreadsToCanvases(request, principal));
-  }));
 
   const conversationReadSchema = ReadEngineeringConversationInputSchema.unwrap().omit({ kind: true, conversationId: true });
   for (const [name, kind, label] of [["read_canvas_chat", "canvas", "Canvas"], ["read_sidekick_conversation", "sidekick", "Sidekick"]] as const) {

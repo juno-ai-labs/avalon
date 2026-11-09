@@ -11,7 +11,6 @@ import { HostedSidekick } from "../src/durable-objects/hosted-sidekick";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { AUTOMATION_SCHEDULE_ALARM_KIND } from "../src/durable-objects/automation-do-protocol";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
-import { insertChannelRow } from "./helpers/hosted-parent";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { queueSidekickSourceReconciliation } from "../src/durable-objects/sidekick-source-registrations";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
@@ -20,7 +19,6 @@ const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000da00");
 const creator = asUserId("00000000-0000-7000-8000-00000000da01");
 const other = asUserId("00000000-0000-7000-8000-00000000da02");
 const automationId = "00000000-0000-7000-8000-00000000da03";
-const homeId = "00000000-0000-7000-8000-00000000da04";
 const connectionId = "00000000-0000-7000-8000-00000000da05";
 const resourceId = "00000000-0000-7000-8000-00000000da06";
 const address = { workspaceId, automationId };
@@ -537,7 +535,6 @@ describe("shared Sidekick delegation admission", () => {
   it.each(["workspace"] as const)("admits a %s-owned personal Sheet event and an hourly occurrence through the same delegate, then refuses that source after withdrawal", async (scope) => {
     await create(true, scope);
     await runInDurableObject(stub(), (_instance, state) => {
-      insertChannelRow(state, homeId, "Content planning");
       state.storage.sql.exec(`INSERT INTO connector_connections(id,workspace_id,connector_type,scope,owner_user_id,
         display_name,model_plugin_id,granted_scopes_json,status,created_at,updated_at)
         VALUES (?,?,'google','personal',?,'Calendar account','plugin_google','["drive.read","sheets.read"]','healthy',?,?)`, connectionId, workspaceId, creator, now, now);

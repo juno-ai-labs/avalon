@@ -936,17 +936,6 @@ export function planSocketReplay(
   return { type: "replay", events };
 }
 
-/** One `workstream_resource_links` row, as the Thread conversion carries it from a Breakout to the Chat. */
-export interface ConversionAttachmentLink {
-  resource_id: string;
-  attached_by_user_id: string | null;
-  watch_enabled: number;
-  relationship_type: string;
-  resource_json: string;
-  attached_at: number;
-  updated_at: number;
-}
-
 /**
  * The hibernating realtime, loop, and storage authority for one substream.
  *
@@ -1295,10 +1284,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * What a hosted conversation's object does once on construction, and what
-   * `convertParentKind` does for a Thread's that becomes a Canvas's: its
+   * What a hosted conversation's object does once on construction: its
    * substream identity and its persistent loop. A retired parent's object
-   * skips this, so a converted one has to be bound when it converts.
+   * skips this.
    */
   private async bindHostedConversation(identity: { workspaceId: string; parentId: string }): Promise<void> {
     const persistedSubstream = this.state.storage.sql.exec<{
@@ -7043,134 +7031,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       this.productSessionAdmissions.set(key, { auth: admission.auth, validUntil });
     }
     return admission.auth;
-  }
-
-  /**
-   * The whole committed transcript as room-visible text, for an operator, with
-   * the identity this object holds so the caller can confirm it read the
-   * conversation it addressed. The same `conversationAsText` the transcript
-   * range reader formats with, over every committed turn; no viewer and no
-   * authorization, because the only caller is the operator dump that runs
-   * before a Thread is retired (`services/thread-retirement-service.ts`). An
-   * object with no identity row never held a conversation and answers empty.
-   */
-  async conversationTranscriptText(): Promise<{
-    identity: { workspaceId: string; parentKind: string; parentId: string; substreamId: string } | null;
-    throughSequence: number;
-    text: string;
-  }> {
-    await this.storageReady;
-    const identity = this.objectStore.identityForRetirement();
-    const throughSequence = this.transcript.transcriptThrough();
-    const range = this.transcript.range(
-      { snapshotId: "operator-dump", snapshotThrough: throughSequence, snapshotAtUtc: new Date().toISOString() },
-      { startInclusive: 1, endExclusive: throughSequence + 1 }, "requested", false,
-    );
-    return {
-      identity: identity ? {
-        workspaceId: identity.workspaceId, parentKind: identity.parentKind, parentId: identity.parentId,
-        substreamId: this.externalSubstreamId(),
-      } : null,
-      throughSequence,
-      text: conversationAsText(range.turns),
-    };
-  }
-
-  /**
-   * Rewrite this conversation's stored parent kind, for the operator
-   * conversion of a Thread that has artifacts into a Canvas in place
-   * (`services/thread-conversion-service.ts`); only `workstream` to `canvas`
-   * is admitted (`WorkstreamObjectStore.convertParentKind`). The object then
-   * does what a hosted conversation's does on construction, which a retired
-   * Thread's skipped, and arms its alarm: the Thread's alarm was cleared on
-   * every firing (see `alarm`), so the effects and wake reasons it holds wait
-   * for this. Idempotent: an object already `canvas` answers
-   * `converted: false` and is bound again, which changes nothing.
-   */
-  async convertParentKind(input: { workspaceId: string; parentId: string; from: string; to: string }): Promise<{ converted: boolean }> {
-    await this.storageReady;
-    const request = parseRpcInput(z.strictObject({
-      workspaceId: z.string().min(1), parentId: z.string().min(1), from: z.string().min(1), to: z.string().min(1),
-    }), input, "convert_parent_kind");
-    const result = this.objectStore.convertParentKind(request);
-    await this.bindHostedConversation(request);
-    this.syncAgentTimerAlarms();
-    await this.armNextAlarm();
-    return result;
-  }
-
-  /**
-   * The resources this conversation has attached, as stored, for the Thread
-   * conversion to carry a Breakout's into the Canvas's Chat before the
-   * Breakout is retired (`services/thread-conversion-service.ts`). Read
-   * through `identityForRetirement`, as the transcript dump is, because a
-   * Thread's object refuses every product read by its kind.
-   */
-  async attachmentsForConversion(): Promise<{
-    identity: { workspaceId: string; parentId: string } | null;
-    links: ConversionAttachmentLink[];
-  }> {
-    await this.storageReady;
-    const identity = this.objectStore.identityForRetirement();
-    return {
-      identity: identity ? { workspaceId: identity.workspaceId, parentId: identity.parentId } : null,
-      links: this.state.storage.sql.exec<ConversionAttachmentLink & Record<string, SqlStorageValue>>(
-        `SELECT resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at
-           FROM workstream_resource_links ORDER BY resource_id`,
-      ).toArray().map((row) => ({ ...row })),
-    };
-  }
-
-  /**
-   * Attach what a Thread's Breakouts had attached to this conversation, the
-   * converted Thread's Main and now its Canvas's Chat, so the Canvas's readers
-   * open those artifacts through it (`AuthorizationService.resource` needs a
-   * conversation they can read that holds the attachment). Only a `canvas`
-   * conversation of this parent takes them, after `convertParentKind`. An
-   * attachment already here is kept as it is; the inventory revision moves
-   * only when one is added, and the insert's own trigger queues the
-   * authorization projection. Each row is copied as stored, `watch_enabled`
-   * included: the watch is the attacher's choice about that resource, and the
-   * Chat is the same Thread's conversation. Answers how many it added.
-   */
-  async adoptAttachmentsForConversion(input: {
-    workspaceId: string; parentId: string; links: ConversionAttachmentLink[];
-  }): Promise<{ adopted: number }> {
-    await this.storageReady;
-    const request = parseRpcInput(z.strictObject({
-      workspaceId: z.string().min(1), parentId: z.string().min(1),
-      links: z.array(z.strictObject({
-        resource_id: z.string().min(1), attached_by_user_id: z.string().nullable(),
-        watch_enabled: z.number().int(), relationship_type: z.string().min(1), resource_json: z.string(),
-        attached_at: z.number().int(), updated_at: z.number().int(),
-      })),
-    }), input, "adopt_attachments_for_conversion");
-    const identity = this.objectStore.identityForRetirement();
-    if (!identity) throw new Error("conversation_attachment_adoption_identity_missing");
-    if (identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId) {
-      throw new Error("conversation_attachment_adoption_identity_mismatch");
-    }
-    if (identity.parentKind !== "canvas") throw new Error(`conversation_attachment_adoption_parent_kind:${identity.parentKind}`);
-    const sql = this.state.storage.sql;
-    return this.state.storage.transactionSync(() => {
-      let adopted = 0;
-      for (const link of request.links) {
-        adopted += sql.exec(
-          `INSERT INTO workstream_resource_links
-             (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(resource_id) DO NOTHING RETURNING resource_id`,
-          link.resource_id, link.attached_by_user_id, link.watch_enabled, link.relationship_type,
-          link.resource_json, link.attached_at, link.updated_at,
-        ).toArray().length;
-      }
-      if (adopted > 0) {
-        sql.exec(
-          `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
-           ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`, Date.now(),
-        );
-      }
-      return { adopted };
-    });
   }
 
   /** Content-free operator inventory, including retired conversations. */

@@ -38,8 +38,7 @@ const ACTOR_ID = asUserId("00000000-0000-7000-8000-00000000e002");
 const OPERATION_ID = "00000000-0000-7000-8000-00000000e003";
 /** The instant the walk is asked to retire at; the register records the same instant. */
 const COMPLETED_AT = "2026-09-05T13:00:00.000Z";
-const FIRST_ROOM_ID = "00000000-0000-7000-8000-00000000e201";
-const SPACE_ID = "00000000-0000-7000-8000-00000000e401";
+const CANVAS_IDS = ["00000000-0000-7000-8000-00000000e201", "00000000-0000-7000-8000-00000000e202"] as const;
 const SIDEKICK_ID = "00000000-0000-7000-8000-00000000e301";
 
 let workspaceSequence = 0;
@@ -54,7 +53,7 @@ function workspaceStub(workspaceId: string): DurableObjectStub<WorkspaceDO> {
   return TEST_ENV.WORKSPACE_DOS.get(TEST_ENV.WORKSPACE_DOS.idFromName(name)) as DurableObjectStub<WorkspaceDO>;
 }
 
-/** Two rooms and one automation, written the way their projections arrive. */
+/** One Sidekick, written the way its projection arrives. */
 async function seedDirectory(stub: DurableObjectStub<WorkspaceDO>, workspaceId: string): Promise<void> {
   await runInDurableObject(stub, (instance: WorkspaceDO, state) => {
     state.storage.sql.exec(
@@ -67,31 +66,6 @@ async function seedDirectory(stub: DurableObjectStub<WorkspaceDO>, workspaceId: 
       Date.now(),
       Date.now(),
     );
-    for (const [index, id] of [
-      FIRST_ROOM_ID,
-      "00000000-0000-7000-8000-00000000e202",
-    ].entries()) {
-      state.storage.sql.exec(
-        `INSERT INTO channels (
-           workstream_id, authority_generation, waterline, source_event_id, payload_hash,
-           title, description, preview, scope, exact_state, system_kind, last_activity_at,
-           completed_at, archived_at, email_address, origin_type, origin_label,
-           created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
-           title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
-           next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
-           source_created_at, source_updated_at, projected_at)
-         VALUES (?, 1, 1, ?, 'h', ?, '', '', 'workspace', 'idle', NULL, ?,
-                 NULL, NULL, NULL, 'ad_hoc', NULL, NULL, NULL, NULL, NULL,
-                 'settled', 0, 0, NULL, NULL, NULL, ?, ?, ?)`,
-        id,
-        `event-${index}`,
-        `Room ${index}`,
-        Date.now(),
-        Date.now(),
-        Date.now(),
-        Date.now(),
-      );
-    }
     state.storage.sql.exec(
       `INSERT INTO automation_directory (
          automation_id, workspace_id, author_user_id, source_version, payload_hash,
@@ -102,26 +76,15 @@ async function seedDirectory(stub: DurableObjectStub<WorkspaceDO>, workspaceId: 
       ACTOR_ID,
       Date.now(),
     );
-    // Archived on purpose. What the graph is about is an object, not a product
-    // surface: an archived Space is still a parent holding a hidden main
-    // conversation, so enumerating only the active ones would report the
-    // Organization closed with one of its objects still answering.
-    state.storage.sql.exec(
-      `INSERT INTO spaces (
-         space_id, title, scope, appearance_json, archived_at, created_by_user_id,
-         system_role, authority_generation, source_version, payload_hash, revision,
-         created_at, updated_at, source_created_at, source_updated_at)
-       VALUES (?, 'Hiring', 'workspace', NULL, ?, ?, NULL, 1, 1, 'h', 1, ?, ?, ?, ?)`,
-      SPACE_ID,
-      Date.now(),
-      ACTOR_ID,
-      Date.now(),
-      Date.now(),
-      Date.now(),
-      Date.now(),
-    );
     void instance;
   });
+}
+
+/** Two Canvases beside the Sidekick, made the way the product makes them. */
+async function seedCanvases(stub: DurableObjectStub<WorkspaceDO>, workspaceId: string): Promise<void> {
+  for (const [index, canvasId] of CANVAS_IDS.entries()) {
+    await stub.canvasCreate({ workspaceId, canvasId, title: `Canvas ${index}`, createdByUserId: ACTOR_ID, authorityGeneration: 1 });
+  }
 }
 
 /**
@@ -181,6 +144,7 @@ describe("workspace retirement graph", () => {
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
     await seedDirectory(stub, workspaceId);
+    await seedCanvases(stub, workspaceId);
 
     const begun = await stub.beginWorkspaceRetirement({
       retiredAt: Date.now(),
@@ -189,21 +153,13 @@ describe("workspace retirement graph", () => {
       reason: "operator_retirement",
     });
 
-    // Both rooms and the automation, captured in one pass. An automation is a
-    // conversation parent like a room, and the spike's empty automation list is
-    // the reason this is asserted rather than assumed.
-    expect(begun.nodes.map((node) => node.parentId).sort()).toEqual([
-      "00000000-0000-7000-8000-00000000e201",
-      "00000000-0000-7000-8000-00000000e202",
-      "00000000-0000-7000-8000-00000000e301",
-      SPACE_ID,
-    ]);
+    // Both Canvases and the Sidekick, captured in one pass. A Sidekick is a
+    // conversation parent like a Canvas, and the spike's empty automation list
+    // is the reason this is asserted rather than assumed.
+    expect(begun.nodes.map((node) => node.parentId).sort()).toEqual([...CANVAS_IDS, SIDEKICK_ID].sort());
     expect(begun.nodes.filter((node) => node.parentKind === "automation")).toHaveLength(1);
-    // A Space is enumerated as its own kind rather than as a work stream, so
-    // the receipt names what was closed; its hosted parent lives in this
-    // object, but its hidden main conversation is still its own object.
-    expect(begun.nodes.filter((node) => node.parentKind === "space")
-      .map((node) => node.parentId)).toEqual([SPACE_ID]);
+    expect(begun.nodes.filter((node) => node.parentKind === "canvas").map((node) => node.parentId).sort())
+      .toEqual([...CANVAS_IDS]);
 
     // The workspace is closed from this moment. A product read is refused...
     let refusal: unknown;
@@ -217,7 +173,7 @@ describe("workspace retirement graph", () => {
     // ...while the walk's own reads keep working, which is the whole reason the
     // graph is recorded rather than re-derived from a directory that now refuses.
     const progress = await stub.workspaceRetirementProgress();
-    expect(progress.remaining).toBe(4);
+    expect(progress.remaining).toBe(3);
     expect(progress.complete).toBe(false);
   });
 
@@ -225,6 +181,7 @@ describe("workspace retirement graph", () => {
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
     await seedDirectory(stub, workspaceId);
+    await seedCanvases(stub, workspaceId);
 
     const first = await stub.beginWorkspaceRetirement({
       retiredAt: Date.now(),
@@ -242,12 +199,12 @@ describe("workspace retirement graph", () => {
     });
     expect(resumed.nodes).toEqual(first.nodes);
 
-    // Everything but the Space, which is the interruption this is about: a
-    // pass that closed the Channels and the Sidekick and died before it
-    // reached the Space must not let the Organization report itself closed.
-    const spaceNode = first.nodes.find((node) => node.parentKind === "space");
-    expect(spaceNode).toBeDefined();
-    for (const node of first.nodes.filter((node) => node.parentKind !== "space")) {
+    // Everything but one Canvas, which is the interruption this is about: a
+    // pass that closed the rest and died before it reached that Canvas must
+    // not let the Organization report itself closed.
+    const lastNode = first.nodes.find((node) => node.parentId === CANVAS_IDS[1]);
+    expect(lastNode).toBeDefined();
+    for (const node of first.nodes.filter((node) => node !== lastNode)) {
       await stub.recordRetiredNode({ parentKind: node.parentKind, parentId: node.parentId });
     }
     const partial = await stub.workspaceRetirementProgress();
@@ -258,8 +215,8 @@ describe("workspace retirement graph", () => {
     expect(partial.complete).toBe(false);
 
     await stub.recordRetiredNode({
-      parentKind: spaceNode!.parentKind,
-      parentId: spaceNode!.parentId,
+      parentKind: lastNode!.parentKind,
+      parentId: lastNode!.parentId,
     });
     const done = await stub.workspaceRetirementProgress();
     expect(done.remaining).toBe(0);
@@ -313,18 +270,19 @@ describe("workspace retirement graph", () => {
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
     await seedDirectory(stub, workspaceId);
+    await seedCanvases(stub, workspaceId);
     const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" };
     await stub.beginWorkspaceRetirement(tombstone);
     // Every parent is closed with the Organization object above, and no
     // `recordRetiredNode` has run, which is exactly the state an interrupted
     // pass leaves behind.
-    expect((await stub.workspaceRetirementProgress()).remaining).toBe(4);
+    expect((await stub.workspaceRetirementProgress()).remaining).toBe(3);
 
     const receipt = await retireWorkspaceGraph(TEST_ENV, { workspaceId, ...tombstone });
     expect(receipt.failed).toEqual([]);
     expect(receipt.complete).toBe(true);
     expect(receipt.remaining).toBe(0);
-    expect(receipt.parents).toBe(4);
+    expect(receipt.parents).toBe(3);
   });
 
 
