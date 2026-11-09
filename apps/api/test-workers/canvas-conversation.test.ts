@@ -10,7 +10,7 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { uuidToBase58 } from "@rally/contracts/uuid-base58";
@@ -39,6 +39,7 @@ import { memberInputs, useOpenRouterDouble } from "./helpers/openrouter-double";
 import { responsesEvents } from "@rally/agent-harness/test-support/responses-stream";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { startWaitBudget, waitBudget } from "./helpers/wait-budget";
 
 let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000cb000");
 const CREATOR = asUserId("00000000-0000-7000-8000-0000000cb001");
@@ -73,9 +74,11 @@ const LONG_REPLY_PROMPT = "Tell me a long story.";
 /**
  * Plain flags rather than promises: the reply's stream is read inside the
  * conversation object, and a promise settled across the test and the object
- * would carry one side's I/O context into the other.
+ * would carry one side's I/O context into the other. The test that holds the
+ * reply sets `released` and `finished` in a `finally`, so a failed test never
+ * leaves the stream spinning in its conversation object.
  */
-const held = { firstPartSent: false, released: false };
+const held = { firstPartSent: false, released: false, finished: false };
 function heldReply(signal: AbortSignal | undefined): Response {
   const events = responsesEvents([
     { choices: [{ delta: { content: "Once upon a time" }, finish_reason: null }] },
@@ -99,9 +102,11 @@ function heldReply(signal: AbortSignal | undefined): Response {
       if (signal?.aborted) return;
       if (sent === 1) while (!held.released) await new Promise((resolve) => setTimeout(resolve, 10));
       // After the chunk read past the Stop, the rest waits for the request to
-      // be aborted, so a fixed loop is not raced; one that never aborts gets
-      // the rest of its reply after a while and completes it.
-      else if (sent > 1) for (let waited = 0; !signal?.aborted && waited < 2_000; waited += 10) {
+      // be aborted, however long a contended run takes to abort it; one that
+      // never aborts gets the rest of its reply when the test ends, and the
+      // test has already failed on the stopped status it never saw. A fixed
+      // wait here raced the abort: past it, the reply streamed to its end.
+      else if (sent > 1) while (!signal?.aborted && !held.finished) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       if (sent >= parts.length) {
@@ -168,6 +173,7 @@ beforeEach(async () => {
       workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
   ]);
+  startWaitBudget();
 });
 
 describe("a Canvas's Chat", () => {
@@ -271,7 +277,18 @@ describe("a Canvas's Chat", () => {
   });
 });
 
-/** A workspace socket for this person, subscribed; every frame it receives is kept. */
+/** Every socket `connect` opened in this test; whatever is still open is closed after it, pass or fail. */
+const connected: WebSocket[] = [];
+afterEach(() => {
+  // 1 is OPEN: a socket the test already closed, or the server did, is left alone.
+  for (const socket of connected.splice(0)) if (socket.readyState === 1) socket.close(1000, "test ended");
+});
+
+/**
+ * A workspace socket for this person, subscribed; every frame it receives is
+ * kept. A socket closed or failed before its subscribe answer rejects with
+ * why, rather than leaving the test waiting out its timeout.
+ */
 async function connect(userId: string): Promise<{ socket: WebSocket; frames: Array<Record<string, unknown>> }> {
   const response = await workspace().fetch("https://workspace.test/socket", {
     headers: {
@@ -287,14 +304,17 @@ async function connect(userId: string): Promise<{ socket: WebSocket; frames: Arr
   if (response.status !== 101 || !response.webSocket) throw new Error(`workspace socket rejected: ${response.status}`);
   const socket = response.webSocket;
   socket.accept();
+  connected.push(socket);
   const frames: Array<Record<string, unknown>> = [];
-  const subscribed = new Promise<void>((resolve) => {
+  const subscribed = new Promise<void>((resolve, reject) => {
     socket.addEventListener("message", (event) => {
       if (String(event.data) === "pong") return;
       const frame = JSON.parse(String(event.data)) as Record<string, unknown>;
       frames.push(frame);
       if (frame.type === "workspace_sync") resolve();
     });
+    socket.addEventListener("close", (event) => reject(new Error(`workspace socket closed before its subscribe answer: ${event.code} ${event.reason}`)));
+    socket.addEventListener("error", () => reject(new Error("workspace socket failed before its subscribe answer")));
   });
   socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
   await subscribed;
@@ -338,7 +358,7 @@ describe("the Canvas list", () => {
     await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
       update: { visibility: "participants", userIds: [MEMBER] } });
     // The change is pushed to every socket, each with its own rows.
-    await expect.poll(() => canvasRows(before.frames)).toMatchObject([{ id: canvasId, unread: true, sharedWithMe: true }]);
+    await expect.poll(() => canvasRows(before.frames), { timeout: waitBudget() }).toMatchObject([{ id: canvasId, unread: true, sharedWithMe: true }]);
     for (const { socket } of [creator, before]) socket.close(1000, "done");
   });
 
@@ -351,14 +371,14 @@ describe("the Canvas list", () => {
     member.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: canvasId }));
     // Applied by waterline, as the client applies it: a push that does not
     // advance it never reaches the row.
-    await expect.poll(() => clientCanvasRows(creator.frames)[0]?.presentUserIds).toEqual([MEMBER]);
+    await expect.poll(() => clientCanvasRows(creator.frames)[0]?.presentUserIds, { timeout: waitBudget() }).toEqual([MEMBER]);
     // The face pile in the Canvas itself, on the same presence path a Channel's uses.
     creator.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: canvasId }));
-    await expect.poll(() => creator.frames.filter((frame) => frame.type === "workspace_presence").at(-1))
+    await expect.poll(() => creator.frames.filter((frame) => frame.type === "workspace_presence").at(-1), { timeout: waitBudget() })
       .toMatchObject({ workstreamId: canvasId, userIds: [MEMBER] });
     expect(await workspace().setSidebarPin({ workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "member",
       kind: "canvas", itemId: canvasId, pinned: true })).toEqual({ ok: true });
-    await expect.poll(() => canvasRows(member.frames)[0]?.pinnedPosition).toBe(0);
+    await expect.poll(() => canvasRows(member.frames)[0]?.pinnedPosition, { timeout: waitBudget() }).toBe(0);
     expect(canvasRows(creator.frames)[0]?.pinnedPosition).toBeNull();
     for (const { socket } of [creator, member]) socket.close(1000, "done");
   });
@@ -368,10 +388,10 @@ describe("the Canvas list", () => {
     const creator = await connect(CREATOR);
     const outsider = await connect(MEMBER);
     outsider.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: canvasId }));
-    await new Promise<void>((resolve) => {
-      outsider.socket.addEventListener("message", (event) => { if (String(event.data) === "pong") resolve(); });
-      outsider.socket.send("ping");
-    });
+    let pongs = 0;
+    outsider.socket.addEventListener("message", (event) => { if (String(event.data) === "pong") pongs += 1; });
+    outsider.socket.send("ping");
+    await expect.poll(() => pongs, { timeout: waitBudget() }).toBeGreaterThan(0);
     expect(canvasRows(creator.frames)[0]?.presentUserIds).toEqual([]);
     expect(await workspace().setSidebarPin({ workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "member",
       kind: "canvas", itemId: canvasId, pinned: true })).toEqual({ ok: false });
@@ -390,7 +410,7 @@ describe("a Canvas's title and pin order", () => {
     const renamed = await new CanvasService(TEST_ENV, auth(MEMBER)).update(canvasId, { title: "  Launch plan, v2 " });
     expect(renamed.title).toBe("Launch plan, v2");
     expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).title).toBe("Launch plan, v2");
-    await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.title).toBe("Launch plan, v2");
+    await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.title, { timeout: waitBudget() }).toBe("Launch plan, v2");
     creator.socket.close(1000, "done");
   });
 
@@ -410,7 +430,7 @@ describe("a Canvas's title and pin order", () => {
     // A second person's colour leaves the first person's icon as it was.
     await new CanvasService(TEST_ENV, auth(CREATOR)).update(canvasId, { appearance: { color: "orange" } });
     expect((await new CanvasService(TEST_ENV, auth(MEMBER)).detail(canvasId)).appearance).toEqual({ icon: "flag", color: "orange" });
-    await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.appearance)
+    await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.appearance, { timeout: waitBudget() })
       .toEqual({ icon: "flag", color: "orange" });
     // Not activity: the Canvas keeps its place in the recency list, and its title.
     const after = clientCanvasRows(creator.frames).find((row) => row.id === canvasId);
@@ -437,29 +457,35 @@ describe("a Canvas's title and pin order", () => {
   it("ends a reply being streamed at its next chunk when a person stops it, as a stopped response", async () => {
     held.firstPartSent = false;
     held.released = false;
-    const { canvasId } = await new CanvasService(TEST_ENV, auth(CREATOR)).create({
-      title: "Story", prompt: { text: LONG_REPLY_PROMPT, clientMessageId: "canvas-stop-1" },
-    });
-    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
-    await expect.poll(() => held.firstPartSent, { timeout: 15_000 }).toBe(true);
-    await expect.poll(() => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ status: string }>(
-      `SELECT status FROM substream_loops WHERE id = 1`).one().status)).toBe("executing");
-    await runInDurableObject(chat, (instance) => (instance as unknown as {
-      product: { stop: (auth: AuthContext, operationId: string) => Promise<void> };
-    }).product.stop(auth(CREATOR), "00000000-0000-7000-8000-0000000cb5f0"));
-    // The rest of the reply arrives after the Stop; it must not be streamed to its end.
-    held.released = true;
-    const statuses = () => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ payload_json: string }>(
-      `SELECT payload.payload_json FROM transcript_facts fact
-         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
-        WHERE fact.fact_kind = 'assistant_turn_status'`).toArray()
-      .map((row) => (JSON.parse(row.payload_json) as { structuredContent?: { kind?: string } }).structuredContent?.kind));
-    await expect.poll(statuses, { timeout: 15_000 }).toEqual(["assistant_turn_stopped"]);
-    await expect.poll(() => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ status: string }>(
-      `SELECT status FROM substream_loops WHERE id = 1`).one().status), { timeout: 15_000 }).toBe("idle");
-    const accepted = await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ payload_json: string }>(
-      `SELECT payload_json FROM transcript_payloads`).toArray().map((row) => row.payload_json).join("\n"));
-    expect(accepted).not.toContain("THE END");
+    held.finished = false;
+    try {
+      const { canvasId } = await new CanvasService(TEST_ENV, auth(CREATOR)).create({
+        title: "Story", prompt: { text: LONG_REPLY_PROMPT, clientMessageId: "canvas-stop-1" },
+      });
+      const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+      await expect.poll(() => held.firstPartSent, { timeout: waitBudget() }).toBe(true);
+      await expect.poll(() => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM substream_loops WHERE id = 1`).one().status), { timeout: waitBudget() }).toBe("executing");
+      await runInDurableObject(chat, (instance) => (instance as unknown as {
+        product: { stop: (auth: AuthContext, operationId: string) => Promise<void> };
+      }).product.stop(auth(CREATOR), "00000000-0000-7000-8000-0000000cb5f0"));
+      // The rest of the reply arrives after the Stop; it must not be streamed to its end.
+      held.released = true;
+      const statuses = () => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ payload_json: string }>(
+        `SELECT payload.payload_json FROM transcript_facts fact
+           JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+          WHERE fact.fact_kind = 'assistant_turn_status'`).toArray()
+        .map((row) => (JSON.parse(row.payload_json) as { structuredContent?: { kind?: string } }).structuredContent?.kind));
+      await expect.poll(statuses, { timeout: waitBudget() }).toEqual(["assistant_turn_stopped"]);
+      await expect.poll(() => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM substream_loops WHERE id = 1`).one().status), { timeout: waitBudget() }).toBe("idle");
+      const accepted = await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ payload_json: string }>(
+        `SELECT payload_json FROM transcript_payloads`).toArray().map((row) => row.payload_json).join("\n"));
+      expect(accepted).not.toContain("THE END");
+    } finally {
+      held.released = true;
+      held.finished = true;
+    }
   });
 
   it("titles a Canvas made with no title from its opening message, on every open list", () => withNamingModel(async () => {
@@ -473,9 +499,9 @@ describe("a Canvas's title and pin order", () => {
     // The Chat's first message reaches the Canvas's parent, which names it by an alarm of its own.
     await deliverChildEffects(TEST_ENV, env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, canvasId))));
-    await expect.poll(async () => (await service.detail(canvasId)).titleStatus, { timeout: 15_000 }).toBe("settled");
+    await expect.poll(async () => (await service.detail(canvasId)).titleStatus, { timeout: waitBudget() }).toBe("settled");
     expect((await service.detail(canvasId)).title).toBe("December pricing launch");
-    await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.title)
+    await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.title, { timeout: waitBudget() })
       .toBe("December pricing launch");
     const naming = provider.calls.filter(namingCall);
     expect(naming).toHaveLength(1);
@@ -520,7 +546,7 @@ describe("a Canvas's title and pin order", () => {
       });
       await expect.poll(() => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
         `SELECT 1 FROM _internal_durable_alarms WHERE kind = ? AND alarm_key = ?`, CANVAS_NAMING_ALARM_KIND, canvasId)
-        .toArray().length), { timeout: 15_000 }).toBe(0);
+        .toArray().length), { timeout: waitBudget() }).toBe(0);
     };
     // An empty Canvas is untitled and settled, and an empty Chat is not activity.
     const created = await service.detail(canvasId);
@@ -596,7 +622,7 @@ describe("a Canvas's title and pin order", () => {
     const position = (canvasId: string) => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.pinnedPosition;
     expect([position(first), position(second), position(third)]).toEqual([0, 1, 2]);
     await new CanvasService(TEST_ENV, auth(CREATOR)).reorderPins("canvas", [third, first, crypto.randomUUID()]);
-    await expect.poll(() => [position(third), position(first), position(second)]).toEqual([0, 1, 2]);
+    await expect.poll(() => [position(third), position(first), position(second)], { timeout: waitBudget() }).toEqual([0, 1, 2]);
     creator.socket.close(1000, "done");
   });
 });
@@ -827,7 +853,7 @@ describe("Rally in a Canvas's Chat", () => {
     });
     expect(response.status, await response.clone().text()).toBe(200);
     await runDurableObjectAlarm(chat);
-    await expect.poll(() => provider.calls.length, { timeout: 15_000 }).toBeGreaterThan(0);
+    await expect.poll(() => provider.calls.length, { timeout: waitBudget() }).toBeGreaterThan(0);
     const call = provider.calls.find((candidate) => candidate.messages.some((message) =>
       typeof message.content === "string" && message.content.startsWith("CANVAS CONTEXT")))!;
     const context = call.messages.find((message) => typeof message.content === "string" && message.content.startsWith("CANVAS CONTEXT"))!;
@@ -839,7 +865,7 @@ describe("Rally in a Canvas's Chat", () => {
     // a holder of a copy; a `canvas` holder is admitted (WorkspaceDO migration 136).
     await expect.poll(() => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
       "SELECT parent_kind, parent_id, substream_id FROM memory_digest_holders WHERE parent_id = ?", canvasId,
-    ).toArray()), { timeout: 15_000 }).toEqual([{ parent_kind: "canvas", parent_id: canvasId, substream_id: "0" }]);
+    ).toArray()), { timeout: waitBudget() }).toEqual([{ parent_kind: "canvas", parent_id: canvasId, substream_id: "0" }]);
   });
 });
 
