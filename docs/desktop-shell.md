@@ -117,7 +117,8 @@ It holds two columns:
   list is what was picked.
   Each section carries a red count (`RailBadge`, 15px in the danger red
   design.html draws; nothing at zero, `99+` past two digits), which the
-  button's accessible name reads after the section ("Canvases, 10 unread"),
+  button's accessible name reads after the section ("Canvases, 10 unread",
+  "Sidekicks, 1 waiting"; read from its content the badge came first),
   the badge itself hidden from a screen reader: **Canvases**, each Canvas holding something this
   person has not read; **Sidekicks**, each Sidekick that needs input or holds
   something unread; **Activity**, every item this person has not seen
@@ -473,13 +474,16 @@ naming the last list looked at, "Activity" over the Canvases home.
 `TitlePillHeader` takes `align="start"` for a Canvas's header (v1-F8), and a
 phone's headers drop Back and Forward (v3-G6). The rail's badge takes the
 design's danger red at 15px and an unread row's time stays muted (v1-F7,
-v4-F6), its buttons are named section first (v1-F14), the browser's rail
-keeps the desktop's top clearance (v4-F9), focus rings the tile (v4-F10,
-v3-G12), the account avatar is 28px (v1-F12), the account menu's Sidekicks
-item wears the rail's single hexagon (v3-G13), and the Canvases home and
-Settings name the window (v4-F24).
-A list row reads its age in the design's words ("now", "2m", "1h", "Tue")
-instead of a clock time that cut the title beside it (v4-F5).
+v4-F6), its buttons are named section first (v1-F14; "Sidekicks, 1 waiting",
+where the content read "1 waiting Sidekicks"), the browser's rail keeps the
+desktop's top clearance (v4-F9), focus rings the tile (v4-F10, v3-G12), the
+account avatar is 28px (v1-F12), the account menu's Sidekicks item wears the
+rail's single hexagon (v3-G13), and the Canvases home and Settings name the
+window (v4-F24). A list row reads its age in the design's words ("now", "2m",
+"1h", "Tue") instead of a clock time that cut the title beside it (v4-F5).
+The Sidekicks section lists every Sidekick by what it last did (its newest run
+or change), with a **Recent** / **Name** control in the heading, where it was
+in the server's alphabetical order with no control.
 
 In the second round the sidebar gives way between 641px and 840px, so the
 pane keeps the conversation's minimum (v3-R2-2), and every section home, the
@@ -515,7 +519,8 @@ repetition the Canvases home had already dropped.
 
 **What a future change must respect:** `sidebarWidth` is the whole sidebar,
 rail included. A width a person already dragged to is kept, so only a person
-who never resized sees the new default.
+who never resized sees the new default. The Sidekicks order is the client's
+over the list the socket keeps, so a reorder costs no request.
 
 ### 2026-11-08 — A long title truncates inside the pill, and a pill title can be edited in place
 

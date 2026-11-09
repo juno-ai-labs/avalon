@@ -8121,7 +8121,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   padding: 0 8px 0 12px;
 }
 .navigation-section-trailing { align-items: center; display: inline-flex; font-weight: 400; gap: 2px; }
-/* A sort in the heading ("Recent") reads as the heading does, muted and its size. */
+.navigation-section-heading > span:first-child { white-space: nowrap; }
+/* A sort in the heading ("Recent ⇵", design §1 and §3) reads as the heading does, muted and its size, not a form field. */
 .navigation-section-trailing .dropdown-select-trigger { color: inherit; font-size: inherit; gap: 4px; min-width: 0; padding-block: 2px; }
 .navigation-section-mark { display: inline-flex; padding: 2px 4px; }
 .navigation-sort {

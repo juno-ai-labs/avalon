@@ -77,7 +77,7 @@ outside their related conversations. The subject is the server-owned execution
 user; an ID in a tool argument supplies only the resource address. A batch read returns resource and artifact metadata with the decision, and
 discloses metadata only for admitted resources. This direct read creates no
 attachment or additional permission. The
-[resource-tool scope](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration)
+[resource-tool scope](agent-attachments.md#authorized-conversation-discovery-and-text-hydration)
 owns discovery and import revalidation.
 
 An authorization batch may receive the active regional workspace-membership
@@ -155,7 +155,7 @@ Guest admission observations are shared only within the current authorization
 batch, like other owner observations. Skill visibility alone does not expose a
 Sidekick's resources; existing member authorization remains on its original path.
 Sidekick resource inheritance follows current execution-user admission; see
-[`agent-attachments.md`](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration).
+[`agent-attachments.md`](agent-attachments.md#authorized-conversation-discovery-and-text-hydration).
 
 Explicit resource refresh and artifact open/error/data routes also admit guests.
 Refresh runs the existing resource read proof before loading metadata or invoking

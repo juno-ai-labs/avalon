@@ -335,6 +335,7 @@ describe('the Activity section', () => {
     const activity = within(rail).getByRole('button', { name: /Activity/ });
     expect(activity).toHaveAccessibleName('Activity, 2 unseen');
     expect(activity.querySelector('.navigation-rail-badge')).toHaveTextContent('2');
+    expect(within(rail).getByRole('button', { name: /^Sidekicks, \d+ waiting$/ })).toBeInTheDocument();
     fireEvent.click(activity);
     expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
 

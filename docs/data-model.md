@@ -1155,7 +1155,9 @@ Breakout, Activity, digest and suggested-work rows. Retired so far:
   tables and those rows. `docs/digests.md` is deleted; the email converter it
   also owned, `email-markdown.ts`, is now
   [`markdown-rendering.md`](markdown-rendering.md)'s, with the decisions that
-  still bind it.
+  still bind it. The client's Daily digest section (`DailyDigestSettings`,
+  `getDigestSchedule`/`updateDigestSchedule`, the `DigestSchedule` types) went
+  with it, and a notification kind with no channel now reads **Off**.
 - **Merge, Channel access requests and session import.**
   `conversation-merge-service.ts` and the agent's `conversation_merge` tool
   backend, `conversation-access-request-service.ts` (its WorkspaceDO storage

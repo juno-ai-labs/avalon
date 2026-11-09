@@ -162,8 +162,7 @@ release, for a person with no stored row too (the no-row read first returned
 the bare defaults, so that desktop failed to parse exactly the people who had
 never opened Settings). `NOTIFICATION_KIND_FOR_PUSH` drops `thread_started`,
 `breakout_started` and `merged`, and maps `access_request` to
-`accessRequests` and `access_granted` to `added`. [Client half: the Settings
-rows, folded in at merge.]
+`accessRequests` and `access_granted` to `added`. Client: Settings → Notifications draws its rows from `OFFERED_NOTIFICATION_KINDS` in contract order (Mentions, New messages, Being added, Sidekick runs, Pinned Canvas updates, Access requests); the stored-only kinds are never drawn, and a save sends only the kind that changed, so stored `newThreads`, `newBreakouts` and `merges` are left as they are.
 
 **Client:** Settings → Notifications offers Push and Email for every kind
 and nothing else: the connector-surface options, the unlinked Slack row and

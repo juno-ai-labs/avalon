@@ -396,7 +396,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     return this.sql.exec<CanvasRow>(
       `SELECT canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, last_editor_kind,
               last_editor_id, writer_sidekick_id, writer_run_id, last_writer_run_id, visibility, authority_generation,
-              title_status
+              title_status, appearance_json
          FROM canvas_directory WHERE canvas_id = ?`,
       this.canvasId,
     ).toArray()[0] ?? null;

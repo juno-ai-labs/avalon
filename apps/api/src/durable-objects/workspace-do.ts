@@ -712,8 +712,8 @@ import {
 import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-batch";
 import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
 import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS, WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
-import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, CANVAS_TITLE_STATUS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
-import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
+import { CANVAS_APPEARANCE_STATEMENTS, CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, CANVAS_TITLE_STATUS_STATEMENTS, CANVAS_LAST_WRITER_RUN_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
+import { canvasAppearanceReporter, canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS, SIDEKICK_RUN_SEED_DROP_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
@@ -4402,18 +4402,21 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // See NOTIFICATION_INTENTS_ACCESS_DENIED_MIGRATION, WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS
   // and docs/canvas-access-requests.md.
   statements: [...NOTIFICATION_INTENTS_ACCESS_DENIED_MIGRATION, ...WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS],
-  version: 155,
-  description: "record the Sidekick run whose publish made a Canvas's newest version",
-  // See CANVAS_LAST_WRITER_RUN_STATEMENTS and docs/canvases.md.
-  statements: CANVAS_LAST_WRITER_RUN_STATEMENTS,
-  version: 154,
-  description: "drop a seeded Sidekick run's script, which demo preparation wrote",
-  // See SIDEKICK_RUN_SEED_DROP_STATEMENTS and docs/architecture.md.
-  statements: SIDEKICK_RUN_SEED_DROP_STATEMENTS,
+}, {
   version: 153,
   description: "record the icon and colour somebody chose for a Canvas",
   // See CANVAS_APPEARANCE_STATEMENTS and docs/canvases.md#choosing-what-a-canvas-looks-like.
   statements: CANVAS_APPEARANCE_STATEMENTS,
+}, {
+  version: 154,
+  description: "drop a seeded Sidekick run's script, which demo preparation wrote",
+  // See SIDEKICK_RUN_SEED_DROP_STATEMENTS and docs/architecture.md.
+  statements: SIDEKICK_RUN_SEED_DROP_STATEMENTS,
+}, {
+  version: 155,
+  description: "record the Sidekick run whose publish made a Canvas's newest version",
+  // See CANVAS_LAST_WRITER_RUN_STATEMENTS and docs/canvases.md.
+  statements: CANVAS_LAST_WRITER_RUN_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {

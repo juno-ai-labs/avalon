@@ -38,7 +38,6 @@ import { accountOnboardingQueryKey } from './account-onboarding-query';
 import { readDevicePreferences } from './device-preferences';
 import { useUiStore } from './ui-store';
 import {
-  consumeSurfaceEntrypoint,
   markWorkstreamFeedOpenStarted,
   workstreamFeedOpenAttemptId,
 } from './telemetry';
@@ -2124,28 +2123,6 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink('rallywithai://notes/not-a-note');
 
     await waitFor(() => expect(lastDeepLinkFailure()).toBe('Rally could not open that note link.'));
-    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
-  });
-
-  it('opens the app for a new-channel link, which names no Space to start in', async () => {
-    bridge.getSession.mockResolvedValueOnce({
-      ...globalIdentitySession,
-      workspace: {
-        id: '7d7a69ac-59ef-4fc2-a022-f9629e631878',
-        name: 'Juno Labs',
-        region: 'global',
-        role: 'owner',
-      },
-    });
-    renderProvider();
-    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
-
-    await dispatchDeepLink('rallywithai://workstreams/new', 'menu_bar');
-
-    // `/new` has to be read before the identifier branch, which would otherwise
-    // measure it against the UUID pattern and reject it.
-    await waitFor(() => expect(window.location.hash).toBe('#/'));
-    expect(consumeSurfaceEntrypoint()).toBe('menu_bar');
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 

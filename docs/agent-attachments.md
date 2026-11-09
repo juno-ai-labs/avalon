@@ -762,19 +762,23 @@ attachment reservation, since a pin usually names an already-sent resource.
 
 ## Changelog
 
-### 2026-11-08 — A version names its member or connector author
+### 2026-11-08 — A version names its author, and the artifact panel shows it
 
 **What changed:** `ResourceRevision` gains optional `authorName`, filled by
 `ResourceService.versions` and `.version` for member and connector authors.
+The panel's "Last updated" line adds "version N · <author>" for the current
+version, and both it and the Versions menu prefer that name.
 
-**Why:** The Versions menu named a member only when the person was on the
+**Why:** design.html §2 reads "Last updated today, 10:42 · version 4 · Rally",
+and the PRD has the artifact sit in the panel "with its version" (v1-F11,
+v4-F13). The Versions menu named a member only when the person was on the
 Canvas's participant list, and an Organization-wide Canvas lists nobody, so a
-teammate's version read "A teammate" (design-conformance findings v1-F11,
-v4-F13). The client has no other way to resolve a user or connection id. The
-name sits beside `author`, not inside it, because the author variants are
-strict objects and a client older than the field would refuse the whole
-history over an unknown key. Agent and system authors carry no name: the
-product names them Rally, and a run id resolves to nothing a person reads.
+teammate's version read "A teammate" and a connection's the provider. The
+client has no other way to resolve a user or connection id. The name sits
+beside `author`, not inside it, because the author variants are strict
+objects and a client older than the field would refuse the whole history over
+an unknown key. Agent and system authors carry no name: the product names
+them Rally, and a run id resolves to nothing a person reads.
 
 
 ### 2026-11-07 — `publish_resource` lands in a Canvas, and no conversation inherits a Thread's links

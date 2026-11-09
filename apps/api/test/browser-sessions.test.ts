@@ -171,7 +171,7 @@ it("forwards the Canvases and Sidekicks shell's route families, and refuses the 
   const browser = new Hono<HonoAppEnv>();
   browser.route("/browser",createBrowserRoutes((forwarded,c) => api.fetch(forwarded,c.env)));
   browser.onError(errorHandler);
-  for (const family of ["canvases","conversations","sidekicks","automations","sharing","resources","search","onboarding/account","onboarding/organization-suggestion","digest","push-devices","connections","workspaces"]) {
+  for (const family of ["canvases","conversations","sidekicks","automations","sharing","resources","search","onboarding/account","onboarding/organization-suggestion","push-devices","connections","workspaces"]) {
     const response = await browser.request(`${apiOrigin}/browser/api/${workspaceId}/${family}/probe`,{ headers:{ cookie:entry.cookie } },bindings());
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ path:`/${family}/probe`,workspaceId });

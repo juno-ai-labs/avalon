@@ -263,12 +263,12 @@ sign-out and account change.
 The cookie adapter forwards the families the Canvases and Sidekicks shell
 calls: `canvases`, `conversations` (a Canvas's Chat and a Sidekick's
 conversation), `sidekicks`, `automations`, `sharing`, `resources`, `search`,
-`connections`, `workspace`, `workspaces`, `push-devices`, `digest` (the
-schedule in Settings), `onboarding/account` and
+`connections`, `workspace`, `workspaces`, `push-devices`, `onboarding/account` and
 `onboarding/organization-suggestion`, with `feature-flags`, `telemetry`,
 `message-issues`, `favicons`, `speech` and `realtime`. The Thread, Channel and
 Space families (`workstreams`, `spaces`, `projects`, `navigation`,
-`work-opportunities`) are not forwarded. The list is
+`work-opportunities`) and `digest` are not forwarded; the server deleted those
+routes in plan step C-1. The list is
 `BROWSER_ROUTE_FAMILIES` in `apps/api/src/routes/browser.ts`: a new route family
 the browser calls must be added there, or the browser's request for it is not
 forwarded. Each route keeps its own role
