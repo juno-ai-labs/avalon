@@ -75,32 +75,40 @@ describe('CanvasesHomeScreen', () => {
     expect(card('Unchosen').querySelector('.canvas-card-shot')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-emerald)' });
   });
 
-  it('lifts the Canvases people are in now into Live now and lists the rest as Recent', async () => {
+  it('keeps Canvases in activity order independently of stored data or viewer presence', async () => {
     renderHome(clientWith([
-      canvas('00000000-0000-7000-8000-0000000000c1', 'Q4 revenue review', { presentUserIds: [MAYA, THEO] }),
-      canvas('00000000-0000-7000-8000-0000000000c2', 'Launch plan', { lastEditor: { kind: 'rally', id: null } }),
+      canvas('00000000-0000-7000-8000-0000000000c1', 'Q4 revenue review', { hasStoredData: false, presentUserIds: [MAYA, THEO] }),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'Launch plan', { hasStoredData: true, lastEditor: { kind: 'rally', id: null } }),
       canvas('00000000-0000-7000-8000-0000000000c3', 'Hiring pipeline', { presentUserIds: [ME] }),
     ]));
-    const live = screen.getByRole('region', { name: 'Live now' });
-    expect(within(live).getByRole('link', { name: 'Q4 revenue review' })).toHaveAttribute('href', '/canvases/00000000-0000-7000-8000-0000000000c1');
-    expect(await within(live).findByText(/Maya and Theo are here/)).toBeInTheDocument();
     const recent = screen.getByRole('region', { name: 'Recent' });
-    expect(within(recent).getByText(/Edited by Rally/)).toBeInTheDocument();
-    // The viewer alone in a Canvas is not company: it stays in Recent.
+    expect(within(recent).getAllByRole('link').map((link) => link.textContent))
+      .toEqual(['Q4 revenue review', 'Launch plan', 'Hiring pipeline']);
+    expect(within(recent).getByRole('link', { name: 'Launch plan' })).toHaveAccessibleDescription('Data');
+    expect(within(recent).getByRole('link', { name: 'Q4 revenue review' })).toHaveAccessibleDescription('');
+    expect(await within(recent).findByText(/Maya and Theo are here/)).toBeInTheDocument();
+    // Older rows with no artifact state also stay in Recent.
     expect(within(recent).getByRole('link', { name: 'Hiring pipeline' })).toBeInTheDocument();
-    expect(within(recent).getByText('2 Canvases')).toBeInTheDocument();
+    expect(within(recent).getByText('3 Canvases')).toBeInTheDocument();
   });
 
-  it('chips a card Live, with the faces of the others in it, only where someone else is', async () => {
+  it('shows viewer facepiles separately from Data artifact badges', async () => {
     renderHome(clientWith([
-      canvas('00000000-0000-7000-8000-0000000000c1', 'Q4 revenue review', { presentUserIds: [MAYA, THEO] }),
+      canvas('00000000-0000-7000-8000-0000000000c1', 'Q4 revenue review', { hasStoredData: false, presentUserIds: [MAYA, THEO] }),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'Data tracker', { hasStoredData: true }),
       canvas('00000000-0000-7000-8000-0000000000c3', 'Hiring pipeline', { presentUserIds: [ME] }),
+      canvas('00000000-0000-7000-8000-0000000000c4', 'Shared tracker', { hasStoredData: true, presentUserIds: [MAYA] }),
     ]));
     const card = (title: string): HTMLElement => screen.getByRole('link', { name: title }).closest('li')!;
-    await waitFor(() => expect(card('Q4 revenue review').querySelector('.canvas-card-live')).toHaveTextContent('Live'));
-    // The chip's faces are the people other than the viewer, two of them here.
-    expect(card('Q4 revenue review').querySelectorAll('.canvas-card-live .avatar')).toHaveLength(2);
-    expect(card('Hiring pipeline').querySelector('.canvas-card-live')).toBeNull();
+    await waitFor(() => expect(card('Q4 revenue review').querySelectorAll('.canvas-card-presence .avatar')).toHaveLength(2));
+    expect(card('Q4 revenue review').querySelector('.canvas-card-data')).toBeNull();
+    expect(card('Data tracker').querySelector('.canvas-card-data')).toHaveTextContent('Data');
+    expect(card('Data tracker').querySelector('.canvas-card-data svg')).toHaveClass('tabler-icon-database');
+    expect(card('Data tracker').querySelector('.canvas-card-presence')).toBeNull();
+    expect(card('Shared tracker').querySelector('.canvas-card-data')).toHaveTextContent('Data');
+    expect(card('Shared tracker').querySelectorAll('.canvas-card-presence .avatar')).toHaveLength(1);
+    expect(card('Hiring pipeline').querySelector('.canvas-card-presence')).toBeNull();
+    expect(card('Hiring pipeline').querySelector('.canvas-card-data')).toBeNull();
   });
 
   it("names the run that wrote a card's newest version and opens the Sidekick's conversation at it", async () => {
@@ -119,12 +127,24 @@ describe('CanvasesHomeScreen', () => {
     expect(within(recent).getAllByRole('link', { name: /run #/ })).toHaveLength(1);
   });
 
-  it('filters by who made a Canvas and by search', () => {
+  it('orders All and Data first and filters by database-backed artifacts, authorship and search', () => {
     renderHome(clientWith([
       canvas('00000000-0000-7000-8000-0000000000c1', 'Mine'),
-      canvas('00000000-0000-7000-8000-0000000000c2', 'Shared plan', { createdByUserId: MAYA, sharedWithMe: true }),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'Shared plan', { hasStoredData: true, createdByUserId: MAYA, sharedWithMe: true }),
       canvas('00000000-0000-7000-8000-0000000000c3', 'Weekly changelog', { createdByUserId: MAYA, writerSidekickId: '00000000-0000-7000-8000-0000000000e1' }),
     ]));
+    const filters = screen.getByRole('group', { name: 'Canvas filter' });
+    expect(within(filters).getAllByRole('button').map((button) => button.textContent))
+      .toEqual(['All', 'Data', 'Made by me', 'Shared with me', 'From Sidekicks']);
+    fireEvent.click(within(filters).getByRole('button', { name: 'Data' }));
+    expect(screen.getByRole('link', { name: 'Shared plan' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Recent' })).toHaveTextContent('1 Canvas');
+    expect(screen.queryByRole('link', { name: 'Mine' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Weekly changelog' })).toBeNull();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search Canvases' }), { target: { value: 'weekly' } });
+    expect(screen.getByText('No matching Canvases')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Shared plan' })).toBeNull();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search Canvases' }), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: 'Shared with me' }));
     expect(screen.getByRole('link', { name: 'Shared plan' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Mine' })).toBeNull();
@@ -133,7 +153,7 @@ describe('CanvasesHomeScreen', () => {
     expect(screen.getByText(/Made by a Sidekick/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Made by me' }));
     expect(screen.getByRole('link', { name: 'Mine' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Everyone' }));
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search Canvases' }), { target: { value: 'weekly' } });
     expect(screen.getByRole('region', { name: 'Search results' })).toHaveTextContent('Weekly changelog');
     expect(screen.queryByRole('link', { name: 'Mine' })).toBeNull();

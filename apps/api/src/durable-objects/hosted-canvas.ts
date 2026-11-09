@@ -764,6 +764,7 @@ export function canvasSidebarRows(
 ): CanvasSidebarRow[] {
   const rows = sql.exec<CanvasRow & {
     participant: number; unread: number; pinned_position: number | null; artifact_type: string | null; artifact_mime: string | null;
+    has_stored_data: number;
     written_run_id: string | null; written_run_number: number | null; written_sidekick_name: string | null;
   }>(
     `SELECT canvas.*, (participant.user_id IS NOT NULL) AS participant,
@@ -780,6 +781,11 @@ export function canvasSidebarRows(
               ELSE 0 END AS unread,
             pin.position AS pinned_position,
             newest.resource_type AS artifact_type, newest.mime_type AS artifact_mime,
+            EXISTS (SELECT 1 FROM canvas_artifacts artifact
+                JOIN artifact_registry registry ON registry.resource_id = artifact.resource_id
+                JOIN resources resource ON resource.id = artifact.resource_id
+               WHERE artifact.canvas_id = canvas.canvas_id AND registry.stateful = 1
+                 AND ${listedResourceVisibilitySql("resource")}) AS has_stored_data,
             -- The run that wrote the newest version, by its primary key; its
             -- number counted as the run's own row counts it (projectRunRow).
             written.run_id AS written_run_id, written_by.title AS written_sidekick_name,
@@ -820,6 +826,7 @@ export function canvasSidebarRows(
     listed.push(CanvasSidebarRowSchema.parse({
       ...canvasSummary(row, report),
       artifactKind: row.artifact_type === null ? null : canvasArtifactKind(row.artifact_type, row.artifact_mime),
+      hasStoredData: row.has_stored_data === 1,
       // A deleted Sidekick's run is no run to open.
       lastWrittenBy: row.written_run_id !== null && row.written_sidekick_name !== null && row.last_editor_id !== null
         ? { sidekickId: row.last_editor_id, runId: row.written_run_id, runNumber: row.written_run_number,
