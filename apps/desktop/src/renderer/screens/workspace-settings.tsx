@@ -179,7 +179,7 @@ function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Elem
         {current === 'unsupported' && <NotificationNotice title="Not available in this browser" detail="This browser cannot show Rally notifications." />}
         {current === 'home-screen' && <NotificationNotice title="Add Rally to your Home Screen"
           detail="To get notifications on this device, tap Share, then Add to Home Screen. Open Rally from your Home Screen and turn this on there." />}
-        {current === 'unavailable' && <NotificationNotice title="Browser notifications are not available yet." />}
+        {current === 'unavailable' && <NotificationNotice title="Browser notifications are not available yet" />}
         {current === 'denied' && <NotificationNotice title="Blocked for this site"
           detail="Allow notifications in your browser's site settings, then turn this on." />}
       </div>
