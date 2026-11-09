@@ -13,6 +13,7 @@ interface ElicitationSource {
   minimumSelections?: number;
   maximumSelections?: number | null;
   allowOther?: boolean;
+  allowSkip?: boolean;
   targetUserId?: string | null;
   status?: 'open' | 'answered' | 'cancelled';
   answer?: unknown;
@@ -39,6 +40,7 @@ export function normalizeElicitation(source: ElicitationSource): ElicitationData
     ...(source.minimumSelections === undefined ? {} : { minimumSelections: source.minimumSelections }),
     ...(source.maximumSelections == null ? {} : { maximumSelections: source.maximumSelections }),
     ...(source.allowOther === undefined ? {} : { allowOther: source.allowOther }),
+    ...(source.allowSkip === undefined ? {} : { allowSkip: source.allowSkip }),
     ...(source.targetUserId ? { targetUserId: source.targetUserId } : {}),
     status: source.status === 'cancelled' ? 'cancelled'
       : source.status === undefined || source.status === 'open' ? 'open' : 'answered',

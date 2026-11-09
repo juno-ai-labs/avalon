@@ -7992,6 +7992,11 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   .workstream-composer .composer-highlight { font-size: 16px !important; }
 }
 
+/* A touch screen has no keyboard to press the Submit shortcut with. */
+@media (hover: none) and (pointer: coarse) {
+  .elicitation-submit kbd { display: none; }
+}
+
 /* ── Navigation: the section switcher and its one list ─────────────────────
    One list column with a switcher beside it, never stacked hierarchy rails
    (`docs/desktop-shell.md`). The rail sits under the macOS traffic lights; the
