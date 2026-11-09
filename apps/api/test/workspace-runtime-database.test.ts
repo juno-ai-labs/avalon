@@ -87,22 +87,22 @@ describe("workspace runtime database routing", () => {
          JOIN workstream_notification_intents intent ON intent.workstream_id = directory.workstream_id`,
     )).toBe(true);
     // `workspaces` must not match inside `workspace_workstream_directory`, and
-    // `sessions` must not match inside `slack_agent_sessions`.
+    // `sessions` must not match inside `realtime_transcription_sessions`.
     expect(__workspaceRuntimeDatabaseTesting.localStatement(
-      "SELECT id FROM slack_agent_sessions WHERE workspace_id = ?",
+      "SELECT id FROM realtime_transcription_sessions WHERE workspace_id = ?",
     )).toBe(true);
   });
 
   it("names the audit authority boundary for a mixed read", () => {
     expect(() => __workspaceRuntimeDatabaseTesting.localStatement(
-      "SELECT a.id FROM audit_events a JOIN slack_agent_sessions s ON s.workspace_id = a.workspace_id",
+      "SELECT a.id FROM audit_events a JOIN realtime_transcription_sessions s ON s.workspace_id = a.workspace_id",
     )).toThrow("workspace_runtime_cross_authority_statement:audit_events");
   });
 
   it("rejects regional mutations that smuggle a WorkspaceDO table through a subquery", () => {
     expect(() => __workspaceRuntimeDatabaseTesting.localStatement(
       `INSERT INTO audit_events (id, workspace_id)
-       SELECT 'audit', workspace_id FROM slack_agent_sessions WHERE id = 'session'`,
+       SELECT 'audit', workspace_id FROM realtime_transcription_sessions WHERE id = 'session'`,
     )).toThrow("workspace_runtime_cross_authority_statement");
     expect(__workspaceRuntimeDatabaseTesting.localStatement(
       "INSERT INTO audit_events (id, workspace_id) VALUES ('audit', 'workspace')",
@@ -211,25 +211,14 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   // intent and read for their workspace socket, both inside the object.
   "workspace_activity_items",
   "workspace_activity_seen",
-  // The Space authority's ten tables. Every one of them is reached through
-  // the typed Space RPCs in `workspace-space-protocol.ts` and nothing else — a
-  // The breakout directory's two. Read by the Space conversation page and
-  // written by the directory handoff, both inside the object; a runtime
-  // statement naming a breakout would be a surface listing one, and nothing
-  // outside a Space dashboard lists one at all.
-  "breakouts",
-  "breakout_viewers",
   "workspace_pins", // Every pin; read and written only by the pin RPCs.
   "workspace_resource_version_changes", // Filled by a resource_versions trigger, drained by the object after each write.
   "member_personal_system_prompts", // Read and written only by the personal system prompt RPCs.
   "member_preferences", // Read and written only by the member preference RPCs.
   "workspace_directory_state",
   "workspace_external_event_registrations",
-  "external_registration_generations", // The retired projection RPC's fence; no longer read or written.
   "retired_meeting_resources", // Operator-only cleanup manifest.
   "workspace_identity",
-  "spaces",
-  "space_viewers",
   "conversation_view_headers", // Typed projection RPCs and admitted socket reads only.
   "conversation_view_turns",
   "memory_digest_holders", // Conversations holding a memory digest copy; `memoryDigest` and the lane only.
@@ -241,41 +230,21 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_socket_ticket_receipts",
   "workspace_socket_unheard", // The first-frame watch's ledger; socket paths and the alarm only.
   "workspace_sync_events",
-  "channels",
-  "workspace_workstream_effect_receipts",
-  // A retired Thread's artifact links, kept by migration 139 only for the
-  // Thread-to-Canvas conversion, which reads them through the object's own
-  // storage; `deleteRetiredThreadParent` deletes each Thread's rows.
-  "workspace_workstream_resource_links",
-  "channel_viewers",
-  // Hosted Channel and Space parents (WorkspaceDO migration 72). Every row is
-  // read and written by `HostedParent` through the object's own storage,
-  // scoped by `parent_id`; no runtime statement names a parent's state.
-  "parent_metadata",
-  "parent_children",
-  "parent_child_projections",
-  "parent_child_viewer_projections",
-  "parent_child_receipts",
-  "parent_projection_keys",
-  "parent_state_clock",
-  "parent_state_changes",
-  "parent_outbox",
   "workspace_directory_followups", // Written only by the directory apply in the same transaction.
   "workspace_member_status", // Written only by relationship events and the relationship reader.
-  "parent_breakout_preparations",
-  "parent_breakout_members",
-  "parent_breakout_member_effects",
+  // The `parent_*` tables migration 141 kept: a Canvas's shares, which
+  // `ScopeInvitationStorage` and `ScopeGrantStorage` write under the Canvas's
+  // id through the object's own storage, and `parent_children`, which the
+  // grant writes join. No runtime statement names them.
+  "parent_children",
   "parent_grant_revision",
   "parent_grants",
   "parent_grant_operations",
   "parent_grant_imports",
   "parent_participant_targets",
-  "parent_participant_migrations",
   "parent_participant_deliveries",
   "parent_invitation_operations",
   "parent_invitations",
-  "parent_connector_admissions",
-  "parent_sidekicks",
 ] as const;
 
 /** Every table WorkspaceDO's migrations leave standing, in application order. */

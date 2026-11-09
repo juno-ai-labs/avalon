@@ -501,11 +501,9 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
     expect(await runInDurableObject(workspace(), (_instance, state) => ({
       bindings: state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM external_conversation_bindings`).one().count,
-      sessions: state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM slack_agent_sessions`).one().count,
       claims: state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM slack_agent_thread_claims`).one().count,
-    }))).toEqual({ bindings: 1, sessions: 0, claims: 0 });
+    }))).toEqual({ bindings: 1, claims: 0 });
     expect((await homeState()).posts).toHaveLength(1);
 
     // 5. A later run reads its home and finds the forwarded answer, with where

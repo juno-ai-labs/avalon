@@ -977,12 +977,12 @@ describe("the WorkspaceDO hosted-Sidekick migration", () => {
 });
 
 describe("the WorkspaceDO migration ledger", () => {
-  // Version 135 is the last one main shipped (2026-11-09, a47746dbc); every
-  // Organization object already holds a receipt for each of these, so none
-  // may change. Versions above it are unshipped until this branch deploys.
-  it("keeps every shipped migration fingerprint through v135 immutable", () => {
+  // Version 140 is the last one main shipped (2026-11-09, efb0cb70a, #1490);
+  // every Organization object already holds a receipt for each of these, so
+  // none may change. Versions above it are unshipped until this branch deploys.
+  it("keeps every shipped migration fingerprint through v140 immutable", () => {
     expect(WORKSPACE_DO_SCHEMA_MIGRATIONS
-      .filter((migration) => migration.version <= 135)
+      .filter((migration) => migration.version <= 140)
       .map((migration) => [migration.version, durableObjectMigrationHash(migration)]))
       .toEqual([
         [1, "fnv1a64:e9ab4e8aef8cdca6"], [2, "fnv1a64:3e3fba9e408f99fe"], [3, "fnv1a64:afd5eb5841d15b82"],
@@ -1030,7 +1030,9 @@ describe("the WorkspaceDO migration ledger", () => {
         [127, "fnv1a64:9f3ad595ab1fc371"], [128, "fnv1a64:35b8f81a850d140d"], [129, "fnv1a64:00c6839e8f9b941e"],
         [130, "fnv1a64:4fa6093296666607"], [131, "fnv1a64:a18c87740266b6dc"], [132, "fnv1a64:9444eeec188cccbb"],
         [133, "fnv1a64:2cfaa8d846ead288"], [134, "fnv1a64:a194ecef7441448b"],
-        [135, "fnv1a64:b86ab74741d1ec2c"],
+        [135, "fnv1a64:b86ab74741d1ec2c"], [136, "fnv1a64:004749e6fba5c090"],
+        [137, "fnv1a64:c285b65be2d86e3d"], [138, "fnv1a64:a67c499d6b02c2d7"], [139, "fnv1a64:865b394df846a776"],
+        [140, "fnv1a64:52f4155b2488d934"],
       ]);
   });
 

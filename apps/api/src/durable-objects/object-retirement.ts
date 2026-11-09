@@ -194,9 +194,10 @@ export function writeObjectRetirement(
  * spike could not make when it found three of these stranded behind a cleared
  * alarm.
  *
- * `durable_outbox` is a conversation's or a Sidekick's; `parent_outbox` is the
- * one `WorkspaceDO` holds for the Channel and Space parents it hosts. A class
- * with neither answers zero rather than failing.
+ * `durable_outbox` is a conversation's or a Sidekick's; `parent_outbox` was
+ * the one `WorkspaceDO` held for the Channel and Space parents it hosted,
+ * until its migration 141 dropped it. A class with neither answers zero
+ * rather than failing.
  */
 export function countRetainedOutbox(sql: SqlStorage): number {
   const present = sql.exec<{ name: string }>(

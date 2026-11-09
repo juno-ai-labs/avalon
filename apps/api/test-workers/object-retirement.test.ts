@@ -209,10 +209,10 @@ describe("object retirement", () => {
       { messageId: "00000000-0000-7000-8000-00000000de04", payloadHash: "sha256:retired" },
     ]);
 
-    // Dropped means dropped: nothing about the parent's projection moved.
+    // Dropped means dropped: nothing was receipted for the parent.
     await runInDurableObject(stub, (instance: WorkspaceDO, state) => {
       const rows = state.storage.sql.exec(
-        "SELECT COUNT(*) AS n FROM parent_child_projections WHERE parent_id = ?",
+        "SELECT COUNT(*) AS n FROM sidekick_child_receipts WHERE sidekick_id = ?",
         workstreamId,
       ).toArray();
       expect(rows[0]?.n).toBe(0);
@@ -256,34 +256,41 @@ describe("object retirement", () => {
   });
 
   it("leaves a retired object with no alarm and counts what it still holds", async () => {
-    const { workstreamId, stub } = freshParent();
+    // A conversation object: the class that keeps an outbox since the
+    // Organization object's `parent_outbox` went with migration 141.
+    const workstreamId = freshWorkstreamId();
+    const stub = TEST_ENV.SUBSTREAM_AGENTS.get(TEST_ENV.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName(TEST_ENV.AVALON_REGION, WORKSPACE_ID, workstreamId, "0"),
+    )) as DurableObjectStub<AgentLoopDO>;
+    const messageId = "00000000-0000-7000-8000-00000000df01";
 
     // An object with work still pending: something armed to wake it, and an
     // effect it accepted but never handed to the Queue. This is the shape the
     // spike found after retiring a parent, and both halves matter — the alarm
     // is what could wake a dead workspace, and the outbox is what it would try
-    // to publish if it did. The outbox row is a hosted parent's: an activity
-    // effect, the kind that waits in `parent_outbox` for the alarm.
-    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+    // to publish if it did.
+    await runInDurableObject(stub, async (instance: AgentLoopDO, state) => {
+      const now = Date.now();
       state.storage.sql.exec(
         `INSERT INTO _internal_durable_alarms
            (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
          VALUES ('demo_test', 'k1', ?, NULL, 0, 0, NULL, ?, ?)`,
-        Date.now() + 60_000,
-        Date.now(),
-        Date.now(),
+        now + 60_000,
+        now,
+        now,
       );
       state.storage.sql.exec(
-        `INSERT INTO parent_outbox
-           (message_id, parent_id, partition_key, source_version, source_epoch, effect_kind,
-            payload_json, payload_hash, state, attempts, not_before, created_at)
-         VALUES (?, ?, ?, 1, 1, 'activity_event', '{}', 'fnv1a64:0000000000000000', 'pending', 0, 0, ?)`,
-        "00000000-0000-7000-8000-00000000df01",
-        workstreamId,
-        workstreamId,
-        Date.now(),
+        `INSERT INTO durable_outbox
+           (message_id, channel, destination_kind, destination_id, partition_key,
+            source_version, source_epoch, contract_version, payload_json, payload_ref,
+            payload_hash, state, attempts, not_before, created_at, acked_at)
+         VALUES (?, 'regional_effect_v1', 'queue', 'global', 'common', 1, 1, 1, '{}', NULL,
+           'fnv1a64:0000000000000000', 'pending', 0, ?, ?, NULL)`,
+        messageId,
+        now + 60_000,
+        now,
       );
-      await state.storage.setAlarm(Date.now() + 60_000);
+      await state.storage.setAlarm(now + 60_000);
       void instance;
     });
 
@@ -299,7 +306,7 @@ describe("object retirement", () => {
     // effects in a dead object rather than preparation still in flight.
     expect(receipt.retainedOutbox).toBe(1);
 
-    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+    await runInDurableObject(stub, async (instance: AgentLoopDO, state) => {
       expect(await state.storage.getAlarm()).toBeNull();
       const alarms = state.storage.sql
         .exec("SELECT COUNT(*) AS n FROM _internal_durable_alarms").toArray();
@@ -307,7 +314,7 @@ describe("object retirement", () => {
       // The rows themselves stay. Retirement is not deletion, and the tombstone
       // is what stops anything draining them later.
       const outbox = state.storage.sql
-        .exec("SELECT COUNT(*) AS n FROM parent_outbox WHERE parent_id = ?", workstreamId).toArray();
+        .exec("SELECT COUNT(*) AS n FROM durable_outbox WHERE message_id = ?", messageId).toArray();
       expect(outbox[0]?.n).toBe(1);
       void instance;
     });

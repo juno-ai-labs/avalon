@@ -619,10 +619,10 @@ link. The ordinary alarm retry handles transport failures. See
 
 ### Scope grant discovery delivery
 
-A Channel's grant write adds a `scope_grant_directory` row to `parent_outbox` in
-the grant transaction; there is no separate alarm kind. `WorkspaceDO` applies the
-row to its own grant directory right after the write, and the outbox lane of the
-alarm retries a failed apply. See [scope grant directory](scope-grant-directory.md).
+A Channel's grant write added a `scope_grant_directory` row to `parent_outbox` in
+the grant transaction, and the outbox lane of the alarm retried a failed apply;
+WorkspaceDO migration 141 dropped `parent_outbox` with the Channel host. A
+Canvas's claimed share applies its grant in the claim's own transaction. See [scope grant directory](scope-grant-directory.md).
 
 ## Changelog
 

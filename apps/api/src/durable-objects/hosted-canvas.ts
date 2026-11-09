@@ -89,24 +89,6 @@ export const CanvasCreateRequestSchema = z.strictObject({
 });
 export type CanvasCreateRequest = z.infer<typeof CanvasCreateRequestSchema>;
 
-/**
- * A Canvas made in place from a Thread that has artifacts, keeping the
- * Thread's id (`services/thread-conversion-service.ts`): the directory row
- * the Thread's own rows decide, who was in it, and the artifacts it made or
- * linked. `WorkspaceDO.convertThreadToCanvas` reads them; this writes them.
- */
-export const CanvasFromThreadRequestSchema = z.strictObject({
-  ...Addressed,
-  title: z.string().max(300),
-  createdByUserId: UserIdSchema,
-  createdAt: z.number().int().nonnegative(),
-  updatedAt: z.number().int().nonnegative(),
-  visibility: z.enum(["participants", "workspace"]),
-  authorityGeneration: z.number().int().positive(),
-  participants: z.array(z.strictObject({ userId: UserIdSchema, addedAt: z.number().int().nonnegative() })),
-  artifacts: z.array(z.strictObject({ resourceId: IdSchema, addedAt: z.number().int().nonnegative() })),
-});
-
 export const CanvasActorRequestSchema = z.strictObject({ ...Addressed, actor: CanvasActorSchema });
 
 export const CanvasRequestAccessRequestSchema = CanvasActorRequestSchema.extend({ request: CanvasAccessRequestSchema });
@@ -446,41 +428,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     });
   }
 
-  /**
-   * Make this Canvas from the Thread of the same id, with the rows the
-   * Thread's directory decided, in one transaction. An existing row is the
-   * resume marker of an earlier pass and answers `created: false` with
-   * nothing written; one in another Organization is not found.
-   */
-  createFromThread(input: z.input<typeof CanvasFromThreadRequestSchema>): { created: boolean } {
-    const request = parseRpcInput(CanvasFromThreadRequestSchema, input, "canvas_create_from_thread");
-    if (request.canvasId !== this.canvasId) throw new Error("canvas_identity_mismatch");
-    return this.host.storage.transactionSync(() => {
-      const existing = this.row();
-      if (existing) {
-        if (existing.workspace_id !== request.workspaceId) throw notFound();
-        return { created: false };
-      }
-      this.insertRow({ ...request, writer: null, titleStatus: "settled" });
-      for (const participant of request.participants) {
-        if (participant.userId === request.createdByUserId) continue;
-        this.sql.exec(
-          `INSERT INTO canvas_participants (canvas_id, user_id, source, added_by_user_id, added_at)
-           VALUES (?, ?, 'added', NULL, ?) ON CONFLICT(canvas_id, user_id) DO NOTHING`,
-          this.canvasId, participant.userId, participant.addedAt,
-        );
-      }
-      for (const artifact of request.artifacts) {
-        this.sql.exec(
-          `INSERT INTO canvas_artifacts (canvas_id, resource_id, added_at) VALUES (?, ?, ?)
-           ON CONFLICT(canvas_id, resource_id) DO NOTHING`, this.canvasId, artifact.resourceId, artifact.addedAt,
-        );
-      }
-      return { created: true };
-    });
-  }
-
-  /** The directory row both creates write, inside their transaction. */
+  /** The directory row `create` writes, inside its transaction. */
   private insertRow(row: {
     workspaceId: string; title: string; createdByUserId: string; createdAt: number; updatedAt: number;
     writer: { sidekickId: string; runId: string } | null; visibility: CanvasRow["visibility"]; authorityGeneration: number;

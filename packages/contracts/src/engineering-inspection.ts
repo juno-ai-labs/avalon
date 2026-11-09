@@ -85,101 +85,6 @@ export const RetireEngineeringOrgResultSchema = deferredZodSchema(() => Workspac
 }));
 export type RetireEngineeringOrgResult = z.infer<typeof RetireEngineeringOrgResultSchema>;
 
-
-/**
- * One Organization's Threads, Breakouts and Channels, retired after the
- * cutover (docs/workspace-retirement.md#retiring-threads-breakouts-and-channels).
- * `confirm` is the Organization id again: the operation is refused unless it
- * names `orgId`, the consistency check Ace's workspace retirement makes.
- */
-export const ThreadRetirementOperationInputSchema = deferredZodSchema(() => z.strictObject({
-  orgId: WorkspaceIdSchema,
-  confirm: z.string().describe("The orgId again, typed by the operator. The operation is refused unless it equals orgId."),
-}));
-export type ThreadRetirementOperationInput = z.infer<typeof ThreadRetirementOperationInputSchema>;
-
-/** A Thread (`workstream`) or a Channel (`space`), the parents the Thread retirement walks. */
-export const RetiredThreadParentKindSchema = z.enum(["workstream", "space"]);
-
-/** One conversation or parent a pass could not finish, by a stable code. The next pass returns to it. */
-export const ThreadRetirementFailureSchema = z.strictObject({
-  parentKind: RetiredThreadParentKindSchema,
-  parentId: z.string(),
-  substreamId: z.string().nullable(),
-  error: z.string(),
-});
-
-export const DumpThreadTranscriptsResultSchema = deferredZodSchema(() => z.strictObject({
-  region: RegionSchema,
-  orgId: WorkspaceIdSchema,
-  /** Every conversation under a Thread or Channel the Organization still holds. */
-  conversations: z.number().int().nonnegative(),
-  /** Written by this pass. */
-  dumped: z.number().int().nonnegative(),
-  /** Already in R2 from an earlier pass, so not read again. */
-  skipped: z.number().int().nonnegative(),
-  failed: z.array(ThreadRetirementFailureSchema),
-}));
-export type DumpThreadTranscriptsResult = z.infer<typeof DumpThreadTranscriptsResultSchema>;
-
-export const RetireThreadsResultSchema = deferredZodSchema(() => z.strictObject({
-  region: RegionSchema,
-  orgId: WorkspaceIdSchema,
-  /** Threads and Channels the Organization still held when this pass started; a finished retirement reruns at 0. */
-  parents: z.number().int().nonnegative(),
-  conversations: z.number().int().nonnegative(),
-  /** Closed by this pass: each parent's conversations retired and its rows deleted. */
-  retiredParents: z.number().int().nonnegative(),
-  retiredConversations: z.number().int().nonnegative(),
-  /** Effects the retired conversations still hold and will never publish. */
-  retainedOutbox: z.number().int().nonnegative(),
-  failed: z.array(ThreadRetirementFailureSchema),
-}));
-export type RetireThreadsResult = z.infer<typeof RetireThreadsResultSchema>;
-
-/**
- * One Organization's Threads that have artifacts, each made a Canvas in place
- * with the same id (docs/workspace-retirement.md#converting-threads-that-have-artifacts).
- * A dry run, the default, only lists them; an apply needs `confirm` naming
- * `orgId`, the consistency check the retirement makes.
- */
-export const ConvertThreadsToCanvasesInputSchema = deferredZodSchema(() => z.strictObject({
-  orgId: WorkspaceIdSchema,
-  dryRun: z.boolean().default(true).describe("true (the default) lists the Threads that would become Canvases and changes nothing."),
-  confirm: z.string().optional().describe("The orgId again, typed by the operator. Required, and must equal orgId, when dryRun is false."),
-}));
-export type ConvertThreadsToCanvasesInput = z.input<typeof ConvertThreadsToCanvasesInputSchema>;
-
-export const ThreadConversionCandidateSchema = z.strictObject({
-  threadId: z.string(),
-  title: z.string(),
-  /** Artifacts the Thread's conversations made (`artifact_registry`). */
-  artifactCount: z.number().int().nonnegative(),
-  /** Artifacts another conversation made that the Thread linked. */
-  linkedArtifactCount: z.number().int().nonnegative(),
-  /** Who becomes a participant of the Canvas: every viewer of a personal Thread, the participants of a Workspace-scoped one. */
-  participantCount: z.number().int().nonnegative(),
-  /** Its conversations, Main and Breakouts, and how many have no transcript dump yet. */
-  conversations: z.number().int().nonnegative(),
-  undumped: z.number().int().nonnegative(),
-});
-
-export const ConvertThreadsToCanvasesResultSchema = deferredZodSchema(() => z.strictObject({
-  region: RegionSchema,
-  orgId: WorkspaceIdSchema,
-  dryRun: z.boolean(),
-  /** Every Thread with an artifact the Organization still holds; a finished conversion reruns with none. */
-  candidates: z.array(ThreadConversionCandidateSchema),
-  /** Made a Canvas by this pass. */
-  converted: z.number().int().nonnegative(),
-  /** Already a Canvas from an interrupted earlier pass, finished by this one. */
-  alreadyConverted: z.number().int().nonnegative(),
-  failed: z.array(z.strictObject({ threadId: z.string(), substreamId: z.string().nullable(), error: z.string() })),
-  /** Artifacts whose conversation names no Thread, Canvas or Sidekick: left alone. */
-  artifactsWithoutThread: z.number().int().nonnegative(),
-}));
-export type ConvertThreadsToCanvasesResult = z.infer<typeof ConvertThreadsToCanvasesResultSchema>;
-
 /**
  * A conversation an operator reads as a user: a Canvas's Chat or a Sidekick's
  * shared conversation. `kind` is what the operator asked for; the region
@@ -552,9 +457,6 @@ export type EngineeringD1SqlResult = z.infer<typeof EngineeringD1SqlResultSchema
 export interface EngineeringInspectionRpcBinding {
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
-  dumpThreadTranscripts(input: ThreadRetirementOperationInput, operator: EngineeringOperator): Promise<DumpThreadTranscriptsResult>;
-  retireThreads(input: ThreadRetirementOperationInput, operator: EngineeringOperator): Promise<RetireThreadsResult>;
-  convertThreadsToCanvases(input: ConvertThreadsToCanvasesInput, operator: EngineeringOperator): Promise<ConvertThreadsToCanvasesResult>;
   retireOrg(input: RetireEngineeringOrgInput, operator: EngineeringOperator): Promise<RetireEngineeringOrgResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;

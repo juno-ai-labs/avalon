@@ -182,7 +182,7 @@ async function seedSidekick(_home: "0", automationId = AUTOMATION_ID): Promise<v
 async function projectResourceAccess() {
   await workspace().beginAuthorizationBackfill({ workspaceId: WORKSPACE_ID });
   const parents = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ parent_id: string }>(
-    "SELECT workstream_id AS parent_id FROM channels UNION SELECT automation_id AS parent_id FROM automation_directory",
+    "SELECT automation_id AS parent_id FROM automation_directory",
   ).toArray());
   for (const { parent_id: parentId } of parents) {
     const job = { type: "authorization_projection_v1" as const, region: "global" as const, workspaceId: WORKSPACE_ID, parentId };
