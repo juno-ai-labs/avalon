@@ -47,7 +47,7 @@
     "lint": "NODE_OPTIONS=\"--max-old-space-size=8192 $NODE_OPTIONS\" eslint . --max-warnings=0 --cache",
     "lint:fresh": "rm -f .eslintcache && pnpm lint",
     "build": "pnpm -r --if-present build",
-    "package:desktop": "pnpm --filter @rally/desktop package:local",
+    "package:desktop": "dotenv -e .env.local -- pnpm --filter @rally/desktop package:local",
     "package:desktop:release": "dotenv -e .env.local -- pnpm --filter @rally/desktop package:release",
     "publish:desktop:release": "dotenv -e .env.local -- pnpm --filter @rally/desktop release:publish:r2",
     "start:desktop:packaged": "pnpm --filter @rally/desktop start:packaged",
