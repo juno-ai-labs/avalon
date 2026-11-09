@@ -1542,7 +1542,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     run: { requester_user_id: string | null },
     sender: SidekickRunContinuationSender,
     principal: string | null,
-  ): Promise<"run_continuation_requires_requester" | "run_continuation_requires_delegate" | null> {
+  ): Promise<"run_continuation_requires_requester" | "run_continuation_requires_delegate" | "run_continuation_requires_rally_user" | null> {
+    // Every run acts as somebody, so outside text that names nobody in Rally
+    // may continue none: anyone in the bound thread could otherwise steer it.
+    if (sender.kind === "external") return "run_continuation_requires_rally_user";
     if (sender.kind !== "person") return null;
     if (run.requester_user_id !== null) {
       return sender.userId === run.requester_user_id ? null : "run_continuation_requires_requester";
@@ -1578,8 +1581,11 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    * delegate's access continues from a person only while they are an
    * eligible delegate themselves. Anyone else is refused by name, never given
    * a new run in its place: the input stays in the transcript, said to the
-   * room. Outside text from a provider thread the run bound, and Rally's own
-   * input (a scheduled wake-up, a worker's report), continue as before.
+   * room. Another agent's message counts as the person it acts for, and
+   * outside text from a bound provider thread as the Rally user its sender
+   * resolved to, or else is refused (`continuationSender` decides who sent
+   * it). Rally's own input (a scheduled wake-up, the Sidekick's own wizard)
+   * is not screened by sender.
    */
   async continueRun(input: SidekickRunContinuationRequest): Promise<SidekickRunContinuation> {
     const request = parseRpcInput(SidekickRunContinuationRequestSchema, input, "continue_run");

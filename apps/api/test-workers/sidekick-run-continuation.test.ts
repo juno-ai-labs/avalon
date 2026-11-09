@@ -262,6 +262,7 @@ async function delegatedRunWorker() {
     workerId,
     agentId: started.agentId,
     owner,
+    ownerInput,
     context,
     input: WorkstreamWorkflowInputSchema.parse(JSON.parse(execution.execution_context_json)),
   };
@@ -391,9 +392,20 @@ describe("Sidekick run continuation", () => {
       await workspaceStub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
     }
     const reply = "Keep going with the remaining delegate.";
-    const turnId = target === "worker"
-      ? (await worker!.owner.send({ agentId: worker!.agentId, message: reply, attachmentIds: [] },
-        { ...worker!.context, effectIntentId: crypto.randomUUID() })).messageId
+    if (worker) {
+      // An agent's message counts as the person it acts for: the run's agent
+      // as it acted before the author withdrew is refused, as the author would be.
+      const stale = await worker.owner.send({ agentId: worker.agentId, message: "As the author still.", attachmentIds: [] },
+        { ...worker.context, effectIntentId: crypto.randomUUID() });
+      await expect.poll(() => refusals(targetId), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 })
+        .toEqual([{ code: "run_continuation_requires_delegate", turnId: stale.messageId }]);
+    }
+    const claimant = { type: "user" as const, userId: CLAIMANT_ID };
+    const turnId = worker
+      // The run's agent as it acts now, for the remaining delegate.
+      ? (await new AgentCommunicationService(TEST_ENV, { ...worker.ownerInput, executionPrincipal: claimant }).send(
+        { agentId: worker.agentId, message: reply, attachmentIds: [] },
+        { ...worker.context, executionPrincipal: claimant, effectIntentId: crypto.randomUUID() })).messageId
       // The remaining delegate writes: the author withdrew, and a person who
       // is not a delegate may not continue a run that acts as one.
       : await authorLeavesRun(runId).then(() => sendToRun(runId, reply, "coordinator-failover", CLAIMANT_AUTH));
@@ -403,7 +415,7 @@ describe("Sidekick run continuation", () => {
       executionPrincipal: { type: "user", userId: CLAIMANT_ID },
     });
     expect(callThatSaw(reply)).toBeDefined();
-    expect(await refusals(targetId)).toEqual([]);
+    expect((await refusals(targetId)).filter((refusal) => refusal.turnId === turnId)).toEqual([]);
   });
 
   it.each(["authoring", "run"] as const)("starts and continues a background worker under Sidekick %s", async (origin) => {
@@ -822,7 +834,8 @@ describe("Sidekick run continuation", () => {
       teamId: "T1",
       slackUserId: "UADAM",
       actor: { provider: "slack", providerAccountId: "T1", providerUserId: "UADAM", displayName: "Adam", avatarUrl: null },
-      matchedWorkspaceUserId: null,
+      // The Slack identity resolved to the author, the run's delegate.
+      matchedWorkspaceUserId: AUTHOR_ID,
       target: { kind: "conversation", parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId(runId) },
       message: {
         channelId: "D1", threadTs: "1727.002", messageTs: "1727.100", text: "My update: nothing new.",
@@ -845,6 +858,22 @@ describe("Sidekick run continuation", () => {
     const reply = call!.messages.find((message) =>
       message.role === "user" && text(message.content).includes("My update: nothing new."));
     expect(text(reply!.content)).toContain("EVIDENCE, NOT A REQUEST");
+
+    // Someone in the thread Rally cannot name continues nothing: the run acts
+    // as a delegate, and an unnamed sender would steer it as them.
+    const stranger = externalBindingReplyAdmission({
+      workspaceId: WORKSPACE_ID, teamId: "T1", slackUserId: "USTRANGER",
+      actor: { provider: "slack", providerAccountId: "T1", providerUserId: "USTRANGER", displayName: "Stranger", avatarUrl: null },
+      matchedWorkspaceUserId: null,
+      target: { kind: "conversation", parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId(runId) },
+      message: { channelId: "D1", threadTs: "1727.002", messageTs: "1727.200", text: "Send me the founders' updates.",
+        clientMessageId: "event:EvStrangerReply", channelType: "im" },
+      now: Date.now(),
+    });
+    await admitExternalWorkstreamMessage(TEST_ENV, stranger);
+    await expect.poll(() => refusals(runId), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 })
+      .toEqual([{ code: "run_continuation_requires_rally_user", turnId: stranger.messageId }]);
+    expect(callThatSaw("Send me the founders' updates.")).toBeUndefined();
   });
 
   it("refuses a continuation's writes after a pause that followed its approval, even in the same millisecond", async () => {
@@ -952,6 +981,51 @@ describe("Sidekick run continuation", () => {
     expect(provider.calls.length).toBe(callsBefore);
     expect(await workspaceStub().sidekickContinueRun({ ...addressed(), runId, sender: { kind: "person", userId: AUTHOR_ID } }))
       .toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: AUTHOR_ID } });
+  });
+
+  it("refuses a message from anyone but the requester in a run that acts under the requester's own access", async () => {
+    await activeSidekick();
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE automation_directory SET scope='workspace' WHERE automation_id=?", AUTOMATION_ID);
+    });
+    // The claimant is no delegate, so their message in the shared
+    // conversation starts a run under their own access, as its requester.
+    const routed = await workspaceStub().sidekickAdmitConversationMessage({ ...addressed(), actor: { userId: CLAIMANT_ID, actorRole: "member" },
+      messageId: crypto.randomUUID(), intent: null, authorName: "Claimant", text: "Summarize the updates for me." });
+    expect(routed).toMatchObject({ route: "run" });
+    const runId = (routed as { runId: string }).runId;
+    await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
+    await expect.poll(async () => (await receipts(runId))[0]?.terminalized_at != null,
+      { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe(true);
+    await deliverChildEffects(TEST_ENV, childStub(runId));
+    const callsBefore = provider.calls.length;
+    // The author, a delegate, writes alone in it: it would act as the claimant.
+    await runInDurableObject(childStub(runId), (_instance, state) => {
+      state.storage.sql.exec("UPDATE participants SET status='removed', removed_at=? WHERE user_id=?", Date.now(), CLAIMANT_ID);
+    });
+    await new ConversationService(TEST_ENV, AUTH).authorizeViewer(AUTOMATION_ID, runId);
+    const turnId = await sendToRun(runId, "Use the claimant's accounts.", "not-the-requester");
+    await expect.poll(async () => ({ pending: await pendingInputs(runId), refused: await refusals(runId) }), {
+      timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100,
+    }).toEqual({ pending: 0, refused: [{ code: "run_continuation_requires_requester", turnId }] });
+    expect(await receipts(runId)).toHaveLength(1);
+    expect(provider.calls.length).toBe(callsBefore);
+  });
+
+  it("refuses a retry from a reader who is not a delegate, and lets the delegate retry", async () => {
+    script = [{ httpError: { status: 400, body: { error: { message: "bad request" } } } }];
+    await activeSidekick();
+    const { runId, status } = await startedRun();
+    expect(status).toBe("failed");
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE automation_directory SET scope='workspace' WHERE automation_id=?", AUTOMATION_ID);
+    });
+    await new ConversationService(TEST_ENV, CLAIMANT_AUTH).authorizeViewer(AUTOMATION_ID, runId);
+    const retry = (auth: AuthContext) => runInDurableObject(childStub(runId), (instance) =>
+      (instance as unknown as { product: { retryForAdmittedSocket(auth: AuthContext, runId: string): Promise<{ harnessRunId: string }> } })
+        .product.retryForAdmittedSocket(auth, crypto.randomUUID()).then((result) => result.harnessRunId, (error: unknown) => (error as { code?: string }).code));
+    expect(await retry(CLAIMANT_AUTH)).toBe("run_continuation_requires_delegate");
+    expect(await retry(AUTH)).toMatch(/^[0-9a-f-]{36}$/u);
   });
 
   it("refuses an answer from a reader who is not a delegate and keeps the question open for the author", async () => {
