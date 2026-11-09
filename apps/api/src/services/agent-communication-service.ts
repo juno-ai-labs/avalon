@@ -276,15 +276,15 @@ export class AgentCommunicationService {
    * wizard, which runs with the authoring tools. The shared conversation
    * gives the wizard a person's message only from someone who manages the
    * Sidekick (`admitConversationMessage`), and an agent's message is held to
-   * the same rule by the person it acts for, refused by name otherwise.
-   * The Sidekick's own agents (its runs, their workers, the wizard's own
-   * workers) are exempt: a run's change request is how the wizard learns of
-   * one, and the wizard decides whether to apply it.
+   * the same rule by the person it acts for, refused by name otherwise. That
+   * includes the Sidekick's own runs: a run under a non-manager's own access,
+   * or a delegate's who does not manage it, would otherwise reach the wizard's
+   * authoring tools as that person. A refused change request tells the run to
+   * tell the person, which is what the run owes them.
    */
   private async authorizeWizardTurn(agentId: AgentId) {
     const address = agentAddressForId(agentId);
     if (address.parentKind !== "automation" || address.substreamId !== "0") return;
-    if (this.input.parentKind === "automation" && this.input.parentId === address.parentId) return;
     if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_contact_user_unavailable");
     const userId = this.input.executionPrincipal.userId;
     const member = await this.env.DB.prepare(

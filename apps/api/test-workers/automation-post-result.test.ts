@@ -122,7 +122,10 @@ const provider = useOpenRouterDouble(async (call) => {
     // The run, continued by the wizard's answer (under the host's continuation
     // note), ends its turn; the wizard answers on the reply route to the run.
     if (JSON.stringify(call.messages).includes(WIZARD_ANSWER)) return { say: "Passed the answer on." };
-    if (latest.includes(sidekickChangeRequest)) return explicitReply(call, WIZARD_ANSWER);
+    // A request that names CONFIGURE_SIDEKICK has the wizard save a revision (below) rather than answer.
+    if (latest.includes(sidekickChangeRequest) && !sidekickChangeRequest.includes("CONFIGURE_SIDEKICK")) {
+      return explicitReply(call, WIZARD_ANSWER);
+    }
     const ask = call.toolNames.find((name) => name === "request_sidekick_change");
     if (ask) return call.messages.some((message) => message.role === "tool")
       ? { say: "Asked the wizard." }
@@ -443,6 +446,52 @@ describe("a room Sidekick's run and the room's agents", () => {
     // The wizard reads the request beside its guidance for one, keyed on the same header.
     expect(JSON.stringify(wizardCall?.messages.filter((message) => message.role === "system")))
       .toContain('An agent message whose text begins with the line \\"SIDEKICK CHANGE REQUEST FROM A RUN\\"');
+  });
+
+  it("lets only a manager's run reach the wizard with a change request, so only that one moves the definition", async () => {
+    const memberId = asUserId("00000000-0000-7000-8000-00000000ad1b");
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+        VALUES (?, ?, 'active', 'member', ?)`).bind(WORKSPACE_ID, memberId, NOW),
+      env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+        VALUES (?, 'member-b@example.com', 'Member B', NULL, 'UTC', ?)`).bind(memberId, NOW),
+    ]);
+    sidekickChangeRequest = "CONFIGURE_SIDEKICK REVISE: include the costs in every comparison.";
+    const revision = async () => (await runInDurableObject(sidekickHost(), (instance: WorkspaceDO) =>
+      instance.sidekickReadDetail({ ...addressed(), actor: manager() }))).currentDefinitionRevision;
+    const before = await revision();
+    const wizardRequests = async () => runInDurableObject(env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID))), (_instance, state) => {
+      try {
+        return state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'`,
+        ).one().count;
+      } catch {
+        return 0;
+      }
+    });
+
+    // Member B manages nothing and shares no access, so their message runs
+    // under their own access; its change request would reach the authoring
+    // tools as B, and is refused before the wizard sees it.
+    const routed = await sidekickHost().sidekickAdmitConversationMessage({ ...addressed(),
+      actor: { userId: memberId, actorRole: "member" }, messageId: crypto.randomUUID(), intent: null,
+      authorName: "Member B", text: "Run the comparison for me." });
+    expect(routed).toMatchObject({ route: "run" });
+    const memberRun = (routed as { runId: string }).runId;
+    await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
+    await settledRun(runChild(memberRun));
+    const refusal = provider.calls.flatMap((call) => call.messages)
+      .find((message) => message.role === "tool" && String(message.content).includes("sidekick_edit_requires_manager"));
+    expect(refusal, "the run's change request was not refused by name").toBeDefined();
+    expect(await wizardRequests()).toBe(0);
+    expect(await revision()).toBe(before);
+
+    // The author's run, a manager's, reaches the wizard, which saves a revision.
+    const started = await sidekickHost().sidekickRunNow({ ...addressed(), actor: manager(), idempotencyKey: "manager-change" });
+    await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
+    await settledRun(runChild(started.runId));
+    await expect.poll(revision, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBeGreaterThan(before);
   });
 
   it("refuses a change request from a conversation that is not a Sidekick run", async () => {

@@ -807,6 +807,44 @@ describe("a Canvas's artifacts", () => {
       .rejects.toMatchObject({ code: "canvas_not_written_by_sidekick" });
   });
 
+  it("still pushes a writer Sidekick's Canvas when an audience change rolled back once and then committed", async () => {
+    const sidekickId = crypto.randomUUID();
+    const actor = { userId: CREATOR, actorRole: "member" as const, participantOfOwningWorkstream: false };
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
+    const home = await resolveTerminalPublicationHome(TEST_ENV, { workspaceId: WORKSPACE_ID, parentKind: "automation", parentId: sidekickId,
+      substreamId: asSubstreamId(crypto.randomUUID()), executionPrincipal: { type: "user", userId: CREATOR } }, { title: "Weekly report" });
+    const canvasId = home!.parentId;
+    const member = await connect(MEMBER);
+    try {
+      const update = { workspaceId: WORKSPACE_ID, automationId: sidekickId, actor, update: { audience: "people" as const, userIds: [MEMBER] } };
+      // The write fails after it has told the host its readers, inside its
+      // transaction, as a later statement's throw would: the audience rolls back.
+      const failed = await runInDurableObject(workspace(), async (instance: WorkspaceDO) => {
+        const target = instance as unknown as { hostedSidekickHost: () => { noteWriterReaders: (id: string, readers: string) => void } };
+        const original = target.hostedSidekickHost.bind(target);
+        target.hostedSidekickHost = () => {
+          const host = original();
+          return { ...host, noteWriterReaders: (id: string, readers: string) => {
+            host.noteWriterReaders(id, readers);
+            throw new Error("injected_after_touch");
+          } };
+        };
+        try {
+          return await instance.sidekickSetAudience(update).then(() => null, (error: unknown) => (error as Error).message);
+        } finally {
+          target.hostedSidekickHost = original;
+        }
+      });
+      expect(failed).toBe("injected_after_touch");
+      expect(clientCanvasRows(member.frames).map((row) => row.id)).not.toContain(canvasId);
+      // The same change, committed now, reaches the member's open list.
+      await workspace().sidekickSetAudience(update);
+      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id)).toContain(canvasId);
+    } finally {
+      member.socket.close(1000, "done");
+    }
+  });
+
   it("puts a Canvas a Sidekick writes on the open list of whoever its audience change admits, and takes it off whoever it drops or its archive", async () => {
     const sidekickId = crypto.randomUUID();
     const actor = { userId: CREATOR, actorRole: "member" as const, participantOfOwningWorkstream: false };
