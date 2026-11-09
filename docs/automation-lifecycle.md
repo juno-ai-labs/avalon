@@ -467,11 +467,21 @@ again. Every caller has proved membership before it asks, so there is no
 variant that checks it. The old `/automations` listing remains a compatibility
 adapter. Directory membership never grants access to an owner.
 
-No conversation owns a Sidekick. The `workstream` scope is retired: WorkspaceDO
-migration 135 turned every Thread-owned Sidekick into an Organization one
-(`scope = 'workspace'`, its owning room cleared), archived any a room archive
-had paused under the old rule, and dropped the rail trigger that bumped an
-owning room's waterline. `owning_workstream_id`, `owning_substream_id` and
+No conversation owns a Sidekick. The `workstream` scope is retired, and
+WorkspaceDO migration 135 keeps each Thread-owned Sidekick's audience as
+`convertThreadToCanvas` keeps a Thread's: one owned by an Organization-wide
+Thread (and, for a Breakout's, an Organization-wide Breakout) becomes an
+Organization Sidekick; one owned by a personal Thread or a personal Breakout
+becomes a `people` Sidekick (`scope = 'personal'`) whose `sidekick_audience`
+is that owner's viewers, the narrower owner's when both are personal, never
+listing the author; one whose owner has no directory row left becomes
+personal to its author. Its owning room is cleared. The migration also
+archived any a room archive had paused under the old rule, and dropped the
+rail trigger that bumped an owning room's waterline. Widening a private
+Thread's Sidekick to the Organization would have made its definition, runs,
+conversation and the Canvases it writes readable by every member and its
+administrators its managers, with no record left of who could read it
+before; that cannot be undone, so the narrower audience is the rule. `owning_workstream_id`, `owning_substream_id` and
 `owning_room_archived_at` stay on `automation_directory` as dead columns,
 because released CHECKs name them. Nothing writes them, and migration 135 left
 them null. A few legacy readers still look and tolerate null: the search
@@ -2288,8 +2298,10 @@ question left its Sidekick reading Active). A member who is not a delegate
 runs under their own access (migration 135 records the requester). A
 schedule's occurrence is admitted only once its `next_due_at` has arrived.
 
-No Thread owns a Sidekick: WorkspaceDO migration 135 converted every
-Thread-owned Sidekick to the Organization's scope and cleared its home,
+No Thread owns a Sidekick: WorkspaceDO migration 135 gave every
+Thread-owned Sidekick its owner's audience (Organization for an
+Organization-wide owner, its viewers as a `people` list for a personal one)
+and cleared its home,
 archived any a room archive had paused under the old rule, and dropped the
 rail trigger that bumped an owning room. The scope enum is `personal |
 workspace`, with stored drafts and transcript rows that say `workstream`

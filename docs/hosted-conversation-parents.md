@@ -182,8 +182,9 @@ what the row says.
 Who reads a Sidekick is its own audience (`sidekickReaderAllows`): its author,
 the person it runs as, the people on its `people` list (`sidekick_audience`,
 WorkspaceDO migration 135) and, for an Organization one, every member; a
-guest only from the list. WorkspaceDO migration 135 converted every
-Thread-owned Sidekick to the Organization's. The library listing takes the
+guest only from the list. WorkspaceDO migration 135 gave every Thread-owned
+Sidekick its owner's audience: the Organization for an Organization-wide
+Thread, that Thread's or Breakout's viewers for a personal one. The library listing takes the
 caller's access class and role from its authentication rather than reading them
 again. The sidebar's Sidekick audience and viewer SQL is
 `sidekick-directory-sql.ts`.
@@ -398,7 +399,8 @@ every change, and the entry's handler calls `projectSidekickRunRow` on `"0"`
 with the run as it stands. A Sidekick has its own audience, so
 `authorizeViewer` no longer asks a home Channel or Breakout, and it keeps each
 reader's read of `"0"` (`sidekick_viewer_reads`, from `"0"`'s `directory_user`
-effects). Migration 135 made every Thread-owned Sidekick an Organization one,
+effects). Migration 135 gave every Thread-owned Sidekick its owner's audience
+(see [`automation-lifecycle.md`](automation-lifecycle.md#creation-and-ownership)),
 and the Sidekick parent stopped reading `channels` and `breakouts`.
 
 Then `HostedParent` and every RPC, alarm lane, socket route and socket command
