@@ -4,13 +4,14 @@ import { desktopBridge } from './platform';
 
 /**
  * Keeps the dock badge, or an installed browser app's icon badge, on the
- * sidebar attention menu's count while the shell is mounted, and clears it when
- * the shell goes (sign-out, a switch of Organization). APNs and Web Push set
- * the same number while Rally is not running (`docs/push-notifications.md`).
+ * rail's counts added up (`useSectionCounts`) while the shell is mounted, and
+ * clears it when the shell goes (sign-out, a switch of Organization). APNs and
+ * Web Push set a number while Rally is not running
+ * (`docs/push-notifications.md`).
  *
- * `complete` says the count is whole: every Channel and every Breakout list it
- * reads has loaded. A count from a half-loaded directory would lower the badge
- * APNs last set, so nothing is sent until then.
+ * `complete` says the count is whole: both lists it reads have arrived. A
+ * count from a half-loaded list would lower the badge APNs last set, so
+ * nothing is sent until then.
  */
 export function useDockBadge(count: number, complete: boolean): void {
   useEffect(() => {

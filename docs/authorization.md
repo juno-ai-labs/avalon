@@ -19,7 +19,7 @@ participants or become a new canonical owner of memberships.
 | `durable-objects/authorization-projection.ts` | Transactional child outbox and reference-only Queue contract |
 | `services/authorization-projection-service.ts` | Reloads attachment inventories from their owners when jobs execute |
 | `durable-objects/workspace-do.ts` | Legacy snapshot compatibility validation, resource facts, migration fan-out and discovery status |
-| `durable-objects/hosted-parent.ts`, `sidekick-do.ts` | Canonical parent/private-child facts; automation author, executor and owning work stream |
+| `durable-objects/hosted-conversation.ts`, `hosted-sidekick.ts`, `hosted-canvas.ts` | Canonical parent/child facts; a Sidekick's author, executor and the people it is shared with; a Canvas's audience |
 | `authorization-control.ts` | Private operator Service Binding entrypoint |
 
 ## How it works
@@ -27,67 +27,46 @@ participants or become a new canonical owner of memberships.
 ### Scope grant foundation
 
 `packages/contracts/src/scope-grants.ts` defines member/guest workspace access
-classes, exact conversation/workstream grant addresses and restricted/inheriting
-child audiences. `services/scope-grant-policy.ts` evaluates these authoritative
-facts. Guests never receive the implicit workspace-public member rule. A direct
-child grant needs no Main grant; a Main grant does not confer parent management.
-Overlapping direct and inherited grants remain independent. Suspension overrides
-them all, while archive preserves reading and disables mutation.
+classes and exact conversation grant addresses; `services/scope-grant-policy.ts`
+evaluates those facts. Guests never receive the implicit workspace-public
+member rule. Suspension overrides every grant, while archive preserves reading
+and disables mutation.
 
-Every ready Channel conversation uses parent grants. Historical rosters are
-imported once; creation and child publication complete that handoff before
-returning. A local roster or directory row never supplies fallback permission.
-[Scoped invitations](scope-invitations.md) owns sharing, the upgrade backfill and
-handoff recovery; [browser sessions](browser-sessions.md) owns cookie transport.
+Who may read a conversation is its parent's audience: `canvasAdmits` for a
+Canvas, `sidekickAdmits` for a Sidekick (below). A grant is the receipt of a
+claimed guest share, not a reader: `scope-grant-storage.ts` keeps it in
+`WorkspaceDO`'s `parent_grant*` tables, keyed by the Canvas id, and the
+Canvas's directory step for that grant adds the guest to `canvas_participants`
+in the same transaction ([`canvases.md`](canvases.md#guests)). Nothing reads
+`parent_grants` to admit a reader. Mutations use expected-revision checks and
+immutable operation receipts; grant changes, receipts and pending delivery
+intents commit in one synchronous transaction. Every grant binds the
+recipient's current membership incarnation, so removing and recreating a
+relationship never revives grants issued to its previous incarnation. Revoked
+rows remain tombstones, so a delayed activation cannot recreate access.
+Reusing an operation ID with different input fails; retrying the original
+input returns its original result without reapplying it.
+[Scoped invitations](scope-invitations.md) owns sharing;
+[browser sessions](browser-sessions.md) owns cookie transport.
 
-`scope-grant-storage.ts` keeps each Channel's grants in `WorkspaceDO`'s
-`parent_grant*` tables, keyed by `parent_id`
-([hosted conversation parents](hosted-conversation-parents.md)), and child
-audience uses `restricted` as the preserving default. Mutations use
-expected-revision checks and immutable operation receipts. Grant changes,
-receipts and pending delivery intents commit in one synchronous transaction.
-Every grant binds the recipient's current membership incarnation. Removing and
-recreating a relationship never revives grants issued to its previous incarnation;
-promotion preserves the incarnation and grants. A fresh sharing operation must
-explicitly grant the new relationship. Revoked rows remain tombstones, so a delayed
-activation cannot recreate access. Frozen legacy imports retain the incarnation
-mapping recorded when the migration began; replay cannot rebind that snapshot.
-Reusing an operation ID with different input fails; retrying the original input
-returns its original result without reapplying it. Delivery acknowledgement is
-for one exact revision. The storage class alone is not an authorization boundary.
-
-`WorkspaceDO`'s `readScopeAccess` RPC, answered by the hosted parent, loads the current D1 relationship and reads
-its local scope grants, target readiness and lifecycle. `mutateScopeGrant` admits
-the authenticated actor against that same scope and requires an active recipient
-for additions. Implicit workspace-public member reading does not authorize
-sharing. All local facts are read after the external relationship reads, with no
-await between the local decision and the write. Expected denials are typed RPC
-results, distinct from transport failures. Abandoned workspaces have no usable
-relationship. Migrated conversation reads recheck this relationship and scope after the D1
-await. Pending handoff refuses admission to the addressed conversation until its
-source freezes and the parent commits the roster transfer; unrelated conversations
-keep their existing path. A failed transfer resumes through the durable alarm.
-Falling back to a legacy roster after source authority freezes would create two
-competing authorities, so recovery retains this availability tradeoff. The canonical resolver requests the
-exact conversation, so an independent migrated child does not read Main's agent
-or require its participation. Its evidence includes relationship incarnation,
-relationship revision and the current participant projection revision. Main and
-child socket admission compare that version against the local applied projection;
-explicit grants use the applied projection, while Main retains parent-authorized
-implicit workspace-member access with version zero. The private-child membership
-table no longer authorizes migrated children. Socket preparation carries the same parent-issued
-revision. Public conversation snapshots, feed tickets, read-state and child title
-changes accept guest identities only through `requireGrantAuthority` parent
-admission. Sidekick authoring conversations retain their separate parent-owned policy.
-Organization-wide member visibility never admits a guest.
+A guest's conversation reads, feed tickets and read state are admitted with
+`requireGrantAuthority`: the viewer check reads the guest's relationship and
+admits them only from a Canvas's participant list or a Sidekick's `people`
+list. Organization-wide visibility never admits a guest, also on a path that
+does not set `requireGrantAuthority` (a mention's notice asks for whoever was
+named): `HostedCanvas` and `HostedSidekick` both read the person's role from
+their relationship rather than assuming a member. Before either rule runs,
+`HostedConversation.authorizeViewer` refuses a person whose relationship with
+the Organization is not active (`refusal: "viewer_relationship_inactive"`), so
+a participant or `people` list that still names someone who left admits them
+on no path; the socket path was already protected by session membership, the
+notice path was not.
 
 Pure policy tests run with `pnpm --filter @rally/api exec vitest run
 test/scope-grant-policy.test.ts`. Storage and populated-schema upgrade tests run
 in real workerd with `pnpm --filter @rally/api test:workers
-test-workers/scope-grant-storage.test.ts`.
-`test-workers/scope-grant-authority.test.ts` additionally drives the real hosted
-parent RPC on `WorkspaceDO` with D1 relationships, including child-only sharing, implicit-member denial,
-inheritance and lifecycle/relationship rejection.
+test-workers/scope-grant-storage.test.ts`; a guest admitted by a claimed share
+is `test-workers/canvas-hosting.test.ts`'s.
 
 A trusted request creates one `AccessContext`. Addresses identify a workspace
 and either a conversation `(parentId, substreamId)`, a resource ID, or a memory
@@ -106,7 +85,7 @@ outside their related conversations. The subject is the server-owned execution
 user; an ID in a tool argument supplies only the resource address. A batch read returns resource and artifact metadata with the decision, and
 discloses metadata only for admitted resources. This direct read creates no
 attachment or additional permission. The
-[resource-tool scope](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration)
+[resource-tool scope](agent-attachments.md#authorized-conversation-discovery-and-text-hydration)
 owns discovery and import revalidation.
 
 An authorization batch may receive the active regional workspace-membership
@@ -119,12 +98,17 @@ subject, and every non-request caller load the fact canonically from D1. Each
 observation is shared within one authorization batch. Each batch gathers conversation IDs from
 its requests and resource locations before loading a parent, preserving one parent
 RPC across multiple substreams. Each response carries exact grant decisions for the requested conversations.
-Canonical checks reload facts. Main and Breakout scopes are independent: a
-Breakout member need not read Main, and reading Main does not admit a restricted
-Breakout.
-An automation supplies its own scope, author, executor and child registry; an
-owning work stream's canonical roster supplies inherited access. Archived work
-streams remain readable. Deleted automations are absent.
+Canonical checks reload facts.
+An automation supplies its own scope, author, executor, `people` list
+membership and child registry, and `sidekickAdmits` decides from those alone:
+its author, its executor and the people it is shared with read it, and a member
+also reads an Organization-scoped one. No conversation owns an automation (the
+`workstream` scope was retired by WorkspaceDO migration 136), so none supplies
+any access. Deleted automations are absent.
+A Canvas supplies its visibility, creator, participant list, its writer
+Sidekick's audience (read live) and whether the person is an owner or
+administrator, and `canvasAdmits` decides; it and `sidekickAdmits` are the one
+`audienceAdmits` rule over their own facts ([`canvases.md`](canvases.md)).
 
 Guest membership comes from an explicitly carried request observation, or is
 read from `workspace_members.access_class`. Guests cannot use a legacy conversation scope/roster or
@@ -141,7 +125,7 @@ immediately before committing its link, through the existing resource authorizer
 Product dispatch has already reloaded the current relationship; it does not trust
 a caller-supplied guest/member classification. Ordinary members keep the existing
 attachment path and personal-connection ownership check, without the added
-resource-authorizer round trip on Space defaults or origin attachment. Guest
+resource-authorizer round trip on origin attachment. Guest
 metadata stays inside the mutation until its source check succeeds; a known
 resource ID is insufficient for a guest. Upload drafts must be sent with a message; existing
 attachment routes accept uploads after publication. Revoking the conversation
@@ -152,8 +136,8 @@ upload ownership and draft status. A resource requiring an attachment is resolve
 through exact `(parent, child, resource)` locations. Each potential grant is
 checked against both conversation authority and the canonical attachment
 inventory. The reverse index is discovery, never sufficient proof of a grant.
-This removes the member search path's serial scan of all work streams and all
-children. Content and search passages still come from canonical source records.
+This removes the member search path's serial scan of every conversation and
+every child. Content and search passages still come from canonical source records.
 
 Public resource metadata, content, version reads and previews admit workspace-bound
 guests through this same policy. Each read operation admits its resource once.
@@ -173,16 +157,13 @@ metadata snapshot is retained.
 Search previews retain their independent source-version comparison after storage;
 that comparison does not reauthorize. This contract does not relax mutations,
 socket admission or the existing artifact viewer-session revocation mechanism.
-Resources attached to workstream-owned Sidekick conversations reuse that
-Sidekick's viewer admission, which for a guest follows the Sidekick's home: the
-owning workstream's management grant for a home in its Main conversation, and
-the home Breakout's own grant for a Breakout home, which a workstream grant
-does not reach.
+Resources attached to a Sidekick's conversations reuse that Sidekick's
+audience: a guest reads them only from its `people` list.
 Guest admission observations are shared only within the current authorization
 batch, like other owner observations. Skill visibility alone does not expose a
 Sidekick's resources; existing member authorization remains on its original path.
 Sidekick resource inheritance follows current execution-user admission; see
-[`agent-attachments.md`](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration).
+[`agent-attachments.md`](agent-attachments.md#authorized-conversation-discovery-and-text-hydration).
 
 Explicit resource refresh and artifact open/error/data routes also admit guests.
 Refresh runs the existing resource read proof before loading metadata or invoking
@@ -198,65 +179,15 @@ scoped as described above: own draft upload/deletion, message publication and
 exact-conversation attachment/detachment are guest-enabled; broader management
 operations remain member-gated.
 
-### Space-derived access
+### Retired: Space-derived access and Space-shared resources
 
-[A Space grants no reader](spaces.md#a-space-starts-organization-wide-and-grants-no-reader), and the
-code that once applied a Space's audience to its Channels is gone
-([`space-access-sources.md`](space-access-sources.md)). The one exception is
-decided at read time and written nowhere: a guest who takes part in a Channel
-reads the Organization-wide threads placed in it as a member does
-(`ScopedAccessFacts.channelReader`, read by the thread's hosted parent from the
-Organization's Space tables;
-[`spaces.md`](spaces.md#a-channel-lends-its-public-threads-to-its-guests)).
-It admits no private thread, no restricted Breakout and no parent management.
-What is left of
-Space-derived access is the readers a Space seated before WorkspaceDO migration
-94. Their grants still carry `parent_grants.source_kind = 'space'` and stay out
-of the shared scope-grant directory, and ordinary removal revokes one like any
-other grant. Direct provenance still wins: a
-direct add of such a reader promotes the grant to `direct` and publishes it.
-
-**Being able to read a Channel discloses the mark and name of every Space it is
-placed in** — the Organization's fact about where the Channel lives, so a
-sidebar can draw it there — whether or not the reader is one of those Spaces'
-participants. That is a *discovery* disclosure and not an admission: it confers
-no read on the Space's other Channels, names none of its participants or
-defaults, counts only the Channels that reader can already see, and every write
-on the Space is refused `space_access_denied`.
-[`spaces.md`](spaces.md#who-may-see-a-space-and-why) owns the predicate and
-what it withholds.
-
-### Resources shared with a Space
-
-A resource is readable through every place it is linked, decided from that
-place's audience as it is now, never from a copy of who could read it then. A
-conversation's links are its inventory, read through its own authority. A
-**Space** (the product's Channel) is the other place: a thread's merge into a
-Channel links each artifact it embeds to that Space
-([`conversation-merge.md`](conversation-merge.md#thread-into-a-channel)).
-
-The link is a row in `authorization_locations` with `parent_kind = 'space'`
-and `substream_id = '0'`, written by `linkSpaceResources` in the merge's own
-WorkspaceDO commit. WorkspaceDO owns the Space, so unlike a conversation's row
-the Space row is the record, not discovery. `authorizationResourceFacts` takes
-the reader's access class and answers `sharedThrough`: the first linked Space
-the reader reaches today, by `WorkspaceSpaceStorage.reach`, the rule the
-Channel feed itself is read under (an archived Space still reads). The
-authorization service admits on it after the resource's own checks
-(connection, note, draft) and before it walks conversation locations, which
-no longer include Space rows.
-
-So access follows the Space's membership with nothing to rewrite: a person
-added to a private Channel can open what was merged into it, and one removed
-cannot, from the next read. Search follows the same way: the resource's rows
-carry the `space:<id>` group (migration 76's triggers reindex on the new
-location row), and `readSearchAudience` gives each person the group of every
-unarchived Space they see (`visibleSpaceIds`, one read), whether or not it
-shares anything: a group no row carries costs nothing.
-
-A link outlives the merge that wrote it, as an attachment outlives the message
-that cited it: deleting the merge, or merging again without the embed, leaves
-the resource shared with the Space. Nothing removes Space rows today.
+A Space (the product's Channel until the Canvases and Sidekicks pivot) once
+lent its audience to a guest taking part in it, disclosed its mark to a
+Channel's readers, and shared a merged artifact with its members through
+`workspace_workstream_resource_links` rows. Spaces, Channels, merge and the
+link table are gone (WorkspaceDO migration 139), so no reader is derived from
+a Space and `sharedThrough` names nothing; a resource is read through the
+Canvas or the Sidekick conversation that holds it.
 
 ### Invitation admission
 
@@ -286,8 +217,7 @@ once before loading and formatting its canonical content; it does not recheck
 after each await. Resource-fact RPCs batch the
 requested resources. The evaluator, typed addresses and four outcomes are shared
 primitives; source loaders remain responsible for their canonical facts.
-Automation and inherited workstream identity observations also share this batch
-lifetime. Member search exposes candidate continuation even when no candidate on
+Automation and Canvas identity observations also share this batch lifetime. Member search exposes candidate continuation even when no candidate on
 that page is admitted. This preserves bounded page work and explicit continuation;
 it does not promise to conceal the existence of matching index entries. The
 position is a deterministic hash and can be correlated with a known source ID.
@@ -326,14 +256,19 @@ cleanup is revision-fenced so an accepted send cannot erase newer intent, and
 new intent preserves Queue failure backoff. Parent discovery prunes retired
 children; even delayed child jobs check the current parent registry.
 
-Parent discovery for a Channel hosted in WorkspaceDO runs where it is enqueued:
-the Channel's `parent_children` rows are in the same database, so
-`enqueueAuthorizationDiscovery` registers them (the same reconcile
-`registerAuthorizationChildren` runs) in the caller's transaction and queues
-only the per-conversation jobs. The Queue still carries conversation jobs,
-which read a `SubstreamAgent`; and a Channel whose legacy import is still pending, since
-serving it needs the async import. The Worker's parent branch in
-`projectAuthorization` stays for those and for jobs queued before this change.
+Parent discovery for a Channel hosted in WorkspaceDO ran where it was
+enqueued: `enqueueAuthorizationDiscovery` answers a parent job in place only
+when `parent_metadata.parent_kind = 'workstream'`, registering the
+`parent_children` rows in the caller's transaction. That path is retired with
+the Channel host; no new parent of that kind is created. A Sidekick parent job
+still rides the Queue: an `authorization_delivery` row, the Worker's
+`projectAuthorization`, and `listAuthorizationChildren` back on WorkspaceDO.
+Per-conversation jobs ride the Queue too and read an `AgentLoopDO`.
+
+**Known gap: Canvases are not backfilled.** `beginAuthorizationBackfill`
+enumerates `channels UNION automation_directory`, with no `canvas_directory`,
+so `backfill` queues no parent discovery for a Canvas and `status` reports
+none.
 
 Deployment enables the core member read path for every workspace. There is no
 legacy/shadow mode, activation flag or comparison gate. `backfill` queues parent
@@ -380,24 +315,17 @@ not a switch controlling which authorization implementation serves the request.
   coverage is complete would silently omit private-child-only resources.
 - Queue writes and resource changes share durable local intent. A crashed
   dispatcher can retry without reconstructing permissions from an old payload.
-- A Space's own visibility is discovery only. A readable Channel discloses its
-  Space's mark and name, which confers no read on the Space's other Channels and
-  no write on the Space.
-- [A Space grants no reader](spaces.md#a-space-starts-organization-wide-and-grants-no-reader). A
-  Channel's audience is its own scope and participants, and an
-  Organization-wide one also admits a guest who takes part in a Space it is
-  placed in (`channelReader`). The one thing a Space
-  admits its readers to is a resource linked to it, and only through the
-  Space's own audience as it is when the read happens. Guard:
-  `channels-threads-navigation.test.ts` "given a merge into a private Channel,
-  when a member is added to the Channel later".
-- A link records a place, never the people. Copying who could read a resource
-  at link time would leave a person added later locked out and a person
-  removed still in.
-- The scope-grant directory is complete for direct grants and deliberately
-  incomplete for Space-derived ones. Anything that treats an absent directory
-  row as absent access is wrong; the candidate index narrows a search, and the
-  owner's authorization read is still what decides.
+- A conversation's reader is decided by its parent's audience rule and nothing
+  else. `canvasAdmits` and `sidekickAdmits` are one `audienceAdmits` rule over
+  their own facts; a second rule in a reader would let one surface open what
+  another refuses. Guard: `test/authorization-policy.test.ts` and
+  `test-workers/canvas-conversation.test.ts`.
+- An attachment records a place, never the people. Copying who could read a
+  resource at attach time would leave a person added to the Canvas later
+  locked out and a person removed still in.
+- The scope-grant directory is a candidate index. Anything that treats an
+  absent directory row as absent access is wrong; the owner's authorization
+  read is still what decides.
 
 ## Boundary
 
@@ -405,7 +333,7 @@ This module owns read decisions and their derived evidence. Authentication and
 active workspace membership are established by request middleware. Agent
 execution authority is established by the host, not tool arguments. Existing
 creation, mutation, socket admission and participant admission retain their
-current authority paths. See [workstream creation](workstream-creation.md),
+current authority paths. See [hosted conversation parents](hosted-conversation-parents.md),
 [agent harness](agent-harness.md), [agent attachments](agent-attachments.md) and
 [text search](text-search.md).
 
@@ -456,8 +384,7 @@ deployment, including permission changes and delayed Queue delivery.
 workspace isolation, aged evidence, future timestamps and explicit incomplete lists.
 `test-workers/authorization-storage.test.ts` uses real SQLite migrations for
 out-of-order inventory delivery, ignored legacy grants and discovery completion.
-`test-workers/conversation-parent-contract.test.ts` exercises stale roster
-projections and private-child search before and after queued backfill without activation.
+
 `test-workers/resource-read-admission.test.ts` drives attachment and artifact
 HTTP routes over real D1, WorkspaceDO and R2, checking first-load RPC counts,
 session/membership/grant revocation, admitted reads
@@ -550,7 +477,61 @@ placement hints with results. Visibility times include polling resolution and us
 Worker timestamps; they are not exact replication timestamps. Remove probe deployments
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
+## Retired documents
+
+Removed from `docs/`; the last text and changelog are recoverable as
+[`architecture.md`](architecture.md#retired-documents) describes.
+
+**`listing-rules.md`: Listing rules (retired 2026-11-07).**
+`apps/api/src/durable-objects/listing-rules.ts` held the one ladder that
+decided who may be told a Space, Channel or Breakout exists: Organization-wide
+scope admits a member and never a guest, a participant is listed what they
+take part in, a Channel is listed through a Breakout of it, and a Space through
+a Channel in it. It was deleted once its last reader, agent memory's
+visibility, was re-derived from Canvas and Sidekick participation. What
+survives is the member-versus-guest half: `admitsOrganizationWide`,
+`AccessClass` and `Viewer` in `apps/api/src/services/authorization-policy.ts`
+beside `sidekickAdmits`, and scope grants' Organization-wide branch
+(`scope-grant-policy.ts`), which reads the access class directly. Its
+changelog is the record of why a guest is never admitted by Organization-wide
+scope.
+
 ## Changelog
+
+### 2026-11-09 — A conversation's read is answered by its Canvas or Sidekick alone, through one audience rule
+
+**What changed:** A Sidekick's conversations and resources are read by whoever
+it is shared with (`sidekickAdmits`: its author, the person it runs as, its
+`people` list, and every member when it is Organization-scoped), and a Canvas's
+Chat and artifacts by `canvasAdmits` over the Canvas's facts; both are
+`audienceAdmits`, and an owner or administrator is admitted to every Canvas. The
+owner rule that admitted an owning Thread's or Breakout's participants, its
+guest path, a resource's `sharedThrough` Channel share, and the Thread parent's
+`readAuthorizationFacts` round trip are removed, here and in search audience and
+memory facts. `listing-rules.ts` is deleted ([Retired
+documents](#retired-documents)).
+
+**Why:** The pivot retires Threads; a Sidekick's shared conversation is read by
+the people it is shared with, and a Canvas owns its audience, so its artifacts
+inherit it. An audience inherited from a Thread would outlive the Thread, two
+rules written field for field would drift, and asking a deleted parent first
+cost a Durable Object round trip on every read for an answer that was always
+"absent".
+
+**Considered and rejected:** A separate artifact-level grant: an artifact is
+generated in the Canvas's Chat and attached to it, so the attachment path
+already decides it.
+
+**Consequences:** A Thread-scoped Sidekick kept its Thread's audience through
+WorkspaceDO migration 136, so nobody gained or lost one. A guest reaches a
+Sidekick only from its list and a Canvas only from its participants. The rule is
+one function, and a reader that decides access some other way is a defect:
+search groups ([`text-search.md`](text-search.md)) and memory visibility
+([`agent-memory.md`](agent-memory.md)) call the same predicates. A resource is
+readable through the conversation that holds it and nothing else.
+
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-21 — Admit attachment and artifact reads once per request
 
@@ -678,7 +659,7 @@ can draw the Channel where it lives instead of in a flat list of rows with no
 home. That is discovery rather than admission, and the invariant above says
 what it does not carry: no read on the Space's other Channels, no participant,
 no default, no count of what the reader cannot see, and no write. The reasoning
-and the predicate are in [`spaces.md`](spaces.md#changelog).
+and the predicate are in `spaces.md` (retired).
 
 ### 2026-09-19 — A Space-derived grant is admission without discovery
 

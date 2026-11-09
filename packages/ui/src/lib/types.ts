@@ -31,5 +31,4 @@ export interface SidebarPresentation {
   scope?: 'personal' | 'workspace';
   participants: WorkspaceMember[];
   resources: { id: string; title: string; resourceType: string; mimeType?: string | null; direction: string; currentVersion: number }[];
-  privateChildren?: { substreamId: string; title: string; appearance?: WorkstreamAppearance; scope?: 'personal' | 'workspace'; needsAttention?: boolean; status?: string; createdByUserId?: string; createdAt?: string; updatedAt?: string; participantUserIds?: string[] }[];
 }

@@ -27,7 +27,7 @@ describe('settings registry', () => {
       sections: new Set(['account', 'workspace', 'application']),
     });
     expect(entries.some((entry) => entry.definition.id === 'lockdown')).toBe(true);
-    for (const id of ['debug', 'telemetry', 'menuBar', 'login', 'releaseChannel', 'invitations', 'inviteEmail', 'digestDays', 'accountAppearance']) {
+    for (const id of ['debug', 'telemetry', 'menuBar', 'login', 'releaseChannel', 'invitations', 'inviteEmail', 'notifyMentions', 'accountAppearance']) {
       expect(entries.some((entry) => entry.definition.id === id)).toBe(false);
     }
   });
@@ -40,7 +40,7 @@ describe('settings registry', () => {
   it('ranks labels before descriptions and shares selectable option labels', () => {
     const entries = collectSettings([coreSettingsProvider], context);
     expect(searchSettings(entries, 'appearance')[0]?.definition.id).toBe('appearance');
-    expect(searchSettings(entries, 'every day').some((entry) => entry.definition.id === 'digestDays')).toBe(true);
+    expect(searchSettings(entries, 'faster').some((entry) => entry.definition.id === 'releaseChannel')).toBe(true);
     expect(searchSettings(entries, 'dark').some((entry) => entry.definition.id === 'appearance')).toBe(true);
     expect(searchSettings(entries, 'time zone').some((entry) => entry.definition.id === 'personalTimezone')).toBe(true);
     expect(searchSettings(entries, '')).toEqual([]);
@@ -58,7 +58,7 @@ describe('settings registry', () => {
   });
   it('preserves legacy vocabulary and English casing independent of host locale', () => {
     const entries = collectSettings([coreSettingsProvider], context);
-    for (const query of ['startup', 'keychain', 'integrations', 'organization', 'roles', 'notifications', 'diagnostics', 'summary', 'security', 'privacy', 'developer', 'status item', 'meetings', "Mac's keystore", 'invitations']) {
+    for (const query of ['startup', 'keychain', 'integrations', 'organization', 'roles', 'notifications', 'diagnostics', 'security', 'privacy', 'developer', 'status item', 'meetings', "Mac's keystore", 'invitations']) {
       expect(searchSettings(entries, query).length, query).toBeGreaterThan(0);
     }
     expect(new Set(coreSettingsProvider.entries.map((entry) => entry.key)).size).toBe(coreSettingsProvider.entries.length);
@@ -73,7 +73,6 @@ describe('settings registry', () => {
   it('ranks competing labels before metadata and non-actions before tied actions', () => {
     const entries = collectSettings([coreSettingsProvider], context);
     expect(searchSettings(entries, 'email')[0]?.definition.id).toBe('inviteEmail');
-    expect(searchSettings(entries, 'start of day')[0]?.definition.id).toBe('digestStartOfDay');
     const withoutInstalledMcp = collectSettings([coreSettingsProvider], { ...context, sections: new Set(['connections']) });
     expect(searchSettings(withoutInstalledMcp, 'Tools Rally may use')[0]?.definition.entryPoint).toBe('provider:custom-mcp');
   });

@@ -16,7 +16,7 @@ loads.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/site/index.html` | The `#technology` section: heading, the `[data-tech-schematic]` figure, and the five-item layer list that carries the same content as text |
+| `apps/site/src/landing-sections.html` | The `#technology` section, which `site-chrome.ts` inlines into `index.html` at the `rally:landing-sections` marker: heading, the `[data-tech-schematic]` figure, and the five-item layer list that carries the same content as text |
 | `apps/site/src/technology-loader.ts` | The only part in the landing page's own bundle: adds the schematic's script when the figure nears the screen |
 | `apps/site/src/technology.ts` | The schematic's own build entry: starts the scene, runs the clock only while the figure is visible, honors reduced motion |
 | `apps/site/vite.config.ts` | The `technology` input, and `rally-technology-entry`, which rewrites the figure's `data-tech-src` to the hashed bundle |
@@ -24,7 +24,7 @@ loads.
 | `apps/site/src/landing.css` | `.tech-*` rules: figure size, label type, the amber of the lines, dots and numerals, the layer list |
 
 `LAYERS` is the scene's single source of the layer names, their order (inside
-out), and their colors. The text list in `index.html` repeats the names and the
+out), and their colors. The text list in `landing-sections.html` repeats the names and the
 order for screen readers and search, so a change to either lands in both files
 in the same commit. The colors are the product's icon palette
 (`--av-sys-color-project-*` in `packages/ui/src/styles/themes.css`): amber,
@@ -82,7 +82,7 @@ not say on its own.
 
 ## Invariants
 
-- **`LAYERS` order is inside out and matches the text list in `index.html`.**
+- **`LAYERS` order is inside out and matches the text list in `landing-sections.html`.**
   The geometry assigns radii by index, the labels stack by index, and each
   label's description is read from the list item at the same index; reordering
   one without the other mislabels a layer or describes it with another's text. No automated guard; verified

@@ -23,7 +23,6 @@ const payloads = (send: { mock: { calls: unknown[][] } }) => send.mock.calls.map
 // No runs or model calls: only the real workspace intent/directory read and D1 delivery writes.
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-00000000f101');
 const workstreamId = asWorkstreamId('00000000-0000-7000-8000-00000000f102');
-const spaceId = '00000000-0000-7000-8000-00000000f107';
 const userId = asUserId('00000000-0000-7000-8000-00000000f103');
 const actorId = asUserId('00000000-0000-7000-8000-00000000f104');
 const workspace = () => env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName('global', workspaceId)));
@@ -64,21 +63,11 @@ beforeEach(async () => {
   ]);
   await workspace().initializeWorkspace(workspaceId, 'wnam');
   await runInDurableObject(workspace(), (_instance, state) => {
-    state.storage.sql.exec(`INSERT INTO spaces
-      (space_id, title, scope, authority_generation, source_version, payload_hash, revision, created_at, updated_at)
-      VALUES (?, 'General', 'workspace', 1, 1, 'space', 1, 0, 0)`, spaceId);
-    state.storage.sql.exec(`INSERT INTO space_channel_memberships
-      (space_id, workstream_id, state, generation, joined_at, updated_at)
-      VALUES (?, ?, 'active', 1, 0, 0)`, spaceId, workstreamId);
-    state.storage.sql.exec(`INSERT INTO channels
-      (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview,
-       scope, exact_state, last_activity_at, origin_type, title_status, latest_attention_ordinal,
-       unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
-      VALUES (?, 1, 1, 'source', 'hash', 'Planning', '', '', 'personal', 'idle', 0, 'ad_hoc', 'settled', 0, 0, 0, 0, 0)`, workstreamId);
-    state.storage.sql.exec(`INSERT INTO channel_viewers
-      (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
-       unread_count, you_are_mentioned, listable, seen_attention_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at)
-      VALUES (?, ?, 1, 1, 'viewer', 'hash', 1, 0, 0, 1, 0, 0, 0, 0)`, workstreamId, userId);
+    // The conversation is a Canvas's Chat: its row is what decides whether
+    // the person may still be told, and what a push links to (`docs/links.md`).
+    state.storage.sql.exec(`INSERT INTO canvas_directory
+      (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, visibility, authority_generation)
+      VALUES (?, ?, 'Planning', ?, 0, 0, 'workspace', 1)`, workstreamId, workspaceId, userId);
   });
   await addIntent('mention:one');
   for (const token of ['aa', 'bb']) await registerPushDevice(env, memberAuth, token, {
@@ -106,56 +95,21 @@ it('sends no mention to a person who turned mentions off, and still sends their 
   expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
   expect(send).toHaveBeenCalledTimes(2);
 });
-it('rechecks access after queueing and defers a directory that is still catching up', async () => {
+it('rechecks access after queueing, waits for a newer parent generation, and skips a parent that is gone', async () => {
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
-  await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec(`UPDATE workstream_notification_intents SET required_directory_version = 2`); });
+  await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec(`UPDATE workstream_notification_intents SET source_generation = 2`); });
   expect(await deliverPush(pushEnv(), message(), send)).toBe(false);
-  await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec(`UPDATE workstream_notification_intents SET required_directory_version = 1`); });
+  await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec(`UPDATE workstream_notification_intents SET source_generation = 1`); });
+  // Made private to its creator: the recipient may no longer open it.
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'creator', created_by_user_id = ?`, actorId);
+  });
+  expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
+  await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec(`DELETE FROM canvas_directory`); });
+  expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
   await env.DB.prepare(`UPDATE workspace_members SET status = 'removed'`).run();
   expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
   expect(send).not.toHaveBeenCalled();
-});
-it('sets the APNs and Web Push badge to the conversations waiting for the reader, leaving out a needs-input run already read', async () => {
-  const needsInputId = asWorkstreamId('00000000-0000-7000-8000-00000000f105');
-  const archivedId = asWorkstreamId('00000000-0000-7000-8000-00000000f106');
-  await runInDurableObject(workspace(), (_instance, state) => {
-    state.storage.sql.exec(`UPDATE channels SET latest_attention_ordinal = 2`);
-    state.storage.sql.exec(
-      `INSERT INTO channels
-       (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview,
-        scope, exact_state, last_activity_at, origin_type, title_status, latest_attention_ordinal,
-        unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
-       VALUES (?, 1, 1, 'needs', 'hash-needs', 'Needs input', '', '', 'personal', 'needs_input', 0, 'ad_hoc', 'settled', 1, 0, 0, 0, 0)`,
-      needsInputId,
-    );
-    state.storage.sql.exec(
-      `INSERT INTO channel_viewers
-       (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
-        unread_count, you_are_mentioned, listable, seen_attention_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at)
-       VALUES (?, ?, 1, 1, 'needs-viewer', 'hash-needs', 1, 0, 0, 1, 1, 0, 0, 0)`,
-      needsInputId, userId,
-    );
-    state.storage.sql.exec(
-      `INSERT INTO channels
-       (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview,
-        scope, exact_state, last_activity_at, archived_at, origin_type, title_status, latest_attention_ordinal,
-        unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
-       VALUES (?, 1, 1, 'archived', 'hash-archived', 'Archived unread', '', '', 'personal', 'idle', 0, 1, 'ad_hoc', 'settled', 4, 0, 0, 0, 0)`,
-      archivedId,
-    );
-    state.storage.sql.exec(
-      `INSERT INTO channel_viewers
-       (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
-        unread_count, you_are_mentioned, listable, seen_attention_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at)
-       VALUES (?, ?, 1, 1, 'archived-viewer', 'hash-archived', 1, 4, 0, 1, 0, 0, 0, 0)`,
-      archivedId, userId,
-    );
-  });
-  const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
-  expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
-  expect(send).toHaveBeenCalledTimes(2);
-  expect(payloads(send).map((payload) => JSON.parse(payload.apns).aps.badge)).toEqual([1, 1]);
-  expect(payloads(send).map((payload) => JSON.parse(payload.web).badge)).toEqual([1, 1]);
 });
 it('removes personal instructions and reduces mention Markdown before push delivery', async () => {
   const intentId = 'mention:markdown';
@@ -267,29 +221,81 @@ it('sends each device the payload of the transport it registered with', async ()
   ]);
   const apple = requests.find(({ url }) => url.startsWith('https://api.push.apple.com/'))!;
   expect(JSON.parse(apple.init.body as string).aps.alert.title).toBe('Author mentioned you in Planning');
+  // A mention in a Canvas's Chat opens the Canvas.
+  expect(JSON.parse(apple.init.body as string).rally.url).toBe('https://app.test/app/global/1111117Hxt1fAWDjNRoE/cv/1111117Hxt1fAWDjNRoF/');
   const web = requests.find(({ url }) => url === webEndpoint)!;
   expect((web.init.headers as Record<string, string>)['content-encoding']).toBe('aes128gcm');
   expect(web.init.redirect).toBe('manual');
 });
 
 
-it('keeps mention alerts distinct from each other and from ordinary replies in the same conversation', async () => {
+it('keeps mention alerts distinct from each other in the same conversation', async () => {
   await addIntent('mention:two');
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
   await deliverPush(pushEnv(), message('mention:one'), send);
   await deliverPush(pushEnv(), message('mention:two'), send);
-  await runInDurableObject(workspace(), (_instance, state) => {
-    state.storage.sql.exec(`INSERT INTO workspace_activity_events (
-      event_id, event_type, subject_type, subject_id, actor_type, actor_user_id, actor_label, title, body,
-      audience_kind, audience_workstream_id, digestible, occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json
-    ) VALUES ('reply', 'workstream_message_created', 'workstream', ?, 'user', ?, 'Author', 'Planning', 'Follow up',
-      'workstream', ?, 0, ?, ?, 'workstream_message', 'reply', 'reply', '{"substreamId":"0","attentionOrdinal":1}')`,
-      workstreamId, actorId, workstreamId, Date.now(), Date.now());
-  });
-  await deliverPush(pushEnv(), { workspaceId, recipientUserId: userId, region: 'global', activityItemId: 'message:reply' }, send);
   const calls = send.mock.calls as unknown as Array<[unknown, unknown, PushPayloads, string]>;
-  // Each alert reaches two devices. Compare the three actual transport tags.
-  expect(new Set([calls[0]![3], calls[2]![3], calls[4]![3]]).size).toBe(3);
+  // Each alert reaches two devices. Compare the two actual transport tags.
+  expect(new Set([calls[0]![3], calls[2]![3]]).size).toBe(2);
   expect(payloads(send).map((payload) => JSON.parse(payload.apns).aps['thread-id']))
-    .toEqual([workstreamId, workstreamId, workstreamId, workstreamId, workstreamId, workstreamId]);
+    .toEqual([workstreamId, workstreamId, workstreamId, workstreamId]);
+});
+
+
+/** The person's relationship as the Organization object holds it, which is what decides what they may open. */
+async function seedRelationship(role: 'admin' | 'member') {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(`INSERT INTO workspace_member_status (user_id, relationship_json, removed_incarnation, active, sequence, updated_at)
+      VALUES (?, ?, NULL, 1, 1, 0) ON CONFLICT (user_id) DO UPDATE SET relationship_json = excluded.relationship_json, active = 1`,
+      userId, JSON.stringify({ workspaceId, userId, accessClass: 'member', role, status: 'active', incarnation: 'i1', revision: 1 }));
+  });
+}
+
+it('tells an administrator mentioned in a Canvas only its creator otherwise opens', async () => {
+  await seedRelationship('admin');
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(`UPDATE canvas_directory SET created_by_user_id = ?, visibility = 'creator' WHERE canvas_id = ?`, actorId, workstreamId);
+  });
+  const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
+  expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
+  expect(payloads(send).map((payload) => JSON.parse(payload.apns).aps.alert.title))
+    .toEqual(['Author mentioned you in Planning', 'Author mentioned you in Planning']);
+});
+
+it('pushes a Sidekick run that needs input or finished, linked to the Sidekick, under the Sidekick runs choice', async () => {
+  const sidekickId = '00000000-0000-7000-8000-00000000f105';
+  const runId = '00000000-0000-7000-8000-00000000f106';
+  await seedRelationship('member');
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(`INSERT INTO automation_directory
+        (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope, owning_workstream_id, title, description, projected_at, authority_generation, region)
+      VALUES (?, ?, ?, 1, 'hash', 'active', 'workspace', NULL, 'Deploy watcher', '', 1, 1, 'global')`, sidekickId, workspaceId, actorId);
+    for (const [kind, runState, reply] of [['needs_input', 'needs_input', 'Which **environment**?'], ['run_finished', 'failed', 'The deploy failed.']] as const) {
+      const notice = { kind, sidekickId, runId, sidekickName: 'Deploy watcher', state: runState, reply, occurredAt: 1 };
+      state.storage.sql.exec(`INSERT INTO workstream_notification_intents
+        (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id, source_generation,
+         source_version, required_directory_version, notification_kind, payload_json, payload_hash, state, attempts, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 1, 1, 1, ?, ?, 'hash', 'delivered', 0, ?, ?)`,
+        `${kind}:one`, workspaceId, sidekickId, userId, `sidekick_run:${runId}:${kind}:1`, kind, JSON.stringify(notice),
+        new Date().toISOString(), new Date().toISOString());
+    }
+  });
+  const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
+  expect(await deliverPush(pushEnv(), message('needs_input:one'), send)).toBe(true);
+  expect(await deliverPush(pushEnv(), message('run_finished:one'), send)).toBe(true);
+  expect(payloads(send).filter((_payload, index) => index % 2 === 0).map((payload) => {
+    const apns = JSON.parse(payload.apns) as { aps: { alert: { title: string; body: string } }; rally: { kind: string; url: string } };
+    return { title: apns.aps.alert.title, body: apns.aps.alert.body, kind: apns.rally.kind, url: apns.rally.url };
+  })).toEqual([
+    { title: 'Deploy watcher needs your input', body: 'Which environment?', kind: 'needs_input', url: 'https://app.test/app/global/1111117Hxt1fAWDjNRoE/sk/1111117Hxt1fAWDjNRoJ/' },
+    { title: 'Deploy watcher failed', body: 'The deploy failed.', kind: 'run_finished', url: 'https://app.test/app/global/1111117Hxt1fAWDjNRoE/sk/1111117Hxt1fAWDjNRoJ/' },
+  ]);
+
+  // One choice covers both notices: off, neither is sent.
+  await workspace().saveMemberPreferences({ workspaceId, userId, preferences: { showAgentWork: true, push: { runFinished: false } } });
+  send.mockClear();
+  await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec(`UPDATE workstream_notification_intents SET intent_id = intent_id || ':again'`); });
+  expect(await deliverPush(pushEnv(), message('needs_input:one:again'), send)).toBe(true);
+  expect(await deliverPush(pushEnv(), message('run_finished:one:again'), send)).toBe(true);
+  expect(send).not.toHaveBeenCalled();
 });

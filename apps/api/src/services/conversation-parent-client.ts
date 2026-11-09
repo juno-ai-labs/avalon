@@ -1,4 +1,4 @@
-import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
+import type { RetirementParentKind } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
 
 import { workspaceDOName } from "../durable-objects/names";
@@ -8,7 +8,8 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 
 export interface ConversationParentAddress {
   workspaceId: string;
-  parentKind: ConversationParentKind;
+  /** Wide enough for a retired parent's effect, which the parent refuses by name. */
+  parentKind: RetirementParentKind;
   parentId: string;
 }
 

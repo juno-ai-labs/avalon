@@ -129,13 +129,20 @@ while the migration is unreleased; a shipped schema change appends a migration.
 
 Local state drifts in two halves nothing reconciles. Re-running `db:migrate` and
 `db:seed` brings D1 up to date, but every Durable Object keeps what an older
-checkout's code wrote into it. A stack left for weeks then serves Channels whose
-parent conversation no longer exists: the API logs
-`conversation_parent_missing` and `conversation_not_found`, the sidebar stays on
-**Rally is opening this organization**, and a Channel shows **Channel could not
-be opened**. The desktop client drifts with it: its stored session names an
-account in the old database (`account_reconnect_required`) and its caches still
-list the old Channels. Reset both at once:
+checkout's code wrote into it. A stack left for weeks then serves
+conversations whose parent no longer exists: the API logs
+`conversation_parent_missing` and `conversation_not_found`, and the sidebar
+stays on **Rally is opening this organization**. The desktop client drifts
+with it: its stored session names an account in the old database
+(`account_reconnect_required`) and its caches still list what the old database
+held. A stack seeded before the seed made Canvases has the same
+drift under a new symptom: the seeded **Q4 revenue review** Canvas stays on
+**Connecting**, and the API answers `409 conversation_parent_kind_retired:workstream`,
+because id `…0020` was a seeded conversation then and its conversation object
+still holds that parent; bootstrapping the Canvas finds the object already
+rooted and keeps it. A fresh seed roots both Canvases as `canvas`. The client's
+stored route can likewise name a Sidekick the new database never made
+(**Sidekick could not be opened**). Reset both at once:
 
 ```bash
 pnpm dev:reset          # stop `pnpm dev` and quit Rally Development first
@@ -159,9 +166,22 @@ pnpm db:open-authority
 ```
 
 This advances the configured local authorities to `durable_object_open` and
-imports `packages/db/seed-product.json` through each Worker's development seed
-route. The Workers must be running for the product import. The command is
+posts `packages/db/seed-product.json` to each Worker's development seed route
+(`POST /dev/seed-product`), which makes the seed's two Canvases — **Q4 revenue
+review**, shared with Samantha, and **Launch plan**, open to the Organization —
+through `createCanvas`, restores their Chats' turns from the fixture, notes the
+fixture resource as Launch plan's artifact (its body, the fixture's `payloads`
+entry, stored in R2 where the resource's `content_ref` points, so the
+artifact renders), and publishes the **Weekly
+changelog** Sidekick through `createAutomation` and its definition. `seed.sql`
+anchors no conversation: the creation paths anchor and route what they make,
+as in production. The Workers must be running for the product import. The command is
 idempotent and repairs partial imports; rerun it after starting a missing Worker.
+A re-run adds no version to the fixture resource unless its type, body or size
+changed, and it rewrites that resource's whole version history to the fixture's
+type, body, size and author (**Rally**): a stack seeded before the fixture said
+`text/markdown` otherwise lists every old version as `text/plain`, size 0 and
+**Unattributed**, and the artifact draws as raw Markdown source.
 For a custom local port, set `PUBLIC_API_BASE_URL_GLOBAL` and run the command
 through `pnpm exec dotenv -e .env.local -- pnpm db:open-authority`.
 
@@ -170,18 +190,11 @@ between its `SELECT ... FROM workspaces` and `ON CONFLICT`. SQLite otherwise
 parses the `ON` as a possible join clause and rejects the fresh post-retirement
 seed before product fixtures reach the Durable Objects.
 
-`routes/dev.ts` seeds transcript rows through the canonical ordered-turn
+`routes/dev.ts` seeds a Chat's turns through the canonical ordered-turn
 storage API. It does not recreate the retired message tables or their runtime
-views merely to import development fixtures.
-
-It also places every Channel it seeds in the Organization's General Space,
-through the same `placeConnectorChannelInGeneral` the Slack agent uses, because
-every non-deleted Channel belongs to a Space and this route does not go through
-the creation coordinator. That is why the command can take a few seconds longer
-on a cold container than the import itself explains: each Channel's placement
-waits for the Organization to see it, which happens when the Channel's parent
-authority publishes its first directory projection.
-[`spaces.md`](spaces.md) owns the mechanism.
+views merely to import development fixtures. It seeds no Thread or Channel:
+until the 2026-11-07 change the seed held two conversations, and once the
+Thread server code was removed the command failed with `workstream_not_found`.
 
 ## 3. Start the API Workers
 
@@ -284,12 +297,23 @@ serves port 8794. Set the API's `BROWSER_APP_ORIGIN` to the exact local browser
 origin (for example `http://localhost:8794`) and use that same hostname in Chrome.
 Add the same origin to `ALLOWED_ORIGINS` in `.env.local` and re-run
 `pnpm env:sync`: every conversation socket checks it, so without it a signed-in
-tab opens each conversation to **Channel could not be opened** and the Worker
+tab opens each conversation to an error and the Worker
 logs `socket_origin_forbidden`.
 The host uses the local Global service binding; the regional API must be running.
 
-The development seed gives its people no verified email, so email sign-in
-refuses them with `verified_identity_required`. Link one in the local database
+The signed-out page offers **Use local development account** whenever the API
+runs with `RALLY_DEV_AUTH=true` (as `pnpm dev:api:local` does): it signs in as
+the seed's Adam with no email, as the desktop's button does
+([`browser-client.md`](browser-client.md#development-sign-in)). To serve the
+browser on another port, run `wrangler dev --port <port> --local-upstream
+localhost:<port>` from `apps/browser` after `pnpm build:client`, with the same
+`WRANGLER_REGISTRY_PATH` as the API, and set `BROWSER_APP_ORIGIN` and
+`ALLOWED_ORIGINS` to that origin; without the second, the shell says "Rally
+can’t connect".
+
+To sign in as another seeded person, email sign-in works once their address is
+verified. The development seed gives its people no verified email, so email
+sign-in refuses them with `verified_identity_required`. Link one in the local database
 before signing in as them:
 
 ```bash
@@ -402,7 +426,30 @@ Capture the screens you touched and read the images.
 
 Development sign-in works end to end in this setup: **Use local development
 account** authenticates against the local Global Worker and opens the seeded
-workspace with its work streams, automations, and onboarding checklist.
+workspace with its Canvases, its Sidekick, and onboarding checklist.
+
+**Settings is a second page that has to be opened before it can be captured.**
+Once a session has an Organization, the main process builds the
+`?surface=settings` window ahead of time and keeps it hidden (`show: false`), so
+it is listed among the CDP pages from the start but never paints: a
+`Page.captureScreenshot` against it, or a Playwright `screenshot()`, waits for a
+frame that does not come and times out. Open it the way a person does, from the
+main page: click the account tile at the bottom of the rail (its accessible name
+starts `Settings, ` and goes on with the person and the Organization), then the
+**Settings** item in the menu it opens. The window is then shown, and the page
+whose URL contains `surface=settings` answers screenshots:
+
+```javascript
+await page.getByRole('button', { name: /^Settings, / }).click();
+await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
+const settings = browser.contexts()[0].pages().find((p) => p.url().includes('surface=settings'));
+await settings.screenshot({ path: '/tmp/settings.png' });
+```
+
+The action row under a Chat message (**Oopsie**, Copy, Speak, Image, PDF) is
+in the DOM, and so in `innerText`, under every message, but drawn at opacity 0
+with `pointer-events: none` until its message is hovered or focused. Hover the
+message before capturing or clicking the row.
 
 ## What cannot be verified in a sandbox
 
@@ -440,9 +487,6 @@ workspace with its work streams, automations, and onboarding checklist.
   empty, which is the check to repeat before believing otherwise. Anything that
   needs synthetic frames has to be played in from the main process; a state a
   component can simply be *given* belongs in a component test instead.
-- **The native iOS client.** The sandbox image has no Xcode or iOS SDK.
-  `apps/ios` is archived on a Mac (`docs/ios-client.md`, `apps/ios/README.md`).
-  `pnpm test:scripts` still checks the packaging invariants on Linux.
 - **The macOS menu bar status item, and the windowless half of a login launch.**
   The item is created only on darwin, and there is no menu bar to draw it into
   here. The launch skips its window only when a status item is actually present,
@@ -450,16 +494,17 @@ workspace with its work streams, automations, and onboarding checklist.
   other launch — proving the window *does not* open needs a Mac. What the sandbox
   can check is everything around it: the two Settings toggles in a real window,
   that a `--hidden` launch still loads the menu's content in the main process,
-  and that a deep link delivered to that instance opens the work stream. See
+  and that a deep link delivered to that instance opens the Canvas. See
   [`menu-bar.md`](menu-bar.md).
 - **macOS packaging, signing, notarization, and Gatekeeper checks.**
   `package:desktop`, `start:desktop:packaged`, and the release publisher are
   macOS-only and must run on a Mac.
 - **Remote D1, deploys, and anything else that needs Cloudflare credentials.**
 
-`packages/db/seed.sql` includes the resource and connector fixtures required by
-the right-rail checks in `pnpm smoke:local`. Re-run `pnpm db:seed` after updating
-an older worktree so the smoke test sees both fixtures.
+`packages/db/seed-product.json` includes the resource and connector fixtures.
+Re-run `pnpm db:seed` and `pnpm db:open-authority` after updating an older
+worktree so a fresh database has the Canvases rather than the retired work
+streams.
 
 ## Quick reference
 
@@ -475,7 +520,6 @@ an older worktree so the smoke test sees both fixtures.
 | Start the configured Workers (workstation) | `pnpm dev:api` |
 | Global health | `curl -s http://127.0.0.1:8787/health` |
 | Desktop client, headless | see [§4](#4-run-the-desktop-client-headlessly) |
-| iOS client (Mac + Xcode 26) | `open apps/ios/Rally.xcodeproj` — see [`ios-client.md`](ios-client.md) |
 | Lint / typecheck / test | `pnpm lint`, `pnpm typecheck`, `pnpm test` |
 | Lint, ignoring the cache | `pnpm lint:fresh` |
 

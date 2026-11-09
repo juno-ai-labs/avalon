@@ -8,7 +8,7 @@
  * Everything here is driven through the Organization object's `sidekick*` RPC
  * surface and the alarm entries it arms, against the real WorkspaceDO, the
  * real regional D1 it reads members and email routes from, and a real run
- * child (a `SubstreamAgent`) whose loop reads its definition back from this
+ * child (an `AgentLoopDO`) whose loop reads its definition back from this
  * object by revision. The one thing replaced is the model: the OpenRouter
  * double answers every turn, so the run reaches inference and ends, and what
  * it was asked is readable in the double's calls.
@@ -20,18 +20,14 @@
  */
 
 import { env } from "cloudflare:workers";
-import { evictDurableObject, reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asAutomationId,
-  asSpaceId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
-  asWorkstreamId,
-  agentAddressForId,
-  WorkstreamWorkflowInputSchema,
   AutomationSetEvaluatorRulesModelInputV1Schema,
   AutomationDetailSchema,
   type AutomationDraft,
@@ -51,7 +47,7 @@ import {
   SIDEKICK_REVIEW_RUN_FLOOR,
   type HostedSidekickHost,
 } from "../src/durable-objects/hosted-sidekick";
-import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import {
   AUTOMATION_RUN_ALARM_KIND,
   AUTOMATION_SCHEDULE_ALARM_KIND,
@@ -62,20 +58,18 @@ import {
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
-import { AgentCommunicationService } from "../src/services/agent-communication-service";
 import { AuthorizationService } from "../src/services/authorization-service";
-import { WorkstreamService } from "../src/services/workstream-service";
-import { bootstrapConversationChildRuntime, bootstrapWorkstreamRuntimeEnvironment, provisionWorkstreamObject } from "../src/services/workstream-runtime-database";
+
 import { readWorkstreamAuthorityControl } from "../src/services/workstream-authority";
 import {
   consumeEffectBodies,
   deliverChildEffects,
 } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { hostedParentStub } from "./helpers/hosted-parent";
+
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
-import { runSidekickAlarms } from "./helpers/sidekick";
+import { runSidekickAlarms, writeSidekickRegistrations } from "./helpers/sidekick";
 import { SidekickRunProvisionQueueMessageSchema } from "../src/durable-objects/automation-do-protocol";
 import { provisionSidekickRun } from "../src/services/sidekick-run-provisioning";
 import { deliverSidekickReview } from "../src/services/sidekick-review";
@@ -322,12 +316,11 @@ async function ingestSlackEvent(eventId: string, providerEventId: string): Promi
   });
 }
 
-async function createDraft(owningWorkstreamId: string | null = null): Promise<void> {
+async function createDraft(): Promise<void> {
   const created = await createAutomation(TEST_ENV, {
     workspaceId: WORKSPACE_ID,
     authorUserId: AUTHOR_ID,
-    scope: owningWorkstreamId ? "workstream" : "personal",
-    owningWorkstreamId,
+    scope: "personal",
     automationId: AUTOMATION_ID
   });
   expect(created).toEqual({ automationId: AUTOMATION_ID, created: true });
@@ -337,18 +330,14 @@ async function submit(draft: AutomationDraft = DEFINITION): Promise<{ definition
   return workspaceStub().sidekickSubmitDefinition({ ...addressed(), draft, evaluatorRules: null, submittedByRunId: null });
 }
 
-/** Legacy event watches still publish a real registration before delivery. */
+/** A Slack watch registered the way an apply writes it, without a Slack connector manifest. */
 async function registerSlackWatcher(): Promise<void> {
-  await runDurableObjectAlarm(workspaceStub());
+  // The object's own alarm runs the entry; forcing a pass on top of it could run it twice.
   await expect.poll(async () => (await alarms()).filter((entry) => entry.kind === "sidekick_delegation_sources").length,
     { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(0);
-  await workspaceStub().applyExternalEventRegistrations({
-    schemaVersion: 1, workspaceId: WORKSPACE_ID, sourceGeneration: 1,
-    destination: { kind: "automation", automationId: AUTOMATION_ID },
-    evaluators: [{ evaluatorId: crypto.randomUUID(), source: {
-      connectorType: "slack", connectionId: SLACK_CONNECTION_ID, eventType: "slack.message.posted",
-    }, when: { kind: "always" } }],
-  });
+  await writeSidekickRegistrations(env, WORKSPACE_ID, AUTOMATION_ID, [{ evaluatorId: crypto.randomUUID(), source: {
+    connectorType: "slack", connectionId: SLACK_CONNECTION_ID, eventType: "slack.message.posted",
+  }, when: { kind: "always" } }]);
 }
 
 async function registrationFor(eventType: string): Promise<string> {
@@ -463,51 +452,6 @@ async function settledChildRun(runId: string): Promise<{ status: string; error_j
   return settled!;
 }
 
-async function knowledgeConversation() {
-  const workstreamId = asWorkstreamId(crypto.randomUUID());
-  const parent = hostedParentStub(env, WORKSPACE_ID);
-  const root = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName('global', WORKSPACE_ID, workstreamId)));
-  await parent.reserveChild({ workspaceId: WORKSPACE_ID, parentId: workstreamId, substreamId: asSubstreamId('0'), kind: 'main', createdByUserId: AUTHOR_ID,
-    authorityGeneration: 1, directory: { title: 'Knowledge', description: '', scope: 'workspace', systemKind: null, emailAddress: null, titleStatus: 'settled', createdAt: NOW } });
-  await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, workstreamId, 'workstream');
-  await provisionWorkstreamObject(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId, title: 'Knowledge', objective: '', scope: 'workspace', createdByUserId: AUTHOR_ID,
-    participantUserIds: [AUTHOR_ID], harnessStatus: 'idle', titleStatus: 'settled', emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: 'double/primary', now: Date.now() });
-  await deliverChildEffects(TEST_ENV, root);
-  async function child(operationId: string, childWorkstreamId = workstreamId) {
-    const recipe = { policy: { revision: 'test-empty-v1', strategy: { id: 'empty', version: 1 }, config: {} }, capture: 'none' as const, parts: [] };
-    const reserved = await parent.beginPrivateChildPreparation({ workspaceId: WORKSPACE_ID, parentId: childWorkstreamId, operationId, creatorUserId: AUTHOR_ID, title: operationId,
-      sourceSubstreamId: '0', sourceThroughTurnId: null, recipe, membershipInitializer: { plugin: { id: 'creator-only', version: 1 }, config: {}, memberUserIds: [AUTHOR_ID] } });
-    const hash = '0'.repeat(64);
-    await parent.savePreparedPrivateChildContext({ workspaceId: WORKSPACE_ID, parentId: childWorkstreamId, operationId,
-      preparedContext: { schemaVersion: 1, recipe, recipeHash: hash, capture: null, captureHash: null, parts: [], contentHash: hash } });
-    await parent.claimPrivateChildConfirmation({ workspaceId: WORKSPACE_ID, parentId: childWorkstreamId, operationId, actorUserId: AUTHOR_ID });
-    await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, 'workstream', childWorkstreamId, reserved.substreamId);
-    await provisionWorkstreamObject(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: childWorkstreamId, substreamId: reserved.substreamId, title: operationId, objective: '', scope: 'personal', createdByUserId: AUTHOR_ID,
-      participantUserIds: [AUTHOR_ID], harnessStatus: 'idle', titleStatus: 'settled', emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: 'double/primary', now: Date.now() });
-    const agent = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName('global', WORKSPACE_ID, childWorkstreamId, asSubstreamId(reserved.substreamId))));
-    await agent.installPreparedSubstreamContext({ workspaceId: WORKSPACE_ID, workstreamId: childWorkstreamId, substreamId: reserved.substreamId, operationId });
-    await parent.setPrivateChildTerminalStatus({ workspaceId: WORKSPACE_ID, parentId: childWorkstreamId, operationId, status: 'ready', errorCode: null });
-    await deliverChildEffects(TEST_ENV, agent);
-    return agent;
-  }
-  let messageOrdinal = 0;
-  async function execute(agent: typeof root, script: typeof sidekickToolScript = []) {
-    sidekickToolScript = script;
-    const before = provider.calls.length;
-    const runCount = await runInDurableObject(agent, (_instance, state) => state.storage.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM runs').one().n);
-    const response = await agent.fetch('https://object.test/internal/product', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ operation: 'create_message', auth: { sessionId: SESSION_ID, userId: AUTHOR_ID, workspaceId: WORKSPACE_ID, region: 'global', role: 'member' },
-        input: { text: 'Use relevant knowledge.', clientMessageId: `recommend-${++messageOrdinal}`, mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } }) });
-    expect(response.status, await response.text()).toBe(200);
-    await expect.poll(() => runInDurableObject(agent, (_instance, state) => {
-      const rows = state.storage.sql.exec<{ status: string }>('SELECT status FROM runs ORDER BY created_at').toArray();
-      return rows.length > runCount ? rows.at(-1)?.status : 'waiting';
-    }), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe('completed');
-    return provider.calls.slice(before).map((call) => call.messages.filter((message) => message.role === 'system').map((message) => promptText(message.content)).join('\n')).join('\n');
-  }
-  return { workstreamId, parent, root, child, execute };
-}
-
 beforeEach(async () => {
   sidekickToolScript = [];
   loadSkillOnNextTurn = false;
@@ -520,201 +464,6 @@ beforeEach(async () => {
 });
 
 describe("a hosted Sidekick", () => {
-  it("lets a child recommend workspace knowledge without activating main or siblings, and loads only locally", async () => {
-    const { workstreamId, parent, root, child, execute } = await knowledgeConversation();
-    const first = await child('first-child');
-    const sibling = await child('sibling-child');
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: 'workspace', owningWorkstreamId: null, automationId: AUTOMATION_ID });
-    await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...DEFINITION, suggestedScope: 'workspace', definitionVersion: 2, triggers: [], instructions: 'Secret body loaded only on request.' }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
-    await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_skill_recommendations' } }, { name: 'list_skill_recommendations', arguments: {} }, { name: 'recommend_skill', arguments: { skillId: AUTOMATION_ID } }]);
-    const listing = provider.calls.flatMap((call) => call.messages).find((message) => message.role === 'tool' && typeof message.content === 'string' && message.content.includes('canRecommend'));
-    expect(listing?.content).toContain('"canRecommend":true');
-    expect(listing?.content).toContain('"skillId":');
-    expect(listing?.content).not.toContain('sidekickId');
-    expect(listing?.content).not.toContain('workspaceSidekicks');
-    // A room edits no Sidekick here, so its list carries no edit state.
-    expect(listing?.content).not.toContain('canEdit');
-    expect(await parent.recommendedSidekickIds({ workspaceId: WORKSPACE_ID, parentId: workstreamId }), JSON.stringify(provider.calls.map((call) => call.messages.filter((message) => message.role === 'tool')))).toEqual([AUTOMATION_ID]);
-    for (const agent of [root, sibling]) {
-      const prompt = await execute(agent);
-      expect(prompt).toContain('[Recommended]');
-      expect(prompt).not.toContain('Secret body loaded only on request.');
-    }
-    const loaded = await execute(first, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]);
-    expect(loaded).toContain('Secret body loaded only on request.');
-    expect(await first.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
-    expect(await root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([]);
-    expect(await sibling.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([]);
-    // Breakouts created after the recommendation also discover it without
-    // silently activating another conversation's local loads.
-    const later = await child('later-child');
-    const another = await child('another-child');
-    for (const agent of [later, another]) {
-      const beforeLoad = await execute(agent);
-      expect(beforeLoad.split('\n').find((line) => line.includes('skill-manual-helper'))).toContain('[Recommended]');
-      expect(beforeLoad).not.toContain('Secret body loaded only on request.');
-      expect(await execute(agent, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]))
-        .toContain('Secret body loaded only on request.');
-      // The next execution activates the saved attachment without load_skill.
-      await evictDurableObject(agent);
-      expect(await execute(agent)).toContain('Secret body loaded only on request.');
-    }
-    await execute(sibling, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]);
-    await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_skill_recommendations' } }, { name: 'unrecommend_skill', arguments: { skillId: AUTOMATION_ID } }]);
-    expect(await first.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId }), JSON.stringify(provider.calls.at(-1)?.messages.filter((message) => message.role === 'tool'))).toEqual([]);
-    expect(await sibling.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
-    expect(await later.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
-    expect(await another.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
-    const after = await execute(root);
-    expect(after).not.toContain('[Recommended]');
-    expect(after).toContain('skill-manual-helper');
-    expect(after).not.toContain('Secret body loaded only on request.');
-    // Ownership recommends the Sidekick independently of the explicit table.
-    const ownedId = asAutomationId('00000000-0000-7000-8000-00000000ad98');
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: 'workstream', owningWorkstreamId: workstreamId, automationId: ownedId });
-    await workspaceStub().sidekickSaveDefinition({ workspaceId: WORKSPACE_ID, automationId: ownedId,
-      draft: { ...DEFINITION, name: 'Owned helper', suggestedScope: 'workstream', definitionVersion: 2, triggers: [], instructions: 'Owned body loaded only on request.' },
-      evaluatorRules: null, submittedByRunId: null, actor: { ...actor(), participantOfOwningWorkstream: true } });
-    for (const agent of [root, first, sibling, later, another]) {
-      const prompt = await execute(agent);
-      expect(prompt.split('\n').find((line) => line.includes('skill-owned-helper'))).toContain('[Recommended]');
-      expect(prompt).not.toContain('Owned body loaded only on request.');
-      expect(await execute(agent, [{ name: 'load_skill', arguments: { name: 'skill-owned-helper' } }]))
-        .toContain('Owned body loaded only on request.');
-    }
-    await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_skill_recommendations' } }, { name: 'unrecommend_skill', arguments: { skillId: ownedId } }]);
-    expect((await execute(root)).split('\n').find((line) => line.includes('skill-owned-helper'))).toContain('[Recommended]');
-
-    // A delegated agent has a real local participant but no human-viewable
-    // private-child membership. Its tools must use execution authority.
-    await execute(root, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]);
-    const input = WorkstreamWorkflowInputSchema.parse({ region: 'global', workspaceId: WORKSPACE_ID,
-      parentKind: 'workstream', parentId: workstreamId, substreamId: '0', loopId: `workstream:${workstreamId}:substream:0:loop`,
-      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
-      executionPrincipal: { type: 'user', userId: AUTHOR_ID }, reason: 'test' });
-    const agents = new AgentCommunicationService(TEST_ENV, input);
-    const toolContext = { workspaceId: WORKSPACE_ID, workstreamId, harnessRunId: input.harnessRunId,
-      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal,
-      signal: new AbortController().signal };
-    sidekickToolScript = [{ name: 'load_plugin', arguments: { pluginId: 'rally_skill_recommendations' } },
-      { name: 'recommend_skill', arguments: { skillId: AUTOMATION_ID } },
-      { name: 'load_skill', arguments: { name: 'skill-manual-helper' } }];
-    const rootCompletedRuns = () => runInDurableObject(root, (_instance, state) =>
-      state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM runs WHERE status = 'completed'").one().n);
-    const rootRunsBefore = await rootCompletedRuns();
-    const started = await agents.start({ name: 'Knowledge helper', description: 'Use shared knowledge',
-      message: 'Attach and load relevant knowledge.', attachmentIds: [] }, toolContext);
-    const address = agentAddressForId(started.agentId);
-    const hidden = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName('global', WORKSPACE_ID, workstreamId, address.substreamId)));
-    const completedRuns = () => runInDurableObject(hidden, (_instance, state) =>
-      state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM runs WHERE status = 'completed'").one().n);
-    await expect.poll(completedRuns, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
-    // The hidden worker finished without replying, so its owner is told once
-    // and runs on that; wait for it, or the next script feeds the wrong run.
-    await expect.poll(rootCompletedRuns, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(rootRunsBefore + 1);
-    expect(await parent.authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: workstreamId,
-      substreamId: address.substreamId, userId: AUTHOR_ID })).toMatchObject({ authorized: false });
-    const userService = new WorkstreamService(TEST_ENV, { sessionId: SESSION_ID, userId: AUTHOR_ID,
-      workspaceId: WORKSPACE_ID, region: 'global', role: 'member', analyticsWorkspaceId: null });
-    await expect(userService.setSidekickRecommendation(workstreamId, AUTOMATION_ID, false, address.substreamId))
-      .rejects.toMatchObject({ status: 404 });
-    expect(await parent.recommendedSidekickIds({ workspaceId: WORKSPACE_ID, parentId: workstreamId })).toEqual([AUTOMATION_ID]);
-    expect(await hidden.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
-    sidekickToolScript = [{ name: 'load_plugin', arguments: { pluginId: 'rally_skill_recommendations' } },
-      { name: 'unrecommend_skill', arguments: { skillId: AUTOMATION_ID } }];
-    await agents.send({ agentId: started.agentId, message: 'Detach that recommendation.', attachmentIds: [] },
-      { ...toolContext, effectIntentId: crypto.randomUUID() });
-    await expect.poll(completedRuns, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(2);
-    await expect.poll(rootCompletedRuns, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(rootRunsBefore + 2);
-    const managementResults = provider.calls.flatMap((call) => call.messages)
-      .filter((message) => message.role === 'tool' && 'tool_call_id' in message
-        && ['call-recommend_skill', 'call-unrecommend_skill'].includes(String(message.tool_call_id)));
-    expect(managementResults.length).toBeGreaterThan(0);
-    for (const message of managementResults) {
-      expect(JSON.parse(promptText(message.content)), promptText(message.content)).toMatchObject({ success: true });
-    }
-    expect(await parent.recommendedSidekickIds({ workspaceId: WORKSPACE_ID, parentId: workstreamId })).toEqual([]);
-    expect(await hidden.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([]);
-    expect(await root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([ownedId, AUTOMATION_ID]);
-    await hidden.stopOwnedAgent();
-    await expect(userService.setSidekickRecommendation(workstreamId, AUTOMATION_ID, true, address.substreamId,
-      { ...input, substreamId: address.substreamId, backgroundAgent: true })).rejects.toMatchObject({
-      status: 403, code: 'sidekick_attachment_execution_forbidden',
-    });
-    expect(await parent.recommendedSidekickIds({ workspaceId: WORKSPACE_ID, parentId: workstreamId })).toEqual([]);
-  });
-  it("inherits a Space Skill default in Main and a Breakout without exposing another Channel's owned Skill", async () => {
-    const { workstreamId, child, execute } = await knowledgeConversation();
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: 'workspace', owningWorkstreamId: null, automationId: AUTOMATION_ID });
-    await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...DEFINITION, suggestedScope: 'workspace', definitionVersion: 2, triggers: [], instructions: 'Secret body loaded only on request.' }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
-    const ownedId = asAutomationId('00000000-0000-7000-8000-00000000ad98');
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: 'workstream', owningWorkstreamId: workstreamId, automationId: ownedId });
-    await workspaceStub().sidekickSaveDefinition({ workspaceId: WORKSPACE_ID, automationId: ownedId,
-      draft: { ...DEFINITION, name: 'Owned helper', suggestedScope: 'workstream', definitionVersion: 2, triggers: [], instructions: 'Owned body loaded only on request.' },
-      evaluatorRules: null, submittedByRunId: null, actor: { ...actor(), participantOfOwningWorkstream: true } });
-    // The enclosing Space's default reaches a newly born Channel, whereas
-    // a Sidekick owned by another Channel must not enter its catalog.
-    const reservedSpace = await workspaceStub().reserveSpace({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      space: { name: 'Shared knowledge', iconKey: 'briefcase', colorKey: 'blue', scope: 'workspace' } });
-    if (!reservedSpace.ok) throw new Error(`reserveSpace refused: ${reservedSpace.code}`);
-    expect(await workspaceStub().addSpaceDefault({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      spaceId: reservedSpace.space.id, kind: 'sidekick', targetId: AUTOMATION_ID })).toMatchObject({ ok: true });
-    const otherWorkstreamId = asWorkstreamId('00000000-0000-7000-8000-00000000ad97');
-    expect(await workspaceStub().reserveChannelInSpaces({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      workstreamId: otherWorkstreamId, spaceIds: [reservedSpace.space.id], requestedScope: 'workspace',
-      requestedParticipantUserIds: [AUTHOR_ID], authorityGeneration: 1,
-      directory: { title: 'Other knowledge', description: '', emailAddress: null, titleStatus: 'settled', createdAt: NOW },
-    })).toMatchObject({ status: 'reserved' });
-    await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, otherWorkstreamId, 'workstream');
-    await provisionWorkstreamObject(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: otherWorkstreamId,
-      title: 'Other knowledge', objective: '', scope: 'workspace', createdByUserId: AUTHOR_ID,
-      participantUserIds: [AUTHOR_ID], harnessStatus: 'idle', titleStatus: 'settled', emailAddress: null,
-      emailRouteStatus: null, systemKind: null, modelOverride: 'double/primary', now: Date.now() });
-    const otherRoot = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      conversationObjectName('global', WORKSPACE_ID, otherWorkstreamId)));
-    await deliverChildEffects(TEST_ENV, otherRoot);
-    // Birth stages defaults before the Channel's parent exists. The test
-    // Queue has no consumer; hand its persisted target to the real consumer.
-    const defaultTargets = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
-      spaceId: string; kind: string; targetId: string; defaultGeneration: number;
-      workstreamId: string; membershipGeneration: number;
-    }>(`SELECT space_id AS spaceId, kind, target_id AS targetId, default_generation AS defaultGeneration,
-        workstream_id AS workstreamId, membership_generation AS membershipGeneration
-        FROM space_default_targets WHERE workstream_id = ? AND state = 'pending'`, otherWorkstreamId).toArray());
-    expect(defaultTargets).toHaveLength(1);
-    expect(await consumeEffectBodies(TEST_ENV, defaultTargets.map((target) => ({ ...target,
-      type: 'space_default', region: 'global', workspaceId: WORKSPACE_ID, requestedByUserId: AUTHOR_ID,
-    })))).toEqual({ acked: 1, retried: 0 });
-    const otherPrompt = await execute(otherRoot);
-    expect(otherPrompt.split('\n').find((line) => line.includes('skill-manual-helper'))).toContain('[Recommended]');
-    expect(otherPrompt).not.toContain('skill-owned-helper');
-    expect(otherPrompt).not.toContain('Owned body loaded only on request.');
-    expect(await execute(otherRoot, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]))
-      .toContain('Secret body loaded only on request.');
-    const otherChild = await child('other-channel-child', otherWorkstreamId);
-    const otherChildPrompt = await execute(otherChild);
-    expect(otherChildPrompt.split('\n').find((line) => line.includes('skill-manual-helper'))).toContain('[Recommended]');
-    expect(otherChildPrompt).not.toContain('Secret body loaded only on request.');
-    expect(otherChildPrompt).not.toContain('skill-owned-helper');
-    expect(await execute(otherChild, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]))
-      .toContain('Secret body loaded only on request.');
-  });
-
-  it("revalidates a loaded Breakout Skill after pause and resume", async () => {
-    const { workstreamId, child, execute } = await knowledgeConversation();
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: 'workspace', owningWorkstreamId: null, automationId: AUTOMATION_ID });
-    await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...DEFINITION, suggestedScope: 'workspace', definitionVersion: 2, triggers: [], instructions: 'Secret body loaded only on request.' }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
-    const target = await child('lifecycle-child');
-    expect(await execute(target, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]))
-      .toContain('Secret body loaded only on request.');
-    expect(await target.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
-    // Saved local attachments do not bypass lifecycle on the next execution.
-    await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
-    expect(await execute(target)).not.toContain('Secret body loaded only on request.');
-    await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
-    expect(await execute(target)).toContain('Secret body loaded only on request.');
-  });
-
   it("publishes through the authoring conversation and completes with a durable final reply", async () => {
     await createDraft();
     const root = childStub("0");
@@ -725,7 +474,7 @@ describe("a hosted Sidekick", () => {
       // Sidekick, and a product request that claimed a Channel is refused.
       body: JSON.stringify({ operation: "create_message", parentKind: "automation", auth: {
         sessionId: SESSION_ID, userId: AUTHOR_ID, workspaceId: WORKSPACE_ID, region: "global", role: "member",
-      }, input: { text: "Publish a personal knowledge Sidekick.", clientMessageId: "sidekick-authoring", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [], modelOverride: "double/primary" } }),
+      }, input: { text: "Publish a personal knowledge Sidekick.", clientMessageId: "sidekick-authoring", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [], modelOverride: "double/primary", intent: "edit_sidekick" } }),
     });
     expect(sent.status, await sent.clone().text()).toBe(200);
     await runDurableObjectAlarm(root);
@@ -878,66 +627,6 @@ describe("a hosted Sidekick", () => {
     expect(source?.loadable).toBe(true);
     expect(await workspaceStub().sidekickReconcileLoadable({ ...addressed(), actor: actor() })).toEqual({ loadable: false });
     expect(await workspaceStub().sidekickSkillCandidates({ workspaceId: WORKSPACE_ID })).not.toContain(AUTOMATION_ID);
-  });
-
-  it("attaches a loaded main-stream Sidekick and pins the latest revision for later executions", async () => {
-    await createDraft();
-    const draft: AutomationDraft = { ...DEFINITION, definitionVersion: 2, triggers: [], instructions: "First accepted Sidekick instructions." };
-    await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft, evaluatorRules: null, submittedByRunId: null, actor: actor() });
-    const earlierId = asAutomationId("00000000-0000-7000-8000-000000000001");
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "personal", owningWorkstreamId: null, automationId: earlierId });
-    await workspaceStub().sidekickSaveDefinition({ workspaceId: WORKSPACE_ID, automationId: earlierId, draft, evaluatorRules: null, submittedByRunId: null, actor: actor() });
-    const workstreamId = asWorkstreamId("00000000-0000-7000-8000-00000000ad99");
-    await hostedParentStub(env, WORKSPACE_ID).reserveChild({
-      workspaceId: WORKSPACE_ID, parentId: workstreamId, substreamId: asSubstreamId("0"), kind: "main",
-      createdByUserId: AUTHOR_ID, authorityGeneration: 1,
-      directory: { title: "Use knowledge", description: "", scope: "personal", systemKind: null, emailAddress: null, titleStatus: "settled", createdAt: NOW },
-    });
-    const root = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, workstreamId)));
-    const auth = { sessionId: SESSION_ID, userId: AUTHOR_ID, workspaceId: WORKSPACE_ID, region: "global", role: "member" };
-    loadSkillOnNextTurn = true;
-    const opened = await root.fetch("https://object.test/internal/product", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operation: "initialize", auth, input: {
-        workspaceId: WORKSPACE_ID, workstreamId, generation: 1, title: "Use knowledge", objective: "",
-        descriptionSource: "derived", titleStatus: "settled", emailAddress: null, creatorUserId: AUTHOR_ID,
-        openingMessage: "Load the writing Sidekick.", clientMessageId: "sidekick-load", participantUserIds: [], attachmentIds: [],
-        modelOverride: "double/primary", executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "user_message",
-      } }),
-    });
-    expect(opened.status, await opened.clone().text()).toBe(200);
-    const snapshots = () => runInDurableObject(root, (_instance, state) => state.storage.sql.exec<{ snapshot_json: string }>(
-      `SELECT snapshot_json FROM sidekick_execution_skills ORDER BY rowid`,
-    ).toArray().map((row) => JSON.parse(row.snapshot_json)));
-    await expect.poll(() => root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId }), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([AUTOMATION_ID]);
-    await expect.poll(() => runInDurableObject(root, (_instance, state) => state.storage.sql.exec<{ status: string }>(`SELECT status FROM runs ORDER BY created_at DESC LIMIT 1`).one().status), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe("completed");
-    expect((await snapshots())[0].sources).toContainEqual(expect.objectContaining({ id: AUTOMATION_ID, revision: 1 }));
-    // Simulate aliases persisted before reusable instructions used skill terms.
-    // A later run projects them without rewriting identities or attachments.
-    await runInDurableObject(root, (_instance, state) => state.storage.sql.exec(
-      `UPDATE sidekick_skill_names SET name = replace(name, 'skill-', 'sidekick-')`,
-    ));
-    await workspaceStub().sidekickRemove({ workspaceId: WORKSPACE_ID, automationId: earlierId, actor: actor() });
-    await evictDurableObject(root);
-    await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...draft, name: "Updated helper", instructions: "Second accepted Sidekick instructions." }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
-    const sent = await root.fetch("https://object.test/internal/product", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operation: "create_message", auth, input: { text: "Use the attached knowledge.", clientMessageId: "sidekick-again", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } }),
-    });
-    expect(sent.status).toBe(200);
-    await expect.poll(async () => (await snapshots()).length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(2);
-    const admitted = await snapshots();
-    expect(admitted[0].sources).toContainEqual(expect.objectContaining({ id: AUTOMATION_ID, instructions: draft.instructions }));
-    expect(admitted[1].sources).toContainEqual(expect.objectContaining({ id: AUTOMATION_ID, revision: 2 }));
-    expect(admitted[1].activeRefs).toContain(`platform:sidekick-${AUTOMATION_ID}`);
-    expect(await runInDurableObject(root, (_instance, state) => state.storage.sql.exec<{ name: string }>(
-      `SELECT name FROM sidekick_skill_names WHERE sidekick_id = ?`, AUTOMATION_ID,
-    ).one().name)).toBe("sidekick-manual-helper-2");
-    await expect.poll(() => provider.calls.some((call) => call.messages.some((message) =>
-      message.role === "system" && promptText(message.content).includes("Second accepted Sidekick instructions.")
-      && promptText(message.content).includes('name="skill-manual-helper-2"'))),
-    { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
-    expect(await root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId, removeId: AUTOMATION_ID })).toEqual([]);
   });
 
   it("keeps the connector tables out of regional D1, which is what makes the binding tests evidence", async () => {
@@ -1318,6 +1007,28 @@ describe("a hosted Sidekick", () => {
     expect(await scheduledRuns()).toBe(1);
   });
 
+  it("admits no run from a schedule entry whose schedule has moved its next occurrence into the future", async () => {
+    await activeAutomation({
+      ...DEFINITION,
+      triggers: [{ type: "manual" }, { type: "interval", intervalSeconds: 3_600, summary: "Every hour" }],
+    });
+    // The entry is due, but a pause and resume (or an apply keeping the
+    // schedule) moved the schedule's next occurrence an hour out meanwhile.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      const now = Date.now();
+      state.storage.sql.exec(`UPDATE sidekick_schedules SET next_due_at = ? WHERE sidekick_id = ?`, now + 3_600_000, AUTOMATION_ID);
+      state.storage.sql.exec(
+        `UPDATE _internal_durable_alarms SET due_at = ?, retry_at = 0 WHERE kind = ? AND substr(alarm_key, 1, ?) = ?`,
+        now - 1, AUTOMATION_SCHEDULE_ALARM_KIND, `${AUTOMATION_ID}:`.length, `${AUTOMATION_ID}:`,
+      );
+    });
+    await runDurableObjectAlarm(workspaceStub());
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM sidekick_runs WHERE sidekick_id = ? AND json_extract(trigger_json, '$.kind') = 'schedule'`,
+      AUTOMATION_ID,
+    ).one().count)).toBe(0);
+  });
+
   it("removes: tombstones the row, reports archived, and is gone from the sidebar", async () => {
     await activeAutomation();
     expect((await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
@@ -1388,89 +1099,6 @@ describe("a hosted Sidekick", () => {
     await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
     await apply();
     expect(await automationRow()).toMatchObject({ lifecycle: "active", accepted_definition_revision: 2 });
-  });
-
-  it("archives an owned Sidekick with its runs and triggers, retains its history, and never restores it with the room", async () => {
-    const roomId = "00000000-0000-7000-8000-00000000ad80";
-    await createDraft(roomId);
-    await submit({ ...DEFINITION, triggers: [{ type: "manual" }, { type: "interval", intervalSeconds: 3_600, summary: "Every hour" }] });
-    await apply();
-    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "archive-owned-run" });
-    await runInDurableObject(workspaceStub(), (instance, state) => {
-      const writer = instance as unknown as { writeSidekickRegistrations: (id: string, evaluators: unknown[]) => number };
-      state.storage.transactionSync(() => writer.writeSidekickRegistrations(AUTOMATION_ID, [{
-        evaluatorId: "00000000-0000-7000-8000-00000000ad40",
-        source: { connectorType: "slack", connectionId: SLACK_CONNECTION_ID, eventType: "slack.message.posted" },
-        when: { kind: "always" },
-      }]));
-    });
-    expect(await activeRegistrations()).toBe(1);
-    expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND)).toHaveLength(1);
-
-    const archive = (archived: boolean) => runInDurableObject(workspaceStub(), (instance, state) => {
-      const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
-      return state.storage.transactionSync(() => new HostedSidekick(host, AUTOMATION_ID)
-        .setOwningRoomArchived({ ...addressed(), workstreamId: roomId, archived }, Date.now()));
-    });
-    expect(await archive(true)).toEqual({ changed: true, outcomeCode: "sidekick_archived" });
-    expect(await automationRow()).toMatchObject({ lifecycle: "deleted", paused_by: null, accepted_definition_revision: 1 });
-    expect(await workspaceStub().sidekickReadRunState({ ...addressed(), runId: started.runId }))
-      .toMatchObject({ state: "stopped", lifecycle: "deleted" });
-    expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND || alarm.kind === AUTOMATION_RUN_ALARM_KIND))
-      .toEqual([]);
-    expect(await activeRegistrations()).toBe(0);
-    await expect(runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickSubmitDefinition({
-      ...addressed(), draft: DEFINITION, evaluatorRules: null, submittedByRunId: null,
-    }))).rejects.toThrow("This Sidekick was archived");
-    await expect(apply()).rejects.toMatchObject({ code: "sidekick_not_found" });
-
-    expect(await archive(true)).toEqual({ changed: false, outcomeCode: "sidekick_already_archived" });
-    expect(await archive(false)).toEqual({ changed: false, outcomeCode: "sidekick_already_archived" });
-    expect((await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID })).items).toEqual([]);
-    expect(await workspaceStub().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, userId: AUTHOR_ID }))
-      .toEqual({ authorized: false, archived: true });
-  });
-
-  it.each(["pause", "resume"] as const)("does not resurrect a Sidekick archived during %s authorization", async (operation) => {
-    const roomId = "00000000-0000-7000-8000-00000000ad80";
-    await createDraft(roomId);
-    await submit();
-    await apply();
-    if (operation === "resume") await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
-    await runInDurableObject(workspaceStub(), async (instance, state) => {
-      const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
-      const sidekick = new HostedSidekick(host, AUTOMATION_ID);
-      const pending = sidekick[operation]({ ...addressed(), actor: actor() });
-      state.storage.transactionSync(() => sidekick.setOwningRoomArchived({ ...addressed(), workstreamId: roomId, archived: true }, Date.now()));
-      await expect(pending).rejects.toMatchObject({ code: "sidekick_not_found" });
-    });
-    expect(await automationRow()).toMatchObject({ lifecycle: "deleted", paused_by: null });
-    expect(await workspaceStub().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, userId: AUTHOR_ID }))
-      .toEqual({ authorized: false, archived: true });
-  });
-
-  it.each(["room_archive", "person", "draft"] as const)("archives a legacy %s Sidekick when its room is restored", async (stateBeforeRestore) => {
-    const roomId = "00000000-0000-7000-8000-00000000ad80";
-    await createDraft(roomId);
-    if (stateBeforeRestore !== "draft") {
-      await submit();
-      await apply();
-      await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
-    }
-    await runInDurableObject(workspaceStub(), (instance, state) => {
-      // Historical state written before room archival became terminal.
-      state.storage.sql.exec(`UPDATE automation_directory SET owning_room_archived_at = 1000, paused_by = ? WHERE automation_id = ?`,
-        stateBeforeRestore === "draft" ? null : stateBeforeRestore, AUTOMATION_ID);
-      const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
-      expect(state.storage.transactionSync(() => new HostedSidekick(host, AUTOMATION_ID)
-        .setOwningRoomArchived({ ...addressed(), workstreamId: roomId, archived: false }, Date.now())))
-        .toEqual({ changed: true, outcomeCode: "sidekick_archived" });
-      expect(state.storage.sql.exec(`SELECT owning_room_archived_at FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID).one())
-        .toEqual({ owning_room_archived_at: 1000 });
-    });
-    expect(await automationRow()).toMatchObject({ lifecycle: "deleted", paused_by: null });
-    await expect(runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickResume({ ...addressed(), actor: actor() })))
-      .rejects.toMatchObject({ code: "sidekick_not_found" });
   });
 
   it("rolls back all table and publication changes when a later declaration conflicts", async () => {
@@ -1681,7 +1309,7 @@ describe("a hosted Sidekick", () => {
   it("pauses one Sidekick without touching another's pending run", async () => {
     await activeAutomation();
     const otherId = asAutomationId(AUTOMATION_ID.replace(/ad0$/u, "ad9"));
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "personal", owningWorkstreamId: null, automationId: otherId });
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "personal", automationId: otherId });
     const other = { workspaceId: WORKSPACE_ID, automationId: otherId };
     await workspaceStub().sidekickSubmitDefinition({ ...other, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
     await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickApply({ ...other, actor: actor() }));
@@ -1707,7 +1335,6 @@ describe("a hosted Sidekick", () => {
       ...addressed(),
       authorUserId: AUTHOR_ID,
       scope: "personal",
-      owningWorkstreamId: null,
       authorityGeneration: authority.generation,
     })).toEqual({ created: true });
 
@@ -1715,7 +1342,6 @@ describe("a hosted Sidekick", () => {
       workspaceId: WORKSPACE_ID,
       authorUserId: AUTHOR_ID,
       scope: "personal",
-      owningWorkstreamId: null,
       automationId: AUTOMATION_ID,
     });
 
@@ -1731,7 +1357,6 @@ describe("a hosted Sidekick", () => {
       workspaceId: WORKSPACE_ID,
       authorUserId: AUTHOR_ID,
       scope: "personal",
-      owningWorkstreamId: null,
       automationId: AUTOMATION_ID,
     })).resolves.toEqual({ automationId: AUTOMATION_ID, created: false });
   });
@@ -1750,7 +1375,7 @@ describe("a hosted Sidekick", () => {
         resourceId, WORKSPACE_ID, resourceId, NOW, NOW,
       );
     });
-    const links = (stub: DurableObjectStub<SubstreamAgent>) => runInDurableObject(stub, (_instance, state) =>
+    const links = (stub: DurableObjectStub<AgentLoopDO>) => runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{ resource_id: string }>(`SELECT resource_id FROM workstream_resource_links`).toArray()
         .map((row) => row.resource_id));
 
@@ -1791,7 +1416,7 @@ describe("a hosted Sidekick", () => {
    * parent's own receipt path. No child object or loop is involved, which is
    * the point: what moves the run row and the review count is the projection.
    */
-  async function finishRuns(runIds: readonly string[], state = "completed"): Promise<void> {
+  async function finishRuns(runIds: readonly string[], state = "completed", sourceVersion = 2): Promise<void> {
     await runInDurableObject(workspaceStub(), async (instance: WorkspaceDO) => {
       for (const runId of runIds) {
         // The same bytes for the same run, so a repeat is the redelivery it claims to be.
@@ -1802,7 +1427,7 @@ describe("a hosted Sidekick", () => {
         const envelope = ConversationEffectEnvelopeSchema.parse({
           kind: "conversation_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
           parentKind: "automation", parentId: AUTOMATION_ID, substreamId: runId, generation: 1,
-          messageId: `finish:${runId}:${state}`, partitionKey: `${AUTOMATION_ID}:${runId}`, sourceVersion: 2,
+          messageId: `finish:${runId}:${state}`, partitionKey: `${AUTOMATION_ID}:${runId}`, sourceVersion,
           requiredProjectionVersion: null, payloadHash: conversationEffectHash(effect), effect,
         });
         await instance.receiveChildEffects({ substreamId: runId, envelopes: [envelope] });
@@ -1856,7 +1481,13 @@ describe("a hosted Sidekick", () => {
     });
   }
 
-  /** The review entry's instant moved to the past, and the object woken for it. */
+  /**
+   * The review entry's instant moved to the past, and the object's alarm armed
+   * for it. Not forced with `runDurableObjectAlarm`: that is a plain call the
+   * runtime does not know about, so it can run on top of the armed alarm's
+   * own pass and send the review a second time (the trap
+   * docs/durable-object-alarms.md records). The caller polls for the outcome.
+   */
   async function forceReviewEntry(): Promise<void> {
     await runInDurableObject(workspaceStub(), async (_instance, state) => {
       state.storage.sql.exec(
@@ -1865,8 +1496,164 @@ describe("a hosted Sidekick", () => {
       );
       await state.storage.setAlarm(Date.now());
     });
-    await runDurableObjectAlarm(workspaceStub());
   }
+
+  /** Two runs as the projection finds them working: one a person asked for, one a schedule started. */
+  async function workingRuns(prefix: string): Promise<{ requested: string; scheduled: string }> {
+    const requested = `00000000-0000-7000-8000-00000000${prefix}001`;
+    const scheduled = `00000000-0000-7000-8000-00000000${prefix}002`;
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      for (const [runId, trigger] of [
+        [requested, JSON.stringify({ kind: "manual", requestedByUserId: OUTSIDER_ID })],
+        [scheduled, JSON.stringify({ kind: "schedule", scheduleId: "00000000-0000-7000-8000-00000000ad5d",
+          scheduleKind: "calendar", plannedFor: Date.parse(NOW) })],
+      ] as const) {
+        state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
+            harness_run_id, state, summary, opening_json, run_as_user_id, coordinator_user_id, created_at, started_at,
+            completed_at, updated_at)
+          VALUES (?, ?, ?, ?, 1, ?, 'running', NULL, NULL, ?, ?, 1, 1, NULL, 1)`,
+          AUTOMATION_ID, runId, `notice:${runId}`, trigger, `${runId}-harness`, AUTHOR_ID, AUTHOR_ID);
+      }
+    });
+    return { requested, scheduled };
+  }
+
+  async function runNotices() {
+    return runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
+      recipient_user_id: string; notification_kind: string; workstream_id: string; payload_json: string; state: string;
+    }>(`SELECT recipient_user_id, notification_kind, workstream_id, payload_json, state FROM workstream_notification_intents
+         ORDER BY payload_json, recipient_user_id`).toArray().map((row) => ({ ...row, payload: JSON.parse(row.payload_json) as unknown, payload_json: undefined })));
+  }
+
+  it("tells the requester and the Sidekick's managers when a run needs input, and only the managers for a scheduled run", async () => {
+    await activeAutomation();
+    const { requested, scheduled } = await workingRuns("a");
+    await finishRuns([requested, scheduled], "needs_input");
+    const notice = (runId: string, recipient: string) => ({
+      recipient_user_id: recipient, notification_kind: "needs_input", workstream_id: AUTOMATION_ID, state: "delivered",
+      payload_json: undefined,
+      payload: { kind: "needs_input", sidekickId: AUTOMATION_ID, runId, sidekickName: "Manual helper", state: "needs_input",
+        reply: `Run ${runId} finished`, occurredAt: expect.any(Number) },
+    });
+    await expect.poll(runNotices, { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([
+      notice(requested, AUTHOR_ID), notice(requested, OUTSIDER_ID), notice(scheduled, AUTHOR_ID),
+    ].sort((a, b) => a.payload.runId.localeCompare(b.payload.runId)));
+  });
+
+  it("lists a Sidekick under Needs input while one of its runs waits on input, and sends the list again", async () => {
+    await activeAutomation();
+    const { requested } = await workingRuns("c");
+    const row = async () => {
+      const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+        .items.find((candidate) => candidate.id === AUTOMATION_ID);
+      const waterline = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workspace_sidebar_list_state WHERE list = 'automations'`).one().waterline);
+      return { needsInput: item?.needsInput, waterline };
+    };
+    const working = await row();
+    expect(working.needsInput).toBe(false);
+
+    // The run asks: its conversation projects Needs input, the shared one does not.
+    await finishRuns([requested], "needs_input");
+    const asking = await row();
+    expect(asking.needsInput).toBe(true);
+    expect(asking.waterline).toBeGreaterThan(working.waterline);
+
+    // Answered: the run works again, and the row leaves Needs input.
+    await finishRuns([requested], "running", 3);
+    const answered = await row();
+    expect(answered.needsInput).toBe(false);
+    expect(answered.waterline).toBeGreaterThan(asking.waterline);
+  });
+
+  it("shows a Sidekick working while its newest run works, and sends the list again when it stops", async () => {
+    await activeAutomation();
+    const { scheduled } = await workingRuns("d");
+    const row = async () => {
+      const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+        .items.find((candidate) => candidate.id === AUTOMATION_ID);
+      const waterline = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workspace_sidebar_list_state WHERE list = 'automations'`).one().waterline);
+      return { runState: item?.runState, waterline };
+    };
+    const working = await row();
+    expect(working.runState).toBe("working");
+    // The newest run finishes; the older one still works, but the row is the newest run's.
+    await finishRuns([scheduled], "completed");
+    const finished = await row();
+    expect(finished.runState).toBeNull();
+    expect(finished.waterline).toBeGreaterThan(working.waterline);
+  });
+
+  it("reads running while any run works, even behind a finished newer one, and sends the list again when the last stops", async () => {
+    await activeAutomation();
+    // `scheduled` is the newer of the two (same start, larger id).
+    const { requested, scheduled } = await workingRuns("f");
+    const row = async () => {
+      const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+        .items.find((candidate) => candidate.id === AUTOMATION_ID);
+      const waterline = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workspace_sidebar_list_state WHERE list = 'automations'`).one().waterline);
+      return { running: item?.running, runState: item?.runState, waterline };
+    };
+    expect(await row()).toMatchObject({ running: true, runState: "working" });
+    // The newer run finishes while the older one still works: the newest
+    // run's state is null, and the row still reads running.
+    await finishRuns([scheduled], "completed");
+    const older = await row();
+    expect(older).toMatchObject({ running: true, runState: null });
+    // The older one finishes too: nothing works, and the list is sent again.
+    await finishRuns([requested], "completed");
+    const idle = await row();
+    expect(idle).toMatchObject({ running: false, runState: null });
+    expect(idle.waterline).toBeGreaterThan(older.waterline);
+  });
+
+  it("keeps an older waiting run's question on the row while a later run works, and after it finishes", async () => {
+    await activeAutomation();
+    // `scheduled` is the newer of the two (same start, larger id).
+    const { requested, scheduled } = await workingRuns("e");
+    const row = async () => {
+      const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+        .items.find((candidate) => candidate.id === AUTOMATION_ID);
+      return { runState: item?.runState, pendingQuestion: item?.pendingQuestion, needsInput: item?.needsInput };
+    };
+    // The older run asks while the newer one works: the row reads the newer
+    // run's state with the older run's open question.
+    await finishRuns([requested], "needs_input");
+    expect(await row()).toEqual({ runState: "working", pendingQuestion: `Run ${requested} finished`, needsInput: true });
+    // The newer run finishes; the question is still open.
+    await finishRuns([scheduled], "completed");
+    expect(await row()).toEqual({ runState: null, pendingQuestion: `Run ${requested} finished`, needsInput: true });
+    // Answered: nothing waits, and the question goes.
+    await finishRuns([requested], "running", 3);
+    expect(await row()).toEqual({ runState: null, pendingQuestion: null, needsInput: false });
+  });
+
+  it("lists what wakes a Sidekick in the run trigger vocabulary, each kind once, in the order its definition names them", async () => {
+    await createDraft();
+    await submit({ ...DEFINITION, ready: false, triggers: [
+      { type: "inbound_email" }, { type: "manual" },
+      { type: "interval", intervalSeconds: 3_600, summary: "Every hour" },
+      WEBHOOK_DEFINITION.triggers[0]!, { type: "manual" },
+    ] });
+    const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+      .items.find((candidate) => candidate.id === AUTOMATION_ID);
+    expect(item?.triggerKinds).toEqual(["inbound_email", "manual", "schedule", "external_event"]);
+  });
+
+  it("tells only the requester when a run finishes, and nobody when a scheduled run does", async () => {
+    await activeAutomation();
+    const { requested, scheduled } = await workingRuns("b");
+    await finishRuns([requested, scheduled], "failed");
+    await expect.poll(runNotices, { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([{
+      recipient_user_id: OUTSIDER_ID, notification_kind: "run_finished", workstream_id: AUTOMATION_ID, state: "delivered",
+      payload_json: undefined,
+      payload: { kind: "run_finished", sidekickId: AUTOMATION_ID, runId: requested, sidekickName: "Manual helper", state: "failed",
+        reply: `Run ${requested} finished`, occurredAt: expect.any(Number) },
+    }]);
+    void scheduled;
+  });
 
   it("asks its wizard for a review once ten runs have finished, with the counts, and not before", async () => {
     await activeAutomation();
@@ -1888,7 +1675,11 @@ describe("a hosted Sidekick", () => {
       const before = provider.calls.length;
       const armedBy = Date.now();
       await finishRuns([runIds[runIds.length - 1]!]);
-      await runDurableObjectAlarm(workspaceStub());
+      // Not forced: every finish also arms the run's row entry due now, so the
+      // object's own alarm is already draining, and a forced
+      // `runDurableObjectAlarm` is a second pass on top of it that production
+      // cannot have, which takes the unsettled review entry again and sends it
+      // twice. The poll waits for that drain instead.
       await expect.poll(async () => (await reviewState()).reviews.map((review) => review.delivered_at !== null), { timeout: RUN_SETTLE_TIMEOUT_MS })
         .toEqual([true]);
       // A redelivered projection is answered by its receipt and counts nothing.
@@ -1899,7 +1690,7 @@ describe("a hosted Sidekick", () => {
       expect(directory.reviewed_at).toBeGreaterThanOrEqual(armedBy);
       const notice = JSON.parse(reviews[0]!.notice_json) as { sample: { failed: string[]; needsInput: string[]; completed: string[] } };
       expect(notice).toMatchObject({
-        kind: "sidekick_review_due", automationId: AUTOMATION_ID, definitionRevision: 1, since: null, announceTo: null,
+        kind: "sidekick_review_due", automationId: AUTOMATION_ID, definitionRevision: 1, since: null, announceTo: AUTOMATION_ID,
         finished: { completed: 10, failed: 0, needsInput: 0, stopped: 0 },
         sample: { failed: [], needsInput: [] },
       });
@@ -2009,66 +1800,11 @@ describe("a hosted Sidekick", () => {
     try {
       const resumedAt = Date.now();
       await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
-      await runDurableObjectAlarm(workspaceStub());
+      // The resume armed the object's alarm; a forced pass on top of it could send twice.
       await expect.poll(() => sent, { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([owed]);
       const resent = (await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND);
       expect(resent!.due_at).toBeGreaterThan(resumedAt);
       expect((await reviewState()).reviews.find((review) => review.review_id === owed)?.delivered_at).toBeNull();
-    } finally {
-      send.mockRestore();
-    }
-  });
-
-  it("announces a review's change in the author's Personal Channel for a personal Sidekick, and in General for an Organization's", async () => {
-    await activeAutomation();
-    const generalId = asSpaceId("00000000-0000-7000-8000-00000000ad0e");
-    const personalId = asSpaceId("00000000-0000-7000-8000-00000000ad0f");
-    // The Organization's Spaces, opened as a new Organization's are: General
-    // and the creator's Personal Channel in the one object call.
-    const opened = await workspaceStub().initializeWorkspace(WORKSPACE_ID, "wnam", {
-      creatorUserId: AUTHOR_ID, spaceId: generalId, personalSpaceId: personalId, authorityGeneration: 1,
-    });
-    if (!opened.spacesReady) throw new Error("the Organization's Spaces did not open");
-    const scope = { kind: "sidekick" as const, automationId: AUTOMATION_ID, authoring: true };
-    const channels = async () => (await workspaceStub().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope }))
-      .conversations.filter((conversation) => conversation.kind === "space").map((conversation) => conversation.parentId);
-
-    // A personal Sidekick's wizard can name its author's Personal Channel, and
-    // post there once per key, from Rally, under the Sidekick's name. A run's
-    // scope, which is not the authoring conversation's, lists no Channel.
-    expect(await channels()).toEqual([personalId]);
-    expect((await workspaceStub().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope: { kind: "sidekick", automationId: AUTOMATION_ID } }))
-      .conversations.filter((conversation) => conversation.kind === "space")).toEqual([]);
-    const request = { workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, spaceId: personalId, automationId: AUTOMATION_ID,
-      key: "sidekick-review:ad90", text: "Now says so in two sentences, after a review." };
-    const posted = await workspaceStub().postSidekickChannelMessage(request);
-    expect(posted).toMatchObject({ ok: true, replayed: false });
-    expect(await workspaceStub().postSidekickChannelMessage(request))
-      .toEqual({ ok: true, messageId: (posted as { messageId: string }).messageId, replayed: true });
-    expect(await workspaceStub().postSidekickChannelMessage({ ...request, spaceId: generalId }))
-      .toEqual({ ok: false, code: "space_not_found" });
-    const feed = await workspaceStub().listChannelFeed({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, spaceId: personalId, cursor: null });
-    if (!feed.ok) throw new Error(feed.code);
-    expect(feed.page.items.flatMap((item) => (item.kind === "message" ? [item.message.body] : [])))
-      .toContain("**Manual helper**\n\nNow says so in two sentences, after a review.");
-
-    // An Organization's Sidekick announces in General, and its notice says so.
-    await runInDurableObject(workspaceStub(), async (_instance, state) => {
-      state.storage.sql.exec(`UPDATE automation_directory SET scope = 'workspace', runs_since_review = ? WHERE automation_id = ?`,
-        SIDEKICK_REVIEW_RUN_FLOOR, AUTOMATION_ID);
-      state.storage.sql.exec(
-        `INSERT INTO _internal_durable_alarms (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
-         VALUES (?, ?, ?, NULL, 0, 0, NULL, ?, ?)`,
-        SIDEKICK_REVIEW_ALARM_KIND, `${AUTOMATION_ID}:review`, Date.now() - 1, Date.now(), Date.now(),
-      );
-      await state.storage.setAlarm(Date.now());
-    });
-    expect(await channels()).toEqual([generalId]);
-    const send = interceptReviewSends(async () => {});
-    try {
-      await runDurableObjectAlarm(workspaceStub());
-      await expect.poll(async () => (await reviewState()).reviews.length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
-      expect((JSON.parse((await reviewState()).reviews[0]!.notice_json) as { announceTo: string | null }).announceTo).toBe(generalId);
     } finally {
       send.mockRestore();
     }
@@ -2079,9 +1815,9 @@ describe("a hosted Sidekick", () => {
     const runId = (suffix: string) => `00000000-0000-7000-8000-00000000${suffix.padStart(4, "0")}`;
     const seed = (id: string, state: string, revision: number, at: number) => `
       INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision, harness_run_id,
-        state, summary, opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at, completed_at, updated_at)
+        state, summary, opening_json, run_as_user_id, coordinator_user_id, created_at, started_at, completed_at, updated_at)
       VALUES ('${AUTOMATION_ID}', '${id}', 'manual:${id}', '{"kind":"manual"}', ${revision}, '${id}-harness', '${state}',
-        NULL, NULL, NULL, '${AUTHOR_ID}', '${AUTHOR_ID}', ${at}, ${at}, ${state === "needs_input" ? "NULL" : at}, ${at})`;
+        NULL, NULL, '${AUTHOR_ID}', '${AUTHOR_ID}', ${at}, ${at}, ${state === "needs_input" ? "NULL" : at}, ${at})`;
     await runInDurableObject(workspaceStub(), async (_instance, state) => {
       // Twenty-three completed, then three failures newer than all of them, then
       // two stops newer still, two runs waiting for input, and two runs under
@@ -2109,7 +1845,8 @@ describe("a hosted Sidekick", () => {
     });
     try {
       const requestedBy = Date.now();
-      await runDurableObjectAlarm(workspaceStub());
+      // The alarm armed above delivers the entry; forcing a second pass on top
+      // of it could send the request twice.
       await expect.poll(async () => (await reviewState()).reviews.length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
       const { review_id: reviewId, notice_json } = (await reviewState()).reviews[0]!;
       const notice = JSON.parse(notice_json) as {
@@ -2298,6 +2035,30 @@ describe("a hosted Sidekick", () => {
     expect(message).toContain("draft.triggers");
   });
 
+  it("refuses a run whose stored trigger does not parse by the field it got wrong", async () => {
+    await activeAutomation();
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "stored-trigger" });
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE sidekick_runs SET trigger_json = ? WHERE sidekick_id = ? AND run_id = ?`,
+        JSON.stringify({ kind: "manual" }), AUTOMATION_ID, started.runId);
+    });
+    const rejection = await workspaceStub().sidekickListRuns({ ...addressed(), actor: actor() })
+      .then(() => null, (error: unknown) => (error as Error).message);
+    expect(rejection).toMatch(/^sidekick_run_trigger_invalid:.*requestedByUserId/u);
+  });
+
+  it("keeps a draft personal when its definition suggests the retired Thread scope", async () => {
+    await createDraft();
+    // A stored suggestion from a Thread-owned draft, re-submitted as the model read it back.
+    await workspaceStub().sidekickSubmitDefinition({
+      ...addressed(), draft: { ...DEFINITION, ready: false, suggestedScope: "workstream" } as never,
+      evaluatorRules: null, submittedByRunId: null,
+    });
+    const scope = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ scope: string }>(
+      `SELECT scope FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID).one().scope);
+    expect(scope).toBe("personal");
+  });
+
   it("rechecks the email trigger after delegate authorization yields", async () => {
     await activeAutomation();
     await submit({ ...DEFINITION, definitionVersion: 2, triggers: [{ type: "manual" }] });
@@ -2311,7 +2072,7 @@ describe("a hosted Sidekick", () => {
       };
       return new HostedSidekick(host, AUTOMATION_ID).admitInboundEmail({
         ...addressed(), emailAddress: EMAIL_ADDRESS, resendEmailId: "removed-email-trigger",
-        senderUserId: AUTHOR_ID, receivedAt: Date.parse(NOW), payloadRef: "emails/removed-trigger",
+        senderUserId: AUTHOR_ID, senderAuthenticated: true, receivedAt: Date.parse(NOW), payloadRef: "emails/removed-trigger",
         resourceId: RESOURCE_ID, textContent: "Please summarize this.", structuredContent: { subject: "Summary" },
       });
     });
@@ -2326,6 +2087,7 @@ describe("a hosted Sidekick", () => {
       emailAddress: EMAIL_ADDRESS,
       resendEmailId: "resend-email-0001",
       senderUserId: AUTHOR_ID,
+      senderAuthenticated: true,
       receivedAt: Date.parse(NOW),
       payloadRef: "emails/resend-email-0001",
       resourceId: "00000000-0000-7000-8000-00000000ad60",
@@ -2357,6 +2119,49 @@ describe("a hosted Sidekick", () => {
       { resend_email_id: "resend-email-0002", outcome_code: "email_sender_not_authorized" },
       { resend_email_id: "resend-email-0003", outcome_code: "sidekick_email_route_mismatch" },
     ]);
+    // Someone this personal Sidekick is shared with may email it, as they may read it.
+    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(
+      `INSERT INTO sidekick_audience (sidekick_id, user_id, added_at) VALUES (?, ?, ?)`, AUTOMATION_ID, OUTSIDER_ID, Date.parse(NOW)));
+    const shared = await workspaceStub().sidekickAdmitInboundEmail({ ...email, resendEmailId: "resend-email-0004", senderUserId: OUTSIDER_ID });
+    expect(shared).toMatchObject({ admitted: true, outcomeCode: "admitted" });
+    // Each run acts as its sender alone: the author as the delegate they are,
+    // the person it is shared with under their own access, never the author's.
+    const principals = await runInDurableObject(workspaceStub(), (_instance, state) =>
+      state.storage.sql.exec<{ run_id: string; coordinator_user_id: string | null; requester_user_id: string | null }>(
+        `SELECT run_id, coordinator_user_id, requester_user_id FROM sidekick_runs WHERE sidekick_id = ? ORDER BY occurrence_key`, AUTOMATION_ID,
+      ).toArray());
+    expect(principals).toEqual([
+      { run_id: admitted.runId, coordinator_user_id: AUTHOR_ID, requester_user_id: null },
+      { run_id: shared.runId, coordinator_user_id: OUTSIDER_ID, requester_user_id: OUTSIDER_ID },
+    ]);
+  });
+
+  it("acts on mail only when the From domain authenticated it, and admits a guest only from the Sidekick's list on every scope", async () => {
+    const guest = asUserId("00000000-0000-7000-8000-00000000ad0a");
+    await env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, access_class, last_seen_at)
+      VALUES (?, ?, 'active', NULL, 'guest', ?)`).bind(WORKSPACE_ID, guest, NOW).run();
+    await activeAutomation();
+    let ordinal = 0;
+    const mail = (senderUserId: string, senderAuthenticated = true) => workspaceStub().sidekickAdmitInboundEmail({
+      ...addressed(), emailAddress: EMAIL_ADDRESS, resendEmailId: `guest-email-${String(ordinal++).padStart(4, "0")}`,
+      senderUserId: asUserId(senderUserId), senderAuthenticated, receivedAt: Date.parse(NOW), payloadRef: "emails/guest",
+      resourceId: RESOURCE_ID, textContent: "Please summarize this.", structuredContent: { subject: "Summary" },
+    }).then((result) => result.outcomeCode);
+    // The author's own address, but the receiving server could not tie the
+    // message to it: the From header is only a claim, and the run would act as them.
+    expect(await mail(AUTHOR_ID, false)).toBe("email_sender_unauthenticated");
+    expect(await mail(guest)).toBe("email_sender_not_authorized");
+    const sql = (statement: string, ...bindings: SqlStorageValue[]) => runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(statement, ...bindings);
+    });
+    // On a personal Sidekick's list, the guest's mail runs, under their own access.
+    await sql(`INSERT INTO sidekick_audience (sidekick_id, user_id, added_at) VALUES (?, ?, ?)`, AUTOMATION_ID, guest, Date.parse(NOW));
+    expect(await mail(guest)).toBe("admitted");
+    // Shared with the Organization instead: every member, and no guest.
+    await sql(`DELETE FROM sidekick_audience WHERE sidekick_id = ?`, AUTOMATION_ID);
+    await sql(`UPDATE automation_directory SET scope = 'workspace' WHERE automation_id = ?`, AUTOMATION_ID);
+    expect(await mail(guest)).toBe("email_sender_not_authorized");
+    expect(await mail(OUTSIDER_ID)).toBe("admitted");
   });
 
   it("answers a run conversation's terminal deadline from its own projection, not a Channel's", async () => {
@@ -2463,7 +2268,7 @@ describe("a hosted Sidekick", () => {
     // time as unhandled, which fails the run even when the assertion held.
     await runInDurableObject(workspaceStub(), async (instance: WorkspaceDO) => {
       await expect(instance.receiveChildEffects({ substreamId: started.runId, envelopes: [latest] }))
-        .resolves.toEqual({ accepted: [{ messageId: latest.messageId, payloadHash: latest.payloadHash }] });
+        .resolves.toEqual({ accepted: [{ messageId: latest.messageId, payloadHash: latest.payloadHash }], notificationIntentIds: [] });
       await expect(instance.receiveChildEffects({ substreamId: started.runId, envelopes: [conflicting] }))
         .rejects.toThrow("substream_effect_idempotency_conflict");
     });

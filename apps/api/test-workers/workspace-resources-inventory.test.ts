@@ -19,6 +19,7 @@ import { asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import { writeSidekickDirectoryRow, writeSidekickRegistrations } from "./helpers/sidekick";
 
 /** Its own workspace: a shared id makes this file queue behind its siblings. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ea0");
@@ -78,12 +79,6 @@ async function outboxRow(objectRef: string): Promise<Record<string, unknown> | n
 beforeEach(async () => {
   await reset();
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
-  // Close the Space cutover, the way the path that opens a new Organization
-  // does before its first session. A `pending` one is due at the epoch — that
-  // is how the fleet migration starts without anybody signing in — so an
-  // object left with one wakes into its full alarm handler, whose resource
-  // sweep would reap the drafts these cases are about before they ask for it.
-  await workspace().finalizeSpaceBootstrap({ workspaceId: WORKSPACE_ID });
   await disarm();
 });
 
@@ -212,20 +207,18 @@ describe("connector resources", () => {
       connectionId: CONNECTION, provider: "canva", providerResourceId: "design", resourceType: "canva_design",
       title: "Design", canonicalUrl: null, at: AT });
     const evaluatorId = nextId();
-    const destination = { kind: "automation", automationId: nextId() };
-    const project = (sourceGeneration: number, active: boolean) => workspace().applyExternalEventRegistrations({
-      schemaVersion: 1, workspaceId: WORKSPACE_ID, destination, sourceGeneration,
-      evaluators: active ? [{ evaluatorId, source: { connectorType: "canva", connectionId: CONNECTION,
-        eventType: "design.revised", resourceId }, when: { kind: "always" } }] : [],
-    });
-    await project(1, true);
+    const automationId = nextId();
+    await writeSidekickDirectoryRow(env, { automationId, workspaceId: WORKSPACE_ID, authorUserId: UPLOADER,
+      lifecycle: "active", scope: "personal", title: "Design watcher", description: "" });
+    const project = (active: boolean) => writeSidekickRegistrations(env, WORKSPACE_ID, automationId,
+      active ? [{ evaluatorId, source: { connectorType: "canva", connectionId: CONNECTION,
+        eventType: "design.revised", resourceId }, when: { kind: "always" } }] : []);
+    await project(true);
     const schedule = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
       "SELECT enabled, interval_seconds FROM schedules WHERE id = ?", evaluatorId,
     ).one());
     expect(await schedule()).toEqual({ enabled: 1, interval_seconds: 600 });
-    await project(2, false);
-    expect(await schedule()).toEqual({ enabled: 0, interval_seconds: 600 });
-    await project(1, true);
+    await project(false);
     expect(await schedule()).toEqual({ enabled: 0, interval_seconds: 600 });
   });
   it("persists and replaces protected access separately from ordinary resource metadata", async () => {
@@ -379,114 +372,6 @@ describe("resource watches", () => {
       next_poll_at: null,
       enabled: 1,
     }]);
-  });
-});
-
-describe("inbound email receipts", () => {
-  const claim = (leaseExpiresAt = "2099-01-01T00:00:00.000Z") =>
-    workspace().claimInboundEmailReceipt({
-      workspaceId: WORKSPACE_ID,
-      resendEmailId: "resend-email-1",
-      workstreamId: WORKSTREAM,
-      svixId: "svix-1",
-      receivedAt: AT,
-      leaseExpiresAt,
-    });
-
-  it("claims once, holds concurrents off, and settles under its lease", async () => {
-    const claimed = await claim();
-    expect(claimed.outcome).toBe("claimed");
-    expect(claimed.leaseToken).not.toBeNull();
-
-    expect((await claim()).outcome).toBe("in_progress");
-
-    expect(await workspace().settleInboundEmailProcessed({
-      workspaceId: WORKSPACE_ID,
-      resendEmailId: "resend-email-1",
-      workstreamId: WORKSTREAM,
-      leaseToken: "somebody-else",
-      payloadRef: "payload/one",
-      processedAt: AT,
-    })).toEqual({ outcome: "lease_lost" });
-
-    expect(await workspace().settleInboundEmailProcessed({
-      workspaceId: WORKSPACE_ID,
-      resendEmailId: "resend-email-1",
-      workstreamId: WORKSTREAM,
-      leaseToken: claimed.leaseToken!,
-      payloadRef: "payload/one",
-      processedAt: AT,
-    })).toEqual({ outcome: "processed" });
-
-    expect((await claim()).outcome).toBe("already_processed");
-  });
-
-  it("takes over an expired lease and reports a renewal on it as lost", async () => {
-    const interrupted = await claim("2000-01-01T00:00:00.000Z");
-    expect(interrupted.outcome).toBe("claimed");
-
-    const reclaimed = await claim();
-    expect(reclaimed.outcome).toBe("claimed");
-    expect(reclaimed.leaseToken).not.toBe(interrupted.leaseToken);
-
-    expect(await workspace().renewInboundEmailLease({
-      workspaceId: WORKSPACE_ID,
-      resendEmailId: "resend-email-1",
-      workstreamId: WORKSTREAM,
-      leaseToken: interrupted.leaseToken!,
-      leaseExpiresAt: "2099-01-01T00:00:00.000Z",
-    })).toEqual({ outcome: "lease_lost" });
-    expect(await workspace().renewInboundEmailLease({
-      workspaceId: WORKSPACE_ID,
-      resendEmailId: "resend-email-1",
-      workstreamId: WORKSTREAM,
-      leaseToken: reclaimed.leaseToken!,
-      leaseExpiresAt: "2099-01-02T00:00:00.000Z",
-    })).toEqual({ outcome: "renewed" });
-  });
-
-  it("records exactly one version for an email however many times it is delivered", async () => {
-    const upsert = (contentRef: string, at: string) => workspace().upsertInboundEmailResource({
-      workspaceId: WORKSPACE_ID,
-      candidateResourceId: nextId(),
-      resendEmailId: "resend-email-2",
-      title: "Quarterly update",
-      contentRef,
-      metadataJson: "{}",
-      at,
-    });
-    const versionCount = (resourceId: string) =>
-      runInDurableObject(workspace(), (_instance, state) => (
-        state.storage.sql.exec<{ count: number }>(
-          `SELECT COUNT(*) AS count FROM resource_versions WHERE resource_id = ?`,
-          resourceId,
-        ).one()
-      ));
-    const first = await upsert("payload/email-one", AT);
-    // The routed version followed its insert with an unconditional refresh,
-    // which fired the semantic-version trigger and recorded a phantom second
-    // version of every email on its first ingestion.
-    expect((await versionCount(first.resourceId)).count).toBe(1);
-
-    // The realistic replay — a crashed delivery whose lease was taken over —
-    // re-derives byte-identical values from the same retrieved message, its
-    // payload pointer included. SQLite's UPDATE-OF triggers fire on a column
-    // being assigned, not changed, so an identical replay must write nothing.
-    const replay = await upsert("payload/email-one", "2026-08-29T01:00:00.000Z");
-    expect(replay.resourceId).toBe(first.resourceId);
-    expect((await versionCount(first.resourceId)).count).toBe(1);
-
-    // Genuinely changed content is a new state of the resource and is kept.
-    const changed = await upsert("payload/email-one-refetched", "2026-08-29T02:00:00.000Z");
-    expect(changed.resourceId).toBe(first.resourceId);
-    const refreshed = await runInDurableObject(workspace(), (_instance, state) => (
-      state.storage.sql.exec<{ content_ref: string }>(
-        `SELECT content_ref FROM resources WHERE id = ?`,
-        first.resourceId,
-      ).one()
-    ));
-    expect(refreshed.content_ref).toBe("payload/email-one-refetched");
-    expect((await versionCount(first.resourceId)).count).toBe(2);
   });
 });
 

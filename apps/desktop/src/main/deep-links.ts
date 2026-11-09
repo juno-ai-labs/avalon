@@ -1,13 +1,28 @@
-import { parseSidekickLinkPathTarget, parseSpaceLinkPathTarget, parseWorkstreamLinkTarget, sidekickDeepLink, spaceDeepLink, workstreamDeepLinkFromParsedTarget } from "@rally/contracts/workstream-links";
+import { linkDeepLink, organizationShellDeepLink, parseLinkTarget, parseOrganizationShellTarget } from "@rally/contracts/links";
+import { isDesktopDeepLinkProtocol } from '@rally/contracts/desktop-deep-link';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
+import { parseWorkspaceAddressedDeepLink } from '@rally/contracts/workspace-target';
 
-/** The exact native URL shapes the main process will deliver to a renderer. */
+/** What the deep-link error window says for a retired link: the web app's sentence. */
+export { RETIRED_LINK_MESSAGE } from "@rally/contracts/links";
+
+/**
+ * The exact native URL shapes the main process will deliver to a renderer.
+ * An old Thread deep link (`spaces/<space>/channels/<thread>`), which a click
+ * on a pre-pivot link in Slack or mail still hands the app, is delivered as
+ * the Canvas deep link of the Thread's id: `parseLinkTarget` reads it so, as
+ * it reads the Thread's HTTPS link, because the conversion kept a Thread with
+ * artifacts as the Canvas of its id.
+ */
 export function acceptedDeepLink(rawUrl: string): string | null {
   try {
-    return parseDesktopDeepLinkIntent(rawUrl) ? new URL(rawUrl).toString() : null;
+    if (parseDesktopDeepLinkIntent(rawUrl)) return new URL(rawUrl).toString();
   } catch {
     return null;
   }
+  const target = parseLinkTarget(rawUrl, { webBaseUrl: [] });
+  const minted = target ? linkDeepLink(target) : null;
+  return minted && parseDesktopDeepLinkIntent(minted) ? minted : null;
 }
 
 /** Connector completions are also delivered to a legacy initiating Settings renderer. */
@@ -26,17 +41,39 @@ export function shouldDeliverConnectorResultToSettings(rawUrl: string): boolean 
   return intent?.kind === 'connector-result' && intent.target === null;
 }
 
-/** Only the two associated Rally hosts and the Space, Channel, and Sidekick path families enter here. */
-export function workstreamHttpsDeepLink(rawUrl: string): string | null {
-  try {
-    const url = new URL(rawUrl);
-    if (!['https://rallywith.ai', 'https://www.rallywith.ai'].includes(url.origin)
-      || url.username || url.password || !url.pathname.startsWith('/app/')) return null;
-    const space = !url.search && !url.hash ? parseSpaceLinkPathTarget(url.pathname) : null;
-    if (space) return spaceDeepLink(space);
-    const sidekick = !url.search && !url.hash ? parseSidekickLinkPathTarget(url.pathname) : null;
-    if (sidekick) return sidekickDeepLink(sidekick);
-    const target = parseWorkstreamLinkTarget(rawUrl, { webBaseUrl: ['https://rallywith.ai', 'https://www.rallywith.ai'] });
-    return target ? workstreamDeepLinkFromParsedTarget(target) : null;
-  } catch { return null; }
+const ASSOCIATED_ORIGINS = ['https://rallywith.ai', 'https://www.rallywith.ai'];
+
+/**
+ * Only the two associated Rally hosts enter here, and on them only the Canvas
+ * and Sidekick path families and the web app's Organization URL
+ * (`/app/workspaces/<region>/<organization>`, with its landing, Canvas or
+ * Sidekick hash route), which open the same screen the web app would.
+ * Anything else, a retired Space, Channel, Breakout or Thread link and any
+ * other hash route included, stays in the browser, where the site's handoff
+ * page or the web app answers it.
+ */
+export function httpsLinkDeepLink(rawUrl: string): string | null {
+  if (!rawUrl.startsWith('https://')) return null;
+  const target = parseLinkTarget(rawUrl, { webBaseUrl: ASSOCIATED_ORIGINS });
+  if (target) return linkDeepLink(target);
+  const shell = parseOrganizationShellTarget(rawUrl, { webBaseUrl: ASSOCIATED_ORIGINS });
+  return shell ? organizationShellDeepLink(shell) : null;
+}
+
+/**
+ * Whether a deep link the app refused names a Space, Channel, Breakout or
+ * Thread, which no longer exist: a deep link under `spaces` or `workstreams`,
+ * addressed or not, that `acceptedDeepLink` does not read (a Thread's own deep
+ * link opens its Canvas). Shape only, as on the site: nothing it names is read.
+ * Main says so in its deep-link error window rather than dropping the link
+ * without a word. An HTTPS link never reaches here: `continue-activity` hands
+ * back to the browser any link `httpsLinkDeepLink` does not claim, and the
+ * web app's entry card says the same sentence for a retired path.
+ */
+export function isRetiredDeepLink(rawUrl: string): boolean {
+  let url: URL;
+  try { url = new URL(rawUrl); } catch { return false; }
+  if (!isDesktopDeepLinkProtocol(url.protocol) || acceptedDeepLink(rawUrl)) return false;
+  const destination = parseWorkspaceAddressedDeepLink(url)?.destination ?? url;
+  return destination.hostname === 'spaces' || destination.hostname === 'workstreams';
 }

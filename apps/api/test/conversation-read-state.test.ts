@@ -1,7 +1,7 @@
 /**
  * Which conversation a read acknowledgement moves the waterline on.
  *
- * Read state is substream-owned: every `SubstreamAgent` keeps its own attention
+ * Read state is substream-owned: every `AgentLoopDO` keeps its own attention
  * ordinals and its own `member_attention` row, and a child's ordinals are
  * deliberately not comparable to Main's
  * ([`workstream-durable-object.md`](../../../docs/workstream-durable-object.md)).
@@ -26,7 +26,6 @@ import { conversationObjectName } from "../src/durable-objects/names";
 import type { AuthContext, Env, HonoAppEnv } from "../src/env";
 import { errorHandler } from "../src/middleware/errors";
 import { conversationRoutes } from "../src/routes/conversations";
-import { workstreamRoutes } from "../src/routes/workstreams";
 import {
   createCloudflareTestBinding,
   createTestD1Database,
@@ -49,7 +48,7 @@ const auth: AuthContext = {
   role: "member",
 };
 
-type ParentKind = "workstream" | "automation";
+type ParentKind = "canvas" | "automation";
 
 interface Recorded {
   /**
@@ -143,7 +142,7 @@ function environment(recorded: Recorded): Env {
 
 function recorder(
   authorized = true,
-  parentKind: ParentKind = "workstream",
+  parentKind: ParentKind = "canvas",
   archived = false,
 ): Recorded {
   return {
@@ -174,7 +173,6 @@ async function request(
     c.set("auth", auth);
     await next();
   });
-  app.route("/workstreams", workstreamRoutes);
   app.route("/conversations", conversationRoutes);
   app.onError(errorHandler);
   const response = await app.request(
@@ -320,31 +318,6 @@ describe("acknowledging a read", () => {
     })]);
     expect(recorded.authorizeViewer).toHaveBeenCalledWith({
       workspaceId, parentId: automationId, substreamId: "0", userId,
-    });
-  });
-
-  it("still answers a released desktop on the work-stream route, for Main and only Main", async () => {
-    // The Worker deploys ahead of the desktop and the updater installs on quit,
-    // so a build that is open while this ships keeps sending here. A 404 would
-    // not just leave its dividers up: the client re-requests a socket snapshot
-    // on a failed acknowledgement and the snapshot re-runs the send. The shim
-    // answers Main, which is all that client ever addressed.
-    const recorded = recorder();
-
-    const answer = await request(recorded, `/workstreams/${workstreamId}/read-state`, read);
-
-    expect(answer.status).toBe(200);
-    expect([...recorded.objectNames]).toEqual([
-      conversationObjectName("global", workspaceId, workstreamId),
-    ]);
-    expect(recorded.productRequests).toEqual([expect.objectContaining({
-      operation: "acknowledge_read",
-      input: read,
-    })]);
-    // It goes through the parent rather than straight to the object, which is
-    // the `authorizeViewer` the route it replaces skipped.
-    expect(recorded.authorizeViewer).toHaveBeenCalledWith({
-      workspaceId, parentId: workstreamId, substreamId: "0", userId,
     });
   });
 

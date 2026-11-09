@@ -1,4 +1,5 @@
 import { navigateAppRoute } from './app-navigation';
+import { LANDING_ROUTE } from './landing';
 import {
   createContext,
   type PropsWithChildren,
@@ -11,10 +12,9 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
+import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceAttention, WorkspaceDepartureOutcome } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
-import { PHONE_LAYOUT_MAX_WIDTH } from '@rally/ui/lib/phone-layout';
 import {
   workspaceTargetsEqual,
   type WorkspaceTarget,
@@ -28,14 +28,13 @@ import type {
 import { accountReconnectRequired, workspaceActivationFailureCode } from '../../common/workspace-activation-error';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
-import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
 import { CollaborationSessionProvider, shellCapabilities, type ConnectorSetupCapability, type PendingConnectorOAuth } from './collaboration-session';
 export type { PendingConnectorOAuth } from './collaboration-session';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { workspaceFromSession } from './session-workspace';
 import { accountOnboardingQueryKey } from './account-onboarding-query';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
-import { markDeepLinkWorkstreamNavigation } from './deep-link-navigation';
+import { canvasLinkRoute } from './canvases';
 import { clearAllLocalCache, clearWorkspaceLocalCache } from './local-cache';
 import {
   readDevicePreferences,
@@ -127,6 +126,12 @@ export interface AppSessionValue {
   setPendingConnectorOAuth: (attempt: PendingConnectorOAuth | null) => void;
   clearPendingInvitation: () => void;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
+  /**
+   * Another Organization's attention, for its account-menu count: on the Mac
+   * with that Organization's stored credential, in the browser through the
+   * identity cookie (`GET /browser/workspaces/attention`).
+   */
+  getWorkspaceAttention: (input: { region: Region; workspaceId: string }) => Promise<WorkspaceAttention>;
   activateWorkspace: (
     region: Region,
     workspaceId: string,
@@ -186,6 +191,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'declineInvitation'
   | 'exchangeDesktopTicket'
   | 'getOnboardingState'
+  | 'getWorkspaceAttention'
   | 'getAccountOnboarding'
   | 'updateAccountOnboarding'
   | 'getOrganizationNameSuggestion'
@@ -197,7 +203,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'onDeepLink'
   | 'onSessionChanged'
   | 'openExternal'
-  | 'openSidekicks'
+  | 'openSidekick'
   | 'openSettings'
   | 'refreshSession'
   | 'reselectActiveWorkspace'
@@ -463,6 +469,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
 
   const getOnboardingState = useCallback(
     () => bridge.getOnboardingState(),
+    [bridge],
+  );
+  const getWorkspaceAttention = useCallback(
+    (input: { region: Region; workspaceId: string }) => bridge.getWorkspaceAttention(input),
     [bridge],
   );
 
@@ -949,7 +959,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     };
     const runInDeepLinkWorkspace = async (
       target: WorkspaceTarget,
-      action: (targetApi: RallyApi) => void | Promise<void>,
+      action: (targetApi: RallyApi, workspaceChanged: boolean) => void | Promise<void>,
     ): Promise<void> => {
       const open = async (): Promise<void> => {
         const entered = await enterDeepLinkWorkspace(target);
@@ -960,7 +970,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         if (entered.workspaceChanged) {
           navigateAppRoute('/opening');
         }
-        await action(entered.api);
+        await action(entered.api, entered.workspaceChanged);
       };
       try {
         await open();
@@ -1037,38 +1047,15 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         }
         return activeSession;
       };
-      if (intent.kind === 'new-workstream') {
-        if (!requireActiveWorkspace('Sign in before starting a thread.')) return;
-        setDeepLinkError(null);
-        markSurfaceEntrypoint(navigation.entrypoint);
-        // A Channel is started from a Space, which this link does not name, so
-        // it opens the app; the sidebar's plus asks for the Space.
-        navigateAppRoute('/');
-        return;
-      }
-      if (intent.kind === 'space') {
-        const openSpace = (): void => {
+      if (intent.kind === 'canvas') {
+        await runInDeepLinkWorkspace(intent.target, () => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          navigateAppRoute(`/spaces/${intent.spaceId}`);
-        };
-        if (intent.target) await runInDeepLinkWorkspace(intent.target, openSpace);
-        else if (requireActiveWorkspace('Sign in before opening this channel link.')) openSpace();
-        return;
-      }
-      if (intent.kind === 'workstream') {
-        const openWorkstream = (): void => {
-          setDeepLinkError(null);
-          markSurfaceEntrypoint(navigation.entrypoint);
-          markDeepLinkWorkstreamNavigation(intent.workstreamId);
-          const query = new URLSearchParams();
-          if (intent.substreamId) query.set('substream', intent.substreamId);
-          if (intent.spaceId) query.set('space', intent.spaceId);
-          if (intent.artifactId) query.set('artifact', intent.artifactId);
-          navigateAppRoute(`/workstreams/${intent.workstreamId}${query.size ? `?${query}` : ''}`);
-        };
-        if (intent.target) await runInDeepLinkWorkspace(intent.target, openWorkstream);
-        else if (requireActiveWorkspace('Sign in before opening this thread link.')) openWorkstream();
+          // `?artifact=` or `?turn=&sequence=`, as the browser's shell writes
+          // them, so the Canvas screen opens the artifact, or scrolls to the
+          // message a push named, one way whichever host the link reached.
+          navigateAppRoute(canvasLinkRoute(intent));
+        });
         return;
       }
       if (intent.kind === 'sidekick') {
@@ -1090,24 +1077,30 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return;
       }
       if (intent.kind === 'activity') {
-        const openActivity = (): void => {
+        // A link that names Activity opens the section; entering it opens its
+        // top row in the pane (`navigation-sidebar.tsx`), and one already in
+        // Activity leaves the pane where it is. After an Organization change
+        // the pane is parked on `/opening` and the shell remounts with
+        // Activity stored, so the pane is given the landing a launch has,
+        // which the top row then replaces.
+        const openActivity = (_api?: RallyApi, workspaceChanged = false): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          const ui = useUiStore.getState();
-          ui.setSidebarSection('activity');
-          // At phone width the sidebar is a sheet; open it so the link lands
-          // somewhere visible. Wider, an open sheet would leave the main pane inert.
-          const phone = window.innerWidth <= PHONE_LAYOUT_MAX_WIDTH;
-          // A changed organization parked the pane on `/opening`; Activity
-          // names no route, so land where the app would. The sidebar resets
-          // the sheet on that navigation, so ask it to open the sheet then.
-          if (window.location.hash === '#/opening') {
-            if (phone) ui.setSheetAfterNavigation(true);
-            navigateAppRoute('/');
-          } else if (phone) ui.setSidebarOpen(true);
+          useUiStore.getState().setSidebarSection('activity');
+          if (workspaceChanged) navigateAppRoute(LANDING_ROUTE);
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openActivity);
-        else if (requireActiveWorkspace('Sign in before opening Activity.')) openActivity();
+        else if (requireActiveWorkspace('Sign in before opening Rally.')) openActivity();
+        return;
+      }
+      if (intent.kind === 'home') {
+        // The web app's Organization URL with no hash: `#/`, where the
+        // landing restores the route this device last had open.
+        await runInDeepLinkWorkspace(intent.target, () => {
+          setDeepLinkError(null);
+          markSurfaceEntrypoint(navigation.entrypoint);
+          navigateAppRoute('/');
+        });
         return;
       }
       if (intent.kind === 'new-automation') {
@@ -1119,7 +1112,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           navigateAppRoute('/');
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openAutomation);
-        else if (requireActiveWorkspace('Sign in before creating an automation.')) openAutomation();
+        else if (requireActiveWorkspace('Sign in before creating a Sidekick.')) openAutomation();
         return;
       }
       if (intent.kind === 'slack-link') {
@@ -1400,6 +1393,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         }
       },
       getOnboardingState,
+      getWorkspaceAttention,
       activateWorkspace,
       acceptInvitation,
       declineInvitation,
@@ -1437,6 +1431,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       exchangingTicket,
       finishWorkspaceSetup,
       getOnboardingState,
+      getWorkspaceAttention,
       pendingInvitation,
       pendingAccessRequestId,
       pendingConnectorOAuth,
@@ -1459,11 +1454,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     ],
   );
 
-  const createSidekick = useCallback(() => bridge.openSidekicks(NEW_SIDEKICK_TARGET), [bridge]);
   const connectorSetup = useMemo(() => ({ pendingConnectorOAuth, setPendingConnectorOAuth,
     resourceAuthorizationAttempts, setResourceAuthorizationAttempt,
     openExternal: (url: string) => bridge.openExternal(url) }), [bridge, pendingConnectorOAuth, resourceAuthorizationAttempts, setResourceAuthorizationAttempt]);
-  return <AppSessionValueProvider value={value} connectorSetup={connectorSetup} createSidekick={createSidekick}>{children}</AppSessionValueProvider>;
+  return <AppSessionValueProvider value={value} connectorSetup={connectorSetup}>{children}</AppSessionValueProvider>;
 }
 
 /**
@@ -1471,18 +1465,16 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
  * shared surface reads. The desktop builds its value from the bridge; the
  * browser builds one over its cookie session.
  */
-export function AppSessionValueProvider({ value, connectorSetup, createSidekick, children }: PropsWithChildren<{
+export function AppSessionValueProvider({ value, connectorSetup, children }: PropsWithChildren<{
   value: AppSessionValue;
   connectorSetup: ConnectorSetupCapability | null;
-  createSidekick: (() => Promise<void>) | null;
 }>): React.JSX.Element {
-  // Starting a connection and authoring a Sidekick are a member's: their
-  // routes refuse a guest, so on either host a guest's shell is handed neither
-  // and offers neither. Existing connectors and attached Sidekicks still work.
+  // Starting a connection is a member's: its routes refuse a guest, so on
+  // either host a guest's shell is not handed it. Existing connectors still work.
   const { guest } = shellCapabilities(value);
   return <AppSessionContext.Provider value={value}>
     <CollaborationSessionProvider api={value.api} host={value.host} session={value.session}
-      connectorSetup={guest ? null : connectorSetup} createSidekick={guest ? null : createSidekick}>{children}</CollaborationSessionProvider>
+      connectorSetup={guest ? null : connectorSetup}>{children}</CollaborationSessionProvider>
   </AppSessionContext.Provider>;
 }
 

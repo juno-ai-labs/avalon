@@ -56,7 +56,7 @@ describe('conversation page capture', () => {
       await transcript.appendParticipantMessage({ turnId: 'pages', actor: 'system', authorUserId: null,
         authorSnapshot: null, text: 'https://example.com/ready https://example.com/failed',
         createdAtUtc: '2026-09-05T00:00:00Z', attentionOrdinal: 1 });
-      const identity = { workspaceId, parentId: resourceId, substreamId: '0', parentKind: 'workstream' as const };
+      const identity = { workspaceId, parentId: resourceId, substreamId: '0', parentKind: 'canvas' as const };
       const read = () => transcript.participantTurn('pages');
       const initial = await prepareConversationLinks(state.storage.sql, captureEnv, identity, 'pages', read, false);
       const ready = initial.documents.find((document) => document.text?.includes('/ready'))!;
@@ -99,7 +99,7 @@ describe('conversation page capture', () => {
       await transcript.appendParticipantMessage({ turnId: 'captured-link', actor: 'system', authorUserId: null,
         authorSnapshot: null, text: '[Reference](https://example.com/)',
         createdAtUtc: '2026-09-05T00:00:00Z', attentionOrdinal: 1 });
-      const identity = { workspaceId, parentId: resourceId, substreamId: '0', parentKind: 'workstream' as const };
+      const identity = { workspaceId, parentId: resourceId, substreamId: '0', parentKind: 'canvas' as const };
       const read = () => transcript.participantTurn('captured-link');
       const uncaptured = await prepareConversationLinks(state.storage.sql, captureEnv, identity, 'captured-link', read, false);
       expect(capture).not.toHaveBeenCalled();
@@ -221,7 +221,7 @@ describe('transcript search migration', () => {
       applyDurableObjectSqliteMigrations({ storage: state.storage,
         migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 41),
         component: 'substream_agent_do', workerVersionId: 'v41', now: 1_000 });
-      seedWorkstreamRoot(state);
+      seedWorkstreamRoot(state, 1, { parentKind: 'automation' });
       await new WorkstreamTranscriptStorage(state.storage).appendParticipantMessage({
         turnId: 'historical-turn', actor: 'system', authorUserId: null, authorSnapshot: null,
         text: 'Historical searchable message', createdAtUtc: '2026-09-05T00:00:00Z', attentionOrdinal: 1,
@@ -259,7 +259,7 @@ describe('conversation display projection', () => {
     await runInDurableObject(stub, async (_instance, state) => {
       applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
         component: 'substream_agent_do', workerVersionId: 'search', now: 2_000 });
-      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: identity.parentId });
+      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: identity.parentId, parentKind: 'automation' });
       const sql = state.storage.sql;
       sql.exec(`DELETE FROM durable_outbox`);
       // Bookkeeping writes on the identity row are not display changes.
@@ -289,7 +289,7 @@ describe('conversation display projection', () => {
       applyDurableObjectSqliteMigrations({ storage: state.storage,
         migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 51),
         component: 'substream_agent_do', workerVersionId: 'v51', now: 1_000 });
-      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: identity.parentId });
+      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: identity.parentId, parentKind: "automation" });
       const transcript = new WorkstreamTranscriptStorage(state.storage);
       for (const [turnId, ordinal] of [['delivered-turn', 1], ['pending-turn', 2]] as const) {
         await transcript.appendParticipantMessage({ turnId, actor: 'system', authorUserId: null, authorSnapshot: null,
@@ -314,8 +314,8 @@ describe('conversation display projection', () => {
 /**
  * Whole-fleet re-projections: once after the 2026-09-10 deploy dead-lettered
  * document jobs whose publish intent the source had already cleared (WorkspaceDO
- * 51, SubstreamAgent 53), and once so rows written before search audience carry
- * one (WorkspaceDO 77, SubstreamAgent 70). Each object re-projects on its next wake.
+ * 51, AgentLoopDO 53), and once so rows written before search audience carry
+ * one (WorkspaceDO 77, AgentLoopDO 70). Each object re-projects on its next wake.
  */
 describe.each([
   { pass: 'after the consumer version skew', workspaceFrom: 50, substreamFrom: 52, suffix: '1' },
@@ -362,7 +362,7 @@ describe.each([
       applyDurableObjectSqliteMigrations({ storage: state.storage,
         migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= substreamFrom),
         component: 'substream_agent_do', workerVersionId: `v${substreamFrom}`, now: 1_000 });
-      seedWorkstreamRoot(state, 1, identity);
+      seedWorkstreamRoot(state, 1, { ...identity, parentKind: 'automation' });
       const transcript = new WorkstreamTranscriptStorage(state.storage);
       for (const [turnId, ordinal] of [['lost-turn', 1], ['waiting-turn', 2]] as const) {
         await transcript.appendParticipantMessage({ turnId, actor: 'system', authorUserId: null, authorSnapshot: null,

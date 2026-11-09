@@ -11,6 +11,7 @@ import { IconButton } from './primitives';
 import { RailSurface } from './rail-surface';
 import { useCopy, type UseCopyResult } from '../lib/use-copy';
 import { CopyStatus, copyStateLabel } from './copy-button';
+import type { RailResize } from './rail-resize-handle';
 
 /** A gallery selection owns its feedback; unmounting also discards pending writes' outcomes. */
 function AttachmentCopyScope({ copyLink, children }: {
@@ -45,7 +46,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
   expandAction?: readonly IconGroupAction[] | undefined;
   /** What the panel sits in, as breadcrumbs, while it stands alone. */
   ancestors?: readonly TitlePillLevel[] | undefined;
-  onResize: (width: number) => void;
+  onResize: RailResize;
   width: number;
 }): React.JSX.Element | null {
   const [detailActions,setDetailActions] = useState<readonly IconGroupAction[]>([]);

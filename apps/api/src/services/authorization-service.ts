@@ -4,18 +4,24 @@ import { durableObjectStubForWorkspace } from '../lib/durable-object-namespace';
 import { workspaceDOName } from '../durable-objects/names';
 import { authorizationSnapshotKey } from '../durable-objects/authorization-storage';
 import { createResourceObjectPort } from '../runtime/resource-port';
-import { createIdentityObjectPort } from '../runtime/identity-port';
 import { conversationParentStub } from './conversation-parent-client';
 import { ApiError } from '../lib/api-error';
 import { logWarn } from '../observability/logger';
+import type { HostedCanvas } from '../durable-objects/hosted-canvas';
 import type { HostedSidekick } from '../durable-objects/hosted-sidekick';
 import type { WorkspaceDO } from '../durable-objects/workspace-do';
 import type { WorkstreamResourceStorage } from '../durable-objects/workstream-resource-storage';
 import {
-  AccessContext, evaluateReadPolicy, owningChannelAdmitsMember, sidekickAdmitsMember,
+  AccessContext, canvasAdmits, evaluateReadPolicy, sidekickAdmits,
   type AuthorizationDecision, type AuthorizationEvidence, type AuthorizationResource,
   type AuthorizationSubject, type ReadPolicy,
 } from './authorization-policy';
+
+/** A Sidekick's or a Canvas's authorization facts, tagged by kind. */
+type HostedConversationFacts =
+  | ({ kind: 'automation' } & Extract<ReturnType<HostedSidekick['readAuthorizationFacts']>, { exists: true }>)
+  | ({ kind: 'canvas' } & Extract<Awaited<ReturnType<HostedCanvas['readAuthorizationFacts']>>, { exists: true }>)
+  | { kind: null | 'automation' | 'canvas'; exists: false; validatedAt: number };
 
 const unavailable = (): AuthorizationDecision => ({ status: 'unavailable', reason: 'authority_unavailable', retryable: true });
 
@@ -116,10 +122,7 @@ export type ResourceReadMetadata = NonNullable<Extract<Awaited<ReturnType<Worksp
 /** Owner observations, including settled reads, live for exactly one batch. */
 class AuthorizationBatch {
   readonly readMetadata = new Map<string, ResourceReadMetadata>();
-  private readonly parents = new Map<string, Promise<Awaited<ReturnType<WorkspaceDO['readAuthorizationFacts']>>>>();
-  private readonly automations = new Map<string, Promise<ReturnType<HostedSidekick['readAuthorizationFacts']>>>();
-  private readonly automationViewers = new Map<string, Promise<Awaited<ReturnType<HostedSidekick['authorizeViewer']>> & { validatedAt: number }>>();
-  private readonly identities = new Map<string, Promise<Awaited<ReturnType<ReturnType<typeof createIdentityObjectPort>['readAuthorizationFacts']>>>>();
+  private readonly automations = new Map<string, Promise<HostedConversationFacts>>();
   private readonly attachments = new Map<string, Promise<ReturnType<WorkstreamResourceStorage['readAuthorizationFacts']>>>();
   private readonly memberships = new Map<string, Promise<{ active: boolean; guest: boolean; validatedAt: number }>>();
   private guest = false;
@@ -219,56 +222,25 @@ class AuthorizationBatch {
     const request = { workspaceId: subject.workspaceId, parentId: resource.parentId, userId: subject.userId,
       substreamIds: [...(this.parentScopes.get(resource.parentId) ?? [resource.substreamId])].map(asSubstreamId),
       ...(this.relationship ? { relationship: this.relationship } : {}) };
-    const workstream = await ownerEvidence(this.parents, JSON.stringify([subject, resource.parentId]), async () => {
-      // Through the one dispatch point, so the namespace a parent kind resolves
-      // to is decided in exactly one place in the tree.
-      const parent = await conversationParentStub(this.env, {
-        workspaceId: subject.workspaceId, parentKind: 'workstream', parentId: resource.parentId,
-      }) as DurableObjectStub<WorkspaceDO>;
-      return parent.readAuthorizationFacts(request);
-    });
-    if (workstream.exists) {
-      const scope = workstream.scopes.find((value) => value.substreamId === resource.substreamId);
-      if (!scope) return unavailable();
-      const evidence = { owner:resource.parentId,revision:scope.revision,validatedAt:workstream.validatedAt };
-      if (!scope.access.allowed && scope.access.reason === "not_found") return { status:"not_found",resource,evidence:[evidence] };
-      if (!scope.access.allowed && scope.access.reason === "not_ready") return { status:"unavailable",reason:"projection_incomplete",retryable:true };
-      return evaluateReadPolicy(fact(scope.access.allowed,"not_participant",evidence),Date.now());
-    }
-    const automation = await conversationParentStub(this.env, {
+    // Every conversation is a Sidekick's or a Canvas's (Threads are retired,
+    // plan step C-2), and its hosted parent answers in one call.
+    // A hosted conversation, a Sidekick's or a Canvas's, answers in one call.
+    const hosted = await conversationParentStub(this.env, {
       workspaceId: subject.workspaceId, parentKind: 'automation', parentId: resource.parentId,
     });
     const facts = await ownerEvidence(this.automations, JSON.stringify([subject, resource.parentId, resource.substreamId]),
-      async () => await automation.sidekickReadAuthorizationFacts({ ...request, substreamIds: [resource.substreamId] }) as
-        ReturnType<HostedSidekick['readAuthorizationFacts']>);
+      async () => await hosted.hostedConversationAuthorizationFacts({ ...request, substreamIds: [resource.substreamId] }) as
+        HostedConversationFacts);
     if (!facts.exists) return { status: 'not_found', resource,
-      evidence: [{ owner: resource.parentId, revision: 'absent', validatedAt: Math.min(workstream.validatedAt, facts.validatedAt) }] };
+      evidence: [{ owner: resource.parentId, revision: 'absent', validatedAt: facts.validatedAt }] };
     const evidence = { owner: resource.parentId, revision: facts.revision, validatedAt: facts.validatedAt };
     if (!facts.children.includes(resource.substreamId)) return { status: 'not_found', resource, evidence: [evidence] };
-    if (this.guest) {
-      const userId = subject.userId;
-      const admission = await ownerEvidence(this.automationViewers, JSON.stringify([subject, resource.parentId, resource.substreamId]),
-        async () => ({ ...await automation.authorizeViewer({ workspaceId: subject.workspaceId, parentId: resource.parentId,
-          userId, substreamId: resource.substreamId, requireGrantAuthority: true }), validatedAt: Date.now() }));
-      return evaluateReadPolicy(fact(admission.authorized, 'not_participant', evidence), Date.now());
-    }
-    const policies = [fact(sidekickAdmitsMember(facts), 'not_participant', evidence)];
-    if (facts.scope === 'workstream' && facts.owningWorkstreamId) {
-      const owningWorkstreamId = facts.owningWorkstreamId;
-      // A Breakout home narrows the Sidekick's audience to that Breakout's
-      // members: its own conversation object holds its participants.
-      const owningSubstreamId = facts.owningSubstreamId ?? '0';
-      const userId = subject.userId;
-      const owner = await ownerEvidence(this.identities, JSON.stringify([subject, owningWorkstreamId, owningSubstreamId]),
-        () => createIdentityObjectPort(this.env, subject.workspaceId, owningWorkstreamId, undefined, owningSubstreamId)
-          .readAuthorizationFacts({ userId }));
-      policies.push(fact(owner.exists && owningChannelAdmitsMember(owner), 'not_participant', {
-        owner: `${owningWorkstreamId}/${owningSubstreamId}`, revision: owner.revision, validatedAt: owner.validatedAt,
-      }));
-    }
-    // Automation existence/scope must remain evidence even when another relationship grants access.
-    return evaluateReadPolicy({ kind: 'all', policies: [fact(true, 'not_participant', evidence),
-      { kind: 'any', policies, reason: 'not_participant' }] }, Date.now());
+    // Who it is shared with decides, for a guest as for a member: a guest
+    // reads it only from a list.
+    const admitted = facts.kind === 'canvas'
+      ? canvasAdmits(facts, !this.guest, facts.administrator)
+      : sidekickAdmits(facts, !this.guest);
+    return evaluateReadPolicy(fact(admitted, 'not_participant', evidence), Date.now());
   }
 
   /** The same predicate `resource()` applies to a connector resource, decided once per connection. */
@@ -293,11 +265,6 @@ class AuthorizationBatch {
     ] };
     const baseDecision = evaluateReadPolicy(base, Date.now());
     if (baseDecision.status !== 'allowed' || (!facts.requiresAttachment && (!this.guest || facts.owned))) return baseDecision;
-    if (facts.sharedThrough !== null) {
-      return evaluateReadPolicy({ kind: 'all', policies: [base, fact(true, 'resource_not_shared', {
-        owner: `space:${facts.sharedThrough}/resources`, revision: facts.revision, validatedAt: facts.validatedAt,
-      })] }, Date.now());
-    }
     let incomplete = false;
     for (const location of facts.locations) {
       // Do not await a top-level batch that may itself contain this conversation.

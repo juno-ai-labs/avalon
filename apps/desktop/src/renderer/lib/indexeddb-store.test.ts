@@ -3,10 +3,30 @@ import { createIndexedDbStore } from './indexeddb-store';
 
 const STORE = 'rows';
 
-function testStore(name: string) {
+/** The first event a deletion from another window answers with. */
+function deleteFromAnotherWindow(name: string): Promise<'success' | 'blocked' | 'error'> {
+  return new Promise((resolve) => {
+    const request = indexedDB.deleteDatabase(name);
+    request.onsuccess = () => resolve('success');
+    request.onblocked = () => resolve('blocked');
+    request.onerror = () => resolve('error');
+  });
+}
+
+/** A connection from another window that never yields to a version change. */
+function openWithoutYielding(name: string): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(name, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(STORE, { keyPath: 'id' });
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function testStore(name: string, version = 1) {
   return createIndexedDbStore({
     name,
-    version: 1,
+    version,
     label: 'test store',
     upgrade(database) {
       if (!database.objectStoreNames.contains(STORE)) database.createObjectStore(STORE, { keyPath: 'id' });
@@ -51,5 +71,35 @@ describe('createIndexedDbStore', () => {
     expect(store.epoch()).toBe(1);
     store.close();
     expect(store.epoch()).toBe(0);
+  });
+
+  it('yields its connection to another window deleting the database, then reopens it empty', async () => {
+    const store = testStore('test-store-yields');
+    await expect(store.withStores([STORE], 'readwrite', async (transaction) => {
+      transaction.objectStore(STORE).put({ id: 'a', text: 'kept' });
+      return true;
+    }, false)).resolves.toBe(true);
+
+    // Held open, the connection would block the deletion, and every later
+    // open in any window would wait behind it with no event.
+    await expect(deleteFromAnotherWindow('test-store-yields')).resolves.toBe('success');
+
+    const row = await store.withStores([STORE], 'readonly', async (transaction) =>
+      store.awaitRequest(transaction.objectStore(STORE).get('a')), 'fallback');
+    expect(row).toBeUndefined();
+    store.close();
+  });
+
+  it('answers the fallback while another window blocks its upgrade, then serves the database once that window lets go', async () => {
+    const other = await openWithoutYielding('test-store-blocked');
+    const store = testStore('test-store-blocked', 2);
+
+    await expect(store.withStores([STORE], 'readonly', async () => 'read', 'fallback')).resolves.toBe('fallback');
+
+    other.close();
+    await vi.waitFor(async () => {
+      await expect(store.withStores([STORE], 'readonly', async () => 'read', 'fallback')).resolves.toBe('read');
+    });
+    store.close();
   });
 });

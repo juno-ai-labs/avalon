@@ -1,5 +1,0 @@
-#include "Debug.xcconfig"
-// Test bundles must not inherit the app Info.plist or APNs entitlements.
-INFOPLIST_FILE =
-CODE_SIGN_ENTITLEMENTS =
-GENERATE_INFOPLIST_FILE = YES

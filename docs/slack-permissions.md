@@ -12,7 +12,7 @@ the installation model in
 [Installing with OAuth](https://docs.slack.dev/authentication/installing-with-oauth/)
 and the granular search scopes in the
 [Real-time Search API documentation](https://docs.slack.dev/apis/web-api/real-time-search-api/).
-Thread follow-up follows Slack's
+Following up in a Sidekick run's Slack thread follows Slack's
 [`message.channels`](https://docs.slack.dev/reference/events/message.channels),
 [`message.groups`](https://docs.slack.dev/reference/events/message.groups),
 [`thread_broadcast`](https://docs.slack.dev/reference/events/message/thread_broadcast/),
@@ -68,7 +68,7 @@ example, `search_messages` is exposed as `slack_search_messages`.
 | `read_file` | `files.info` plus an authenticated private-file download | `files:read` | Returns metadata for an accessible file. Text files are downloaded only from trusted Slack HTTPS hosts and only up to 512 KiB; binary or larger content is omitted. |
 
 The workspace bot is in a conversation because somebody invited it (which links
-the room to a Rally Space) or because a Sidekick's Slack source names that public
+the room to nothing since Spaces and Threads were retired) or because a Sidekick's Slack source names that public
 channel and Rally joined it for the source. It does not join public channels on
 its own. Rally does not poll channel history or mirror Slack content. See
 [`external-conversation-bindings.md`](external-conversation-bindings.md). Private channels, DMs, MPIMs, and files remain limited by the bot's actual
@@ -95,21 +95,21 @@ The production manifest requests these scopes as one administrator-approved bund
 | --- | --- |
 | `app_mentions:read` | Receive `app_mention` events when someone invokes `@Rally` in a channel. |
 | `assistant:write` | Update Agent thread status and title and stream Agent output. |
-| `channels:history` | Receive public-channel follow-ups in existing Rally threads, perform bounded explicit-retry recovery, and run authorized channel/thread/context reads. Unrelated public messages are discarded before durable queueing. |
-| `channels:join` | Join the public channels a saved Sidekick's Slack source names, so the Sidekick receives their events. Such a join links no Space. |
+| `channels:history` | Receive public-channel replies in Sidekick runs' bound threads, and run authorized channel/thread/context reads. Unrelated public messages are discarded before durable queueing. |
+| `channels:join` | Join the public channels a saved Sidekick's Slack source names, so the Sidekick receives their events. Such a join links nothing. |
 | `channels:manage` | Create a public channel with workspace `slack_create_conversation`. |
-| `channels:read` | Discover public channels, read conversation metadata, maintain bot membership, classify the Slack surface, list visible members, and detect a Slack Connect channel before an unfurl names a work stream. |
+| `channels:read` | Discover public channels, read conversation metadata, maintain bot membership, classify the Slack surface, list visible members, and detect a Slack Connect channel before an unfurl names a Canvas or Sidekick. |
 | `chat:write` | Post and stream Agent replies, errors, controls, proactive notifications, automation results, and workspace `slack_send_message` output. |
 | `commands` | Receive `/rally` slash commands and Slack global or message shortcuts. |
 | `files:read` | Read metadata and bounded textual content for files visible to the bot. |
-| `groups:history` | Receive private-channel follow-ups in existing Rally threads, perform bounded explicit-retry recovery, and run authorized private-channel/thread/context reads. Unrelated private messages are discarded before durable queueing. |
-| `groups:read` | Read invited private-channel metadata, list visible members, and detect an externally shared private channel before an unfurl names a work stream. It does not grant access to private channels the bot has not joined. |
+| `groups:history` | Receive private-channel replies in Sidekick runs' bound threads, and run authorized private-channel/thread/context reads. Unrelated private messages are discarded before durable queueing. |
+| `groups:read` | Read invited private-channel metadata, list visible members, and detect an externally shared private channel before an unfurl names a Canvas or Sidekick. It does not grant access to private channels the bot has not joined. |
 | `groups:write` | Create a private channel with workspace `slack_create_conversation`. |
 | `im:history` | Receive Agent DM prompts and read accessible DM history. |
-| `im:read` | Discover bot-visible direct-message conversations and membership, and read a DM's conversation metadata to tell an ordinary DM from a Slack Connect DM before an unfurl names a work stream. |
+| `im:read` | Discover bot-visible direct-message conversations and membership, and read a DM's conversation metadata to tell an ordinary DM from a Slack Connect DM before an unfurl names a Canvas or Sidekick. |
 | `im:write` | Open an Agent DM for account linking, notifications, automation delivery, or workspace `slack_create_conversation`. |
 | `links:read` | Receive `link_shared` events for supported Rally URLs. Slack's own permalink for a thread Rally was summoned in is read with `chat.getPermalink`, which needs no scope of its own beyond the bot's access to that conversation. |
-| `links:write` | Attach a work-stream preview — title, status, last activity, origin — to an eligible Rally URL with `chat.unfurl`, or an anonymous card where the audience is not known to be internal. |
+| `links:write` | Attach a Canvas or Sidekick preview naming it to an eligible Rally URL with `chat.unfurl`, or an anonymous card where the audience is not known to be internal. |
 | `mpim:history` | Read accessible multi-person-DM history and threads. |
 | `mpim:read` | Discover accessible multi-person DMs and membership, and read their conversation metadata for the same unfurl audience check. Replies in group DMs arrive through `message.mpim`, routed like any other message by their binding. |
 | `mpim:write` | Open a group DM with workspace `slack_create_conversation`. |
@@ -184,7 +184,7 @@ Event subscriptions are not additional OAuth scopes. The manifest subscribes to:
 | --- | --- |
 | `app_context_changed` | Store the user's bounded active-view entity metadata so the next Agent prompt can understand the channel, thread, canvas, or list the user is viewing. |
 | `app_home_opened` | Publish the linked, unlinked, or administrator App Home view. |
-| `app_mention` | Start or continue a channel task when a user explicitly mentions Rally. |
+| `app_mention` | Continue a Sidekick run when the mention is in a thread its result started; any other mention is answered once that Slack starts no work. |
 | `app_uninstalled` | Mark the workspace installation disconnected and stop routing work to it. |
 | `channel_archive` | Suspend the archived room's binding (`provider_room_archived`); a re-invitation or a mention brings it back. |
 | `channel_created` | Offer bounded channel-creation activity to explicitly configured automations. Rally does not join the channel. |
@@ -194,11 +194,11 @@ Event subscriptions are not additional OAuth scopes. The manifest subscribes to:
 | `file_shared` | Offer bounded file-share activity to explicitly configured automations. |
 | `group_archive` | As `channel_archive`, for a private channel. |
 | `group_left` | As `channel_left`, for a private channel. |
-| `member_joined_channel` | The bot's own join is the invitation that links the room to a Space; anyone else's triggers explicitly configured channel-membership automations. |
+| `member_joined_channel` | The bot's own join is an invitation, logged `slack_room_invitation` and linking nothing; anyone else's triggers explicitly configured channel-membership automations. |
 | `member_left_channel` | The bot's own leave suspends the room's binding; anyone else's triggers explicitly configured channel-membership automations. |
-| `message.channels` | Continue a Rally-owned public thread or offer bounded message activity to an explicitly configured automation; unmatched messages are discarded before durable queueing. |
-| `message.groups` | Continue a Rally-owned invited-private-channel thread or offer bounded activity to an authorized personal automation; unmatched messages are discarded before durable queueing. |
-| `message.im` | Receive Agent prompts and follow-ups, or offer bounded DM activity to an authorized personal automation. |
+| `message.channels` | Continue a Sidekick run's bound public thread or offer bounded message activity to an explicitly configured automation; unmatched messages are discarded before durable queueing. |
+| `message.groups` | Continue a Sidekick run's bound private-channel thread or offer bounded activity to an authorized personal automation; unmatched messages are discarded before durable queueing. |
+| `message.im` | Receive replies in a Sidekick run's bound DM thread (an unbound DM is answered that Slack starts no work), or offer bounded DM activity to an authorized personal automation. |
 | `message.mpim` | Continue a bound group-DM thread, or offer bounded activity to an explicitly configured automation; unmatched messages are discarded before durable queueing. |
 | `reaction_added` | Offer bounded emoji-reaction activity to explicitly configured automations. |
 | `reaction_removed` | Offer bounded emoji-reaction removal activity to explicitly configured automations. |
@@ -251,7 +251,7 @@ the Slack product surface, the ingress, or the registration:
 | --- | --- |
 | Lifecycle, data handling, App Home, user linking, acceptance | [`slack-integration.md`](slack-integration.md) |
 | The registration itself and its regional routing | [`provider-apps.md`](provider-apps.md) |
-| The unfurl card and its audience rules | [`workstream-links.md`](workstream-links.md) |
+| The unfurl card and its audience rules | [`links.md`](links.md) |
 | Connector scope kinds, capabilities, and health semantics | [`connectors.md`](connectors.md) |
 | Why a stored status is not a gate | [`connectors.md`](connectors.md#stored-status-is-a-belief-not-a-gate) |
 
@@ -305,7 +305,7 @@ you that a scope was actually granted; only the acceptance flows in
 ## Security and trust model
 
 The short-lived search `action_token` is **hidden runtime authorization**: it is
-never placed in the system prompt, the work-stream transcript, model tool arguments,
+never placed in the system prompt, the conversation transcript, model tool arguments,
 tool output, or inference-payload logs. Search results are transient model context
 and are excluded from durable tool-result replay.
 

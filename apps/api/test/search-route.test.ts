@@ -142,10 +142,25 @@ describe('index-served member search', () => {
     expect(body).toMatchObject({ nextCursor: null, results: [{
       id: 'admitted', category: 'messages', title: 'Planning', sourceLabel: 'Planning', occurredAt: '2026-09-05T00:00:00.000Z',
       revision: '3', excerpt: 'the needle sits here', excerptStart: 0, highlights: [{ start: 4, end: 10 }],
-      location: { kind: 'message', workstreamId: room, substreamId: '0', turnId: 'turn-1', transcriptSequence: 4, range: { start: 4, end: 10 } },
+      location: { kind: 'message', parentKind: 'canvas', workstreamId: room, substreamId: '0', turnId: 'turn-1', transcriptSequence: 4, range: { start: 4, end: 10 } },
     }, { id: 'synced', category: 'files', title: 'Brief', location: { kind: 'resource', resourceId: '00000000-0000-7000-8000-000000000006', mimeType: 'text/plain' } }] });
     expect(body.results.map((row) => row.id)).toEqual(['admitted', 'synced']);
     // The field older clients sent is still accepted, and still changes nothing.
     expect((await request({ query: 'needle', category: 'messages', pageSize: 7, supportsPartialResults: true })).status).toBe(200);
+  });
+
+  it('names a hit in a Sidekick\'s run as the Sidekick\'s, so it opens that conversation and not a missing Canvas', async () => {
+    const sidekick = '00000000-0000-7000-8000-00000000000a';
+    const run = '00000000-0000-7000-8000-00000000000b';
+    const [sidekickGroup] = await searchAudienceGroupIds([searchAudienceGroup.sidekick(sidekick)]);
+    const { request } = fixture(async () => [sidekickGroup!]);
+    providerQuery.mockResolvedValue({ rows: [{ id: 'run-turn', source: 'messages', scope_id: sidekick, source_id: `${run}/turn-9`,
+      substream_id: run, revision: 1, text: 'the needle in a run', title: 'Triage', source_label: 'Triage', archived: false,
+      occurred_at: Date.parse('2026-11-09T00:00:00Z'), transcript_sequence: 2, url: null, mime_type: null, audience: [sidekickGroup] }] });
+    const response = await request({ query: 'needle', category: 'messages', pageSize: 7 });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ results: [{ id: 'run-turn', location: {
+      kind: 'message', parentKind: 'automation', workstreamId: sidekick, substreamId: run, turnId: 'turn-9', transcriptSequence: 2,
+    } }] });
   });
 });

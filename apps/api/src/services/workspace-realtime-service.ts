@@ -1,6 +1,5 @@
 import {
   WorkspaceSyncTopicSchema,
-  asUserId,
   asWorkspaceId,
   type WorkspaceSyncTopic,
 } from "@rally/contracts";
@@ -24,22 +23,6 @@ export interface WorkspaceSyncDetail {
   audienceUserIds?: readonly string[];
   /** The connection the change was to: its owner hears of it when it is personal, everyone when it is not. */
   connectionId?: string;
-}
-
-/** Seat a member who just accepted their invitation in the Spaces that listed its address. */
-export async function seatSpaceInvitee(env: Env, workspaceId: string, userId: string, email: string): Promise<string[]> {
-  const placementAffinity = await workspacePlacementAffinity(env, workspaceId);
-  const workspace = await durableObjectStubForWorkspace(
-    env,
-    env.WORKSPACE_DOS,
-    workspaceId,
-    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
-    placementAffinity,
-  );
-  const result = await workspace.seatSpaceInvitee({
-    workspaceId: asWorkspaceId(workspaceId), userId: asUserId(userId), email: email.toLowerCase(),
-  });
-  return result.seatedSpaceIds;
 }
 
 /** Publish one durable, replayable invalidation through the workspace control plane. */
@@ -69,7 +52,7 @@ export async function publishWorkspaceSync(
 /**
  * Everything a change to a connection can move: the connection itself (and
  * the installation, catalog and repository-access reads beside it), the
- * resources its account can reach, and a digest whose destination it is.
+ * resources its account can reach.
  * Sidekicks are not here: no Sidekick read consults a connection, which a
  * Sidekick reads only when one is applied or its principal is claimed, and
  * both of those are Sidekick writes that publish `automations` themselves.
@@ -77,14 +60,13 @@ export async function publishWorkspaceSync(
 export const CONNECTION_SYNC_TOPICS: readonly WorkspaceSyncTopic[] = [
   "connector_connections",
   "resources",
-  "digest_schedule",
 ];
 
 /**
  * Who one mutation's invalidation is for.
  *
  * - `organization`: every socket in the Organization.
- * - `actor`: the person who made the write — their digest, their onboarding
+ * - `actor`: the person who made the write — their onboarding
  *   progress, their telemetry preference, their own OAuth attempt.
  * - `connection`: the audience of the connection the write changed, which
  *   `WorkspaceDO.publishSync` reads from the connection's own row. The id is
@@ -122,10 +104,9 @@ function connectionPublications(pathname: string): WorkspaceSyncPublication[] {
     return [{ topics: ["connector_oauth_attempts"], audience: ACTOR }];
   }
   if (first === "slack" && second === "link" && third === "preview") return [];
-  // A person's own Slack identity: their connections and their digest's
-  // destinations, nobody else's.
+  // A person's own Slack identity: their connections, nobody else's.
   if (first === "slack" && second === "link") {
-    return [{ topics: ["connector_connections", "digest_schedule"], audience: ACTOR }];
+    return [{ topics: ["connector_connections"], audience: ACTOR }];
   }
   // The Canva loopback runs the provider's OAuth completion, which publishes
   // the connection's topics to its audience itself, as every completion does.
@@ -141,7 +122,7 @@ function connectionPublications(pathname: string): WorkspaceSyncPublication[] {
 /**
  * Complete workspace-query invalidation map for authenticated desktop writes,
  * each with who it is news to. Workstream-local detail/feed state is also
- * pushed by SubstreamAgent; the authoritative workspace-directory topic is
+ * pushed by AgentLoopDO; the authoritative workspace-directory topic is
  * named here because the sidebar is a WorkspaceDO query the conversation
  * socket does not own.
  */
@@ -165,23 +146,12 @@ export function workspaceSyncPublicationsForMutation(
   // Rally access is shown beside the profile, to every administrator.
   if (pathname === "/workspace/support-access") return organization("workspace_profile");
   if (pathname === "/connections" || pathname.startsWith("/connections/")) return connectionPublications(pathname);
-  // A digest belongs to one person (`routes/digest.ts`).
-  if (pathname.startsWith("/digest")) return [{ topics: ["digest_schedule"], audience: ACTOR }];
   if (
     pathname.startsWith("/automations")
     || pathname.startsWith("/automation-subscriptions")
     || pathname.startsWith("/automation-templates")
-  ) return organization("automations", "workstream_directory");
-  if (pathname.startsWith("/notes")) return organization("notes", "resources");
-  // Retired. Every `/projects` request is answered `410` by a route that
-  // reads nothing and writes nothing, so there is no state for an
-  // invalidation to be about.
-  if (pathname.startsWith("/projects")) return [];
-  if (pathname.startsWith("/resources")) return organization("resources", "workstream_directory");
-  if (pathname.startsWith("/work-opportunities")) {
-    return organization("work_opportunities", "activity", "workstream_directory");
-  }
-  if (pathname.startsWith("/workstreams")) return organization("workstream_directory");
+  ) return organization("automations");
+  if (pathname.startsWith("/resources")) return organization("resources");
   // A person's own analytics choice.
   if (pathname.startsWith("/telemetry/preference")) return [{ topics: ["viewer_preferences"], audience: ACTOR }];
   return [];

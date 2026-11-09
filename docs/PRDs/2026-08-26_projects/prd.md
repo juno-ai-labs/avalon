@@ -9,7 +9,7 @@
 > [Queue versus RPC](../../choosing-queues-or-rpc.md),
 > [work-stream creation](../../workstream-creation.md),
 > [work-stream email addresses](../../workstream-email-addresses.md),
-> [work-stream pinning](../../workstream-pinning.md). Standing contract:
+> [work-stream pinning](../../pinning.md). Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
 ## Summary

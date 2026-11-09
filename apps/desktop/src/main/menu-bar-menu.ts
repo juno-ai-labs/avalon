@@ -1,54 +1,38 @@
 import type { MenuItemConstructorOptions } from 'electron';
 import { macosMajorVersion } from './macos-version';
 
-export interface MenuBarWorkstream {
-  readonly id: string;
-  readonly title: string;
-  /** The Breakout the row opens, for a Channel listed to this reader only through one; null opens Main. */
-  readonly substreamId: string | null;
-}
-
-/** One unread Activity row: what happened, in a thread's Main or a Breakout in it. */
-export interface MenuBarAttentionRow {
+/** One row the menu draws: a Canvas or a Sidekick, opened in the main window. */
+export interface MenuBarRow {
   readonly key: string;
-  readonly workstreamId: string;
-  /** Null for Main. */
-  readonly substreamId: string | null;
-  /** The thread's title, or the Breakout's. */
-  readonly title: string;
-  /** What happened, and the thread for a Breakout: "Rally finished", "Ana mentioned you in Pricing". */
-  readonly detail: string;
-  /** A thread's merge opens the Channel it landed in, not the thread. */
-  readonly channelId?: string;
-}
-
-/** A request to join a Channel or Breakout, waiting on this person. */
-export interface MenuBarAccessRequestRow {
+  readonly kind: 'canvas' | 'sidekick';
   readonly id: string;
-  readonly requesterName: string;
   readonly title: string;
+  /** Why it is listed ("Needs input", "Unread"), or null for a plain recent row. */
+  readonly detail: string | null;
 }
 
 export interface MenuBarContent {
-  /** Access requests waiting on this person, newest first; listed above the conversations and counted with them. */
-  readonly accessRequests: readonly MenuBarAccessRequestRow[];
-  /** Every unread Activity row, newest first. The menu draws the first few; the count is all of them. */
-  readonly attention: readonly MenuBarAttentionRow[];
-  /** False until Activity has been read once, so an empty list is not yet "nothing". */
+  /** What the rail counts, in its order. The menu draws the first few; the count is all of them. */
+  readonly attention: readonly MenuBarRow[];
+  /** False until both lists have arrived, so an empty list is not yet "nothing". */
   readonly attentionComplete: boolean;
-  /** Channels in the sidebar's Recent order under All. */
-  readonly recents: readonly MenuBarWorkstream[];
-  /** False until the first walk of every Space has finished, so an empty list is not yet "none". */
+  /** Canvases, newest first. */
+  readonly recents: readonly MenuBarRow[];
+  /** False until the Canvases list has arrived. */
   readonly recentsComplete: boolean;
 }
 
 export const emptyMenuBarContent: MenuBarContent = {
-  accessRequests: [], attention: [], attentionComplete: false, recents: [], recentsComplete: false,
+  attention: [], attentionComplete: false, recents: [], recentsComplete: false,
 };
 
+/**
+ * The telemetry names, which are a closed enum on the wire: a Needs attention
+ * row reports `attention_conversation` and a recent Canvas `recent_workstream`,
+ * the names those sections reported under before the 2026-11 cutover.
+ */
 export type MenuBarAction =
   | 'attention_conversation'
-  | 'access_request'
   | 'recent_workstream'
   | 'open_rally'
   | 'quit_rally';
@@ -56,12 +40,8 @@ export type MenuBarAction =
 export interface MenuBarActions {
   /** Observational only: a reporting failure must not block the selected row. */
   readonly selected: (action: MenuBarAction) => void;
-  /** `substreamId` names a Breakout; null opens Main. */
-  readonly openConversation: (workstreamId: string, substreamId: string | null) => void;
-  /** Opens a Channel. */
-  readonly openChannel: (channelId: string) => void;
-  /** Opens the main window on this request's approve-or-decline dialog. */
-  readonly openAccessRequest: (requestId: string) => void;
+  /** Opens a Canvas or a Sidekick in the main window. */
+  readonly open: (row: Pick<MenuBarRow, 'kind' | 'id'>) => void;
   readonly openRally: () => void;
   readonly quit: () => void;
 }
@@ -105,8 +85,7 @@ export function menuBarTitle(count: number): string {
 
 /**
  * A macOS menu is as wide as its widest row, so one long label stretches every
- * other one. Work-stream titles are model-written and allowed 180 characters by
- * their contract — a work stream Rally named itself can run most of that — so
+ * other one. Canvas and Sidekick titles can be model-written and run long, so
  * the limit is set by what stays readable rather than by what arrives.
  */
 const MENU_BAR_LABEL_MAX_LENGTH = 60;
@@ -155,16 +134,15 @@ export function menuBarLabel(rawLabel: string): string {
 }
 
 const ATTENTION_HEADER = 'Needs attention';
-const RECENT_HEADER = 'Most recent';
+const RECENT_HEADER = 'Recent Canvases';
 
 /**
  * Builds the status item's drop-down as a plain Electron template, so the whole
  * mapping from content to menu is testable without a display server.
  *
- * Two sections, each the top of a list the sidebar also draws: **Needs
- * attention**, the Activity tab's unread rows in its order, and **Most
- * recent**, the Channels in the sidebar's Recent order under All. The menu has
- * no selected Space, so neither section filters by one or shows a pin.
+ * Two sections, each the top of what the sidebar draws: **Needs attention**,
+ * what the rail counts (Sidekicks that need input, then unread Sidekicks and
+ * Canvases), and **Recent Canvases**.
  *
  * Nothing here starts anything. Every row reopens something that already
  * exists, which is the one thing this surface can do that no window can —
@@ -205,34 +183,23 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
   if (!options.signedIn) {
     pushSection(ATTENTION_HEADER, [], 'Sign in to Rally');
   } else {
-    // Requests first: each is somebody waiting on this person, and the menu
-    // cannot approve in place, so a row opens the decision in the main window.
-    const requests = content.accessRequests.slice(0, MENU_BAR_SECTION_LIMIT).map((row): MenuItemConstructorOptions => ({
-      label: menuBarLabel(`${row.requesterName} asked to join ${row.title}`),
-      sublabel: 'Access request',
-      click: tracked('access_request', () => actions.openAccessRequest(row.id)),
-    }));
-    const conversations = content.attention.slice(0, Math.max(0, MENU_BAR_SECTION_LIMIT - requests.length)).map((row): MenuItemConstructorOptions => ({
+    const attention = content.attention.slice(0, MENU_BAR_SECTION_LIMIT).map((row): MenuItemConstructorOptions => ({
       label: menuBarLabel(row.title),
-      sublabel: menuBarLabel(row.detail),
-      click: tracked('attention_conversation', () => (row.channelId
-        ? actions.openChannel(row.channelId)
-        : actions.openConversation(row.workstreamId, row.substreamId))),
+      ...(row.detail ? { sublabel: row.detail } : {}),
+      click: tracked('attention_conversation', () => actions.open(row)),
     }));
-    // "Nothing" only once Activity has been read, and "still loading" before.
-    const attention = [...requests, ...conversations];
+    // "Nothing" only once both lists have arrived, and "still loading" before.
     const attentionTrailing = !content.attentionComplete
-      ? 'Still loading activity'
+      ? 'Still loading'
       : attention.length === 0 ? 'Nothing needs your attention' : null;
     pushSection(ATTENTION_HEADER, attention, attentionTrailing);
 
-    const recents = content.recents.slice(0, MENU_BAR_SECTION_LIMIT).map((workstream): MenuItemConstructorOptions => ({
-      label: menuBarLabel(workstream.title),
-      click: tracked('recent_workstream', () => actions.openConversation(workstream.id, workstream.substreamId)),
+    const recents = content.recents.slice(0, MENU_BAR_SECTION_LIMIT).map((row): MenuItemConstructorOptions => ({
+      label: menuBarLabel(row.title),
+      click: tracked('recent_workstream', () => actions.open(row)),
     }));
-    // An empty list is "none" only once every Space has been walked.
     const recentsTrailing = recents.length > 0 ? null
-      : content.recentsComplete ? 'No recent threads' : 'Still loading threads';
+      : content.recentsComplete ? 'No Canvases yet' : 'Still loading Canvases';
     pushSection(RECENT_HEADER, recents, recentsTrailing);
   }
 

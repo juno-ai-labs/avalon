@@ -35,7 +35,7 @@ export function MessageTextMenu({ children, markdown, speechKind = 'response', s
   markdown: string;
   speechKind?: 'response' | 'message';
   streaming?: boolean;
-  telemetry?: { messageId: string; workstreamId: string };
+  telemetry?: { messageId: string; workstreamId: string; turnId?: string | undefined };
 }) {
   const snapshotRef = useRef<MessageTextSnapshot>(EMPTY_MESSAGE_TEXT_SNAPSHOT);
   const bodyRef = useRef<HTMLElement | null>(null);
@@ -75,7 +75,7 @@ export function MessageTextMenu({ children, markdown, speechKind = 'response', s
       kind: 'content_copied',
       contentType: 'message_response',
       resourceType: 'message',
-      resourceId: telemetry.messageId,
+      resourceId: telemetry.turnId ?? telemetry.messageId,
       workstreamId: telemetry.workstreamId,
     });
   };

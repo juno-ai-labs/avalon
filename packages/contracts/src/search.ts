@@ -26,7 +26,10 @@ export const SearchResultSchema = z.strictObject({
   revision: z.string(),
   location: z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('link'), url: HttpUrlSchema, range: TextRangeSchema }),
-    z.strictObject({ kind: z.literal('message'), workstreamId: z.string().uuid(), substreamId: z.string(), turnId: z.string(), transcriptSequence: z.number().int().positive(), range: TextRangeSchema }),
+    // `parentKind` names what `workstreamId` is: a Canvas (its Chat is
+    // substream `0`) or a Sidekick (`automation`: its shared conversation is
+    // `0`, a run's is the run's id).
+    z.strictObject({ kind: z.literal('message'), parentKind: z.enum(['canvas', 'automation']), workstreamId: z.string().uuid(), substreamId: z.string(), turnId: z.string(), transcriptSequence: z.number().int().positive(), range: TextRangeSchema }),
     z.strictObject({ kind: z.literal('resource'), resourceId: z.string().uuid(), mimeType: z.string().nullable(), range: TextRangeSchema }),
   ]),
 });

@@ -18,8 +18,8 @@ describe("workspace impersonation authority", () => {
     const stub = env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
     await stub.initializeWorkspace(workspaceId, "wnam");
     const relationships = [
-      { impersonatorUserId: alice, representedUserId: alice, authorityBasis: "demo:operation" },
-      { impersonatorUserId: alice, representedUserId: bob, authorityBasis: "demo:operation" },
+      { impersonatorUserId: alice, representedUserId: alice, authorityBasis: "operator:grant" },
+      { impersonatorUserId: alice, representedUserId: bob, authorityBasis: "operator:grant" },
     ];
 
     await stub.upsertImpersonationRelationships({ workspaceId, relationships });
@@ -52,7 +52,7 @@ describe("workspace impersonation authority", () => {
 
     expect(await stub.revokeImpersonationRelationships({
       workspaceId,
-      authorityBasis: "demo:operation",
+      authorityBasis: "operator:grant",
     })).toEqual({ revoked: 2 });
     expect((await stub.listImpersonationRelationships({ workspaceId, impersonatorUserId: alice })).relationships)
       .toEqual([expect.objectContaining({ representedUserId: bob, authorityBasis: "support:approved" })]);

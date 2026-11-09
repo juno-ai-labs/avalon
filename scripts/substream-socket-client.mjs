@@ -18,7 +18,7 @@ export function socketUrlWithoutTicket(url) {
 }
 
 /**
- * Opens one SubstreamAgent feed, optionally submits one correlated command
+ * Opens one AgentLoopDO feed, optionally submits one correlated command
  * after the canonical snapshot, and returns only after its private receipt.
  */
 export function openSubstreamSocket(url, {

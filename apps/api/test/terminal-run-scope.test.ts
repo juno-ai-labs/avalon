@@ -18,7 +18,7 @@ const WORKER = "55555555-5555-4555-8555-555555555555";
 const NESTED_WORKER = "66666666-6666-4666-8666-666666666666";
 
 function agent(parentId: string, substreamId: string): AgentId {
-  return agentIdForAddress({ parentKind: "workstream", parentId, substreamId: asSubstreamId(substreamId) });
+  return agentIdForAddress({ parentKind: "canvas", parentId, substreamId: asSubstreamId(substreamId) });
 }
 
 /** The ownership table, as `agentOwner` reads it: child to owner. */
@@ -30,7 +30,7 @@ function owners(edges: Array<[child: AgentId, owner: AgentId]>) {
 function input(substreamId: string | undefined, backgroundAgent: boolean) {
   return {
     workspaceId: WORKSPACE,
-    parentKind: "workstream" as const,
+    parentKind: "canvas" as const,
     parentId: WORKSTREAM,
     ...(substreamId === undefined ? {} : { substreamId: asSubstreamId(substreamId) }),
     backgroundAgent,
@@ -42,9 +42,9 @@ describe("the conversation whose Terminal a run uses", () => {
     const ownerOf = owners([[agent(WORKSTREAM, THREAD), agent(WORKSTREAM, "0")]]);
 
     await expect(resolveTerminalRunScope(input(undefined, false), ownerOf))
-      .resolves.toEqual({ parentKind: "workstream", backgroundAgent: false, runSubstreamId: "0", authoritySubstreamId: "0" });
+      .resolves.toEqual({ parentKind: "canvas", backgroundAgent: false, runSubstreamId: "0", authoritySubstreamId: "0" });
     await expect(resolveTerminalRunScope(input(THREAD, false), ownerOf))
-      .resolves.toEqual({ parentKind: "workstream", backgroundAgent: false, runSubstreamId: THREAD, authoritySubstreamId: THREAD });
+      .resolves.toEqual({ parentKind: "canvas", backgroundAgent: false, runSubstreamId: THREAD, authoritySubstreamId: THREAD });
     // An ordinary run's conversation is its own whatever the table says.
     expect(ownerOf).not.toHaveBeenCalled();
   });
@@ -56,9 +56,9 @@ describe("the conversation whose Terminal a run uses", () => {
     ]);
 
     await expect(resolveTerminalRunScope(input(WORKER, true), ownerOf))
-      .resolves.toEqual({ parentKind: "workstream", backgroundAgent: true, runSubstreamId: WORKER, authoritySubstreamId: THREAD });
+      .resolves.toEqual({ parentKind: "canvas", backgroundAgent: true, runSubstreamId: WORKER, authoritySubstreamId: THREAD });
     await expect(resolveTerminalRunScope(input(NESTED_WORKER, true), ownerOf))
-      .resolves.toEqual({ parentKind: "workstream", backgroundAgent: true, runSubstreamId: NESTED_WORKER, authoritySubstreamId: THREAD });
+      .resolves.toEqual({ parentKind: "canvas", backgroundAgent: true, runSubstreamId: NESTED_WORKER, authoritySubstreamId: THREAD });
   });
 
   it("shares the authoring sandbox across Sidekick activations without changing their run addresses", async () => {

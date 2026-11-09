@@ -7,9 +7,7 @@ import { emptyMenuBarContent, type MenuBarActions, type MenuBarContent } from '.
 function noopActions(): MenuBarActions {
   return {
     selected: vi.fn(),
-    openConversation: vi.fn(),
-    openChannel: vi.fn(),
-    openAccessRequest: vi.fn(),
+    open: vi.fn(),
     openRally: vi.fn(),
     quit: vi.fn(),
   };
@@ -195,30 +193,25 @@ describe('menu bar controller', () => {
     expect(controller.present()).toBe(true);
   });
 
-  it('shows every waiting conversation as the number beside the icon, not only the five the menu lists', async () => {
+  it('shows everything waiting as the number beside the icon, not only the five the menu lists', async () => {
     const attention = Array.from({ length: 7 }, (_, index) => ({
-      key: `c${index}`,
-      workstreamId: `c${index}`,
-      substreamId: null,
-      title: `Channel ${index}`,
-      detail: 'Rally finished',
+      key: `canvas:c${index}`, kind: 'canvas' as const, id: `c${index}`, title: `Canvas ${index}`, detail: 'Unread',
     }));
-    const subject = harness({ content: { accessRequests: [], attention, attentionComplete: true, recents: [], recentsComplete: true } });
+    const subject = harness({ content: { attention, attentionComplete: true, recents: [], recentsComplete: true } });
     await subject.controller.initialize();
 
     expect(subject.titles.at(-1)).toBe('7');
   });
 
   it('shows no number while nothing is waiting, or nobody is signed in', async () => {
-    const quiet = harness({ content: { accessRequests: [], attention: [], attentionComplete: true, recents: [], recentsComplete: true } });
+    const quiet = harness({ content: { attention: [], attentionComplete: true, recents: [], recentsComplete: true } });
     await quiet.controller.initialize();
     expect(quiet.titles.at(-1)).toBe('');
 
     const signedOut = harness({
       signedIn: false,
       content: {
-        attention: [{ key: 'a', workstreamId: 'a', substreamId: null, title: 'A', detail: 'Rally finished' }],
-        accessRequests: [],
+        attention: [{ key: 'canvas:a', kind: 'canvas', id: 'a', title: 'A', detail: 'Unread' }],
         attentionComplete: true,
         recents: [],
         recentsComplete: true,
@@ -230,7 +223,7 @@ describe('menu bar controller', () => {
 
   it('rebuilds the drop-down from whatever is currently held', async () => {
     const subject = harness({
-      content: { accessRequests: [], attention: [], attentionComplete: true, recents: [{ id: 'a', title: 'Acme renewal', substreamId: null }], recentsComplete: true },
+      content: { attention: [], attentionComplete: true, recents: [{ key: 'canvas:a', kind: 'canvas', id: 'a', title: 'Acme renewal', detail: null }], recentsComplete: true },
     });
     await subject.controller.initialize();
     subject.controller.refresh();

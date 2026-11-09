@@ -95,7 +95,7 @@ function fixture(
   options: {
     withInstructions?: boolean;
     /** Which conversation the run executes in and which owns the sandbox; the main one for both by default. */
-    scope?: { parentKind: "workstream" | "automation"; backgroundAgent: boolean; runSubstreamId: string; authoritySubstreamId: string };
+    scope?: { parentKind: "canvas" | "automation"; backgroundAgent: boolean; runSubstreamId: string; authoritySubstreamId: string };
   } = {},
 ) {
   const database = preRetirementProductSqliteDatabase();
@@ -546,7 +546,7 @@ describe("Daytona Terminal runtime", () => {
     // A holder from another conversation is live while its lease is, judged
     // against the instant the command starts, so the two clocks have to agree.
     const { objectStore, runtime } = fixture({ now: () => new Date() }, undefined, undefined, {
-      scope: { parentKind: "workstream", backgroundAgent: true, runSubstreamId: worker, authoritySubstreamId: "0" },
+      scope: { parentKind: "canvas", backgroundAgent: true, runSubstreamId: worker, authoritySubstreamId: "0" },
     });
     // Neither the agent's run nor the receipt the harness planned for this
     // call is in this object: both live in the agent's own conversation.

@@ -1,10 +1,9 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * The Slack ingress spine and the agent-session lifecycle against the object
- * that holds them: job admission and its dedupe, the claim lease, settlement
- * fencing, the exhaustion episode, the maintenance sweep, thread claims,
- * pending prompts, session seating, the status reaction, and feedback.
+ * The Slack ingress spine against the object that holds it: job admission and
+ * its dedupe, the claim lease, settlement fencing, the exhaustion episode, the
+ * maintenance sweep, thread claims, pending prompts, and App Home context.
  *
  * These are claim shapes, so what real workerd proves here is exactly what a
  * Node double cannot: the insert-or-report decision and the fail-and-check
@@ -34,12 +33,7 @@ import {
   WorkspaceSlackIngressSettleResultSchema,
   WorkspaceSlackIngressSweepResultSchema,
   WorkspaceSlackContextResultSchema,
-  WorkspaceSlackFeedbackResultSchema,
   WorkspaceSlackPendingPromptResultSchema,
-  WorkspaceSlackSessionAssignResultSchema,
-  WorkspaceSlackSessionExistsResultSchema,
-  WorkspaceSlackSessionReactionResultSchema,
-  WorkspaceSlackSessionResultSchema,
   WorkspaceSlackThreadClaimResultSchema,
   WorkspaceSlackThreadRoutableResultSchema,
 } from "../src/durable-objects/workspace-slack-protocol";
@@ -127,7 +121,6 @@ beforeEach(async () => {
     state.storage.sql.exec(`DELETE FROM slack_agent_thread_claims`);
     state.storage.sql.exec(`DELETE FROM slack_agent_feedback`);
     state.storage.sql.exec(`DELETE FROM slack_agent_contexts`);
-    state.storage.sql.exec(`DELETE FROM slack_agent_sessions`);
     state.storage.sql.exec(`DELETE FROM external_conversation_bindings`);
     state.storage.sql.exec(`DELETE FROM slack_link_challenges`);
     state.storage.sql.exec(`DELETE FROM slack_ingress_jobs`);
@@ -427,17 +420,18 @@ describe("Slack thread claims", () => {
 });
 
 describe("Slack pending prompts and thread routing", () => {
+  // Nothing writes a pending prompt since Slack stopped starting work; a row
+  // an earlier deploy retained is what these reads still answer for until it
+  // expires, so the test writes one the way that deploy did.
   const prompt = (threadTs: string, expiresMinutes: number) =>
-    workspace().rememberSlackPendingPrompt({
-      workspaceId: WORKSPACE_ID,
-      connectionId: CONNECTION,
-      channelId: "C1",
-      threadTs,
-      slackUserId: "U1",
-      prompt: "investigate the deploy",
-      denialReason: "policy",
-      expiresAt: at(expiresMinutes),
-      at: at(0),
+    runInDurableObject(workspace(), async (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO slack_agent_pending_prompts
+           (connection_id, slack_channel_id, slack_thread_ts, slack_user_id, prompt,
+            denial_reason, expires_at, created_at, updated_at)
+         VALUES (?, 'C1', ?, 'U1', 'investigate the deploy', 'policy', ?, ?, ?)`,
+        CONNECTION, threadTs, at(expiresMinutes), at(0), at(0),
+      );
     });
 
   const loadPrompt = (threadTs: string, atMinutes = 1) =>
@@ -482,28 +476,20 @@ describe("Slack pending prompts and thread routing", () => {
     expect(await routable("1.0")).toEqual({ routable: true, suspended: false });
     // An expired prompt no longer claims the thread.
     expect(await routable("1.0", 90)).toEqual({ routable: false, suspended: false });
-    // A session row alone is delivery state, not a route: the thread routes
-    // because creating the session bound it in the same transaction.
-    await workspace().createSlackSession({
+    // A thread bound to a Sidekick run routes, written the way a run's send
+    // records it.
+    expect(await workspace().recordOutboundExternalConversationBinding({
       workspaceId: WORKSPACE_ID,
-      sessionId: "session-1",
-      connectionId: CONNECTION,
-      teamId: "T1",
-      slackUserId: "U1",
-      channelId: "C1",
-      threadTs: "2.0",
-      openingClientMessageId: "event:opening",
-      workstreamId: "00000000-0000-7000-8000-0000000c1d50",
-      invocationKind: "app_mention",
-      channelType: "public",
-      assignedUserId: null,
-      assignedAt: null,
-      assignmentMethod: null,
-      claimedBySlackUserId: null,
-      claimedAt: null,
-      contextJson: "{}",
+      installationId: "slack:T1",
+      path: ["C1", "2.0"],
+      target: {
+        kind: "conversation",
+        parentKind: "automation",
+        parentId: "00000000-0000-7000-8000-0000000c1d40",
+        substreamId: "00000000-0000-7000-8000-0000000c1d50",
+      },
       at: at(0),
-    });
+    })).toEqual({ outcome: "bound" });
     expect(await routable("2.0", 90)).toEqual({ routable: true, suspended: false });
     await workspace().suspendExternalConversationBindings({
       workspaceId: WORKSPACE_ID,
@@ -529,386 +515,8 @@ describe("workspace fencing", () => {
   });
 });
 
-/**
- * The agent-session lifecycle, on the object that now holds it.
- *
- * What real workerd proves past a Node double: the seating read and its write
- * are one `transactionSync`, so the previous assignment each session travelled
- * back with was read inside the critical section that moved it; the reaction
- * compare-and-set decides `settled` from a `RETURNING` witness against an `IS`
- * predicate, so NULL — Rally has placed nothing — is a state it can match;
- * the feedback insert's `ON CONFLICT … DO NOTHING RETURNING` distinguishes a
- * redelivery from a write; and the foreign key to `connector_connections` is
- * enforced rather than assumed.
- */
-describe("Slack agent sessions", () => {
-  const WORKSTREAM = "00000000-0000-7000-8000-0000000c1d20";
-  const OTHER_WORKSTREAM = "00000000-0000-7000-8000-0000000c1d21";
-  const THIRD_WORKSTREAM = "00000000-0000-7000-8000-0000000c1d22";
-  const MEMBER = "00000000-0000-7000-8000-0000000c1d30";
-  const OTHER_MEMBER = "00000000-0000-7000-8000-0000000c1d31";
-
-  function createSession(input: {
-    sessionId?: string;
-    connectionId?: string;
-    workstreamId?: string;
-    threadTs?: string;
-    slackUserId?: string;
-    assignedUserId?: string | null;
-    assignmentMethod?: "verified_email" | "explicit_link" | null;
-    assignedAtMinutes?: number;
-    atMinutes?: number;
-  } = {}) {
-    return workspace().createSlackSession({
-      workspaceId: WORKSPACE_ID,
-      sessionId: input.sessionId ?? "session-1",
-      connectionId: input.connectionId ?? CONNECTION,
-      teamId: "T1",
-      slackUserId: input.slackUserId ?? "U1",
-      channelId: "C1",
-      threadTs: input.threadTs ?? "1.0",
-      openingClientMessageId: "event:Ev1",
-      workstreamId: input.workstreamId ?? WORKSTREAM,
-      invocationKind: "app_mention",
-      channelType: "public",
-      assignedUserId: input.assignedUserId ?? null,
-      assignedAt: input.assignedUserId ? at(input.assignedAtMinutes ?? -10) : null,
-      assignmentMethod: input.assignmentMethod ?? null,
-      claimedBySlackUserId: null,
-      claimedAt: null,
-      contextJson: JSON.stringify({ opening: "text" }),
-      at: at(input.atMinutes ?? 0),
-    }).then((result) => WorkspaceSlackSessionResultSchema.parse(result));
-  }
-
-  function assign(input: {
-    assignedUserId?: string;
-    assignmentMethod?: "verified_email" | "explicit_link";
-    slackUserId?: string;
-    atMinutes?: number;
-  } = {}) {
-    return workspace().assignSlackSessions({
-      workspaceId: WORKSPACE_ID,
-      connectionId: CONNECTION,
-      teamId: "T1",
-      slackUserId: input.slackUserId ?? "U1",
-      assignedUserId: input.assignedUserId ?? MEMBER,
-      assignmentMethod: input.assignmentMethod ?? "verified_email",
-      at: at(input.atMinutes ?? 5),
-    }).then((result) => WorkspaceSlackSessionAssignResultSchema.parse(result));
-  }
-
-  /** The columns the session result deliberately does not carry. */
-  function assignmentRow(sessionId: string) {
-    return runInDurableObject(workspace(), (_instance, state) =>
-      state.storage.sql.exec<{
-        assigned_user_id: string | null;
-        assigned_at: string | null;
-        assignment_method: string | null;
-      }>(
-        `SELECT assigned_user_id, assigned_at, assignment_method
-           FROM slack_agent_sessions WHERE id = ?`,
-        sessionId,
-      ).one());
-  }
-
-  it("moves a thread's session to the connection a reconnect wrote, instead of refusing a second row", async () => {
-    await createSession();
-    const RECONNECTED = "00000000-0000-7000-8000-0000000c1d40";
-    await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(
-        `INSERT INTO connector_connections
-           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
-            display_name, encrypted_credentials, credential_iv, credential_key_version,
-            granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
-            model_plugin_id)
-         VALUES (?, ?, 'slack', 'workspace', NULL, 'T1', 'Slack', 'encrypted', 'iv', 1,
-                 '["slack.agent"]', 'healthy', '{}', '{}', ?, ?, 'plugin_slack_reconnected')`,
-        RECONNECTED, WORKSPACE_ID, at(0), at(0),
-      );
-    });
-    // The bound thread's reply arrives on the new connection and repairs its
-    // delivery state.
-    const repaired = await createSession({ sessionId: "session-repair", connectionId: RECONNECTED, atMinutes: 5 });
-    expect(repaired.session).toMatchObject({ id: "session-1", connection_id: RECONNECTED, workstream_id: WORKSTREAM });
-    const byThread = WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionByThread({
-      workspaceId: WORKSPACE_ID, connectionId: RECONNECTED, channelId: "C1", threadTs: "1.0",
-    }));
-    expect(byThread.session?.id).toBe("session-1");
-  });
-
-  it("answers with the row it stored, and finds it by thread, work stream, and id", async () => {
-    const created = await createSession();
-    expect(created.session).toMatchObject({
-      id: "session-1",
-      workspace_id: WORKSPACE_ID,
-      connection_id: CONNECTION,
-      slack_thread_ts: "1.0",
-      workstream_id: WORKSTREAM,
-      invocation_kind: "app_mention",
-      channel_type: "public",
-      assigned_user_id: null,
-      slack_stream_ts: null,
-      last_delivery_key: null,
-      reaction_current: null,
-    });
-
-    const byThread = WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionByThread({
-      workspaceId: WORKSPACE_ID,
-      connectionId: CONNECTION,
-      channelId: "C1",
-      threadTs: "1.0",
-    }));
-    expect(byThread).toEqual(created);
-    const byWorkstream = WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionByWorkstream({
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM,
-    }));
-    expect(byWorkstream).toEqual(created);
-    const byId = WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionById({
-      workspaceId: WORKSPACE_ID,
-      sessionId: "session-1",
-    }));
-    expect(byId).toEqual(created);
-    expect(WorkspaceSlackSessionExistsResultSchema.parse(await workspace().slackSessionExists({
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM,
-      connectionId: CONNECTION,
-    }))).toEqual({ sessionId: "session-1" });
-    // A work stream this connection never opened a thread for.
-    expect(WorkspaceSlackSessionExistsResultSchema.parse(await workspace().slackSessionExists({
-      workspaceId: WORKSPACE_ID,
-      workstreamId: OTHER_WORKSTREAM,
-      connectionId: CONNECTION,
-    }))).toEqual({ sessionId: null });
-  });
-
-  it("refuses a session for an installation this object does not hold", async () => {
-    // The foreign key is real here. A Node double would have accepted the row
-    // and left the orphan for a reader to trip over.
-    //
-    // On the instance rather than through the stub, for the reason the
-    // fencing test below gives: a stub's rejected pipelining proxy leaves an
-    // unhandled rejection beside the one the assertion takes.
-    const outcome = await runInDurableObject(workspace(), async (instance) =>
-      instance.createSlackSession({
-        workspaceId: WORKSPACE_ID,
-        sessionId: "session-orphan",
-        connectionId: "00000000-0000-7000-8000-0000000c1dff",
-        teamId: "T1",
-        slackUserId: "U1",
-        channelId: "C1",
-        threadTs: "1.0",
-        openingClientMessageId: "event:Ev1",
-        workstreamId: WORKSTREAM,
-        invocationKind: "app_mention",
-        channelType: "public",
-        assignedUserId: null,
-        assignedAt: null,
-        assignmentMethod: null,
-        claimedBySlackUserId: null,
-        claimedAt: null,
-        contextJson: "{}",
-        at: at(0),
-      }).then(() => null, (error: unknown) => error));
-    expect(String(outcome)).toContain("FOREIGN KEY");
-  });
-
-  it("seats the sessions a verified email may claim, and reports what it moved them from", async () => {
-    await createSession({ sessionId: "session-unseated", threadTs: "1.0", workstreamId: WORKSTREAM });
-    await createSession({
-      sessionId: "session-mine",
-      threadTs: "2.0",
-      workstreamId: OTHER_WORKSTREAM,
-      assignedUserId: MEMBER,
-      assignmentMethod: "verified_email",
-      assignedAtMinutes: -10,
-    });
-    // Someone else's explicit link. An email match is the weaker claim.
-    await createSession({
-      sessionId: "session-theirs",
-      threadTs: "3.0",
-      workstreamId: THIRD_WORKSTREAM,
-      assignedUserId: OTHER_MEMBER,
-      assignmentMethod: "explicit_link",
-      assignedAtMinutes: -10,
-    });
-
-    const { sessions } = await assign({ atMinutes: 5 });
-    expect([...sessions].sort((left, right) => left.id.localeCompare(right.id))).toEqual([
-      {
-        id: "session-mine",
-        workspaceId: WORKSPACE_ID,
-        workstreamId: OTHER_WORKSTREAM,
-        previousAssignedUserId: MEMBER,
-        previousAssignmentMethod: "verified_email",
-      },
-      {
-        id: "session-unseated",
-        workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM,
-        previousAssignedUserId: null,
-        previousAssignmentMethod: null,
-      },
-    ]);
-    // Re-affirming its own seat does not restamp when it was seated.
-    expect(await assignmentRow("session-mine")).toEqual({
-      assigned_user_id: MEMBER,
-      assigned_at: at(-10),
-      assignment_method: "verified_email",
-    });
-    expect(await assignmentRow("session-unseated")).toEqual({
-      assigned_user_id: MEMBER,
-      assigned_at: at(5),
-      assignment_method: "verified_email",
-    });
-    expect(await assignmentRow("session-theirs")).toEqual({
-      assigned_user_id: OTHER_MEMBER,
-      assigned_at: at(-10),
-      assignment_method: "explicit_link",
-    });
-  });
-
-  it("lets an explicit link take a seat the email guess made, and restamp it", async () => {
-    await createSession({
-      sessionId: "session-guessed",
-      assignedUserId: OTHER_MEMBER,
-      assignmentMethod: "verified_email",
-      assignedAtMinutes: -10,
-    });
-
-    expect(await assign({ assignmentMethod: "explicit_link", atMinutes: 7 })).toEqual({
-      sessions: [{
-        id: "session-guessed",
-        workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM,
-        previousAssignedUserId: OTHER_MEMBER,
-        previousAssignmentMethod: "verified_email",
-      }],
-    });
-    expect(await assignmentRow("session-guessed")).toEqual({
-      assigned_user_id: MEMBER,
-      assigned_at: at(7),
-      assignment_method: "explicit_link",
-    });
-  });
-
-  /** Points the session's one reaction slot at a message, as admission does. */
-  function anchor(messageTs: string, reaction: string | null, atMinutes: number) {
-    return workspace().anchorSlackSessionReaction({
-      workspaceId: WORKSPACE_ID,
-      sessionId: "session-1",
-      channelId: "C1",
-      messageTs,
-      reaction,
-      at: at(atMinutes),
-    });
-  }
-
-  function settle(messageTs: string, expected: string | null, reaction: string | null) {
-    return workspace().settleSlackSessionReaction({
-      workspaceId: WORKSPACE_ID,
-      sessionId: "session-1",
-      channelId: "C1",
-      messageTs,
-      expected,
-      reaction,
-      at: at(5),
-    }).then((result) => WorkspaceSlackSessionReactionResultSchema.parse(result));
-  }
-
-  async function reactionSlot() {
-    return WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionById({
-      workspaceId: WORKSPACE_ID,
-      sessionId: "session-1",
-    })).session;
-  }
-
-  it("settles the status reaction only against the emoji the caller removed", async () => {
-    await createSession();
-    await anchor("1.0", null, 4);
-
-    // NULL is a state, not a missing value: this transition removed nothing.
-    expect(await settle("1.0", null, "eyes")).toEqual({ outcome: "settled" });
-    // The same caller retrying, or a rival that read the same empty slot,
-    // loses — the row no longer carries what it expected to remove.
-    expect(await settle("1.0", null, "hourglass")).toEqual({ outcome: "raced" });
-    expect(await settle("1.0", "eyes", "hourglass")).toEqual({ outcome: "settled" });
-    expect(await reactionSlot()).toMatchObject({ reaction_current: "hourglass" });
-  });
-
-  it("refuses an outcome settled against the anchor a follow-up moved away from", async () => {
-    await createSession();
-    await anchor("1.0", "eyes", 4);
-    // A follow-up is admitted while the first run is live, carrying the same emoji.
-    await anchor("9.0", "eyes", 6);
-
-    // The first run's outcome, settled against its own message. The emoji
-    // matches, so only the anchor can tell the two apart.
-    expect(await settle("1.0", "eyes", "white_check_mark")).toEqual({ outcome: "raced" });
-    expect(await reactionSlot()).toMatchObject({
-      reaction_channel_id: "C1",
-      reaction_message_ts: "9.0",
-      reaction_current: "eyes",
-    });
-
-    // The follow-up's own outcome still settles.
-    expect(await settle("9.0", "eyes", "white_check_mark")).toEqual({ outcome: "settled" });
-    expect(await reactionSlot()).toMatchObject({
-      reaction_message_ts: "9.0",
-      reaction_current: "white_check_mark",
-    });
-  });
-
-  it("moves the status reaction when a follow-up re-anchors it", async () => {
-    await createSession();
-    await anchor("1.0", null, 4);
-    await settle("1.0", null, "eyes");
-
-    await anchor("9.0", "eyes", 6);
-
-    expect(await reactionSlot()).toMatchObject({
-      reaction_channel_id: "C1",
-      reaction_message_ts: "9.0",
-      reaction_current: "eyes",
-    });
-  });
-
-  it("clears a legacy stream pointer without touching the delivery key", async () => {
-    await createSession();
-    await workspace().setSlackSessionDeliveryKey({
-      workspaceId: WORKSPACE_ID,
-      sessionId: "session-1",
-      deliveryKey: "run-1:turn-2",
-      at: at(5),
-    });
-    // Existing deployed rows may still carry a placeholder stream. The typed
-    // API can clear one but can no longer create a new pointer.
-    await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(
-        `UPDATE slack_agent_sessions SET slack_stream_ts = '5.0'
-          WHERE id = 'session-1' AND workspace_id = ?`,
-        WORKSPACE_ID,
-      );
-    });
-    expect(WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionById({
-      workspaceId: WORKSPACE_ID,
-      sessionId: "session-1",
-    })).session).toMatchObject({ last_delivery_key: "run-1:turn-2", slack_stream_ts: "5.0" });
-
-    // The stream ends; the pointer clears without touching the delivery key.
-    await workspace().setSlackSessionStream({
-      workspaceId: WORKSPACE_ID,
-      sessionId: "session-1",
-      streamTs: null,
-      at: at(6),
-    });
-    expect(WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionById({
-      workspaceId: WORKSPACE_ID,
-      sessionId: "session-1",
-    })).session).toMatchObject({ last_delivery_key: "run-1:turn-2", slack_stream_ts: null });
-  });
-
+/** The App Home context, stored wholesale per Slack user on an installation. */
+describe("Slack App Home context", () => {
   it("keeps one App Home context per Slack user on an installation", async () => {
     const read = (slackUserId: string) => workspace().slackAppContext({
       workspaceId: WORKSPACE_ID,
@@ -936,31 +544,5 @@ describe("Slack agent sessions", () => {
     expect(await read("U1")).toEqual({ contextJson: JSON.stringify({ view: "tasks" }) });
     // Another Slack user on the same installation is a different row.
     expect(await read("U2")).toEqual({ contextJson: null });
-  });
-
-  it("records feedback once per ingress job and reports a redelivery as a replay", async () => {
-    const record = (input: { feedbackId: string; rating: "helpful" | "needs_improvement" }) =>
-      workspace().recordSlackFeedback({
-        workspaceId: WORKSPACE_ID,
-        feedbackId: input.feedbackId,
-        ingressJobId: "interaction:Iv1",
-        workstreamId: WORKSTREAM,
-        userId: MEMBER,
-        connectionId: CONNECTION,
-        rating: input.rating,
-        comment: null,
-        at: at(0),
-      }).then((result) => WorkspaceSlackFeedbackResultSchema.parse(result));
-
-    expect(await record({ feedbackId: "feedback-1", rating: "helpful" })).toEqual({ outcome: "recorded" });
-    // Slack redelivers the interaction; the second write is not a failure, and
-    // it does not overwrite what the member actually said.
-    expect(await record({ feedbackId: "feedback-2", rating: "needs_improvement" }))
-      .toEqual({ outcome: "replayed" });
-    const stored = await runInDurableObject(workspace(), (_instance, state) =>
-      state.storage.sql.exec<{ id: string; rating: string }>(
-        `SELECT id, rating FROM slack_agent_feedback`,
-      ).toArray());
-    expect(stored).toEqual([{ id: "feedback-1", rating: "helpful" }]);
   });
 });

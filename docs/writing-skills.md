@@ -73,7 +73,7 @@ has. It carries no code and grants no authority.
 Write a skill when:
 
 - There is a **repeatable procedure** worth capturing once, rather than
-  re-explaining it in every work stream.
+  re-explaining it in every conversation.
 - The guidance is **knowledge**, not a new capability. If what is missing is a
   *capability* — a provider call, a store read, a write — that is a plugin tool
   ([`agent-tools.md`](agent-tools.md)), possibly *with* a skill that teaches the
@@ -284,7 +284,7 @@ on every turn in the harness's total order rather than spliced into the previous
 prompt, so a resumed attempt produces the same bytes as a fresh one and the
 provider's cached prefix survives. Two authoring rules follow:
 
-- **Never interpolate a per-run value** — a timestamp, a counter, a work-stream
+- **Never interpolate a per-run value** — a timestamp, a counter, a conversation
   id — into a `description`, `whenToUse`, or `body`. If a skill genuinely needs
   a dynamic value, that value belongs in the run's user-role context, not baked
   into the skill.

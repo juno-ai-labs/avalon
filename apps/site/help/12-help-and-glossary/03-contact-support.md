@@ -31,15 +31,15 @@ questions. These help most:
 - The **Request ID** from a **Run failed** card. Click the copy button beside it
   and paste it into your email. It lets us find that one run among all the
   others. The card is described in
-  [While Rally works](../02-working-in-a-channel/03-while-rally-works.md).
+  [While Rally works](../02-canvases/04-while-rally-works.md).
 - Roughly when it happened, with your time zone.
-- A link to the Thread, if the problem is in one. Use **Copy link** as
-  shown in [Search and links](../03-spaces-and-breakouts/06-search-and-links.md).
+- A link to the Canvas or Sidekick, if the problem is in one. Use **Copy link** as
+  shown in [Search and links](../02-canvases/11-search-and-links.md).
   A link grants nothing by itself, so it is safe to send: it only tells us
   where to look.
 - Your Rally version. It is under **Settings → Application → About**, or
   **Rally → About Rally** in the menu bar.
-- Which device: the Mac app, the iPhone app, or Rally in a web browser.
+- Which device: the Mac app, or Rally in a web browser.
 - Which connector, if the problem involves one, and whether it is your
   personal connection or the Organization's.
 - Screenshots, once you have covered or cropped out anything private.
@@ -59,7 +59,7 @@ into your accounts.
   information.
 
 If a screenshot would show any of these, crop or cover that part first. The
-Request ID, the error message and the Thread link are enough for us to find
+Request ID, the error message and the Canvas link are enough for us to find
 what we need on our side.
 
 > [!WARNING]

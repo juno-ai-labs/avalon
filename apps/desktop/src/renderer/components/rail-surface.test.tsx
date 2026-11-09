@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { act, render, renderHook, screen } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { RAIL_EXIT_FADE_MS, RailSurface, useRailExitFade } from './rail-surface';
@@ -115,5 +115,25 @@ describe('RailSurface', () => {
     expect(surface).toHaveClass('is-leaving');
     expect(surface).toHaveAttribute('inert');
     expect(screen.queryByRole('separator', { name: 'Resize Preview', hidden: true })).not.toBeInTheDocument();
+  });
+});
+
+describe('dragging the rail handle', () => {
+  it('applies each step without saving it, and saves the width it ends at once', () => {
+    const onResize = vi.fn();
+    render(<Tooltip.Provider>
+      <RailSurface label="Preview" leaving={false} onClose={vi.fn()} onResize={onResize} resizeLabel="Resize Preview" width={300}>
+        <div>panel</div>
+      </RailSurface>
+    </Tooltip.Provider>);
+    const handle = screen.getByRole('separator', { name: 'Resize Preview' });
+    fireEvent.pointerDown(handle, { pointerId: 1, clientX: 600 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 590 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 580 });
+    expect(onResize.mock.calls.every(([, options]) => options?.remember === false)).toBe(true);
+    expect(onResize).toHaveBeenCalledTimes(2);
+    fireEvent.pointerUp(handle, { pointerId: 1, clientX: 580 });
+    expect(onResize).toHaveBeenCalledTimes(3);
+    expect(onResize.mock.calls[2]).toEqual([onResize.mock.calls[1]![0]]);
   });
 });

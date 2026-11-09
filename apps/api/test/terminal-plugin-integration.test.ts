@@ -55,7 +55,7 @@ function fixture(
   emergencyDisabled = false,
   options: {
     /** What WorkspaceDO answers when composition asks who owns an agent. */
-    agentOwner?: (input: { workspaceId: string; agentId: string }) => Promise<{ agentId: string | null }>;
+    agentOwner?: (input: { workspaceId: string; agentId: string }) => Promise<{ ok: true; value: { agentId: string | null } }>;
   } = {},
 ) {
   const database = preRetirementProductSqliteDatabase();
@@ -109,7 +109,7 @@ function fixture(
     TERMINAL_EMERGENCY_DISABLED: emergencyDisabled ? "true" : "false",
   });
   const input: WorkstreamWorkflowInput = {
-    region: "global", workspaceId: W, parentKind: "workstream", parentId: S,
+    region: "global", workspaceId: W, parentKind: "canvas", parentId: S,
     loopId: `workstream:${S}:substream:0:loop`, harnessRunId: R,
     triggerMessageId: null, activityId: null,
     executionPrincipal: { type: "user", userId: U }, reason: "user_message",
@@ -187,6 +187,17 @@ function readGateway(baseSha = BASE): TerminalGitHubReadGateway {
 }
 
 describe("Terminal Bind integration", () => {
+  it("gives a requester's run no Terminal, whose shared files only a delegate's access reaches", async () => {
+    const { env, input } = fixture("supported");
+    const requester = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : U;
+    const plugin = await createAvalonTerminalPlugin(env, { ...input, parentKind: "automation" }, undefined, {
+      provider: provider(), readGateway: readGateway(),
+      delegation: { sidekickId: S, creatorUserId: U, accountUserId: U,
+        delegates: [{ userId: requester, generation: 0, grantedAt: 1 }], requesterUserId: requester },
+    });
+    expect(plugin).toBeNull();
+  });
+
   it.each([false, true])("shares Sidekick files and observes withdrawal on inventory refresh (personal repository %s)", async (personalRepository) => {
     const { database, objectStore, objectStores, env, input, workspace } = fixture("supported");
     if (personalRepository) {
@@ -198,7 +209,7 @@ describe("Terminal Bind integration", () => {
     } });
     await workspace.instance.sidekickCreate({
       workspaceId: W, automationId: S, authorUserId: U, scope: "workspace",
-      owningWorkstreamId: null, owningSubstreamId: asSubstreamId("0"), authorityGeneration: 1
+      authorityGeneration: 1
     });
     const consent = async (userId: typeof U, allowed: boolean) => {
       const request = { workspaceId: W, automationId: S, userId, allowed, operationId: crypto.randomUUID() };
@@ -288,7 +299,7 @@ describe("Terminal Bind integration", () => {
       workspaceId: W, userId: U, accessClass: "member", role: "owner", status: "active", incarnation: "test-member", revision: 1,
     } });
     await workspace.instance.sidekickCreate({ workspaceId: W, automationId: S, authorUserId: U,
-      scope: "workspace", owningWorkstreamId: null, authorityGeneration: 1 });
+      scope: "workspace", authorityGeneration: 1 });
     const snapshot = { id: "wizard-sandbox", name: "wizard-sandbox", state: "running" as const, domainAllowList: [] as string[] };
     // Only the external sandbox provider is doubled; inventory assembly,
     // delegation, shared-file authority and Terminal execution remain real.
@@ -334,11 +345,11 @@ describe("Terminal Bind integration", () => {
     // The agent's owner is under another work stream: a routing defect the
     // resolver refuses. The refusal takes Terminal away, named, and nothing else.
     const { env, input } = fixture("supported", false, {
-      agentOwner: async ({ agentId }) => ({
-        agentId: agentId === agentIdForAddress({ parentKind: "workstream", parentId: S, substreamId: asSubstreamId(worker) })
-          ? agentIdForAddress({ parentKind: "workstream", parentId: otherWorkstream, substreamId: asSubstreamId("0") })
+      agentOwner: async ({ agentId }) => ({ ok: true, value: {
+        agentId: agentId === agentIdForAddress({ parentKind: "canvas", parentId: S, substreamId: asSubstreamId(worker) })
+          ? agentIdForAddress({ parentKind: "canvas", parentId: otherWorkstream, substreamId: asSubstreamId("0") })
           : null,
-      }),
+      } }),
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
@@ -360,12 +371,12 @@ describe("Terminal Bind integration", () => {
   it("gives a background agent its owner's sandbox, in the owner's object", async () => {
     const worker = "30000000-0000-4000-8000-000000000077";
     const { objectStore, objectStores, env, input } = fixture("supported", false, {
-      agentOwner: async ({ agentId }) => ({
+      agentOwner: async ({ agentId }) => ({ ok: true, value: {
         // The worker is owned by the main conversation; the main conversation by nobody.
-        agentId: agentId === agentIdForAddress({ parentKind: "workstream", parentId: S, substreamId: asSubstreamId(worker) })
-          ? agentIdForAddress({ parentKind: "workstream", parentId: S, substreamId: asSubstreamId("0") })
+        agentId: agentId === agentIdForAddress({ parentKind: "canvas", parentId: S, substreamId: asSubstreamId(worker) })
+          ? agentIdForAddress({ parentKind: "canvas", parentId: S, substreamId: asSubstreamId("0") })
           : null,
-      }),
+      } }),
     });
     // The agent's conversation is its own object, where its run lives.
     const workerStore = testWorkstreamObjectStore();

@@ -20,7 +20,7 @@ Rally saves a sign-in on your Mac and renews it quietly while you use the app.
   the moment you signed in with Google.
 
 When either limit is reached, Rally asks you to sign in with Google again. Your
-Threads, settings and connections are still there afterwards. Only the
+Canvases, Sidekicks, settings and connections are still there afterwards. Only the
 sign-in was renewed.
 
 These limits exist so that a sign-in left on an old laptop, or copied from one,
@@ -47,13 +47,12 @@ There are two ways:
   **Sign out of Rally**.
 
 Signing out deletes the saved sign-in, and any unsent drafts, from this Mac.
-It closes the Settings and Sidekicks windows if they are open. It also tells
+It closes any artifact windows you popped out. It also tells
 Rally's servers to end that sign-in, so it cannot be used again even if a copy
 of it exists somewhere.
 
-Signing out only affects this Mac. If you also use Rally on your iPhone,
-you stay signed in there until you sign out on the phone too: in the iPhone
-app's **Settings**, tap **Sign out**.
+Signing out only affects this Mac. If you also use Rally in a web browser,
+you stay signed in there until you sign out there too.
 
 ### Signing out is not leaving
 
@@ -62,7 +61,7 @@ People mix these two up, and they do different things.
 | | Signing out | Leaving an Organization |
 | --- | --- | --- |
 | Where it applies | This device only | Every device you use |
-| What you lose | Nothing; sign in again and everything is back | Access to that Organization's Threads and Channels |
+| What you lose | Nothing; sign in again and everything is back | Access to that Organization's Canvases and Sidekicks |
 | How to undo it | Sign in with Google | Someone has to invite you again |
 
 Leaving is covered in
@@ -100,8 +99,7 @@ switches on the **Application** page wait for it to finish, so a short pause
 there is normal. You stay signed in. Turning Lockdown mode off again
 works the same way in reverse.
 
-Lockdown mode is a setting for this Mac only. The iPhone app already keeps its
-sign-in in the iPhone's own Keychain.
+Lockdown mode is a setting for this Mac only.
 
 ### When the keychain is not available
 

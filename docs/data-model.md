@@ -4,30 +4,30 @@ Rally's regional data is split by declared authority. D1 is the thin regional
 control plane: it owns workspace/member/user identity, object and connector
 ingress routing, migration coordination, global-provider handoff receipts, and
 operational audit/telemetry. `WorkspaceDO` owns every workspace-scoped product
-that is not intrinsically one work stream or automation: connector credentials
-and local handoff state, Terminal egress policy history, digests and shared
-schedules, resources/notes/watches and R2 lifecycle references, shared memory,
+that is not intrinsically one conversation: connector credentials and local
+handoff state, Terminal egress policy history, shared schedules,
+resources/notes/watches and R2 lifecycle references, shared memory,
 external-delivery intents/attempts, inbound-email processing receipts,
-dictation socket admission, the cross-work-stream directory,
-first-party activity, suggested work, and every Channel's and Space's
-conversation-parent state, as `parent_*` rows keyed by parent id
+dictation socket admission, and every Canvas's and Sidekick's
+conversation-parent state, keyed by parent id
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)).
 
-Each automation is a conversation parent hosted in `WorkspaceDO` beside the
-Channel and Space parents: its `automation_directory` row is its definition
+Each Sidekick is a conversation parent hosted in `WorkspaceDO` beside the
+Canvases: its `automation_directory` row is its definition
 row, and its revisions, schedules, runs and receipts are the `sidekick_*`
 tables keyed by `sidekick_id` (WorkspaceDO migration 91; migration 92 drops
 the import ledger after `SidekickDO` was deleted). See
 [`automation-lifecycle.md`](automation-lifecycle.md). D1 keeps no rebuildable
-workspace product serving projection. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
+workspace product serving projection. Serving contract 1 makes each `AgentLoopDO` SQLite database the product authority for
 one independently ordered substream after the guarded regional generation opens;
-its non-agent parent (a hosted Channel, Space or Sidekick parent in
-`WorkspaceDO`) owns the aggregate metadata and the parent outbox. The stored `workstream.parent_kind` is the closed three-value
-vocabulary those parents answer to, widened to admit `space` by conversation-object schema
-version 66. Legacy D1 workspace-product activity/opportunity rows are
-maintenance import input and are scrubbed before each verified WorkspaceDO route
-becomes active. Migration 0090 removes those sources, the per-work-stream source
-tables, and their writer fences after the authority is open. Neither family is a
+its non-agent parent (a hosted Canvas or Sidekick in `WorkspaceDO`) owns the
+aggregate metadata. The stored `workstream.parent_kind` admits `automation`
+and `canvas` for a live conversation (conversation migration 83); its
+`workstream` and `space` values are retired Threads' and Spaces'. Legacy D1
+workspace-product activity/opportunity rows are maintenance import input and
+are scrubbed before each verified WorkspaceDO route becomes active. Migration
+0090 removes those sources, the per-conversation source tables, and their
+writer fences after the authority is open. Neither family is a
 serving fallback or part of the current D1 schema. The checked-in migrations are the authoritative D1 schema and the
 object schema registry is the authoritative DO schema. This document maps both
 rather than duplicating their DDL. Application
@@ -42,16 +42,16 @@ owns the policy. The claim-access table from 129 and D1 migration 0124's
 `sidekick_delegation_locations` are unused; the applied migrations are retained
 without using either table for access or cross-Organization discovery.
 
-**Storage words and product words differ.** Since the navigation redesign
-([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)) a stored **Space**
-(`spaces`, `space_*`) is the product's **Channel**, a stored **Channel** or
-**work stream** (`channels`, `workstreams`, `workstream_id`) is the product's
-**thread**, and a **substream** is a **breakout**. Tables, columns, RPCs and
-telemetry keep the storage words; only user-facing copy uses the product ones.
-WorkspaceDO migration 97 adds `workspace_pins` (one pin list per person per
-kind; [`workstream-pinning.md`](workstream-pinning.md)) and
-`workspace_activity_seen` (the Activity tab's read mark;
-[`digests.md`](digests.md#the-activity-tab)).
+**Storage words and product words differ.** The product has two sections,
+Canvases and Sidekicks ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)).
+A conversation parent id is still a `WorkstreamId` and lands in
+`workstream_id` columns, D1 `workstreams` and `workstream_authority_routes`; a
+stored **automation** is a Sidekick; a **substream** is a conversation under
+its parent (`"0"`, or a Sidekick's run). The retired storage words keep their
+retired meaning: `spaces` held Channels, and `channels` held Threads. Tables,
+columns, RPCs and telemetry keep the storage words; only user-facing copy uses
+the product ones. WorkspaceDO migration 97 adds `workspace_pins` (one pin list
+per person per kind, now `canvas` and `sidekick`; [`pinning.md`](pinning.md)).
 
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
@@ -109,36 +109,13 @@ scope, additive membership, separate execution ownership, and immutable reply
 addresses. They contain no message bodies or task state. The typed host RPCs and
 their invariants are described in [Agent communication](agent-communication.md).
 
-## Personal work-stream access history
-
-WorkspaceDO migration 37 adds `workspace_workstream_access`, keyed by user and
-workstream, with an integer server timestamp and cascading deletion from the
-directory row. It is private object state, accessed through the workspace socket
-and directory RPCs, not the generic D1 facade. Foreground visits update it;
-read-watermark and child projection writes do not. See
-[sidebar ordering](workstream-pinning.md#recent-work-streams).
-
 ## Sidekick loading and attachment storage
 
-WorkstreamDO migration 13 added `workstream_sidekick_attachments`, keyed by
-workspace Sidekick ID with its attachment time; it is now `parent_sidekicks` in
-`WorkspaceDO`, keyed by parent id. Workstream-owned Sidekicks use
-their existing ownership relation. These relations recommend catalog entries
-in all substreams; `sidekick_attachments` remains local to each SubstreamAgent.
-Execution snapshots optionally contain `recommendedRefs` for compatibility with
-previously admitted executions.
+SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Conversation migration 43 adds `sidekick_execution_skills` for retry-stable instruction snapshots; the `sidekick_attachments` table it added beside it, which only a Thread's conversation wrote, is dropped by conversation migration 86. `parent_sidekicks` in `WorkspaceDO` (a Channel's default Sidekicks) stays for the Thread retirement and nothing writes it. Existing namespace lookup keys remain unchanged.
 
-`WorkspaceDO` keeps Main's reported `sidekick_attachments` per Channel in
-`channel_sidekick_attachments` (migration 82) for the Channel menu's Sidekicks, applied
-from `sidekickAttachmentIds` on a directory effect. No conversation sends that
-field yet; emission follows in a later deploy, and the table stays empty until
-then.
+WorkspaceDO migration 86 adds `sidekick_conversation_attachments` (`automation_id`, `parent_kind`, `parent_id`, `substream_id`, `attached_by_user_id`, `attached_at`), the conversations a Sidekick may read and post to beyond its own; migration 137 widens `parent_kind` to admit `canvas`, the only kind now attached. It is typed-RPC only, and it is not `parent_sidekicks`, which recorded skill loading. The same migration's `automation_directory.owning_substream_id` is a dead column. [`conversation-tools.md`](conversation-tools.md) and [`automation-lifecycle.md`](automation-lifecycle.md) own them.
 
-SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Substream migration 43 adds sidekick_attachments and sidekick_execution_skills for conversation ownership and retry-stable instruction snapshots. Existing namespace lookup keys remain unchanged.
-
-SidekickDO migration 11 and WorkspaceDO migration 86 add `owning_substream_id TEXT NOT NULL DEFAULT '0'` to `automation` and `automation_directory`: a room Sidekick's home conversation under its owning Channel, `"0"` for Main. WorkspaceDO migration 86 also adds `sidekick_conversation_attachments` (`automation_id`, `parent_kind`, `parent_id`, `substream_id`, `attached_by_user_id`, `attached_at`), the conversations a Sidekick may read and post to beyond its home; it is typed-RPC only, and it is not `sidekick_attachments` or `parent_sidekicks`, which record skill loading. [`conversation-tools.md`](conversation-tools.md) and [`automation-lifecycle.md`](automation-lifecycle.md) own them.
-
-WorkspaceDO migration 85 adds `external_conversation_bindings`, keyed by provider installation (`slack:<team>`, deliberately not a `connector_connections` row, so a binding survives a reconnect) and a JSON path of provider identifiers: a room binds to a Space, a thread to a conversation (a Channel's Main or a Sidekick run child). It carries each existing `slack_agent_sessions` thread over as an active thread binding. It is typed-RPC only. [`external-conversation-bindings.md`](external-conversation-bindings.md) owns it.
+WorkspaceDO migration 85 adds `external_conversation_bindings`, keyed by provider installation (`slack:<team>`, deliberately not a `connector_connections` row, so a binding survives a reconnect) and a JSON path of provider identifiers: a thread binds to a Sidekick run child. Room bindings are no longer written or read. It is typed-RPC only. [`external-conversation-bindings.md`](external-conversation-bindings.md) owns it.
 
 ## Where the code lives
 
@@ -149,9 +126,9 @@ WorkspaceDO migration 85 adds `external_conversation_bindings`, keyed by provide
 | `packages/db/test/baseline-migration.test.ts` | Replays every migration in order and proves the checked-in baseline leaves the same schema. |
 | `packages/db/seed.sql` | The local development seed. |
 | `apps/api/src/mappers/connection.ts` | D1 row schemas parsed at the read — the pattern the remaining hand-coercing control-plane readers are converging on. |
-| `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
+| `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `AgentLoopDO`. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical transcript fact ownership, participant and exact Bind projections, range snapshots, activities, and compaction checkpoints. |
-| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-product-storage.ts`, `workspace-runtime-sql.ts`, `hosted-parent.ts`, `hosted-parent-schema.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync/command routing, bounded invalidation replay, Channel and Space parent state and child aggregation, and Channel control sockets. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-runtime-sql.ts`, `hosted-parent-schema.ts`, `canvas-schema.ts`, `hosted-sidekick-schema.ts`, `retired-workspace-schema.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync routing, bounded invalidation replay, and the Canvas and Sidekick parents' state and child aggregation. `hosted-parent-schema.ts` and `workspace-product-schema.ts` hold shipped migrations whose tables are retired; `retired-workspace-schema.ts` holds the shipped statements of deleted modules byte for byte, and migration 139's drops. |
 | `apps/api/src/services/workspace-runtime-database.ts` | D1-compatible routing port that sends an allowlisted workspace-product statement to typed WorkspaceDO RPC while leaving global/regional control SQL in D1; mixed-authority batches fail closed, and so does any single statement — read or write — naming both a WorkspaceDO table and a regional-only one. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Typed, runtime-validated query and effect contracts joining conversation-parent facts to WorkspaceDO serving state. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
@@ -176,7 +153,7 @@ owns their lookup, erasure, admission and delivery semantics.
 
 ### Scoped share lookup
 
-`scope_share_recipients` says which Channel to ask about a share addressed to an
+`scope_share_recipients` says which Canvas to ask about a share addressed to an
 email: `(email COLLATE NOCASE, workspace_id, parent_id)`, written once the
 Organization object records the share and deleted by it once nothing for that
 address is pending there. Signing in reads it by the user's verified addresses.
@@ -190,7 +167,7 @@ Worker has shipped; the previous Worker still reads it until then.
 
 ### Search projection state
 
-WorkspaceDO migration 33 owns `resource_search_versions`: a retained resource revision, pending flag, and dispatch time. Resource insert/delete and search-relevant update triggers advance it in the same transaction as the canonical write. SubstreamAgent migration 42 adds `conversation_search_links` and transcript-triggered `search_projection_v1` entries in `durable_outbox`. Both migrations enqueue existing records; these are projections, never new content authority. See [text search](text-search.md).
+WorkspaceDO migration 33 owns `resource_search_versions`: a retained resource revision, pending flag, and dispatch time. Resource insert/delete and search-relevant update triggers advance it in the same transaction as the canonical write. AgentLoopDO migration 42 adds `conversation_search_links` and transcript-triggered `search_projection_v1` entries in `durable_outbox`. Both migrations enqueue existing records; these are projections, never new content authority. See [text search](text-search.md).
 
 WorkspaceDO migration 39 adds partial indexes for draft upload cleanup
 (`resources_expired_drafts_idx`), missing slugs (`resources_missing_slug_idx`),
@@ -235,7 +212,7 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   Account → Default timezone, and no report moves it; turning **Set timezone
   automatically** back on sets `client` again. It is one column per region —
   `users` is regional — so it answers for every workspace the person belongs to
-  in that region, and a second region's row keeps its own. `syncRegionalProfile`
+  in that region, and a second region's row keeps its own. `syncRegionalProfileStatement`
   deliberately syncs `email`, `name`, and `avatar_url` and not `timezone`, so a
   zone chosen in one region does not cross to another.
 
@@ -295,7 +272,7 @@ authorization.
 
 ### Realtime synchronization records
 
-Each main `SubstreamAgent` transcript has one semantic fact/payload owner and
+Each main `AgentLoopDO` transcript has one semantic fact/payload owner and
 two ordering projections. `participant_transcript_turns` assigns
 `transcript_sequence` to participant-visible conversation turns and safe status
 events; `participant_transcript_blocks` orders text, tool, and generic thinking
@@ -330,34 +307,31 @@ exact model-only checkpoint fact. The pre-v27 projection, payload-transfer
 receipts, and temporary message-record identity shim were migration evidence and
 are gone after schema v33; they are not runtime sources of truth.
 
-`WorkspaceDO` is the relational authority for workspace product state and
-cross-work-stream serving. It stores connector/product configuration, Terminal
-policy revisions, the automation directory, digests/schedules,
-resource/note/watch/memory records, external-delivery state, inbound-email processing receipts and their
+`WorkspaceDO` is the relational authority for workspace product state. It
+stores connector/product configuration, Terminal policy revisions, the
+automation directory, schedules, resource/note/watch/memory records,
+external-delivery state, inbound-email processing receipts and their
 exclusive leases, dictation admission (one-time transcription ticket receipts
 and the concurrency session leases the per-user/per-workspace caps count), the
-common directory, per-viewer overlays, pins, inverted indexes, activity,
-opportunities, receipts, consumed socket tickets, Channel and Space parent
-state in the `parent_*` tables, and a bounded monotonic
+Canvas directory and audiences, the hosted-conversation tables, pins,
+receipts, consumed socket tickets, and a bounded monotonic
 `workspace_sync_events` log. A sync row names
 typed query topics, and for a per-person change the people it was sent to; it
 never embeds the underlying row. Membership, invitations,
 user profiles, placement routes, and migration control remain D1 authorities.
 
-`WorkspaceDO.parent_metadata` is different: one row per Channel or Space, it is
-the parent's identity, generation and revision; what Main says about the parent
-lives on its `channels` or `spaces` row. Its revision advances with every
-common effect; only Main entries in `parent_child_viewer_projections`
-produce the parent viewer overlay. Child title and lifecycle live in
-`parent_children`, whose nullable
+`WorkspaceDO.parent_metadata` was different: one row per retired Channel or
+Space, it was the parent's identity, generation and revision; what Main said
+about the parent lived on its `channels` or `spaces` row. Child title and
+lifecycle lived in `parent_children`, whose nullable
 `archived_at` is independent of creation readiness. Archive retains membership
 and transcript while excluding the child from the visible directory. A WebSocket
 snapshot includes nulls so a client can delete a former email,
 archive/system marker, or schedule rather than accidentally retain it.
-`SubstreamAgent` continues to own ordered parts, active output, and replay; token
+`AgentLoopDO` continues to own ordered parts, active output, and replay; token
 frames are never database joins or metadata patches.
 
-Each `SubstreamAgent` owns one stable `substream_loops` row (which, since v45,
+Each `AgentLoopDO` owns one stable `substream_loops` row (which, since v45,
 carries `transcript_projected_through` — the highest transcript sequence the
 model's conversation has considered, so a turn that started no run is appended
 at the next admission rather than lost),
@@ -371,249 +345,83 @@ Bind head rebuilt from canonical participant history when no stable projection
 exists. These are connected by typed, hash-checked RPCs rather than cross-object
 SQL joins.
 
-### Work streams
+### Conversations
 
-- The main `SubstreamAgent`'s object-local `workstream` row is the product root;
-  each provisioned child carries the bounded root facts needed to authorize and
-  project its own context, while `WorkspaceDO`'s `channels` row is the
-  Main-derived parent view and `parent_metadata` its identity. `workstream_key` is the conversation parent id and
-  `parent_kind` (v39, widened by v66) says whether that parent is a work stream,
-  an automation, or a Space; `origin_type`, `automation_subscription_id`, `automation_run_id`,
-  and `planned_for` are dead columns, kept only because the released
-  runtime-compat triggers name them. `objective` is the work
-  stream's description; `description_source` records whether a person wrote it
-  (`authored`) or it was derived at creation or by the refresh loop (`derived`),
-  which is what lets an automatic rewrite weigh a deliberate line differently from
-  a copied opening message. `title_status` is the same question for the title:
-  `naming` while the naming agent is choosing the first one and the stored title
-  is a placeholder clients render as a skeleton, `automatic` once Rally has named
-  it and one later pass may still replace it, `settled` when a person named it, a
-  caller supplied it, or that pass has run.
-- Object-local `description_refresh_state` holds one row per work stream: the last
-  evaluation by the loop that rewrites a description once the work stream's
-  purpose has moved. `rest_until` is both the admission clock and the
-  single-writer claim — it is pushed forward when an evaluation starts, so two
-  runs finishing together cannot both spend a window and a failing model is not
-  retried by every run behind it. It stores the resolved instant rather than the
-  inputs because the rest is earned: `consecutive_keeps` doubles it to a ceiling,
-  a rewrite returns it to the floor, and a person editing the description buys a
-  full rest outright. `decision` records the outcome including `kept`, because
-  knowing the loop looked is what separates a description that still fits from one
-  nothing has examined. See
-  [`workstream-descriptions.md`](workstream-descriptions.md).
-- `workstream.scope` answers who may read a work stream, in the same
-  `personal`/`workspace` vocabulary `notes.scope` uses. Privacy is a declared
-  property of the row rather than a rule each caller has to remember. The
-  Channel's hosted parent enforces the authoritative participant/scope rule and
-  publishes its viewer projection to WorkspaceDO's directory, which applies it
-  for lists and socket admission without consulting D1.
-- **`personal` means “an active participant” at every serving
-  boundary.** Detail authorization, sockets, workspace lists, pins, visibility
-  checks, resource reads, and Suggested Work all use that
-  same rule. Creation seats the creator, but `created_by_user_id` is attribution,
-  not a permanent authorization grant: `removeParticipant` revokes a creator in
-  exactly the same way it revokes anybody else. Any current reader may remove
-  themself or another participant, but the object commits removal only while at
-  least one other active participant remains; a work stream never has an empty
-  participant room.
-- **Cross-work-stream content moves from a source audience to an equal or
-  narrower target audience.** Workspace activity may enter a workspace work
-  stream or a private work stream a particular member may read. Suggested Work
-  evaluates that public activity in a separate personal window for every active
-  member; the personal window is an inference boundary, not a narrowing of the
-  source. Restricted activity may enter a personal work stream only when every
-  active participant is in its permitted user set. Suggested
-  context persists that source audience and the main `SubstreamAgent` rechecks it before
-  storing, reading, or resolving a card; a legacy row with no auditable audience
-  is not visible.
-- **A work stream is born `personal`, and every path that means otherwise says
-  so.** The request body carries no scope, so a client cannot claim an
-  audience; `POST /workstreams` itself says `workspace`, because a Channel a
-  person starts in Rally is public. The bootstrap row
-  the object is created with is `personal` too, which matters because the runtime
-  compatibility insert writes `COALESCE(NEW.scope, scope)`: a path that names no
-  scope inherits that row's, so the default has to be the narrow one for the
-  omission to be safe. A thread in a public Slack channel states `workspace`
-  outright because its room is the channel rather than a participant list.
-  **An automation's conversations are `personal` too, whatever the automation's
-  scope**: its own chat seats the author, and each run, a child substream under
-  the automation, seats exactly the run-as principal, for every trigger. A run
-  is a nested execution record rather than a room; who may read the
-  automation's conversations is the hosted Sidekick's decision, carried down at
-  admission. [`automation-lifecycle.md`](automation-lifecycle.md) owns that
-  rule. A suggestion carries its own
-  `audience_scope` across the same
-  way: a `workspace` one was shown to every member before anyone started it, and
-  the work stream it becomes stays readable by the people it was offered to. A `system_kind` row (an older digest occurrence) is the other
-  direction: `personal` with its single recipient seated, so every tool its run
-  reached for resolved against that person's access.
-- A work stream born from a connector conversation uses that same scope rather
-  than introducing a second visibility model: a public conversation starts as
-  `workspace`, while a private or unclassified one starts as `personal` with the
-  conversation's resolved members seated as participants. This seeds the room at
-  creation; later speakers may join it and publish the same `participant_added`
-  event as an in-product admission, and the ordinary right-click scope toggle may
-  still change it. See
-  [`connectors.md`](connectors.md#a-work-streams-audience-is-the-conversation-it-started-in).
-- **A work stream moves between the two, and privacy is not ownership.**
-  `PATCH /workstreams/:id` takes `scope`, and the sidebar's right-click menu offers
-  it as **Make private** / **Make public to workspace**, named for the state it
-  moves to the way the note item is. Anyone who may read a work stream may move it
-  either way, and everyone left inside a private one can read it, write to it, and
-  add anyone else in the workspace — `addParticipant` requires only that the caller
-  can read the work stream and that the person named is an active member. Two
-  consequences fall out of `personal` being enforced against participants: whoever
-  makes a work stream private is upserted as one in the same batch as the scope
-  itself — either both land or neither does, and a person the upsert genuinely adds
-  is announced as a participant — or the one action that closes a work stream would
-  be the one that locks its author out of it; and the change has to reach the
-  sockets already inside the room, which authorized once at connect time. The room
-  evicts the connections that may no longer read it and sends
-  `workstream_scope_changed` to the rest. Two kinds of row refuse the change with
-  `scope_change_unsupported`, because `scope` is not what decides who reads them: a
-  `system_kind` row is machinery assembled from one person's activity. An
-  automation's conversation has no scope toggle at all; its readers are its
-  parent's decision. Its creator is also seated as a participant.
-- `workstream.system_kind` is the different question of whether a work stream is
-  *machinery*. `NULL` is ordinary work; any non-`NULL` value is a subsystem's own
-  work stream, so an internal run can reuse the whole agent loop rather than
-  inventing a second one. It decides whether the row is *listed* — off unless the
-  caller passes `includeSystem`, which the desktop does when Debug enabled is on —
-  never who may read it. The only value is `digest`, on work streams the scheduled
-  digest created when it still ran a model: `scope = 'personal'` and
-  `system_kind = 'digest'`. The digest no longer runs a model, so nothing creates
-  new ones. See [`digests.md`](digests.md).
-- `workstream.model_override` pins this one work stream's runs to an OpenRouter
+- Each `AgentLoopDO`'s object-local `workstream` row is its conversation's
+  root; each provisioned child carries the bounded root facts needed to
+  authorize and project its own context. `workstream_key` is the conversation
+  parent id and `parent_kind` says which kind of parent owns it: `automation`
+  (a Sidekick) or `canvas` (conversation migration 83). A stored `workstream`
+  or `space` row is a retired Thread's or Space's and is refused on open
+  except for the Thread retirement's own read. `origin_type`,
+  `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead
+  columns, kept only because the released runtime-compat triggers name them;
+  `title_status`, `description_source`, `system_kind` and the
+  `description_refresh_state` table served the retired Thread naming,
+  description and digest passes and are no longer written.
+- Who may read a conversation is its parent's decision, never the row's:
+  `canvasAdmits` over a Canvas's `canvas_directory` row and participants, or
+  `sidekickAdmits` over a Sidekick's audience
+  ([`authorization.md`](authorization.md)). `workstream.scope`
+  (`personal`/`workspace`) is still the object's own participant check, and
+  the Worker seats every reader the parent admits as a participant before it
+  issues a ticket, so the parent's audience is what decides.
+- `workstream.model_override` pins one conversation's runs to an OpenRouter
   model, ahead of the `agent-model-workstream` flag. `NULL` — the overwhelming
-  majority — means the flag decides. It exists because model *selection* is a
-  fleet-wide rollout and this is the opposite question, asked about one piece of
-  work at the moment it is created; see
+  majority — means the flag decides; see
   [`feature-flags.md`](feature-flags.md#a-conversations-own-model). The column
-  carries no `CHECK` enumerating the ids: the selectable set is a product decision
-  that moves, so it lives in `AGENT_MODEL_OVERRIDES` and is re-validated on read,
-  which lets a model be retired without a migration.
-- `workspace_workstream_pins` in WorkspaceDO is one person's pinned Channels in
-  one Space and the order they arranged them in. Its primary key is
-  `(user_id, space_id, workstream_id)`. It belongs beside the authoritative
-  workspace and Space directories because it is a cross-Channel ordering owned
-  by one user. The corresponding read/mention waterlines live in the
-  owning object's `member_attention`; a pin is one person's opinion about one
-  placement of a shared row, so it cannot be a column on `workstreams` without
-  imposing one member's arrangement on the workspace and every Space. `position`
-  is unique and ascending per person and Space and is rewritten as a dense run by every unpin and reorder, because a
-  tie leaves "what order is this list in" without a single answer; a new pin takes
-  `MAX(position) + 1` rather than the row count, so two pins made at once — or one
-  made after a cascade delete left a hole — cannot land on the same number. It is
-  deliberately not uniquely indexed, since any intermediate state of the rewrite
-  collides with itself. A pin is never broadcast — it changes nothing anyone else
-  can see — and it never widens what its owner may read: every pinned read still
-  applies the visibility rule above, so a pin left behind by a work stream that was
-  removed from their audience cannot make it visible again. Removing a Channel
-  from one Space cascades only that placement's pin. Migration 66 intentionally
-  drops every legacy Organization-wide pin before creating this key, because
-  the old row cannot identify which of several Spaces should own it.
-  An archived or narrowed work stream contributes no row while remaining
-  removable by its owner. See [`workstream-pinning.md`](workstream-pinning.md).
-- **WorkspaceDO migration 64 drops the eight Project tables** — `projects`,
-  `project_participants`, `workspace_project_order`, `workspace_project_state`,
-  `project_workstream_memberships`, `project_default_resources`,
-  `project_default_resource_targets` and `project_default_resource_publications`
-  — children-before-parents, because `PRAGMA foreign_keys = OFF` is a no-op once
-  a Durable Object event has touched SQLite. The same transaction settles every
-  undelivered default first — targets to `terminal` with `project_retired`,
-  publications to `accepted` — so a Queue message still in flight finds nothing
-  current and attaches nothing; the activity consumer's tombstone leg
-  acknowledges it. There is no barrier in front of the drops: an undelivered
-  Project default is discarded on purpose, because Projects are deleted rather
-  than converted. What the Project
-  mechanism already delivered to a Channel — an attached resource, a
-  recommended Sidekick, an audience — is the Channel's own and survives. See
-  [`projects.md`](projects.md).
-- WorkspaceDO migration 63 adds the Space authority that replaced those rows:
-  `spaces` and `space_viewers` (created as `workspace_space_directory` and
-  `workspace_space_viewers`, renamed by migration 72) are the *projection*
-  a Space's parent publishes, so they carry the generation, source version
-  and payload hash each effect is fenced on rather than being written by a
-  mutation; a reservation is written at source version zero so the first real
-  projection supersedes it. `workspace_container_order` is every list a person
-  arranges by hand, keyed by the container it belongs to — the Organization's
-  Spaces, one Space's Channels and one Channel's Breakouts;
-  `workspace_pinned_order` (migration 87) is one person's order for the Pinned
-  section under All, kept apart so older Workers and clients never meet it — and
-  `workspace_space_state` is the one waterline both directories share.
-  `member_personal_system_prompts` (migration 88) is each member's personal
-  system prompt for this Organization, copied into each SubstreamAgent's
+  carries no `CHECK` enumerating the ids: the selectable set lives in
+  `AGENT_MODEL_OVERRIDES` and is re-validated on read, which lets a model be
+  retired without a migration.
+- The Canvas parent's own rows are `canvas_directory`, `canvas_participants`
+  and `canvas_artifacts` in `WorkspaceDO` ([`canvases.md`](canvases.md#data-model));
+  both kinds share `sidekick_children`, `sidekick_child_projections`,
+  `sidekick_child_receipts` and `sidekick_viewer_reads`, keyed by the parent id
+  in `sidekick_id` ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)).
+  `workspace_pins` holds each person's Canvas and Sidekick pins
+  ([`pinning.md`](pinning.md)).
+- Each person's Activity is `workspace_activity_items`, one row per mention,
+  add and Sidekick run notice they were sent, keyed by its notification
+  intent's id, and `workspace_activity_seen`, their Mark all seen, in
+  `WorkspaceDO` (migration 140, [`activity.md`](activity.md#data-model)).
+- The retired Thread, Channel and Breakout state — `channels`,
+  `channel_viewers`, `spaces`, `space_viewers`, `breakouts`,
+  `breakout_viewers` and the `parent_*` tables — stays in `WorkspaceDO` after
+  migration 139 because the Thread retirement's inventory reads it; nothing
+  else does ([`workspace-retirement.md`](workspace-retirement.md)). Migration
+  64 dropped the Project tables, and 139 dropped the Space ledgers, the
+  Thread pins, order, access and resource links, and the batch dispatches.
+- **What the Thread era left.** The shipped migrations are the map of the
+  Thread, Channel, Space and Project tables as they were; this list says only
+  what is still in the schema. WorkspaceDO migration 64 dropped the eight
+  Project tables, and migration 139 (`THREAD_ERA_TABLES_DROP_MIGRATION` in
+  `retired-workspace-schema.ts`) dropped the Space ledgers (`space_intents`,
+  `space_defaults` and its staging, `space_bootstrap`, `space_invitees`,
+  `space_reads`, `space_channel_memberships`, `workspace_space_state`), the
+  Thread pins and orders (`workspace_workstream_pins`, `workspace_pinned_order`,
+  `workspace_container_order`), `workspace_workstream_access`,
+  `conversation_access_requests`, the Channel colour and rail ledgers, the
+  batch dispatches and the import-reservation reclaim. What remains unwritten
+  are the directory tables migration 72 renamed (`channels`, `channel_viewers`,
+  `breakouts`, `breakout_viewers`, `spaces`, `space_viewers`) and the `parent_*`
+  tables of the retired Channel and Space host
+  ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), which
+  the Thread retirement's inventory reads, and
+  `workspace_workstream_effect_receipts`, the Thread host's effect inbox. The
+  partial unique index on `spaces.system_role` that made General singular
+  stays with its table.
+- `member_personal_system_prompts` (migration 88) is each member's personal
+  system prompt for this Organization, copied into each conversation object's
   `personal_system_prompt_copies` (its migration 72); see
   [`personal-system-prompt.md`](personal-system-prompt.md).
-  `member_preferences` (migration 89) holds each member's display preferences;
+- `member_preferences` (migration 89) holds each member's display preferences;
   see [`member-preferences.md`](member-preferences.md).
-  `conversation_access_requests` (migration 95) holds each request to join a
-  Channel or Breakout, addressed to one approver, with at most one pending per
-  person per conversation; see
-  [`channel-access-requests.md`](channel-access-requests.md).
-  `space_invitees` (migration 96) holds the addresses of Organization invitees a
-  Space lists until they accept and are seated as participants; see
-  [`spaces.md`](spaces.md#participants).
-  `workspace_pins` (migration 97) is one person's pins of every kind, keyed
-  `(user_id, item_kind, item_id)` with `item_kind` `thread`, `channel` or
-  `breakout` and the breakout's thread in `parent_id`, and is the one source of
-  pin state; see [`workstream-pinning.md`](workstream-pinning.md). The same
-  migration adds `workspace_activity_seen(user_id, seen_through)`, how far each
-  person has read the Activity tab
-  ([`digests.md`](digests.md#the-activity-tab)), the `(user_id,
-  is_participant)` indexes on `channel_viewers` and `breakout_viewers`, and the
-  `(space_id, state, joined_at, workstream_id)` index the Channel feed pages by.
-  Migration 98 gives a Space (the product's Channel) the unread columns a thread
-  and a breakout carry: `spaces.latest_attention_ordinal` (the waterline,
-  advanced only by a placement), `spaces.unread_tracking_start_ordinal`,
-  `space_channel_memberships.attention_ordinal` (the ordinal a placement took),
-  and `space_reads(space_id, user_id, seen_attention_ordinal, updated_at)`,
-  each person's read position, in a table of its own because most readers of
-  an Organization-wide Space have no `space_viewers` row. No foreign key on
-  either new table, for the reason `space_invitees` gives; see
-  [`spaces.md`](spaces.md#the-channels-read-state).
-  `space_channel_memberships` is keyed by Space and Channel with **no**
-  uniqueness on the Channel, because a Channel belongs to as many Spaces as it
-  was added to. `space_intents` is one row per staged cross-object operation
-  with the three fences it was staged against. `space_defaults`,
-  `space_default_targets` and `space_default_publications` carry a `kind`
-  column, so a resource and a Sidekick recommendation share one staging, fence
-  and receipt. `space_bootstrap` is the singleton cutover row — phase, General's
-  id, the walk's cursor, the blocked Channels as JSON, and the
-  `not_before`/`attempts` retry gate the alarm claims on — seeded `pending` for
-  every Organization. A redelivered page costs nothing because the membership
-  row says what is already placed, so there is no receipt table beside it. The
-  same migration rebuilds `workspace_retirement_graph` so `parent_kind` admits
-  `'space'`, carrying its rows and their `retired_at` receipts through a scratch
-  table — migration 42 is released and is not edited. A unique partial index on
-  `system_role` makes General singular. See [`spaces.md`](spaces.md).
-- **WorkspaceDO migration 65 adds the Organization's view of a Channel's
-  breakouts.**
-  `breakouts` is one row per `(workstream_id, substream_id)`
-  and `breakout_viewers` is its per-person half (created as
-  `workspace_breakout_directory` and `workspace_breakout_viewers`, renamed by
-  migration 72), both applied from
-  the `directory_common` and `directory_user` effects a Channel now forwards on
-  its breakouts' behalf, under the same generation-then-version fence and the
-  same `workspace_workstream_effect_receipts` receipt the Channel directory
-  uses. They are separate tables rather than a `substream_id` column on
-  `channels` because every other query over that table
-  reads it as one row per Channel. Their columns are spelled the way the
-  Channel directory spells the same facts, because one code-owned SQL predicate
-  is rendered against both. The dashboard's refresh signal has **no** table of
-  its own: a client is told to read its page again over the socket and nothing
-  is written. See [`spaces.md`](spaces.md#the-refresh-signal).
-- **WorkspaceDO migration 72 hosts Channel and Space conversation parents.** It
-  renames the directory tables to the product's names (`channels`,
-  `channel_viewers`, `breakouts`, `breakout_viewers`, `spaces`,
-  `space_viewers`), adds the `parent_*` tables that hold what each legacy
-  `WorkstreamDO` and `SpaceDO` held, every one led by `parent_id`, and seeds
-  `parent_imports` with one `pending` row per Channel and Space the directory
-  already knew. WorkspaceDO migration 75 drops `parent_imports` once every
-  parent had moved and the legacy classes were deleted. The table map and the
-  history of the move are in
-  [`hosted-conversation-parents.md`](hosted-conversation-parents.md).
-- Migration 72 also adds `workspace_member_status`, one row per person: their
+- `workspace_pins` (migration 97) is one person's pins of every kind, keyed
+  `(user_id, item_kind, item_id)`; migration 137 admits `canvas` and
+  `sidekick`, the only kinds written now, and 139 deleted every row of the
+  Thread-era kinds the shipped CHECK still admits. It is the one source of pin
+  state; see [`pinning.md`](pinning.md).
+- `workspace_member_status` (migration 72), one row per person: their
   workspace relationship as `relationship_json` (null for someone with none or
   removed), `active`, the D1 delivery `sequence` of the last relationship event
   applied (0 when only a D1 read has been recorded), and `removed_incarnation`,
@@ -622,21 +430,15 @@ SQL joins.
   checks inside `WorkspaceDO` read it instead of D1. A D1 read or write a
   request makes replaces a row only when provably newer (a new incarnation over
   a removed one, or a higher revision of the same one), and a removed
-  incarnation never comes back. See
-  [`hosted-conversation-parents.md`](hosted-conversation-parents.md#workspace-relationships-are-local).
-- `workspace_directory_followups` holds the post-commit work a directory change
-  owes (socket publishes, Space snapshots, schedule and watch refreshes) as
-  `followup_json`, written in the same transaction as the change, run straight
-  after the commit and deleted once it has run; `attempts` and `not_before`
-  let the alarm retry one whose run failed. Nothing reads it but that runner.
+  incarnation never comes back.
+
 - Object-local `participants` records explicit participation reasons, and
-  `first_opened_at` — null until that person opens the work stream, which is
-  what makes "you were added to this and have never been here" a state the
-  sidebar can show. It is on the membership row rather than on `member_attention`
-  because the attention row does not exist for somebody who has only been added.
-  See [`workstream-markers.md`](workstream-markers.md). Viewer presence is
-  intentionally absent from durable storage.
-- Object-local `participant_transcript_turns` has a per-work-stream
+  `first_opened_at` — null until that person opens the conversation. It is on
+  the membership row rather than on `member_attention` because the attention
+  row does not exist for somebody who has only been added. The conversation
+  snapshot still carries it as `unseen` and opening settles it, but no surface
+  draws it since the Thread list's marker was deleted. Viewer presence is intentionally absent from durable storage.
+- Object-local `participant_transcript_turns` has a per-conversation
   `transcript_sequence`; the root
   `workstream.next_sequence_number` allocates ordered events. Conversation rows
   belong to a `substreams` row, with the main chat fixed at substream `0`.
@@ -644,9 +446,9 @@ SQL joins.
   keyed to their canonical turn.
 - `participant_transcript_attachments` relates a resource to one exact owning
   turn. A
-  resource can appear in multiple work streams, so projections that report
+  resource can appear in multiple conversations, so projections that report
   attachment state must use the current object's link; existence anywhere in the
-  workspace is not the relationship for the current work stream.
+  workspace is not the relationship for the current conversation.
 - WorkspaceDO `resources` holds metadata while `content_ref` points at the user-visible
   regional R2 object and `content_sha256` identifies the exact bytes selected for
   model extraction. Uploads hash before the row commits; connector hydration
@@ -694,11 +496,14 @@ SQL joins.
   is attempted is released because there are no bytes to protect; detaching one
   relationship leaves shared resource objects intact.
   WorkspaceDO `pending_attachment_reservations` is the deletion fence between a
-  draft upload and one preparing or ready work-stream input. It freezes workspace,
-  work-stream, author, input, and resource identity. Canonical
-  `workspace_workstream_resource_links` projection marks the upload attached and
-  removes the effect's exact input/resource reservations in the same transaction;
-  failed preparation uses an idempotent typed release RPC. SubstreamAgent's
+  draft upload and one preparing or ready conversation input. It freezes workspace,
+  conversation, author, input, and resource identity. The upload is marked
+  attached, and the effect's exact input/resource reservations removed, in the
+  same transaction that records the attachment (for a Thread, the
+  `workspace_workstream_resource_links` projection did this; migration 139
+  keeps that table because `convert_threads_to_canvases` reads it and
+  `deleteRetiredThreadParent` deletes a Thread's rows);
+  failed preparation uses an idempotent typed release RPC. AgentLoopDO's
   `pending_attachment_reservation_recovery` is only the cross-object recovery
   obligation, not a second resource or message authority.
   Object-local `attachment_tool_receipts` relates a versioned read, search, view, or summary
@@ -706,7 +511,7 @@ SQL joins.
   resource invalidates the whole invocation and queues its JSON replay object;
   the table never contains attachment content or ephemeral image data. Every
   dependency registration, invalidation, replay, and cleanup mutation
-  carries the workspace/work-stream identity even though resource and invocation
+  carries the workspace/conversation identity even though resource and invocation
   IDs are globally unique.
   `resource_inventory_revision` holds one monotonic revision in the object.
   Local triggers advance it when resource membership, message
@@ -714,35 +519,36 @@ SQL joins.
   private-note visibility can change the authorized inventory. Derivative claim,
   processing, and hydration timestamp updates do not advance it; it is a race
   fence, not an attachment catalog.
-  Each SubstreamAgent's `workstream_resource_links` owns its attachment
+  Each AgentLoopDO's `workstream_resource_links` owns its attachment
   relationship and resource-inventory fence; WorkspaceDO owns resource metadata,
   workspace watches, and the inverted workspace index. `relationship_type` is
   constrained to `attachment`, `message_attachment`, `origin`, `generated`,
-  `inbound_email`, or `context`. The work-stream-facing
+  `inbound_email`, or `context`. The conversation-facing
   `direction` is derived from that relationship: `generated` is an `artifact`;
   every other relationship is a `source`. Direction is not stored on the shared
   resource because the same resource may be an artifact here and a source elsewhere.
-  The `origin` relationship records what a work stream was created from — see
-  [work-stream origin attachments](workstream-origin-attachments.md).
+  The `origin` relationship recorded what a Thread was created from; nothing
+  writes it since Threads were deleted, and stored rows keep the label.
 - `elicitation_requests` is operational human-input state tied to a run.
 
 D1 retains a `workstreams` identity/routing anchor because control tables have
 foreign keys to the stable ID. It contains only `id`, `workspace_id`, and
 `do_identity_anchor`; a post-cutover row has `do_identity_anchor = 1`. The id
-is a **conversation parent id**: a work stream's or an automation's, since an
-automation's conversations are bootstrapped through the same path, and
+is a **conversation parent id**: a Canvas's or a Sidekick's, both
+bootstrapped through the same path, and
 `workstream_authority_routes.workstream_id` is keyed the same way. The column
 names are kept because D1 migrations are immutable and every reader of the
-route keys on the same pair. Likewise `workstream_email_routes.automation_subscription_id`
-keeps its name and holds the automation id. Common/per-user
-list queries, pins, and resource discovery use `WorkspaceDO`'s
-`channels`, `channel_viewers` and `workspace_workstream_*` tables. D1 has
-no projection fallback when that object is unavailable.
+route keys on the same pair. A retired Thread's row stays, which keeps a new
+Canvas from taking its id and its stale search rows unreachable
+([`text-search.md`](text-search.md)). Likewise `workstream_email_routes.automation_subscription_id`
+keeps its name and holds the automation id. The Canvas and Sidekick lists and
+pins are `WorkspaceDO`'s; D1 has no projection fallback when that object is
+unavailable.
 
 ### Automations and execution
 
 **An automation's own state is hosted in `WorkspaceDO`.** Each automation is
-a conversation parent like a Channel's, whose rows (`automation_directory` and
+a conversation parent like a Canvas, whose rows (`automation_directory` and
 the `sidekick_*` tables) hold its definition revisions, lifecycle, schedules,
 runs (each a child substream under it), and inbound-email receipts.
 [`automation-lifecycle.md`](automation-lifecycle.md) is that schema's map and
@@ -752,9 +558,10 @@ column catalog; what follows is only what WorkspaceDO still holds.
 - `automation_directory` is the Sidekick's definition row, which the sidebar,
   the connector fan-out, and access revocation find a Sidekick by: id,
   workspace, author, `source_version`, payload hash, lifecycle (`draft`,
-  `active`, `paused`, `deleted`), scope (`personal`, `workspace`,
-  `workstream`), the owning work stream a `workstream` scope must name, title,
-  description, next run time, the chosen icon and colour (null until somebody
+  `active`, `paused`, `deleted`), scope (`personal`, `workspace`; a stored
+  `workstream` reads as `personal`, fail closed: the stored value does not say whether its Thread was private; migration 136 rewrote every directory row's
+  `workstream` scope to its owning Thread's audience), the dead owning
+  columns, title, description, next run time, the chosen icon and colour (null until somebody
   picks one), and when it was projected. Migration 91 added the definition
   columns (accepted revision, bindings, run-as user, pause reason and the rest);
   the revisions, schedules and runs are the `sidekick_*` tables.
@@ -763,26 +570,26 @@ column catalog; what follows is only what WorkspaceDO still holds.
   `directory_automation` message from the deleted `SidekickDO` is acknowledged
   and ignored.
 - `workspace_external_event_registrations` holds one row per active trigger
-  route, an automation's typed evaluator document or a work stream's watched
-  resource, indexed on `(connection, event type, resource, state)` for
+  route, an automation's typed evaluator document (the
+  `workstream_resource_update` kind a Thread's watched resource registered has
+  no writer since Threads were retired), indexed on `(connection, event type, resource, state)` for
   candidate selection and on `(destination kind, destination key, state)` for
-  replacement. A destination's set is replaced whole by
-  `applyExternalEventRegistrations`, ordered by the destination generation in
-  `external_registration_generations`;
-  `effective_after_event_sequence` is the cutoff, so an event admitted before
+  replacement. A Sidekick's set is replaced whole inside its own transaction
+  (`writeSidekickRegistrations`), which orders its writes; the
+  `external_registration_generations` fence the retired projection RPC kept is
+  no longer read or written. `effective_after_event_sequence` is the cutoff, so an event admitted before
   the call is never matched by a rule that did not exist when it arrived.
   Removed rows are reaped after a day.
 - There is no delivery ledger. `matchExternalEventDestinations` returns one
   complete Queue message per match, and the destination is idempotent on the
   event and registration ids, which is all a lease ever guaranteed.
-- `schedules` carries no automations. A row names exactly one of a connector
-  connection or a digest schedule; an automation's timers are alarm entries
-  inside its own object.
+- `schedules` carries no automations. A row names a connector connection's
+  poll; an automation's timers are alarm entries keyed by its id.
 - Migration 31 dropped `workspace_external_event_deliveries`,
   `automation_creation_claims`, `automation_cutover_campaign`,
   `automation_templates`, and `automation_template_versions`, rebuilt
   `automation_directory` and the registrations without their coordinates, and
-  deleted every work-stream directory row an automation run had made. The
+  deleted every conversation directory row an automation run had made. The
   directory's `origin_type`, `origin_label`, `automation_subscription_id`,
   `automation_run_id`, `planned_for`, and `automation_exposed` remain as dead
   columns inside the released CHECK constraints; nothing reads or writes them.
@@ -792,7 +599,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   the changelog carries; a fresh WorkspaceDO still creates them inside frozen
   migration 1 and drops them with its identity row.
 
-- `memory_scopes` owns durable work-stream, user, workspace, and Sidekick
+- `memory_scopes` owns durable user, workspace, and Sidekick
   table authority. `memory_tables`,
   `memory_table_columns`, `memory_table_rows`, and `memory_table_cells` store typed
   collections with natural-key deduplication and targeted queries. Prose
@@ -818,7 +625,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   `code_execute` program's nested calls are rows of their own whose
   `tool_call_id` is the program's with a `:call:<index>` suffix
   ([`code-mode.md`](code-mode.md)).
-- SubstreamAgent `tool_pages` maps `(run_id, page_id)` to private continuation
+- AgentLoopDO `tool_pages` maps `(run_id, page_id)` to private continuation
   arguments, producing/consuming receipts, operation, principal, connection, and
   forward ancestry. Migration 61 adds it alongside the receipt authority; the
   lifecycle and scope checks are owned by [tool pagination](tool-pagination.md).
@@ -829,7 +636,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   version. Current authorized totals are regenerated on apply and replay and
   are intentionally absent from the principal-scoped row. A final conditional
   insert rejects a summary when the inventory revision changed after rendering.
-- Object-local `active_agent_compaction` is the owning SubstreamAgent's
+- Object-local `active_agent_compaction` is the owning AgentLoopDO's
   singleton reconnect checkpoint for an in-progress compaction indicator. It
   stores only run/attempt/index/trigger/start time, is cleared by the matching
   finish or terminal run state, and is not checkpoint history or model-visible
@@ -841,7 +648,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   `automation_subscription_id`, `connector_connection_id`, and `digest_schedule_id`
   is set on a row.
 - Object-local `workstream_wakeups` holds one-shot prompt wake-ups a run scheduled
-  for itself, each mirrored into that SubstreamAgent's own alarm index.
+  for itself, each mirrored into that AgentLoopDO's own alarm index.
   It is separate from `schedules` because a wake-up is one-shot, belongs to a work
   stream rather than a subscription or connection, and carries the prompt text that
   becomes the resulting run's trigger. The common WorkspaceDO directory row exposes
@@ -850,11 +657,11 @@ column catalog; what follows is only what WorkspaceDO still holds.
   so a replayed tool receipt resolves to the wake-up its first attempt created;
   `status` moves `pending → fired` under a version guard before the run is launched,
   making a wake-up at-most-once rather than at-least-once.
-- Terminal's work-stream-specific durable rows are object-local.
+- Terminal's conversation-specific durable rows are object-local.
   `terminal_workspace` owns one generation, authority fingerprint, provider
   reconciliation identity, exclusive operation lease, lifecycle deadlines, and
   final-diff pointer per conversation: the main conversation's sandbox is the
-  work stream's, a side thread has its own, and a background agent uses the
+  parent's, a run has its own, and a background agent uses the
   one of the conversation that started it, with `operation_run_substream_id`
   naming the holder's conversation while a run from elsewhere holds the lease
   (conversation schema 63). `terminal_tasks` binds one command to one
@@ -885,95 +692,33 @@ column catalog; what follows is only what WorkspaceDO still holds.
   compaction event whose transitions were applied. Rows are never deleted.
   See [`resident-context.md`](resident-context.md).
 
-### Activity log and digests
+### Notifications and connectors
 
-- `WorkspaceDO.workspace_workstream_effect_receipts` is the inbox for parent
-  directory, activity, resource-link, and mention-delivery effects, whether
-  applied in a hosted parent's own transaction or delivered by the activity
-  Queue. Message ID and payload hash detect replay or
-  conflict; generation and per-key waterlines reject stale mutable state.
-- `WorkspaceDO.channels` and
-  `channel_viewers` are authoritative common and viewer-specific
-  query rows; `viewers.unseen` is the projection of the membership row's
-  `first_opened_at`, so the sidebar reads it without a cross-object call. Equal
-  generation/waterline with a different hash is rejected.
-  WorkspaceDO `workstream_notification_intents` temporarily retains a bounded
-  person-notification payload — a mention, or somebody added to the work stream
-  — plus its required viewer waterline. Delivery resolves current
-  membership/profile state from D1 and current destination state from
-  WorkspaceDO; a newer revocation/listability row wins;
-  terminal delivery or skip erases `payload_json` rather than retaining a second
-  transcript. Effect receipts and terminal intent shells are retained for 30
-  days; a redelivery past that window converges on the idempotent product
-  identities (directory waterline, activity dedupe key, intent ID) rather than
-  a receipt row. Activity and mention effects commit their receipt in the same
-  WorkspaceDO transaction as the event or intent they acknowledge; no regional
-  D1 receipt exists for them.
-- `WorkspaceDO.workspace_activity_events` is the first-party derived record of what happened that someone should
-  hear about, separate from the WorkspaceDO-owned normalized provider event.
-  `audience_kind`
-  stores a visibility *rule* — `workspace`, `user`, or `workstream` — resolved
-  against the reader at read time, so a work stream gaining a participant
-  retroactively gains them its history. `workspace_activity_event_targets` is the different
-  question of who an event is *about* (`mentioned`, `involved`, …), which is what
-  lets a consumer lead with it; a target outside the audience is stored but still
-  filtered out on read. `event_type` and `subject_type` are open strings so a
-  producer adds a value rather than a column.
-  Migration 126 adds `workspace_activity_people_actor_idx`, a partial index on
-  human message authors and event ids excluding merged copies. The People
-  picker combines those author seeks with existing target and conversation
-  indexes instead of scanning the Organization's retained activity.
-- `workspace_activity_events.digestible` is the separate question of whether anybody *wants*
-  to hear about an event, as opposed to who *may*. It is still written, but nothing
-  reads it today: the digest lists unread Activity, which carries no connector
-  activity. It is kept for a future surface. It is fixed when the row is
-  written — from the connector's manifest for connector activity, at the call site
-  for a first-party producer — because the question is asked far more often than it
-  is answered, and re-deriving it on read would need a manifest that may have
-  changed or that this region does not register. It carries no index: the reads
-  that use it are already anchored on the `event_sequence` primary key, and a two-value
-  column ahead of that range would only widen an index for every other reader.
-  [`digests.md`](digests.md#digestible-what-a-person-should-be-told) owns the rule,
-  and the WorkspaceDO column deliberately has no default: every producer must
-  make the decision explicitly. Frozen D1 migration input retains its historical
-  `DEFAULT 1`, but no post-cutover writer can use it.
-- `workspace_activity_events.event_sequence` is `INTEGER PRIMARY KEY AUTOINCREMENT` and is the
-  only cursor axis. Timestamps cannot order it: two events written in the same
-  millisecond tie, and any tiebreak can place the second below a cursor taken after
-  the first, dropping it permanently. `AUTOINCREMENT` is required rather than
-  incidental — a reused rowid would appear beneath a cursor that has already
-  passed.
-- `digest_schedules` is one digest per person per workspace, carrying a `day_mask`
-  (bit 0 Sunday). It owns no work stream. Every active member gets one (weekdays
-  at 09:00, to email and, for a member who is not a guest, their Personal
-  Channel), created by the cron reconciler rather than at the several places a membership is
-  made. A row is never deleted, so its absence unambiguously means "never had one"
-  and the reconciler cannot resurrect a digest somebody switched off. It
-  deliberately has no timezone column — a digest's times are wall-clock times in
-  its owner's day, and `users.timezone` already answers that; a second copy would
-  disagree the first time somebody moved. The derived `schedules` rows carry the
-  resolved zone and are re-derived when the account timezone changes.
-  `digest_schedule_times` holds the delivery times, and one `schedules` row is
-  derived per *time* — a single RRULE cannot express a list of times, because
-  `BYHOUR` and `BYMINUTE` multiply out.
-- `digest_delivery_targets` freezes each destination, with a per-family `CHECK`:
-  `email` carries an address and no connection, and every other type carries a
-  connection plus the frozen provider identity. `personal_channel` fills that
-  shape with the person's Personal Channel in place of the connection and the
-  person in place of the provider user. `target_type` is deliberately not
-  an enum, so a connector declaring a new `userDelivery` surface becomes selectable
-  without a migration.
-- `digest_deliveries` is the idempotency record for one occurrence. Its id is
-  derived from the schedule and `planned_for`, and `(digest_schedule_id,
-  planned_for)` is unique, so a re-fired alarm resolves to the attempt already in
-  flight. The first attempt claims the row with `summary_markdown` already set:
-  that text is what every destination receives, and a retry sends it unchanged
-  rather than reading Activity again. `empty` is a settled outcome, not a failure.
-  `cursor_from` and `cursor_through` are written as `NULL` and `0`: the digest
-  reads unread Activity, not a window over the log, so there is no cursor to
-  move. `workstream_id` is unused for new rows; it names the work stream an older
-  occurrence ran in. Digests never write `workstream_read_states` and never mark
-  anything read.
+- A conversation's effects, a mention or an add among them, are receipted
+  by its Canvas or Sidekick in `WorkspaceDO.sidekick_child_receipts`; message
+  ID and payload hash detect replay or conflict, and a mention's intent commits
+  in the same transaction. An `activity_event` is receipted and stored nowhere:
+  the Activity log it fed is retired, and migration 139 dropped
+  `workspace_activity_events` and its targets, reads and pushes.
+  `WorkspaceDO.workspace_workstream_effect_receipts`, the Thread host's inbox,
+  is unwritten since 2026-11-07; migration 139 left it in place.
+- WorkspaceDO `workstream_notification_intents` temporarily retains a bounded
+  person-notification payload — a mention, or somebody added to the
+  conversation — and the Sidekick run pushes (Needs input, finished;
+  migration 138). Delivery resolves current membership/profile state from D1
+  and checks the recipient against the parent's own reader rule
+  (`notificationDirectoryState`); terminal delivery or skip erases
+  `payload_json` rather than retaining a second transcript. Effect receipts
+  are retained for 180 days and terminal intent shells for 30; a redelivery
+  past that window converges on the idempotent intent ID rather than a receipt
+  row. A mention commits its receipt in the same WorkspaceDO transaction as the
+  intent it acknowledges; no regional D1 receipt exists for it.
+- The Thread-era Activity log and the digests are gone: migration 139 dropped
+  `workspace_activity_events` with its targets, reads and pushes, and every
+  digest table except `digest_schedules`, kept empty because a foreign key on
+  `schedules` names it. Their shapes are in the shipped migrations. Activity as
+  it is now is `workspace_activity_items` and `workspace_activity_seen`
+  (migration 140), above.
 
 - `WorkspaceDO.connector_installations` owns a connection's unique setup attempt,
   initiating user and input digest, generation, typed registration document, and
@@ -1021,26 +766,24 @@ column catalog; what follows is only what WorkspaceDO still holds.
   `slackUserIsLinked` incident below, and again the automation delivery-target
   500 of 2026-08-31. A session row is delivery state (status, reaction, who
   started the thread); where a Slack message routes is decided by
-  `external_conversation_bindings`, below. Each SubstreamAgent's
-  `run_absorbed_slack_origins` (its migration 73) records the Slack origin of
-  every steer a run absorbed, so that run can settle those messages' status
-  reactions; see [`slack-integration.md`](slack-integration.md#the-status-reaction).
+  `external_conversation_bindings`, below. Each AgentLoopDO's
+  `run_absorbed_slack_origins` (its migration 73) recorded the Slack origin of
+  every steer a Thread's run absorbed; nothing writes or reads it since plan
+  step C-3, and it stays as an unwritten table.
 
 - An automation has no destinations anywhere: its rows store none, and
-  a run's loop input is a reference to its definition revision. A room-owned
-  automation's result reaches its home conversation (a Channel's Main or a
-  Breakout, `automation_directory.owning_workstream_id` and
-  `owning_substream_id`) or another attached conversation through the run's
-  own `conversation_post` tool; attachments are
+  a run's loop input is a reference to its definition revision. A run's result
+  is its row in the Sidekick's shared conversation; it reaches an attached
+  Canvas through the run's own `conversation_post` tool, and attachments are
   `sidekick_conversation_attachments` in WorkspaceDO, keyed by the Sidekick and
   the conversation address. Any other destination is the run's own work, sent
   with its connector tools.
 
-- `slack_unfurled_links` records which Slack message carries which work-stream
-  link, plus a hash of the attachment posted on it, so a posted unfurl card is
-  rewritten exactly when it would render differently. Slack reports a shared link
+- `slack_unfurled_links` records which Slack message carries which Rally
+  link, plus a hash of the attachment posted on it. Slack reports a shared link
   only once, so a row that is not written as the card is posted can never be
-  recovered — see [`workstream-links.md`](workstream-links.md).
+  recovered — see [`links.md`](links.md); posted cards are no longer refreshed
+  ([`slack-integration.md`](slack-integration.md)).
 
 - `WorkspaceDO.webhook_receipts` stores connection-scoped signed-delivery replay
   receipts for generic, Granola and Ashby webhooks. `provider_webhook_receipts` remains
@@ -1072,40 +815,12 @@ column catalog; what follows is only what WorkspaceDO still holds.
 - `audit_events` in the independent `AUDIT_DB` records security- and side-effect-relevant actions without copying
   sensitive bodies.
 
-### Demo workspaces and object retirement
+### Object retirement
 
-Five tables belong to the demo-workspace lifecycle, and they sit at three
-different authorities on purpose. [`demo-workspaces.md`](demo-workspaces.md)
-owns the three in D1 and [`workspace-retirement.md`](workspace-retirement.md)
-the two in the objects; this entry exists so somebody adding a table finds them.
+Two tables belong to closing a workspace, both in the objects;
+[`workspace-retirement.md`](workspace-retirement.md) owns them, and this entry
+exists so somebody adding a table finds them.
 
-- **Regional D1 `demo_operations`** is the preparation and the register in one
-  row per operation the operator started — company, presenter, pack version,
-  cast, the workspace once allocated, status, attempt, failed phase and
-  reason, and the instants the workspace was published (`ready_at`) and closed
-  (`retired_at`). The operation is the identity the PRD requires — repeated
-  submission resolves to the same row — and it exists before a workspace does.
-  `workspace_id` is nullable, unique, written before the workspace is created
-  so a retry reuses it, and deliberately carries no foreign key to
-  `workspaces`: D1 enforces one on the write, and the write precedes the row it
-  would reference. Discovery withholds a row with no `ready_at`, and the Demos
-  page lists every row. It is not an authorization input for retirement — that
-  gate was built and dropped; retirement is an operator action on any
-  workspace behind Ace's Access policy. It carries no `region` column for the
-  same reason `workspace_members` does not: it derives region from which
-  regional D1 it lives in.
-- **Regional D1 `demo_operation_phases`** holds one row per phase per
-  operation with its status, attempt, a small detail object the page renders
-  and its error. The phase names are the contract's, not a `CHECK`: they are a
-  product decision that will move, and SQLite cannot widen a `CHECK` in place.
-- **Regional D1 `demo_seed_receipts`** records what the seeder confirmed, one row
-  per pack action of one operation: its kind and room, the work stream and human
-  turn it wrote, the run and how it settled, the elicitation a question opened,
-  the resource an upload attached. It references `demo_operations` by
-  `operation_id`, so a receipt cannot describe a demo no operation started, and
-  it is written only after the action's outcome is confirmed — preparation
-  resumes from it and the readiness barrier generates its expected manifest
-  from it, both of which need rows that mean "done" rather than "attempted".
 - **`object_retirement`, in every gated object's own SQLite**, is one permanent
   row: the tombstone. It is not in D1 because the gate has to answer during
   constructor recovery, before anything cross-authority could be consulted.
@@ -1120,7 +835,11 @@ In D1, retirement writes no table of its own: the operator door sets
 `workspaces.abandoned_at`, the column the last member leaving already writes and
 every authority read already fences on, before any object is closed.
 
-All three D1 tables arrive in one migration, `0100_demo_workspaces.sql`.
+The demo feature's three D1 tables (`demo_operations`, `demo_operation_phases`,
+`demo_seed_receipts`, from `0100_demo_workspaces.sql`) have had no reader or
+writer since 2026-11-08. D1 migration `0125_drop_demo_tables.sql` drops them,
+children first, as a Worker-first migration (below). WorkspaceDO migration 136 drops
+`sidekick_runs.seed_json`.
 Retirement is not deletion. Every other row stays exactly where it is; the
 tombstone is what stops anything reading or draining them.
 
@@ -1161,21 +880,19 @@ The tables have distinct lifecycles rather than one catch-all event store:
    is never overwritten by a client's. Calendar intent separately retains the
    IANA timezone a person named for it; a trigger that names none resolves in
    the order explicit trigger, personal owner, then workspace, read where the
-   schedule is derived: a digest's on its WorkspaceDO `schedules` row, an
-   automation's inside its own object when a revision is applied (the run-as
-   user's zone for a personal automation, the workspace's otherwise). The
-   resolved zone is then frozen on that row and does not follow a later change
-   to the account, unlike a digest's, which is re-derived;
+   schedule is derived: an automation's inside its own object when a revision
+   is applied (the run-as user's zone for a personal automation, the
+   workspace's otherwise). The resolved zone is then frozen on that row and
+   does not follow a later change to the account;
    `docs/potential-bugs.md` carries the question of whether it should.
 
 8. R2 objects are addressed through opaque references. Raw/large provider
    payloads never enter Queue or Workflow inputs; the regional Queue carries
    only the bounded normalized connector event needed to reach WorkspaceDO.
 
-9. **Who may read a work stream is decided by Durable Object authority.**
-   The Channel's hosted parent in WorkspaceDO owns scope and participants;
-   WorkspaceDO's directory serves the projected viewer decision for
-   cross-work-stream lists and admission. D1 is never a
+9. **Who may read a conversation is decided by Durable Object authority.**
+   Its Canvas or Sidekick in WorkspaceDO owns the audience (`canvasAdmits`,
+   `sidekickAdmits`), and the lists and admission read it there. D1 is never a
    visibility fallback.
 
 10. **Migration files are immutable after deployment.** New schema changes receive
@@ -1198,12 +915,10 @@ The tables have distinct lifecycles rather than one catch-all event store:
 14. **An effect is acknowledged to the Queue only after the owning receiver
     commits the effect and its receipt together, and the sender's outbox row is
     deleted when `sendBatch` accepts the message, because retry is the Queue's.**
-    A child's effects commit in its parent (a hosted Channel, Space or Sidekick
-    parent in WorkspaceDO); directory/user effects, an automation's
-    row, and first-party activity/mention effects commit in WorkspaceDO. A
-    hosted parent's directory effects are applied in the parent write's own
-    transaction, with no Queue hop and no outbox row; its `parent_outbox` holds
-    only work that leaves the object. External notification
+    A child's effects commit in its parent (a hosted Canvas or Sidekick in
+    WorkspaceDO); an automation's row and mention effects commit in
+    WorkspaceDO. A hosted parent's list rows are written in the parent write's
+    own transaction, with no Queue hop and no outbox row. External notification
     intent and delivery state also commit there; D1 supplies only current
     member/user identity and opaque provider routing. Queue order and
     uniqueness are never trusted, generation/version fences mutable state, and
@@ -1222,12 +937,11 @@ has a document, and the column notes above point at it rather than restating it:
 | The local-only snapshot a fresh development database starts from | [`d1-baseline-migrations.md`](d1-baseline-migrations.md) |
 | The surfaces, flows, and contract boundaries around this schema | [`architecture.md`](architecture.md) |
 | Which region a row lives in and what crosses | [`regionalization.md`](regionalization.md) |
-| The description refresh loop | [`workstream-descriptions.md`](workstream-descriptions.md) |
-| Pinning and the pinned sidebar section | [`workstream-pinning.md`](workstream-pinning.md) |
+| Pinning and the pinned sidebar section | [`pinning.md`](pinning.md) |
 | The automation lifecycle and every `sidekick_*` table | [`automation-lifecycle.md`](automation-lifecycle.md) |
 | The conversation-parent contract and the effect legs between the objects | [`workstream-durable-object.md`](workstream-durable-object.md) |
-| Channel, Space and Sidekick parent tables in WorkspaceDO, and how they moved from the legacy objects | [`hosted-conversation-parents.md`](hosted-conversation-parents.md) |
-| The activity log's semantics and the digest that reads it | [`digests.md`](digests.md) |
+| Canvas and Sidekick parent tables in WorkspaceDO, and how they moved from the legacy objects | [`hosted-conversation-parents.md`](hosted-conversation-parents.md) |
+| A Canvas's directory, audience and artifacts | [`canvases.md`](canvases.md) |
 | Model pinning and the flags it overrides | [`feature-flags.md`](feature-flags.md) |
 | Telemetry routing, identities, lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
 | Running and reverting migrations against hosted databases | [`runbook.md`](runbook.md) |
@@ -1235,7 +949,7 @@ has a document, and the column notes above point at it rather than restating it:
 
 ## Failure modes and limits
 
-- **The historical D1 `activity_events.digestible` defaulted to `1`;
+- **Retired (WorkspaceDO migration 139 dropped this table).** **The historical D1 `activity_events.digestible` defaulted to `1`;
   WorkspaceDO does not.** That source table existed only through migration 0089
   and is absent from the current D1 schema. `workspace_activity_events.digestible` is
   `NOT NULL` with no default, and the typed RPC requires it, so every live
@@ -1243,11 +957,11 @@ has a document, and the column notes above point at it rather than restating it:
 - **`artifacts` is retired and absent from current D1.** It remained through
   migration 0089 so the previous Worker could still read it; 0090 removes it
   with the rest of the product schema. Do not add a reader or recreate it.
-- **A work-stream wake-up is at-most-once, not at-least-once.** `status` moves
+- **A conversation's wake-up is at-most-once, not at-least-once.** `status` moves
   `pending → fired` under a version guard before the run launches, so a wake-up
   lost between the guard and the launch does not fire at all rather than firing
   twice.
-- **`workspace_workstream_pins.position` is not uniquely indexed**, because any intermediate
+- **Retired (WorkspaceDO migration 139 dropped this table).** **`workspace_workstream_pins.position` is not uniquely indexed**, because any intermediate
   state of the dense rewrite collides with itself. Uniqueness is a property the
   rewrite maintains, not one the database enforces.
 - **An archived Sidekick's object is kept forever.** Its stored lifecycle moves
@@ -1257,8 +971,7 @@ has a document, and the column notes above point at it rather than restating it:
   still name it. Its conversations become unreadable rather than deleted:
   `authorizeViewer` answers unauthorized and archived from then on. Rally does
   not currently expose an archived-Sidekick browser or an unarchive operation.
-- **A `system_kind` work stream refuses a scope change** with
-  `scope_change_unsupported`. That is deliberate, not a missing case.
+
 - **A migration deployed ahead of the code that needs it is the safe order; the
   reverse is not.** A `CHECK` relaxed before the enum widens means rows the new
   schema accepts fail the readers still running. The destructive 0090 retirement
@@ -1267,9 +980,6 @@ has a document, and the column notes above point at it rather than restating it:
   remote pending ledger before deleting schema the previous Worker still names.
 
 ## Testing
-
-`apps/api/test-workers/automation-do.test.ts` verifies execution snapshots and
-substream-local attachment persistence across the tool-driven recommendation flow.
 
 `pnpm --filter @rally/db test` is the suite that covers the schema itself:
 
@@ -1331,48 +1041,18 @@ fails when a table referencing `connector_connections` is added without being
 declared, which is the failure that otherwise waits until the next rebuild drops
 its rows.
 
-## Scoped participant authority (implementation in progress)
+## Grants and invitations
 
-Unpublished WorkstreamDO migration 14 added exact grants, immutable operation
-receipts, participant migration tokens and projection targets. Its
-`participant_projection_deliveries` row holds the latest effective roster
-payload per conversation/user, including revocation tombstones. Successful
-receiver delivery records `acknowledged_revision` without deleting that payload:
-viewer admission still needs its version. A new desired revision clears the
-acknowledgement in the same transaction as the grant and alarm. Source-side
-Substream migration 62 freezes legacy roster writers and records applied
-projection revisions. See [workstream authority](workstream-durable-object.md)
-for handoff and delivery ordering; live migration remains disabled. These tables
-now live in WorkspaceDO as `parent_grants`, `parent_grant_operations`,
-`parent_participant_migrations`, `parent_participant_targets` and
-`parent_participant_deliveries`, keyed by `parent_id`
-([table map](hosted-conversation-parents.md#table-map)).
-
-## Space-derived Channel access
-
-WorkstreamDO migration 18 made each Channel the provenance authority for its
-own readers. `workstream_direct_audience` records the Channel's audience on its
-own account, backfilled from `workstream_metadata.scope` — which becomes the
-*effective* audience the moment a Space widens the Channel and can no longer
-answer the question. `workstream_space_access_sources` holds one row per Space
-that reaches the Channel, with the Space revision and membership generation it
-was applied on, and `workstream_space_supplied_readers` holds the readers each
-source *seated*, cascading with it. `workstream_access_operations` receipts
-every access operation on its exact request, in the shape
-`scope_grant_operations` uses. `scope_grants` gains `source_kind` and
-`source_id`; existing rows backfill as `direct` through the defaults, which is
-what they were.
-
-These tables moved to WorkspaceDO as `parent_direct_audience`,
-`parent_space_sources`, `parent_space_readers`, `parent_access_operations` and
-`parent_grants`, keyed by `parent_id`
-([table map](hosted-conversation-parents.md#table-map)). A Space's parent uses
-the same tables as a Channel's. No regional D1 table is involved: the provenance is
-Channel-local, and the audience it plans is still written by the main
-conversation's scope and participant rows or by the grant ledger. Since
-WorkspaceDO migration 94 a Space seats nobody; see
-[authorization](authorization.md#space-derived-access) for what is left of
-Space-derived grants.
+`parent_grants`, the invitation tables and their delivery receipts in
+`WorkspaceDO` are keyed by `parent_id`. A Canvas's guest share writes them, and
+the claim's directory step adds the guest to `canvas_participants`; the grant
+is the share's receipt, not who may read
+([`scope-invitations.md`](scope-invitations.md)). The other `parent_*` grant
+and audience tables (`parent_grant_operations`, the participant migration and
+delivery tables, `parent_direct_audience`, `parent_space_sources`,
+`parent_space_readers`, `parent_access_operations`) held a Channel's roster
+handoff and Space-derived access; nothing writes them now, and they stay with
+the Thread retirement's inventory.
 
 ## Usage metering
 
@@ -1407,6 +1087,49 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-11-09 — The Thread, Channel, Thread-era Activity and demo storage loses its code; what is dropped and what waits
+
+**What changed:** The server code that read and wrote the Thread, Channel,
+Space, Breakout, Thread-era Activity, digest, suggested-work, merge,
+access-request, session-import, backfill and colour-sync rows is deleted, and
+every migration statement those modules exported moved byte for byte to
+`retired-workspace-schema.ts`, so the migration ledger's hashes are unchanged.
+Queue messages of the retired kinds are acknowledged by tombstones rather than
+dead-lettered. WorkspaceDO migration 139 drops the Thread-era tables that lost
+their last reader (the Thread-era Activity, digests but `digest_schedules`,
+suggested work, a Channel's own ledgers, Thread pins and order, Thread access,
+batch dispatches, `thread_backfill`, the import reclaim,
+`workstream_email_receipts`), their dangling triggers and the Thread rows of
+shared tables, and AgentLoopDO migration 84 drops the per-conversation Thread
+tables. Migration 140 adds the per-person Activity tables
+([`activity.md`](activity.md)). Migration 136 drops `sidekick_runs.seed_json`,
+and D1 `0125_drop_demo_tables.sql` drops the three demo tables.
+
+**Why:** After the cutover nothing shows a Thread or a Channel, and code that
+only served them is deleted rather than left dormant so the next change does not
+have to reason about it. Tables are dropped worker-first: the Worker that no
+longer reads them deploys before the migration that drops them. An empty table
+left behind would let a stale query succeed against nothing instead of failing,
+the reason 0090 gave for dropping the legacy product tables.
+
+**Considered and rejected:** Dropping `channels`, `spaces`, `breakouts`, their
+viewers and `parent_*` now: the Thread retirement's inventory reads them.
+Shipping an earlier 0125 that rebuilt `demo_seed_receipts` for a Canvas-shaped
+pack and then dropping it: it never shipped and was deleted.
+
+**Consequences:** Those tables, `digest_schedules` (emptied, under the
+`schedules` foreign key), D1 `workstreams` (the conversation-parent anchor, and
+the guard that keeps retired search rows unreachable) and the D1 authority
+tables (read by Canvas and Sidekick creation) stay until a later migration;
+[`workspace-retirement.md`](workspace-retirement.md) says when. 0125 is a
+Worker-first migration and must be the only pending regional D1 migration when
+it deploys, because applied first it would break the previous Worker, which
+reads `demo_operations` on every regional discovery. The persona `users` rows a
+demo minted stay. Nothing prunes the Activity tables.
+
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-18 — A rename is a version cause of its own
 
@@ -1585,7 +1308,7 @@ WorkstreamDO migration 13 stores workspace Sidekick recommendation links once pe
 
 ### 2026-09-14 — Retire built-in meeting data
 
-Workspace migration 57 purges built-in note rows and captures content-free resource deletion addresses. Conversation migration 58 removes meeting attachment snapshots. The old tables remain empty until external deletion is verified; shipped migration history remains immutable. Dictation and connector resources remain independent. See [meeting retirement](meeting-notes.md) for rollout and verification.
+Workspace migration 57 purges built-in note rows and captures content-free resource deletion addresses. Conversation migration 58 removes meeting attachment snapshots. The old tables remain empty until external deletion is verified; shipped migration history remains immutable. Dictation and connector resources remain independent. See `meeting-notes.md` (retired) for rollout and verification.
 
 ### 2026-09-13 — Rebuilding a referenced parent empties its dependents first
 
@@ -1792,7 +1515,7 @@ against; a receipt written at admission would let a run that failed count as
 seeded. The first row wins on conflict because its ids are the ones already
 handed onward.
 
-All of these rows are owned by [`demo-workspaces.md`](demo-workspaces.md).
+All of these rows are owned by `demo-workspaces.md`.
 
 **Considered and rejected:** Keeping the register and dropping only the
 foreign key — the duplicate would still have to be kept in step on every field

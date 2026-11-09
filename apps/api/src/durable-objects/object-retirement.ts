@@ -11,7 +11,7 @@ import { DurableObject } from "cloudflare:workers";
  * the object without passing anything that could have said no. WorkspaceDO
  * alone has roughly 229 methods and no shared dispatch boundary, and the
  * conversation objects hold the writes that actually matter: the refusal the
- * spike observed came from `SubstreamAgent`, and the outbox it stranded was a
+ * spike observed came from `AgentLoopDO`, and the outbox it stranded was a
  * `WorkstreamDO`'s (a class since deleted; its state is now in WorkspaceDO).
  *
  * So the check is not a helper each method is expected to call. Every method on
@@ -594,7 +594,7 @@ const CONSTRUCTING = new WeakMap<object, number>();
 
 /**
  * Depth rather than a flag, because a class may open this window more than
- * once. `SubstreamAgent` applies its schema through one `initializeDurableObject`
+ * once. `AgentLoopDO` applies its schema through one `initializeDurableObject`
  * and recovers its runtime through a second, both from its constructor; with a
  * flag, the first one's `finally` closed the window while the second was still
  * inside it, and recovery refused itself on a private helper.

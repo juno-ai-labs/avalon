@@ -194,7 +194,7 @@ describe('connector connection resolution', () => {
       capability: 'sheets.write',
       operation: 'edit',
       resource: { id: 'sheet-1', type: 'document', name: 'Ellen Buckley Assessment' },
-      parentKind: 'workstream',
+      parentKind: 'canvas',
       parentId: '00000000-0000-7000-8000-000000000002',
       substreamId: '0',
       failedToolInvocationId: '00000000-0000-7000-8000-000000000003:turn:1:tool:0',
@@ -219,6 +219,7 @@ describe('connector connection resolution', () => {
       capability: 'sheets.write',
       operation: 'edit' as const,
       resource: { id: 'sheet-1', type: 'document', name: 'Ellen Buckley Assessment' },
+      parentKind: 'canvas' as const,
       parentId: '00000000-0000-7000-8000-000000000002',
       substreamId: '0',
       failedToolInvocationId: '00000000-0000-7000-8000-000000000003:turn:1:tool:0',
@@ -384,6 +385,45 @@ describe('connector connection resolution', () => {
     expect(screen.queryByText('Connected')).not.toBeInTheDocument();
     expect(screen.getByText('Disabled')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reconnect' })).toBeEnabled();
+  });
+
+  it('reports a connection made while the card is open, once, and never one connected when it opened', async () => {
+    const request = { connectorId: 'slack', scope: 'personal' } as const;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onNewlyConnected = vi.fn();
+    const Harness = ({ status }: { status?: 'healthy' }) => (
+      <QueryClientProvider client={queryClient}>
+        <ConnectorConnectionsProvider connections={status ? [{
+          id: 'connection-one', modelPluginId: 'plugin_slack', connectorType: 'slack', displayName: 'Slack',
+          scope: 'you', status, capabilities: ['slack.personal.mcp'],
+        }] : []}>
+          <ConnectorConnectionCard onNewlyConnected={onNewlyConnected} request={request} />
+        </ConnectorConnectionsProvider>
+      </QueryClientProvider>
+    );
+    const view = render(<Harness />);
+    expect(await screen.findByRole('button', { name: 'Connect Slack' })).toBeInTheDocument();
+    view.rerender(<Harness status="healthy" />);
+    await waitFor(() => expect(onNewlyConnected).toHaveBeenCalledTimes(1));
+    view.rerender(<Harness status="healthy" />);
+    expect(onNewlyConnected).toHaveBeenCalledTimes(1);
+    view.unmount();
+
+    // Already connected for this viewer when it opened: nothing to report, so
+    // a question the card answers does not answer itself.
+    const already = vi.fn();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConnectorConnectionsProvider connections={[{
+          id: 'connection-one', modelPluginId: 'plugin_slack', connectorType: 'slack', displayName: 'Slack',
+          scope: 'you', status: 'healthy', capabilities: ['slack.personal.mcp'],
+        }]}>
+          <ConnectorConnectionCard onNewlyConnected={already} request={request} />
+        </ConnectorConnectionsProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('Connected')).toBeInTheDocument();
+    expect(already).not.toHaveBeenCalled();
   });
 
   it('uses a feed-owned Connected latch only while live connections are loading', async () => {

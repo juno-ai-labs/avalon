@@ -17,6 +17,7 @@
     "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control — a switch that is on, a selected preset — which is neither the vivid hue nor the wash. `vivid` is the one saturated step, for a status indicator a few pixels across — the healthy dot beside a connection — where `base`, tuned for text and fills, read as grey.",
     "sys.color.warning": "Attention short of failure.",
     "sys.color.danger": "Failure and destructive action.",
+    "sys.color.badge": "A count, a Needs input badge or an unread dot: the red design.html draws them in, with white digits, in both appearances. Apart from `danger`, which dark lightens until white over it fails contrast.",
     "sys.color.palette-ink": "The two inks a palette fill can carry, absolute in both appearances. A fill does not change with the theme, so the ink over it must not either — the neutral ramp inverts and is the wrong source here. Which one a given fill takes is PALETTE_INK in @rally/contracts, not a judgement made in CSS.",
     "sys.color.project": "The semantic identity palette shared by projects, work streams, and personal accents. Stored color keys remain stable; each light/dark appearance defines its own values so shades can be tuned for contrast without changing saved choices.",
     "sys.color.project-tint": "The background of a mark drawn in a palette hue — a Channel's or a Breakout's glyph, a Sidekick's hexagon, a picker swatch. Pastel rather than the hue itself, all at one lightness and chroma per appearance so none stands out, and each a pair with its `project-ink`. A person's own colour does not use it: avatars and accents keep `project` at full saturation.",
@@ -318,6 +319,12 @@
       "$type": "color"
     },
     "sys.color.danger.on": {
+      "$type": "color"
+    },
+    "sys.color.badge.base": {
+      "$type": "color"
+    },
+    "sys.color.badge.on": {
       "$type": "color"
     },
     "sys.color.palette-ink.light": {
@@ -801,9 +808,6 @@
       "$type": "color"
     },
     "cmp.feed.width": {
-      "$type": "dimension"
-    },
-    "cmp.feed.width-wide": {
       "$type": "dimension"
     },
     "cmp.feed.byline.font-size": {

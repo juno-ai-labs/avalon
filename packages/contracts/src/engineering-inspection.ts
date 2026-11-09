@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { deferredZodSchema } from "./deferred-zod-schema";
 
-import { CreateMessageRequestSchema, RegionSchema, WorkspaceNameSchema, WorkstreamMessageAdmissionReceiptSchema, type SpaceChannelPage } from "./index";
+import { CreateMessageRequestSchema, RegionSchema, WorkspaceNameSchema, WorkstreamMessageAdmissionReceiptSchema } from "./index";
 import { AutomationIdSchema } from "./automation-agent";
 import {
   ArtifactIdSchema,
@@ -11,8 +11,6 @@ import {
   WorkspaceIdSchema,
   WorkstreamIdSchema,
 } from "./identifiers";
-import { SpaceIdSchema, SpaceSummarySchema, type SpaceDirectory } from "./spaces";
-import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { ReadTranscriptRequestSchema } from "./workstream-transcript";
 import { WorkspaceRetirementResultSchema } from "./workspace-retirement";
 
@@ -43,41 +41,7 @@ export const CreateEngineeringOrgResultSchema = deferredZodSchema(() => z.strict
 }));
 export type CreateEngineeringOrgResult = z.infer<typeof CreateEngineeringOrgResultSchema>;
 
-export const CreateEngineeringChannelInputSchema = deferredZodSchema(() => z.strictObject({
-  ...creationIdentity,
-  orgId: WorkspaceIdSchema,
-  name: z.string().trim().min(1),
-  participantUserIds: z.array(UserIdSchema).describe("Organization users to seat, subject to the app's audience permissions; the creator is always included. Channels are Organization-wide."),
-}));
-export type CreateEngineeringChannelInput = z.infer<typeof CreateEngineeringChannelInputSchema>;
-export const CreateEngineeringChannelResultSchema = deferredZodSchema(() => z.strictObject({
-  region: RegionSchema,
-  orgId: WorkspaceIdSchema,
-  channelId: SpaceIdSchema,
-  channel: SpaceSummarySchema,
-}));
-export type CreateEngineeringChannelResult = z.infer<typeof CreateEngineeringChannelResultSchema>;
-
-export const CreateEngineeringThreadInputSchema = deferredZodSchema(() => z.strictObject({
-  ...creationIdentity,
-  orgId: WorkspaceIdSchema,
-  channelId: SpaceIdSchema,
-  prompt: z.string().max(MESSAGE_MAX_CHARACTERS).refine((value) => value.trim().length > 0, "A starting prompt is required"),
-}));
-export type CreateEngineeringThreadInput = z.infer<typeof CreateEngineeringThreadInputSchema>;
-export const CreateEngineeringThreadResultSchema = deferredZodSchema(() => z.strictObject({
-  region: RegionSchema,
-  orgId: WorkspaceIdSchema,
-  channelId: SpaceIdSchema,
-  threadId: WorkstreamIdSchema,
-  turnId: IdSchema,
-  harnessRunId: IdSchema.nullable(),
-}));
-export type CreateEngineeringThreadResult = z.infer<typeof CreateEngineeringThreadResultSchema>;
-
 const engineeringViewer = { orgId: WorkspaceIdSchema, userId: UserIdSchema };
-export const ListEngineeringUserChannelsInputSchema = deferredZodSchema(() => z.strictObject(engineeringViewer));
-export type ListEngineeringUserChannelsInput = z.infer<typeof ListEngineeringUserChannelsInputSchema>;
 export const SendEngineeringMessageInputSchema = deferredZodSchema(() => z.strictObject({
   text: CreateMessageRequestSchema.shape.text,
   mentions: CreateMessageRequestSchema.shape.mentions,
@@ -87,8 +51,7 @@ export const SendEngineeringMessageInputSchema = deferredZodSchema(() => z.stric
   runMode: CreateMessageRequestSchema.shape.runMode,
   ...engineeringViewer,
   operationId: IdSchema.describe("A fresh UUID for this message; reuse it after an uncertain outcome."),
-  threadId: WorkstreamIdSchema,
-  breakoutId: SubstreamIdSchema.optional().describe("Omit for the Thread's Main; a Breakout is authorized independently."),
+  conversationId: IdSchema.describe("A Canvas ID (posts to its Chat) or a Sidekick ID (posts to its shared conversation)."),
   recordOnly: z.boolean().optional().describe("true posts for the conversation's readers without starting a Rally run, whatever addressing would decide. false or omitted uses normal addressing."),
 }));
 export type SendEngineeringMessageInput = z.infer<typeof SendEngineeringMessageInputSchema>;
@@ -122,20 +85,110 @@ export const RetireEngineeringOrgResultSchema = deferredZodSchema(() => Workspac
 }));
 export type RetireEngineeringOrgResult = z.infer<typeof RetireEngineeringOrgResultSchema>;
 
-export const ReadEngineeringChannelInputSchema = deferredZodSchema(() => z.strictObject({
-  ...engineeringViewer,
-  channelId: SpaceIdSchema,
-  cursor: z.string().min(1).optional(),
+
+/**
+ * One Organization's Threads, Breakouts and Channels, retired after the
+ * cutover (docs/workspace-retirement.md#retiring-threads-breakouts-and-channels).
+ * `confirm` is the Organization id again: the operation is refused unless it
+ * names `orgId`, the consistency check Ace's workspace retirement makes.
+ */
+export const ThreadRetirementOperationInputSchema = deferredZodSchema(() => z.strictObject({
+  orgId: WorkspaceIdSchema,
+  confirm: z.string().describe("The orgId again, typed by the operator. The operation is refused unless it equals orgId."),
 }));
-export type ReadEngineeringChannelInput = z.infer<typeof ReadEngineeringChannelInputSchema>;
-export const ListEngineeringUserConversationsInputSchema = deferredZodSchema(() => ReadEngineeringChannelInputSchema.unwrap().extend({
-  kind: z.enum(["channel", "breakout"]),
+export type ThreadRetirementOperationInput = z.infer<typeof ThreadRetirementOperationInputSchema>;
+
+/** A Thread (`workstream`) or a Channel (`space`), the parents the Thread retirement walks. */
+export const RetiredThreadParentKindSchema = z.enum(["workstream", "space"]);
+
+/** One conversation or parent a pass could not finish, by a stable code. The next pass returns to it. */
+export const ThreadRetirementFailureSchema = z.strictObject({
+  parentKind: RetiredThreadParentKindSchema,
+  parentId: z.string(),
+  substreamId: z.string().nullable(),
+  error: z.string(),
+});
+
+export const DumpThreadTranscriptsResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  /** Every conversation under a Thread or Channel the Organization still holds. */
+  conversations: z.number().int().nonnegative(),
+  /** Written by this pass. */
+  dumped: z.number().int().nonnegative(),
+  /** Already in R2 from an earlier pass, so not read again. */
+  skipped: z.number().int().nonnegative(),
+  failed: z.array(ThreadRetirementFailureSchema),
 }));
-export type ListEngineeringUserConversationsInput = z.infer<typeof ListEngineeringUserConversationsInputSchema>;
+export type DumpThreadTranscriptsResult = z.infer<typeof DumpThreadTranscriptsResultSchema>;
+
+export const RetireThreadsResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  /** Threads and Channels the Organization still held when this pass started; a finished retirement reruns at 0. */
+  parents: z.number().int().nonnegative(),
+  conversations: z.number().int().nonnegative(),
+  /** Closed by this pass: each parent's conversations retired and its rows deleted. */
+  retiredParents: z.number().int().nonnegative(),
+  retiredConversations: z.number().int().nonnegative(),
+  /** Effects the retired conversations still hold and will never publish. */
+  retainedOutbox: z.number().int().nonnegative(),
+  failed: z.array(ThreadRetirementFailureSchema),
+}));
+export type RetireThreadsResult = z.infer<typeof RetireThreadsResultSchema>;
+
+/**
+ * One Organization's Threads that have artifacts, each made a Canvas in place
+ * with the same id (docs/workspace-retirement.md#converting-threads-that-have-artifacts).
+ * A dry run, the default, only lists them; an apply needs `confirm` naming
+ * `orgId`, the consistency check the retirement makes.
+ */
+export const ConvertThreadsToCanvasesInputSchema = deferredZodSchema(() => z.strictObject({
+  orgId: WorkspaceIdSchema,
+  dryRun: z.boolean().default(true).describe("true (the default) lists the Threads that would become Canvases and changes nothing."),
+  confirm: z.string().optional().describe("The orgId again, typed by the operator. Required, and must equal orgId, when dryRun is false."),
+}));
+export type ConvertThreadsToCanvasesInput = z.input<typeof ConvertThreadsToCanvasesInputSchema>;
+
+export const ThreadConversionCandidateSchema = z.strictObject({
+  threadId: z.string(),
+  title: z.string(),
+  /** Artifacts the Thread's conversations made (`artifact_registry`). */
+  artifactCount: z.number().int().nonnegative(),
+  /** Artifacts another conversation made that the Thread linked. */
+  linkedArtifactCount: z.number().int().nonnegative(),
+  /** Who becomes a participant of the Canvas: every viewer of a personal Thread, the participants of a Workspace-scoped one. */
+  participantCount: z.number().int().nonnegative(),
+  /** Its conversations, Main and Breakouts, and how many have no transcript dump yet. */
+  conversations: z.number().int().nonnegative(),
+  undumped: z.number().int().nonnegative(),
+});
+
+export const ConvertThreadsToCanvasesResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  dryRun: z.boolean(),
+  /** Every Thread with an artifact the Organization still holds; a finished conversion reruns with none. */
+  candidates: z.array(ThreadConversionCandidateSchema),
+  /** Made a Canvas by this pass. */
+  converted: z.number().int().nonnegative(),
+  /** Already a Canvas from an interrupted earlier pass, finished by this one. */
+  alreadyConverted: z.number().int().nonnegative(),
+  failed: z.array(z.strictObject({ threadId: z.string(), substreamId: z.string().nullable(), error: z.string() })),
+  /** Artifacts whose conversation names no Thread, Canvas or Sidekick: left alone. */
+  artifactsWithoutThread: z.number().int().nonnegative(),
+}));
+export type ConvertThreadsToCanvasesResult = z.infer<typeof ConvertThreadsToCanvasesResultSchema>;
+
+/**
+ * A conversation an operator reads as a user: a Canvas's Chat or a Sidekick's
+ * shared conversation. `kind` is what the operator asked for; the region
+ * refuses an id whose parent is the other kind (`conversation_kind_mismatch`).
+ */
 export const ReadEngineeringConversationInputSchema = deferredZodSchema(() => z.strictObject({
   ...engineeringViewer,
-  threadId: WorkstreamIdSchema,
-  breakoutId: SubstreamIdSchema.optional(),
+  kind: z.enum(["canvas", "sidekick"]),
+  conversationId: IdSchema,
   ...ReadTranscriptRequestSchema.shape,
 }));
 export type ReadEngineeringConversationInput = z.infer<typeof ReadEngineeringConversationInputSchema>;
@@ -179,26 +232,18 @@ export const EngineeringWorkspaceSchema = deferredZodSchema(() => z.strictObject
 }));
 export type EngineeringWorkspace = z.infer<typeof EngineeringWorkspaceSchema>;
 
-export const EngineeringWorkstreamSchema = deferredZodSchema(() => z.strictObject({
+/** One Canvas, read from the Organization's `canvas_directory`. */
+export const EngineeringCanvasSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
+  canvasId: IdSchema,
   region: RegionSchema,
   title: z.string(),
-  scope: z.string(),
-  state: z.string(),
-  systemKind: z.string().nullable(),
-  lastActivityAt: z.number().int().nonnegative(),
-  archivedAt: z.number().int().nonnegative().nullable(),
+  visibility: z.string(),
+  createdByUserId: z.string(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
 }));
-export type EngineeringWorkstream = z.infer<typeof EngineeringWorkstreamSchema>;
-
-export const EngineeringSubstreamSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
-  substreamId: SubstreamIdSchema,
-  region: RegionSchema,
-}));
-export type EngineeringSubstream = z.infer<typeof EngineeringSubstreamSchema>;
+export type EngineeringCanvas = z.infer<typeof EngineeringCanvasSchema>;
 
 /**
  * One Sidekick as its workspace's directory holds it.
@@ -247,24 +292,6 @@ export const EngineeringArtifactSchema = deferredZodSchema(() => z.strictObject(
 }));
 export type EngineeringArtifact = z.infer<typeof EngineeringArtifactSchema>;
 
-/**
- * One Space as its Organization holds it.
- *
- * Reported the way a Sidekick is, including an archived one: the object
- * outlives the row a product surface renders, and an archived Space is a
- * common inspection target.
- */
-export const EngineeringSpaceSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: WorkspaceIdSchema,
-  spaceId: SpaceIdSchema,
-  region: RegionSchema,
-  name: z.string(),
-  scope: z.string(),
-  status: z.string(),
-  systemRole: z.string().nullable(),
-  archivedAt: z.number().int().nonnegative().nullable(),
-}));
-export type EngineeringSpace = z.infer<typeof EngineeringSpaceSchema>;
 
 export const ListEngineeringWorkspacesInputSchema = z.strictObject({});
 export type ListEngineeringWorkspacesInput = z.infer<typeof ListEngineeringWorkspacesInputSchema>;
@@ -360,17 +387,18 @@ export const WorkspaceInspectionInputSchema = deferredZodSchema(() => z.strictOb
 }));
 export type WorkspaceInspectionInput = z.infer<typeof WorkspaceInspectionInputSchema>;
 
-export const WorkstreamInspectionInputSchema = deferredZodSchema(() => z.strictObject({
-  workstreamId: WorkstreamIdSchema,
-}));
-export type WorkstreamInspectionInput = z.infer<typeof WorkstreamInspectionInputSchema>;
-
-export const SubstreamInspectionInputSchema = deferredZodSchema(() => z.strictObject({
+/**
+ * A Canvas's or Sidekick's conversation object, by the parent's id: the
+ * object is named by that id (a `workstream` id in storage) and, unless
+ * `substreamId` names one of its registered children (a Sidekick run's or a
+ * background agent's conversation), is its main conversation, substream 0.
+ */
+export const ConversationInspectionInputSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
-  substreamId: SubstreamIdSchema,
+  conversationId: IdSchema,
+  substreamId: SubstreamIdSchema.optional(),
 }));
-export type SubstreamInspectionInput = z.infer<typeof SubstreamInspectionInputSchema>;
+export type ConversationInspectionInput = z.infer<typeof ConversationInspectionInputSchema>;
 
 export const ArtifactInspectionInputSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
@@ -387,15 +415,10 @@ export const EngineeringWorkspaceTargetSchema = deferredZodSchema(() => z.strict
 }));
 export type EngineeringWorkspaceTarget = z.infer<typeof EngineeringWorkspaceTargetSchema>;
 
-export const EngineeringWorkstreamTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
-  workstreamId: WorkstreamIdSchema,
+export const EngineeringConversationTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
+  conversationId: IdSchema,
 }).strict());
-export type EngineeringWorkstreamTarget = z.infer<typeof EngineeringWorkstreamTargetSchema>;
-
-export const EngineeringSubstreamTargetSchema = deferredZodSchema(() => EngineeringWorkstreamTargetSchema.unwrap().extend({
-  substreamId: SubstreamIdSchema,
-}).strict());
-export type EngineeringSubstreamTarget = z.infer<typeof EngineeringSubstreamTargetSchema>;
+export type EngineeringConversationTarget = z.infer<typeof EngineeringConversationTargetSchema>;
 
 export const EngineeringArtifactTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
   artifactId: ArtifactIdSchema,
@@ -408,11 +431,11 @@ export const WorkspaceSqlInspectionInputSchema = deferredZodSchema(() => Workspa
 }).strict());
 export type WorkspaceSqlInspectionInput = z.infer<typeof WorkspaceSqlInspectionInputSchema>;
 
-export const SubstreamSqlInspectionInputSchema = deferredZodSchema(() => SubstreamInspectionInputSchema.unwrap().extend({
+export const ConversationSqlInspectionInputSchema = deferredZodSchema(() => ConversationInspectionInputSchema.unwrap().extend({
   authorityGeneration: AuthorityGenerationSchema,
   query: InspectionSqlRequestSchema,
 }).strict());
-export type SubstreamSqlInspectionInput = z.infer<typeof SubstreamSqlInspectionInputSchema>;
+export type ConversationSqlInspectionInput = z.infer<typeof ConversationSqlInspectionInputSchema>;
 
 export const ArtifactSqlInspectionInputSchema = deferredZodSchema(() => ArtifactInspectionInputSchema.unwrap().extend({
   authorityGeneration: AuthorityGenerationSchema,
@@ -427,20 +450,12 @@ function lookupResultSchema<T extends z.ZodType>(value: T) {
   ]);
 }
 
-export const EngineeringWorkstreamListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
+export const EngineeringCanvasListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
-  items: z.array(EngineeringWorkstreamSchema),
+  items: z.array(EngineeringCanvasSchema),
 })));
-export type EngineeringWorkstreamListLookup = z.infer<typeof EngineeringWorkstreamListLookupSchema>;
-
-export const EngineeringSubstreamListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
-  region: RegionSchema,
-  workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
-  items: z.array(EngineeringSubstreamSchema),
-})));
-export type EngineeringSubstreamListLookup = z.infer<typeof EngineeringSubstreamListLookupSchema>;
+export type EngineeringCanvasListLookup = z.infer<typeof EngineeringCanvasListLookupSchema>;
 
 export const EngineeringSidekickListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
   region: RegionSchema,
@@ -449,12 +464,6 @@ export const EngineeringSidekickListLookupSchema = deferredZodSchema(() => looku
 })));
 export type EngineeringSidekickListLookup = z.infer<typeof EngineeringSidekickListLookupSchema>;
 
-export const EngineeringSpaceListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
-  region: RegionSchema,
-  workspaceId: WorkspaceIdSchema,
-  items: z.array(EngineeringSpaceSchema),
-})));
-export type EngineeringSpaceListLookup = z.infer<typeof EngineeringSpaceListLookupSchema>;
 
 export const EngineeringArtifactListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
   region: RegionSchema,
@@ -470,11 +479,11 @@ export type EngineeringWorkspaceTargetLookup = z.infer<
   typeof EngineeringWorkspaceTargetLookupSchema
 >;
 
-export const EngineeringSubstreamTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
-  EngineeringSubstreamTargetSchema,
+export const EngineeringConversationTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
+  EngineeringConversationTargetSchema,
 ));
-export type EngineeringSubstreamTargetLookup = z.infer<
-  typeof EngineeringSubstreamTargetLookupSchema
+export type EngineeringConversationTargetLookup = z.infer<
+  typeof EngineeringConversationTargetLookupSchema
 >;
 
 export const EngineeringArtifactTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
@@ -510,7 +519,6 @@ export const EngineeringSqlLookupSchema = deferredZodSchema(() => lookupResultSc
   substreamId: SubstreamIdSchema.nullable(),
   sidekickId: AutomationIdSchema.optional(),
   artifactId: ArtifactIdSchema.optional(),
-  spaceId: SpaceIdSchema.optional(),
   result: InspectionSqlResultSchema,
 })));
 export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
@@ -542,29 +550,25 @@ export type EngineeringD1SqlResult = z.infer<typeof EngineeringD1SqlResultSchema
 
 /** The named regional WorkerEntrypoint surface bound only to the engineering MCP Worker. */
 export interface EngineeringInspectionRpcBinding {
-  listUserChannels(input: ListEngineeringUserChannelsInput): Promise<SpaceDirectory>;
-  listUserConversations(input: ListEngineeringUserConversationsInput): Promise<SpaceChannelPage>;
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
+  dumpThreadTranscripts(input: ThreadRetirementOperationInput, operator: EngineeringOperator): Promise<DumpThreadTranscriptsResult>;
+  retireThreads(input: ThreadRetirementOperationInput, operator: EngineeringOperator): Promise<RetireThreadsResult>;
+  convertThreadsToCanvases(input: ConvertThreadsToCanvasesInput, operator: EngineeringOperator): Promise<ConvertThreadsToCanvasesResult>;
   retireOrg(input: RetireEngineeringOrgInput, operator: EngineeringOperator): Promise<RetireEngineeringOrgResult>;
-  readChannel(input: ReadEngineeringChannelInput): Promise<EngineeringTextResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;
-  createChannel(input: CreateEngineeringChannelInput, operator: EngineeringOperator): Promise<CreateEngineeringChannelResult>;
-  createThread(input: CreateEngineeringThreadInput, operator: EngineeringOperator): Promise<CreateEngineeringThreadResult>;
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
   searchOrganizations(input: SearchEngineeringOrganizationsInput): Promise<SearchEngineeringOrganizationsResult>;
   searchUsers(input: SearchEngineeringUsersInput): Promise<SearchEngineeringUsersResult>;
-  listWorkstreams(input: WorkspaceInspectionInput): Promise<EngineeringWorkstreamListLookup>;
-  listSubstreams(input: WorkstreamInspectionInput): Promise<EngineeringSubstreamListLookup>;
+  listCanvases(input: WorkspaceInspectionInput): Promise<EngineeringCanvasListLookup>;
   listSidekicks(input: WorkspaceInspectionInput): Promise<EngineeringSidekickListLookup>;
-  listSpaces(input: WorkspaceInspectionInput): Promise<EngineeringSpaceListLookup>;
   listArtifacts(input: WorkspaceInspectionInput): Promise<EngineeringArtifactListLookup>;
   resolveWorkspace(input: WorkspaceInspectionInput): Promise<EngineeringWorkspaceTargetLookup>;
-  resolveSubstream(input: SubstreamInspectionInput): Promise<EngineeringSubstreamTargetLookup>;
+  resolveConversation(input: ConversationInspectionInput): Promise<EngineeringConversationTargetLookup>;
   resolveArtifact(input: ArtifactInspectionInput): Promise<EngineeringArtifactTargetLookup>;
   runWorkspaceSql(input: WorkspaceSqlInspectionInput): Promise<EngineeringSqlLookup>;
-  runSubstreamSql(input: SubstreamSqlInspectionInput): Promise<EngineeringSqlLookup>;
+  runConversationSql(input: ConversationSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runArtifactSql(input: ArtifactSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runD1Sql(input: D1SqlInspectionInput): Promise<EngineeringD1SqlResult>;
 }

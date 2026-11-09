@@ -3,7 +3,7 @@ import {
   asWorkspaceId,
   type WorkspaceId,
 } from "@rally/contracts";
-import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
+import type { RetirementParentKind } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -13,7 +13,6 @@ import {
 } from "../durable-objects/names";
 import { durableObjectStubForWorkspace, workspacePlacementAffinity } from "../lib/durable-object-namespace";
 import { settledBatches } from "../lib/settled-batches";
-import { markDemoWorkspaceRetired } from "./demo-workspace-register";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { ConversationParentRetirementChildrenResultSchema } from "@rally/contracts";
 
@@ -87,7 +86,7 @@ export interface WorkspaceRetirementReceipt {
   /** Effects the closed objects still hold and will never publish. */
   retainedOutbox: number;
   /** Nodes this pass could not finish, by id. The next pass returns to them. */
-  failed: { parentKind: ConversationParentKind; parentId: string; error: string }[];
+  failed: { parentKind: RetirementParentKind; parentId: string; error: string }[];
 }
 
 export async function retireWorkspaceGraph(
@@ -96,8 +95,7 @@ export async function retireWorkspaceGraph(
 ): Promise<WorkspaceRetirementReceipt> {
   // Any workspace. This is an operator tool behind Ace's Access policy, and
   // the decision was made not to gate it on a register of what some feature
-  // created: the demo register still records the demos, but it is not an
-  // authorization input. Retirement is irreversible, so the confirmation an
+  // created. Retirement is irreversible, so the confirmation an
   // operator gives before reaching here is the whole of the protection — and
   // it is the caller's to ask for, not this function's to infer.
   //
@@ -129,22 +127,10 @@ export async function retireWorkspaceGraph(
     reason: input.reason,
   };
 
-  const demo = await env.DB.prepare(
-    "SELECT operation_id FROM demo_operations WHERE workspace_id = ?",
-  ).bind(input.workspaceId).first<{ operation_id: string }>();
-
   // Closes the workspace and captures the graph in one call. On a resumed pass
   // this returns what the first pass recorded rather than re-reading directories
   // that now refuse.
-  await workspace.beginWorkspaceRetirement({
-    ...tombstone,
-    ...(demo ? {
-      impersonationRevocation: {
-        workspaceId: input.workspaceId,
-        authorityBasis: `demo:${demo.operation_id}`,
-      },
-    } : {}),
-  });
+  await workspace.beginWorkspaceRetirement(tombstone);
   const progress = await workspace.workspaceRetirementProgress();
 
   const receipt: WorkspaceRetirementReceipt = {
@@ -160,7 +146,8 @@ export async function retireWorkspaceGraph(
   for (const node of progress.nodes) {
     if (node.retired) continue;
     try {
-      // Every parent, a Channel's, a Space's and a Sidekick's, is hosted by
+      // Every parent, a Canvas, a Sidekick, and a Thread or Channel not yet
+      // retired by `retire_threads`, is hosted by
       // this workspace's own object, which is already closed and answers only
       // the retirement read.
       const parent = workspace;
@@ -263,14 +250,6 @@ export async function retireWorkspaceGraph(
   receipt.remaining = settled.remaining;
   receipt.complete = settled.complete;
 
-  // The regional shadow of the tombstone, written only once the whole graph is
-  // closed. It is what lets the Demos page list what is live without waking a
-  // retired object to ask it. A workspace this feature never made has no row,
-  // and the update is a no-op for it.
-  if (receipt.complete) {
-    await markDemoWorkspaceRetired(env.DB, input.workspaceId, new Date(input.retiredAt).toISOString());
-  }
-
   // The region's own record of who closed this workspace. The tombstone names
   // an operator retirement; this line names the operator, and it is the one
   // place in the region that does.
@@ -297,8 +276,7 @@ export async function retireWorkspaceGraph(
  * wrong for a door: an id no workspace in this region owns would be "retired"
  * as a set of brand-new empty objects holding tombstones, and the operator told
  * it succeeded while the real workspace, in the other region, stayed open. So
- * the door checks the row first. An abandoned demo whose workspace was never
- * created is closed by the operation, not through here.
+ * the door checks the row first.
  */
 export async function retireWorkspaceForOperator(
   env: Env,

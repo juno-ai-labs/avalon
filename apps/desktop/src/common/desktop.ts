@@ -32,7 +32,6 @@ import type {
   EmbeddedBrowserResult,
   EmbeddedBrowserState,
 } from './embedded-browser';
-import type { BrowserImportContext, BrowserImportProgress } from './browser-import';
 import type {
   WorkspaceSyncPublication,
   WorkspaceConversationViewRelayRequest,
@@ -528,26 +527,8 @@ export interface RallyDesktopBridge {
   onEmbeddedBrowserState: (listener: (state: EmbeddedBrowserState) => void) => () => void;
   /** A browser shortcut pressed inside a visited page that the host's controls handle. */
   onEmbeddedBrowserHostRequest: (listener: (request: EmbeddedBrowserHostRequest) => void) => () => void;
-  /** Opens, or raises, the window for importing a signed-in Claude or ChatGPT conversation. */
-  openBrowserImport: (context: BrowserImportContext) => Promise<void>;
-  /** The import window's Spaces, as the main window last offered them. */
-  getBrowserImportContext: () => Promise<BrowserImportContext | null>;
-  onBrowserImportContextChanged: (listener: () => void) => () => void;
   /** View → Refresh Organization List: reread the account menu's Organizations. */
   onOrganizationListRefreshRequested: (listener: () => void) => () => void;
-  /**
-   * The import window's hand-off: the main window opens the Channel, or the
-   * Breakout `substreamId` names in it, and this window closes.
-   */
-  completeBrowserImport: (workstreamId: string, substreamId?: string) => Promise<void>;
-  /**
-   * The import window's create starting or failing, relayed to the main
-   * window. `completeBrowserImport` relays its success and opens the Channel;
-   * `imported` here only settles the row when that hand-off failed.
-   */
-  reportBrowserImport: (progress: BrowserImportProgress) => Promise<void>;
-  /** The main window's view of an import in the other window. */
-  onBrowserImportProgress: (listener: (progress: BrowserImportProgress) => void) => () => void;
   /**
    * Renders one of Rally's messages as a picture or a PDF and offers to save
    * it. Resolves with `saved: false` when the person dismissed the dialog, and
@@ -601,19 +582,11 @@ export interface RallyDesktopBridge {
   /** Replace one detached window; resolves true while another stale window remains. */
   updatePoppedOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<boolean>;
   /**
-   * Raise the singleton Sidekicks window, on its library or on one target.
-   *
-   * A target is a stored Sidekick's id, or `NEW_SIDEKICK_TARGET` for the
-   * composer that creates one — main parses it through
-   * `parseSidekicksWindowTarget` rather than routing on it directly.
+   * Open a Sidekick in the main window and bring it forward, from a window
+   * that cannot route there itself, such as Settings. Main checks the id and
+   * hands it to the same deep link an in-app link takes.
    */
-  openSidekicks: (target?: string) => Promise<void>;
-  /**
-   * Open a Thread in the main window and bring it forward, from a window that
-   * cannot route there itself, such as the Sidekicks window. Main checks the id
-   * and hands it to the same deep link an in-app link takes.
-   */
-  openThread: (workstreamId: string) => Promise<void>;
+  openSidekick: (sidekickId: string) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
   startSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;
   stopSystemAudioCapture: () => Promise<void>;
@@ -663,14 +636,14 @@ export interface RallyDesktopBridge {
   onSessionChanged: (listener: (session: DesktopSession | null) => void) => () => void;
   /**
    * The main window's Organization socket, told to main so it can relay it to
-   * the Settings and Sidekicks windows. Main refuses it from any other window.
+   * the Settings window. Main refuses it from any other window.
    */
   publishWorkspaceSync: (publication: WorkspaceSyncPublication) => Promise<void>;
   requestWorkspaceConversationView: (request: WorkspaceConversationViewRelayRequest) => Promise<void>;
-  /** Settings and Sidekicks windows only: whose socket is being relayed right now, if anyone's. */
+  /** The Settings window only: whose socket is being relayed right now, if anyone's. */
   getWorkspaceSyncSource: () => Promise<WorkspaceSyncSourceSnapshot>;
   /**
-   * Settings and Sidekicks windows only: every relayed event. News that arrived before the
+   * The Settings window only: every relayed event. News that arrived before the
    * first listener is held, folded, and delivered to it.
    */
   onWorkspaceSyncRelayed: (listener: (event: WorkspaceSyncRelayEvent) => void) => () => void;

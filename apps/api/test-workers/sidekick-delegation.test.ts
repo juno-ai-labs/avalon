@@ -35,7 +35,7 @@ beforeEach(async () => {
 
 async function create(scope: "personal" | "workspace" = "workspace") {
   return stub().sidekickCreate({
-    ...address, authorUserId: creator, scope, owningWorkstreamId: null, authorityGeneration: 1,
+    ...address, authorUserId: creator, scope, authorityGeneration: 1,
   });
 }
 
@@ -57,7 +57,7 @@ describe("Sidekick consent authority in real workerd", () => {
       const parentId = room ? crypto.randomUUID() : sidekickId;
       const triggerMessageId = crypto.randomUUID();
       const child = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, parentId));
-      const input = runInput(crypto.randomUUID(), { workspaceId, parentId, parentKind: room ? "workstream" : "automation",
+      const input = runInput(crypto.randomUUID(), { workspaceId, parentId, parentKind: room ? "canvas" : "automation",
         triggerMessageId, executionPrincipal: { type: "user", userId: other } });
       await runInDurableObject(child, async (_instance, state) => {
         seedWorkstreamRoot(state, Date.now(), { workspaceId, workstreamId: parentId });
@@ -68,7 +68,9 @@ describe("Sidekick consent authority in real workerd", () => {
       const claim = await claimHarnessAttempt(runs, input, { attemptId: crypto.randomUUID(), owner: "first", leaseSeconds: 300 });
       if (claim.state !== "claimed") throw new Error("consent_recovery_test_claim_failed");
       const receipts = createToolReceiptObjectPort(env, workspaceId, parentId);
-      const tool = sidekickDelegationTools(env, input, other, room)[2]!;
+      // The tool as the live loop offers it in either parent: a Canvas chat's
+      // call is recorded under the same unprefixed name an authoring one is.
+      const tool = sidekickDelegationTools(env, input, other, false)[2]!;
       const args = { sidekickId, userId: other, allowed: true };
       const admit = async (effectIntentId: string, toolCallId: string, lease = claim.lease) => {
         await receipts.admit({ effectIntentId, runId: input.harnessRunId, toolCallId, toolName: tool.definition.name,

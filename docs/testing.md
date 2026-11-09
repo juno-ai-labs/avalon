@@ -30,14 +30,13 @@ once and passes on a rerun.
 | `apps/api/test/**/*.test.ts` | `pnpm --filter @rally/api exec vitest run` | Node. Services and route handlers with bindings supplied by the typed builders, and real SQL through `node:sqlite`. `cloudflare:workers` is aliased to `test/helpers/cloudflare-workers.ts`, which stands in for the `DurableObject` base class and the `tracing` custom-span API — the stand-in keeps their contracts but nests no spans and exports nothing, so anything depending on either belongs a rung up. |
 | `apps/desktop/src/{renderer,main,common}/**/*.test.{ts,tsx}` | `pnpm --filter @rally/desktop test` | Two projects. `renderer` runs on jsdom; `main` and `common` run on node, because a main-process module that reaches for `document` should fail rather than find a window Electron's main process does not have. A main or common test that genuinely needs a DOM opts back in with a `// @vitest-environment jsdom` docblock. Asserts on the DOM, which is not the same as looking at the screen — see [verifying visible changes](../AGENTS.md#verifying-visible-changes). Console output is buffered and printed only for failing tests (`silent: 'passed-only'`), because the renderer's [performance traces](performance-tracing.md) print on every create, open, and send; a test that asserts on a log line spies on `console` itself and is unaffected. |
 | `packages/*/src/**/*.test.ts` | `pnpm --filter @rally/<pkg> test` | Node. Pure contract, harness, and connector logic. |
-| `packages/db/test/**/*.test.ts` | `pnpm --filter @rally/db test` | Node. The [local baseline](d1-baseline-migrations.md), the development seed, and the work-stream queries over a migrated database. There is no per-migration suite: every migration is at or below the baseline boundary and immutable, and the manifest digest fails if one is edited or inserted. A *new* migration is tested through the baseline equivalence check and by whatever service test covers the behaviour it enables. |
+| `packages/db/test/**/*.test.ts` | `pnpm --filter @rally/db test` | Node. The [local baseline](d1-baseline-migrations.md), the development seed, and the repository queries over a migrated database. There is no per-migration suite: every migration is at or below the baseline boundary and immutable, and the manifest digest fails if one is edited or inserted. A *new* migration is tested through the baseline equivalence check and by whatever service test covers the behaviour it enables. |
 | `apps/site/test/**/*.test.ts`, `apps/release-retention/test/**/*.test.ts` | `pnpm --filter @rally/site test`, `pnpm --filter @rally/release-retention test` | Node. The public site Worker and the release-retention Worker, each with its own R2 builder. |
 | `scripts/*.test.mjs` | `pnpm test:scripts` | `node --test`. The repository's own tooling and the ESLint boundary rules. |
-| `apps/ios/RallyTests`, `apps/ios/RallyUITests` | Xcode → Product → Test on the Rally scheme | XCTest on the iOS 26 SDK. PKCE, deep links, transcript mapping, and sign-in chrome. **Not** covered by `pnpm test`; the sandbox has no iOS SDK. |
 | `apps/desktop/scripts/*.test.mjs` | `pnpm --filter @rally/desktop test:release` | `node --test`. The release planner and release scripts — **not** covered by `pnpm test:scripts`, whose name suggests otherwise. |
 | `apps/api/scripts/test-crash-symbolicator-container.mjs` | `pnpm --filter @rally/api test:crash-symbolicator-container` | Docker. Builds and exercises the symbolicator image. |
-| `scripts/smoke-local.mjs` | `pnpm smoke:local` against a running `pnpm dev:api:local` | Configured regional Workers under `wrangler dev`, with the local D1 database. |
-| `scripts/e2e-local.mjs` | `pnpm e2e:local` against a running `pnpm dev:api:local`, after `pnpm db:open-authority` | The full member pipeline over the live local stack — happy, sad, and chaos lanes, with real model calls when `OPENROUTER_API_KEY` is configured. See [`e2e.md`](e2e.md#automated-behavioral-lane). |
+| `scripts/smoke-local.mjs` | `pnpm smoke:local` against a running `pnpm dev:api:local`, after `pnpm db:open-authority` | Configured regional Workers under `wrangler dev`, with the local D1 database: the seeded Canvases and Sidekick, a new Canvas's create retry and Chat message, a reply when a model is configured, and the conversation socket's replay and ticket refusals. |
+| `scripts/e2e-local.mjs` | `pnpm e2e:local` against a running `pnpm dev:api:local`, after `pnpm db:open-authority` | The full member pipeline over the live local stack — happy, sad, and chaos lanes over Canvas Chats, with real model calls when `OPENROUTER_API_KEY` is configured. See [`e2e.md`](e2e.md#automated-behavioral-lane). |
 
 `pnpm test` runs every package's `test` script recursively, and `@rally/api`'s
 runs the Node suite *and then* the workerd suite — so a green `pnpm test`
@@ -117,7 +116,7 @@ in D1 today, where they prove nothing about the routed reads they sit beside.
 
 Seed those tables in the object that owns them — `initializeWorkspace`, then
 `runInDurableObject(workspaceStub(), …)`. Where the absence is the point,
-`test-workers/automation-acceptance-bindings.test.ts` asserts it in its first test
+`test-workers/hosted-sidekick.test.ts` asserts it in its first binding test
 rather than trusting a comment to survive. On the production side,
 `rally/durable-object-workspace-table-routing` refuses a `WORKSPACE_LOCAL_TABLES`
 name on `env.DB` in any object.
@@ -180,7 +179,7 @@ modals provably exist before either click retires anything; a sleep would have
 asserted the same thing only on a machine that was fast enough.
 
 Loop-storage tests that admit another input while settling a step must read a
-fresh loop fence before the next assistant reservation, just as `SubstreamAgent`
+fresh loop fence before the next assistant reservation, just as `AgentLoopDO`
 does. The settlement result is a snapshot, not a live revision: a late admission
 can commit after it. `workstream-transcript-storage.test.ts` exercises both a
 concurrent arrival and an arrival explicitly sequenced after settlement so the
@@ -234,6 +233,19 @@ only, and only in the `renderer` project.
 is the whole reason to write a poll: it fails with `expected 1 to be +0` and a
 line number, where a harness timeout names no assertion at all. A poll budgeted
 at the test budget is a poll whose message nobody will ever read.
+
+**Waits in one test share one deadline when they chain.** Three polls of 15
+seconds each in a 30-second test can need 45 seconds, and the test then dies
+as a bare timeout halfway through a wait. `apps/api/test-workers/helpers/wait-budget.ts`
+holds the shared deadline: `startWaitBudget()` at the end of the file's
+`beforeEach`, then `{ timeout: waitBudget() }` on each poll. Each poll gets the
+time left, which ends 5 seconds before the `testTimeout` in
+`vitest.workers.config.ts`, so the wait that runs out fails on its own
+assertion. `canvas-conversation`, `sidekick-shared-conversation` and
+`workspace-socket-subscribe` use it. A hold the test releases (a held stream,
+a held Flagship answer) is released in a `finally`, and every socket the test
+opens is closed in a `finally` or an `afterEach`. Otherwise a failed test
+leaves it spinning or open in an object the next test reuses.
 
 One thing not to over-correct for: a poll does not falsely expire because the box
 is loaded. Node fires the 50ms interval timer ahead of the one-second timeout
@@ -326,7 +338,7 @@ beforeEach(async () => {
   never calls one can still be made to wait for a sibling's. That surfaces as a
   `beforeAll`/`beforeEach` timing out on its *first* test and passing when the
   file is run alone — which reads as flakiness and is not. Two things fix it,
-  and `workspace-directory-reads.test.ts` does both: the `beforeEach` rule
+  and `workspace-socket-first-frame.test.ts` does both: the `beforeEach` rule
   below, and a hook budget well above the work the hook does. The suite-wide
   budget in `vitest.workers.config.ts` is now that budget, 30 seconds for every
   test and hook in the directory, so a hook writes its own only to ask for
@@ -339,8 +351,8 @@ beforeEach(async () => {
   Tests that are not *about* that replay must not share an `initialize` identity
   with a neighbour that already opened that object. More importantly, a test
   that asserts pre-inference state must not start a model loop merely to create
-  its fixture: `participant-notification.test.ts` provisions existing rooms and
-  calls the create mutation without the endpoint's activation step. Minting a
+  its fixture: provision existing rooms and call the create mutation without the
+  endpoint's activation step. Minting a
   fresh id for every case does not fix unnecessary draining work; under a
   sharded workers run it only leaves more live objects for promotion polls to
   contend with.
@@ -350,7 +362,7 @@ beforeEach(async () => {
   rather than repaired. Paying for setup per test costs milliseconds, because
   every seed here is already idempotent — `CREATE TABLE IF NOT EXISTS`,
   `INSERT OR REPLACE`, `ON CONFLICT DO UPDATE`.
-  `workspace-directory-reads.test.ts`'s `establishWorkspace` is the worked
+  `workspace-socket-first-frame.test.ts`'s `establishWorkspace` is the worked
   example. The directory holds no `beforeAll` today; the rule is what keeps the
   next one from being reintroduced as an optimization.
 - **Object names are not isolated per file — storage is.** Two files naming the
@@ -412,19 +424,18 @@ beforeEach(async () => {
   `durable-object-runtime.test.ts` counts `projection_keys`, written per effect
   in the same transaction as the outbox row it stands for and deleted by
   nothing, rather than counting the outbox rows themselves. Or **keep the call
-  and its check inside one invocation the object cannot interleave**, as
-  `dispatchWithoutDraining` in `agent-run-lifecycle.test.ts` does by dispatching
-  and parking the alarm in a single `runInDurableObject`.
+  and its check inside one invocation the object cannot interleave** — dispatch
+  and park the alarm in a single `runInDurableObject`.
 
   **Do not build that fence with `state.blockConcurrencyWhile`.** It is for an
   object initializing itself, and calling it re-entrantly from inside
   `runInDurableObject` holds the very input gate `reset()` needs in order to
   clear storage between tests. It was tried here: the guarded test passed, and
-  the *next* test in the file started finding a work stream the previous one had
+  the *next* test in the file started finding a conversation the previous one had
   left behind, failing with `workstream_create_replay_incomplete` — in CI only,
   where the object is under enough load for it to matter.
 
-  Two more forms of the same gap, each of which failed one CI shard:
+  Two more forms of the same gap:
 
   - **A fixture dated in the past is fair game for a sweep.** Deleting an
     alarm does not stop a handler that is already running, and that handler
@@ -432,11 +443,10 @@ beforeEach(async () => {
     ago is "expired" to that sweep, so it can vanish mid-test.
     `workspace-resources-inventory.test.ts` dates the drafts it is not testing
     for expiry to now, so no sweep can reach them.
-  - **"Nothing is owed now" must name what may be.** Closing the Space cutover
-    queues the seating pass (`personal_channel_backfill`) due at once, and under
-    load it can still be pending when the object next wakes.
-    `space-bootstrap.test.ts` accepts an alarm due now only when that pass is
-    what is due.
+  - **"Nothing is owed now" must name what may be.** A pass a write queues
+    due at once can still be pending when the object next wakes under load, so
+    a test that asserts no alarm is due accepts one due now only when that pass
+    is what is due.
 
   `runDurableObjectAlarm` introduces its own variant of the race when the alarm
   it is meant to force is already overdue: workerd clears the alarm slot for the
@@ -488,11 +498,9 @@ opened ready for review rather than as a draft, that is most of a change's life.
   that does not match its manifest in `config/`, and only the second of those
   runs in CI — through `pnpm test:scripts` — so a documentation change that
   skips `docs:check` is one whose headings nothing checked.
-  And two documents are executable contracts, read off disk and checked against
-  what the code produces: `docs/connector-digestibility.md` by
-  `packages/connectors/src/digestibility-doc.test.ts`, and
-  `docs/workstream-email-addresses.md` by
-  `apps/api/test/workstream-email-address.test.ts`. Editing one of those runs
+  And one document is an executable contract, read off disk and checked against
+  what the code produces: `docs/workstream-email-addresses.md` by
+  `apps/api/test/workstream-email-address.test.ts`. Editing it runs
   its test too. For a document not on
   that list,
   `grep -rn 'docs/<file>.md' --include='*.test.*' .` finds the tests that name
@@ -551,9 +559,10 @@ tool built for that shape:
 | A code-shape rule: a class must call a gate in its constructor, a method must stay a prototype method, a statement must not name a table | A rule in `scripts/eslint-rules/`, registered in `eslint.config.mjs`. The rule sees the AST, so it fails on the shape rather than on a spelling, and it runs on every file including the one added next month. |
 | Handler wiring in `apps/desktop/src/main/index.ts` | Extract the decision into a module that takes its dependencies as an argument and test that module. `apps/desktop/src/main/workspace-activation.ts` is the pattern: `revalidateWorkspaceActivation(target, operationId, dependencies)` owns the request shape and the error mapping, `index.ts` calls it with the real bridge, and `workspace-activation-wiring.test.ts` drives it with a recording double. What stays in `index.ts` is one call, which a test cannot reach and does not need to. |
 | A CSS declaration, a layout, a color | No unit test. jsdom lays nothing out and a stylesheet scan proves only that a string is present. Verify in a real window per [verifying visible changes](../AGENTS.md#verifying-visible-changes), and state that in the pull request's **Validation** section. |
+| Which rule wins the cascade for an element: a state that hides a control, a phone rule that one later in the file overrides | A renderer test that mounts the real stylesheet with `mountAppStylesheet({ width, height })` from `apps/desktop/src/renderer/test/app-stylesheet.ts`, renders the component, and reads `getComputedStyle`. jsdom runs specificity and source order, and the helper resolves each media block for that window size. It still lays nothing out and computes no container query or pseudo-element, so position, size and legibility stay a real-window check. `workspace-settings.test.tsx`'s one-close-on-a-phone test is the pattern. |
 | A config or deploy setting: a route list, a header file, a workflow step | Not testable, and not to be tested; the deploy is the test. See [Do not test CI or deployment configuration](#do-not-test-ci-or-deployment-configuration). |
 | A flag list or constant must match across packages | Import the constant from the package that owns it and assert against it, or derive the second list from the first so there is nothing to match. Never scan a source file for the spelling. |
-| A doc table must match the code | Allowed only when the test executes the code side. `packages/connectors/src/digestibility-doc.test.ts` reads the document and compares it to what `createConnectorRegistry` produces; a test that reads the document and a source file and compares two strings is the scrape above with a second file. A page scan is allowed on the same terms: `apps/site/test/site.test.ts` checks the landing page's tracked link ids against `SITE_ACTION_LINKS` and `siteActionForLink`, which the code resolves at runtime. |
+| A doc table must match the code | Allowed only when the test executes the code side. `apps/api/test/workstream-email-address.test.ts` reads the document's frozen vocabulary and compares it to the lists `workstream-email-address.ts` exports; a test that reads the document and a source file and compares two strings is the scrape above with a second file. A page scan is allowed on the same terms: `apps/site/test/site.test.ts` checks the landing page's tracked link ids against `SITE_ACTION_LINKS` and `siteActionForLink`, which the code resolves at runtime. |
 | A mock was called | Assert the state the call produced, or the argument it was called with. `toHaveBeenCalled()` alone, or `mockResolvedValue(row)` followed by `expect(result).toEqual(row)`, asserts that Vitest works. |
 | A constant has its value | Nothing. `expect(LIMIT).toBe(50)` is the constant written twice. A test covers what the code _does_ with the constant. |
 
@@ -736,7 +745,7 @@ before restoring globals that its components need during unmount.
 one of three shapes: `migratedSqliteDatabase()` for the current schema,
 `legacyProductSqliteDatabase()` for the product tables as they stood before
 `0090` dropped them, and `preRetirementProductSqliteDatabase()` for that same
-shape with the work-stream foreign keys the object import has to detach. Use one
+shape with the conversation foreign keys the object import has to detach. Use one
 of them rather than replaying the migration directory in your own file — sixteen
 tests used to, and that is where most of the suite's runtime sat.
 
@@ -798,7 +807,7 @@ and the test waiting on it times out on an assertion that has nothing to do with
 what broke.
 
 That failure is worse than it sounds, because the passing case is not
-necessarily better. `participant-notification.test.ts` used to start an opening
+necessarily better. A notification suite, since deleted in plan step C-2, used to start an opening
 model run in every fixture even though it asserted only committed product state
 and regional effects. Under shard contention those live alarms crossed the
 next test's `reset()`: one create silently replayed against the previous root,
@@ -806,7 +815,7 @@ one parent receipt was absent, and an elicitation precondition stayed
 `executing:1`. Isolating selected object ids reduced the frequency but could not
 remove a run the tests had no reason to start.
 
-`unseen-workstream-state.test.ts` hit the same failure in PR #630: a speculative
+An unseen-state suite, also deleted in plan step C-2, hit the same failure in PR #630: a speculative
 open case inherited the previous case's first-open timestamp before connecting
 its socket. The original fixture failed its first shuffled repetition. Its
 creation now calls the real product service before endpoint execution activation,
@@ -1058,7 +1067,7 @@ has. Assert the property that replaced it, and put the reason in the test.
 
 ## What the objects' RPC surface has, and has not
 
-Every public `async` method on `WorkspaceDO` and `SubstreamAgent` is an interface some Worker calls across a stub. Coverage counts are mechanical,
+Every public `async` method on `WorkspaceDO` and `AgentLoopDO` is an interface some Worker calls across a stub. Coverage counts are mechanical,
 so re-derive them rather than trusting a checked-in number after a change:
 
 ```bash
@@ -1075,8 +1084,8 @@ The remaining methods without a workerd RPC exercise are:
 
 | Object | Unexercised |
 | --- | --- |
-| `WorkspaceDO` | `activityEventSource`, `applyWorkstreamRegionalEffect`, `dueWorkstreamDirectory`, `existingOpportunities`, `getOpportunity`, `notificationDirectoryState`, `opportunityWindow`, `resourceAccess`, `workstreamScheduleTargets` |
-| `SubstreamAgent` | `publishEvent` |
+| `WorkspaceDO` | `notificationDirectoryState`, `workstreamScheduleTargets` |
+| `AgentLoopDO` | `publishEvent` |
 
 **Uncovered here does not mean untested** — several have Node suites over their
 storage class, which is the right rung for what the SQL decides. It means

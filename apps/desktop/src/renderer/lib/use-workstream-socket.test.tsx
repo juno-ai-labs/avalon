@@ -14,7 +14,6 @@ import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopRealtimeSocketHandshakePhase } from '../../common/realtime-socket';
 import type { Message, WorkstreamBoot, WorkstreamDetail, WorkstreamSummary } from './types';
-import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import {
   applyActiveStreamCheckpoints,
   applyStreamingOverlayEvent,
@@ -31,11 +30,6 @@ import {
   workstreamOpenTimeoutMs,
   type WorkstreamSocketApi,
 } from './use-workstream-socket';
-import {
-  RECENT_WORKSTREAM_SOCKET_RETENTION_MS,
-  WorkstreamSocketPool,
-  useRetainedWorkstreamSocket,
-} from './workstream-socket-pool';
 import { WorkstreamSocketResumeProvider } from './workstream-socket-resume';
 import { conversationCacheKey, conversationSlice } from './conversation-cache';
 import { clearAllLocalCache } from './local-cache';
@@ -225,7 +219,6 @@ function workstreamSummary(overrides: Partial<WorkstreamSummary> = {}): Workstre
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
-    spaceIds: [],
     lastActivityAt: '2026-07-31T20:00:00.000Z',
     ...overrides,
   };
@@ -696,36 +689,6 @@ describe('useWorkstreamSocket', () => {
     expect(FakeWebSocket.instances).toHaveLength(2);
   });
 
-  it('keeps a previously opened Breakout retrying through incomplete context snapshots', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const id = '00000000-0000-7000-8000-00000000074e';
-    const child = '00000000-0000-7000-8000-00000000074f';
-    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
-      url: 'wss://api.rally.test/feed', ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
-    })) });
-    const { result } = renderHook(() => useWorkstreamSocket(
-      api, id, true, 'active_workstream', undefined, true, child,
-    ), { wrapper: createWrapper() });
-    await flushPromises();
-    const first = FakeWebSocket.instances[0]!;
-    act(() => { first.open(); first.message(snapshotFrame({ sequence: 1, workstream: { id } })); first.close(1012); });
-    await act(async () => vi.advanceTimersByTimeAsync(750));
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      const next = FakeWebSocket.instances.at(-1)!;
-      act(() => {
-        next.open(); next.rawMessage('pong');
-        next.message(snapshotFrame({ sequence: 2 + attempt, workstream: { id }, initialContextChunkCount: 1 }));
-      });
-      await act(async () => vi.advanceTimersByTimeAsync(Math.min(10_000 * 2 ** attempt, 40_000)));
-      expect(result.current.openingError).toBeUndefined();
-      await act(async () => vi.advanceTimersByTimeAsync(12_000));
-    }
-    expect(FakeWebSocket.instances.length).toBeGreaterThan(4);
-    expect(result.current.openingError).toBeUndefined();
-  });
-
   it('recovers a reading-only feed on foreground without a pending command', async () => {
     vi.useFakeTimers();
     vi.spyOn(document, 'hasFocus').mockReturnValue(true);
@@ -1114,253 +1077,6 @@ describe('useWorkstreamSocket', () => {
     expect(overlayMessages(queryClient, id).map(message => message.text)).toEqual(['Fresh queue']);
   });
 
-  it('restarts from a baseline after a partial initial-context close', async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workstreamId = '00000000-0000-7000-8000-00000000063a';
-    const substreamId = '00000000-0000-7000-8000-00000000063b';
-    const getSocketTicket = vi.fn(async (
-      ...args: Parameters<WorkstreamSocketApi['getSocketTicket']>
-    ) => {
-      void args;
-      return {
-      url: `wss://api.rally.test/workstreams/${workstreamId}/${substreamId}`,
-      ticket: 'socket-ticket',
-      protocols: socketTicketProtocols('socket-ticket'),
-      };
-    });
-    const { result } = renderHook(() => useWorkstreamSocket(
-      socketApiWith({ getSocketTicket }), workstreamId, true,
-      'active_workstream', undefined, true, substreamId,
-    ), { wrapper: createWrapper(queryClient) });
-    await flushPromises();
-    const first = FakeWebSocket.instances[0]!;
-    act(() => {
-      first.open();
-      first.message(snapshotFrame({
-        sequence: 8, initialContextChunkCount: 2, workstream: { id: workstreamId },
-      }));
-      first.message({
-        type: 'initial_context_snapshot_chunk', sequence: 8,
-        occurredAt: '2026-07-31T19:20:00.000Z',
-        snapshotId: emptyTranscriptSnapshot().snapshotId,
-        chunkIndex: 0, chunkCount: 2, json: '{"stale":',
-      });
-    });
-    expect(result.current.sendReady).toBe(false);
-    act(() => first.close(1006));
-    await act(async () => vi.advanceTimersByTimeAsync(750));
-    await flushPromises();
-
-    expect(getSocketTicket.mock.calls[1]?.[3]).toBe(0);
-    expect(result.current.sendReady).toBe(false);
-    expect(queryClient.getQueryData(substreamInitialContextQueryKey(workstreamId, substreamId)))
-      .toBeUndefined();
-  });
-
-  it('requires every initial-context chunk before a child becomes send-ready', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workstreamId = '00000000-0000-7000-8000-00000000063d';
-    const substreamId = '00000000-0000-7000-8000-00000000063e';
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}/${substreamId}`,
-        ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
-      })),
-    });
-    const { result } = renderHook(() => useWorkstreamSocket(
-      api, workstreamId, true, 'active_workstream', undefined, true, substreamId,
-    ), { wrapper: createWrapper(queryClient) });
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    const context = {
-      source: { workspaceId: '00000000-0000-7000-8000-00000000063c', workstreamId, substreamId: '0' },
-      throughTurnId: null,
-      policyRevision: 'policy-1',
-      contentHash: 'a'.repeat(64),
-      parts: [{ kind: 'summary', text: 'Inherited', requestedModel: 'model', resolvedModel: 'model', inputTokens: 1, outputTokens: 1 }],
-    };
-    const encoded = JSON.stringify(context);
-    act(() => {
-      socket.open();
-      socket.message(snapshotFrame({
-        sequence: 1, initialContextChunkCount: 2, workstream: { id: workstreamId },
-      }));
-      socket.message({
-        type: 'initial_context_snapshot_chunk', sequence: 1,
-        occurredAt: '2026-07-31T19:20:00.000Z', snapshotId: emptyTranscriptSnapshot().snapshotId,
-        chunkIndex: 1, chunkCount: 2, json: encoded.slice(Math.floor(encoded.length / 2)),
-      });
-    });
-    expect(result.current.sendReady).toBe(false);
-    act(() => socket.message({
-      type: 'initial_context_snapshot_chunk', sequence: 1,
-      occurredAt: '2026-07-31T19:20:00.000Z', snapshotId: emptyTranscriptSnapshot().snapshotId,
-      chunkIndex: 0, chunkCount: 2, json: encoded.slice(0, Math.floor(encoded.length / 2)),
-    }));
-    expect(queryClient.getQueryData(substreamInitialContextQueryKey(workstreamId, substreamId)))
-      .toEqual(context);
-    expect(result.current.sendReady).toBe(true);
-  });
-
-  it('requests a fresh snapshot when a complete initial-context assembly is malformed', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workstreamId = '00000000-0000-7000-8000-00000000064a';
-    const substreamId = '00000000-0000-7000-8000-00000000064b';
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}/${substreamId}`,
-        ticket: 'socket-ticket',
-        protocols: socketTicketProtocols('socket-ticket'),
-      })),
-    });
-    renderHook(() => useWorkstreamSocket(
-      api, workstreamId, true,
-      'active_workstream', undefined, true, substreamId,
-    ), { wrapper: createWrapper(queryClient) });
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => {
-      socket.open();
-      socket.message(snapshotFrame({
-        sequence: 1, initialContextChunkCount: 1, workstream: { id: workstreamId },
-      }));
-      socket.message({
-        type: 'initial_context_snapshot_chunk', sequence: 1,
-        occurredAt: '2026-07-31T19:20:00.000Z', snapshotId: emptyTranscriptSnapshot().snapshotId,
-        chunkIndex: 0, chunkCount: 1, json: '{not-json',
-      });
-    });
-
-    expect(sentFrames(socket).at(-1)).toEqual({ type: 'request_snapshot' });
-    expect(queryClient.getQueryData(substreamInitialContextQueryKey(workstreamId, substreamId)))
-      .toBeUndefined();
-  });
-
-  it('reuses the same socket when returning to a recently viewed channel', async () => {
-    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const firstWorkstreamId = '00000000-0000-7000-8000-000000000621';
-    const secondWorkstreamId = '00000000-0000-7000-8000-000000000622';
-    const queryClient = new QueryClient();
-    for (const workstreamId of [firstWorkstreamId, secondWorkstreamId]) {
-      queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({ id: workstreamId }));
-      queryClient.setQueryData(['ordered-transcript', workstreamId], emptyTranscriptSnapshot());
-    }
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async (workstreamId: string) => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}`,
-        ticket: `socket-ticket-${workstreamId}`,
-        protocols: socketTicketProtocols(`socket-ticket-${workstreamId}`),
-      })),
-    });
-    function ActiveConnection({ workstreamId }: { workstreamId: string }): React.JSX.Element {
-      const connection = useRetainedWorkstreamSocket(api, workstreamId, true);
-      return <div>{connection.state}</div>;
-    }
-    const view = render(
-      <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
-        <ActiveConnection workstreamId={firstWorkstreamId} />
-      </WorkstreamSocketPool>,
-      { wrapper: createWrapper(queryClient) },
-    );
-    await flushPromises();
-    const firstSocket = FakeWebSocket.instances[0]!;
-    firstSocket.send.mockImplementation((frame: string) => {
-      if (frame === 'ping') queueMicrotask(() => firstSocket.rawMessage('pong'));
-      else if (frame.includes('request_snapshot')) queueMicrotask(() => firstSocket.message(snapshotFrame({
-        sequence: 1, workstream: {id: firstWorkstreamId},
-      })));
-    });
-    act(() => firstSocket.open());
-    await flushPromises();
-    const firstClose = vi.spyOn(firstSocket, 'close');
-
-    view.rerender(
-      <WorkstreamSocketPool activeWorkstreamId={secondWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
-        <ActiveConnection workstreamId={secondWorkstreamId} />
-      </WorkstreamSocketPool>,
-    );
-    await flushPromises();
-    const secondSocket = FakeWebSocket.instances[1]!;
-    secondSocket.send.mockImplementation((frame: string) => {
-      if (frame === 'ping') queueMicrotask(() => secondSocket.rawMessage('pong'));
-      else if (frame.includes('request_snapshot')) queueMicrotask(() => secondSocket.message(snapshotFrame({
-        sequence: 1, workstream: {id: secondWorkstreamId},
-      })));
-    });
-    act(() => secondSocket.open());
-    await flushPromises();
-    expect(FakeWebSocket.instances).toHaveLength(2);
-    expect(firstClose).not.toHaveBeenCalled();
-
-    await act(async () => vi.advanceTimersByTimeAsync(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
-    view.rerender(
-      <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
-        <ActiveConnection workstreamId={firstWorkstreamId} />
-      </WorkstreamSocketPool>,
-    );
-    await flushPromises();
-
-    expect(FakeWebSocket.instances).toHaveLength(2);
-    expect(firstClose).not.toHaveBeenCalled();
-  });
-
-  it('closes an idle recently viewed socket only after five minutes', async () => {
-    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const firstWorkstreamId = '00000000-0000-7000-8000-000000000623';
-    const secondWorkstreamId = '00000000-0000-7000-8000-000000000624';
-    const queryClient = new QueryClient();
-    for (const workstreamId of [firstWorkstreamId, secondWorkstreamId]) {
-      queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({ id: workstreamId }));
-      queryClient.setQueryData(['ordered-transcript', workstreamId], emptyTranscriptSnapshot());
-    }
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async (workstreamId: string) => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}`,
-        ticket: `socket-ticket-${workstreamId}`,
-        protocols: socketTicketProtocols(`socket-ticket-${workstreamId}`),
-      })),
-    });
-    function ActiveConnection({ workstreamId }: { workstreamId: string }): React.JSX.Element {
-      const connection = useRetainedWorkstreamSocket(api, workstreamId, true);
-      return <div>{connection.state}</div>;
-    }
-    const view = render(
-      <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
-        <ActiveConnection workstreamId={firstWorkstreamId} />
-      </WorkstreamSocketPool>,
-      { wrapper: createWrapper(queryClient) },
-    );
-    await flushPromises();
-    const firstSocket = FakeWebSocket.instances[0]!;
-    firstSocket.send.mockImplementation((frame: string) => {
-      if (frame === 'ping') queueMicrotask(() => firstSocket.rawMessage('pong'));
-      else if (frame.includes('request_snapshot')) queueMicrotask(() => firstSocket.message(snapshotFrame({
-        sequence: 1, workstream: {id: firstWorkstreamId},
-      })));
-    });
-    act(() => firstSocket.open());
-    await flushPromises();
-    const firstClose = vi.spyOn(firstSocket, 'close');
-
-    view.rerender(
-      <WorkstreamSocketPool activeWorkstreamId={secondWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
-        <ActiveConnection workstreamId={secondWorkstreamId} />
-      </WorkstreamSocketPool>,
-    );
-    await flushPromises();
-    await act(async () => vi.advanceTimersByTimeAsync(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
-    expect(firstClose).not.toHaveBeenCalled();
-
-    act(() => vi.advanceTimersByTime(1));
-    expect(firstClose).toHaveBeenCalledTimes(1);
-  });
-
   it.each(['close', 'manual'] as const)('preserves a pending message and its receipt across %s recovery', async (recovery) => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -1393,6 +1109,7 @@ describe('useWorkstreamSocket', () => {
         text: 'Please continue.',
         clientId: clientMessageId,
         runMode: 'queue',
+        intent: 'edit_sidekick',
       });
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
@@ -1409,6 +1126,7 @@ describe('useWorkstreamSocket', () => {
         confirmedParticipantUserIds: [],
         attachmentIds: [],
         runMode: 'queue',
+        intent: 'edit_sidekick',
       },
     }));
     if (recovery === 'manual') act(() => result.current.retryOpening());
@@ -1626,93 +1344,6 @@ describe('useWorkstreamSocket', () => {
     await expect(admission).resolves.toMatchObject({ clientMessageId, deliveryState: 'canonical' });
   });
 
-  it('orders appearance choices and never sends queued choices to a newly selected room', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const workstreamId = '00000000-0000-7000-8000-000000000631';
-    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
-      url: `wss://api.rally.test/workstreams/${workstreamId}`,
-      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
-    })) });
-    const queryClient = new QueryClient();
-    const appearance = { icon: 'atom', color: 'gray' } as const;
-    setCachedWorkstreams(queryClient, [workstreamSummary({ id: workstreamId, appearance })]);
-    queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({ id: workstreamId, appearance }));
-    const { result, rerender } = renderHook(({ id }) => useWorkstreamSocket(api, id, true), {
-      initialProps: { id: workstreamId }, wrapper: createWrapper(queryClient),
-    });
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    const color = result.current.setAppearance({ color: 'purple' });
-    const icon = result.current.setAppearance({ icon: 'rocket' });
-    await flushPromises();
-    const commands = sentFrames(socket).filter((frame) => frame.type === 'set_workstream_appearance');
-    expect(commands).toHaveLength(1);
-    // Nothing moves on a sent command: the sidebar shows a committed value or
-    // the old one, never a choice the room may still refuse.
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance).toEqual(appearance);
-    const first = commands[0]!;
-    act(() => socket.message({ type: 'client_command_succeeded', command: 'set_workstream_appearance', operationId: first.operationId }));
-    await color;
-    await flushPromises();
-    // The receipt is the commit, and the sidebar row takes it without waiting
-    // for the directory projection. The patch merges over the current value,
-    // so the color choice keeps the icon. The detail entry is left to the
-    // versioned push: the header shows the picker's own preview until then,
-    // and moving the detail here would retire that preview early.
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance)
-      .toEqual({ icon: 'atom', color: 'purple' });
-    expect(queryDetail(queryClient, workstreamId)?.appearance).toEqual(appearance);
-    expect(sentFrames(socket).filter((frame) => frame.type === 'set_workstream_appearance')).toHaveLength(2);
-    const queued = result.current.setAppearance({ color: 'blue' });
-    const rejectedIcon = expect(icon).rejects.toMatchObject({ code: 'workstream_socket_unavailable' });
-    const rejectedQueued = expect(queued).rejects.toMatchObject({ code: 'workstream_socket_unavailable' });
-    rerender({ id: '00000000-0000-7000-8000-000000000632' });
-    await flushPromises();
-    await rejectedIcon;
-    await rejectedQueued;
-    const next = FakeWebSocket.instances.at(-1)!;
-    act(() => next.open());
-    expect(sentFrames(next).filter((frame) => frame.type === 'set_workstream_appearance')).toEqual([]);
-  });
-
-  it('does not apply an appearance receipt that crossed a reconnect over newer cached state', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const workstreamId = '00000000-0000-7000-8000-000000000633';
-    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
-      url: `wss://api.rally.test/workstreams/${workstreamId}`,
-      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
-    })) });
-    const queryClient = new QueryClient();
-    setCachedWorkstreams(queryClient, [workstreamSummary({ id: workstreamId, appearance: { icon: 'atom', color: 'gray' } })]);
-    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    const choice = result.current.setAppearance({ color: 'purple' });
-    await flushPromises();
-    const sent = sentFrames(socket).find((frame) => frame.type === 'set_workstream_appearance');
-    expect(sent).toBeDefined();
-    // The room committed the choice but the receipt was lost with the connection.
-    act(() => socket.close(1006));
-    act(() => vi.advanceTimersByTime(750));
-    await flushPromises();
-    const reconnected = FakeWebSocket.instances[1]!;
-    act(() => reconnected.open());
-    await flushPromises();
-    expect(sentFrames(reconnected).find((frame) => frame.type === 'set_workstream_appearance')).toEqual(sent);
-    // Meanwhile another client chose blue and its newer versioned state arrived.
-    setCachedWorkstreams(queryClient, [workstreamSummary({ id: workstreamId, appearance: { icon: 'atom', color: 'blue' } })]);
-    act(() => reconnected.message({ type: 'client_command_succeeded', command: 'set_workstream_appearance', operationId: sent!.operationId }));
-    await expect(choice).resolves.toBeUndefined();
-    await flushPromises();
-    // The replayed receipt answers the resend; it says nothing about which
-    // choice the room holds now, so the newer cached value stands.
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance).toEqual({ icon: 'atom', color: 'blue' });
-  });
-
   it('sends child-local commands to the addressed breakout and resends them until receipt', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -1733,13 +1364,6 @@ describe('useWorkstreamSocket', () => {
     });
     const api = socketApiWith({ getSocketTicket });
     const queryClient = new QueryClient();
-    setCachedWorkstreams(queryClient, [workstreamSummary({
-      id: workstreamId,
-      appearance: { icon: 'atom', color: 'gray' },
-    })]);
-    queryClient.setQueryData(['workstream-children', workstreamId], {
-      privateChildren: [{ substreamId, title: 'Private child' }],
-    });
     queryClient.setQueryData(['substream-workstream', workstreamId, substreamId], workstreamDetail({
       id: workstreamId,
       appearance: { icon: 'orbit', color: 'green' },
@@ -1823,44 +1447,6 @@ describe('useWorkstreamSocket', () => {
       harnessRunId: retryRunId,
     }));
     await expect(retry).resolves.toEqual({ harnessRunId: retryRunId });
-
-    const appearance = result.current.setAppearance({ color: 'purple' });
-    await flushPromises();
-    const appearanceCommand = sentFrames(second).find((frame): frame is Extract<ClientSocketEvent, {
-      type: 'set_workstream_appearance';
-    }> => frame.type === 'set_workstream_appearance')!;
-    act(() => second.message({
-      type: 'client_command_succeeded',
-      command: 'set_workstream_appearance',
-      operationId: appearanceCommand.operationId,
-    }));
-    await expect(appearance).resolves.toBeUndefined();
-    expect(queryClient.getQueryData<{ privateChildren: Array<{ appearance?: unknown }> }>(
-      ['workstream-children', workstreamId],
-    )?.privateChildren[0]?.appearance).toEqual({ icon: 'orbit', color: 'purple' });
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance)
-      .toEqual({ icon: 'atom', color: 'gray' });
-
-    const lateAppearance = result.current.setAppearance({ icon: 'rocket' });
-    await flushPromises();
-    const lateAppearanceCommand = sentFrames(second).filter((frame): frame is Extract<ClientSocketEvent, {
-      type: 'set_workstream_appearance';
-    }> => frame.type === 'set_workstream_appearance').at(-1)!;
-    // Another authoritative parent projection lands while this receipt is in
-    // flight. The receipt only confirms the older command and must not regress
-    // the newer row.
-    queryClient.setQueryData(['workstream-children', workstreamId], {
-      privateChildren: [{ substreamId, title: 'Private child', appearance: { icon: 'heart', color: 'blue' } }],
-    });
-    act(() => second.message({
-      type: 'client_command_succeeded',
-      command: 'set_workstream_appearance',
-      operationId: lateAppearanceCommand.operationId,
-    }));
-    await expect(lateAppearance).resolves.toBeUndefined();
-    expect(queryClient.getQueryData<{ privateChildren: Array<{ appearance?: unknown }> }>(
-      ['workstream-children', workstreamId],
-    )?.privateChildren[0]?.appearance).toEqual({ icon: 'heart', color: 'blue' });
   });
 
   it('rejects failed and mismatched private command receipts', async () => {
@@ -1913,47 +1499,6 @@ describe('useWorkstreamSocket', () => {
     });
   });
 
-  it('preserves the control-owned private child directory across a main feed snapshot', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workstreamId = '00000000-0000-7000-8000-000000000623';
-    const child = {
-      substreamId: '00000000-0000-7000-8000-000000000624',
-      title: 'Ready child',
-      createdByUserId: '00000000-0000-7000-8000-000000000002',
-      createdAt: '2026-09-04T12:00:00.000Z',
-      updatedAt: '2026-09-04T12:00:00.000Z',
-    };
-    queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({
-      id: workstreamId,
-      title: 'Control title',
-    }));
-    queryClient.setQueryData(['workstream-children', workstreamId], { privateChildren: [child] });
-    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
-      url: `wss://api.rally.test/workstreams/${workstreamId}`,
-      ticket: 'socket-ticket',
-      protocols: socketTicketProtocols('socket-ticket'),
-    })) });
-    renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
-      wrapper: createWrapper(queryClient),
-    });
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => {
-      socket.open();
-      socket.message(snapshotFrame({
-        sequence: 1,
-        workstream: { id: workstreamId, title: 'Feed title' },
-      }));
-    });
-    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
-      .toMatchObject({ title: 'Feed title' });
-    expect(queryClient.getQueryData(['workstream-children', workstreamId]))
-      .toEqual({ privateChildren: [child] });
-  });
-
   it('isolates a child feed from the main cache and recovers it through its own socket', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -1966,10 +1511,6 @@ describe('useWorkstreamSocket', () => {
     queryClient.setQueryData(['workstream', workstreamId], mainDetail);
     queryClient.setQueryData(['ordered-transcript', workstreamId], mainTranscript);
     queryClient.setQueryData(['transcript-overlays', workstreamId], [{ main: true }]);
-    setCachedWorkstreams(queryClient, [{
-      ...mainDetail,
-      title: 'Parent sidebar row',
-    }]);
     const getSocketTicket = vi.fn((
       ...args: Parameters<WorkstreamSocketApi['getSocketTicket']>
     ) => {
@@ -2015,8 +1556,7 @@ describe('useWorkstreamSocket', () => {
       occurredAt: '2026-07-31T20:00:00.000Z',
       turn: transcriptTurn(1, 'Child-only turn'),
     }));
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.title)
-      .toBe('Parent sidebar row');
+    expect(queryClient.getQueryData(['workstream', workstreamId])).toBe(mainDetail);
 
     act(() => first.message({
       type: 'resync_required',
@@ -3204,8 +2744,8 @@ describe('useWorkstreamSocket', () => {
   it('does not mark a channel unread for the reader\'s own arriving turn', async () => {
     // The room advances the author's own read waterline in the write that
     // stores their message, so a client that guessed "unread" here would draw
-    // an Unread messages divider above the turn the person just sent and light
-    // their own sidebar dot for it, for as long as that state took to arrive.
+    // an Unread messages divider above the turn the person just sent, for as
+    // long as that state took to arrive.
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-00000000070a';
@@ -3218,9 +2758,6 @@ describe('useWorkstreamSocket', () => {
       ['workstream', workstreamId],
       workstreamDetail({ id: workstreamId, latestAttentionSequenceNumber: 4, readThroughSequenceNumber: 4 }),
     );
-    setCachedWorkstreams(queryClient, [
-      workstreamSummary({ id: workstreamId, latestAttentionSequenceNumber: 4, readThroughSequenceNumber: 4 }),
-    ]);
     const api = socketApiWith({
       viewerUserId,
       getSocketTicket: vi.fn(async () => ({
@@ -3264,9 +2801,73 @@ describe('useWorkstreamSocket', () => {
       hasUnread: false,
       firstUnreadSequenceNumber: null,
     });
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toMatchObject({
-      hasUnread: false,
-      firstUnreadSequenceNumber: null,
+  });
+
+  it('reads the viewer\'s own starting run as read, and another person\'s as news', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const viewerUserId = '00000000-0000-7000-8000-00000000070b';
+    const otherUserId = '00000000-0000-7000-8000-00000000070c';
+    const runRow = (requesterUserId: string) => ({
+      type: 'transcript_turn_upserted' as const,
+      sequence: 1,
+      occurredAt: '2026-11-08T12:00:00.000Z',
+      turn: {
+        transcriptSequence: 1,
+        turnId: `run-row-${requesterUserId}`,
+        entryKind: 'conversation' as const,
+        actor: 'system' as const,
+        authorUserId: null,
+        authorSnapshot: null,
+        attentionOrdinal: 5,
+        createdAtUtc: '2026-11-08T12:00:00.000Z',
+        revision: 1,
+        blocks: [{
+          type: 'text' as const, blockId: `run-row-${requesterUserId}:text:0`, blockIndex: 0, text: '', streaming: false,
+          messageType: 'automation_activation' as const,
+          structuredContent: {
+            type: 'automation_activation', schemaVersion: 1,
+            automationId: '00000000-0000-7000-8000-0000000000aa', automationName: 'fs Picker',
+            runId: '00000000-0000-7000-8000-0000000000bb', deliveryId: 'delivery-1',
+            trigger: { kind: 'manual' }, occurredAt: 1794139200000,
+            run: { state: 'pending', stepCount: 0, reply: null },
+          },
+          sidekickRun: { requesterUserId, runNumber: 7 },
+        }],
+        activityId: null,
+      },
+    });
+    const openFeed = async (workstreamId: string) => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData<WorkstreamTranscriptSnapshot>(['ordered-transcript', workstreamId], emptyTranscriptSnapshot());
+      queryClient.setQueryData(['workstream', workstreamId],
+        workstreamDetail({ id: workstreamId, latestAttentionSequenceNumber: 4, readThroughSequenceNumber: 4 }));
+      const api = socketApiWith({
+        viewerUserId,
+        getSocketTicket: vi.fn(async () => ({
+          url: `wss://api.rally.test/workstreams/${workstreamId}`,
+          ticket: 'socket-ticket',
+          protocols: socketTicketProtocols('socket-ticket'),
+        })),
+      });
+      renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+      await flushPromises();
+      const socket = FakeWebSocket.instances.at(-1)!;
+      act(() => socket.open());
+      return { queryClient, socket };
+    };
+
+    const own = await openFeed('00000000-0000-7000-8000-000000000711');
+    act(() => own.socket.message(runRow(viewerUserId)));
+    await flushPromises();
+    expect(queryDetail(own.queryClient, '00000000-0000-7000-8000-000000000711')).toMatchObject({
+      latestAttentionSequenceNumber: 5, readThroughSequenceNumber: 5, hasUnread: false,
+    });
+
+    const theirs = await openFeed('00000000-0000-7000-8000-000000000712');
+    act(() => theirs.socket.message(runRow(otherUserId)));
+    await flushPromises();
+    expect(queryDetail(theirs.queryClient, '00000000-0000-7000-8000-000000000712')).toMatchObject({
+      latestAttentionSequenceNumber: 5, readThroughSequenceNumber: 4, hasUnread: true,
     });
   });
 
@@ -3847,7 +3448,7 @@ describe('useWorkstreamSocket', () => {
     expect(overlayMessages(queryClient, workstreamId)[0]?.text).toBe('One two');
   });
 
-  it('shows the name Rally gives a channel in its header and its sidebar row', async () => {
+  it('shows the name Rally gives a conversation in its header', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000401';
@@ -3858,10 +3459,6 @@ describe('useWorkstreamSocket', () => {
       titleStatus: 'naming',
       harnessStatus: 'running',
     } as WorkstreamDetail);
-    setCachedWorkstreams(queryClient, [
-      { id: workstreamId, title: provisional, titleStatus: 'naming' },
-      { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
-    ] as WorkstreamSummary[]);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.rally.test/workstreams/${workstreamId}`,
@@ -3885,9 +3482,7 @@ describe('useWorkstreamSocket', () => {
 
     // The event settles the skeleton as well as the text: `automatic` is a
     // name, just one a later pass may still improve on. The icon a naming pass
-    // chose goes to the sidebar row with it.
-    //
-    // It must NOT go to the cached detail, which is the entry the appearance
+    // chose must NOT go to the cached detail, which is the entry the appearance
     // picker reads to decide its own preview is done: `settled()` retires a
     // pending choice as soon as the detail's icon moves off the baseline it was
     // taken against, to any value at all, because another person changing the
@@ -3899,18 +3494,9 @@ describe('useWorkstreamSocket', () => {
       .toMatchObject({ title: 'Rally download link email to Danny', titleStatus: 'automatic' });
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
       .not.toHaveProperty('appearance');
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
-      {
-        id: workstreamId,
-        title: 'Rally download link email to Danny',
-        titleStatus: 'automatic',
-        appearance: { icon: 'megaphone', color: null },
-      },
-      { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
-    ]);
   });
 
-  it('keeps a child rename out of the parent sidebar row', async () => {
+  it('keeps a child rename on the child\'s own entry', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000401';
@@ -3921,10 +3507,6 @@ describe('useWorkstreamSocket', () => {
       titleStatus: 'naming',
       harnessStatus: 'running',
     } as WorkstreamDetail);
-    setCachedWorkstreams(queryClient, [
-      { id: workstreamId, title: provisional, titleStatus: 'naming' },
-      { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
-    ] as WorkstreamSummary[]);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.rally.test/workstreams/${workstreamId}`,
@@ -3950,64 +3532,10 @@ describe('useWorkstreamSocket', () => {
     // name, just one a later pass may still improve on.
     expect(queryClient.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, 'child']))
       .toMatchObject({ title: 'Rally download link email to Danny', titleStatus: 'automatic' });
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
-      { id: workstreamId, title: provisional, titleStatus: 'naming' },
-      { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
-    ]);
+    expect(queryClient.getQueryData(['workstream', workstreamId])).toBeUndefined();
   });
 
-  it('leaves an icon a person already chose alone when a naming event arrives after it', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workstreamId = '00000000-0000-7000-8000-000000000409';
-    queryClient.setQueryData(['workstream', workstreamId], {
-      id: workstreamId,
-      title: 'Mucker invoices',
-      titleStatus: 'naming',
-      harnessStatus: 'running',
-    } as WorkstreamDetail);
-    // Their own choice, already acknowledged and written to the row by the
-    // receipt handler. The naming event was published before that command
-    // committed, so the icon it carries is older than what is here.
-    setCachedWorkstreams(queryClient, [
-      { id: workstreamId, title: 'Mucker invoices', titleStatus: 'naming', appearance: { icon: 'rocket', color: 'teal' } },
-    ] as WorkstreamSummary[]);
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}`,
-        ticket: 'socket-ticket',
-        protocols: socketTicketProtocols('socket-ticket'),
-      })),
-    });
-    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
-
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    act(() => socket.message({
-      type: 'workstream_renamed',
-      sequence: 1,
-      occurredAt: '2026-08-11T09:00:01.000Z',
-      title: 'Reconcile Mucker invoices',
-      titleStatus: 'automatic',
-      icon: 'megaphone',
-    }));
-
-    // The name lands; the icon does not. The event carries an icon only when
-    // the object had none when it renamed, so a row that has one holds
-    // something newer — and the two travel different paths, so the event can
-    // arrive after the receipt that put it there.
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
-      {
-        id: workstreamId,
-        title: 'Reconcile Mucker invoices',
-        titleStatus: 'automatic',
-        appearance: { icon: 'rocket', color: 'teal' },
-      },
-    ]);
-  });
-
-  it('carries a visibility change to the header and the sidebar row', async () => {
+  it('carries a visibility change to the header', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000403';
@@ -4017,10 +3545,6 @@ describe('useWorkstreamSocket', () => {
       scope: 'workspace',
       harnessStatus: 'completed',
     } as WorkstreamDetail);
-    setCachedWorkstreams(queryClient, [
-      { id: workstreamId, title: 'Compensation review', scope: 'workspace' },
-      { id: '00000000-0000-7000-8000-000000000404', title: 'August planning', scope: 'workspace' },
-    ] as WorkstreamSummary[]);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.rally.test/workstreams/${workstreamId}`,
@@ -4044,10 +3568,6 @@ describe('useWorkstreamSocket', () => {
     // who receives this may still read it and only needs the lock to appear.
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
       .toMatchObject({ title: 'Compensation review', scope: 'personal' });
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
-      { id: workstreamId, title: 'Compensation review', scope: 'personal' },
-      { id: '00000000-0000-7000-8000-000000000404', title: 'August planning', scope: 'workspace' },
-    ]);
   });
 
   it('stops dialling a channel it has just been shut out of', async () => {
@@ -4066,10 +3586,6 @@ describe('useWorkstreamSocket', () => {
     queryClient.setQueryData(transcriptOverlaysQueryKey(workstreamId), [{ sensitive: true }]);
     queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
     queryClient.setQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId), 1);
-    setCachedWorkstreams(queryClient, [
-      { id: workstreamId, title: 'Compensation review' },
-      { id: '00000000-7000-7000-8000-000000000406', title: 'August planning' },
-    ] as WorkstreamSummary[]);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.rally.test/workstreams/${workstreamId}`,
@@ -4100,9 +3616,6 @@ describe('useWorkstreamSocket', () => {
     expect(queryClient.getQueryData(transcriptOverlaysQueryKey(workstreamId))).toBeUndefined();
     expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBeUndefined();
     expect(queryClient.getQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId))).toBeUndefined();
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
-      { id: '00000000-7000-7000-8000-000000000406', title: 'August planning' },
-    ]);
   });
 
   it('allows explicit retry after access revocation while keeping automatic recovery stopped', async () => {
@@ -4199,8 +3712,6 @@ describe('useWorkstreamSocket', () => {
       completedAt: null,
       createdAt: '2026-08-06T05:00:00.000Z',
     };
-    const cachedSummary = workstreamSummary({ id: workstreamId, harnessStatus: 'completed' });
-    setCachedWorkstreams(queryClient, [cachedSummary]);
     queryClient.setQueryData(['workstream', workstreamId], {
       id: workstreamId,
       harnessStatus: 'completed',
@@ -4255,29 +3766,16 @@ describe('useWorkstreamSocket', () => {
       startedAt: '2026-08-06T05:00:00.000Z',
       createdAt: '2026-08-06T05:00:00.000Z',
     });
-    // Cross-workstream serving belongs to the WorkspaceDO socket. A substream
-    // recovery patches this row and leaves the list to that socket: it neither
-    // merges a parallel REST list nor walks every Space again.
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([{
-      ...cachedSummary,
-      harnessStatus: 'running',
-    }]);
-    expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(false);
   });
 
-  it('pushes a status change into the sidebar list without waiting for a refetch', async () => {
+  it('pushes a status change into the header without waiting for a refetch', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000110';
-    const otherWorkstreamId = '00000000-0000-7000-8000-000000000111';
     queryClient.setQueryData(['workstream', workstreamId], {
       id: workstreamId,
       harnessStatus: 'running',
     });
-    setCachedWorkstreams(queryClient, [
-      workstreamSummary({ id: workstreamId, harnessStatus: 'running' }),
-      workstreamSummary({ id: otherWorkstreamId, harnessStatus: 'running' }),
-    ]);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.rally.test/workstreams/${workstreamId}`,
@@ -4298,12 +3796,8 @@ describe('useWorkstreamSocket', () => {
     }));
 
     // Asserted before the canonical reconciliation resolves: the frame itself
-    // has to move both views, or the sidebar dot lags the header by a round trip.
-    const summaries = queryClient.getQueryData<WorkstreamSummary[]>(['workstreams']);
-    expect(summaries?.find((item) => item.id === workstreamId)?.harnessStatus).toBe('needs_input');
-    expect(summaries?.find((item) => item.id === otherWorkstreamId)?.harnessStatus).toBe('running');
+    // moves the header, without a round trip.
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.harnessStatus).toBe('needs_input');
-    expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(false);
     await flushPromises();
   });
 

@@ -27,7 +27,7 @@ function report(overrides: Partial<DurableObjectMigrationReport> = {}): DurableO
     reportId: `00000000-0000-7000-8000-${String(reportSequence).padStart(12, "0")}`,
     objectId: OBJECT_ID,
     objectName: OBJECT_NAME,
-    className: "SubstreamAgent",
+    className: "AgentLoopDO",
     component: "substream_agent_do",
     region: "global",
     appEnv: "production",
@@ -157,7 +157,7 @@ describe("the operator site", () => {
         namespaces: [{
           namespaceId: "ns-global",
           scriptName: "avalon-api-global",
-          className: "SubstreamAgent",
+          className: "AgentLoopDO",
           usesSqlite: true,
           objects: [
             { objectId: OBJECT_ID, hasStoredData: false },

@@ -315,8 +315,16 @@ describe('Usage in the Organization menu', () => {
     expect(onSelect).toHaveBeenCalledOnce();
   });
 
+  it('fills a nearly full allowance in the neutral tone, and only a low one in the warning tone', async () => {
+    renderMenuItem(apiAnswering(usage(95)));
+    const meter = await screen.findByRole('meter', { name: 'Weekly quota left' });
+    expect(meter).toHaveClass('meter', 'meter-thin');
+    expect(meter).not.toHaveClass('meter-warning');
+  });
+
   it('says overage is enabled once the quota runs low', async () => {
     renderMenuItem(apiAnswering(usage(19)));
+    expect(await screen.findByRole('meter', { name: 'Weekly quota left' })).toHaveClass('meter-warning');
 
     expect(await screen.findByText('19% left till Thu 9:00 AM, overage enabled')).toBeVisible();
   });

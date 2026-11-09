@@ -3,7 +3,6 @@ import { ConnectorDeliveryReferenceSchema, readConnectorDeliveryReference, sendC
 import { SidekickReviewQueueMessageSchema, SidekickRunProvisionQueueMessageSchema } from "../durable-objects/automation-do-protocol";
 import { provisionSidekickRun } from "../services/sidekick-run-provisioning";
 import { deliverSidekickReview } from "../services/sidekick-review";
-import { publishAccessRevocation } from "../services/access-revocation";
 import type { Region } from "@rally/contracts/regions";
 import { ConnectorMaintenanceQueueSchema, runConnectorMaintenance } from "../services/connector-maintenance-service";
 import { ConnectorInstallationQueueSchema, runConnectorInstallation } from "../services/connector-installation-service";
@@ -14,25 +13,16 @@ import { workspaceSearchIndex, searchChunkIdentity } from '../services/text-sear
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
 import { SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
 import { AuthorizationProjectionJobSchema } from '../durable-objects/authorization-projection';
-import { ChannelColorSyncMessageSchema } from "../durable-objects/channel-color-sync";
-import { ThreadBackfillMessageSchema, type ThreadBackfillJob } from "../durable-objects/thread-backfill";
-import { backfillSuggestion } from "../services/suggestion-backfill-service";
-import { MemorySweepMessageSchema, runMemorySweep } from "../services/memory-sweep-service";
-import { MemoryDigestSyncMessageSchema } from "../durable-objects/memory-digest-sync";
-import { refreshMemoryDigestCopies } from "../services/memory-digest-service";
-import { summarizeExistingDescription } from "../services/workstream-naming-service";
-import { createIdentityObjectPort } from "../runtime/identity-port";
+
 import { projectAuthorization } from '../services/authorization-projection-service';
 import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
 import { projectConversationDisplay } from '../services/search-conversation-display';
-import { ConnectorError, connectorOriginUrl } from "@rally/connectors";
+
 import {
-  ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ActivityQueueMessageSchema,
   WorkspaceExternalEventDeliveryQueueMessageSchema,
   asSubstreamId,
   asWorkspaceId,
-  asUserId,
   WorkspaceExternalEventMatchResultSchema,
   type WorkspaceId,
 } from "@rally/contracts";
@@ -44,11 +34,6 @@ import {
   ParentEffectEnvelopeSchema,
 } from "@rally/contracts/conversation-effects";
 import { codeShaped, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
-import {
-  SpaceBootstrapQueueMessageSchema,
-  SpaceDefaultQueueMessageSchema,
-  SpaceIntentResumeQueueMessageSchema,
-} from "../durable-objects/workspace-space-protocol";
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceConnectorEventClaimResultSchema,
@@ -61,60 +46,45 @@ import { runInteractiveMessage } from "./interactive-consumer";
 import { InteractiveQueueMessageSchema } from "../services/interactive-queue";
 import { runtimeDeferral } from "../lib/defer";
 import { admitExternalEventWithSemanticGate } from "../services/semantic-trigger-admission";
-import type { AuthContext } from "../env";
+
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { consumeGitHubDeliveryMessage, isGitHubDeliveryQueueMessage } from "../services/github-routing-service";
-import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
-import { recordActivityEvent } from "../services/activity-event-service";
+
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
-import { connectorRegistryForEnv } from "../lib/connector-registry";
+import { MemorySweepMessageSchema, runMemorySweep } from "../services/memory-sweep-service";
+import { MemoryDigestSyncMessageSchema } from "../durable-objects/memory-digest-sync";
+import { refreshMemoryDigestCopies } from "../services/memory-digest-service";
+
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import { admitConnectorEvent } from "../services/workspace-connector-event-ingress";
 import {
-  applyWorkstreamRegionalEffect,
   processWorkstreamNotificationIntent,
 } from "../services/conversation-effect-service";
 import { conversationParentStub } from "../services/conversation-parent-client";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-update";
-import { SpaceBootstrapService, spaceBootstrapDriver } from "../services/space-bootstrap-service";
-import { SpaceService } from "../services/space-service";
-import { WorkstreamService } from "../services/workstream-service";
 import { hostedParentStub } from "../services/conversation-parent-client";
 
 /**
- * What each thread-backfill job does to one conversation, and the outcome it
- * logs. A job must be safe to run twice over the same conversation: a row
- * whose consumer failed part way is sent again whole.
- */
-const THREAD_BACKFILL_HANDLERS: Record<ThreadBackfillJob, (env: Env, target: {
-  workspaceId: string; workstreamId: string; substreamId: string;
-}) => Promise<string>> = {
-  description_summary: (env, target) => summarizeExistingDescription(env, target),
-  suggestion_backfill: (env, target) => backfillSuggestion(env, target),
-  conversation_view: async (env, target) => {
-    const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, target.workspaceId,
-      conversationObjectName(env.AVALON_REGION, asWorkspaceId(target.workspaceId), target.workstreamId, asSubstreamId(target.substreamId)));
-    return stub.backfillConversationView({ type: "conversation_view_v1", region: env.AVALON_REGION,
-      workspaceId: target.workspaceId, parentId: target.workstreamId, substreamId: target.substreamId, turnId: "" });
-  },
-};
-
-/**
- * The shape of a Project default delivery, kept only to recognize one.
+ * The shape of a message whose handler is gone, kept only to recognize one.
  *
- * Projects are retired and their protocol module is gone; what survives is the
- * platform's retry window, during which a message published before the cutover
- * can still arrive. Matching on the discriminator and the two fields a log line
- * needs is the whole contract — there is nothing left to act on, so parsing the
- * rest would be describing a payload in order to throw it away.
+ * Projects, then the thread backfill and Channel colour sync (plan step C-2),
+ * are retired and their protocol modules are gone; what survives is the
+ * platform's retry window, during which a message published before the
+ * cutover can still arrive. Matching on the discriminator and the field a log
+ * line needs is the whole contract — there is nothing left to act on, so
+ * parsing the rest would be describing a payload in order to throw it away.
  */
-const RetiredProjectDefaultMessageSchema = z.object({
-  type: z.literal("project_default_resource"),
-  workspaceId: z.string(),
-  workstreamId: z.string(),
-});
+const RetiredQueueMessageSchema = z.union([
+  z.object({
+    type: z.enum(["project_default_resource", "thread_backfill", "channel_color_sync",
+      "space_default", "space_bootstrap", "space_intent_resume"]),
+    workspaceId: z.string(),
+  }),
+  // A Thread batch update names its type by `kind`.
+  z.object({ kind: z.literal("workstream_batch_update"), workspaceId: z.string() })
+    .transform(({ kind, workspaceId }) => ({ type: kind, workspaceId })),
+]);
 
 interface ActivityRow {
   id: string;
@@ -147,22 +117,12 @@ interface ActivityRow {
   processing_status: "pending" | "processing" | "processed" | "failed";
 }
 
-
-
 function parseRecord(value: string): Record<string, unknown> {
   try {
     const parsed: unknown = JSON.parse(value);
     return z.record(z.string(), z.unknown()).parse(parsed);
   } catch {
     return {};
-  }
-}
-
-function parseStrings(value: string): string[] {
-  try {
-    return z.array(z.string()).parse(JSON.parse(value));
-  } catch {
-    return [];
   }
 }
 
@@ -182,7 +142,6 @@ function matchesFilters(activity: ActivityRow, filters: Record<string, unknown>)
   };
   return Object.entries(filters).every(([key, expected]) => deepEqual(available[key], expected));
 }
-
 
 const SearchChildJobTypeSchema = z.object({ type: z.literal('search_embedding_batch_v1') });
 
@@ -214,44 +173,6 @@ export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: En
 
 export const activityQueueConsumer = consumeActivityQueue;
 
-/** Repairs the commit-before-queue-send window for every connector ingress. */
-export async function recoverPendingActivityQueue(env: Env, limit = 100): Promise<number> {
-  // Post-cutover the Queue payload is the handoff and WorkspaceDO owns retry
-  // state. This scan exists only for an interrupted legacy D1 deployment.
-  if (env.WORKSPACE_DOS) return 0;
-  const staleBefore = new Date(Date.now() - 60_000).toISOString();
-  const pending = await env.DB.prepare(
-    `SELECT a.id, a.workspace_id, w.region, a.processing_status,
-            CAST(COALESCE(json_extract(a.metadata_json, '$._connector_event_attempt'), -1) AS INTEGER) AS connector_event_attempt
-     FROM activities a
-     JOIN workspaces w ON w.id = a.workspace_id
-     WHERE a.processing_status IN ('pending', 'failed') AND a.received_at <= ?
-       AND (a.processing_status = 'pending'
-         OR CAST(COALESCE(json_extract(a.metadata_json, '$._connector_event_attempt'), -1) AS INTEGER) < 5)
-       AND w.region = ?
-     ORDER BY a.received_at ASC, a.id ASC
-     LIMIT ?`,
-  ).bind(staleBefore, env.AVALON_REGION, Math.max(1, Math.min(limit, 100))).all<{
-    id: string;
-    workspace_id: string;
-    region: Region;
-    processing_status: "pending" | "failed";
-    connector_event_attempt: number;
-  }>();
-  if (pending.results.length === 0) return 0;
-  await env.ACTIVITY_QUEUE.sendBatch(pending.results.map((activity) => ({
-    body: ActivityQueueMessageSchema.parse({
-      region: activity.region,
-      workspaceId: activity.workspace_id,
-      activityId: activity.id,
-      attempt: activity.processing_status === "failed"
-        ? Math.max(0, activity.connector_event_attempt + 1)
-        : Math.max(0, activity.connector_event_attempt),
-    }),
-  })));
-  return pending.results.length;
-}
-
 async function discoverSearchDocuments(env: Env, reference: z.infer<typeof SearchProjectionMessageSchema>): Promise<string[]> {
   const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, reference.workspaceId,
     conversationObjectName(reference.region, reference.workspaceId, reference.parentId, reference.substreamId));
@@ -264,31 +185,20 @@ async function loadSearchSource(env: Env, reference: SearchSourceReference, capt
       workspaceDOName(reference.region, reference.workspaceId));
     return stub.prepareResourceSearchDocument(reference, documentId);
   }
-  if (reference.type === 'channel_message_search_projection_v1') {
-    // A Channel message is one document, so the id needs no selecting.
-    const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
-      workspaceDOName(reference.region, reference.workspaceId));
-    return stub.prepareChannelMessageSearch(reference);
-  }
+  // A Channel message's job published before Channels were retired: nothing to index.
+  if (reference.type === 'channel_message_search_projection_v1') return { documents: [], retry: false };
   const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, reference.workspaceId,
     conversationObjectName(reference.region, reference.workspaceId, reference.parentId, reference.substreamId));
   return stub.prepareSearchTurnDocument(reference, documentId, captureLinks);
 }
 
 /**
- * A resource's or a Channel message's watermark, without extracting its
- * text. Every input of its search text bumps it (`resource-search-projection.ts`,
- * `channel-message-search-projection.ts`), so an equal revision is equal text. A turn has no such read: a link capture can
+ * A resource's watermark, without extracting its text. Every input of its
+ * search text bumps it (`resource-search-projection.ts`), so an equal
+ * revision is equal text. A turn has no such read: a link capture can
  * change a page's text at the same revision, so a turn is re-read in full.
  */
 function searchSourceRevision(env: Env, reference: SearchSourceReference): (() => Promise<number | null>) | undefined {
-  if (reference.type === 'channel_message_search_projection_v1') {
-    return async () => {
-      const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
-        workspaceDOName(reference.region, reference.workspaceId));
-      return stub.channelMessageSearchRevision({ workspaceId: reference.workspaceId, messageId: reference.messageId });
-    };
-  }
   if (reference.type !== 'resource_search_projection_v1') return undefined;
   return async () => {
     const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
@@ -547,169 +457,6 @@ async function consumeOne(message: Message<unknown>, env: Env,
     }
     return;
   }
-  const projectDefault = RetiredProjectDefaultMessageSchema.safeParse(message.body);
-  if (projectDefault.success) {
-    // A tombstone, kept for the platform's retry window and no longer.
-    //
-    // Projects are retired: the migration that retires them invalidates every
-    // pending target and drops the tables underneath it, so a target this
-    // message names can never be current again. Acknowledging is therefore the
-    // whole handler — a retry would reach the same answer on every redelivery
-    // until the message dead-lettered, which is a non-empty dead-letter queue
-    // saying something that is not a failure.
-    logInfo(env, "project_default_delivery_terminal", {
-      workspace_id: projectDefault.data.workspaceId,
-      workstream_id: projectDefault.data.workstreamId,
-      outcome: "skipped",
-      reason: "projects_retired",
-    });
-    message.ack();
-    return;
-  }
-  const spaceDefault = SpaceDefaultQueueMessageSchema.safeParse(message.body);
-  if (spaceDefault.success) {
-    const target = spaceDefault.data;
-    if (target.region !== env.AVALON_REGION) {
-      message.ack();
-      return;
-    }
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      target.workspaceId,
-      workspaceDOName(env.AVALON_REGION, target.workspaceId),
-    );
-    let current: boolean;
-    try {
-      current = await workspace.spaceDefaultTargetCurrent(target);
-    } catch (error) {
-      // A retired Organization's default target is never current again.
-      if (!isRetirementRefusal(error)) throw error;
-      message.ack();
-      return;
-    }
-    if (!current) {
-      message.ack();
-      return;
-    }
-    // The delivery runs as the person whose action staged it: whoever put the
-    // Channel in the Space, or added the default. A Space's own roster has no
-    // say over its Channels, so it is never the actor.
-    const member = await env.DB.prepare(
-      `SELECT user_id, role FROM workspace_members
-        WHERE workspace_id = ? AND user_id = ? AND status = 'active' AND access_class = 'member'`,
-    ).bind(target.workspaceId, target.requestedByUserId)
-      .first<{ user_id: string; role: AuthContext["role"] }>();
-    if (!member) {
-      await workspace.failSpaceDefaultTarget(target);
-      message.ack();
-      return;
-    }
-    const auth: AuthContext = {
-      sessionId: `space-default:${target.spaceId}:${target.kind}:${target.defaultGeneration}`,
-      userId: asUserId(member.user_id),
-      workspaceId: target.workspaceId,
-      region: env.AVALON_REGION,
-      role: member.role,
-      analyticsWorkspaceId: null,
-      principal: "connector",
-    };
-    try {
-      // One handler, two consumers. The staging, the fence, the currency
-      // recheck and the receipt are identical; what a resource and a Sidekick
-      // differ in is the canonical operation that applies them.
-      const workstreams = new WorkstreamService(env, auth);
-      if (target.kind === "resource") await workstreams.attachResource(target.workstreamId, target.targetId);
-      else await workstreams.setSidekickRecommendation(target.workstreamId, target.targetId, true);
-      await workspace.completeSpaceDefaultTarget(target);
-      message.ack();
-    } catch (error) {
-      // The reason, not the fact. `last_error_code` is the only durable record
-      // of why a default has not reached a Channel, and the fixed
-      // `space_default_apply_failed` it used to carry said only that it had
-      // not — which the row's existence already said.
-      const errorCode = diagnosticErrorCode(error, "space_default_apply_failed");
-      await workspace.recordSpaceDefaultTargetFailure({ ...target, errorCode }).catch(() => undefined);
-      logWarn(env, "space_default_delivery_failed", {
-        workspace_id: target.workspaceId,
-        space_id: target.spaceId,
-        workstream_id: target.workstreamId,
-        kind: target.kind,
-        reason: errorCode,
-      });
-      const attempts = Math.max(1, message.attempts);
-      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
-    }
-    return;
-  }
-  const backfill = ThreadBackfillMessageSchema.safeParse(message.body);
-  if (backfill.success) {
-    const target = backfill.data;
-    if (target.region !== env.AVALON_REGION) {
-      message.ack();
-      return;
-    }
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      target.workspaceId,
-      workspaceDOName(env.AVALON_REGION, target.workspaceId),
-    );
-    // The conversation being worked on, so a failure resumes there.
-    let current: string | null = null;
-    try {
-      const work = await workspace.threadBackfillWork(target);
-      if (work) {
-        // Main and each open Breakout, in turn. A failure part way leaves the
-        // row in place and the alarm sends it again, from the conversation
-        // that failed; every job is written to do nothing the second time
-        // over a conversation it already did.
-        for (const substreamId of work.substreamIds) {
-          current = substreamId;
-          const outcome = await THREAD_BACKFILL_HANDLERS[target.job](env, {
-            workspaceId: target.workspaceId, workstreamId: target.workstreamId, substreamId,
-          });
-          logInfo(env, "thread_backfill_conversation", {
-            job: target.job,
-            workspace_id: target.workspaceId,
-            workstream_id: target.workstreamId,
-            substream_id: substreamId,
-            outcome,
-          });
-          if (target.job === "conversation_view" && outcome === "queued") {
-            // Keep this parent claimed until its source has confirmed writes.
-            // Do not wake all its children and immediately admit another batch.
-            // Its durable retry gate will revisit it, at this conversation
-            // rather than at Main; ordinary pending work must not burn
-            // through Queue retries and land in the dead letter.
-            await workspace.deferThreadBackfill({ ...target, resumeFrom: asSubstreamId(substreamId) });
-            message.ack();
-            return;
-          }
-        }
-        await workspace.completeThreadBackfill(target);
-      }
-    } catch (error) {
-      // A retired Organization's thread is never written again.
-      if (!isRetirementRefusal(error)) {
-        // Acked rather than retried, as colour sync does: the row's own gate
-        // sends it again, and released so it holds no successor back.
-        logWarn(env, "thread_backfill_failed", {
-          job: target.job,
-          workspace_id: target.workspaceId,
-          workstream_id: target.workstreamId,
-          ...(current === null ? {} : { substream_id: current }),
-          reason: diagnosticErrorCode(error, "thread_backfill_failed"),
-        });
-        if (current !== null) {
-          await workspace.deferThreadBackfill({ ...target, resumeFrom: asSubstreamId(current) }).catch(() => undefined);
-        }
-        await workspace.releaseThreadBackfill(target).catch(() => undefined);
-      }
-    }
-    message.ack();
-    return;
-  }
   const memorySweep = MemorySweepMessageSchema.safeParse(message.body);
   if (memorySweep.success) {
     const target = memorySweep.data;
@@ -717,8 +464,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
       message.ack();
       return;
     }
-    // Acked whatever happens, as colour sync and the backfill are: the
-    // conversation's own claim and rest decide when it is tried again, and
+    // Acked whatever happens: the conversation's own claim and rest decide when it is tried again, and
     // `runMemorySweep` has already released the claim before it throws.
     try {
       await runMemorySweep(env, target);
@@ -731,49 +477,6 @@ async function consumeOne(message: Message<unknown>, env: Env,
           attempt: target.attempt,
           reason: diagnosticErrorCode(error, "memory_sweep_delivery_failed"),
         });
-      }
-    }
-    message.ack();
-    return;
-  }
-  const colorSync = ChannelColorSyncMessageSchema.safeParse(message.body);
-  if (colorSync.success) {
-    const target = colorSync.data;
-    if (target.region !== env.AVALON_REGION) {
-      message.ack();
-      return;
-    }
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      target.workspaceId,
-      workspaceDOName(env.AVALON_REGION, target.workspaceId),
-    );
-    try {
-      const work = await workspace.channelColorWork(target);
-      if (work) {
-        // Main and each open Breakout, in turn. A failure part way leaves the
-        // row in place, and the alarm sends it again; `recolor` writes nothing
-        // where the colour already matches, and refuses this revision wherever
-        // a newer one has already landed.
-        for (const substreamId of work.substreamIds) {
-          await createIdentityObjectPort(env, target.workspaceId, target.workstreamId, undefined, substreamId)
-            .recolor({ color: work.color, revision: target.revision, now: Date.now() });
-        }
-        await workspace.completeChannelColorSync(target);
-      }
-    } catch (error) {
-      // A retired Organization's thread is never written again.
-      if (!isRetirementRefusal(error)) {
-        // Acked rather than retried: the row's own gate sends it again, and a
-        // Queue retry beside it would be a second copy of the same attempt.
-        // Released so it does not hold the rest of its batch's successors back.
-        logWarn(env, "channel_color_sync_failed", {
-          workspace_id: target.workspaceId,
-          workstream_id: target.workstreamId,
-          reason: diagnosticErrorCode(error, "channel_color_sync_failed"),
-        });
-        await workspace.releaseChannelColorSync(target).catch(() => undefined);
       }
     }
     message.ack();
@@ -806,7 +509,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
     } catch (error) {
       // A retired Organization's conversation is never read again.
       if (!isRetirementRefusal(error)) {
-        // Acked rather than retried, as colour sync is: the row's own gate
+        // Acked rather than retried: the row's own gate
         // sends it again, and releasing it lets the rest of its batch go.
         logWarn(env, "memory_digest_sync_failed", {
           workspace_id: target.workspaceId,
@@ -819,152 +522,23 @@ async function consumeOne(message: Message<unknown>, env: Env,
     message.ack();
     return;
   }
-  const bootstrap = SpaceBootstrapQueueMessageSchema.safeParse(message.body);
-  if (bootstrap.success) {
-    const work = bootstrap.data;
-    if (work.region !== env.AVALON_REGION) {
-      message.ack();
-      return;
-    }
-    // Nobody is signed in. The cutover's actor is resolved from current
-    // membership rather than carried on the message, because the message may
-    // be redelivered days later and the person it named may have left.
-    const driver = await spaceBootstrapDriver(env, work.workspaceId, env.AVALON_REGION);
-    if (!driver) {
-      // An Organization with no active member has nobody the disclosure could
-      // be attributed to, and nobody to render the hierarchy for either.
-      logInfo(env, "space_bootstrap_skipped", {
-        workspace_id: work.workspaceId,
-        outcome: "skipped",
-        reason: "no_active_member",
-      });
-      message.ack();
-      return;
-    }
-    try {
-      const cutover = new SpaceBootstrapService(env, driver);
-      if (work.kind === "general") await cutover.runGeneral();
-      else if (work.kind === "preflight") await cutover.runPreflight(work.cursor);
-      else if (work.kind === "memberships") await cutover.runMemberships(work.cursor);
-      else await cutover.runFinalize();
-      message.ack();
-    } catch (error) {
-      if (isRetirementRefusal(error)) {
-        message.ack();
-        return;
-      }
-      // Said out loud, for the reason a resume says its own: the alarm
-      // republishes this on its retry gate as well, so a silent catch turns a
-      // half-migrated Organization into a dead-letter message with no reason
-      // on it.
-      logWarn(env, "space_bootstrap_failed", {
-        workspace_id: work.workspaceId,
-        kind: work.kind,
-        attempts: message.attempts,
-        reason: diagnosticErrorCode(error, "space_bootstrap_failed"),
-      });
-      const attempts = Math.max(1, message.attempts);
-      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
-    }
+  const retired = RetiredQueueMessageSchema.safeParse(message.body);
+  if (retired.success) {
+    // A tombstone, kept for the platform's retry window and no longer.
+    //
+    // What the message names can never be acted on again, so acknowledging is
+    // the whole handler — a retry would reach the same answer on every
+    // redelivery until the message dead-lettered, which is a non-empty
+    // dead-letter queue saying something that is not a failure.
+    logInfo(env, "retired_queue_message_terminal", {
+      workspace_id: retired.data.workspaceId,
+      message_type: retired.data.type,
+      outcome: "skipped",
+      reason: `${retired.data.type}_retired`,
+    });
+    message.ack();
     return;
   }
-  const spaceResume = SpaceIntentResumeQueueMessageSchema.safeParse(message.body);
-  if (spaceResume.success) {
-    const intent = spaceResume.data;
-    if (intent.region !== env.AVALON_REGION) {
-      message.ack();
-      return;
-    }
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      intent.workspaceId,
-      workspaceDOName(env.AVALON_REGION, intent.workspaceId),
-    );
-    // The person who staged it, if they are still here. A Space operation is
-    // applied through the Channel's canonical operations, and those authorize
-    // an actor — so a resume needs one, and the requester is the only actor the
-    // original authorization covered.
-    const member = await env.DB.prepare(
-      `SELECT user_id, role FROM workspace_members
-        WHERE workspace_id = ? AND user_id = ? AND status = 'active' AND access_class = 'member'`,
-    ).bind(intent.workspaceId, intent.requestedByUserId)
-      .first<{ user_id: string; role: AuthContext["role"] }>();
-    if (!member) {
-      try {
-        await workspace.recordSpaceIntentFailure({
-          workspaceId: intent.workspaceId,
-          userId: intent.requestedByUserId,
-          operationId: intent.operationId,
-          errorCode: "space_intent_requester_inactive",
-        });
-      } catch (error) {
-        if (!isRetirementRefusal(error)) throw error;
-      }
-      message.ack();
-      return;
-    }
-    const auth: AuthContext = {
-      sessionId: `space-intent:${intent.operationId}`,
-      userId: asUserId(member.user_id),
-      workspaceId: intent.workspaceId,
-      region: env.AVALON_REGION,
-      role: member.role,
-      analyticsWorkspaceId: null,
-      principal: "connector",
-    };
-    try {
-      // WorkspaceDO resumes the intent from its row, whatever its kind.
-      const resumed = await new SpaceService(env, auth).resumeIntent(intent.operationId);
-      // An intent that settled without doing its work is the one outcome
-      // nothing else would say out loud: the row reads `settled`, the queue is
-      // clear, and the operation the person asked for never reached its member
-      // Channels. Named here rather than inside the service because this is
-      // where the failing resume is already logged, and a reader comparing the
-      // two lines should not have to know which layer wrote which.
-      if (resumed.outcome === "abandoned") {
-        logWarn(env, "space_intent_resume_abandoned", {
-          workspace_id: intent.workspaceId,
-          space_id: intent.spaceId,
-          operation_id: intent.operationId,
-          kind: intent.kind,
-          reason: resumed.reason,
-        });
-      }
-      message.ack();
-    } catch (error) {
-      if (isRetirementRefusal(error)) {
-        message.ack();
-        return;
-      }
-      // Said out loud, and written down. A resume that keeps failing is
-      // retried by the alarm and here as well, so a silent catch makes a
-      // half-finished operation a thing that shows up only as a dead-letter
-      // message with no reason on it — which is the diagnosis this costs on the
-      // way in. The code goes on the intent as well as into the log, the way a
-      // default target's does: the row outlives the log line, and whoever finds
-      // it unsettled otherwise has the fact without the reason.
-      const reason = diagnosticErrorCode(error, "space_intent_resume_failed");
-      await workspace.recordSpaceIntentFailure({
-        workspaceId: intent.workspaceId,
-        userId: intent.requestedByUserId,
-        operationId: intent.operationId,
-        errorCode: reason,
-      }).catch(() => undefined);
-      logWarn(env, "space_intent_resume_failed", {
-        workspace_id: intent.workspaceId,
-        space_id: intent.spaceId,
-        operation_id: intent.operationId,
-        kind: intent.kind,
-        attempts: message.attempts,
-        reason,
-      });
-      const attempts = Math.max(1, message.attempts);
-      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
-    }
-    return;
-  }
-  if (await consumeWorkstreamBatchUpdate(message, env)) return;
   const runProvision = SidekickRunProvisionQueueMessageSchema.safeParse(message.body);
   if (runProvision.success) {
     // A Sidekick's run, handed off by its Organization's alarm entry. The entry
@@ -1337,6 +911,13 @@ function effectRejection(
 }
 
 /**
+ * How long an effect whose notification intent another delivery is holding
+ * waits before the Queue brings it back. Carried over unchanged from the
+ * deleted `parent_effect` branch; why 30 was chosen was not recorded.
+ */
+const NOTIFICATION_HELD_RETRY_SECONDS = 30;
+
+/**
  * One effect message, at-least-once and unordered.
  *
  * A child's effect goes to its parent, a parent's to the workspace. Both
@@ -1367,36 +948,55 @@ async function consumeEffect(
   try {
     if (envelope.kind === "conversation_effect") {
       const parent = await conversationParentStub(env, envelope);
-      await parent.receiveChildEffects({ substreamId: envelope.substreamId, envelopes: [envelope] });
+      // A retired parent answers with receipts alone, so it names no intent.
+      const { notificationIntentIds = [] } = await parent.receiveChildEffects({
+        substreamId: envelope.substreamId, envelopes: [envelope],
+      }) as { notificationIntentIds?: string[] };
       if (envelope.effect.kind === "directory_common" && envelope.effect.attachmentReservationReleases?.length) {
         const workspace = await workspaceDirectory(env,envelope.workspaceId);
         await workspace.publishConversationAttachments(envelope);
       }
+      // A mention or an add the parent recorded: deliver it now. The parent
+      // names it again on a redelivery and the intent's own state makes a
+      // second delivery a no-op, so a send that failed is retried this way.
+      let notificationOutcome: "delivered" | "skipped" | null = null;
+      for (const intentId of notificationIntentIds) {
+        const outcome = await processWorkstreamNotificationIntent(env, envelope.workspaceId, intentId);
+        if (outcome === "busy") {
+          logInfo(env, "conversation_effect_deferred", {
+            ...fields,
+            substream_id: envelope.substreamId,
+            notification_intent_id: intentId,
+            reason: "notification_busy",
+            retry_delay_seconds: NOTIFICATION_HELD_RETRY_SECONDS,
+          });
+          message.retry({ delaySeconds: NOTIFICATION_HELD_RETRY_SECONDS });
+          return;
+        }
+        notificationOutcome = outcome;
+      }
       logInfo(env, "conversation_effect_terminal", {
         ...fields,
         substream_id: envelope.substreamId,
-        outcome: "applied",
-        reason: "parent_accepted",
+        outcome: notificationOutcome ?? "applied",
+        reason: notificationOutcome ? "notification_terminal" : "parent_accepted",
+        ...(notificationIntentIds.length > 0 ? { notification_intent_id: notificationIntentIds.join(",") } : {}),
       });
       message.ack();
       return;
     }
+    // A parent's effect from a retired Thread or Space retries to the
+    // dead-letter queue under the kind's name, as a child's does when its
+    // parent refuses it; the dead-letter queue is the signal.
+    if (envelope.parentKind === "workstream" || envelope.parentKind === "space") {
+      throw new Error(`conversation_parent_kind_retired:${envelope.parentKind}`);
+    }
     if (envelope.effect.kind === "scope_grant_directory") {
       const workspace = await workspaceDirectory(env, envelope.workspaceId);
       await workspace.applyScopeGrantDirectory(envelope);
-      const { grant } = envelope.effect;
-      if (!grant.active && grant.target.kind === "workstream") {
-        // Owned Sidekick conversations are siblings, outside the workstream's
-        // participant projection. Keep this durable effect retryable until the
-        // existing revocation queue accepts their fan-out.
-        const published = await publishAccessRevocation(env, {
-          reason: "workstream_participant_removed", workspaceId: envelope.workspaceId,
-          userId: grant.userId, sessionId: null,
-          ...(grant.membershipIncarnation ? { membershipIncarnation: grant.membershipIncarnation } : {}),
-          target: { scope: "workstream_automations", workstreamId: grant.target.parentId },
-        });
-        if (!published) throw new Error("scope_grant_sidekick_revocation_publish_failed");
-      }
+      // A Thread's owned Sidekicks once needed a revocation hop here; a Canvas
+      // grant (target kind `workstream`) owns none, so the directory step is
+      // the whole effect.
       message.ack();
       return;
     }
@@ -1407,33 +1007,13 @@ async function consumeEffect(
       message.ack();
       return;
     }
-    const applied = await applyWorkstreamRegionalEffect(env, envelope);
-    let notificationOutcome: "delivered" | "skipped" | null = null;
-    if (applied.notificationIntentId) {
-      const outcome = await processWorkstreamNotificationIntent(
-        env,
-        envelope.workspaceId,
-        applied.notificationIntentId,
-      );
-      if (outcome === "busy") {
-        logInfo(env, "conversation_effect_deferred", {
-          ...fields,
-          notification_intent_id: applied.notificationIntentId,
-          reason: "notification_busy",
-          retry_delay_seconds: 30,
-        });
-        message.retry({ delaySeconds: 30 });
-        return;
-      }
-      notificationOutcome = outcome;
-    }
-    logInfo(env, "conversation_effect_terminal", {
-      ...fields,
-      outcome: notificationOutcome ?? "applied",
-      reason: notificationOutcome ? "notification_terminal" : "effect_applied",
-      notification_intent_id: applied.notificationIntentId,
-      replayed: applied.replayed,
-    });
+    // An activity row, a mention or an add as a `parent_effect`: only the
+    // Thread host published these, from its `parent_outbox`. A hosted parent
+    // records a mention where its conversation's effect lands
+    // (`HostedConversation.applyChildEnvelope`), so a leftover under a current
+    // parent kind is acknowledged and named rather than applied; a retired
+    // kind's was refused above.
+    logInfo(env, "conversation_effect_terminal", { ...fields, outcome: "ignored", reason: "parent_effect_producer_retired" });
     message.ack();
   } catch (error) {
     logWarn(env, "conversation_effect_processing_failed", {
@@ -1453,9 +1033,7 @@ export async function processConnectorEvent(
   const activity = activityRowFromWorkspaceEvent(event);
   env = withWorkspaceRuntimeDatabase(env, activity.workspace_id);
   // Match first and ask WorkspaceDO for its durable claim witness. The list of
-  // deliveries is only the work still pending; a retry after those deliveries
-  // settle must still know the activity was claimed and keep it out of
-  // Suggested Work.
+  // deliveries is only the work still pending.
   const workspace = await workspaceDirectory(env, asWorkspaceId(activity.workspace_id));
   // Parsed on this side: the delivery carries the event's metadata, whose
   // open shape the RPC type system cannot name, so the stub's answer is
@@ -1464,10 +1042,6 @@ export async function processConnectorEvent(
     workspaceId: activity.workspace_id,
     eventId: activity.id,
   }));
-  const opportunity = matched.matched
-    ? "claimed"
-    : await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
-  await projectActivityEvent(env, activity);
   await Promise.all(matched.deliveries.map((delivery) => sendConnectorEventDelivery(env, delivery)));
   logInfo(env, "connector_event_processing_completed", {
     workspace_id: activity.workspace_id,
@@ -1477,10 +1051,6 @@ export async function processConnectorEvent(
     connector_event_id: activity.id,
     deterministic_route_claimed: matched.matched,
     deterministic_delivery_count: matched.deliveries.length,
-    // What Suggested Work did with it, not merely whether it was offered: an
-    // event whose type is excluded from candidacy is offered and declined.
-    opportunity_enqueued: opportunity === "enqueued",
-    opportunity_outcome: opportunity,
     outcome: "processed",
   });
 }
@@ -1519,125 +1089,6 @@ function activityRowFromWorkspaceEvent(event: WorkspaceConnectorEvent): Activity
   };
 }
 
-/**
- * Projects a processed connector activity into the first-party activity log.
- *
- * It happens here, after routing, rather than at ingest: an activity is only
- * something a person should hear about once it has survived verification and
- * routing, and `activities` rows are rewritten during processing. The
- * connection's own scope is the audience — a personal connection speaks only to
- * its owner, a workspace-wide one to the whole workspace — which is the same
- * rule the rest of the product already applies to connector data.
- */
-async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<void> {
-  // The same rule the rest of the consumer applies, rather than a second one:
-  // null means the whole workspace may see it, an empty list means nobody may,
-  // and a populated list names exactly who may. A Slack private channel or DM
-  // arrives on a workspace-wide connection but is restricted to the people in
-  // it, so `connection_scope` alone is not the audience.
-  const restrictedUserIds = restrictedActivityUserIds(activity);
-  if (restrictedUserIds?.length === 0) return;
-
-  const digestible = activityIsDigestible(env, activity);
-  const shared = {
-    digestible,
-    workspaceId: asWorkspaceId(activity.workspace_id),
-    eventType: `connector.${activity.provider}.${activity.event_type}`,
-    subjectType: activity.resource_type ?? "connector_activity",
-    subjectId: activity.provider_resource_id ?? activity.id,
-    actorType: "external" as const,
-    actorLabel: connectorActorLabel(activity),
-    title: activity.title,
-    body: activity.summary || activity.text_snippet,
-    canonicalUrl: connectorOriginUrl(parseRecord(activity.metadata_json)),
-    occurredAt: activity.occurred_at,
-    sourceKind: "activity",
-    sourceId: activity.id,
-    metadata: { provider: activity.provider, connectorType: activity.connector_type },
-  };
-
-  if (!restrictedUserIds) {
-    await recordActivityEvent(env, {
-      ...shared,
-      audience: { kind: "workspace" },
-      dedupeKey: `activity:${activity.id}`,
-      // The provider already told us who it concerns; `target_user_ids_json`
-      // holds the Avalon users it resolved to.
-      targets: parseStrings(activity.target_user_ids_json).map((userId) => ({ userId, relation: "involved" })),
-    });
-    return;
-  }
-
-  // A restricted activity becomes one event per permitted reader. `audience`
-  // names a single user by design — a set-valued audience would need a join
-  // table to answer the one question this table exists to answer quickly — and
-  // these lists are small, because they come from a mention or a private
-  // conversation's membership.
-  for (const userId of restrictedUserIds) {
-    await recordActivityEvent(env, {
-      ...shared,
-      audience: { kind: "user", userId },
-      dedupeKey: `activity:${activity.id}:${userId}`,
-      targets: [{ userId, relation: "involved" }],
-    });
-  }
-}
-
-/**
- * Whether this connector activity may be read back to a person in a digest.
- *
- * This answers the digest question only. Suggested Work reads the same activity
- * independently and must not inherit this notification choice.
- *
- * The connector's manifest is the authority, keyed on the event type — the one
- * thing an activity durably carries all the way from the provider to the log.
- * A polling stream may additionally withhold its own output, and says so
- * through the metadata the poll host stamps; a stream can only ever subtract,
- * so the two declarations cannot contradict each other into a digest.
- *
- * Everything unknown is withheld. An unregistered connector in this region, a
- * manifest that has dropped an event type it used to emit, an activity from a
- * connector that predates the declaration — none of those are somebody
- * confirming that a person wants this in their inbox, and the cost of being
- * wrong runs one way only: a withheld event is still logged, still routes, and
- * still triggers automations.
- */
-function activityIsDigestible(env: Env, activity: ActivityRow): boolean {
-  if (parseRecord(activity.metadata_json)[ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY] === true) {
-    return false;
-  }
-  try {
-    return connectorRegistryForEnv(env)
-      .get(activity.connector_type)
-      .manifest.digestibleActivityTypes
-      .includes(activity.event_type);
-  } catch (error) {
-    // Two very different things reach here, and only one of them is ordinary.
-    //
-    // `unsupported_capability` is a connector this region does not register —
-    // expected, and withholding is the whole point of failing closed. Anything
-    // else means the registry could not be built at all: one malformed
-    // credential fails every adapter, which would withhold *every* connector's
-    // activity region-wide, settle every digest as empty, and advance every
-    // cursor over the discarded windows. That is indistinguishable from a quiet
-    // week unless it says so, so it is logged rather than swallowed.
-    if (!(error instanceof ConnectorError) || error.code !== "unsupported_capability") {
-      logWarn(env, "connector_registry_unavailable_for_digestibility", {
-        workspace_id: activity.workspace_id,
-        connector_type: activity.connector_type,
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-    }
-    return false;
-  }
-}
-
-function connectorActorLabel(activity: ActivityRow): string {
-  const displayName = parseRecord(activity.actor_json).displayName;
-  if (typeof displayName === "string" && displayName.length > 0) return displayName;
-  return activity.provider;
-}
-
 function workspaceDirectory(env: Env, workspaceId: WorkspaceId) {
   return durableObjectStubForWorkspace(
     env,
@@ -1649,6 +1100,5 @@ function workspaceDirectory(env: Env, workspaceId: WorkspaceId) {
 
 export const __testing = {
   matchesFilters,
-  projectActivityEvent,
   restrictedActivityUserIds,
 };

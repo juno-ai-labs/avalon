@@ -9,11 +9,11 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000f70");
 const firstParent = "00000000-0000-7000-8000-000000000f71";
 const secondParent = "00000000-0000-7000-8000-000000000f72";
 const sidekickParent = "00000000-0000-7000-8000-000000000f73";
-const root = agentIdForAddress({ parentKind: "workstream", parentId: firstParent, substreamId: asSubstreamId("0") });
-const second = agentIdForAddress({ parentKind: "workstream", parentId: secondParent, substreamId: asSubstreamId("0") });
+const root = agentIdForAddress({ parentKind: "canvas", parentId: firstParent, substreamId: asSubstreamId("0") });
+const second = agentIdForAddress({ parentKind: "canvas", parentId: secondParent, substreamId: asSubstreamId("0") });
 const sidekick = agentIdForAddress({ parentKind: "automation", parentId: sidekickParent, substreamId: asSubstreamId("0") });
-const worker = agentIdForAddress({ parentKind: "workstream", parentId: firstParent, substreamId: asSubstreamId("00000000-0000-7000-8000-000000000f74") });
-const nested = agentIdForAddress({ parentKind: "workstream", parentId: firstParent, substreamId: asSubstreamId("00000000-0000-7000-8000-000000000f75") });
+const worker = agentIdForAddress({ parentKind: "canvas", parentId: firstParent, substreamId: asSubstreamId("00000000-0000-7000-8000-000000000f74") });
+const nested = agentIdForAddress({ parentKind: "canvas", parentId: firstParent, substreamId: asSubstreamId("00000000-0000-7000-8000-000000000f75") });
 const address = { workspaceId: WORKSPACE_ID };
 function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
@@ -72,5 +72,25 @@ describe("durable agent teams", () => {
       .toEqual({ ok: false, code: "agent_ownership_conflict" });
     expect(await workspace().registerAgentDelegation({ ...address, teamId, ownerAgentId: nested, agentId: root }))
       .toEqual({ ok: false, code: "agent_ownership_cycle" });
+  });
+
+  it("leaves a Thread-era teammate out of the roster, and names the retired kind for its owner and its message", async () => {
+    const { teamId } = await workspace().ensureAgentTeam({ ...address, originAgentId: root });
+    await workspace().registerAgentDelegation({ ...address, teamId, ownerAgentId: root, agentId: worker });
+    const thread = "workstream/00000000-0000-7000-8000-000000000f76/0";
+    const messageId = crypto.randomUUID();
+    // Rows a Thread wrote before Threads were retired; no current writer can.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("INSERT INTO agent_team_members VALUES (?, ?)", teamId, thread);
+      state.storage.sql.exec("UPDATE agent_delegations SET owner_agent_id = ? WHERE agent_id = ?", thread, worker);
+      state.storage.sql.exec("INSERT INTO agent_message_routes VALUES (?, ?, ?, ?)", messageId, teamId, thread, root);
+    });
+
+    expect(await workspace().listAgentTeammates({ ...address, teamId, requesterAgentId: root }))
+      .toEqual({ ok: true, value: { agentIds: [root, worker].sort() } });
+    expect(await workspace().agentOwner({ ...address, agentId: worker }))
+      .toEqual({ ok: false, code: "conversation_parent_kind_retired:workstream" });
+    expect(await workspace().resolveAgentMessage({ ...address, messageId: crypto.randomUUID(), senderAgentId: root, replyToMessageId: messageId }))
+      .toEqual({ ok: false, code: "conversation_parent_kind_retired:workstream" });
   });
 });

@@ -185,12 +185,12 @@ describe('help center search', () => {
   const entry = (t: string, x: string, h: Array<[string, string]> = []): SearchEntry => ({ t, c: 'Chapter 1 · Start', u: `/help/${t.toLowerCase()}/`, d: '', h, x });
   const entries = [
     entry('Sidekicks', 'A sidekick runs on a schedule.'),
-    entry('Channels', 'Talk in a channel. Sidekicks can post here.', [['schedules', 'Schedules']]),
+    entry('Canvases', 'Talk in a canvas. Sidekicks can write here.', [['schedules', 'Schedules']]),
     entry('Billing', 'Invoices.'),
   ];
 
   it('ranks title matches above body matches and needs every word', () => {
-    expect(searchEntries(entries, 'sidekick').map((hit) => hit.entry.t)).toEqual(['Sidekicks', 'Channels']);
+    expect(searchEntries(entries, 'sidekick').map((hit) => hit.entry.t)).toEqual(['Sidekicks', 'Canvases']);
     expect(searchEntries(entries, 'sidekick invoices')).toEqual([]);
   });
 
@@ -201,7 +201,7 @@ describe('help center search', () => {
 
   it('points a heading match at its section', () => {
     expect(searchEntries(entries, 'schedules').map((hit) => [hit.entry.t, hit.heading])).toEqual([
-      ['Channels', ['schedules', 'Schedules']],
+      ['Canvases', ['schedules', 'Schedules']],
     ]);
   });
 });

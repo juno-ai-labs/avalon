@@ -163,20 +163,20 @@ export class WorkstreamResourceStorage {
   }
 
   /** Host identity for resource inheritance; never supplied by the model. */
-  inheritanceContext(): { kind: "sidekick"; sidekickId: string; substreamId: string } | { kind: "breakout" } | { kind: "none" } {
+  inheritanceContext(): { kind: "sidekick"; sidekickId: string; substreamId: string } | { kind: "none" } {
     const row = first(this.sql.exec<{
-      parent_kind: string; workstream_key: string; substream_id: string; background: number;
+      parent_kind: string; workstream_key: string; substream_id: string;
     }>(
       `SELECT workstream.parent_kind, workstream.workstream_key,
-              COALESCE(identity.external_substream_id, '0') AS substream_id,
-              EXISTS (SELECT 1 FROM background_agent) AS background
+              COALESCE(identity.external_substream_id, '0') AS substream_id
          FROM workstream LEFT JOIN substream_agent_identity AS identity ON identity.id = 1
         WHERE workstream.id = 1`,
     ));
     if (row?.parent_kind === "automation") {
       return { kind: "sidekick", sidekickId: row.workstream_key, substreamId: row.substream_id };
     }
-    return row?.parent_kind === "workstream" && row.substream_id !== "0" && !row.background
-      ? { kind: "breakout" } : { kind: "none" };
+    // A Thread's Breakout inherited its Thread's links; Threads are retired,
+    // and a Canvas's conversations inherit nothing.
+    return { kind: "none" };
   }
 }

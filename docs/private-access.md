@@ -204,15 +204,15 @@ wording and launch checklist. The content modules in the path table are the
 editable landing/email definitions. Personal outreach, profile research and
 onboarding demos remain separate launch work.
 
-Intake and downloads no longer depend on the completed Channel cutover row.
-Their own origin, rate, and credential checks still apply.
+Intake and downloads have their own origin, rate, and credential checks.
 Successful intake responses do not distinguish duplicates, but explicit email
 failures can reveal acknowledgement state during a provider outage. A future
 durable acknowledgement dispatcher can remove that distinction without silently
 losing retries.
 
-The [security audit](private-access-security-audit-2026-09-09.md) records unresolved
-launch controls. Do not treat the open guards or default Cloudflare DDoS protection
+The 2026-09-09 early-access security audit recorded unresolved launch controls;
+it is a historical record now, listed in [architecture.md's
+changelog](architecture.md#retired-documents). Do not treat the open guards or default Cloudflare DDoS protection
 as a hardened acquisition system.
 
 ## Operations
@@ -441,7 +441,7 @@ Shipped in [#728](https://github.com/juno-ai-labs/avalon/pull/728).
 
 **What changed:** The acknowledgement sends no HTML part. The stored copy is
 still reduced by `markdownToEmailText` rather than sent verbatim. Carrying that
-required relaxing the shared Resend caller ([digests](digests.md)), where `html`
+required relaxing the shared Resend caller (digests (retired)), where `html`
 was mandatory and is now optional and omitted rather than sent empty.
 
 **Why:** A person's four-paragraph reply arrived in the app's dark palette,

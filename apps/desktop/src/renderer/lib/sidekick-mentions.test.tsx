@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { SIDEBAR_LIST_QUERY_KEYS } from './sidebar-list-store';
-import { conversationSidekickMentions, SidekickMentionProvider, SidekickMentionScope, useSidekickMentions } from './sidekick-mentions';
+import { SidekickMentionProvider, SidekickMentionScope, useSidekickMentions } from './sidekick-mentions';
 import type { AutomationSummary } from './types';
 
 const DIGEST = '0b8c3a52-5f0e-4d6a-9a1c-1d2e3f405162';
@@ -44,16 +44,5 @@ describe('Sidekick mention directory', () => {
       </SidekickMentionProvider></QueryClientProvider>,
     );
     expect(screen.getByRole('status')).toHaveTextContent('Triage, Daily digest* | no mine');
-  });
-
-  it("leaves out a recommendation or attachment nobody can vouch for as published", () => {
-    const draft = { id: MINE, name: 'Half-built', description: '', available: false };
-    const published = { id: TRIAGE, name: 'Triage', description: '', available: true };
-    // A reader who cannot list the thread's own Sidekicks sees only these rows.
-    expect(conversationSidekickMentions(undefined, [], [draft, published]).map((sidekick) => sidekick.name))
-      .toEqual(['Triage']);
-    // The owned list vouches for an unavailable one, and keeps its status.
-    expect(conversationSidekickMentions([{ id: MINE, name: 'Half-built', description: '', status: 'paused' }], [draft], [])
-      .map((sidekick) => sidekick.status)).toEqual(['paused', undefined]);
   });
 });

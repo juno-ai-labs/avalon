@@ -3,7 +3,7 @@ import { asUserId } from "@rally/contracts";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, ClaimScopeInvitationsSchema, RevokeScopeInvitationSchema,
   WorkspaceRelationshipSchema, type ScopeGrant, type ScopeAccessRequest, type ScopeAccessResult, type ScopeInvitationResult, type ScopeInvitationSummary } from "@rally/contracts/scope-grants";
-import { workstreamAddressedUrl } from "@rally/contracts/workstream-links";
+import { canvasCanonicalUrl } from "@rally/contracts/links";
 import type { Env } from "../env";
 import { encryptString, decryptString } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -43,35 +43,25 @@ export class ScopeInvitationService {
     private readonly coverageMatches: (request: z.infer<typeof CreateScopeInvitationsSchema>) => boolean,
     private readonly enqueueDirectory: (grant: ScopeGrant, now: number) => void,
     private readonly readRelationship: (workspaceId: string, userId: string) => Promise<WorkspaceRelationship | null>,
-    private readonly noteRelationship: (relationship: WorkspaceRelationship) => void) {
+    private readonly noteRelationship: (relationship: WorkspaceRelationship) => void,
+    /**
+     * The Canvas being shared (`docs/canvases.md`), the one parent this
+     * service has now: it says whether its targets are ready and gives the
+     * title an invitation names.
+     */
+    private readonly parent: { targetsReady(): boolean; title(): string | null }) {
     this.invitations = new ScopeInvitationStorage(storage, parentId);
   }
 
   private canShare(targets: z.infer<typeof CreateScopeInvitationsSchema>["targets"], actor: WorkspaceRelationship | null): boolean {
-    if (this.storage.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id = ? AND phase = 'pending' LIMIT 1",
-      this.parentId).toArray().length) return false;
     return actor !== null && targets.every((target) => {
       const access = this.resolve({ target, userId: actor.userId }, actor);
       return access.allowed && access.writable && access.grantIds.length > 0;
     });
   }
 
-  private targetsReady(targets: z.infer<typeof CreateScopeInvitationsSchema>["targets"]): boolean {
-    if (targets.some((target) => target.kind === "workstream") && this.storage.sql.exec(
-      `SELECT 1 FROM parent_children child LEFT JOIN parent_participant_migrations migration
-        ON migration.parent_id=child.parent_id AND migration.substream_id=child.substream_id
-       WHERE child.parent_id=? AND child.kind='child' AND child.status='ready' AND child.audience='inherits_workstream'
-         AND (migration.phase IS NULL OR migration.phase!='complete') LIMIT 1`,
-      this.parentId,
-    ).toArray().length > 0) return false;
-    return targets.every((target) => {
-      const substreamId = target.kind === "workstream" ? "0" : target.substreamId;
-      const phase = this.storage.sql.exec<{ phase: string }>(
-        "SELECT phase FROM parent_participant_migrations WHERE parent_id = ? AND substream_id = ?",
-        this.parentId, substreamId,
-      ).toArray()[0]?.phase;
-      return phase === "complete";
-    });
+  private targetsReady(): boolean {
+    return this.parent.targetsReady();
   }
 
   async list(input: z.infer<typeof ListScopeInvitationsSchema>) {
@@ -122,12 +112,10 @@ export class ScopeInvitationService {
     return { status: "created", invitations: this.invitations.operation(request) ?? result.invitations };
   }
 
-  /** Main for a Channel share, the conversation itself for a single conversation. */
+  /** Where the email links: the Canvas, on the web app, which hands it to the desktop app from there. */
   private destination(origin: URL, targets: z.infer<typeof CreateScopeInvitationsSchema>["targets"]): string {
-    const target = targets[0]!;
-    return workstreamAddressedUrl(origin.origin, { region: this.env.AVALON_REGION, workspaceId: target.workspaceId,
-      workstreamId: target.parentId,
-      ...(target.kind === "conversation" && target.substreamId !== "0" ? { substreamId: target.substreamId } : {}) });
+    const workspaceId = targets[0]!.workspaceId;
+    return canvasCanonicalUrl(origin.origin, { region: this.env.AVALON_REGION, workspaceId, canvasId: this.parentId });
   }
 
   private async noteRecipients(workspaceId: string, emails: string[]): Promise<void> {
@@ -174,7 +162,7 @@ export class ScopeInvitationService {
   private record(request: z.infer<typeof CreateScopeInvitationsSchema>, actor: WorkspaceRelationship | null,
     prepared: Parameters<ScopeInvitationStorage["create"]>[2]): ScopeInvitationResult {
     if (!actor || !this.canShare(request.targets, actor)) return denied("sharing_required");
-    if (!this.targetsReady(request.targets)) return denied("migration_pending");
+    if (!this.targetsReady()) return denied("migration_pending");
     try {
       const existing = this.invitations.operation(request);
       if (existing) return { status: "created", invitations: existing };
@@ -343,9 +331,8 @@ export class ScopeInvitationService {
    * said in it.
    *
    * The first target, because that is where the emailed link opens:
-   * a work-stream offer opens Main, and a conversation offer opens that
-   * conversation. Never a second conversation and never the parent of a
-   * child-only share — the preview is bounded by the scope, exactly as the
+   * a Canvas offer (target kind `workstream`, its storage name) opens the
+   * Canvas's chat. The preview is bounded by the scope, exactly as the
    * grants are.
    *
    * A preview is cosmetic and its transcript lives in another object, so a read
@@ -360,12 +347,7 @@ export class ScopeInvitationService {
     try {
       // Inside the guard with the transcript read: a local read that fails is
       // still only a title, and an invitation must not fail for want of one.
-      conversationTitle = substreamId === "0"
-        ? this.storage.sql.exec<{ title: string | null }>("SELECT title FROM channels WHERE workstream_id = ?", this.parentId)
-          .toArray()[0]?.title ?? null
-        : this.storage.sql.exec<{ title: string | null }>(
-          "SELECT title FROM parent_children WHERE parent_id = ? AND substream_id = ?", this.parentId, substreamId,
-        ).toArray()[0]?.title ?? null;
+      conversationTitle = this.parent.title();
       return { conversationTitle, preview: await readConversationPreview(this.env, {
         workspaceId: target.workspaceId, parentId: target.parentId, substreamId,
         turns: PREVIEW_TURNS, words: PREVIEW_WORDS, bytes: PREVIEW_BYTES,
@@ -405,7 +387,7 @@ export class ScopeInvitationService {
    * re-reads the actor and commits under that read; this is the early gate.
    */
   private async unofferable(record: ScopeInvitationRecord): Promise<"migration_pending" | "sharing_required" | null> {
-    if (!this.targetsReady(record.summary.targets)) return "migration_pending";
+    if (!this.targetsReady()) return "migration_pending";
     const target = record.summary.targets[0];
     if (!target) return "sharing_required";
     const actor = await this.readRelationship(target.workspaceId, record.actorUserId);

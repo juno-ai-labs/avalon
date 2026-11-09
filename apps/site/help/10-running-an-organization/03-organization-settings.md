@@ -11,14 +11,11 @@ owners and administrators can change them.
 ## Organization preferences
 
 Open **Settings → Organization**. The first block, **Organization
-preferences**, says it holds **organization details and defaults shared by
-organization automations**. "Automations" is the old name for Sidekicks; the
-screen has not caught up yet.
+preferences**, holds the Organization's details and the defaults its
+Sidekicks share. It has three rows.
 
-It has three rows.
-
-- **Organization** shows the Organization's name. It is for reference only:
-  there is no control to rename the Organization on this screen.
+- **Organization** shows the Organization's name. An owner or administrator
+  can double-click it to rename it; a name needs 2 to 120 characters.
 - **Default timezone** is the time zone an Organization Sidekick uses when it
   does not name one of its own. Pick one from the list and it saves straight
   away.
@@ -29,17 +26,36 @@ It has three rows.
 The default time zone matters for anything scheduled. A Sidekick set to run "at
 9 every weekday" needs to know whose 9 o'clock. If most of your team is in one
 place, set it to theirs, and nobody gets their morning report at 2 in the
-afternoon. Schedules are covered in [Triggers and schedules](../07-sidekicks/03-triggers-and-schedules.md).
+afternoon. Schedules are covered in [Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md).
 
 Your own time zone is a different setting, under **Settings → Account**,
 described in
 [The Settings window](../09-settings-and-shortcuts/01-the-settings-window.md).
 
+Below the preferences, **What Rally remembers about the Organization** lists
+what Rally has saved to the Organization's shared memory (see
+[Memory and coming back later](../04-working-with-rally/05-memory-and-coming-back-later.md)).
+
+## Plan and usage
+
+The **Usage** block shows the Organization's plan and its shared weekly quota.
+
+- **Plan** is **Starter plan** ($100 a month) or **Growth plan** ($250 a
+  month). It sets the weekly quota everyone in the Organization shares. Only
+  owners and administrators can change it.
+- **Weekly quota** shows how much of this week's quota is left, with a meter,
+  and when it resets.
+- If the Organization has used more than its quota this month, a **Usage
+  beyond quota this month** row says so, marked **Not billed**: Rally is not
+  charging for it yet.
+
+The same meter sits in the account menu, under your avatar, for everyone.
+
 ## Letting the Rally team in
 
 Sometimes the quickest way for us to help is to see Rally the way one of your
 people sees it: set up a Sidekick for them, check why a connection fails, or
-tidy up a Channel. **Allow Rally access** lets the Rally team do that for seven
+look at a Canvas that will not behave. **Allow Rally access** lets the Rally team do that for seven
 calendar days.
 
 Press **Grant access**. The row then counts down how long is left (**6 days
@@ -174,7 +190,7 @@ owners and administrators can:
 
 > [!IMPORTANT]
 > An Organization connection is shared in full. Every member can use every tool
-> it grants, in any Thread, and Rally acts with the account you connected it
+> it grants, in any Canvas or Sidekick, and Rally acts with the account you connected it
 > with. Before you connect an account with wide access for the whole
 > Organization, ask whether a personal connection would do.
 

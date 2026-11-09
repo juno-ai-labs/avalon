@@ -5,9 +5,9 @@ through the `FLAGS` binding on configured regional Workers. The binding owns two
 things: which OpenRouter model each agent runs on, and which client-visible
 features the desktop is allowed to offer. Read this document before adding a
 flag, changing an agent's models, or changing what happens when a flag cannot be
-evaluated. One thing overrides a flag rather than being one — a conversation,
-a work stream or a substream alike, pinned to a single model — and it has [its
-own section](#a-conversations-own-model) below.
+evaluated. One thing overrides a flag rather than being one — a conversation
+pinned to a single model, which today means a Sidekick's pin copied onto each
+of its runs — and it has [its own section](#a-conversations-own-model) below.
 
 ## Where the code lives
 
@@ -40,8 +40,7 @@ The rest:
 | `packages/contracts` — `AGENT_MODEL_OVERRIDES` | The closed set of pinnable models. |
 | `apps/desktop/src/main/developer-settings-flag.ts` | The main-process poll and its interval. |
 | `apps/desktop/src/renderer/lib/agent-models.ts` | How every model id reads on screen — the menu's names and groups, and the shortening the conversation's read-only pill applies to an id the closed set does not admit. |
-| `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the menu that pins a work stream or substream being started, and the locked pill inside one that already exists. |
-| `apps/api/src/services/substream-creation-service.ts` | Where a substream's pin is written, on the confirmation that creates it. See [`substream-creation.md`](substream-creation.md). |
+| `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the choosable menu that would pin a conversation being started (offered by no composer today), and the locked pill inside one that already exists. |
 | `packages/db/src/index.ts`, `apps/api/src/durable-objects/workstream-object-product.ts` | Where compatibility reads and authoritative object reads re-validate a stored model pin before it reaches routing. |
 
 ### Why a flag rather than a Worker variable
@@ -59,25 +58,19 @@ and Rally keeps running unchanged when Flagship is unreachable.
 ### One flag per agent
 
 Each adjustable model-using agent type uses a flag keyed
-`agent-model-<agent>`. Background agents use the work-stream agent type and
+`agent-model-<agent>`. Background agents use the conversation agent type and
 inherit the source conversation's model override:
 
 | Agent | Flag key | Default model | Fallback models |
 | --- | --- | --- | --- |
-| Work-stream agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Work-stream naming | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Work-stream description | `agent-model-workstream-description` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Conversation import | `agent-model-session-import` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Suggestion draft | `agent-model-suggestion-draft` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
+| Conversation agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
+| Pasted-text naming (role `workstream_naming`) | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Memory sweep | `agent-model-memory-sweep` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Sidekick wizard | `agent-model-sidekick-authoring` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
 The checked-in primary model is `openai/gpt-6.1-sol`, with low reasoning
 from the harness model-default registry. Flagship variations still override
-the primary model. The conversation import agent reads screenshots, so any
-model its flag names must accept image input.
+the primary model.
 
 Message addressing is deliberately absent from this table and from Ace. Its
 evaluated cascade fixes JEV as primary and
@@ -85,16 +78,16 @@ evaluated cascade fixes JEV as primary and
 fallback, with no model or provider fallbacks. Changing either side requires a
 new evaluation and deploy; leaving an editable Flagship value in front of the
 measured route would let production silently diverge from its evidence. The
-work-stream entry matches the `AgentInferenceSource` value written to the
+conversation entry matches the `AgentInferenceSource` value written to the
 inference ledger, so a ledger row and its flag key name the same agent; an
 automation activation and its delegation workers remain `workstream` runs on
-the work-stream agent's flag. The Sidekick's authoring Main (`automation` parent,
+the conversation agent's flag. The Sidekick's authoring Main (`automation` parent,
 substream `0`) and the background agents it starts use `sidekick_authoring`,
-independently defaulting to Sol even when the work-stream flag serves Terra. An explicit conversation model pin still
+independently defaulting to Sol even when the conversation flag serves Terra. An explicit conversation model pin still
 wins. The rest
 are the standalone structured-output agents: message addressing uses the
-agent-harness JEV/fallback cascade; work-stream naming, the two halves of suggested work, and the
-work-stream description loop use the bounded structured-inference gateway.
+agent-harness JEV/fallback cascade; the pasted-text title (the
+`workstream_naming` role) uses the bounded structured-inference gateway.
 The memory sweep ([`agent-memory.md`](agent-memory.md)) is a role on the
 primary model. Text search's document embeddings use the same gateway's native
 OpenRouter embeddings path but deliberately have no Flagship role: their fixed
@@ -105,19 +98,25 @@ model is platform policy recorded in the durable context recipe before
 inference starts. The structured-inference gateway accepts that explicit route
 with an empty fallback list, so a retry cannot pick up a later flag evaluation
 or Worker fallback change and produce a different seed under the same receipt.
-Admission and ranking get separate flags because admission turns connector
-activity into prompts while ranking orders them per user, and pinning one should
-not move the other.
+The `workstream_description` and `suggestion_draft` roles are retired: their
+callers (the description loop, the conversation suggestions) were deleted in
+plan step C-2, and the Ace deploy retires `agent-model-workstream-description`
+and `agent-model-suggestion-draft` through `retireFlag`, as it does the
+`session_import`, `work_opportunity_admission` and `work_opportunity_ranking`
+keys, whose callers (session import, suggested work) were deleted too.
+`session_import`, `suggestion_draft` and `turn_disposition_classifier` stay in
+the usage contract's metered activities, so a usage event queued before the
+deploy still parses rather than going unbilled, and `OPENROUTER_STRUCTURED_MODEL`
+has no reader left; removing that Worker variable is a deploy-affecting change
+of its own. `workstream_naming`
+keeps its Thread-era name because it is a Flagship key, and now titles pasted
+text (`pasted-text-service.ts`); a rename would be a flag migration for no
+change in behaviour. The loop read a window of up to 600 messages to judge whether
+a Thread's purpose had moved, which is why it once wanted a stronger default
+than the classifiers it shared one with; its retirement record is in
+[`canvases.md`](canvases.md#retired-documents).
 
-The description loop is the one role whose default is most likely to want
-raising. It reads a window of up to 600 messages and decides whether a work
-stream's purpose has moved, which is a harder judgment than the classifiers it
-shares a default with — see
-[`workstream-descriptions.md`](workstream-descriptions.md). Retarget the flag
-rather than changing the shared `OPENROUTER_STRUCTURED_MODEL` variable, which
-would move the classifiers with it.
-
-Naming sits at the other end: it relabels one request in a single turn, runs
+Naming sits at the cheap end: it relabels one request in a single turn, runs
 while somebody watches for the result, and asks for no reasoning at all, so the
 smallest classifier model is the right default and latency is the thing a
 retarget would spend.
@@ -167,34 +166,29 @@ recorded in its own `model_override`. The pin wins, and the flag is not
 consulted at all.
 
 The two answer different questions. A flag is a fleet-wide default, rolled out
-per workspace, identical for every work stream in it. A pin is somebody asking
+per workspace, identical for every conversation in it. A pin is somebody asking
 what *this* piece of work looks like on some other model — decided once, when
 the conversation is created, and not something to stage a rollout for. Precedence
 follows from that: a rollout reaching the workspace must not quietly take the
 pinned conversation with it.
 
-**The row a run reads is its own, not its parent's.** A work stream's main
-conversation and each of its substreams is a separate object with a separate
-`model_override`, and routing resolves the one the run is executing in. So a
-substream is pinned by being created pinned, and a substream that names nothing
-follows the flag even inside a pinned work stream. Nothing copies a pin
-downward: making a child inherit its parent's would move every substream of
-every pinned work stream onto that model, none of which was chosen, and would
-make the selector's **Default** entry — which says it follows the flag — untrue
-in exactly the case somebody is looking at it.
+**The row a run reads is its own, not its parent's.** Each conversation is a
+separate object with a separate `model_override`, and routing resolves the one
+the run is executing in. Nothing copies a pin from a parent to a child
+implicitly: that would move conversations onto a model nobody chose, and make
+the selector's **Default** entry — which says it follows the flag — untrue in
+exactly the case somebody is looking at it.
 
-A pin comes from one place — the model selector in the composers that start work,
-which appears only while Application → Developer → **Debug enabled** is on. A new
-work stream carries the choice directly, and so does a new substream, through
-`POST …/substreams/confirm`; [`substream-creation.md`](substream-creation.md)
-owns that half. An automation's pin is the
+A Canvas is created unpinned (`createCanvas` writes `modelOverride: null`); the
+Thread and Breakout composers that used to carry a pin from the developer model
+selector are retired with them. An automation's pin is the
 `model_override` column on its `automation_directory` row; there is exactly one path
 that creates a run, `provisionSidekickRun`, which serves manual,
 scheduled, connector-event, and inbound-email triggers alike, and it copies
 `model_override` onto the run's child conversation, so a run resolves its model
 from its own row like every other conversation.
 
-That used to be three paths, two of which built the work-stream row inline, so
+That used to be three paths, two of which built the conversation row inline, so
 a pin that reached only one looked correct under **Run now** and was silently
 ignored by every scheduled run. That is how this shipped in review, and it is
 the concrete reason [`automation-lifecycle.md`](automation-lifecycle.md) has
@@ -202,11 +196,11 @@ one producer. A field a run needs comes from `readRunDefinition`; a field added
 to the conversation row without going through the definition is a field an
 automation run does not get.
 
-Nothing else writes the column, and choosing nothing writes nothing, so an
-ordinary conversation is unpinned and reads exactly as this document describes
-above. The selector says so plainly: unpinned is its own menu entry, labelled
-**Default** and described as following this flag, rather than named after a
-model the renderer cannot know is being served.
+Nothing else writes the column, so an ordinary conversation is unpinned and
+reads exactly as this document describes above. The control's choosable shape,
+which no composer offers today, says so plainly: unpinned is its own menu entry,
+labelled **Default** and described as following this flag, rather than named
+after a model the renderer cannot know is being served.
 
 The pin carries **no fallbacks**. It is a request to observe one specific model,
 and routing onward would answer a question nobody asked. An explicit pin stays
@@ -220,7 +214,7 @@ whole run. [`agent-harness.md`](agent-harness.md#failure-modes-and-limits) owns
 the budget and the failure code. Do not answer a pinned run's provider outage by
 adding fallbacks here.
 
-It reaches the work-stream agent, which also authors Sidekicks, runs their
+It reaches the conversation agent, which also authors Sidekicks, runs their
 occurrences, and executes background work. A background agent inherits its
 source conversation's override. The retired inline-child flag does not control
 these agents.
@@ -248,7 +242,7 @@ migration.
 
 #### Reading it back inside the conversation
 
-The composer of a conversation that already exists — a work stream's, and a
+The composer of a conversation that already exists — Main's and a
 substream's — shows the same control in the same place, behind the same **Debug
 enabled** preference: the identical dropdown, trigger and pill and chevron, with
 the trigger `disabled`. That is what
@@ -272,11 +266,11 @@ conversation**. A pin is fixed: `resolveWorkstreamModelRouting` finds it on the 
 never reads the flag, so every run uses it. An unpinned conversation re-evaluates
 `agent-model-workstream` on *every* launch, so the id shown is what the latest
 run happened to resolve and a later run may differ. What is immutable there is
-the setting, not the model — an earlier draft of this control said a work stream
+the setting, not the model — an earlier draft of this control said a conversation
 keeps the model it started on, which is a stability guarantee the server does
 not make for the unpinned majority. The renderer therefore takes `pinned`
 alongside the id and picks the claim from it. It says "conversation" rather than
-"work stream" for the same reason the column is read per row: in a substream,
+"Canvas" or "Sidekick" for the same reason the column is read per row: in a substream,
 naming the parent's kind would describe a row this pill is not showing.
 
 The tooltip survives the disable — checked in a real window rather than assumed,
@@ -331,8 +325,8 @@ A caller supplies only these, and only what it knows:
 | `agent` | The role key, e.g. `workstream` |
 | `appEnv` | `APP_ENV` |
 | `workspaceId` | Present wherever the caller knows it; the right key for percentage rollouts |
-| `workstreamId` | Present on work-stream, subagent, and classifier evaluations |
-| `userId` | Present on meeting-notes and work-stream naming evaluations |
+| `workstreamId` | Present on conversation, subagent, and classifier evaluations |
+| `userId` | Present on conversation naming evaluations |
 
 Identity wins over attributes: the loaded facts are spread underneath these, so
 nothing read from D1 can redefine the id a percentage rollout buckets on.
@@ -341,7 +335,7 @@ nothing read from D1 can redefine the id a percentage rollout buckets on.
 
 Ids alone cannot express a rule anybody would want to write. Nobody targets a
 uuid; they target the dogfooding workspace, the teams rather than the solo
-accounts, the work streams a person started rather than the ones an automation
+accounts, the conversations a person started rather than the ones an automation
 did. Each id the caller passes brings its facts with it:
 
 | Attribute | Type | Value | Needs |
@@ -358,7 +352,7 @@ did. Each id the caller passes brings its facts with it:
 | `workstreamCreatedByUserId` | string | Who created it | `workstreamId` |
 | `workstreamCreatorEmailDomain` | string | That person's email domain | `workstreamId` |
 | `workstreamFromOpportunity` | boolean | Whether it was started from a suggested work item | `workstreamId` |
-| `workstreamIsSystem` | boolean | Whether it is machinery (`system_kind`), such as a work stream an older digest created | `workstreamId` |
+| `workstreamIsSystem` | boolean | Whether it is machinery (`system_kind`), such as a conversation an older digest created | `workstreamId` |
 
 An attribute whose fact is unknown is **omitted rather than sent empty**, so a
 rule can never match a placeholder. The consequence worth knowing: a rule on an
@@ -377,7 +371,7 @@ does not match, so such an account sits out the rollout rather than landing in
 the wrong half of it.
 
 `workspaceOwnerEmailDomain` exists because it is the only domain most
-evaluations can have. A work-stream run, a subagent, and the
+evaluations can have. A conversation run, a subagent, and the
 classifiers carry no `userId` — nobody is asking, the workspace is — so without
 the owner's domain no rule could reach a customer's tenancy or the dogfooding
 workspaces on the paths that do the most inference.
@@ -390,8 +384,8 @@ loader, not at the rule author's discretion:
 
 - **Yes** — ids, counts, ages, the enums the schema itself declares
   (`origin_type`, `scope`, `role`), and the **domain** half of an email address.
-- **No** — a person's name, a full email address or its local part, a work
-  stream's title or objective, a note, a message, a prompt, or anything else a
+- **No** — a person's name, a full email address or its local part, a
+  conversation's title or objective, a note, a message, a prompt, or anything else a
   person wrote.
 - **One carve-out: `workspaceSlug`.** It is user-authored text — the workspace
   name typed at onboarding, slugified, with eight characters of the workspace id
@@ -417,17 +411,17 @@ carve-out.
   would otherwise all miss and all read — and a single request now resolves
   several flags at once. The pending read is dropped as soon as it settles, so
   it de-duplicates rather than adding a second cache with its own staleness.
-- A **miss is not cached.** A scheduled-creation path resolves a model for a work
-  stream id whose product facts are not populated yet, so remembering "no such
-  work stream" would leave those work streams unattributed through their first
+- A **miss is not cached.** A scheduled-creation path resolves a model for a
+  conversation id whose product facts are not populated yet, so remembering "no such
+  conversation" would leave those conversations unattributed through their first
   runs. They are unattributed for that first evaluation either way — a fact the
   rows do not yet hold cannot be sent.
-- A brand-new Durable Object keeps its work-stream id in the first model
+- A brand-new Durable Object keeps its conversation id in the first model
   evaluation for identity and bucketing, but loads only workspace attributes
   until the atomic authoritative root, opening message, and first run commit.
-  Querying work-stream facts while the root is still `preparing` is not a miss:
+  Querying conversation facts while the root is still `preparing` is not a miss:
   it crosses the authority fence, logs an operational error, and suppresses the
-  now-readable row for ten seconds. Later runs load the complete work-stream
+  now-readable row for ten seconds. Later runs load the complete conversation
   attributes normally.
 - Scheduled creation uses the same resolver. `provisionSidekickRun`
   calls `scheduledWorkstreamModel` after the run's child conversation is
@@ -496,8 +490,7 @@ behave:
 | Flag key | Type | Default | Decides |
 | --- | --- | --- | --- |
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
-| `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
-| `live-artifacts-enabled` | boolean | `false` | Whether Electron shows live-artifact surfaces — the rail's site detail and preview pane, the Data view, and the artifact window. Presentation only: an artifact's authorization is structural, so a URL somebody already holds keeps working through its session checks whether or not this is on. See [`live-web-artifacts.md`](live-web-artifacts.md) |
+| `suggested-work-enabled` | boolean | `false` | Still served; it gated the Suggested Work surfaces, which are deleted, so no client reads it |
 | `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
@@ -517,9 +510,7 @@ The managed product Booleans are presentation-only. Only
 Electron consumes them to show or hide product surfaces; the API routes and
 underlying product capabilities do not evaluate them. They are rollout
 controls for discovery and visibility, not authorization, entitlements, or
-server-side kill switches. A hidden Suggested Work surface may skip its own
-fetch and impressions because nothing was drawn, but the Suggested Work API
-remains available. The same rule applies to workspace-template,
+server-side kill switches. The same rule applies to workspace-template
 and multiple-workspace operations. Turning the
 multiple-workspaces flag off hides the account-menu affordances; it does not
 collapse memberships or discard stored workspace credentials.
@@ -565,7 +556,7 @@ a value.
 
 #### The desktop half
 
-The four managed product Booleans arrive on the private
+The three managed product Booleans arrive on the private
 WorkspaceDO subscribe response and on `workspace_feature_flags` events. They
 replace the renderer's one `['feature-flags']` cache as a complete object; a
 partial event cannot leave a mixed generation behind. Reconnect always
@@ -583,8 +574,8 @@ flag change takes to reach a running app. The poll lives in the **main
 process**, not a renderer, because that is where `application-settings.json` and
 the session are, and because both windows then read one answer instead of each
 deciding for itself. It is a poll rather than a socket: the only realtime
-channel Rally has is the per-work-stream room, which a device without a work
-stream open is not connected to, and a flag change is not worth a second
+channel Rally has is the per-conversation room, which a device without a
+conversation open is not connected to, and a flag change is not worth a second
 channel. A sign-in re-asks immediately rather than waiting out the interval; a
 sign-out closes the section on the way past.
 
@@ -627,7 +618,7 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
 - **A conversation's pin wins and the flag is not consulted at all.** A rollout
   reaching the workspace must not quietly take a pinned conversation with it.
 - **A run resolves the pin on the row of the conversation it is executing in.**
-  A work stream's main conversation and each substream is a separate object with
+  A conversation's main conversation and each substream is a separate object with
   a separate column, so nothing inherits: a substream is pinned by being created
   pinned. Copying a parent's pin downward would move work nobody chose for it.
 - **The one path that creates a run copies `model_override` onto that run's
@@ -692,13 +683,11 @@ what they do with the model they are handed:
 
 | For | Read |
 | --- | --- |
-| Why digests need a kill switch, and exactly where it is checked | [`digests.md`](digests.md#an-occurrence) |
 | The run loop, the route plan's failure policy, the inference ledger | [`agent-harness.md`](agent-harness.md) |
 | The `model_override` column and where it is copied | [`data-model.md`](data-model.md) |
-| The cadence's other half, and what a snapshot travels with | [`meeting-notes.md`](meeting-notes.md) |
 | Why **Debug enabled** crosses no trust boundary | [`security.md`](security.md) |
 | Why `userPlatformId` is the stable per-person id | [`regionalization.md`](regionalization.md) |
-| The description loop that most wants its default raised | [`workstream-descriptions.md`](workstream-descriptions.md) |
+| The retired description loop's retirement record | [`canvases.md`](canvases.md#retired-documents) |
 | Provisioning credentials and the release health gate | [`runbook.md`](runbook.md) |
 
 A subsystem that wants a rollout adds a flag here and reads it through the
@@ -728,9 +717,9 @@ correctly provisioned flag.
   binding, a binding that throws, an unresolved flag, a non-boolean value.
 - **Facts are cached in the isolate for five minutes, keyed by subject**, and
   concurrent evaluations of the same subject share one read. A **miss is not
-  cached**: the automation paths resolve a model for a work-stream id one statement
-  before they insert the row, so remembering "no such work stream" would leave those
-  work streams unattributed through their first runs.
+  cached**: the automation paths resolve a model for a conversation id one statement
+  before they insert the row, so remembering "no such conversation" would leave those
+  conversations unattributed through their first runs.
 - **A failed read is held down for ten seconds**, keyed by entity and subject.
   While D1 is unhealthy every agent path would otherwise re-issue its reads and
   warn again on every run, so an outage would arrive with a log flood on top of it.
@@ -742,8 +731,6 @@ correctly provisioned flag.
   failed read there is a real defect rather than the expected local state.
 - **A pin naming a retired model logs `workstream_model_override_unknown` and
   returns to the flag**, rather than failing the run.
-- **A clamped cadence logs `control_tower_refresh_flag_clamped`** rather than
-  passing quietly.
 - **`harness_runs.model` is an expectation, not a guarantee.** It records the model
   a scheduled run was expected to use, resolved at schedule time; a flag changed
   between scheduling and execution makes it wrong. The run host overwrites it at
@@ -774,19 +761,16 @@ correctly provisioned flag.
 | --- | --- |
 | `apps/api/test/agent-model-flags.test.ts` | Each resolver's failure direction, unresolved cases, and zod rejection. |
 | `apps/api/test/agent-model-override.test.ts` | Pin precedence, the closed id set validated on write and read, and the three run-creation paths that must copy the column. |
-| `apps/api/test/client-feature-flags.test.ts` | That everything but an explicit `true` resolves to off, and that the cadence is clamped to `CONTROL_TOWER_REFRESH_SECONDS`. |
+| `apps/api/test/client-feature-flags.test.ts` | That everything but an explicit `true` resolves to off. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Initial private values and per-user live re-evaluation over a real hibernating WebSocket. |
 | `apps/ace/test` | Safe rule vocabulary and Flagship limits, signed-site failure behavior, key-only notification, and cross-region Queue fan-out. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | Initial and live full-contract replacement in the feature-flag cache. |
-| Desktop menu, sidebar, work-stream, and meeting suites | Every visible entry point remains hidden until explicitly enabled while product actions remain otherwise unchanged. |
+| Desktop menu, sidebar, conversation, and meeting suites | Every visible entry point remains hidden until explicitly enabled while product actions remain otherwise unchanged. |
 | `apps/api/test/flag-targeting-attributes.test.ts` | The attribute vocabulary, the omitted-not-empty rule, the cache and its negative cases, and — scoped to the fields the rule covers — that no local part or authored text leaves the Worker. |
 | `apps/desktop/src/main/developer-settings-flag.test.ts` | The poll, the last-answer-standing behavior, and that a stored `debugEnabled` grants nothing while the flag is off. |
 | `apps/desktop/src/renderer/screens/workspace-settings.test.tsx`, `apps/desktop/src/renderer/lib/use-debug-enabled.test.tsx` | Live application-setting broadcasts win over older reads, read failures, and mutation replies, so a poll can reveal or withdraw Developer without a relaunch. |
-| `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | The selector's **Debug enabled** gate, that an untouched control sends no override, and that an explicit pin to the flag's own default is still sent. |
+
 | `apps/desktop/src/renderer/components/workstream-composer.test.tsx` | The locked pill inside a conversation: the same gate, the exact id and the claim each of `pinned`'s two states may make, and that it opens no menu. |
-| `apps/desktop/src/renderer/components/substream-launch.test.tsx` | The substream launcher's selector: the same gate, the chosen pin reaching creation, and that it stays on **Default** under a pinned parent rather than inheriting. |
-| `apps/api/test-workers/substream-creation-runtime.test.ts` | A substream created pinned: the column on the child's row and not the parent's, the pin on the wire in `WorkstreamDetail`, and the run reaching the provider on that model. |
-| `apps/api/test/workstream-row-contracts.test.ts` | That the stored pin is re-validated on read, and that a retired model reads as unpinned rather than failing the response. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/agent-model-flags.test.ts` — the
@@ -819,8 +803,7 @@ identical. Staging a rollout per region does not need a second app either:
 
 Ace automatically ensures all eight `agent-model-*` JSON flags plus
 `meeting-recording-enabled`, `suggested-work-enabled`,
-`multiple-workspaces-enabled`,
-`live-artifacts-enabled`, and `push-notifications-enabled` exist on every
+`multiple-workspaces-enabled`, and `push-notifications-enabled` exist on every
 merge-to-main deployment. It seeds model flags from the checked-in Worker
 defaults and does not overwrite an existing definition. Every product flag
 defaults off except `push-notifications-enabled`, which defaults **on** for
@@ -954,7 +937,7 @@ pnpm exec wrangler flagship flags set <APP_ID> agent-model-workstream -V next
 ```
 
 Bucket the rollout by `workspaceId` rather than `workstreamId` or `userId`: it
-keeps every agent in a workspace on one generation, so a work-stream run and the
+keeps every agent in a workspace on one generation, so a conversation run and the
 subagents and classifiers around it stay consistent.
 
 Because configured deployments share the app, a rollout reaches both unless you scope it.
@@ -973,7 +956,7 @@ pnpm exec wrangler flagship flags update <APP_ID> agent-model-workstream \
 Prefer a rule whose attribute is present on the evaluations it is meant to
 reach. `userRole` and `userEmailDomain` only exist where a caller knows a user —
 the automation compiler and meeting notes — so a rule written on them leaves the
-work-stream agent on the old variation, which is rarely what a rollout means to
+conversation agent on the old variation, which is rarely what a rollout means to
 say. `workspaceOwnerEmailDomain` reaches every evaluation that knows a
 workspace, which is all of them.
 
@@ -1102,7 +1085,7 @@ closed with no exception.
 
 **Why:** The flag guarded the agent-run digest that the 2026-10-15 rewrite
 replaced, and its live default had drifted to `off`, silently hiding the Daily
-digest settings and stopping delivery. See [`digests.md`](digests.md).
+digest settings and stopping delivery. See `digests.md` (retired).
 
 **Consequences:** A future flag that must fail open belongs in a module of its
 own, as this one did; do not revive `digests-enabled` for a new purpose.
@@ -1121,7 +1104,7 @@ icons. Terra accepts the schema.
 
 **Consequences:** The Gemini fallbacks serve naming only with the plain-string
 icon and `reasoningRequired` from the same pull request; see
-[`workstream-naming.md`](workstream-naming.md#changelog). A
+the naming retirement record in [`canvases.md`](canvases.md#retired-documents). A
 `.env.local` that sets the key, as one copied from the old `.env.example` does,
 outranks the new default until it is edited.
 
@@ -1574,7 +1557,7 @@ while silently doing nothing is worse than the scope of reading one more
 field.
 
 **Considered and rejected:** Nothing new here beyond what
-[`digests.md`](digests.md)'s matching entry already weighs — a "paused"
+`digests.md` (retired)'s matching entry already weighs — a "paused"
 notice instead of hiding the section outright, and a client-side check
 combined from workspace and user facts rather than one evaluation reused.
 
@@ -1590,7 +1573,7 @@ effect the same way a `hypersight-enabled` save always did.
 already named, reading a new `digests-enabled` boolean. It fails open, the
 same direction as the model flags and for the same reason. It is Ace's fifth
 managed flag — the first that is not presentation-only and the first Ace
-provisions on rather than off. `docs/digests.md#an-occurrence` and `docs/ace.md`
+provisions on rather than off. `docs/ace.md` and the retired `docs/digests.md` (in git history)
 carry the full rationale; this document's tables and provisioning walkthrough
 now include it alongside the other three resolvers.
 

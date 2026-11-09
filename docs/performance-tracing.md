@@ -31,11 +31,9 @@ necessarily keeps apart.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/observability/tracing.ts` | The whole API-side surface: `inSpan`, `inFlowSpan`, `inDurableObjectPhase`, `requestFlowSpan`, `noFlowSpan`, and `identityAttributes` — the one place a Rally identifier becomes an attribute name. |
-| `apps/api/src/routes/workstreams.ts`, `routes/conversations.ts` | Root spans for work-stream creation/open/message flows and substream preparation/confirmation. |
-| `apps/api/src/services/workstream-object-creation-service.ts` | The create path's steps — every awaited call between the receipt and the activated route. |
-| `apps/api/src/services/substream-creation-service.ts` | Named steps for parent authorization, preparation receipts, source capture, context transformation, child provisioning, context installation, opening admission, publication, and seating. |
+| `apps/api/src/routes/conversations.ts` | Root spans for conversation open and message flows. `routes/canvases.ts` opens none. |
 | `apps/api/src/services/socket-service.ts` | `SocketService.upgrade`: the edge half of a socket open. |
-| `apps/api/src/durable-objects/substream-agent.ts` | The room: product operations, socket acceptance, subscription, snapshot assembly. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | `AgentLoopDO`, the room: product operations, socket acceptance, subscription, snapshot assembly. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Workspace synchronization and the released-client compatibility handler for the former parent-routed `create_message`. |
 | `apps/api/test/helpers/cloudflare-workers.ts` | The Node suite's stand-in for `tracing`, and `recordedSpans()`, which is how a Node test asserts on span names and attributes. |
 | `apps/desktop/src/renderer/lib/perf-trace.ts` | The renderer tracer, its governed diagnostic projection, and `newRequestId`. Not OpenTelemetry — see [The desktop half](#the-desktop-half). |
@@ -105,7 +103,7 @@ Two properties of `step` decide how a flow has to be written:
   already shares the root's trace, and `perf_flow` carries every step's duration
   beside the identity, which is the path built for aggregating across requests.
 
-**One person opening a work stream produces about eight of these rows, not
+**One person opening a conversation produces about eight of these rows, not
 one — and the rows are the small half of what an export ships.** A flow is per component invocation, and an open crosses the detail read,
 the transcript read, the socket ticket, the socket upgrade, the room's accept,
 its subscribe, and its `get` and `messages` calls. All unconditional, both
@@ -166,18 +164,14 @@ the preparation timestamp.
 
 The same row carries raw elapsed durations for the operations inside those
 regions: `initial_identity_run_ms`, `persisted_outcome_ms`,
-`initial_run_authority_ms`, `sidekick_authority_ms`,
-`sidekick_recommendations_ms`, `lease_heartbeat_ms`,
+`initial_run_authority_ms`, `sidekick_authority_ms`, `lease_heartbeat_ms`,
 `run_context_ms`,
 `transcript_bootstrap_ms`, `tool_inventory_ms`, `tool_construction_ms`, and
 `attachment_replay_ms`.
 `transcript_bootstrap_required` distinguishes a fresh canonical projection from
 a resident persistent-loop projection, and `sidekick_snapshot_reused`
-distinguishes a pinned Sidekick snapshot from fresh discovery.
-`sidekick_recommendations_read` distinguishes a
-skipped conditional dependency from a real `0 ms` result. These durations also
-overlap: recommendation discovery may be nested inside guest Sidekick authority,
-tool inventory begins before the lease heartbeat, while tool construction begins
+distinguishes a pinned Sidekick snapshot from fresh discovery. These durations
+also overlap: tool inventory begins before the lease heartbeat, while tool construction begins
 after it, and run context, tools, transcript, and attachment replay then proceed
 concurrently. Use each field to identify the slow dependency, never add them
 together.
@@ -207,17 +201,13 @@ logger retains every entry; `plugin_id` inside each entry names the plugin.
 `authorization`). The catalog source is `provided` when the host's KV snapshot has windows,
 `fallback` when it is empty, and `skipped` without compaction. Bind no longer
 fetches the OpenRouter catalog on the inference path.
-`tool_surface_hash_ms` precedes scope persistence; `scope_ownership_ms`,
-`scope_hash_ms`, and `scope_write_ms` divide that persistence call.
-`activation_run_write_ms` and `activation_hint_write_ms` divide its two durable
-writes; for credential plugins, `activation_connection_context_ms`,
-`activation_provider_health_ms`, and `activation_health_verdict_ms` divide
-authorization. Initial authorization checks overlap across plugins; their
-summed durations may exceed `initial_activations_ms`. Bind's
-`bind_plugin_rehydration_ms` now excludes a second connector authorization
-for IDs this host just checked and persisted, but still includes eligibility
-and any dynamic tool loading. `before_model_principal_ms` and `before_model_identity_ms`
-separate the D1 membership and Channel identity reads; conversation and
+`tool_surface_hash_ms` precedes scope persistence, which is
+`scope_persist_ms`. Each activation detail divides its plugin's time into
+`activation_authorize_ms`, `activation_prepare_ms` and
+`activation_persist_ms`; initial authorization checks overlap across plugins,
+so their summed durations may exceed `initial_activations_ms`.
+`initial_identity_run_ms` and `initial_authority_ms` cover the identity and
+authority reads before the model; conversation and
 automation authority fields appear only when that path runs. The forced lease
 renewals expose their attempt and persistent-loop parts as
 `liveness_inference_start_*_ms` and `liveness_before_model_*_ms`.
@@ -297,7 +287,7 @@ A message-send span ends when the immutable turn has been accepted as either
 canonical or pending. It deliberately carries no agent-invocation or harness-run
 attribute: admission may wake the persistent loop, but it does not prove that an
 execution has started or identify which later execution receipt will deliver the
-turn. `rally.harness_run.id` remains valid on work-stream creation and actual
+turn. `rally.harness_run.id` remains valid on conversation creation and actual
 execution spans, where a real subordinate receipt exists.
 
 `identityAttributes` in `tracing.ts` is the only place a Rally identifier
@@ -346,7 +336,7 @@ attribute is simply not there.
 | --- | --- | --- |
 | Anything rooted in an HTTP request | yes | yes |
 | A Durable Object reached over a binding call | inherited — the span is a child of the HTTP root above | inherited |
-| `workstream.room.socket.accept` / `…subscribe` / `…create_message` on SubstreamAgent, `workstream.message.send` on the legacy WorkspaceDO path | no | yes |
+| `workstream.room.socket.accept` / `…subscribe` / `…create_message` on `AgentLoopDO`, `workstream.message.send` on the legacy WorkspaceDO path | no | yes |
 
 The socket-rooted spans are their own traces, so they need identity of their
 own. They get the workspace surrogate from the `workspaces` row their
@@ -383,7 +373,7 @@ would never meet.
 | Sidebar click → each retried `GET /workstreams/:id` | `rally.operation.id`, from the click-scoped `x-rally-operation-id`. Each HTTP call keeps its own `rally.request.id`. |
 | `GET …/socket` → the WebSocket upgrade → the room | `rally.socket.ticket_id`. A browser can attach no header to a handshake — see [`realtime-sockets.md`](realtime-sockets.md) — so the ticket id, which the issuing route logs and the room consumes, is the only shared value. |
 | The room's upgrade → the `subscribe` that follows | `rally.socket.connection_id`. `subscribe` arrives on a later invocation, possibly on a woken isolate. |
-| Renderer → admitted SubstreamAgent socket | `rally.message.client_id`, which the renderer, the command, and the private command result all carry. |
+| Renderer → admitted `AgentLoopDO` socket | `rally.message.client_id`, which the renderer, the command, and the private command result all carry. |
 
 ### The five flows
 
@@ -428,7 +418,7 @@ message, and that count is the only place its cost appears.
 Normal navigation
 issues neither detail nor transcript REST reads. Canonical history recovery
 uses snapshot-fenced `load_transcript_range` requests on the admitted
-SubstreamAgent socket. When replay is unavailable or the client cursor is
+`AgentLoopDO` socket. When replay is unavailable or the client cursor is
 ahead, main and child conversations both abandon that connection, reset the
 addressed cursor, and reconnect from zero for a new authoritative socket
 snapshot. Retry restarts the same bounded socket opening sequence; it does not
@@ -446,7 +436,7 @@ while a failed runtime-recovery attempt is logged and retried by the next
 mutation rather than remaining a permanently rejected gate.
 
 **`workstream_message_send`** — the desktop sends over the already-admitted
-SubstreamAgent socket, so `workstream.room.create_message` is the trace to read:
+`AgentLoopDO` socket, so `workstream.room.create_message` is the trace to read:
 `workstream.room.product.create_message`, optional `…loop.activate`, and
 `…respond`. There is no WorkspaceDO span, second session query, or parent-to-child
 binding call on the current desktop path. `POST /:id/messages` traces the same
@@ -492,7 +482,7 @@ requires everything to travel on.
 Instead `RallyApi` stamps a distinct `x-request-id` on every call and prints one
 `[perf] http <method> <path> <status> <ms>` line, and each flow prints one
 `[perf] <flow> <ms>` line carrying its phases and the correlation ids above.
-The work-stream detail call additionally sends the pending sidebar attempt as
+The conversation detail call additionally sends the pending sidebar attempt as
 `x-rally-operation-id`, so React Query retries remain separate requests under
 one product opening attempt.
 Both go through `logDebug`, which is `console.debug`: filtered out of DevTools
@@ -536,7 +526,7 @@ rendering — and those have opposite fixes. Two things separate them.
 
 Every flow line carries **`blockedMs` and `longTasks`**: the `longtask` entries
 overlapping that flow's window, from one process-wide `PerformanceObserver`
-rather than one per trace, since several work streams hold open traces at once.
+rather than one per trace, since several conversations hold open traces at once.
 Entries are counted by their overlap with the window, not whole, so a flow that
 ends mid-task is not charged for work that outlives it. A slow flow with
 `blockedMs` near zero was genuinely waiting on something else; a slow flow with
@@ -552,7 +542,7 @@ large `dial` can only mean the renderer was not running; main-process IPC,
 network setup, TLS, the Worker upgrade, and the Durable Object acceptance are
 all inside `handshake`. One number across both read as a slow server either way.
 And **`sinceEffectMs`** reports how long
-the work stream was on screen before the attempt's first request left: on
+the conversation was on screen before the attempt's first request left: on
 attempt zero that is dead time no trace can otherwise see, because the trace
 does not exist until `connect` runs. On a reconnect it is the age of the effect
 and the backoff explains it.
@@ -586,7 +576,7 @@ and the backoff explains it.
 ## Boundary
 
 This module owns latency diagnosis for the named product flows, including
-workspace search and the work-stream flows described here.
+workspace search and the conversation flows described here.
 
 - **Its exported projection is diagnostic telemetry, not a product outcome.**
   [`telemetry.md`](telemetry.md) owns its regional routing, closed schema,
@@ -687,7 +677,7 @@ workspace search and the work-stream flows described here.
 | `apps/api/test/tracing.test.ts` (`pnpm --filter @rally/api test`) | That a step opens a runtime span and ends it, that the step which threw is still ended and the rejection propagates, the `perf_flow` row's step map and `slowest_step`, `setError`'s status attributes, that an absent identifier sets no attribute, that `noFlowSpan` opens nothing, and that a request's span carries the `x-request-id` the desktop sent. |
 | `apps/desktop/src/renderer/lib/perf-trace.test.ts` | The renderer tracer's phase order, its throwing phase, `end` idempotence, the exact governed projection and rejection of arbitrary console fields, and that `newRequestId` produces something `requestContext` will accept rather than replace. |
 | `apps/desktop/src/main/native-performance-log.test.ts`, desktop release tests | The exact public structured record, observational failure behavior, development/packaged addon paths, and that the native bridge is packaged, signed, and release-verified. |
-| `apps/desktop/src/renderer/lib/api.test.ts` (`request correlation`) | That every call carries a distinct `x-request-id`, explicit per-request socket IDs remain unchanged, and a work-stream detail retry carries its longer-lived opening attempt separately as `x-rally-operation-id`. |
+| `apps/desktop/src/renderer/lib/api.test.ts` (`request correlation`) | That every call carries a distinct `x-request-id`, explicit per-request socket IDs remain unchanged, and a conversation detail retry carries its longer-lived opening attempt separately as `x-rally-operation-id`. |
 | `apps/api/test/security-and-config.test.ts` | That `x-request-id` survives the CORS preflight in configured deployments and is exposed on the response. |
 
 Three traps:

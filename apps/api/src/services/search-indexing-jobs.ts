@@ -1,9 +1,22 @@
 import { z } from 'zod';
-import { ChannelMessageSearchProjectionSchema } from '../durable-objects/channel-message-search-projection';
+import { IdSchema, WorkspaceIdSchema } from '@rally/contracts';
+import { RegionSchema } from '@rally/contracts/regions';
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
 import { SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
 import { SearchDocumentSchema } from './search-document';
 import { SEARCH_EMBEDDING_BATCH_SIZE } from './search-embedding';
+
+/**
+ * A Channel message's search job. Channel messages are retired with Channels
+ * (plan step C-2) and nothing publishes one; a job published before that still
+ * parses so it is answered with no documents rather than retried.
+ */
+export const ChannelMessageSearchProjectionSchema = z.strictObject({
+  type: z.literal('channel_message_search_projection_v1'),
+  region: RegionSchema,
+  workspaceId: WorkspaceIdSchema,
+  messageId: IdSchema,
+});
 
 export const SearchSourceReferenceSchema = z.union([
   ResourceSearchProjectionSchema, SearchProjectionMessageSchema, ChannelMessageSearchProjectionSchema,

@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * Crash/retry behavior for the v35 singleton SubstreamAgent loop.
+ * Crash/retry behavior for the v35 singleton AgentLoopDO loop.
  *
  * Substream execution no longer has a dispatch table. Durable work is either
  * an immutable subordinate `runs` receipt or an ordered pending loop input;

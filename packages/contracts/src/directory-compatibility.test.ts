@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { WorkstreamStateVersionSchema } from "./index";
 import { WorkstreamDirectoryCommonEffectSchema, WorkstreamDirectoryUserEffectSchema } from "./conversation-effects";
 
 const common = {
@@ -20,15 +19,5 @@ describe("directory compatibility", () => {
       isParticipant: true, unreadCount: 0, youAreMentioned: false, listable: true };
     expect(WorkstreamDirectoryUserEffectSchema.parse({ ...viewer, obsolete: "discard" })).toEqual(viewer);
     expect(WorkstreamDirectoryCommonEffectSchema.safeParse({ ...common, title: 12 }).success).toBe(false);
-  });
-
-  it("accepts historical UUIDs while preserving viewer identity and waterline invariants", () => {
-    const version = { commonEventId: "00000000-0000-4000-8000-000000000003",
-      viewerEventId: "00000000-0000-4000-8000-000000000004",
-      authorityGeneration: 1, commonWaterline: 3, viewerWaterline: 2 };
-    expect(WorkstreamStateVersionSchema.parse(version)).toEqual(version);
-    expect(WorkstreamStateVersionSchema.safeParse({ ...version, commonEventId: "not-a-uuid" }).success).toBe(false);
-    expect(WorkstreamStateVersionSchema.safeParse({ ...version, viewerWaterline: 0 }).success).toBe(false);
-    expect(WorkstreamStateVersionSchema.safeParse({ ...version, viewerEventId: null }).success).toBe(false);
   });
 });

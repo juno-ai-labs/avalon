@@ -1,7 +1,7 @@
 # Rendering markdown in the desktop client
 
-Almost everything Rally shows a person is markdown a model wrote: a work-stream
-turn, a meeting briefing, a note, an automation's overview.
+Almost everything Rally shows a person is markdown a model wrote: a conversation
+turn, a published document in the rail, a Markdown attachment.
 All of it goes through one component and one block of CSS. This document covers
 that renderer — what it adds on top of `react-markdown`, what a surface hosting
 it may and may not restyle, and the two tests that keep the arrangement from
@@ -25,21 +25,19 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/lib/favicon-api.tsx` | Narrows the broad app-session context to the stable API capability link icons need, so unrelated session updates do not re-render every Markdown body. Detached exports receive no capability. |
 | `apps/desktop/src/renderer/lib/host-favicon.ts` | What the two surfaces that draw a site's icon share: the hostname an HTTP(S) target names, and the request, its object-URL revocation, and a result that is *target*-scoped rather than merely mount-scoped — it is read only for the `{api, hostname}` it was fetched for, and dies with the URL it names. The markup is not shared — a link puts the icon in front of its text, a footnote marker puts it instead of its asterisk. |
 | `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text message rewrite (including personal-instruction filtering) that transactional email, Slack, and Apple push delivery send instead. |
+| `apps/api/src/services/email-markdown.ts` | Rally's one Markdown-to-email converter: `markdownToEmailHtml`, `markdownToEmailText` (the plain-text alternative), `markdownToEmailPreheader`, and `COLOR`, the light palette every Rally email is drawn in. Each entry point reduces citations (`rewriteCitationsAsPlainText`) and then repairs TeX (`normalizeModelMarkdown` / `normalizeModelText`), in that order; both passes read fenced blocks from `markdownLineKinds` rather than tracking fences themselves. Tested by `apps/api/test/email-markdown.test.ts`. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
-| `apps/desktop/src/renderer/components/resource-action-menu.tsx`, `lib/breakout-resource-actions.ts` | The right-click menu a resource can wear, drawn from a host-supplied list, and the one list supplied today: **Attach to channel** on a Breakout's artifacts. |
-| `packages/ui/src/styles/app.css` | The `.markdown-body` group: every element style markdown gets, and the `--markdown-*` paint properties each of those rules reads instead of a token. Also the one surface that re-points them — `.human-message-bubble .markdown-body`, which restates the whole group, and the highlighter's `syntax` roles with it, as percentages of the bubble's own ink. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), the compact resource embed and intrinsic image treatment, and `.inspector-detail-document` (sizes the body and the host width to the rail, and restyles no markdown element). |
+| `apps/desktop/src/renderer/components/resource-action-menu.tsx` | The right-click menu a resource can wear, drawn from a host-supplied list. No host supplies one today: the only list, **Attach to channel** on a Breakout's artifacts, went with Breakouts. |
+| `packages/ui/src/styles/app.css` | The `.markdown-body` group: every element style markdown gets, and the `--markdown-*` paint properties each of those rules reads instead of a token. Also the one surface that re-points them — `.human-message-bubble .markdown-body`, which restates the whole group, and the highlighter's `syntax` roles with it, as percentages of the bubble's own ink. Also the host overrides: the compact resource embed and intrinsic image treatment, and `.inspector-detail-document` (sizes the body and the host width to the rail, and restyles no markdown element). |
 
-Nine call sites, all passing a markdown string as `children`:
+The call sites, all passing a markdown string as `children`:
 
 | Surface | Call site |
 | --- | --- |
-| A work-stream turn, and the structured block above it | `workstream-blocks.tsx` |
-| An automation's definition on its page | `screens/automation.tsx` |
-| The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
-| A note's body | `screens/note-detail.tsx` |
+| A conversation turn, and the structured block above it | `workstream-blocks.tsx` |
 | A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
-| A resource's readable content in the rail's detail | `inspector-rail.tsx`, reading through `lib/resource-preview.ts`. Hosted as `.inspector-detail-document` in the rail's own scroll, not in a boxed inner pane, and sized to the rail's column so long prose wraps to the panel instead of clipping. |
+| A resource's readable content in the rail's detail | `annotation-surface.tsx` inside `inspector-rail.tsx`, reading through `lib/resource-preview.ts`. Hosted as `.inspector-detail-document` in the rail's own scroll, not in a boxed inner pane, and sized to the rail's column so long prose wraps to the panel instead of clipping. |
 | A turn being saved as a picture or a PDF | `workstream-blocks.tsx` builds it; `lib/message-export.ts` renders it off-screen for its markup |
 
 ## How it works
@@ -139,11 +137,10 @@ Markdown soft wrapping, while `verbatim` controls model-text repair.
 
 ### Heading collapse
 
-Heading collapse is opt-in and enabled only by the main work-stream message
+Heading collapse is opt-in and enabled only by the main conversation message
 feed. There, every heading h2 and below is an accordion, one level deep. Every
-other Markdown surface — the inspector rail, notes, attachment lightbox,
-meeting briefing, and automation setup — renders headings fully
-expanded. This keeps compact feed navigation from becoming a surprising
+other Markdown surface — the inspector rail and the attachment lightbox —
+renders headings fully expanded. This keeps compact feed navigation from becoming a surprising
 document-reader behavior. It also avoids borrowing `still`, whose citation
 behavior belongs to exported pictures rather than interactive screens.
 
@@ -252,8 +249,8 @@ whom a message shares the conversation with, so an address in code or in a link
 is neither a chip nor a share, and `@dana@example.com.au` never names
 `dana@example.com`. Both shapes become a span
 carrying `data-email-mention`, whose text is the address as written. The `span`
-override resolves it against `EmailMentionContext`, which the Channel and
-new-Channel screens fill from the roster and the invitees: a member who holds
+override resolves it against `EmailMentionContext`, which
+`conversation-surface.tsx` fills from the roster and the invitees: a member who holds
 the address draws as their person chip, an invitee as `.mention-chip-invited`
 (an outline and muted italic address rather than a fill), and anybody else as the text.
 Resolving at render rather than at parse is what turns the chip into the
@@ -323,7 +320,12 @@ the image response headers and body. It validates the bytes as an image and
 stores either the icon or a confirmed miss in the dedicated platform-wide
 `FAVICON_CACHE`. A transient
 Firecrawl, network, rate-limit, or server failure is not negative-cached, and a
-failure for one candidate cannot discard a valid result from the other. Each KV
+failure for one candidate cannot discard a valid result from the other. When
+neither candidate resolves, the route answers 502
+`favicon_unavailable:<reason>` (`faviconFailureReason`): a discovery or image
+fetch that did not complete names its phase (`branding_fetch_failed`), and a
+Firecrawl failure its kind and status (`firecrawl_http_400`,
+`firecrawl_network`), never the provider's message. Each KV
 entry expires after 30 days; the next read fetches and overwrites it, so no stale
 generation is retained.
 
@@ -346,7 +348,7 @@ without hiding additional media. A lone embed keeps its paragraph. Audio include
 an on-demand inline player.
 **The pass groups only what this render will actually draw as a card**: it is
 given a predicate over the citation context's own resolver, so a surface with no
-context, or a target this work stream does not carry, keeps the paragraphs it
+context, or a target this conversation does not carry, keeps the paragraphs it
 already had rather than becoming a horizontal scroller full of sentences. It
 also rewrites the root's children alone, so embeds inside a blockquote or a list
 item stay a column — deliberately, because the placement bet is that models put
@@ -371,7 +373,7 @@ independently of its readable preview. Plain text, code, and structured text
 render literally in a `pre`; Markdown and converted documents use `MarkdownBody`.
 Feed excerpts still use the shared preview reader.
 
-On a work stream, rendering or receiving an embed never opens the right-side
+In a conversation, rendering or receiving an embed never opens the right-side
 inspector automatically. The transcript stays where the person left it until
 they click an embed, chip, or other explicit preview control. This applies on
 initial load, reconnect, and while an agent response streams.
@@ -441,13 +443,11 @@ link, as an embed, and as a source. Two cells are worth knowing about:
 - **A glance keeps mention chips and drops every other link to its text.** A
   `person:` or connector href still goes through `renderIdentity`, because a
   chip is a span with no destination and is valid inside the card's button.
-  The Channel feed's thread summary is a glance, and its names are the point
-  of it.
 - **`link` × unknown keeps react-markdown's default.** That cell is where
   `mailto:`, `tel:` and relative targets live; rendering it as text would be a
   regression dressed as a degradation.
 
-Resolution is the loaded work stream's resource set, and nothing wider. A cited
+Resolution is the loaded conversation's resource set, and nothing wider. A cited
 resource it carries resolves synchronously, so the chip is on the first paint;
 anything else renders as its label text. That is a deliberate narrowing rather
 than a missing tier: the rail resolves an inspector target from the same set, so
@@ -458,9 +458,9 @@ the rail's fetch-by-id detail, and the two have to land together.
 
 **A resolved chip, embed card or media tile can carry a right-click menu.** The
 citation context's optional `actions` lists what it offers per resource; with no
-list, and always on a still, the element renders untouched. Today only a
-Breakout fills it, with **Attach to channel** on its generated artifacts
-(`lib/breakout-resource-actions.ts`); the
+list, and always on a still, the element renders untouched. No host fills it
+today; the one that did, a Breakout's **Attach to channel** on its generated
+artifacts, went with Breakouts. The
 [changelog](#2026-09-24--a-resource-citation-can-carry-a-hosts-right-click-menu)
 has why.
 
@@ -619,6 +619,11 @@ painted without being text, `--markdown-mark` for a task box's tick and
 `--markdown-scrollbar-thumb` for the bar under a wide table — from the
 appearance's own tokens, and every element rule reads one of those.
 
+A table shades only its header row (`--markdown-wash`); body cells are
+transparent on whatever surface the table sits on, in both appearances. An
+artifact's headings (`.inspector-detail-document`) take `text-default`, the
+document's strongest ink, where a reply's headings stay `--markdown-ink-quiet`.
+
 The indirection is there because not every markdown surface sits on the
 appearance's canvas. A person's turn is drawn on a filled bubble — near-black in
 the light appearance, mid-grey in the dark one, or the sender's profile colour —
@@ -659,14 +664,14 @@ and deliberately kept.
 A surface hosting `MarkdownBody` may override typography — a heading scale, a
 measure — because that is a property of the surface. It may not restyle a
 markdown element, and it paints by re-pointing the group rather than by naming
-an element. Two surfaces take the exemption: a note reads as a document
-page and steps its headings 22/17/14, the meeting briefing sits in a narrow
-rail beside a transcript and holds every level at 15px. Compact resource rows
-no longer contain a markdown glance or its heading override.
+an element. No surface takes a heading exemption today: the two that did, a
+note's page (headings 22/17/14) and the meeting briefing's rail (every level at
+15px), went with built-in notes ([their retirement record](architecture.md#retired-documents)), and
+compact resource rows no longer contain a markdown glance.
 
-Each writes the heading exemption as `<host> .markdown-body :is(h1, …)`, naming
+A heading exemption is written as `<host> .markdown-body :is(h1, …)`, naming
 the shared container even though the host alone would select the same elements.
-That is deliberate. `.note-detail-article h1` ties `.markdown-body h1` at
+That is deliberate. `<host> h1` ties `.markdown-body h1` at
 (0,1,1) and wins only by sitting lower in the file, so the override would
 survive exactly as long as nobody split the stylesheet or moved a block. With
 `.markdown-body` in the selector it is (0,2,1) and the question does not arise.
@@ -690,7 +695,7 @@ written this way is a sign it is not a typography override.
   parser. Code is not rewritten. The pass runs on `verbatim` bodies too — it is
   not TeX repair.
 - **Markdown element styling lives in the `.markdown-body` group and nowhere
-  else.** A rule like `.note-detail-article ul` ties `.markdown-body ul` on
+  else.** A rule like `<host> ul` ties `.markdown-body ul` on
   specificity, so which one applies is decided by which is further down a
   3,000-line file. Nobody editing a screen's styles is thinking about that.
 - **A host may override typography, not elements.** The distinction is whether
@@ -771,7 +776,7 @@ This module owns how a markdown string becomes DOM in the renderer, and how that
 DOM is styled. It exposes `MarkdownBody` — taking a markdown string, an optional
 `mentions` array, an optional `citations` context, and `glance` / `verbatim` /
 `still` / `streaming` / `collapseHeadings` / `preserveLineBreaks` flags — plus the citation matrix and
-`ResourceIcon`, which the inspector rail and the work-stream sidebar render too
+`ResourceIcon`, which the inspector rail and the conversation sidebar render too
 so that one resource kind draws one glyph everywhere. **It takes the resource,
 never a type string**, and calls the exported `resourceIconType` itself: a
 provenance type (`generated_file`, `uploaded_file`) says who made the resource
@@ -781,17 +786,17 @@ cannot see that a `generated_file` carrying the site manifest is a live site.
 The glyph is then chosen by substrings of that one name, with a published site
 matched whole ahead of the chain — under both `generated_site` and `site` — and
 drawn as a Tabler `app-window`. Heading collapse is off unless a host explicitly
-sets `collapseHeadings`; the main work-stream feed is the intended opt-in host.
+sets `collapseHeadings`; the main conversation feed is the intended opt-in host.
 `MarkdownCollapseController` holds section state within each Markdown body.
 
 **It does not own where a citation goes.** The host supplies resolution and
 click routing as `CitationContext` (`lib/use-citations.ts` builds the
-work-stream screen's), and a surface that supplies none is not broken — every
+conversation screen's), and a surface that supplies none is not broken — every
 citation on it degrades to the label text the message already carried. That
 split is deliberate: the renderer knows the protocol, the host knows the
 application, and neither should be guessing about the other. The two
-non-renderer delivery surfaces own their own reductions rather than borrowing
-this one; [`digests.md`](digests.md) and
+non-renderer delivery surfaces, email and Slack, own their own reductions rather than borrowing
+this one; `markdownToEmailText` in `email-markdown.ts` and
 [`slack-integration.md`](slack-integration.md) hold those rules.
 
 It does not own the repair applied to that string before it is parsed, either.
@@ -800,14 +805,13 @@ becomes the characters it stood for;
 [`model-text-normalization.md`](model-text-normalization.md) owns what that maps
 and why it refuses to touch a price.
 
-It does not own the markdown itself. Where a briefing's text comes from is
-[`meeting-notes.md`](meeting-notes.md); an automation definition's is
-[`automation-lifecycle.md`](automation-lifecycle.md). It does not own the surrounding
-screen either — a note's page geometry belongs to the note screen, and this
-document has an opinion only about the part of it that is markdown.
+It does not own the markdown itself: where a conversation turn's text comes
+from is [`agent-harness.md`](agent-harness.md), and a published document's is
+[`agent-attachments.md`](agent-attachments.md). It does not own the surrounding
+screen either, and has an opinion only about the part of it that is markdown.
 
 It renders untrusted text: everything it is given was written by a model, a
-meeting participant, or an inbound email. `react-markdown` does not evaluate HTML
+person, a connector's provider, or an inbound email. `react-markdown` does not evaluate HTML
 in its input and no `rehype-raw` is configured, so markup in the source is text.
 The first closed exception is a bare `<br>` / `<br/>` / `<br />`, rewritten to
 a real line break; that is not HTML parsing, and a tagged `<br class="…">` or
@@ -824,9 +828,8 @@ person mention is, and the cost of them
 disagreeing is invisible until somebody reads an email. How a markdown string
 becomes DOM is still this module's alone, and deliberately not shared:
 Rally's outbound email has one shared converter,
-`apps/api/src/services/email-markdown.ts`, for the reason
-[`digests.md`](digests.md) records — a general markdown library emits far more
-than an email client will honour. Every email surface renders through that one,
+`apps/api/src/services/email-markdown.ts`, because a general markdown library
+emits far more than an email client will honour. Every email surface renders through that one,
 rather than growing a second.
 
 The exported message card is the one place outside this stylesheet that styles
@@ -860,9 +863,9 @@ needs it should parse rather than widen the pattern again.
   clipboard is unavailable, and the code is on screen either way.
 - **A `person:` href with no matching entry in `mentions`** renders as
   `span.mention-text-fallback` — the label as plain text. This is the expected
-  path for a mention of someone who has since left the workspace.
+  path for a mention of someone who has since left the Organization.
 - **A table wider than its surface** scrolls inside `.markdown-table-scroll`. It
-  never widens the page, which matters most in the meeting rail, the narrowest
+  never widens the page, which matters most in the rail, the narrowest
   surface that renders one.
 - **A `color` set on a host does not reach the markdown.** `.markdown-body`
   declares its own — now `var(--markdown-ink)` — and a declaration beats an
@@ -874,8 +877,7 @@ needs it should parse rather than widen the pattern again.
   to be met with `!important` or a second `.markdown-body` rule — the divergence
   the rest of this document exists to prevent. A surface that genuinely needs a
   different body colour has to restate it inside the wrapper, and should say why
-  in the same breath. `.note-detail-article` carried a dead `color` of this kind
-  until 2026-08-12.
+  in the same breath.
 - **A fenced block does not follow its surface**, per the styling section
   above: it is an island of the appearance, so a code panel or a diagram inside
   a coloured bubble is drawn in the window's colours on the window's ground.
@@ -941,9 +943,8 @@ registered with `waitUntil` before the exact-host response returns.
 The traps, both of which have bitten:
 
 - **The stylesheet guard reads selector preludes, not the raw file.** A search
-  for the substring `.note-detail-article ul` misses
-  `:is(.note-detail-article, .meeting-notes-body) ul` and
-  `.note-detail-article > li`, which style the same thing. If you extend the
+  for the substring `<host> ul` misses `:is(<host>, <other>) ul` and
+  `<host> > li`, which style the same thing. If you extend the
   guard, extend it against those forms.
 - **A component test cannot see any of this.** jsdom lays nothing out, so a test
   asserting that a `ul` rendered passes just as happily when the list has no
@@ -1244,7 +1245,6 @@ values, so a palette colour added to the product needs no rule here; they were
 checked in both appearances against both default fills, a dark profile fill and
 a light one, which are the two ink cases the palette can produce. Nothing
 outside a bubble moved.
-
 
 ### 2026-09-15 — Non-renderer deliveries share one plain-text reduction
 
@@ -2698,7 +2698,7 @@ one override — a note's descending heading scale, a briefing's flat one — an
 stylesheet test asserts that neither host states any other markdown element
 styling. This document was created in the same change, because until then
 markdown rendering had no document and its history was accumulating in
-[`workstream-creation.md`](workstream-creation.md), whose scope is the create
+[`workstream-creation.md`](hosted-conversation-parents.md#retired-documents), whose scope is the create
 path and explicitly not the screens a work stream is read on.
 
 **Why:** The entry below restored the list markers by naming all three containers
@@ -2758,7 +2758,7 @@ nothing took it back. The surrounding rules read as though something had — the
 set the indent a marker needs and a colour for `li::marker` — so a bulleted list
 rendered as indented paragraphs and a numbered one lost its numbers, everywhere
 markdown appears. The work-stream message bubble entry in
-[`workstream-creation.md`](workstream-creation.md) had reported this against the
+[`workstream-creation.md`](hosted-conversation-parents.md#retired-documents) had reported this against the
 `tw-fade` preflight, which was wrong; that sentence is corrected in place there,
 and this entry is where the repair itself is recorded.
 

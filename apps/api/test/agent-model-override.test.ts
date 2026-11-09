@@ -106,10 +106,10 @@ function seededDatabase(): Fixture {
   // Every automation run path now launches through the Durable-Object
   // authority; open it before any product rows exist, as a fresh stack does.
   openWorkstreamAuthorityForTest(database);
-  // The alarm's draft arm reads the object's links table, which no regional
-  // snapshot has ever carried, and excludes drafts still reserved by an
-  // input preparation in the same WorkspaceDO authority.
-  createWorkspaceObjectTable(database, "workspace_workstream_resource_links");
+  // The alarm's draft arm reads the object's Canvas artifacts, which no
+  // regional snapshot has ever carried, and excludes drafts still reserved by
+  // an input preparation in the same WorkspaceDO authority.
+  createWorkspaceObjectTable(database, "canvas_artifacts");
   applyWorkspaceResourceSchema(database, WORKSPACE_ID);
 
   const objectStore = testWorkstreamObjectStore();

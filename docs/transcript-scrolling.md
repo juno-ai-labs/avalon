@@ -1,6 +1,6 @@
 # Transcript scrolling
 
-The work-stream transcript keeps itself at the newest message while a turn
+A conversation's transcript keeps itself at the newest message while a turn
 streams in, so a reply written a token at a time stays visible without anyone
 touching a scroll wheel. That service ends the instant the reader scrolls: from
 then until they ask to go back, the viewport is theirs, and the only thing that
@@ -92,8 +92,8 @@ turn finishes.
 
 `conversation-surface.tsx` never writes `scrollTop`. It calls:
 
-- `scrollToEnd()` when a work stream opens at the end, when it opens with no
-  transcript at all — a work stream created moments ago, whose first reply is
+- `scrollToEnd()` when a conversation opens at the end, when it opens with no
+  transcript at all — a Canvas created moments ago, whose first reply is
   what the person is waiting for — and when the reader sends a message, which is
   the strongest statement anyone can make that they mean to be at the end.
 - `scrollToEnd({ smooth: true })` for **Jump to latest**. The animation is
@@ -109,7 +109,10 @@ turn finishes.
   exactly what a reader pulling away looks like, so following is armed only
   when the animation *arrives*.
 - `release()` when it opens at the reader's first unread message, so a run
-  already streaming into that work stream cannot pull them off it.
+  already streaming into that conversation cannot pull them off it. Only when
+  the transcript overflows its viewport: one that fits shows the first unread
+  message and the end together, so it opens at the end and follows, and
+  **Jump to latest** is not offered with nothing to jump to.
 - `scrollTo(top)`, through `useVirtualScrollAnchor`, to hold the reading
   position when rows are inserted above it. See
   [Holding the row on screen](#holding-the-row-on-screen).
@@ -203,7 +206,7 @@ opening snapshot even if live events append newer turns.
 ## Invariants
 
 - **Only the reader's own scrolling decides where the viewport sits.** The one
-  exception is a reposition the reader asked for — opening a work stream,
+  exception is a reposition the reader asked for — opening a conversation,
   **Jump to latest**, sending a message — and each of those goes through the hook.
 - **The transcript's `scrollTop` is written in exactly one file.** Any new
   reposition calls `scrollTo`, `scrollToEnd`, or `release`; none of them writes
@@ -253,7 +256,7 @@ not know what a message is, when a turn is streaming, or how tall a row is; it
 reads three numbers off a DOM element and writes one back.
 
 It depends on the screen for permission — `canFollow` is false until
-`conversation-surface.tsx` has positioned this work stream, while the transcript is empty,
+`conversation-surface.tsx` has positioned this conversation, while the transcript is empty,
 and whenever the end of the transcript is a page away rather than loaded, because
 following an end that is not the real end would strand the reader at a boundary.
 It also takes the full parent-and-substream conversation address. The shared
@@ -275,8 +278,8 @@ whose position `scrollTo` restores is described from the wire side in
 [`realtime-sockets.md`](realtime-sockets.md); how a message body is rendered
 belongs to [`markdown-rendering.md`](markdown-rendering.md).
 
-This document covers the conversation transcript, which a work stream's feed
-and an automation's chat both render through the same surface; the
+This document covers the conversation transcript, which a Canvas's Chat and a
+Sidekick's conversation both render through the same surface; the
 automation-drafts screen that carried a second, older streaming follow is
 gone.
 
@@ -293,7 +296,7 @@ gone.
   block scrolled mid-transcript — still stops the follow. That is the safe
   direction to be wrong in: the reader gets the viewport, and **Jump to latest**
   appears.
-- **A work stream opened at an unread anchor does not follow**, even if a turn is
+- **A conversation opened at an unread anchor does not follow**, even if a turn is
   streaming into it, until the reader returns to the end. This is deliberate.
 - The follow reads `scrollHeight` on every commit while it is active, which
   forces layout. It is gated on the follow being on precisely so that a screen
@@ -302,10 +305,11 @@ gone.
 ## Testing
 
 `use-transcript-history.test.tsx` exercises position-based paging, resize,
-visibility, in-flight requests, and conversation changes. `workstream-open.test.tsx`
-checks opening readiness, A → B → A request deduplication and restoration,
-reconnect status, direction-specific errors, and coverage-based termination. Run these with
-`pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-transcript-history.test.tsx src/renderer/screens/workstream-open.test.tsx`.
+visibility, in-flight requests, and conversation changes. Run it with
+`pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-transcript-history.test.tsx`.
+The screen-level opening tests that covered request deduplication and
+coverage-based termination were deleted with the Thread screens and have no
+successor.
 
 [`apps/desktop/src/renderer/lib/use-transcript-follow.test.tsx`](../apps/desktop/src/renderer/lib/use-transcript-follow.test.tsx),
 in the desktop suite (`pnpm --filter @rally/desktop test`).
@@ -343,10 +347,12 @@ whose rectangles come from a layout swapped in at commit: the bottom edge held
 across a prepend that adds a top gap, nothing done for an append, a vanished
 key, or while following, the fall-through past a re-keyed row, and a change
 above the list alone. Whether the window it predicts renders the right rows is
-an integration question: verify it in Electron by reopening a long Channel with
-a fresh window (the query cache keeps loaded history across Channel switches),
+an integration question: verify it in Electron by reopening a long Canvas with
+a fresh window (the query cache keeps loaded history across Canvas switches),
 sampling every visible row's position each animation frame while scrolling up,
 and checking that no row moves further than the scroll step in any frame.
+
+## Changelog
 
 ### 2026-10-08 — Hold the reading row in the commit that prepends
 
@@ -411,7 +417,6 @@ Shipped through [PR #565](https://github.com/juno-ai-labs/avalon/pull/565).
 **Considered and rejected:** A lifetime marker keyed only by turn ID suppressed valid repeated navigation.
 
 **Consequences:** Search positioning releases follow and must clear stale parameters before normal unread positioning resumes.
-
 
 ### 2026-08-28 — Automation authoring adopts the shared follow controller
 

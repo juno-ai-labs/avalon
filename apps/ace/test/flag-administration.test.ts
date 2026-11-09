@@ -16,9 +16,9 @@ function administration(overrides: Partial<Env> = {}): FlagAdministration {
   }));
 }
 
-const liveArtifactsUpdate = {
-  key: 'live-artifacts-enabled',
-  description: 'Live artifacts.',
+const multipleWorkspacesUpdate = {
+  key: 'multiple-workspaces-enabled',
+  description: 'Multiple workspaces.',
   enabled: true,
   default_variation: 'off',
   rules: [{
@@ -57,31 +57,31 @@ describe('FlagAdministration', () => {
     const send = vi.fn(async () => undefined);
     const cloudflare = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({
       success: true,
-      result: { key: 'live-artifacts-enabled', default_variation: 'off' },
+      result: { key: 'multiple-workspaces-enabled', default_variation: 'off' },
     }));
     const logged = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
     const result = await administration({ PRODUCT_FLAG_CHANGE_QUEUE: createTestQueue({ send }) })
-      .updateProductFlag({ actor, update: liveArtifactsUpdate });
+      .updateProductFlag({ actor, update: multipleWorkspacesUpdate });
 
-    expect(result).toEqual({ ok: true, value: { key: 'live-artifacts-enabled', default_variation: 'off' } });
+    expect(result).toEqual({ ok: true, value: { key: 'multiple-workspaces-enabled', default_variation: 'off' } });
     expect(cloudflare).toHaveBeenCalledWith(
-      `${flagshipBase}/live-artifacts-enabled`,
+      `${flagshipBase}/multiple-workspaces-enabled`,
       expect.objectContaining({ method: 'PUT' }),
     );
     expect(JSON.parse(String(cloudflare.mock.calls[0]![1]?.body))).toEqual({
-      ...liveArtifactsUpdate,
+      ...multipleWorkspacesUpdate,
       variations: { off: false, on: true },
     });
     expect(send).toHaveBeenCalledWith(
-      { kind: 'flagship_product_flag_changed', flagKey: 'live-artifacts-enabled' },
+      { kind: 'flagship_product_flag_changed', flagKey: 'multiple-workspaces-enabled' },
       { delaySeconds: 30 },
     );
     expect(logged.mock.calls.map((call) => JSON.parse(String(call[0])))).toEqual([{
       event: 'ace_product_flag_updated',
       actor_subject: 'engineer-1',
       via: 'engineering_mcp',
-      flag_key: 'live-artifacts-enabled',
+      flag_key: 'multiple-workspaces-enabled',
     }]);
   });
 
@@ -90,7 +90,7 @@ describe('FlagAdministration', () => {
 
     const result = await administration().updateProductFlag({
       actor,
-      update: { ...liveArtifactsUpdate, rules: [{ ...liveArtifactsUpdate.rules[0], serve_variation: 'maybe' }] },
+      update: { ...multipleWorkspacesUpdate, rules: [{ ...multipleWorkspacesUpdate.rules[0], serve_variation: 'maybe' }] },
     });
 
     expect(result).toEqual({
@@ -104,7 +104,7 @@ describe('FlagAdministration', () => {
   it('names a rejected field by its path and code, without echoing a caller-supplied key', async () => {
     const result = await administration().updateProductFlag({
       actor,
-      update: { ...liveArtifactsUpdate, 'customer@example.com': true },
+      update: { ...multipleWorkspacesUpdate, 'customer@example.com': true },
     });
 
     expect(result.ok).toBe(false);
@@ -118,7 +118,7 @@ describe('FlagAdministration', () => {
       { status: 403 },
     ));
 
-    const result = await administration().updateProductFlag({ actor, update: liveArtifactsUpdate });
+    const result = await administration().updateProductFlag({ actor, update: multipleWorkspacesUpdate });
 
     expect(result).toEqual({
       ok: false,
@@ -133,7 +133,7 @@ describe('FlagAdministration', () => {
 
     const result = await administration({
       PRODUCT_FLAG_CHANGE_QUEUE: createTestQueue({ send: vi.fn(async () => { throw new Error('queue down'); }) }),
-    }).updateProductFlag({ actor, update: liveArtifactsUpdate });
+    }).updateProductFlag({ actor, update: multipleWorkspacesUpdate });
 
     expect(result).toEqual({
       ok: false,
@@ -144,7 +144,7 @@ describe('FlagAdministration', () => {
       event: 'ace_product_flag_updated',
       actor_subject: 'engineer-1',
       via: 'engineering_mcp',
-      flag_key: 'live-artifacts-enabled',
+      flag_key: 'multiple-workspaces-enabled',
     }]);
   });
 

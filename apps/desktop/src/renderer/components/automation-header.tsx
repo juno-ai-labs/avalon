@@ -1,8 +1,7 @@
 import { AutomationGlyph } from './workstream-glyph';
 import { AppearancePicker } from './appearance-picker';
-import { OwningThreadLabel } from './owning-thread-label';
 import { useState, type ReactNode } from 'react';
-import { Archive, ChevronRight, CirclePause, Copy, Ellipsis, History, Mail, Play } from 'lucide-react';
+import { Archive, ChevronRight, CirclePause, Clock, Copy, Ellipsis, Hand, History, Mail, Play, Zap } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ArchiveAutomationDialog } from './archive-automation-dialog';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
@@ -12,6 +11,9 @@ import { Badge, Button, IconButton, ErrorNotice, Modal, StatusDot } from './prim
 import { MenuActionItem } from '@rally/ui/components/menu-action-item';
 import { RelativeTime } from './relative-time';
 import { useOptionalCollaborationSession } from '../lib/collaboration-session';
+import { canvasRoute } from '../lib/canvases';
+import { Link } from 'react-router-dom';
+import { CanvasMark } from './canvas-mark';
 
 export type AutomationHeaderAction = 'pause' | 'resume' | 'archive' | 'run';
 
@@ -52,12 +54,23 @@ const lifecycleLabel: Record<AutomationDetail['lifecycle'], string> = {
 };
 
 function scopeLabel(scope: AutomationDetail['scope']): string {
-  return scope === 'you' ? 'Only you' : scope === 'workspace' ? 'Organization' : 'Thread';
+  return scope === 'you' ? 'Only you' : 'Organization';
+}
+
+/** Who a Sidekick is shared with, as its badge says it: its audience when the server sends one, else its scope. */
+export function sidekickAudienceLabel(automation: Pick<AutomationDetail, 'audience' | 'scope'> & { sharedWithUserIds?: readonly string[] | undefined }): string {
+  if (automation.audience === 'people') {
+    const count = (automation.sharedWithUserIds?.length ?? 0) + 1;
+    return automation.sharedWithUserIds ? `Shared · ${count} people` : 'Shared with people';
+  }
+  if (automation.audience === 'personal') return 'Only you';
+  if (automation.audience === 'workspace') return 'Organization';
+  return scopeLabel(automation.scope);
 }
 
 function runTriggerLabel(run: AutomationRun): string {
   switch (run.triggerType) {
-    case 'manual': return 'Manual';
+    case 'manual': return 'On request';
     case 'schedule': return 'Scheduled';
     case 'external_event': return 'Event';
     case 'inbound_email': return 'Email';
@@ -86,6 +99,19 @@ export function customToolPluginLabel(pluginId: string): string {
   const words = suffix.split('_').filter(Boolean);
   return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 }
+
+type TriggerType = NonNullable<AutomationDetail['currentDefinition']>['triggers'][number]['type'];
+
+/** The mark beside a "Wakes on" row, as design §4 draws one per trigger: a clock for a schedule, a bolt for an event. */
+function TriggerIcon({ type }: { type: TriggerType | undefined }): React.JSX.Element {
+  if (type === 'calendar') return <Clock aria-hidden="true" size={15} />;
+  if (type === 'inbound_email') return <Mail aria-hidden="true" size={15} />;
+  if (type === 'manual') return <Hand aria-hidden="true" size={15} />;
+  return <Zap aria-hidden="true" size={15} />;
+}
+
+/** A details block with nothing in it says so, rather than leaving a reader to wonder whether it was shown. */
+const NOTHING_YET = 'Nothing yet';
 
 function runStatus(run: AutomationRun): React.ComponentProps<typeof StatusDot>['status'] {
   return run.status === 'pending' ? 'scheduled' : run.status;
@@ -121,7 +147,7 @@ export function AutomationHeader({
   const isPaused = automation.lifecycle === 'paused';
   const pendingReason = pending !== null ? 'Please wait for the current action to finish.' : undefined;
   const disabledReason = pendingReason ?? {
-    draft: 'Finish setting up this Sidekick in the conversation before you can pause it.',
+    draft: undefined, // A draft draws no Pause.
     active: undefined,
     paused: undefined,
     deleted: 'This Sidekick has been archived and can no longer be paused.',
@@ -135,11 +161,53 @@ export function AutomationHeader({
   const historyDisabledReason = hasTriggers || listedRuns.length > 0
     ? undefined : 'This Sidekick has no triggers or previous runs.';
   // Older accepted definitions receive email without listing an email trigger.
-  const triggerSummaries = automation.triggerSummaries.length === 0 && automation.emailAddress
-    ? ['When an email arrives'] : automation.triggerSummaries;
+  // Summaries are derived one per definition trigger, in order (`lib/api.ts`),
+  // so the trigger at the same index says which mark the row wears.
+  const triggers: Array<{ summary: string; type: TriggerType | undefined }> = automation.triggerSummaries.length === 0 && automation.emailAddress
+    ? [{ summary: 'When an email arrives', type: 'inbound_email' }]
+    : automation.triggerSummaries.map((summary, index) => ({ summary, type: definition?.triggers[index]?.type }));
+  const isDraft = automation.lifecycle === 'draft';
+  // The connections its runs use, named as the rest of the profile names
+  // plugins; and the Canvases it writes that this reader may open.
+  const plugins = [...new Set((definition?.recommendedPlugins ?? []).map((plugin) => customToolPluginLabel(plugin.pluginId)))];
+  const canvases = automation.canvases ?? [];
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [showRunHistory, setShowRunHistory] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
+  // A draft has no Pause beside it, so the menu sits at the end of the
+  // title's pills rather than alone on a row of its own.
+  const moreMenu = (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <IconButton label="More Sidekick actions"><Ellipsis size={16} /></IconButton>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
+          <MenuActionItem disabled={Boolean(runDisabledReason)} disabledReason={runDisabledReason} onSelect={onRunNow} tooltipSide="right">
+            <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
+          </MenuActionItem>
+          <MenuActionItem disabled={Boolean(historyDisabledReason)} disabledReason={historyDisabledReason} onSelect={() => setShowRunHistory(true)} tooltipSide="right">
+            <History size={14} /> Run history
+          </MenuActionItem>
+          <DropdownMenu.Item className="menu-item" onSelect={() => {
+            setCopyFailed(false);
+            void onCopyLink().catch(() => setCopyFailed(true));
+          }}>
+            <Copy size={14} /> Copy link
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator className="menu-separator" />
+          <DropdownMenu.Item
+            className="menu-item menu-item-danger"
+            disabled={pending !== null}
+            onSelect={() => setConfirmingArchive(true)}
+          >
+            <Archive size={14} />
+            {automation.lifecycle === 'draft' ? 'Archive draft' : 'Archive Sidekick'}
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
   return (
     <div className="automation-header">
       <span className="sidekick-profile-glyph">
@@ -159,70 +227,59 @@ export function AutomationHeader({
               <Badge className={`automation-lifecycle is-${automation.lifecycle}`}>
                 {lifecycleLabel[automation.lifecycle]}
               </Badge>
-              {automation.scope === 'workstream' && automation.owningThread
-                ? <Badge className="scope-badge owning-thread-badge"><OwningThreadLabel thread={automation.owningThread} /></Badge>
-                : <Badge className="scope-badge">{scopeLabel(automation.scope)}</Badge>}
+              <Badge className="scope-badge">{sidekickAudienceLabel(automation)}</Badge>
+              {isDraft && <span className="automation-title-more">{moreMenu}</span>}
             </div>
-            <div className="automation-description">
+            {(description || error || copyFailed) && <div className="automation-description">
               {description}
               {error && <ErrorNotice>{error}</ErrorNotice>}
               {copyFailed && <ErrorNotice>The Sidekick link could not be copied.</ErrorNotice>}
-            </div>
+            </div>}
           </div>
         </div>
-        <div className="workstream-header-actions window-no-drag">
+        {!isDraft && <div className="workstream-header-actions window-no-drag">
+          {/* A draft has nothing running to pause; it is finished in the conversation. */}
           <Button disabledReason={disabledReason} onClick={isPaused ? onResume : onPause}>
             {isPaused ? <Play aria-hidden="true" size={14} /> : <CirclePause aria-hidden="true" size={14} />}
             {pending === 'pause' ? 'Pausing…' : pending === 'resume' ? 'Resuming…' : isPaused ? 'Resume' : 'Pause'}
           </Button>
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <IconButton label="More Sidekick actions"><Ellipsis size={16} /></IconButton>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-                <MenuActionItem disabled={Boolean(runDisabledReason)} disabledReason={runDisabledReason} onSelect={onRunNow} tooltipSide="right">
-                  <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
-                </MenuActionItem>
-                <MenuActionItem disabled={Boolean(historyDisabledReason)} disabledReason={historyDisabledReason} onSelect={() => setShowRunHistory(true)} tooltipSide="right">
-                  <History size={14} /> Run history
-                </MenuActionItem>
-                <DropdownMenu.Item className="menu-item" onSelect={() => {
-                  setCopyFailed(false);
-                  void onCopyLink().catch(() => setCopyFailed(true));
-                }}>
-                  <Copy size={14} /> Copy sidekick link
-                </DropdownMenu.Item>
-                <DropdownMenu.Separator className="menu-separator" />
-                <DropdownMenu.Item
-                  className="menu-item menu-item-danger"
-                  disabled={pending !== null}
-                  onSelect={() => setConfirmingArchive(true)}
-                >
-                  <Archive size={14} />
-                  {automation.lifecycle === 'draft' ? 'Archive draft' : 'Archive Sidekick'}
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-          <ArchiveAutomationDialog
-            onClose={() => setConfirmingArchive(false)}
-            onConfirm={onArchive}
-            target={confirmingArchive ? { name, status: automation.lifecycle } : null}
-          />
-        </div>
+          {moreMenu}
+        </div>}
+        <ArchiveAutomationDialog
+          onClose={() => setConfirmingArchive(false)}
+          onConfirm={onArchive}
+          target={confirmingArchive ? { name, status: automation.lifecycle } : null}
+        />
       </div>
       <div className="automation-header-details">
-        {automation.delegationAttention && <p role="status">{automation.delegationAttention.message}</p>}
-        {delegation}
-        <section className="sidekick-profile-section">
-          <h2>When to expect it</h2>
-          {triggerSummaries.length === 0 && !automation.nextRunAt && <p className="automation-timing-empty">No timing details yet.</p>}
-          {triggerSummaries.length > 0 && <ul aria-label="Triggers" className="automation-header-triggers">
-            {triggerSummaries.map((summary) => <li key={summary}>{summary}</li>)}
-          </ul>}
+        <section aria-labelledby="sidekick-wakes-on" className="sidekick-profile-section">
+          <h2 id="sidekick-wakes-on">Wakes on</h2>
+          {triggers.length === 0 && !automation.nextRunAt
+            ? <p className="sidekick-profile-empty">{NOTHING_YET}</p>
+            : triggers.length > 0 && <ul aria-label="Triggers" className="sidekick-profile-rows">
+              {triggers.map(({ summary, type }) => <li key={summary}><TriggerIcon type={type} /><span>{summary}</span></li>)}
+            </ul>}
           {automation.nextRunAt && <p className="automation-runs-next">Next <RelativeTime value={automation.nextRunAt} /></p>}
         </section>
+        <section aria-labelledby="sidekick-uses" className="sidekick-profile-section">
+          <h2 className="sidekick-profile-heading" id="sidekick-uses">Uses{plugins.length > 0 && <span>{plugins.length} {plugins.length === 1 ? 'tool' : 'tools'}</span>}</h2>
+          {plugins.length === 0
+            ? <p className="sidekick-profile-empty">{NOTHING_YET}</p>
+            : <ul aria-label="Connections it uses" className="sidekick-profile-rows">
+              {plugins.map((label) => <li key={label}><span>{label}</span></li>)}
+            </ul>}
+        </section>
+        <section aria-labelledby="sidekick-writes-to" className="sidekick-profile-section">
+          <h2 id="sidekick-writes-to">Writes to</h2>
+          {canvases.length === 0
+            ? <p className="sidekick-profile-empty">{NOTHING_YET}</p>
+            : <ul aria-label="Canvases it writes to" className="sidekick-canvas-links">
+              {canvases.map((canvas) => <li key={canvas.id}><Link to={canvasRoute(canvas.id)}><CanvasMark kind={null} size={24} />{canvas.title}</Link></li>)}
+            </ul>}
+        </section>
+        {/* Who it may act as is a question for a Sidekick that runs; a draft has nobody to ask yet. */}
+        {!isDraft && automation.delegationAttention && <p role="status">{automation.delegationAttention.message}</p>}
+        {!isDraft && delegation}
         {automation.emailAddress && <details className="sidekick-profile-section sidekick-email-details"><summary>Email this Sidekick</summary><span className="automation-header-email"><Mail aria-hidden="true" size={14} /><span>{automation.emailAddress}</span></span></details>}
         {customTools.length > 0 && <section className="sidekick-profile-section sidekick-tools-section">
           <h2>Tools</h2>

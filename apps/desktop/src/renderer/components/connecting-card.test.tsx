@@ -12,20 +12,20 @@ describe('ConnectingCard', () => {
     expect(status).toHaveAttribute('aria-live', 'polite');
     expect(status).toBeEmptyDOMElement();
 
-    rerender(<ConnectingCardSlot><ConnectingCard name="Release notes" state="connecting" subject="channel" /></ConnectingCardSlot>);
+    rerender(<ConnectingCardSlot><ConnectingCard name="Release notes" state="connecting" subject="Canvas" /></ConnectingCardSlot>);
     expect(status).toHaveTextContent('Connecting to Release notes…');
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
   it('falls back to the kind of thing when it has no name yet', () => {
-    render(<ConnectingCard name={null} state="offline" subject="breakout" />);
+    render(<ConnectingCard name={null} state="offline" subject="Sidekick" />);
 
-    expect(document.querySelector('.connecting-card')).toHaveTextContent('Waiting for a connection to this breakout…');
+    expect(document.querySelector('.connecting-card')).toHaveTextContent('Waiting for a connection to this Sidekick…');
   });
 
   it('says what waits for the connection under the sentence, and keeps saying it when the connection fails', () => {
     const { rerender } = render(
-      <ConnectingCard detail="Sending is available once Rally connects" name="Release notes" state="connecting" subject="channel" />,
+      <ConnectingCard detail="Sending is available once Rally connects" name="Release notes" state="connecting" subject="Canvas" />,
     );
 
     expect(document.querySelector('.connecting-card')).toHaveTextContent('Connecting to Release notes…');
@@ -37,7 +37,7 @@ describe('ConnectingCard', () => {
         error="The live connection timed out after 3 attempts."
         name="Release notes"
         state="failed"
-        subject="channel"
+        subject="Canvas"
       />,
     );
     // The moment the connection gives up is the moment someone tries to send;
@@ -48,7 +48,7 @@ describe('ConnectingCard', () => {
 
   it('shows the failure and offers the one action there is', () => {
     const onRetry = vi.fn();
-    render(<ConnectingCard error="The live connection timed out after 3 attempts." name="Hiring" onRetry={onRetry} state="failed" subject="space" />);
+    render(<ConnectingCard error="The live connection timed out after 3 attempts." name="Hiring" onRetry={onRetry} state="failed" subject="Canvas" />);
 
     expect(screen.getByRole('alertdialog')).toHaveTextContent('Rally could not connect to Hiring.');
     expect(screen.getByText('The live connection timed out after 3 attempts.')).toBeInTheDocument();

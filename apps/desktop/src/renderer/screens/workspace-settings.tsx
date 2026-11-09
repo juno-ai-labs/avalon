@@ -1,4 +1,5 @@
 import { startConnectorAuthorization } from '../lib/start-connector-authorization';
+import { useDocumentTitle } from '../lib/document-title';
 import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstallationRecovery } from '../components/connector-installation';
 import { ConnectorApiKeyField, ConnectorApiKeyIssuingLink } from '../components/connector-api-key-field';
 import { CopyButton, CopyField } from '../components/copy-button';
@@ -60,7 +61,7 @@ import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, IconB
 import { connectorBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { ThemePicker } from '../components/theme-picker';
-import { DailyDigestSettings, NotificationChannelSettings } from '../components/notification-settings';
+import { NotificationChannelSettings } from '../components/notification-settings';
 import { UsageSettingsSection } from '../components/organization-usage';
 import { InlineEditableText } from '../components/inline-editable-text';
 import { useAppSession } from '../lib/app-session';
@@ -136,17 +137,20 @@ const installedConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   'x',
 ]);
 
-/** A row under the Mac's notification toggle saying why macOS is not showing them, with the way to fix it. */
-function MacNotificationNotice({ title, detail, onOpen }: {
+/**
+ * A row under the notification toggle, inside its card, saying why the Mac or
+ * this browser is not showing them, with the way to fix it when there is one.
+ */
+function NotificationNotice({ title, detail, onOpen }: {
   title: string;
-  detail: string;
+  detail?: string;
   onOpen?: () => void;
 }): React.JSX.Element {
   return (
     <div className="settings-preference-row">
       <span className="settings-row-copy">
         <strong>{title}</strong>
-        <small>{detail}</small>
+        {detail && <small>{detail}</small>}
       </span>
       {onOpen && <Button onClick={onOpen}>Open System Settings</Button>}
     </div>
@@ -171,11 +175,14 @@ function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Elem
           disabled={!current || current === 'unsupported' || current === 'home-screen' || current === 'unavailable' || current === 'denied' || update.isPending}
           onChange={(event) => update.mutate(event.currentTarget.checked)}
           role="switch" />
+        {/* Why it is off is a row of the card, as the Mac's is. */}
+        {current === 'unsupported' && <NotificationNotice title="Not available in this browser" detail="This browser cannot show Rally notifications." />}
+        {current === 'home-screen' && <NotificationNotice title="Add Rally to your Home Screen"
+          detail="To get notifications on this device, tap Share, then Add to Home Screen. Open Rally from your Home Screen and turn this on there." />}
+        {current === 'unavailable' && <NotificationNotice title="Browser notifications are not available yet" />}
+        {current === 'denied' && <NotificationNotice title="Blocked for this site"
+          detail="Allow notifications in your browser's site settings, then turn this on." />}
       </div>
-      {current === 'unsupported' && <p className="settings-section-copy">This browser cannot show Rally notifications.</p>}
-      {current === 'home-screen' && <p className="settings-section-copy">To get notifications on this device, tap Share, then Add to Home Screen. Open Rally from your Home Screen and turn this on there.</p>}
-      {current === 'unavailable' && <p className="settings-section-copy">Browser notifications are not available yet.</p>}
-      {current === 'denied' && <p className="settings-section-copy">Notifications are blocked for this site. Allow them in your browser's site settings, then turn this on.</p>}
       {state.error && <ErrorNotice occurrence={state.error}>{state.error.message}</ErrorNotice>}
       {/* A browser's own subscribe() error names its internals, not anything the member can act on. */}
       {update.error && <ErrorNotice occurrence={update.error}>{update.error instanceof ApiError ? update.error.message : 'Rally could not change notifications in this browser. Try again.'}</ErrorNotice>}
@@ -613,6 +620,8 @@ export function WorkspaceSettingsScreen({
   } = useAppSession();
   const { host, guest } = useShellCapabilities();
   const browserHost = host === 'browser';
+  // The tab and the Settings window are named for what they show.
+  useDocumentTitle('Settings');
   const workspaceSocket = useOptionalWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
   const queryClient = useQueryClient();
@@ -1527,7 +1536,7 @@ export function WorkspaceSettingsScreen({
           <div className="settings-content-scroll" inert={navigationSheetOpen}>
             {activeSection === 'account' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2><SettingLabel setting={settings.profile} /></h2><p>Your Rally identity and access in this workspace.</p></div>
+                <div className="settings-pane-heading"><h2><SettingLabel setting={settings.profile} /></h2><p>Your Rally identity and access in this Organization.</p></div>
                 <PersonalSetup variant="settings" profileDetails={(displayName) => <>
                   <span><strong>{displayName}</strong><small>{workspace.currentUser.email}</small></span>
                   <Badge className="role-badge">{guest ? 'Guest' : workspace.currentUser.role}</Badge>
@@ -1610,16 +1619,16 @@ export function WorkspaceSettingsScreen({
                     disabled={!applicationSettings || applicationSettings.pushNotificationStatus === 'unavailable' || updatePushNotifications.isPending}
                     onChange={(event) => updatePushNotifications.mutate(event.currentTarget.checked)} />
                   {applicationSettings?.pushNotificationStatus === 'unavailable' && (
-                    <MacNotificationNotice title="Not available in this build"
+                    <NotificationNotice title="Not available in this build"
                       detail="Notifications need an installed release build of Rally." />
                   )}
                   {applicationSettings?.pushNotificationStatus === 'denied' && (
-                    <MacNotificationNotice title="Turned off in macOS"
+                    <NotificationNotice title="Turned off in macOS"
                       detail="Rally can't show alerts or a Dock badge until you allow notifications."
                       onOpen={() => void bridge.openNotificationSettings()} />
                   )}
                   {applicationSettings?.pushNotificationStatus === 'enabled' && applicationSettings.notificationBadgeStatus === 'disabled' && (
-                    <MacNotificationNotice title="Badges turned off in macOS"
+                    <NotificationNotice title="Badges turned off in macOS"
                       detail="The Dock icon won't show what needs your attention until you allow badges."
                       onOpen={() => void bridge.openNotificationSettings()} />
                   )}
@@ -1630,23 +1639,15 @@ export function WorkspaceSettingsScreen({
             {activeSection === 'notifications' && api && (
               <NotificationChannelSettings
                 api={api}
-                connections={connections.data ?? []}
                 email={session?.user.email ?? null}
                 pushAvailable={featureFlags.data?.pushNotificationsEnabled === true}
                 workspaceId={workspace.id}
               />
             )}
-            {activeSection === 'notifications' && api && (
-              <DailyDigestSettings
-                api={api}
-                connections={connections.data ?? []}
-                onEditTimezone={() => setActiveSection('account')}
-              />
-            )}
 
             {activeSection === 'workspace' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>Organization preferences</h2><p>Review organization details and defaults shared by organization automations.</p></div>
+                <div className="settings-pane-heading"><h2>Organization preferences</h2><p>Review organization details and defaults shared by the Organization’s Sidekicks.</p></div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
                     <SettingCopy setting={settings.workspaceIdentity} />
@@ -2056,7 +2057,7 @@ export function WorkspaceSettingsScreen({
                       value={connectionFilter}
                     />
                   </div>
-                  <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Organization connections expose granted capabilities to every member; organization automations use only the connections explicitly bound to them.</p>
+                  <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Organization connections expose granted capabilities to every member; an Organization’s Sidekicks use only the connections explicitly bound to them.</p>
                   <div className="provider-grid">
                     {visibleProviders.map((provider) => {
                       const mark = 'mark' in provider ? provider.mark : null;

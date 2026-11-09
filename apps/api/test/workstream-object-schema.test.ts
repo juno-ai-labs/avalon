@@ -96,7 +96,6 @@ const EXPECTED_TABLES = [
   "content_audience_fences",
   "content_refs",
   "conversation_search_links",
-  "conversation_suggestions",
   "conversation_view_changes",
   "conversation_view_clock",
   "delivered_loop_inputs",
@@ -106,9 +105,6 @@ const EXPECTED_TABLES = [
   "durable_inbox_receipts",
   "durable_outbox",
   "elicitation_requests",
-  "imported_session_messages",
-  "imported_session_sources",
-  "imported_session_update_receipts",
   "inference_attempts",
   "inference_delay_status",
   "member_attention",
@@ -116,8 +112,6 @@ const EXPECTED_TABLES = [
   "memory_sweep_state",
   "object_retirement",
   "object_versions",
-  "participant_authority_transfer",
-  "participant_projection_revisions",
   "participant_transcript_attachments",
   "participant_transcript_blocks",
   "participant_transcript_mentions",
@@ -129,8 +123,6 @@ const EXPECTED_TABLES = [
   "personal_system_prompt_copies",
   "plugin_activation_hints",
   "prepared_conversation_receipts",
-  "private_child_lifecycle_authority",
-  "private_child_membership_authority",
   "projection_keys",
   "realtime_state",
   "repository_publications",
@@ -143,12 +135,10 @@ const EXPECTED_TABLES = [
   "run_plugin_activations",
   "run_scopes",
   "runs",
-  "sidekick_attachments",
   "sidekick_execution_skills",
+  "sidekick_run_rows",
   "sidekick_skill_names",
   "substream_agent_identity",
-  "substream_context_captures",
-  "substream_initial_context",
   "substream_loops",
   "substreams",
   "terminal_imported_resources",
@@ -166,7 +156,6 @@ const EXPECTED_TABLES = [
   "transcript_counters",
   "transcript_facts",
   "transcript_payloads",
-  "turn_disposition_judgements",
   "workstream",
   "workstream_resource_links",
   "workstream_wakeups",
@@ -186,30 +175,6 @@ function objectStorage(
 describe("the Workstream Durable Object relational schema", () => {
   let warn: MockInstance;
 
-  it("preserves existing suggestions when upgrading to resolution suggestions", () => {
-    const database = new DatabaseSync(":memory:");
-    const storage = objectStorage(database);
-    try {
-      applyDurableObjectSqliteMigrations({ storage,
-        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 78),
-        component: "substream_agent_do", workerVersionId: "before-resolution", now: 1 });
-      storage.sql.exec(`INSERT INTO conversation_suggestions
-        (suggestion_id, kind, judged_turn_id, judged_turn_sequence, run_id, status, draft_status,
-         draft_text, decision_choice, decision_confidence, decision_model, created_at)
-        VALUES ('existing', 'merge_up', 'turn-1', 1, 'run-1', 'open', 'ready', 'Keep the discount.',
-          'worth_carrying_up', 0.9, 'jev-test', 1)`);
-      applyWorkstreamObjectSchema(storage, "with-resolution", 2);
-      expect(storage.sql.exec("SELECT kind, status, draft_text FROM conversation_suggestions").toArray())
-        .toEqual([{ kind: "merge_up", status: "open", draft_text: "Keep the discount." }]);
-      expect(() => storage.sql.exec(`INSERT INTO conversation_suggestions
-        SELECT 'duplicate', kind, judged_turn_id, judged_turn_sequence, 'another-run', status,
-          draft_status, draft_text, draft_subject, target_kind, target_id, target_title,
-          decision_choice, decision_confidence, decision_model, created_at, resolved_at,
-          resolved_by_user_id, resolution, accepting_by_user_id FROM conversation_suggestions WHERE suggestion_id = 'existing'`))
-        .toThrow(/UNIQUE/);
-    } finally { database.close(); }
-  });
-
   beforeEach(() => {
     warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
@@ -218,43 +183,41 @@ describe("the Workstream Durable Object relational schema", () => {
     warn.mockRestore();
   });
 
-  it("keeps every shipped migration fingerprint through v32 immutable", () => {
+  // Version 81 is the last one main shipped (2026-11-09, 910d94dc4); every
+  // AgentLoopDO already holds a receipt for each of these, so none may change.
+  // Versions above it are unshipped until this branch deploys.
+  it("keeps every shipped migration fingerprint through v81 immutable", () => {
     expect(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS
-      .filter((migration) => migration.version <= 32)
+      .filter((migration) => migration.version <= 81)
       .map((migration) => [migration.version, durableObjectMigrationHash(migration)]))
       .toEqual([
-        [1, "fnv1a64:740b2c18aea9a94f"],
-        [2, "fnv1a64:6a3aedde16fb0edf"],
-        [3, "fnv1a64:ef09d286d0c92908"],
-        [4, "fnv1a64:227602ce51828cb1"],
-        [5, "fnv1a64:378ecfe08af01f41"],
-        [6, "fnv1a64:5d9aca5e03e7a8c5"],
-        [7, "fnv1a64:198c86c2a9187a36"],
-        [8, "fnv1a64:e4e8f878b8b1f833"],
-        [9, "fnv1a64:808df8fe2f1380b9"],
-        [10, "fnv1a64:9519a46d04c82c19"],
-        [11, "fnv1a64:dd2956457d3fdf4e"],
-        [12, "fnv1a64:1d5a0ac3e1429146"],
-        [13, "fnv1a64:3c5ac9beabf243f8"],
-        [14, "fnv1a64:79c8836a0814470f"],
-        [15, "fnv1a64:207530ec9f92e212"],
-        [16, "fnv1a64:50a0b23d1d77b44b"],
-        [17, "fnv1a64:907a81e47947c870"],
-        [18, "fnv1a64:eca60aaf68a8ff6a"],
-        [19, "fnv1a64:f57ab2addd8a0f82"],
-        [20, "fnv1a64:7d48e297c9270b77"],
-        [21, "fnv1a64:bbd0fe713205ead4"],
-        [22, "fnv1a64:5de04264bbcd5226"],
-        [23, "fnv1a64:0f9575673f4ae0d8"],
-        [24, "fnv1a64:5becac5f85d26473"],
-        [25, "fnv1a64:f6296520794d1119"],
-        [26, "fnv1a64:00e294b01e91be59"],
-        [27, "fnv1a64:c1cf2977a182c28f"],
-        [28, "fnv1a64:b204afcc6c942738"],
-        [29, "fnv1a64:dc704f71c381236c"],
-        [30, "fnv1a64:9e186cd27f9dcd6b"],
-        [31, "fnv1a64:4f82f4cf6d6c21d7"],
-        [32, "fnv1a64:d4f93bb5a60c035d"],
+        [1, "fnv1a64:740b2c18aea9a94f"], [2, "fnv1a64:6a3aedde16fb0edf"], [3, "fnv1a64:ef09d286d0c92908"],
+        [4, "fnv1a64:227602ce51828cb1"], [5, "fnv1a64:378ecfe08af01f41"], [6, "fnv1a64:5d9aca5e03e7a8c5"],
+        [7, "fnv1a64:198c86c2a9187a36"], [8, "fnv1a64:e4e8f878b8b1f833"], [9, "fnv1a64:808df8fe2f1380b9"],
+        [10, "fnv1a64:9519a46d04c82c19"], [11, "fnv1a64:dd2956457d3fdf4e"], [12, "fnv1a64:1d5a0ac3e1429146"],
+        [13, "fnv1a64:3c5ac9beabf243f8"], [14, "fnv1a64:79c8836a0814470f"], [15, "fnv1a64:207530ec9f92e212"],
+        [16, "fnv1a64:50a0b23d1d77b44b"], [17, "fnv1a64:907a81e47947c870"], [18, "fnv1a64:eca60aaf68a8ff6a"],
+        [19, "fnv1a64:f57ab2addd8a0f82"], [20, "fnv1a64:7d48e297c9270b77"], [21, "fnv1a64:bbd0fe713205ead4"],
+        [22, "fnv1a64:5de04264bbcd5226"], [23, "fnv1a64:0f9575673f4ae0d8"], [24, "fnv1a64:5becac5f85d26473"],
+        [25, "fnv1a64:f6296520794d1119"], [26, "fnv1a64:00e294b01e91be59"], [27, "fnv1a64:c1cf2977a182c28f"],
+        [28, "fnv1a64:b204afcc6c942738"], [29, "fnv1a64:dc704f71c381236c"], [30, "fnv1a64:9e186cd27f9dcd6b"],
+        [31, "fnv1a64:4f82f4cf6d6c21d7"], [32, "fnv1a64:d4f93bb5a60c035d"], [33, "fnv1a64:789b0553b0308654"],
+        [34, "fnv1a64:91a6f03b50e51e5b"], [35, "fnv1a64:3e7735b837b1648c"], [36, "fnv1a64:c8761b9b7bd7604d"],
+        [37, "fnv1a64:7adc3e9b9b54d1b8"], [38, "fnv1a64:90ddfa6a6bee8cef"], [39, "fnv1a64:5fd11258095067e1"],
+        [40, "fnv1a64:3ca3f7fb8a607eef"], [41, "fnv1a64:e88a28ae84b03a9e"], [42, "fnv1a64:a8bb6e61efe33efe"],
+        [43, "fnv1a64:764a9105a5ccfbcf"], [44, "fnv1a64:63cd94006c620c0a"], [45, "fnv1a64:929a25b872a6c246"],
+        [46, "fnv1a64:ab42a23831f95157"], [47, "fnv1a64:85c380bbc83bebcd"], [48, "fnv1a64:d40ed6ef92b0e4b4"],
+        [49, "fnv1a64:1e18fe7ffee25ed2"], [50, "fnv1a64:f2a9f4fd8d303ec5"], [51, "fnv1a64:ac6fb500dda3801a"],
+        [52, "fnv1a64:1d0e6f5ba7e40ea1"], [53, "fnv1a64:200d99259ccc19df"], [54, "fnv1a64:31e99daf3271f2c0"],
+        [55, "fnv1a64:2c5e7ce44c05381e"], [56, "fnv1a64:4dc313c5cdabc69d"], [57, "fnv1a64:669b7ecb8eed72eb"],
+        [58, "fnv1a64:19c2c332e3aa28a7"], [59, "fnv1a64:d2e61b7120f0e688"], [60, "fnv1a64:f9b004a4e33d65d8"],
+        [61, "fnv1a64:65a4e61a45969a20"], [62, "fnv1a64:673339a6e448b60b"], [63, "fnv1a64:6483486889911c60"],
+        [64, "fnv1a64:be9d5ca22bde855d"], [65, "fnv1a64:b1cc89772d9d0c8a"], [66, "fnv1a64:80c67d33af1d4e56"],
+        [67, "fnv1a64:db939a56ba5d170c"], [68, "fnv1a64:0de5560086513490"], [69, "fnv1a64:65cc81285d17e623"],
+        [70, "fnv1a64:2eff887aaeba92fc"], [71, "fnv1a64:6e698419ff4104b3"], [72, "fnv1a64:b716f31ca5e6792a"],
+        [73, "fnv1a64:a9037612a68b276a"], [74, "fnv1a64:c76e0232296a9761"], [75, "fnv1a64:3f883d4c4abc8a6d"],
+        [76, "fnv1a64:4d1ae3fb40558a3b"], [77, "fnv1a64:030b6f075a329262"], [78, "fnv1a64:9ca3237acf5bcb48"],
+        [79, "fnv1a64:8f01340873142e3c"], [80, "fnv1a64:235ba2d591fde636"], [81, "fnv1a64:4cbbcebec49c14d2"],
       ]);
   });
 
@@ -540,11 +503,9 @@ describe("the Workstream Durable Object relational schema", () => {
     const storage = objectStorage(database);
     try {
       applyDurableObjectSqliteMigrations({ storage, migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 45), component: "substream_agent_do", workerVersionId: "worker-v45", now: 1_000 });
-      database.exec(`INSERT INTO sidekick_execution_skills VALUES ('execution', '{"sources":[],"activeRefs":[]}');
-        INSERT INTO sidekick_attachments VALUES ('sidekick', 1000)`);
+      database.exec(`INSERT INTO sidekick_execution_skills VALUES ('execution', '{"sources":[],"activeRefs":[]}')`);
       applyWorkstreamObjectSchema(storage, "worker-v46", 2_000);
       expect(database.prepare(`SELECT * FROM sidekick_execution_skills`).all()).toEqual([{ execution_id: "execution", snapshot_json: '{"sources":[],"activeRefs":[]}' }]);
-      expect(database.prepare(`SELECT * FROM sidekick_attachments`).all()).toEqual([{ sidekick_id: "sidekick", attached_at: 1000 }]);
       database.exec(`INSERT INTO sidekick_skill_names VALUES ('first', 'sidekick-editor')`);
       expect(() => database.exec(`INSERT INTO sidekick_skill_names VALUES ('second', 'sidekick-editor')`)).toThrow(/UNIQUE/);
       applyWorkstreamObjectSchema(storage, "worker-v46", 3_000);
@@ -1083,6 +1044,70 @@ describe("the Workstream Durable Object relational schema", () => {
     }
   });
 
+  it("upgrades a populated v81 root, the last shipped version, to the canvas parent kind without losing its row, columns or triggers", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 81),
+        component: "substream_agent_do",
+        workerVersionId: "worker-v81",
+        now: 1_000,
+      });
+      database.prepare(
+        `INSERT INTO workstream
+           (id, workstream_key, parent_workspace_key, region, authority_mode,
+            authority_generation, title, description, scope, exact_state,
+            state_reason_code, next_sequence_number, next_attention_ordinal,
+            authority_epoch, scope_epoch, source_authorization_floor, listing_epoch,
+            deletion_epoch, run_revision, created_at, last_people_activity_at,
+            state_changed_at, updated_at, parent_kind, appearance_json, model_override,
+            agent_profile, channel_color_revision, archive_generation)
+         VALUES (1, ?, ?, 'global', 'authoritative', 4, 'Launch', 'About the launch',
+                 'personal', 'idle', 'test', 7, 3, 2, 1, 0, 1, 0, 1,
+                 1000, 1100, 1200, 1300, 'automation', '{"icon":"briefcase"}', 'sonnet',
+                 'researcher', 5, 2)`,
+      ).run(WORKSTREAM_ID, WORKSPACE_ID);
+      database.prepare(
+        `INSERT INTO content_audience_fences (fence_id, audience_json, created_at)
+         VALUES ('fence-1', '{"scope":"users","userIds":["${RECIPIENT_ID}"]}', 1000)`,
+      ).run();
+
+      applyWorkstreamObjectSchema(storage, "worker-current", 2_000);
+
+      // The columns added after version 66 crossed the swap with the rest.
+      expect(database.prepare(`SELECT * FROM workstream WHERE id = 1`).get()).toMatchObject({
+        workstream_key: WORKSTREAM_ID, title: "Launch", next_sequence_number: 7, parent_kind: "automation",
+        model_override: "sonnet", agent_profile: "researcher", channel_color_revision: 5, archive_generation: 2,
+      });
+      database.prepare(`UPDATE workstream SET parent_kind = 'canvas' WHERE id = 1`).run();
+      expect(database.prepare(`SELECT parent_kind FROM workstream WHERE id = 1`).get()).toEqual({ parent_kind: "canvas" });
+      expect(() => database.prepare(`UPDATE workstream SET parent_kind = 'project' WHERE id = 1`).run()).toThrow();
+      expect(database.prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'workstream' ORDER BY name`,
+      ).all()).toEqual([
+        { name: "authorization_workstream_delete" },
+        { name: "authorization_workstream_insert" },
+        { name: "authorization_workstream_update" },
+        { name: "conversation_view_generation" },
+        { name: "conversation_view_header_delete" },
+        { name: "conversation_view_header_insert" },
+        { name: "conversation_view_header_update" },
+        { name: "workstream_restricted_content_scope" },
+        { name: "workstream_search_display_update" },
+      ]);
+      expect(() => database.prepare(`UPDATE workstream SET scope = 'workspace' WHERE id = 1`).run())
+        .toThrow(/workstream_audience_restricted_content/u);
+      expect(database.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
+      expect(database.prepare(
+        `SELECT name FROM sqlite_master WHERE name = '_canvas_parent_kind_copy_workstream'`,
+      ).all()).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
   it("enforces substream and semantic-part shapes in SQLite", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);
@@ -1232,11 +1257,11 @@ describe("the Workstream Durable Object relational schema", () => {
     const store = new WorkstreamObjectStore(objectStorage(database), "worker-one", "global");
     try {
       await store.waitUntilReady();
-      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "global");
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: WORKSTREAM_ID }, "global");
 
       expect(() => store.ensureIdentity({
         workspaceId: WORKSPACE_ID,
-        parentKind: "workstream",
+        parentKind: "canvas",
         parentId: asWorkstreamId("00000000-0000-7000-8000-0000000000ff"),
       }, "global")).toThrow("workstream_object_identity_mismatch");
     } finally {
@@ -1251,7 +1276,7 @@ describe("the Workstream Durable Object relational schema", () => {
     const store = new WorkstreamObjectStore(storage, "worker-one", "enterprise");
     try {
       await store.waitUntilReady();
-      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "enterprise");
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: WORKSTREAM_ID }, "enterprise");
       const now = Date.now();
       const at = new Date(now).toISOString();
       activateRealtimeExecution(storage, now);
@@ -1369,7 +1394,7 @@ describe("the Workstream Durable Object relational schema", () => {
     const store = new WorkstreamObjectStore(storage, "worker-one", "global");
     try {
       await store.waitUntilReady();
-      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "global");
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: WORKSTREAM_ID }, "global");
       const now = Date.now();
       const at = new Date(now).toISOString();
       activateRealtimeExecution(storage, now, { linkPersistentLoop: false });
@@ -1406,7 +1431,7 @@ describe("the Workstream Durable Object relational schema", () => {
     const store = new WorkstreamObjectStore(storage, "worker-one", "global");
     try {
       await store.waitUntilReady();
-      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "global");
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: WORKSTREAM_ID }, "global");
       const at = "2026-08-21T03:00:00.000Z";
       activateRealtimeExecution(storage, Date.parse(at));
       store.commitRealtimeEvent(ServerSocketEventSchema.parse({

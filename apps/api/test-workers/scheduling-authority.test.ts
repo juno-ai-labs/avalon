@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asSubstreamId } from "@rally/contracts";
 
 import { conversationObjectName } from "../src/durable-objects/names";
-import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import type { SchedulingObjectPort } from "../src/durable-objects/workstream-scheduling-protocol";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
@@ -338,7 +338,7 @@ describe("scheduling authority on real workerd", () => {
     // inherit the same authority fence as every other object-local write, so a
     // quarantined object cannot publish a phantom "compacting" turn.
     const result = await runInDurableObject(stub, (instance) =>
-      (instance as SubstreamAgent).executeTranscriptOperation({
+      (instance as AgentLoopDO).executeTranscriptOperation({
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
         operation: "reserveCompactionStatus",
@@ -403,7 +403,7 @@ describe("scheduling authority on real workerd", () => {
     await runInDurableObject(stub, async (instance, state) => state.blockConcurrencyWhile(async () => {
       // Keep delivery from deleting the committed outbox before inspection.
       // Invoke the same HTTP handler inside the gate, without another RPC turn.
-      if (!instance.fetch) throw new Error("SubstreamAgent fetch handler is required");
+      if (!instance.fetch) throw new Error("AgentLoopDO fetch handler is required");
       const response = await instance.fetch(new Request("https://object.test/internal/scheduling", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,

@@ -43,9 +43,12 @@ const PERSONAL_NOTE = "Facts under \"About the person\" belong to the person who
 function groupTitle(kind: MemoryDigestSubjectKind, label: string | null): string {
   switch (kind) {
     case "organization": return "About the Organization";
-    case "channel": return label ? `About the Channel "${label}"` : "About this Channel";
-    case "thread": return label ? `About the Thread "${label}"` : "About this Thread";
-    case "breakout": return label ? `About the Breakout "${label}"` : "About this Breakout";
+    // A Canvas's facts are stored under `thread` until the subject kinds are
+    // rebuilt; `channel` and `breakout` facts outlive the rooms they named, so
+    // they read by their label alone.
+    case "channel":
+    case "breakout": return label ? `About "${label}"` : "About this conversation";
+    case "thread": return label ? `About the Canvas "${label}"` : "About this Canvas";
     case "sidekick": return label ? `Working knowledge of the Sidekick "${label}"` : "Working knowledge of this Sidekick";
     case "person": return "About the person";
   }

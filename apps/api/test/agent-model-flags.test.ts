@@ -402,7 +402,7 @@ describe("agent model flags", () => {
 
   it("preserves reasoning effort from a model flag", async () => {
     const env = envWithFlags(serving({ model: "openai/gpt-6.1-sol", fallbackModels: [], reasoningEffort: "medium" }));
-    await expect(resolveAgentModelRouting(env, "session_import")).resolves.toEqual({
+    await expect(resolveAgentModelRouting(env, "sidekick_authoring")).resolves.toEqual({
       model: "openai/gpt-6.1-sol", fallbackModels: [], reasoningEffort: "medium",
     });
   });
@@ -486,7 +486,7 @@ describe("agent model flags", () => {
     expect(conversationModelRole({ parentKind: "automation", substreamId: "activation" })).toBe("workstream");
     expect(conversationModelRole({ parentKind: "automation", substreamId: "worker", backgroundAgent: true,
       automationDelegation: { runId: "00000000-0000-7000-8000-000000000001", stopGeneration: 0 } })).toBe("workstream");
-    expect(conversationModelRole({ parentKind: "workstream", substreamId: "0" })).toBe("workstream");
+    expect(conversationModelRole({ parentKind: "canvas", substreamId: "0" })).toBe("workstream");
   });
 
   it("routes an unpinned wizard to Sol independently of the live thread flag", async () => {

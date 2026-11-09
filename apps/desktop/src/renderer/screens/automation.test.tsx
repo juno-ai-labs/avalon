@@ -3,8 +3,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { setCachedWorkstreams } from '../lib/workstreams-cache';
+import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
 import type { AutomationDetail } from '../lib/types';
+import type * as WorkspaceSocket from '../lib/workspace-socket';
+import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { AutomationScreen } from './automation';
 
 const getAutomation = vi.hoisted(() => vi.fn());
@@ -14,14 +16,34 @@ const archiveAutomation = vi.hoisted(() => vi.fn());
 const getSidekickDelegates = vi.hoisted(() => vi.fn());
 const createAutomation = vi.hoisted(() => vi.fn());
 const shell = vi.hoisted(() => ({ host: 'desktop' as 'desktop' | 'browser' }));
+const viewer = vi.hoisted(() => ({ session: undefined as { user: { id: string }; workspace: { role: string | null } } | undefined }));
+const surfaceIntents = vi.hoisted(() => [] as (string | undefined)[]);
+const surfaceMenus = vi.hoisted(() => [] as (ReadonlyArray<{ label: string; checked?: boolean; onSelect: () => void }> | undefined)[]);
 vi.mock('../lib/collaboration-session', () => ({
   useOptionalCollaborationSession: () => null,
-  useCollaborationSession: () => ({ api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance, getSidekickDelegates, createAutomation } }),
+  useCollaborationSession: () => ({ session: viewer.session, api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance, getSidekickDelegates, createAutomation } }),
   useShellCapabilities: () => ({ host: shell.host, guest: false }),
+}));
+const socket = vi.hoisted(() => ({ mounted: false }));
+vi.mock('../lib/workspace-socket', async (importOriginal) => ({
+  ...await importOriginal<typeof WorkspaceSocket>(),
+  useOptionalWorkspaceSocket: () => socket.mounted ? { presenceUserIdsByWorkstream: {} } : null,
 }));
 // The conversation beside the profile is its own surface with its own sockets,
 // and none of it is what this file is about.
-vi.mock('./conversation-surface', () => ({ ConversationSurface: () => <div /> }));
+const surfaceCancels = vi.hoisted(() => [] as (((() => void) | undefined))[]);
+vi.mock('./conversation-surface', () => ({ ConversationSurface: ({ messageIntent, composerMenuActions, composerNotice, onComposerCancel }: {
+  messageIntent?: string;
+  composerMenuActions?: ReadonlyArray<{ label: string; checked?: boolean; onSelect: () => void }>;
+  composerNotice?: React.ReactNode;
+  onComposerCancel?: () => void;
+}) => {
+  surfaceIntents.push(messageIntent);
+  surfaceMenus.push(composerMenuActions);
+  surfaceCancels.push(onComposerCancel);
+  // The notice is the host's own markup, drawn where the composer would be.
+  return <div>{composerNotice}</div>;
+} }));
 
 const SIDEKICK_ID = 'sidekick-1';
 
@@ -53,7 +75,7 @@ function detail(overrides: Partial<AutomationDetail> = {}): AutomationDetail {
  * is what puts the hexagon in the accessibility tree.
  */
 async function showProfile(): Promise<void> {
-  fireEvent.click(await screen.findByRole('button', { name: 'Details' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Sidekick details' }));
 }
 
 function renderScreen(client: QueryClient, entry = `/sidekicks/${SIDEKICK_ID}`) {
@@ -79,7 +101,162 @@ beforeEach(() => {
   getSidekickDelegates.mockReset().mockResolvedValue({ sidekickId: SIDEKICK_ID, creatorUserId: 'user-1', you: { userId: 'user-1', allowed: false }, delegates: [] });
   createAutomation.mockReset().mockResolvedValue({ automationId: SIDEKICK_ID });
   shell.host = 'desktop';
+  viewer.session = undefined;
+  surfaceIntents.length = 0;
+  surfaceMenus.length = 0;
+  surfaceCancels.length = 0;
   window.location.hash = '';
+  socket.mounted = false;
+});
+
+describe('opening a Sidekick the list already holds', () => {
+  it('mounts its conversation from the list row before the detail read answers, and fills the details in after', async () => {
+    let answer!: (value: AutomationDetail) => void;
+    getAutomation.mockReturnValue(new Promise<AutomationDetail>((resolve) => { answer = resolve; }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    applyVersionedSidebarList(client, 'automations', 1, [
+      { id: SIDEKICK_ID, name: 'Weekly changelog', description: '', scope: 'workspace', status: 'active', updatedAt: '2026-11-08T09:00:00.000Z' },
+    ]);
+    renderScreen(client);
+    expect(surfaceIntents.length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Sidekick menu: Weekly changelog' })).toBeInTheDocument();
+    const mounted = surfaceIntents.length;
+    await act(async () => { answer(detail()); });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sidekick menu: Weekly changelog' })).toBeInTheDocument());
+    expect(surfaceIntents.length).toBeGreaterThanOrEqual(mounted);
+  });
+});
+
+describe("The Sidekick's conversation composer", () => {
+  async function open(userId: string, role: string | null, overrides: Partial<AutomationDetail> = {}) {
+    viewer.session = { user: { id: userId }, workspace: { role } };
+    getAutomation.mockResolvedValue(detail(overrides));
+    renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    await waitFor(() => expect(surfaceIntents.length).toBeGreaterThan(0));
+  }
+  const editAction = () => surfaceMenus.at(-1)?.find((action) => action.label === 'Edit Sidekick');
+
+  it("asks the Sidekick for a run from the author until they switch on Edit Sidekick", async () => {
+    await open('user-1', 'member');
+    expect(surfaceIntents.at(-1)).toBeUndefined();
+    expect(editAction()).toMatchObject({ checked: false });
+    act(() => editAction()!.onSelect());
+    await waitFor(() => expect(surfaceIntents.at(-1)).toBe('edit_sidekick'));
+    expect(editAction()).toMatchObject({ checked: true });
+    act(() => editAction()!.onSelect());
+    await waitFor(() => expect(surfaceIntents.at(-1)).toBeUndefined());
+  });
+
+  it('names the open Sidekick in its one header, and the open run after it', async () => {
+    await open('user-1', 'member');
+    expect(await screen.findByRole('button', { name: 'Sidekick menu: Weekly changelog' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Sidekicks' })).toBeNull();
+  });
+
+  it("puts the run's pill after the Sidekick's, which leads back to the shared conversation", async () => {
+    viewer.session = { user: { id: 'user-1' }, workspace: { role: 'member' } };
+    renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }), `/sidekicks/${SIDEKICK_ID}?run=run-1`);
+    const back = await screen.findByRole('button', { name: /Weekly changelog/ });
+    expect(screen.getByText('Run')).toBeInTheDocument();
+    fireEvent.click(back);
+    expect(await screen.findByRole('button', { name: 'Sidekick menu: Weekly changelog' })).toBeInTheDocument();
+  });
+
+  it("numbers the run's pill as its row in the shared conversation does", async () => {
+    viewer.session = { user: { id: 'user-1' }, workspace: { role: 'member' } };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const RUN_ID = '00000000-0000-7000-8000-0000000000bb';
+    // The shared conversation as its socket leaves it: the run's row, numbered 6.
+    client.setQueryData(orderedTranscriptQueryKey(SIDEKICK_ID), {
+      snapshotId: 'snapshot-shared', snapshotThrough: 1, eventSequence: 1, snapshotAtUtc: '2026-11-08T10:00:00.000Z',
+      unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 }, covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{
+          transcriptSequence: 1, turnId: 'turn-run-1', entryKind: 'conversation', actor: 'system', authorUserId: null,
+          authorSnapshot: null, attentionOrdinal: 1, clientMessageId: 'automation-activation:run-1', externalActor: null,
+          createdAtUtc: '2026-11-08T10:00:00.000Z', revision: 1,
+          blocks: [{
+            type: 'text', blockId: 'block-run-1', blockIndex: 0, text: 'Done.', streaming: false,
+            messageType: 'automation_activation',
+            structuredContent: {
+              type: 'automation_activation', schemaVersion: 1, automationId: '00000000-0000-7000-8000-0000000000aa', automationName: 'Weekly changelog',
+              runId: RUN_ID, deliveryId: 'delivery-1', trigger: { kind: 'manual' }, occurredAt: 1789088651967,
+              run: { state: 'completed', stepCount: 2, reply: 'Done.' },
+            },
+            sidekickRun: { requesterUserId: 'user-1', runNumber: 6 },
+            mentions: [], attachments: [],
+          }],
+          blockCount: 1, activityId: null,
+        }],
+        activities: [], pluginRuns: [],
+      }],
+      activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
+    });
+    renderScreen(client, `/sidekicks/${SIDEKICK_ID}?run=${RUN_ID}`);
+    await screen.findByRole('button', { name: /Weekly changelog/ });
+    expect(screen.getByText('Run 6')).toBeInTheDocument();
+  });
+
+  it('numbers the run from the link that opened it before its shared conversation has loaded', async () => {
+    viewer.session = { user: { id: 'user-1' }, workspace: { role: 'member' } };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const RUN_ID = '00000000-0000-7000-8000-0000000000bc';
+    render(
+      <QueryClientProvider client={client}>
+        <Tooltip.Provider>
+          <MemoryRouter initialEntries={[{ pathname: `/sidekicks/${SIDEKICK_ID}`, search: `?run=${RUN_ID}`, state: { runNumber: 5 } }]}>
+            <Routes><Route element={<AutomationScreen />} path="/sidekicks/:id" /></Routes>
+          </MemoryRouter>
+        </Tooltip.Provider>
+      </QueryClientProvider>,
+    );
+    await screen.findByRole('button', { name: /Weekly changelog/ });
+    expect(screen.getByText('Run 5')).toBeInTheDocument();
+  });
+
+  it('leaves Edit Sidekick from the chip at the composer, and on Escape', async () => {
+    await open('user-1', 'member');
+    act(() => editAction()!.onSelect());
+    await waitFor(() => expect(surfaceIntents.at(-1)).toBe('edit_sidekick'));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop editing this Sidekick' }));
+    await waitFor(() => expect(surfaceIntents.at(-1)).toBeUndefined());
+    expect(screen.queryByText('Editing this Sidekick')).toBeNull();
+
+    act(() => editAction()!.onSelect());
+    await waitFor(() => expect(surfaceIntents.at(-1)).toBe('edit_sidekick'));
+    act(() => surfaceCancels.at(-1)!());
+    await waitFor(() => expect(surfaceIntents.at(-1)).toBeUndefined());
+    // Off, the composer has no mode to leave.
+    expect(surfaceCancels.at(-1)).toBeUndefined();
+  });
+
+  it('names the window after the open Sidekick', async () => {
+    document.title = 'Rally';
+    await open('user-1', 'member');
+    await waitFor(() => expect(document.title).toBe('Weekly changelog · Rally'));
+  });
+
+  it('opens a draft already editing, since it has nothing to run yet', async () => {
+    await open('user-1', 'member', { lifecycle: 'draft', status: 'draft' });
+    expect(surfaceIntents.at(-1)).toBe('edit_sidekick');
+  });
+
+  it("offers an Organization admin the edit on an Organization Sidekick", async () => {
+    await open('user-2', 'admin');
+    expect(editAction()).toBeDefined();
+  });
+
+  it("offers a member who does not manage it no edit, so they only ask for runs", async () => {
+    await open('user-2', 'member');
+    expect(editAction()).toBeUndefined();
+    expect(surfaceIntents.at(-1)).toBeUndefined();
+  });
+
+  it("offers an admin no edit on a personal Sidekick they did not write", async () => {
+    await open('user-2', 'admin', { scope: 'you' });
+    expect(editAction()).toBeUndefined();
+  });
 });
 
 describe('Immediate Sidekick creation', () => {
@@ -90,19 +267,23 @@ describe('Immediate Sidekick creation', () => {
     expect(createAutomation).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('button', { name: 'Create Sidekick' })).not.toBeInTheDocument();
   });
+
+  it('reopens the draft this person already has rather than making a second', async () => {
+    socket.mounted = true;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    applyVersionedSidebarList(client, 'automations', 1, [
+      { id: SIDEKICK_ID, name: 'New Sidekick', description: '', scope: 'you', status: 'draft', updatedAt: '2026-11-08T09:00:00.000Z' },
+    ]);
+    getAutomation.mockResolvedValue(detail({ lifecycle: 'draft', status: 'draft', name: 'New Sidekick' }));
+    renderScreen(client, '/sidekicks/new');
+    expect(await screen.findByRole('button', { name: 'Sidekick menu: New Sidekick' })).toBeInTheDocument();
+    expect(createAutomation).not.toHaveBeenCalled();
+  });
 });
 
 describe('AutomationScreen load failure', () => {
-  it('offers a way back to the workspace in a browser tab, where the sidebar is hidden', async () => {
-    shell.host = 'browser';
-    getAutomation.mockRejectedValue(new Error('Sidekick not found'));
-    renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(window.location.hash).toBe('#/');
-  });
-
-  it('leaves closing to the window in the Mac app', async () => {
+  it.each(['desktop', 'browser'] as const)('offers a retry and leaves the way out to the sidebar beside it (%s)', async (host) => {
+    shell.host = host;
     getAutomation.mockRejectedValue(new Error('Sidekick not found'));
     renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
     fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
@@ -112,9 +293,8 @@ describe('AutomationScreen load failure', () => {
 });
 
 describe('AutomationScreen archival', () => {
-  it('refreshes channels and leaves the archived Sidekick route', async () => {
+  it('leaves the archived Sidekick route', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    setCachedWorkstreams(client, []);
     renderScreen(client);
     await showProfile();
 
@@ -125,7 +305,6 @@ describe('AutomationScreen archival', () => {
 
     await screen.findByText('Sidekicks library');
     expect(archiveAutomation).toHaveBeenCalledWith(SIDEKICK_ID);
-    expect(client.getQueryState(['workstreams'])?.isInvalidated).toBe(true);
   });
 });
 

@@ -522,7 +522,6 @@ describe("durable UI-to-model transcript projection", () => {
       "Notice from Rally, not from a person or an agent: a scheduled self-review of this Sidekick is due.",
       text,
       "Every count and run above is from definition revision 2, between creation and 2026-10-26T10:00:00.000Z.",
-      "Where to announce a change, as the conversation to post to: 00000000-0000-7000-8000-0000000000bb.",
       "Read exactly these runs, by id, and no others:",
       "- failed or stopped: 00000000-0000-7000-8000-0000000000f0",
       "- waiting for input: none",
@@ -641,10 +640,12 @@ describe("durable UI-to-model transcript projection", () => {
     );
   });
 
-  it("tells a run its own wizard's message may answer its change request, and where to post the answer", () => {
+  it("tells a run its own wizard's message may answer its change request, and points at where the answer goes", () => {
     const note = renderRunContinuationNote({ senderName: "Sidekick wizard", source: { kind: "run" } }, { fromWizard: true });
     expect(note.role).toBe("user");
-    expect(note.content).toContain("post its answer in the thread where the person who asked wrote");
+    // Where the answer goes is the run guidance's rule, with its tie-break;
+    // the note defers to it rather than stating a second, shorter version.
+    expect(note.content).toContain("give that answer to the person who asked, where your instructions for request_sidekick_change say");
   });
 
   it("launches a selected expanded suggested-work brief as the executable user turn", async () => {

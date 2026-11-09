@@ -27,7 +27,7 @@ properties without knowing which appearance is active.
 | `apps/desktop/src/renderer/lib/theme.ts` | Desktop native reporting and window synchronization adapter. |
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance setting, drawn with the shared `SegmentedControl` from `components/primitives.tsx`. |
 | `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
-| `packages/contracts/src/palette.ts` | The palette keys and `PALETTE_INK` — which of the two absolute inks each fill carries, and the reasoning behind the rule that picks it. Which keys a Space, Channel, Project or person may hold is in `spaces.ts` and `projects.ts`, which draw from it. |
+| `packages/contracts/src/palette.ts` | The palette keys and `PALETTE_INK` — which of the two absolute inks each fill carries, and the reasoning behind the rule that picks it. Which keys a person may hold is in `projects.ts` (a storage name kept from before the Canvases pivot), which draws from it. |
 | `packages/ui/src/lib/project-palette.ts` | `markColors()`, the pastel `project-tint`/`project-ink` pair a mark of a hue is painted in, and `glyphInk()`, resolving `PALETTE_INK` to the `palette-ink` token for the fills that have no pair. `apps/desktop/src/renderer/lib/project-palette.ts` only re-exports it. |
 | `apps/desktop/src/renderer/styles/palette.css.node.test.ts` | Recomputes the table from the tokens, and pins the WCAG 2 shortfall and the APCA ties. |
 
@@ -120,7 +120,10 @@ serves it through `rally-font://`.
   gradient on nested panes creates seams when the sidebar and feed differ in
   size.
 - **The main-process window background matches the canvas token.** A mismatch
-  flashes the wrong colour before the renderer's first frame.
+  flashes the wrong colour before the renderer's first frame. It is set when a
+  window is built and again on every change of appearance, a choice made in
+  `theme:set-window` or the Mac's own under System (`repaintWindowBackgrounds`
+  in `apps/desktop/src/main/window-background.ts`).
 - **So do the root's own background and the `theme-color` meta.** iOS 26
   paints a Home Screen app's status bar from the page, the root's background
   or a fixed container at its top edge, and iOS 15 to 18 from the meta. A root
@@ -137,7 +140,7 @@ serves it through `rally-font://`.
   recorded rather than fixed — see the 2026-09-10 changelog entry for what is
   accepted and why.
 - **A mark is painted in its hue's pastel pair, a person in the hue itself.**
-  Channel and Breakout glyphs, Sidekick hexagons, Space icons and picker
+  Conversation glyphs (`WorkstreamGlyph`), Sidekick hexagons and picker
   swatches take `project-tint` under `project-ink` (`markColors()`), themed per
   appearance, every ink at least 5.3:1 on its tint in light and 7.25:1 in dark,
   and each family at one OKLab lightness so no hue stands out.
@@ -149,6 +152,12 @@ serves it through `rally-font://`.
   `palette-ink-dark` and the fills themselves live in `base.json`, where an
   appearance cannot move them, and the `--personal-ink-*` pair swaps which
   neutral it points at precisely so that it does not invert.
+- **A badge is not a danger fill.** A count, a Needs input badge and an unread
+  dot read `sys.color.badge.base` under `sys.color.badge.on`: design.html
+  draws them `#c3453f` with white digits in both appearances (4.82:1), so the
+  pair lives in `base.json`. `danger.base` lightens to `#cc7a6a` in dark, where
+  white over it is 3.12:1, and its dark `danger.on` would make a badge read as
+  a different object from the light one.
 - **A spacing token is re-fitted, never escaped per consumer.** When a shared
   value is wrong for one rule, the fix is the token or a decision written down
   beside the rule — not a literal on that one selector. Overriding each
@@ -156,10 +165,10 @@ serves it through `rally-font://`.
   60px in the one place nobody had overridden; the value that survives that
   process is the one nobody argued for.
 - **A rule that names a token is not proof the token reaches it.** Check for a
-  shorthand later in `app.css` that shadows the longhand on the same element —
-  `.sidebar-primary-actions` (`app.css:703`) names `sys.space.group.gap` and has
-  never used it, because `.sidebar-secondary-actions` sets a `margin` shorthand
-  at equal specificity further down the file.
+  shorthand later in `app.css` that shadows the longhand on the same element.
+  The case that taught it, a sidebar action row that named
+  `sys.space.group.gap` and never used it because a sibling rule's `margin`
+  shorthand at equal specificity came later, went with the old sidebar.
 - **The hover wash is layered over a control, never substituted for what it
   paints.** `app.css` spells it `--hover-layer`, a `background-image` derived
   from the token, and a hover rule sets that rather than `background`. A

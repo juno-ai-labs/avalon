@@ -1,5 +1,4 @@
 import {
-  DemoSeedSchema,
   asAutomationId,
   asHarnessRunId,
   asSubstreamId,
@@ -141,9 +140,6 @@ export async function provisionSidekickRun(env: Env, message: SidekickRunProvisi
       trigger: definition.trigger,
     },
     executionPrincipal,
-    // A seeded run answers its own provider requests from here; every other
-    // run carries nothing and reaches the real provider. See `runSeeded`.
-    ...(run.seedJson ? { seed: DemoSeedSchema.parse(JSON.parse(run.seedJson)) } : {}),
     reason: definition.trigger.kind,
   });
   await workspace.sidekickRunProvisioned(address);

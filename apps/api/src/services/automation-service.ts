@@ -1,18 +1,14 @@
 import {
   asAutomationId,
-  asSubstreamId,
   asUserId,
   asWorkspaceId,
   type AutomationDetail,
-  type AutomationDraft,
   type AutomationExecutionPrincipalClaim,
   type AutomationRun,
   type AutomationScope,
-  type AutomationSetEvaluatorRulesInputV1,
   type AutomationSummary,
-  type DemoSeed,
   type WorkstreamAppearancePatch,
-  type WorkstreamAutomationSummary,
+  type SidekickAudienceUpdate,
 } from "@rally/contracts";
 
 import type { AutomationActor } from "../durable-objects/automation-do-protocol";
@@ -39,9 +35,6 @@ export async function createAutomation(env: Env, input: {
   workspaceId: string;
   authorUserId: string;
   scope: AutomationScope;
-  owningWorkstreamId: string | null;
-  /** The home conversation under the owning Channel: its Main ("0", the default) or a Breakout. */
-  owningSubstreamId?: string;
   automationId?: string;
 }): Promise<{ automationId: string; created: boolean }> {
   const workspaceId = asWorkspaceId(input.workspaceId);
@@ -54,8 +47,6 @@ export async function createAutomation(env: Env, input: {
     automationId,
     authorUserId: asUserId(input.authorUserId),
     scope: input.scope,
-    owningWorkstreamId: input.owningWorkstreamId,
-    owningSubstreamId: asSubstreamId(input.owningSubstreamId ?? "0"),
     authorityGeneration: authority.generation,
   });
   // Both steps run on a replay too. The object's row commits first, and a
@@ -95,7 +86,6 @@ export class AutomationService {
       workspaceId: this.auth.workspaceId,
       authorUserId: this.auth.userId,
       scope: "personal",
-      owningWorkstreamId: null,
     });
     return { automationId };
   }
@@ -124,16 +114,6 @@ export class AutomationService {
     });
   }
 
-  /** What one work stream owns, for its rail. The sidebar list excludes these. */
-  async listForWorkstream(workstreamId: string): Promise<{ items: WorkstreamAutomationSummary[] }> {
-    const workspace = await this.workspace();
-    return workspace.listWorkstreamAutomations({
-      workspaceId: this.auth.workspaceId,
-      workstreamId,
-      userId: this.auth.userId,
-    });
-  }
-
   async detail(automationId: string): Promise<AutomationDetail> {
     const workspace = await this.workspace();
     return workspace.sidekickReadDetail(await this.actorRequest(automationId));
@@ -142,49 +122,6 @@ export class AutomationService {
   async apply(automationId: string): Promise<AutomationDetail> {
     const workspace = await this.workspace();
     return workspace.sidekickApply(await this.actorRequest(automationId));
-  }
-
-  /**
-   * Record a definition and, when it is ready, publish it — the same call the
-   * drafting conversation makes when a person accepts what it wrote.
-   *
-   * The caller supplies the definition rather than a model writing it, which is
-   * how a demo gets a published Sidekick without depending on a live drafting
-   * run. Management authority is the object's to check, as it is for every
-   * other method here.
-   */
-  async saveDefinition(automationId: string, input: {
-    draft: AutomationDraft;
-    evaluatorRules: AutomationSetEvaluatorRulesInputV1 | null;
-    submittedByRunId: string | null;
-  }): Promise<{ definitionRevision: number; ready: boolean }> {
-    const workspace = await this.workspace();
-    const { actor } = await this.actorRequest(automationId);
-    return workspace.sidekickSaveDefinition({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      automationId: asAutomationId(automationId),
-      draft: input.draft,
-      evaluatorRules: input.evaluatorRules,
-      submittedByRunId: input.submittedByRunId,
-      actor,
-    });
-  }
-
-  /**
-   * Start one run whose model bytes come from a demo's pack instead of a
-   * provider. Only the demo seeder calls this; `POST /sidekicks/:id/run` goes
-   * to `runNow`, whose request shape cannot carry a seed. See
-   * `HostedSidekick.runSeeded`.
-   */
-  async runSeeded(automationId: string, seed: DemoSeed): Promise<{ runId: string; reused: boolean }> {
-    const workspace = await this.workspace();
-    const { actor } = await this.actorRequest(automationId);
-    return workspace.sidekickRunSeeded({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      automationId: asAutomationId(automationId),
-      actor,
-      seed,
-    });
   }
 
   /**
@@ -200,6 +137,12 @@ export class AutomationService {
   ): Promise<AutomationDetail> {
     const workspace = await this.workspace();
     return workspace.sidekickSetAppearance({ ...await this.actorRequest(automationId), appearance });
+  }
+
+  /** Choose who the Sidekick is shared with, and return the Sidekick that results. */
+  async setAudience(automationId: string, update: SidekickAudienceUpdate): Promise<AutomationDetail> {
+    const workspace = await this.workspace();
+    return workspace.sidekickSetAudience({ ...await this.actorRequest(automationId), update });
   }
 
   async pause(automationId: string): Promise<void> {

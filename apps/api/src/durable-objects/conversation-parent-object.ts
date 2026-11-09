@@ -11,7 +11,7 @@ import { z } from "zod";
 /**
  * What the conversation parents share, now that every parent is hosted.
  *
- * A `SubstreamAgent` is one transcript and one loop; it reports what changed
+ * An `AgentLoopDO` is one transcript and one loop; it reports what changed
  * (its directory projection, its viewers' projections, an activity event, a
  * notification) to its parent and nothing else. Every parent, a Channel's, a
  * Space's and a Sidekick's, is hosted in the Organization's `WorkspaceDO`
@@ -22,9 +22,12 @@ import { z } from "zod";
  * aggregation helpers and the Queue batching.
  */
 
+/** The most envelopes one `receiveChildEffects` call takes; a caller with more sends them in chunks. */
+export const RECEIVE_CHILD_EFFECTS_MAX_ENVELOPES = 25;
+
 export const ReceiveChildEffectsRequestSchema = z.strictObject({
   substreamId: z.string().min(1).max(180),
-  envelopes: z.array(ConversationEffectEnvelopeSchema).min(1).max(25),
+  envelopes: z.array(ConversationEffectEnvelopeSchema).min(1).max(RECEIVE_CHILD_EFFECTS_MAX_ENVELOPES),
 });
 export type ReceiveChildEffectsRequest = z.infer<typeof ReceiveChildEffectsRequestSchema>;
 
@@ -138,6 +141,10 @@ export function aggregateUserProjections(
       return value === null ? earliest : earliest === null ? value : Math.min(earliest, value);
     }, null),
     manualUnreadGeneration: Math.max(...effects.map((effect) => effect.manualUnreadGeneration ?? 0)),
+    lastReadAt: effects.reduce<string | null>((latest, effect) => {
+      const value = effect.lastReadAt ?? null;
+      return value === null ? latest : latest === null || value > latest ? value : latest;
+    }, null),
     latestMentionAttentionOrdinal: Math.max(...effects.map((effect) => effect.latestMentionAttentionOrdinal ?? 0)),
   };
 }

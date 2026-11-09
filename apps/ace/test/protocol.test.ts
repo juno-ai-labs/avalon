@@ -101,7 +101,6 @@ describe('Ace managed flag protocol', () => {
       'suggested-work-enabled',
       'multiple-workspaces-enabled',
       'push-notifications-enabled',
-      'live-artifacts-enabled',
     ]);
     expect(MANAGED_FLAGS.map((flag) => flag.key)).toEqual(ProductFeatureFlagKeySchema.options);
     for (const flag of MANAGED_FLAGS) {
@@ -168,16 +167,11 @@ describe('Ace managed model protocol', () => {
     expect(MANAGED_MODELS.map(({ role, key }) => ({ role, key }))).toEqual([
       { role: 'workstream', key: 'agent-model-workstream' },
       { role: 'inline_child', key: 'agent-model-inline-child' },
-      { role: 'workstream_description', key: 'agent-model-workstream-description' },
       { role: 'workstream_naming', key: 'agent-model-workstream-naming' },
-      { role: 'work_opportunity_admission', key: 'agent-model-work-opportunity-admission' },
-      { role: 'work_opportunity_ranking', key: 'agent-model-work-opportunity-ranking' },
-      { role: 'session_import', key: 'agent-model-session-import' },
-      { role: 'suggestion_draft', key: 'agent-model-suggestion-draft' },
       { role: 'memory_sweep', key: 'agent-model-memory-sweep' },
       { role: 'sidekick_authoring', key: 'agent-model-sidekick-authoring' },
     ]);
-    expect(MANAGED_MODELS.map((model) => model.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(MANAGED_MODELS.map((model) => model.rank)).toEqual([1, 2, 3, 4, 5]);
     expect(MANAGED_MODELS.every((model) => model.rankReason.length > 15)).toBe(true);
     expect(new Set(MANAGED_MODELS.map((model) => model.key)).size).toBe(MANAGED_MODELS.length);
     expect(MANAGED_MODELS.every((model) => model.description.length > 60)).toBe(true);
@@ -224,13 +218,13 @@ describe('Ace managed model protocol', () => {
 
   it('accepts a free-text primary and preserves the ordered fallback array', () => {
     expect(ManagedModelUpdateSchema.parse({
-      role: 'workstream_description',
+      role: 'workstream_naming',
       routing: {
         model: ' custom/provider-primary ',
         fallbackModels: ['custom/first', ' custom/second '],
       },
     })).toEqual({
-      role: 'workstream_description',
+      role: 'workstream_naming',
       routing: {
         model: 'custom/provider-primary',
         fallbackModels: ['custom/first', 'custom/second'],

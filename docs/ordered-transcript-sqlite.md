@@ -3,9 +3,9 @@
 `apps/api/src/durable-objects/ordered-transcript-sqlite/` is the one place the
 canonical ordered-transcript tables are declared and the one implementation of
 the canonical JSON those tables are addressed by. One Durable Object class
-installs the statement array today, `SubstreamAgent`, and every conversation
+installs the statement array today, `AgentLoopDO`, and every conversation
 Rally has, a work stream's feed and an automation's chat and runs alike, is a
-`SubstreamAgent`, so they are the same rows with the same ordering rules
+`AgentLoopDO`, so they are the same rows with the same ordering rules
 underneath different parents.
 
 The promise it makes is narrow and load-bearing: **these bytes never change.**
@@ -31,14 +31,14 @@ conversations are for. This document owns the shared module itself.
 | `ordered-transcript-sqlite/canonical-payload-store.ts` | `canonicalTranscriptJson`, `prepareCanonicalTranscriptFact` (canonical bytes plus SHA-256 plus the derived `payload_id`), and `insertPreparedCanonicalTranscriptFact` (the one upsert into `transcript_payloads` and `transcript_facts`). |
 | `ordered-transcript-sqlite/participant-transcript-store.ts` | `ParticipantTranscriptStore`: product-neutral append of one plain-text conversation turn, sequence allocation from `transcript_counters`, and an ordered read of those turns. |
 | `apps/api/src/durable-objects/sqlite-migrations.ts` | The runner that applies a host's ledger and compares each version's recorded hash against the current statements. The enforcement point for the freeze. |
-| `apps/api/src/durable-objects/workstream-object-schema.ts` | Installs the array as `SubstreamAgent` migration 27. |
+| `apps/api/src/durable-objects/workstream-object-schema.ts` | Installs the array as `AgentLoopDO` migration 27. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | The work-stream host adapter: every richer read and write over these tables — blocks, attachments, mentions, activities, Bind states — lives here, not in the shared module. |
 
 ### One schema, one ledger today
 
 `ORDERED_TRANSCRIPT_SCHEMA_V1` is a `readonly string[]` of `CREATE TABLE`,
 `CREATE INDEX`, and one seeding `INSERT`. A host spreads it into a version of
-its own migration list. `SubstreamAgent` added it as version 27. A second host
+its own migration list. `AgentLoopDO` added it as version 27. A second host
 would ship the same bytes inside its own version and end up with the same
 physical schema even though its ledger numbered it differently; the first
 automation object did exactly that until it was deleted on 2026-09-03.
@@ -163,13 +163,15 @@ by the other.
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test/workstream-object-schema.test.ts` | `pnpm --filter @rally/api test` | The SubstreamAgent ledger, version by version, against `node:sqlite` — including the version that installs this array. |
+| `apps/api/test/workstream-object-schema.test.ts` | `pnpm --filter @rally/api test` | The AgentLoopDO ledger, version by version, against `node:sqlite` — including the version that installs this array. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api test:workers` | The work-stream host's use of the same tables: canonical ranges, oversized-turn envelopes, and compaction recovery. |
 | `apps/api/test/workstream-transcript-storage.test.ts`, `apps/api/test/tool-transcript-durability.test.ts` | `pnpm --filter @rally/api test` | The work-stream adapter's reads and writes over these tables. |
 
 The trap: a test that asserts on a migration *hash* is asserting on the bytes of
 this file, which is the intent — if such an assertion fails after an edit here,
 the edit is wrong, not the test.
+
+## Changelog
 
 ### 2026-09-21 — Transcript migration drift warns without blocking the object
 

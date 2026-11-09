@@ -3,7 +3,6 @@ import { AnnotationSurface } from './annotation-surface';
 import { openLink } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
 import { downloadPreview } from './attachment-lightbox';
-import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconDownload, IconExternalLink, IconEye, IconFileText, IconHistory, IconLink, IconLoader2, IconPencil, IconPin, IconDots, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
 import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitlePillClose, TitlePillHeader, openLevel, useTitleMenuNav, type TitlePillLevel } from '@rally/ui/components/title-pill';
@@ -11,7 +10,7 @@ import { classifyAttachmentKind } from '@rally/contracts';
 import { DetailActionMenu, DetailHeaderActionsHost, type DetailHeaderAction } from './detail-header-actions';
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import { useEffect, useRef, useState } from 'react';
-import { formatDateTime, formatSparseRelativeDate } from '../lib/format';
+import { formatDateTime, formatDayLabel, formatSparseRelativeDate, formatTime } from '../lib/format';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreview, readResourcePreviewText } from '../lib/resource-preview';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import type {
@@ -25,6 +24,7 @@ import { ResourceIcon } from './markdown-citations';
 import { CopyButton, CopyStatus, copyStateLabel } from './copy-button';
 import { useCopy } from '../lib/use-copy';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, ErrorNotice, Modal } from './primitives';
+import { ApiError } from '../lib/api';
 import { SiteResourceDetail, type SiteResourceDetailProps } from './site-resource-detail';
 import { RailSurface } from './rail-surface';
 import { RelativeTime } from './relative-time';
@@ -59,10 +59,10 @@ interface InspectorRailProps {
   /**
    * Everything the live-artifact detail needs, or absent.
    *
-   * Absent is how the feature is off: a surface with no API session cannot mint
-   * access, and the `live-artifacts-enabled` flag decides whether the caller
-   * passes this at all. A site then falls back to the ordinary resource card,
-   * which is a working outcome rather than a hidden one.
+   * Absent only when the surface cannot host one: with no API session there is
+   * no access to mint, and with no desktop or browser bridge there is nowhere
+   * to present it. A site then falls back to the ordinary resource card, which
+   * is a working outcome rather than a hidden one.
    */
   siteArtifacts?: {
     openArtifact: SiteResourceDetailProps['openArtifact'];
@@ -71,14 +71,6 @@ interface InspectorRailProps {
     surface: SiteResourceDetailProps['surface'];
   };
   workstream?: WorkstreamDetail;
-  /**
-   * This work stream's Sidekicks, or `undefined` while the answer is on its
-   * way. Both pending and empty states retain the shared Sidekicks heading;
-   * only actual Sidekicks and a failed-read recovery action add rows beneath it.
-   */
-  sidekicks?: SidekickRow[] | undefined;
-  sidekickFailure?: SidekickSectionFailure | undefined;
-  onRefreshSidekicks?: (() => void) | undefined;
   onAddParticipant?: () => void;
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void | Promise<void>;
@@ -193,24 +185,18 @@ function watchLabel(resource: WorkstreamResource): { text: string; name: string 
 
 function ContextContent({
   workstream,
-  sidekicks,
-  sidekickFailure,
-  onRefreshSidekicks,
   onAddParticipant,
   onAddResource,
   onToggleWatch,
 }: Pick<InspectorRailProps,
   | 'workstream'
-  | 'sidekicks'
-  | 'sidekickFailure'
-  | 'onRefreshSidekicks'
   | 'onAddParticipant'
   | 'onAddResource'
   | 'onToggleWatch'
 >): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
 
-  if (!workstream) return <EmptyState title="No thread selected" description="Open a thread to inspect its context." />;
+  if (!workstream) return <EmptyState title="Nothing selected" description="Open a Canvas or Sidekick to inspect its context." />;
   const sources = workstream.resources.filter((resource) => resource.direction === 'source');
   const artifacts = workstream.resources.filter((resource) => resource.direction === 'artifact');
 
@@ -251,8 +237,6 @@ function ContextContent({
         )}
       </Section>
 
-      <SidekickSection items={sidekicks} failure={sidekickFailure} onRefresh={onRefreshSidekicks} />
-
       <Section title="Details">
         <dl className="detail-list">
           {workstream.emailAddress && (
@@ -267,7 +251,7 @@ function ContextContent({
                     must not still be showing over the next stream's. */}
                 <CopyButton
                   key={workstream.id}
-                  label="Copy thread email address"
+                  label="Copy email address"
                   onCopied={() => reportTelemetryProductIntent({
                     kind: 'content_copied', contentType: 'workstream_email', resourceType: 'workstream',
                     resourceId: workstream.id,
@@ -278,7 +262,7 @@ function ContextContent({
               </dd>
             </div>
           )}
-          <div><dt>Created by</dt><dd>{workstream.createdBy?.name ?? 'Automation'}</dd></div>
+          <div><dt>Created by</dt><dd>{workstream.createdBy?.name ?? 'Sidekick'}</dd></div>
           <div><dt>Created</dt><dd>{formatDateTime(workstream.createdAt)}</dd></div>
           <div><dt>Last activity</dt><dd><RelativeTime value={workstream.lastActivityAt} /></dd></div>
           {/* Everything past this point describes how the work stream is wired
@@ -298,12 +282,12 @@ function ContextContent({
               )}
               {!workstream.latestHarnessRun && workstream.latestHarnessRunId && <div><dt>Harness run</dt><dd className="mono">{workstream.latestHarnessRunId}</dd></div>}
               <div>
-                <dt>Thread ID</dt>
+                <dt>ID</dt>
                 <dd className="copy-detail">
                   <span className="mono">{workstream.id}</span>
                   <CopyButton
                     key={workstream.id}
-                    label="Copy thread ID"
+                    label="Copy ID"
                     onCopied={() => reportTelemetryProductIntent({
                       kind: 'content_copied', contentType: 'workstream_id', resourceType: 'workstream',
                       resourceId: workstream.id,
@@ -365,6 +349,18 @@ function hasGeneratedArtifactPreview(resource: WorkstreamResource): boolean {
 }
 
 /**
+ * An artifact with no stored content: the server says so up front
+ * (`contentAvailable: false`) or answers its read `resource_content_unavailable`.
+ * Said, rather than left as a pane holding only its last-updated line.
+ */
+function UnstoredContent(): React.JSX.Element {
+  return <EmptyState
+    description="Its content was never stored, so there is nothing to show. A new version from Rally or an upload will appear here."
+    title="Nothing to show yet"
+  />;
+}
+
+/**
  * What the resource says, under what the record says about it.
  *
  * The rail's detail used to be metadata only — type, direction, version, remove —
@@ -382,7 +378,7 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
   loadResourceContent: NonNullable<InspectorRailProps['loadResourceContent']>;
   resource: WorkstreamResource;
 }): React.JSX.Element | null {
-  const [state, setState] = useState<{ text?: string; src?: string; media?: 'audio' | 'image'; failed?: boolean }>({});
+  const [state, setState] = useState<{ text?: string; src?: string; media?: 'audio' | 'image'; failed?: boolean; unavailable?: boolean }>({});
   const attachmentKind = classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType });
   const media = resource.contentAvailable && (attachmentKind === 'image' || attachmentKind === 'audio')
     ? attachmentKind
@@ -406,13 +402,15 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
         .then((text) => {
           if (!controller.signal.aborted) setState({ text });
         });
-    void load.catch(() => {
+    void load.catch((cause: unknown) => {
       // A resource whose content was never hydrated, whose object has since
       // gone, or whose format the server will not convert is not an error the
       // reader can act on — last-updated above is still true, and saying so
       // beats an empty panel. A preview still being prepared is not one of
       // these, and no longer arrives here until the retries are spent.
-      if (!controller.signal.aborted) setState({ failed: true });
+      if (controller.signal.aborted) return;
+      // Never stored: the server has no bytes to show, and says so by name.
+      setState(cause instanceof ApiError && cause.code === 'resource_content_unavailable' ? { failed: true, unavailable: true } : { failed: true });
     });
     return () => {
       controller.abort();
@@ -424,6 +422,7 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
     // a citation substantiating a claim with the wrong revision.
   }, [loadResourceContent, media, resource.currentVersion, resource.id]);
 
+  if (state.unavailable) return <UnstoredContent />;
   if (state.failed && attachmentKind === 'other') return <AnnotationSurface resourceId={resource.id} version={resource.currentVersion} name={resource.title} mimeType={resource.mimeType} sizeBytes={resource.sizeBytes} />;
   if (state.failed) {
     return <p className="inspector-detail-preview-status">This preview is not available.</p>;
@@ -437,9 +436,10 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
 /**
  * Who a version row names, in the words the rail can actually show.
  *
- * A run and a connection are ids nothing in the rail resolves to a name, so
- * the agent reads as Rally and a connector as the provider the resource came
- * from. A version nothing attributed says so rather than picking someone.
+ * The server names a member or a connector (`authorName`) where it can; a
+ * run reads as Rally, and without a name a member falls back to the room's
+ * participants and a connector to the provider the resource came from. A
+ * version nothing attributed says so rather than picking someone.
  */
 function versionAuthorLabel(
   version: ResourceVersion,
@@ -452,12 +452,18 @@ function versionAuthorLabel(
     case 'system':
       return 'Rally';
     case 'member':
-      return participants.find((person) => person.id === author.userId)?.name ?? 'A teammate';
+      return version.authorName ?? participants.find((person) => person.id === author.userId)?.name ?? 'A teammate';
     case 'connector':
-      return resource.provider ?? 'Connector';
+      return version.authorName ?? resource.provider ?? 'Connector';
     default:
       return 'Unattributed';
   }
+}
+
+/** When an artifact last changed, as the design writes it: "today, 10:42", "Yesterday, 9:05", "Jul 31, 7:39 PM". */
+function updatedLabel(value: string): string {
+  const day = formatDayLabel(value);
+  return `${day === 'Today' ? 'today' : day}, ${formatTime(value)}`;
 }
 
 /**
@@ -632,11 +638,22 @@ function InspectorDetail({
   refreshingResourceId,
   siteArtifacts,
   artifactEditable,
+  participants,
+  versions,
 }: Pick<
   InspectorRailProps,
   'loadResourceContent' | 'onRefreshResource' | 'refreshingResourceId' | 'siteArtifacts'
-> & { resource: WorkstreamResource | undefined; settled: boolean; artifactEditable: boolean }): React.JSX.Element | null {
+> & {
+  resource: WorkstreamResource | undefined;
+  settled: boolean;
+  artifactEditable: boolean;
+  participants: WorkstreamDetail['participants'];
+  /** The resource's history, newest first, when it has arrived: the header names the current one. */
+  versions: ResourceVersion[] | undefined;
+}): React.JSX.Element | null {
   if (!resource && !settled) return null;
+  // design.html §2: "Last updated today, 10:42 · version 4 · Rally".
+  const current = resource ? versions?.find((version) => version.version === resource.currentVersion) ?? versions?.[0] : undefined;
 
   if (resource) {
     // A live artifact is a page people open, not a record to describe. Behind
@@ -669,7 +686,8 @@ function InspectorDetail({
       <div className="inspector-detail">
         {resource.updatedAt && (
           <p className="inspector-detail-updated">
-            Last updated <time dateTime={resource.updatedAt}>{formatDateTime(resource.updatedAt)}</time>
+            Last updated <time dateTime={resource.updatedAt} title={formatDateTime(resource.updatedAt)}>{updatedLabel(resource.updatedAt)}</time>
+            {current && <>{` · version ${current.version} · ${versionAuthorLabel(current, resource, participants)}`}</>}
           </p>
         )}
         {sourceActions && (
@@ -689,6 +707,7 @@ function InspectorDetail({
         {showDocument && loadResourceContent && (
           <ResourceContentPreview loadResourceContent={loadResourceContent} resource={resource} />
         )}
+        {!resource.contentAvailable && !sourceActions && <UnstoredContent />}
       </div>
     );
   }
@@ -704,7 +723,7 @@ function inspectedResource(
 }
 
 const railTitle: Record<RailVariant, string> = {
-  context: 'Thread',
+  context: 'Details',
   browser: 'Browser',
 };
 
@@ -1015,9 +1034,11 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
             {...(props.loadResourceContent ? { loadResourceContent: props.loadResourceContent } : {})}
             onRefreshResource={props.onRefreshResource}
             refreshingResourceId={props.refreshingResourceId}
+            participants={props.workstream?.participants ?? []}
             resource={resource}
             settled={settled}
             {...(props.siteArtifacts ? { siteArtifacts: props.siteArtifacts } : {})}
+            versions={props.resourceVersions}
           />
         ) : (
           <ContextContent {...props} />
@@ -1026,7 +1047,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       </div>
       </DetailHeaderActionsHost>
       <Modal
-        description={`${archiveTarget?.title ?? 'This resource'} will leave this thread. Rally has no way to bring it back yet.`}
+        description={`${archiveTarget?.title ?? 'This resource'} will be removed. Rally has no way to bring it back yet.`}
         footer={(
           <>
             <Button disabled={archiving} onClick={closeArchive}>Cancel</Button>

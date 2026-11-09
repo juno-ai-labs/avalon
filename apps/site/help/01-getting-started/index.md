@@ -1,31 +1,30 @@
 ---
 title: Getting started
-description: Install Rally, sign in, set up your Organization and send your first message.
+description: Install Rally, sign in, set up your Organization and start your first Canvas.
 ---
 
-Most work is already a conversation. Somebody asks, somebody answers, a draft goes back and forth, and the useful part ends up spread across a chat app, an inbox and a few browser tabs nobody wants to close. Rally keeps that conversation in one place and puts an AI agent in it, so you, your teammates and the agent work on the same thing where everyone can see what happened.
+Most work ends in a thing. A plan, a budget, a deck, a report, a sign-up page. Getting there is usually a conversation spread across a chat app, an inbox and a few browser tabs nobody wants to close, and the thing itself lives somewhere else again. Rally puts the conversation and the thing side by side, with an AI agent in the conversation that does the making.
 
-Rally is a desktop app for the Mac. There is also an iPhone app for keeping up while you are away from your desk, and a lighter version that runs in a web browser for people someone has shared a conversation with. The Mac app is the one with everything in it, so that is where this chapter starts.
+Rally is a desktop app for the Mac. There is also a version that runs in a web browser, for people someone has shared a Canvas with and for the times you are away from your Mac. The Mac app is the one with everything in it, so that is where this chapter starts.
 
-The agent inside Rally is also called Rally. That sounds confusing for about a day. After that you will say "ask Rally" and mean the agent, and "open Rally" and mean the app, and nobody will be confused at all. Rally the agent reads, writes, searches the web, runs code, works in your other tools and makes documents. It does this in the open, inside a conversation your teammates can see and join.
+The agent inside Rally is also called Rally. That sounds confusing for about a day. After that you will say "ask Rally" and mean the agent, and "open Rally" and mean the app, and nobody will be confused at all. Rally the agent reads, writes, searches the web, runs code, works in your other tools and makes files. It does this in the open, in a conversation the people you invite can see and join.
 
 ## The cast of characters
 
-A handful of words come up on nearly every page of this book. Here they are, from the biggest to the smallest.
+A handful of words come up on nearly every page of this book. Here they are.
 
 - An **Organization** is your team's home in Rally. Its members, its connections to other tools and all of its work live inside it.
-- A **Channel** is a group of Threads. Use one for a team, a client or a long-running project. Every Organization starts with one Channel, called General.
-- A **Thread** is one conversation about one piece of work. This is where you talk to Rally and your teammates, and where most of your time goes.
-- A **Breakout** is a side conversation that branches off a Thread, for chasing an idea without derailing the main thread.
-- A **Sidekick** is a saved helper. You describe a job once, and it can run on a schedule, when something happens in another tool, or whenever you call on it.
+- A **Canvas** is one piece of work: a conversation with Rally, and whatever Rally makes in it. Documents, spreadsheets, images, PDFs and small websites all live in Canvases. A new Canvas is yours alone until you share it.
+- A **Sidekick** is an AI agent your team shares. You describe a job once, and it does that job on a schedule, when something happens in another tool, or whenever someone asks it to. Each Sidekick has one conversation that everyone it is shared with can join.
+- A **run** is one stretch of work by Rally or a Sidekick, from the request to the answer.
 
-If you remember only one picture, make it this: an Organization holds Channels, a Channel holds Threads, and a Thread can sprout Breakouts. Sidekicks are the helpers who come and go between them.
+If you remember only one picture, make it this: Canvases are where you and Rally make things together, and Sidekicks are the colleagues who keep doing a job while you get on with something else. When a Sidekick makes something people will work on afterwards, it makes a Canvas.
 
 > [!NOTE]
-> Rally has renamed a few things since it started, and some screens and older emails still use the old words. If you see **Workspace**, read Organization. **Project** or **Space** means Channel. A **work stream**, a **stream**, or what Rally used to call a **Channel** is a Thread, a **substream** is a Breakout, and an **automation** is a Sidekick. Same furniture, new labels on the drawers.
+> Rally has renamed things a few times since it started, and some screens and older emails still use old words. **Workspace** means Organization, and an **automation** is a Sidekick. If an old email mentions a Channel, a Thread or a Breakout, those were the conversations Rally had before Canvases. They are gone, and their links no longer open.
 
 ## What this chapter covers
 
-This chapter has five short pages. You will install Rally and sign in, create or join an Organization, go through the guided setup, take a tour of the window, and then start your first Thread and give Rally something to do. Allow about as long as it takes a kettle to boil, twice.
+This chapter has five short pages. You will install Rally and sign in, create or join an Organization, go through the guided setup, take a tour of the window, and then start your first Canvas and give Rally something to make. Allow about as long as it takes a kettle to boil, twice.
 
 Start with [Install Rally and sign in](01-install-rally.md).

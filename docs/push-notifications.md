@@ -1,26 +1,30 @@
 # Push notifications
 
-Rally pushes every row of the sidebar's Activity tab to signed-in Macs and
-iPhones through APNs, and to signed-in browser tabs through Web Push. Mentions
-and additions use the existing workspace notification intent; the rows Activity
-reads from the directory (a thread or breakout somebody started, a run Rally
-finished) are pushed from the Organization object as they appear
-([Activity rows](#activity-rows)). Each device registers with one transport and
+Rally pushes to signed-in Macs through APNs, and to signed-in browser tabs
+through Web Push, whatever lands on the workspace notification intent: a
+mention or an add, a Sidekick run that needs input or finished
+([below](#a-sidekick-run-that-needs-input-or-finished)), and a person's reply
+([below](#a-persons-reply)). A mention or add in a
+Canvas's Chat or a Sidekick's conversation is recorded by its parent
+([A mention or an add](hosted-conversation-parents.md#a-mention-or-an-add)),
+and a run notice by the Sidekick. Each device registers with one transport and
 is sent only that transport's payload. Push is enabled for everyone from launch through
-`push-notifications-enabled`. Each kind of row also goes by email or Slack when
-the person chose that for it ([What each person chooses](#what-each-person-chooses));
-nothing falls back from one channel to another.
+`push-notifications-enabled`. Every kind also goes by email when the person
+chose that for it ([Sinks](#sinks),
+[What each person chooses](#what-each-person-chooses)); nothing falls back
+from one channel to another.
 
 ## Where the code lives
 
 - `apps/api/src/services/push-device-service.ts`: regional D1 device/session registry.
 - `apps/api/src/services/push/`: provider authentication and payload rendering; `apns-transport.ts` for Apple, `web-push-transport.ts` for browsers.
-- `apps/api/src/queues/push-delivery-consumer.ts`: intent or Activity row read, existing access check, send by transport, receipt.
-- `apps/api/src/durable-objects/workspace-activity-push.ts`: which Activity rows a directory batch pushes, to whom, and the record that keeps each to one push.
+- `apps/api/src/services/notification-notice.ts`: `renderNotice`, the one rendering of every kind into a channel-neutral `Notice`, with the access check.
+- `apps/api/src/queues/push-delivery-consumer.ts`: the queue consumer: render the notice, check the choice for its channel, hand it to the push sink (send by transport, receipt) or the email sink; a retired Activity row message is acknowledged.
+- `apps/api/src/services/notice-email.ts`: the email sink, one template for every kind, sent through `sendResendEmail`.
+- `apps/api/src/services/push-delivery-service.ts`: `enqueueNotice`, which queues one message per sink a producer's recipient chose.
 - `packages/contracts/src/push-notifications.ts`: the registration contract and the Web Push service host allowlist (`isWebPushServiceUrl`).
 - `apps/desktop/src/renderer/lib/web-push.ts` and `apps/browser/public/sw.js`: browser subscription and the service worker that shows the notification.
 - `apps/desktop/src/main/push-notifications.ts` and `apps/desktop/native/push-notifications/`: Mac registration and native response/permission callbacks.
-- `apps/ios/Rally/App/RallyPush.swift`, `RallyAppDelegate.swift`, and `AppModel` reconcile: iPhone registration, permission, and tap routing.
 
 ## How it works
 
@@ -28,17 +32,27 @@ Every stored workspace credential registers the installation with its own region
 The Mac loops every credential it holds, a guest's included, and the browser
 registers a guest's tab as it does a member's. A registration belongs to the account in that deployment, not to one
 workspace, so a guest workspace's notifications still reach a device that a
-membership in the same deployment registered; the iPhone holds one workspace session
-and registers that one. Delivery requires a live session bound to that device; another installation's
+membership in the same deployment registered. Delivery requires a live session bound to that device; another installation's
 session cannot keep it alive. The device switch and a separate push installation
-ID persist in the existing application settings file on the Mac, and in the
-Keychain on iPhone.
+ID persist in the existing application settings file on the Mac.
+
+A mention or an add in a Canvas's Chat or a Sidekick's conversation becomes
+an intent where the conversation's effect lands: the hosted parent records it
+beside the effect's receipt and the activity consumer processes it at once
+([A mention or an add](hosted-conversation-parents.md#a-mention-or-an-add)).
+Processing reads whether the recipient is still an active member (D1), may
+still open the parent and is not the author, then sends each channel the
+person chose.
 
 The producer enqueues only region, workspace, recipient and intent identifiers.
 Settlement retains the payload only when push was enqueued, until the existing
 intent retention expires. The consumer reads content through `WorkspaceDO.readNotificationIntentForDelivery`
-and reuses the processor's `notificationDeliveryContext`. A projection behind
-its required version retries; revoked access stops delivery. No presence check is
+and reuses the processor's `notificationDeliveryContext`, which asks
+`WorkspaceDO.notificationDirectoryState` whether the recipient may still open
+the conversation: the Canvas's row and who it admits, or the Sidekick's row and
+who it is shared with. An intent written from a newer parent generation than
+the object holds retries; one for any other parent (a retired Thread) is
+skipped as `notification_parent_missing`; revoked access stops delivery. No presence check is
 added. Successful enqueue with a live device is not proof of an Apple alert.
 
 Success receipts key on workspace, intent and device. A partial retry skips only
@@ -58,24 +72,23 @@ Payload bodies remove the generated personal-system-prompt envelope, then
 reduce Markdown formatting and Rally's internal citation and person-mention
 references to readable plain text before carrying the first
 1,000 Unicode code points with an ellipsis when shortened, fitted further to
-Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` to the number
-the sidebar's **Threads** button counts, less pending access requests
-([`attention-menu.md`](attention-menu.md)):
-each Main and each Breakout the recipient takes part in, in an unarchived,
-non-system Channel, that is unread, unseen or mentions them, plus each Main
-that mentions them without their taking part. Other activity in an
-Organization-wide thread they are not in does not count, as it is not in their
-Threads list. The
-directory `attention` read returns it as `readerAttentionCount`
-(`WorkspaceSpaceStorage.readerAttentionCount`). A run in `needs_input` is not
-counted, as the Threads count does not include it. A send from one workspace does not sum
-other workspaces: iOS holds one session, and a global inbox is out of scope.
+Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` (and the Web
+Push payload's `badge`, and `rally.badge` in the data) to the `attention`
+read's `readerAttentionCount`: the person's unseen Activity in that
+Organization, read when the message is sent, so the notice's own row, recorded
+before it was queued, is in it ([`activity.md`](activity.md)). An alert that
+arrives while Rally is closed therefore sets the icon to what the Activity rail
+will show, rather than clearing it. A send from one workspace does not sum
+other workspaces: a global inbox is out of scope.
 Omitting `badge` would leave the previous icon count in place; `0` clears it.
 
 While Rally runs, the Mac sets the dock badge itself. `useDockBadge` sends the
-menu's count to main (`dock-badge:set`, `app.setBadgeCount`) on every change,
-once the Channel directory and every Breakout list the count reads have
-loaded, and clears it when the shell unmounts. Main re-applies the last count
+live unseen Activity count (`dockBadgeCount`, the Activity rail badge's
+`unseenCount`, the same count a push's badge carries) to main
+(`dock-badge:set`, `app.setBadgeCount`) on every change, once the Activity
+list has arrived, and clears it when the shell unmounts. So the badge follows
+the push payload's count while Rally is closed and the live count while it
+is open, and opening Rally keeps the number an alert left. Main re-applies the last count
 when a Rally window gains focus, since a background alert from another
 Organization sets that Organization's count. Foreground alerts leave `.badge`
 out of their presentation options, so they never replace it.
@@ -83,9 +96,11 @@ out of their presentation options, so they never replace it.
 An installed browser app (a Chrome or Edge app window, or a Home Screen app on
 iPhone and iPad) shows the same number through the Badging API. The Web Push
 payload carries it as `badge`, and `sw.js` sets it with `navigator.setAppBadge`
-(`clearAppBadge` at `0`) when the push arrives, unless a Rally tab is focused:
-the push may be for another Organization, and a Mac foreground alert leaves the
-dock badge alone too. While a tab runs, the browser bridge's
+(`clearAppBadge` at `0`) when the push arrives, unless a Rally tab is visible:
+the visible tab owns the icon with its live count, the push may be for another
+Organization, and a Mac foreground alert leaves the dock badge alone too. A
+hidden tab (a backgrounded Home Screen app) takes the push's count until it is
+shown again. While a tab runs, the browser bridge's
 `setDockBadgeCount` takes the count from `useDockBadge` the same way. The icon
 is one for every tab, so only the tab focused last writes it: focusing a tab
 (or bringing it back to visible) records it under `rally.app-badge-owner` in
@@ -123,155 +138,217 @@ cleanup without delaying local credential removal. Optional push settings I/O
 cannot abort application startup.
 APNs groups notifications by the main workstream ID, including notifications
 from its substreams. Clicks still target the originating substream.
-Clicks pass the HTTPS link through the existing work-stream parser and scheme
-navigation, including pending navigation before sign-in or window readiness.
-iOS parses the same `rally` object and opens `url` as a universal link. Debug
-iPhone builds sign the development APNs entitlement, so their tokens are
-`apnsEnvironment: sandbox` and the consumer posts to
-`api.sandbox.push.apple.com`; Release and TestFlight stay on production, like
-the Mac.
+Clicks pass the HTTPS link through the Canvas and Sidekick link reader
+(`httpsLinkDeepLink`) and scheme navigation, including pending navigation before sign-in or window readiness.
 Main-window creation waits for renderer protocol and IPC installation, including
 when a native notification response arrives during asynchronous app startup.
 
-## Activity rows
+## What is pushed
 
-**Human replies** (`new_message`) use the existing message activity log and
-current participant viewer rows, without requiring another mention. Their
-notification setting is **New messages** (`newMessages`), defaulting to push.
-The existing directory follow-up durably triggers delivery after a message event
-commits. AI messages, the author, and nonparticipants are excluded.
+Each of the intents below also writes its recipient's Activity row in the same
+transaction ([`activity.md`](activity.md)), so the feed lists what was pushed.
 
-Reply and completion delivery wait **15 seconds** on the existing Queue. Reading the reply in
-that interval cancels delivery; otherwise the consumer reads the conversation's
-latest human reply and uses the original queued event for its delivery receipt.
-Ordinary reply and completion alerts share a **two-minute** per-conversation
-cooldown, stored per delivery channel in `workspace_activity_alerts` only after
-a provider accepts the alert. Disabled kinds, unavailable transports and replies
-read before delivery start no cooldown. `workspace_activity_pushes` separately
-records decisions and whether a reply was actually enqueued for its 15-second
-batch. The owning object reserves the recipient/conversation synchronously
-before awaiting the Queue. The existing durable directory follow-up remains
-pending until handoff completes; a failure or restart leaves that work retryable
-without treating an unfinished handoff as a final decision.
-Suppressed events still update Activity. Explicit mentions retain their own
-immediate delivery path and a mention's message does not also schedule a reply alert. These intervals are product policy, named `REPLY_BATCH_SECONDS` and
-`CONVERSATION_ALERT_COOLDOWN_MS`.
-Provider handoff is claimed atomically per recipient, conversation, and channel
-before sending. A competing consumer retries while the claim is busy; a sent
-alert then suppresses another delivery through the normal cooldown. The claim
-is released in `finally` even when the provider fails, and expires after the
-same two-minute interval if the consumer disappears. Claim ids fence delayed
-cleanup from a later claim. A failed Queue enqueue is persisted as a push-only
-directory follow-up, so retrying it does not repeat completed publications.
+Push delivery reads notification intents only. A Queue message for a retired
+Activity row is logged `activity_item_retired` and acknowledged (its id logged
+as `activity_item_id`). The events are a mention or add (the intent above,
+recorded by the Canvas or Sidekick whose conversation carried it), a
+Sidekick run's two notices, and the notices a hosted parent records about
+itself, below.
 
-An invitation stamped at the opening message's time covers that reply alert too,
-so an invitee receives one request for attention. Later replies remain eligible.
-Recent batch checks seek `(user_id, pushed_at)` rather than scanning all past
-notification decisions.
+### A Sidekick run that needs input or finished
 
-The cooldown intentionally suppresses the trailing alert rather than deferring
-it; its unread Activity remains available.
+A run reaching `needs_input`, or finishing (`completed`, `failed` or
+`stopped`), is a notice on the same intent row a mention uses, with
+`notification_kind` `needs_input` or `run_finished` (WorkspaceDO migration 138
+widened the CHECK; `NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION`). Who hears it is
+decided, per the [Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
 
-Having a thread selected does not suppress a human reply: only the existing
-visible-message read waterline clears it. That waterline advances after the
-client's read debounce while the app is focused and visible, through messages
-in the viewport. A thread scrolled away from new replies therefore remains unread.
+- **Needs input** goes to the run's requester when a person's request started
+  the run (a `manual` trigger's `requestedByUserId`: a message in the
+  Sidekick's conversation or Run now), plus whoever manages the Sidekick (its
+  author, the person it runs as, and for an Organization-wide Sidekick the
+  Organization's owners and administrators).
+- **A finished run** goes only to its requester. A scheduled, event or email
+  run has none; its row in the shared conversation and its unread are the
+  signal.
 
+`HostedSidekick.onChildCommonProjection` sees the transition in the
+projection's own transaction (the state it moves from is read there) and arms
+one `sidekick_run_notice` alarm entry carrying the notice
+(`SidekickRunNotificationSchema` in `packages/contracts/src/push-notifications.ts`:
+the Sidekick's name, the run, its state and reply then). A run admitted
+straight into `needs_input` for want of a delegate arms the same entry. The
+entry resolves recipients, drops anyone no longer active, records one intent
+per recipient with `recordSidekickRunNotices` (already `delivered`: push is
+the only channel, so there is no lease), and enqueues each with
+`enqueuePushDelivery`. A retried entry records nothing twice (the source and
+kind are unique per recipient) and re-enqueues, which the per-device receipts
+make harmless.
 
-Everything the Activity tab lists can be a push, an email or a Slack message.
-`added` and `mentioned` go through their notification intents above, whose
-processor sends each channel the person chose. `thread_started`,
-`breakout_started`, `run_finished` and `merged` are read by the feed from the directory
-rather than from an event ([`digests.md`](digests.md#the-activity-tab)), and
-`workspace-activity-push.ts` queues one message per chosen channel.
-`artifact_updated` goes the same way, to the person who pinned the artifact
-alone: its trigger is a new version reaching the pinned-artifact ledger
-(migration 111), drained after the write that filled it, and the person's
-**Pinned artifact updates** setting (`artifactUpdates`) chooses its channels.
-It reads "Rally updated launch-checklist.md" and opens the artifact, expanded
-over its thread, through the link's artifact segment
-([`workstream-links.md`](workstream-links.md#the-two-forms)).
+The push consumer reads the notice back, checks the recipient is an active
+member the Sidekick still admits (`notificationDirectoryState`), consults
+`notificationAllows` for the kind, and links to the Sidekick
+(`conversationLink`). The title is "<Sidekick> needs your input" or
+"<Sidekick> finished / failed / stopped"; the body is the run's reply as plain
+text. For Needs input that reply is the question the run is waiting on: a
+run's conversation sends a pending elicitation's prompt as its reply
+([automation-lifecycle.md](automation-lifecycle.md#runs-in-the-shared-conversation)),
+so the push body and the Activity row's preview, which is the body's text,
+carry the question. One notice feeds both, so they cannot disagree, and the
+question is what the recipient needs to decide whether to answer now; before
+this the body was the run's last text turn, usually empty, because the asking
+is not a text turn. A run admitted with no delegate carries the delegation
+notice instead. Both kinds read the person's **Sidekick runs** choice (`runFinished`),
+so one row in Settings covers both.
 
-**The trigger is the directory write.** `applyDirectoryBatch` reads each
-conversation's row either side of its common effect and names what moved in
-the follow-up (`activityPushSubjects`):
+**Where a push links.** Every notice, whichever sink takes it, links through
+`conversationLink` once, in `renderNotice`: a mention or a reply in a
+Canvas's Chat opens the Canvas at that message — the canonical link with
+`?turn=<turn>&sequence=<n>` ([`links.md`](links.md)), and the push data's
+`turnId` and `sequence` beside it — from the mention effect's
+`transcriptSequence` and the reply notice's `messageSequence`. A notice
+recorded before it carried the sequence, or a turn id that is not a UUID,
+opens the Canvas without a position. Needs input and a Sidekick's
+conversation or finished run open the Sidekick (its link has no message
+form), and a pinned Canvas's new version opens the Canvas onto that artifact.
+A conversation with neither — a retired Thread or Breakout — has no link, and
+the notice is skipped as `conversation_not_linkable:<parent kind>` rather
+than sent to open nothing. An older Mac refuses a link with a message query
+and opens the app without navigating.
 
-- a **start**: no row before, and a row that reads as started by somebody after;
-- a **finish**: the state arriving at `completed`. Not `completed_at` moving: a
-  parent stamps a completed thread's finish with its latest activity
-  (`aggregateCommon`), so later traffic moves it with no new run;
-- a **join**: a person becoming a participant of a thread or breakout. A viewer
-  row travels in its own message and can land after the start was decided, so
-  a join reconsiders that conversation's start for that person.
+### A person's reply
 
-The push runs from the follow-up table after the commit, best effort, as the
-Channel row sends are: a failure is logged as `activity_push_failed` with its
-reason and not retried, because the row is in Activity either way and a push
-must not re-run the batch's other work.
+A person's message in a Canvas's Chat or a Sidekick's shared conversation
+(`"0"`) tells every active participant of that conversation who neither wrote
+it nor is mentioned in it (a mention already tells them) nor was seated by it
+(being added already tells them): `new_message`, the **New messages** choice
+(`newMessages`). Rally's own replies tell nobody; the conversation's unread is
+the signal, as it was for the Thread-era reply batch. A run's own
+conversation tells nobody either.
 
-**The feed decides what each person is told.** A start asks everyone when its
-conversation is Organization-wide, else the people its viewer rows name, and
-the feed keeps only those it would tell
-([`digests.md`](digests.md#who-is-told-about-channel-news)); a
-finish asks only its participants, the only people the feed shows one to; a
-join asks the person who joined. D1 narrows that to active members, and the
-object keeps those with a live device or a channel other than push chosen for
-these kinds. For each, the object reads their first Activity page and pushes the
-rows about those subjects that are unread, of the subject's kinds, from after
-migration 105 ran (`workspace_activity_push_origin`) and not handed to
-delivery before (`workspace_activity_pushes`). So nobody is told about a
-conversation they cannot list, the starter is not told of their own start, and
-a backfill that re-projects old threads pushes nothing. Two rows are left out
-on purpose:
+The conversation object names the recipients, because only it knows who is
+seated: where it emits a message's mention effects it emits one
+`new_message_notification` per message, carrying the message, its attention
+ordinal and transcript sequence, and the recipients' ids. One effect per
+message rather than one per recipient keeps the Queue payload to the
+message's text once plus a list of ids; per-recipient effects would carry the
+text, up to 8,000 characters, once per person. The effect is bound by the
+Queue's per-message limit (`EFFECT_QUEUE_MESSAGE_MAX_BYTES`, 120,000 bytes):
+a conversation with more than roughly 2,700 people to tell (fewer with a long
+message) makes an effect over it, which the outbox logs
+`conversation_effect_oversized` (`outcome: dropped`) and drops, so that
+reply tells nobody.
 
-- a start, when the person has an add for that conversation, since the add
-  pushes itself; checked when deciding and again when sending, because the add
-  lands after the viewer row it depends on; and
-- anything about a thread the person has open in a foreground window
-  (`contributesPresence`). Rally finishes a run on every reply, and a banner
-  for the reply already on screen is noise. Mentions keep the old rule of no
-  presence check.
+The hosted parent adds the effect, in the transaction that receipts it, to its
+conversation's open `reply_batch` alarm entry
+(`conversation-reply-batch.ts`), or opens one due `REPLY_BATCH_SECONDS` (15)
+out. The entry holds, per recipient, the newest reply they are owed (by
+transcript sequence, since the Queue does not order effects); a reply drops
+its own author from what the batch owes them. The key carries its due time,
+so a reply after a batch has come due opens a new one rather than joining a
+batch being sent. When the entry runs, each recipient gets one `new_message`
+intent and one Activity row for their reply (`recordParentNotice`), recorded
+`delivered` and enqueued, unless the person was told about this conversation
+within `CONVERSATION_ALERT_COOLDOWN_MS` (two minutes) — read from their last
+`new_message` intent's `delivered_at` — in which case the intent is recorded
+`skipped` (`conversation_alert_cooldown`) and only the Activity row moves.
+Both numbers are the team's from the Thread-era batch
+(`workspace-activity-push.ts`, which
+`git log --diff-filter=D -1 -- apps/api/src/durable-objects/workspace-activity-push.ts`
+finds,
+and the 2026-10-20 entry below), carried rather than set again.
 
-**The queue carries a pointer.** The message names the row
-(`activityItemId`), never its text, and a `channel` when it is an email or a
-connector surface rather than a push. The consumer sends those through
-`sendActivityEmail` and `sendWorkstreamActivitySlack`, keyed on the row so a
-retry is one message. The consumer reads the row back through
-the same feed (`readActivityItemForPush`), so a row the person has read, or
-lost access to, since it was queued sends nothing. A finish is matched by its
-conversation rather than its id, whose `completed_at` later traffic can move.
-It is worded as the sidebar words it: "Maya started Q3 plan", "Maya started a
-breakout on Q3 plan" with the breakout as the body, "Rally finished Q3 plan".
-Receipts and the collapse id key on `activity:<row id>`. An app built before
-these `rally.kind` values opens no conversation on a tap. Reply APNs payloads
-therefore use the existing `mention` routing discriminator, which shipped native
-clients accept; their displayed wording, preferences, receipts, and collapse key
-still identify a reply. Web Push retains `new_message`, since its service worker
-opens the URL without rejecting unknown kinds. Its service worker requests
-`renotify` for tagged reply replacements, so the next alert that passes the
-server cooldown can make a new banner or sound while replacing the old row.
+The push reads the notice back (`ParentNoticeSchema`), checks the recipient
+as a run notice's is (an active member the parent still admits), consults
+`notificationAllows`, and says "<author> in <Canvas or Sidekick>" with the
+message as plain text. Its collapse id is the conversation's, so a newer
+reply replaces the alert before it.
 
-Known gaps: a thread made Organization-wide after it started shows its start to
-people who could not see it before, but is not pushed to them. A finish that
-lands before a participant's viewer row is not pushed to them. A row more than a
-page deep when a push is read back sends nothing.
+### A pinned Canvas's new version
+
+A new version of one of a Canvas's artifacts tells everyone who pinned the
+Canvas (`workspace_pins`, kind `canvas`) except whoever made it or had it made
+(the version's `author_user_id` and `on_behalf_of_user_id`): `artifact_updated`,
+the **Pinned Canvas updates** choice (`artifactUpdates`). Which versions are
+news is the rule the Canvas row's own artifact unread takes
+(`artifactNewsSql`): version 2 on, a republish or a replacement, so a new
+artifact's first version tells nobody. The publish's note to its Canvas
+(`HostedCanvas.noteArtifact`) reads the resource's newest version and records
+one intent and Activity row per pinner (`tellCanvasPinners`,
+`canvas-artifact-notices.ts`), then enqueues each push; a publish noted twice
+records nothing twice. The push says "<author> updated <artifact> in
+<Canvas>" — the author a member's name, a connection's display name, or
+whoever the publish says edited the Canvas (Rally for its Chat, the Sidekick
+for a run) — and opens the Canvas onto the artifact (`/cv/<id>/a/<id>/`). Its
+collapse id is the Canvas's, so a newer version replaces the alert before it.
+
+### A request to open a Canvas, and its grant
+
+A member who asks to open a Canvas they cannot gives each of its deciders an
+`access_request` intent, the **Access requests** choice (`accessRequests`):
+"<requester> asked to open <Canvas>", the request's message as the body,
+linking to the Canvas, where the Share panel lists it. An approval gives the
+requester an `access_granted` intent, read through **Being added** (`added`),
+since being let in is being added: "<decider> let you into <Canvas>". A
+denial gives the requester an `access_denied` intent under their **Access
+requests** choice: "<decider> declined your request to open a Canvas", with
+no title (they were refused it), linking to the Canvas, and sent although
+they cannot list it. All three are recorded with their Activity rows by
+[`canvas-access-requests.md`](canvas-access-requests.md)'s settlement.
+
+## Sinks
+
+Every notification is rendered once into a **notice** (`Notice`, by
+`renderNotice`): its kind, title, plain-text body, who acted, the canonical
+link it opens, the Organization, and for a mention or an add the
+conversation's reply-to address. The rendering is where each kind's words
+live and where the recipient is checked (still a member, still able to open
+what it is about, the link still exists); nothing downstream knows kinds.
+
+A **sink** takes a notice and adds only its transport's form. There are two:
+
+- **Push** (`sendPushNotice`): the APNs and Web Push payloads, the badge, the
+  collapse id, one send per live device with a receipt.
+- **Email** (`sendNoticeEmail`): one template for all kinds. Its subject is
+  the notice's title, so each kind has its own subject line ("Avery mentioned
+  you in Launch plan", "Deploy watcher needs your input", "Ada declined your
+  request to open a Canvas"); its body greets the person, quotes the notice's
+  text (cut at 320 characters, the mention email's number), has one Open in
+  Rally button to the link, and names the Settings row that sent it. It goes
+  through `sendResendEmail` (production only), keyed on
+  `rally-notice/<organization>/<intent>`, so a retried message is one email.
+
+A producer that records an intent calls `enqueueNotice` with the channels its
+recipient chose for the kind (`chosenChannels`, read from the object's own
+`member_preferences` row): one queue message per sink, `channel` absent for
+push and `email` for email, each pointing at the intent. The mention and add
+processor does the same after its claim, keeping the intent's payload for
+the sinks to read. The consumer renders the message's intent and checks
+`notificationAllows` for its kind and channel again before handing it on, so
+a choice changed after queueing still holds. A new sink is a channel in
+`NotificationChannelSchema`, a function that takes a `Notice`, and one branch
+in the consumer.
+
+Slack is not a sink. The Slack DM sender for mentions and adds was deleted;
+a stored `slack_agent_dm` choice reads as no choice.
 
 ## What each person chooses
 
-Settings → Notifications → **Notify me about** holds, for each of the six
-kinds, the channels it goes by: `push`, `email`, and any connector surface the
-person can be reached on (`userDelivery`, such as Slack). How they are stored
-and how a save merges them is [`member-preferences.md`](member-preferences.md).
-They apply to every device; the device switch above them is still the
-device's own on/off. An empty list means Activity and the daily digest only.
+Settings → Notifications → **Notify me about** holds, for each kind it offers
+— exactly the kinds a producer records: Mentions, New messages, Being added,
+Sidekick runs, Pinned Canvas updates, Access requests
+(`OFFERED_NOTIFICATION_KINDS`) — the channels it goes by: `push` and `email`,
+each a [sink](#sinks). A Thread-era kind a person stored (`newThreads`,
+`newBreakouts`, `merges`) is dropped as the record is read. How
+they are stored and how a save merges them is
+[`member-preferences.md`](member-preferences.md). They apply to every device;
+the device switch above them is still the device's own on/off. An empty list
+means that kind is not sent at all.
 
 `notificationAllows` in `member-preferences.ts` is the one rule. The push
-consumer checks it before any push, and before any email or Slack message it
-sends for an Activity row, so a choice changed after a message was queued
-still holds. The mention and add processor reads the same choice and sends
-only those channels. The Activity sweep records a row as decided for a person
-with a device whatever they chose, so choosing a kind again never sends an old
-row late.
+consumer checks it before any push, so a choice changed after a message was
+queued still holds, and for email the same way. Producers read the same choice
+to queue only the sinks chosen.
 
 The row of buttons in Settings is `ChannelPicker`: a button per channel while
 they all fit beside the row's words, one menu of checkboxes when they do not.
@@ -293,7 +370,9 @@ one installation id per browser profile lives in `localStorage`. Settings →
 Notifications shows "In this browser" with a toggle instead of the Mac's
 section. Safari on iPhone and iPad offers Web Push only to a Home Screen app, so
 an iOS Safari tab reports `home-screen` and the section explains how to add
-Rally ([`browser-client.md`](browser-client.md)).
+Rally ([`browser-client.md`](browser-client.md)). Why the toggle is off
+(unsupported, Home Screen, not available yet, blocked for the site) is a row
+inside its card, as the Mac's reason is, not a line below it.
 
 The consumer renders both payloads and sends each device the one for its
 transport. `web-push-transport.ts` encrypts one `aes128gcm` record to the
@@ -332,7 +411,21 @@ id: a Web Notification with the same tag replaces the earlier one rather than
 grouping with it, so a retry replaces itself and two mentions in one channel
 both stay on screen. There is no browser counterpart to APNs `thread-id`
 grouping. A click opens the link's path and query on the worker's own origin,
-never another host, in the first of:
+never another host. Nothing in the click path reads the push's `kind`: the
+link alone decides where it lands, so every kind routes the same way, the
+macOS click (`httpsLinkDeepLink`) included. A Canvas link (`/cv/<id>/`) opens
+the Canvas, which is where a reply, an access request (its Share panel lists
+the request) and a grant land; a pinned Canvas's new version links with
+`/a/<id>/` and opens the Canvas onto that artifact (`?artifact=` in the
+hash route, on either host). A mention's or a reply's push links with the
+message's position, `/cv/<id>/?turn=<turn>&sequence=<n>`, and opens the Chat
+scrolled to that message: the browser's `shellLocation` and `inPlaceHash`
+read the query with `parseLinkTarget` and route `#/canvases/<id>?turn=&sequence=`
+(a query that is not a message still opens the Canvas), and on the Mac
+`httpsLinkDeepLink` carries it onto the deep link, whose intent the app
+session routes through `canvasLinkRoute` to `canvasTurnRoute`, the route a
+search result for a message opens.
+The tab is the first of:
 
 1. A tab already on that page, focused.
 2. A tab in the notification's Organization, sent the link. The page routes it
@@ -355,6 +448,12 @@ device bound to it keeps receiving until that session ends; this predates Web
 Push.
 
 ## Operations and release
+
+An email sink without its Resend key or sender answers
+`notification_email_unavailable` (retryable), so its queue messages retry
+until the dead-letter queue takes them: a non-empty dead-letter queue is the
+signal, as for every queue here. Outside production the sink sends nothing
+and logs `notification_email_skipped` with `transport_disabled_for_environment`.
 
 Set `APNS_AUTH_KEY` and `APNS_KEY_ID` separately on both regional API Workers.
 For browsers, set `WEB_PUSH_VAPID_PUBLIC_KEY` (base64url uncompressed P-256
@@ -405,30 +504,62 @@ signed-Mac delivery.
 - A Web Push `404` or `410` disables the browser device at once.
 - The Worker contacts only allowlisted Web Push service hosts and follows no redirect.
 - `sw.js` opens links only on its own origin.
-- An Activity row is pushed only if the feed lists it, unread, to that person when queued and again when sent.
-- Each Activity row is handed to delivery for a person at most once (`workspace_activity_pushes`).
+- A notice is sent only to a recipient the parent still admits when it is sent (`notificationDirectoryState`): a Canvas narrowed, a Sidekick unshared or a member removed since the intent was recorded sends nothing.
+- A Sidekick run notice is recorded once per recipient and kind; a retried alarm entry re-enqueues, which the per-device receipts make harmless.
 
 ## Testing
 
 `push-device-service.test.ts` uses real migrated SQLite. `push-payload.test.ts` and
 `apns-transport.test.ts` cover encoding/signing, Apple responses, and the
 sandbox versus production host. The real
-workerd `push-delivery.test.ts` covers read RPC, receipts, revocation, retry,
-and that `aps.badge` and the Web Push `badge` are the reader's attention count. `workspace-attention.test.ts`
-covers that count, Breakouts included, against the same directory projection,
+workerd `push-delivery.test.ts` covers read RPC, receipts, revocation (a Canvas
+made private, a Canvas deleted, a removed member), a newer parent generation, retry,
+and that `aps.badge` and the Web Push `badge` are the reader's attention count.
 `dock-badge.test.tsx` covers when the Mac sends its local count, and
 `platform.test.ts` covers the browser bridge setting and restoring the app
 icon badge, and leaving it to the tab focused last. Desktop push/link tests cover registration and routing; existing settings and
-release suites cover the integration. iOS XCTest covers payload parse and the
-PUT body. For Web Push, `web-push-transport.test.ts` reproduces RFC 8291's
+release suites cover the integration. For Web Push, `web-push-transport.test.ts` reproduces RFC 8291's
 worked example, checks the VAPID token and maps push service answers, redirects
 and hosts outside the allowlist. The workerd suite covers routing each device to
 its own transport, disabling a dropped browser subscription at once, and an
 APNs credential fault that leaves Web Push sending. The contract test covers the
 host allowlist and key shapes, and `web-push.test.ts` covers registration,
 re-subscribing on a key change, and the permission prompt coming first.
-`activity-push.test.ts` drives Activity rows through `receiveChildEffects` on
-real workerd, and the consumer's read-back. The provider itself and macOS/iOS alert
+The workerd `push-delivery.test.ts` also covers that an owner or administrator mentioned in a Canvas only its
+creator otherwise opens is told, and pushes both Sidekick run notices with
+their titles and the Sidekick's link, sending neither once **Sidekick runs** is
+off; `hosted-sidekick.test.ts` covers who each notice is recorded for
+(requester and managers for Needs input, the requester alone for a finish,
+managers alone for a scheduled run's Needs input and nobody for its finish),
+and `test/workspace-notification-intent-kinds-migration.test.ts` migration
+138 over populated rows. `hosted-mention-notifications.test.ts` starts from the message: a mention
+posted in a Canvas's Chat and in an Organization-wide Sidekick's conversation
+reaches the parent, records one `mention` intent for the recipient, enqueues
+one push and sends its literal alert, and a redelivery of every effect sends
+nothing again. `hosted-reply-notifications.test.ts` starts from a reply: two replies in one
+batch make one `new_message` intent and one Activity row carrying the newest,
+whose push says "Avery in Launch plan"; a person the replies mention and their
+author get nothing; a reply within the cooldown is recorded `skipped` and moves
+the row, and one after it pushes again; a reply after the row was read is a
+new row; and Rally's reply makes no batch at all.
+`canvas-artifact-notices.test.ts` covers a pinned Canvas's new version: its
+author's own pin gets nothing, the other pinner one intent and a row naming
+the artifact, the push "Avery updated Launch report in Launch" opening onto
+the artifact, Rally's next version moving that row, a read of the Chat
+clearing it, and the version after that a new row.
+`canvas-access-requests.test.ts` covers a request's push to its decider, an
+approval's push to the requester and a denial's.
+`notice-email-sink.test.ts` covers the sinks on real workerd: with email chosen
+for every offered kind, the email sink is handed one notice per kind (mention,
+add, reply, pinned version, request, grant, denial, run finished, needs input)
+with its title, body, actor and link; a kind left on push sends no email and a
+stored `slack_agent_dm` reads as no choice; and the real sink sends one Resend
+request whose subject is the title and whose idempotency key is the intent,
+with the template's literal text.
+`test/workspace-notification-intent-kinds-migration.test.ts` covers migration
+138 over populated rows. `test/conversation-effect-service.test.ts` covers the
+mention processor queueing one message per chosen sink, the email one named,
+and keeping the payload for them. The provider itself and macOS alert
 presentation require a signed installed build.
 
 Local acceptance on 2026-09-14: lint/typecheck, scoped API and desktop tests,
@@ -440,6 +571,58 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-11-09 — Every kind renders once into a notice for the push and email sinks, checked against its Canvas or Sidekick, with an Activity row beside each intent
+
+**What changed:** `notificationDirectoryState` checks a recipient against the
+Canvas's row and `canvasReaderAllows`, or the Sidekick's row and
+`sidekickReaderAllows`, with the person's role, so an administrator hears a
+creator-only Canvas's mention, and reads the relationship through
+`readRelationship`; the Thread directory reads and the projection-version wait
+are gone. The kinds are a Canvas mention and add; a Sidekick run's `needs_input`
+and `run_finished`, recorded by a `sidekick_run_notice` alarm entry the run's
+projection arms; a reply (`new_message`), batched per conversation in a
+`reply_batch` entry with the Thread-era 15-second batch and two-minute cooldown;
+a pinned Canvas's new version (`artifact_updated`); and an access request, grant
+and denial. WorkspaceDO migration 138 widens the intents' kind CHECK. Every
+intent writes its recipient's Activity row in the same transaction.
+`renderNotice` renders each kind once into a channel-neutral `Notice` that a
+push sink and an email sink take, one queue message per chosen sink; the Slack
+DM sender and the per-kind email services are deleted. A push's link comes from
+the conversation's parent (a mention or reply opens at its message,
+`?turn=&sequence=`), a delivery about a Thread is skipped as
+`conversation_not_linkable`, and every push's badge is the person's unseen
+Activity count.
+
+**Why:** The PRD keeps push for Canvas mentions, Needs input and finished runs,
+and none was sent: nothing writes the Thread directory any more, so every Canvas
+mention waited on a projection that never came. The owner asked on 2026-11-08
+for replies, pinned updates and access requests to notify again, and for Slack
+to go while "email should support all notifications (this should be generic
+pathway, it's easy to hook notification sinks into)". Writing the Activity row
+with the intent is what keeps the feed and the push from disagreeing, and the
+badge from clearing when an alert arrives while Rally is closed.
+
+**Considered and rejected:** Sending a Thread push with no link: a tap that
+opens nothing reads as broken. One queue message fanning out to every sink,
+where a push retry would resend the email. Rendering per sink, each carrying its
+own copy of every kind's words. A reply notification per recipient, which sends
+the text across the Queue once per person, or an intent per message, which makes
+ten replies ten pushes. Reading the feed from the intents table, whose rows are
+30-day delivery records.
+
+**Consequences:** A kind's words live in `renderNotice` only; a sink branches on
+kind only for its own transport's needs (push's collapse id), and the consumer
+checks `notificationAllows` for the message's own channel. A new person-facing
+kind is recorded through one of the three recorders or writes its Activity row
+in its own intent's transaction, and the intents' reaper must keep leaving
+Activity alone. An inactive recipient's mention is now recorded and skipped at
+delivery. A desktop older than this release drops a push whose kind it does not
+know. The `platform: "ios"` registration shape and its APNs topic stay in code
+with no client sending them.
+
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-21 — The installed browser app shows the badge
 
@@ -483,7 +666,6 @@ scheduler is unnecessary because the existing delivery Queue supports delays.
 
 **Consequences:** Cooldowns never clear unread state. Mentions remain immediate
 and independently controlled. Queue retries check the read/access state again.
-
 
 ### 2026-10-19 — A Channel merge reaches the Channel's readers
 

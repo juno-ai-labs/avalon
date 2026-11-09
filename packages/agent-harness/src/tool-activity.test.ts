@@ -204,9 +204,9 @@ describe("tool activity names", () => {
 
   it("words the Sidekick, agent and generation rows under both spellings", () => {
     expect(toolActivityName({ toolName: "post_result", status: "completed" }))
-      .toBe("Posted the result to the work stream");
+      .toBe("Posted the result to the conversation");
     expect(toolActivityName({ toolName: "sidekick_post_result", status: "completed" }))
-      .toBe("Posted the result to the work stream");
+      .toBe("Posted the result to the conversation");
     expect(toolActivityName({ toolName: "conversation_post", status: "completed" }))
       .toBe("Posted to a conversation");
     expect(toolActivityName({ toolName: "conversation_merge", status: "completed" }))

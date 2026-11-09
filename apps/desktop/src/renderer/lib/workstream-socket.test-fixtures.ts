@@ -50,7 +50,6 @@ export function snapshotFrame(input: {
   workstream?: Record<string, unknown>;
   transcript?: WorkstreamBoot['transcript'];
   pendingInputChunkCount?: number;
-  initialContextChunkCount?: number;
 }): Record<string, unknown> {
   return {
     type: 'snapshot',
@@ -60,7 +59,6 @@ export function snapshotFrame(input: {
     workstream: wireWorkstreamDetail(input.workstream),
     transcript: input.transcript ?? emptyTranscriptSnapshot(),
     pendingInputChunkCount: input.pendingInputChunkCount ?? 0,
-    initialContextChunkCount: input.initialContextChunkCount ?? 0,
     activeStreams: [],
     activeCompaction: null,
   };

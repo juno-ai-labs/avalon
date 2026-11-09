@@ -34,7 +34,7 @@ verified.
 | `packages/agent-harness/src/automation-creator-tools.ts` | `sidekick_tool_test`, `customToolIdentityHash`, the buffered tests, `submit_draft`'s refusal of an untested tool, and `CUSTOM_TOOLS_GUIDE`. |
 | `packages/contracts/src/index.ts` | `SidekickCustomToolSchema`, `ToolInputObjectSchema`, `CUSTOM_TOOL_RALLY_PLUGIN_IDS`, `customTools` on the draft and the run definition. |
 | `apps/api/src/services/integrations.ts` | Registers the code plugin and a run's custom-tools plugin in `loadHarnessTools`; `findCompletedToolResult`, the one completed-receipt lookup Bind and the gateway share; attaches the gateway's host seams just before `runHarness`; the wizard's `testTool` port. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Crash repair names a program's completed nested calls in the ambiguity it records. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | Crash repair names a program's completed nested calls in the ambiguity it records. |
 | `apps/api/src/env.ts`, `apps/api/wrangler.global.jsonc` | The `CODE_LOADER` Worker Loader binding. Optional: absent, neither plugin exists and the wizard has no test tool. |
 
 ## How it works
@@ -457,8 +457,11 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
 - `scripts/code-mode-evals.mjs`: prompt evaluations against the local API and
   the real models, run by hand when a prompt or a tool contract changes
   (`node scripts/code-mode-evals.mjs --suite final`). Three suites: fourteen
-  work-stream scenarios from one arithmetic call to a deliberate failure after
-  two writes, run on Sol and Terra; seven wizard scenarios with runs; and the
+  scenarios asked in a new Canvas's Chat, from one arithmetic call to a
+  deliberate failure after two writes, on the primary model (a Canvas has no
+  per-conversation model pin, so the Terra column of the earlier rounds is
+  gone); seven wizard scenarios with runs, each sent to the Sidekick's shared
+  conversation marked as an edit so the wizard answers it; and the
   final twenty wizard scenarios of rising complexity, from a Sidekick with no
   tool to one whose tool takes an input, dedupes by date and returns three
   results. The graders read transcripts and saved definitions, and the expected
@@ -499,8 +502,9 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   to hold its Sidekick's tools after publication; today only runs do, and the
   wizard tests through `sidekick_tool_test`.
 - **Who may read a saved tool's code on the profile.** Everyone who can read
-  the Sidekick can read it today; whether a guest in the owning Thread counts
-  is a listing-rules question still open.
+  the Sidekick can read it today, a guest included only from the Sidekick's
+  own people list (`sidekickReaderAllows`); no Sidekick has an owning
+  conversation since Threads were retired.
 
 ## Changelog
 

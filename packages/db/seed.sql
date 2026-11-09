@@ -16,13 +16,10 @@ VALUES
   ('00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000001', 'owner', 'active', '2026-07-31T18:00:00.000Z'),
   ('00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000003', 'member', 'active', '2026-07-31T18:00:00.000Z');
 
--- The regional control-plane index rows for the seeded work streams. Their
--- product content — transcripts, runs, tool events, resources, connections,
--- automations — lives in seed-product.json and is written into the Durable
--- Objects by `pnpm db:open-authority`, because the objects are the product
--- authority and D1 no longer contains product tables.
-INSERT OR IGNORE INTO workstreams
-  (id, workspace_id, do_identity_anchor)
-VALUES
-  ('00000000-0000-7000-8000-000000000020', '00000000-0000-7000-8000-000000000002', 1),
-  ('00000000-0000-7000-8000-000000000021', '00000000-0000-7000-8000-000000000002', 1);
+-- No conversation is seeded here. The two Canvases and the Sidekick in
+-- seed-product.json are made by the Worker's own creation paths when
+-- `pnpm db:open-authority` posts that file to POST /dev/seed-product, and
+-- those paths write the D1 anchors (`workstreams`, routes) themselves, after
+-- the authority is open. A row here would anchor a conversation no object
+-- holds, which is what failed the seed with `workstream_not_found` once the
+-- Thread server code was gone.

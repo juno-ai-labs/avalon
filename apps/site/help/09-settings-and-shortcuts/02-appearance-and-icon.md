@@ -20,8 +20,8 @@ Rally feel at home on this Mac"). The **Appearance** control has three choices:
 | **Dark** | Stays dark, whatever this Mac is set to. |
 
 Hover over a choice to see that description as a tooltip. The line underneath
-confirms what you picked: "Following this Mac, which is light right now." for
-System, or "Always light." or "Always dark." for the other two.
+confirms what you picked: "Following this device, which is light right now."
+for System, or "Always light." or "Always dark." for the other two.
 
 The change happens at once, in every Rally window you have open, including
 Settings itself.
@@ -44,7 +44,8 @@ old choice has been turned into the matching light or dark setting.
 
 > [!NOTE]
 > Appearance is saved on this Mac only. If you use Rally on a second computer,
-> set it there as well.
+> set it there as well. In a web browser, the same choice is in the
+> **Appearance** block of **Settings → Account**.
 
 ## Your personal colour
 

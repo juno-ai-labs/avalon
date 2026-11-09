@@ -1,7 +1,7 @@
 # Copy controls
 
 Every place the desktop renderer offers to put a value on the clipboard for a
-person — a webhook endpoint, a signing secret, an invite link, a work stream's
+person — a webhook endpoint, a signing secret, an invite link, a Canvas's
 email address or id, a run's request id, a site's public link, a table as CSV,
 a note's summary or transcript, a code block — renders the same control: an
 icon beside the value, named by its tooltip, whose glyph says what the copy
@@ -62,7 +62,7 @@ endpoint and a secret.
   appears should be a `no-restricted-imports` entry
   ([`testing.md`](testing.md#what-to-test-and-what-not-to)). What
   may: a menu item, whose row is its label and whose menu closes on the click,
-  and `copy-workstream-link.ts`, the helper those items share. The
+  and `copy-link.ts`, the helper those items share. The
   message-action row's **Copy** is the one labelled pill that stays: it is one
   of a family of labelled pills under a turn, owned by
   [`conversation-surfaces.md`](conversation-surfaces.md). The message-text
@@ -86,7 +86,13 @@ endpoint and a secret.
 
 The hook owns the clipboard write and what a control shows about it. It does
 not own the value's provenance, the telemetry vocabulary — `content_copied`'s
-`contentType` is `@rally/contracts`' — or where the control sits. A surface
+`contentType` is `@rally/contracts`' — or where the control sits. A copied
+message is named by its transcript turn id (`copiedMessageId`), not by the
+rendered block's id (`<turn>:text:0`). A person's turn id is a UUID, and an
+assistant's is its loop's identity and ordinal
+(`workstream:<parent>:substream:<0|id>:loop:turn:<n>`); the contract admits
+exactly those for `resourceType: "message"` and a UUID for every other
+resource. A surface
 decides that: beside the value in a `.copy-detail` row, in a `CopyField`, or in
 a toolbar. Menu items and the code block's header keep their own elements and
 share only the behaviour; the code block does so because markdown renders

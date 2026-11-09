@@ -71,9 +71,8 @@ bounded-evidence contract in [Sidekick lifecycle](automation-lifecycle.md#sideki
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
-| `apps/desktop/src/main/media-permission.ts` | Chromium media permission for the shared composer: audio-only capture from the main and Sidekicks windows. |
-| `apps/desktop/src/main/embedded-browser.ts` | Isolated web contents for the local browser in the right rail and the import window; its lifecycle and command boundary are documented in [`embedded-browser.md`](embedded-browser.md). |
-| `apps/sideline/src/main/index.ts`, `apps/sideline/src/preload/index.ts` | The internal represented-messaging host, encrypted operator session, dedicated OAuth target, sender-confined IPC, and narrow renderer bridge. Main also holds one ticketed workspace socket (fixed `app://sideline` Origin) and sends the renderer only a payload-free `sideline:catalog-stale` signal. The relationship and audit boundary is documented in [`impersonation.md`](impersonation.md). |
+| `apps/desktop/src/main/media-permission.ts` | Chromium media permission for the shared composer: audio-only capture from the main window. |
+| `apps/desktop/src/main/embedded-browser.ts` | Isolated web contents for the local browser in the right rail; its lifecycle and command boundary are documented in [`embedded-browser.md`](embedded-browser.md). |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
 | `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the conversation-window socket IPC boundary. |
 | `apps/desktop/src/main/realtime-socket-broker.ts` | Route-confined Node socket transport, ordered system/PAC routing, OS trust roots, frame limits, and renderer-owner teardown. |
@@ -91,7 +90,6 @@ bounded-evidence contract in [Sidekick lifecycle](automation-lifecycle.md#sideki
 | `apps/api/src/lib/crypto.ts` | AES-GCM credential envelopes and key-version handling. |
 | `apps/api/src/services/terminal/` | The isolated Daytona execution boundary, network compiler, authority-fenced lifecycle, resource bridge, and trusted GitHub publisher. |
 | `apps/desktop/scripts/mac-signature-policy.mjs`, `apple-notarization.mjs`, `finalize-macos-release.mjs` | Entitlement rules, notarization, and the release verifier. |
-| `apps/ios/Rally/Auth/KeychainStore.swift`, `apps/ios/Rally/Rally.entitlements` | iOS session secrets and APNs/associated-domain entitlements. Owned with [`ios-client.md`](ios-client.md). |
 | `.gitleaks.toml`, `scripts/gitleaks-allowlist.test.mjs` | The scan's bounded exceptions and the test that keeps them honest. |
 
 The renderer socket-ticket lint rule follows immutable awaited ticket aliases,
@@ -106,14 +104,6 @@ output, and connector payloads are untrusted. The Electron main process and
 regional Worker are trusted only within their narrow responsibilities. D1 and R2
 are canonical storage services, not authorization layers.
 
-iOS has no renderer. The comparable split is the SwiftUI process (untrusted for
-secrets it does not need) versus the Keychain (identity and workspace refresh
-tokens) versus the regional Worker. Google credentials stay in
-`ASWebAuthenticationSession`. Refresh tokens are
-`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and are never written to
-UserDefaults or iCloud. Socket tickets still travel as `Sec-WebSocket-Protocol`,
-same as desktop.
-
 ### Electron
 
 - `contextIsolation` is enabled, Node integration is disabled, and sandboxing is
@@ -124,9 +114,8 @@ same as desktop.
 - Every IPC argument is parsed before use.
 - Chromium media permission is a second grant on top of macOS System Settings,
   and it is per WebContents. `allowsTrustedAudioCapture` admits the main window
-  and the Sidekicks window only, and only for audio: both host the shared
-  composer, and Sidekicks can outlive the main window. Settings, the import
-  window, the deep-link failure window, detached artifacts, and the embedded
+  only, and only for audio: it hosts every composer. Settings, the deep-link
+  failure window, detached artifacts, and the embedded
   browser are refused. Camera, display capture, and mixed audio+video stay
   denied. Computer-audio tap IPC remains main-window-only because the composer
   never requests it.
@@ -150,9 +139,11 @@ same as desktop.
 - Detached artifact renderers remain outside the trusted-window sender set.
   `artifact:window-action` admits only a registered detached renderer and maps a
   strict operation union to the resource in main's window record. Rename,
-  Archive, pinning and navigation-link coordinates derive their thread from
-  that record's Main annotation scope and owning surface eligibility; the server
-  still authorizes each route.
+  Archive, pinning and navigation-link coordinates derive their conversation
+  from that record's annotation scope and owning surface eligibility; the
+  server still authorizes each route. A scope may name a Canvas
+  (`canvas:<id>`): rename and archive then go through the Canvas's
+  conversation, and pin and link are refused with a reason naming the Canvas.
   Read/content/version/site-data and frozen-page preview operations cannot name another resource or an
   arbitrary API path. Credentials stay in main, which checks session ownership, including the opening region,
   again after asynchronous work and uses fresh site access for external opens.
@@ -160,27 +151,16 @@ same as desktop.
   OAuth opens in the system browser. The embedded browser's isolated web
   contents handle website links and redirects within their own session, with
   non-web destinations rejected.
-- The main window and the import window may drive their own browser tabs,
-  including page script and DevTools commands; no other window may. Those
-  commands act with the person's website sign-ins, so a script injected into
-  either renderer would reach every site signed in there. A conversation import
-  hands that capability to a model: its agent runs arbitrary page script in the
-  person's signed-in tab, reads the page's outline and screenshots, gives it
-  input, and lists and reads the network responses the tab received. Those
-  results — network bodies included — reach the model unredacted, by product
-  decision: the page already received them. The boundary is the tab: one tab,
-  with no other tab and no DevTools passthrough. Where that tab goes is not
-  restricted, by product decision: it may navigate to and load from any site
-  with the person's session, and there is no egress filter on the page. The
-  import window is the
-  one non-conversation window allowed to open a realtime socket, to the hidden
-  conversation its agent runs in, and it closes that socket when the window
-  navigates, crashes or closes. See [`desktop-actions.md`](desktop-actions.md)
-  and [`session-import.md`](session-import.md).
+- The main window may drive its own browser tabs, including page script and
+  DevTools commands; no other window may. Those commands act with the person's
+  website sign-ins, so a script injected into the renderer would reach every site
+  signed in there. The desktop-action protocol that let an API agent loop ask for
+  those commands is unreached ([its retirement record](workstream-durable-object.md#retired-documents)).
 - Browser orchestration scripts execute in a separate sandboxed, ephemeral
   WebContents with no Node/preload and a network/frame-denying CSP. Only closed,
   typed requests reach the pinned browser tab; browser/tab closure or run
-  termination disposes that realm. See [browser script runtime](browser-script-runtime.md).
+  termination disposes that realm. Nothing reaches the realm today
+  ([its retirement record](embedded-browser.md#retired-documents)).
 - A strict Content Security Policy allows bundled content and the configured
   regional API only.
 - Markdown treats model, member, email, and attachment text as untrusted.
@@ -254,11 +234,12 @@ same as desktop.
   nothing else. The menu itself holds no control for state the operating system
   owns independently — whether Rally opens at login is a Settings toggle, read
   back from macOS on every read rather than from Rally's preference file. Its
-  content requests reuse the stored access token and regional endpoint through the
-  same coalescing refresh as the feature-flag poll, add no credential storage, and
-  reach only `/workstreams` and `/work-opportunities`. The work-stream titles they
-  return are workspace content held in main-process memory only, never written to
-  disk, and dropped on sign-out. Because Rally registers itself to open at login
+  content is the Canvas and Sidekick lists, read from a workspace socket that
+  the main process opens itself (`sidebar-lists-watch.ts`) with a ticket issued
+  against the stored access token and regional endpoint through the same
+  coalescing refresh as the feature-flag poll; it adds no credential storage.
+  The titles it holds are workspace content kept in main-process memory only,
+  never written to disk, and dropped on sign-out. Because Rally registers itself to open at login
   and starts hidden there, this runs with no window and no renderer;
   [`menu-bar.md`](menu-bar.md) owns the mechanism. Its preference shares
   `application-settings.json` with Lockdown mode and therefore the same shared
@@ -317,10 +298,10 @@ same as desktop.
   operator UUID and role with timing-safe token comparison — `support` and
   `security` from `TELEMETRY_OPERATORS_JSON`, `demos` from the separate
   `DEMO_OPERATORS_JSON`; every operator router names the roles it admits and
-  the secret it reads, so the `demos` role reaches only the demo preparation
-  and workspace retirement routes Ace calls
-  ([`demo-workspaces.md`](demo-workspaces.md#preparing-a-demo)), and neither
-  telemetry role reaches those. Ace holds one `demos` token per region, each
+  the secret it reads, so the `demos` role (Ace's operator role; the stored
+  name is the retired demo feature's) reaches only the workspace retirement,
+  access and connector-maintenance routes Ace calls, and neither telemetry
+  role reaches those. Ace holds one `demos` token per region, each
   known to that region alone. Raw access and replay derive audit identity from
   that principal; neither endpoint accepts an operator ID or role in its body.
 
@@ -395,7 +376,7 @@ external link carries `(region, workspace_id)` as routing context. Those values
 are public identifiers, not bearer authority. Scoped invitation links follow the
 same rule: since shares are claimed by signing in with the shared-with address,
 the email links to the conversation's own addressed path, so a forwarded copy
-tells its reader the region, Organization and Channel ids while opening nothing
+tells its reader the region, Organization and conversation ids while opening nothing
 for them. Hiding those ids took an opaque token and a store behind it, and the
 token's only other job, the acceptance secret, went with the acceptance step.
 
@@ -444,7 +425,7 @@ rather than authoring details. A recommended or locally loaded ID still has to
 pass the source's personal-audience or owning-workstream rule. New guest agent
 runs discover only recommendations, workstream-owned Sidekicks and local loads;
 existing execution snapshots keep ordinary source revalidation. Removing a local
-load rechecks participation and archival state in that SubstreamAgent, without
+load rechecks participation and archival state in that `AgentLoopDO`, without
 changing Main, siblings or workstream recommendations. Source history and parent
 management remain separate authorization paths.
 
@@ -453,7 +434,7 @@ that admitted them. Migration 0110 backfills existing sessions; insert and
 workspace-selection triggers bind newly selected memberships. Reassigning the
 same workspace ID does not rebind a session. Promotion preserves membership
 incarnation, while removal/rejoin creates a different one. HTTP authentication,
-refresh rotation, and the workspace, Channel control and SubstreamAgent socket
+refresh rotation, and the workspace and `AgentLoopDO` socket
 session checks require the stored and current incarnations to match. Refresh performs
 that check in the token-rotation update, so rejected old credentials do not
 rotate the session. Identity-only sessions remain valid for workspace selection.
@@ -470,26 +451,23 @@ Every API resource query includes `workspace_id`. Mutations additionally resolve
 membership role. A connector ingress may assert a member's own authority by
 marking its auth `principal: "connector"` — set only after verifying the account
 link on the delivered message, re-checked against current membership by the
-work-stream object, and refused by every socket-ticket issuer (see
-[`workstream-durable-object.md`](workstream-durable-object.md#invariants)). The
-demo seeder asserts a cast member's authority the same way under
-`principal: "demo_seed"`, verified and refused identically; only server code
-constructs either value ([`demo-workspaces.md`](demo-workspaces.md#security-and-trust-model)).
-The resource-grant callback similarly uses the server-only
+conversation object, and refused by every socket-ticket issuer (see
+[`workstream-durable-object.md`](workstream-durable-object.md#invariants)); only
+server code constructs it. The resource-grant callback similarly uses the server-only
 `principal: "resource_authorization"` after verifying OAuth state, connection
 authority, and current membership; ordinary participants cannot supply its
 reserved continuation-message ID.
 Every connector tool checks its execution principal, connection
 scope, granted capability, and resource visibility. Workspace-scoped connector
-capabilities roll down to every work stream in that workspace and execute as the
+capabilities roll down to every conversation in that workspace and execute as the
 workspace principal; participants do not implicitly share their personal
 connectors.
 
 WebSocket upgrades require an exact match against `ALLOWED_ORIGINS`; missing
 origins and suffix lookalikes are rejected before the short-lived socket ticket is
-forwarded to a room. Tickets bind user, workspace, work stream, region, and
+forwarded to a room. Tickets bind user, workspace, conversation, region, and
 one-time ID, and the room atomically rejects reuse. A feed ticket also binds the
-authenticated role and regional work-stream authority generation. SubstreamAgent
+authenticated role and regional conversation authority generation. `AgentLoopDO`
 may reuse those values only when they exactly match request-scoped in-memory
 preparation revalidated against D1 during ticket transit and its local
 generation. Every upgrade still reads current regional maintenance authority;
@@ -508,10 +486,10 @@ admission path.
 
 Native renderer WebSockets may be constructed only from a URL returned by an
 authenticated ticket endpoint; ESLint enforces that provenance at each
-production constructor. Electron's Channel control and SubstreamAgent connections
-instead cross a typed preload bridge to the main-process broker. Main accepts
+production constructor. Electron's `AgentLoopDO` feed connections instead
+cross a typed preload bridge to the main-process broker. Main accepts
 that capability only from the primary application window, validates the URL
-against configured regional `ws`/`wss` origins and the declared control/feed
+against configured regional `ws`/`wss` origins and the declared feed
 route shape, rejects credentials and fragments, discards query configuration,
 requires the public
 ticket sentinel, and supplies the exact `app://rallywithai` Origin itself. The
@@ -519,7 +497,7 @@ renderer chooses only the validated ticket subprotocol offer that becomes
 `Sec-WebSocket-Protocol`; it cannot choose arbitrary headers or turn the broker
 into an arbitrary network client. Main tries only the ordered proxy directives
 Electron resolved, including `DIRECT` only when policy supplied it, and Node
-accepts no work-stream control/feed frame over the shared 1 MB application
+accepts no conversation feed frame over the shared 1 MB application
 limit. Runtime URL schemas likewise name their
 accepted scheme contract explicitly — HTTP(S), HTTPS-only, `avalon:`, or the
 intentional HTTP(S)/Rally handoff union. Bare Zod URL validation is forbidden
@@ -556,7 +534,7 @@ telemetry properties.
 Tool arguments are runtime-validated and canonically hashed. The system records a
 write as started before provider execution and reuses completed results on
 workflow retry. If a process stops after a provider write but before confirmation
-is stored, the invocation becomes `ambiguous`, the work stream becomes
+is stored, the invocation becomes `ambiguous`, the conversation becomes
 `needs_input`, and the write is not automatically repeated.
 
 This is retry safety, not a broad approval gate.
@@ -693,19 +671,23 @@ on the revision still being current so revocation cannot win the last race.
 Historical protocol reconstruction does not trust a completed tool invocation
 merely because its JSON receipt still exists. Attachment read, search,
 summarize, and view results are identified from their persisted execution plan,
-then reauthorized against the current principal, current work-stream
+then reauthorized against the current principal, current conversation
 relationship, and current derivative dependency before any result is placed in
 the next model request. Missing authority omits that assistant/tool pair rather
 than replaying stale content.
 
-A Sidekick run continues on input from anyone who can reach it, including
-everyone in a provider thread bound to the run who is a full member of the
-connected workspace, whether or not they have a linked Rally account. For Slack,
-the sender check refuses guests (restricted and single-channel accounts) and
-members of another team, such as Slack Connect users, before the reply reaches
-the run. The continued run acts with the Sidekick's run-as user's connectors
-whoever sent the input. That is the product decision the external conversation
-bindings PRD records, not a gap. The mitigation is framing, not admission:
+A Sidekick run continues on a person's input only when the run could act as
+them: its requester, for a run under its requester's own access, or an
+eligible delegate, for a run under a delegate's access; anyone else the
+Sidekick is shared with is refused by name
+([continuing a run](automation-lifecycle.md#continuing-a-run)). Another
+agent's message counts as the person that agent acts for, and a retry as the
+person retrying. Outside Rally, a reply in a provider thread bound to the run
+continues it under the run's own principal whoever sent it: every binding is
+one the run's own outbound message made, so a reply there is the answer the
+run asked for. For Slack, the sender check refuses guests (restricted and single-channel accounts) and members of another
+team, such as Slack Connect users, before the reply reaches the run. The
+mitigation for what an admitted reply says is framing:
 outside text in a run child reaches the model as labelled evidence from its
 sender and never as a member request, and the host's continuation note quotes
 the sender's display name as data and says the new message is handled only as
@@ -767,12 +749,12 @@ backup ambiguity leaves the old sandbox in place.
 
 Daytona receives no R2 credential. Resource originals and generated files cross
 through the regional Worker under current-principal visibility and normal cleanup
-ownership. The work-stream sandbox receives a one-hour, single-repository GitHub
+ownership. The conversation sandbox receives a one-hour, single-repository GitHub
 App credential through host-scoped Daytona secret placeholders. Connector
 `read_only` maps to read permissions and technically rejects remote mutation;
 `full_access` maps to contents-write and pull-request-write so the model can use
 standard `git` and `gh`. Rally prepares and switches to a persisted word-based
-work-stream branch before each model-facing operation. GitHub cannot scope an
+conversation branch before each model-facing operation. GitHub cannot scope an
 installation token to one branch, so branch discipline is explicit model
 guidance rather than a custom proxy or claimed technical boundary. Policy
 changes invalidate the cached expiry and force credential rotation before the
@@ -824,14 +806,14 @@ or Resend tag. Resend uses a send-only API key and a stable per-invitation
 idempotency key; an outbound provider failure revokes the new invitation before
 the API returns an error.
 
-Work-stream inbound addresses are routing identifiers, never authenticators.
+Conversation inbound addresses are routing identifiers, never authenticators.
 Resend webhooks are verified against their untouched raw body before parsing and
 deduplicated by delivery ID. Received HTML, headers, attachments, sender
 identities, and quoted content are untrusted. Incoming mail is attached as a
 regional resource and system message; it never launches a write-capable agent run
 merely because the From address resembles a workspace member. Friendly addresses
 are immutable and permanently reserved so a stale sender can never reach a
-different work stream.
+different conversation.
 
 Daytona lifecycle webhooks use the same shared Svix raw-body verifier, then
 check `DAYTONA_ORGANIZATION_ID`. Signed payloads are refresh hints: current
@@ -976,9 +958,9 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   receipt remains the one-use decision.
 
 - **A native WebSocket in the renderer is constructed only from a URL an
-  authenticated ticket endpoint returned; Electron's work-stream broker is
+  authenticated ticket endpoint returned; Electron's conversation broker is
   narrower still.** Its typed IPC accepts only configured regional
-  Channel-control/SubstreamAgent paths from main or Sidekicks windows, and main supplies the
+  `AgentLoopDO` feed paths from the main window, and main supplies the
   application Origin.
 
 - **A URL schema names its accepted scheme contract explicitly.** Bare Zod URL
@@ -1011,11 +993,18 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   capability, limits, and idempotency state are all checked before execution.
 
 - **An inbound email address is a routing identifier, never an authenticator.** The
-  From match against active workspace membership is the only control on a
-  mail-started run: since 2026-09-03 such a run holds the same connector and web
-  tools as every other automation run, so a spoofed From that passes the screen
-  steers a run that can write and send. The changelog entry of that date records
-  why the tool filter came out and what stands in its place.
+  run acts as the person the From header names, under their own access when
+  they are not a delegate, and since 2026-09-03 it holds the same connector and
+  web tools as every other automation run. So the From must be authenticated:
+  the run is admitted only on the receiving server's aligned verdict for the
+  From domain (DMARC pass, or a DKIM pass for that domain, from Resend's
+  `authentication`), and only for a sender the Sidekick admits as a reader
+  ([inbound email](automation-lifecycle.md#triggers-and-occurrences)). It is
+  only as strong as the sending domain's own spoofing protection, and DMARC and
+  DKIM authenticate the sending domain, not the mailbox: on a domain whose own
+  mail server does not bind From to the sending account, anyone who can send as
+  any address on that domain can still make a run act as a colleague there. The
+  changelog entry of 2026-09-03 records why the tool filter came out.
 
 - **An invitation token exists in D1 only as a SHA-256 hash**, and never in a query
   string, log, audit event, or Resend tag.
@@ -1060,7 +1049,7 @@ does not own the subsystems on either side of them:
 
 - **An ambiguous external write is never automatically repeated.** If a process
   stops after a provider write but before confirmation is stored, the invocation
-  becomes `ambiguous`, the work stream becomes `needs_input`, and a person decides.
+  becomes `ambiguous`, the conversation becomes `needs_input`, and a person decides.
   This is retry safety, not a broad approval gate — a tool that has not been made
   idempotent has no protection here.
 - **A lost custom-protocol notification is recoverable.** The durable connector
@@ -1125,7 +1114,7 @@ no unit test standing in for them.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/desktop/src/main/*.test.ts` | Session encryption and the envelope versions, Lockdown migration, the settings write queue, the developer-settings flag suppression, launch-at-login, the menu bar's content fetch. |
+| `apps/desktop/src/main/*.test.ts` | Session encryption and the envelope versions, Lockdown migration, the settings write queue, the developer-settings flag suppression, launch-at-login, the menu bar's socket-held lists. |
 | `apps/api/test/connector-credential-envelope.test.ts` | The AES-GCM envelope, its connection-bound additional authenticated data, and key-version rotation reads. |
 | `apps/api/test/auth-session-lifecycle.test.ts` | Session minting, revocation, and single-use consumption. |
 | `apps/api/test/auth-router.test.ts` | Root-mounted identity/workspace middleware reuse, standalone workspace-middleware authentication, and next-request revocation. |
@@ -1160,7 +1149,7 @@ incident response that may prompt it.
 Apple device registrations reuse authenticated workspace sessions and the regional
 D1 control plane. The existing notification access decision runs again when the
 queue consumer sends. The native bridge handles permission state and explicit
-notification responses; main validates the work-stream link through the shared
+notification responses; main validates the conversation link through the shared
 parser before navigation. Only the main app gains Push Notifications and
 Associated Domains entitlements; helpers retain their existing entitlement set.
 [Apple push](push-notifications.md) owns provisioning and release verification.
@@ -1313,7 +1302,6 @@ capability to operate on unrelated resources.
 authorization. A new menu action needs a confined operation rather than adding
 the window to `assertTrustedIpcSender`.
 
-
 ### 2026-10-19 — Isolate annotation picking from resource scripts
 
 **What changed:** Opaque static frames and isolated live-site worlds run trusted picker code; main owns screenshots and popouts receive narrow sender-checked IPC.
@@ -1325,7 +1313,6 @@ the window to `assertTrustedIpcSender`.
 **Consequences:** Preserve opaque frames, trusted-input checks, native screenshot ownership, narrow IPC and an active original composer scope for transfer. See [artifact annotations](artifact-annotations.md).
 
 PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
-
 
 ### 2026-10-02 — Isolate persistent browser orchestration from the app
 
@@ -1457,7 +1444,6 @@ workspace-selection writers; only a different workspace selection rebinds.
 Relying solely on asynchronous revocation would leave a rejoin window, while
 binding to every membership revision would unnecessarily sign people out during
 promotion. Incarnation is the lifecycle boundary those two choices missed.
-
 
 ### 2026-09-16 — Receipt-owned pagination replaces model-held provider tokens
 
@@ -1632,7 +1618,7 @@ credential nobody holds. A distinct principal value rather than a reuse of
 `connector` so a seeded run's authorization record says who acted. Google's
 disconnect is local (`connection-service.ts`, `mayRevokeRemotely`), which is
 the one property that makes a shared grant safe to hold in several
-workspaces. [`demo-workspaces.md`](demo-workspaces.md#security-and-trust-model)
+workspaces. `demo-workspaces.md`
 owns both.
 
 ### 2026-09-08 — The `demos` role moves to its own secret

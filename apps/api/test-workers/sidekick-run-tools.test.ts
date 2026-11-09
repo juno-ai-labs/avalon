@@ -103,7 +103,7 @@ beforeEach(async () => {
   await workspace().initializeWorkspace(WORKSPACE, "wnam");
   for (const automationId of [SIDEKICK, OTHER]) {
     await workspace().sidekickCreate({ workspaceId: WORKSPACE, automationId, authorUserId: USER, scope: "personal",
-      owningWorkstreamId: null, owningSubstreamId: asSubstreamId("0"), authorityGeneration: 1 });
+      authorityGeneration: 1 });
     await workspace().sidekickSubmitDefinition({ workspaceId: WORKSPACE, automationId, draft, evaluatorRules: null, submittedByRunId: null });
   }
 });
@@ -240,7 +240,7 @@ describe("Sidekick wizard run inspection", () => {
       plugin(overrides).tools.some((candidate) => candidate.definition.capability.startsWith("rally.sidekick.runs."));
     expect(plugin().tools.filter((candidate) => candidate.definition.capability.startsWith("rally.sidekick.runs.")).map((candidate) => candidate.definition.mode)).toEqual(["read", "read"]);
     expect(reads({ substreamId: asSubstreamId(runId(8)), backgroundAgent: true })).toBe(true);
-    for (const overrides of [{ parentKind: "workstream" as const }, { substreamId: asSubstreamId(runId(1)) },
+    for (const overrides of [{ parentKind: "canvas" as const }, { substreamId: asSubstreamId(runId(1)) },
       { substreamId: asSubstreamId(runId(9)), backgroundAgent: true, automationDelegation: { runId: runId(1), stopGeneration: 0 } }]) {
       expect(reads(overrides)).toBe(false);
     }

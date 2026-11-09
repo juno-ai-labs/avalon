@@ -31,9 +31,9 @@ export interface MemoryFactsState {
 export type MemoryFactRemoval = { pending: true } | { pending: false; refusal: string };
 
 const UNTITLED_SOURCE: Record<MemoryReviewSource['kind'], string> = {
-  thread: 'a thread',
-  breakout: 'a breakout',
-  channel: 'a channel',
+  thread: 'a Canvas',
+  breakout: 'a Canvas',
+  channel: 'a conversation',
   sidekick: 'a Sidekick',
 };
 

@@ -31,12 +31,10 @@ describe('browser fallback single-platform identity boundary', () => {
     window.location.hash = '';
   });
 
-  it('opens Sidekicks as a route of this tab rather than a new one', async () => {
+  it('opens a Sidekick as a route of this tab rather than a new one', async () => {
     const open = vi.spyOn(window, 'open');
-    await desktopBridge().openSidekicks('example');
+    await desktopBridge().openSidekick('example');
     expect(window.location.hash).toBe('#/sidekicks/example');
-    await desktopBridge().openSidekicks();
-    expect(window.location.hash).toBe('#/sidekicks');
     expect(open).not.toHaveBeenCalled();
     open.mockRestore();
   });

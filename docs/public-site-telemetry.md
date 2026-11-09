@@ -17,7 +17,7 @@ Trust Center pages load the landing's `landing.css` and add `apps/site/src/trust
 | `apps/site/src/credential-paths.ts` | The paths whose URL carries a credential, where no third-party script runs. |
 | `apps/site/src/posthog-loader.ts` | Adding PostHog's separate script from the `rally-posthog-src` meta tag. |
 | `apps/site/src/posthog.ts` | The PostHog SDK entry, a separate build input: initializes the full SDK with replay, heatmaps and autocapture, and hands its session to the reporter. |
-| `apps/site/src/*-handoff.ts`, `desktop-open.ts`, `invite.ts`, `slack-link.ts`, `workstream-link.ts` | Report presented, automatic, and manual browser-to-desktop handoff attempts after each page has validated its own target. |
+| `apps/site/src/*-handoff.ts`, `desktop-open.ts`, `invite.ts`, `slack-link.ts`, `link-handoff.ts` | Report presented, automatic, and manual browser-to-desktop handoff attempts after each page has validated its own target. |
 | `apps/site/vite.config.ts` | Injects the shared telemetry entry and immutable release/build context into every site page. |
 | `apps/api/src/routes/telemetry.ts` | Exposes the content-free Cloudflare route decision and the capability-bound anonymous ingest. |
 | `apps/api/src/telemetry/posthog-adapter.ts` | Maps the Global page observations once to PostHog `$pageview` and `$pageleave`; `site_action_selected` keeps its own name and properties. |
@@ -59,12 +59,18 @@ does carry its own `pathname`, which Global maps to `$pathname` as it does for
 page views, so variants of one page that share link ids can be compared directly.
 A middle-click, which fires `auxclick` rather than `click`, counts too.
 
-`desktop_handoff_attempted` reports the handoff type,
+`desktop_handoff_attempted` reports the handoff type (`canvas` or `sidekick`
+for a shared link, `workstream` for a retired Space, Channel, Breakout or
+Thread link, which is always `invalid`),
 whether it was merely presented, actually attempted, or declined for the web
 app (`browser`, from a shared link's **Continue in browser**), and whether the local
 target parser considered it valid. Handoff query strings, URL fragments,
-single-use tickets, invitation tokens, Slack state, work-stream IDs, automation
-IDs, and settings values never enter an event.
+single-use tickets, invitation tokens, Slack state, Canvas, Sidekick and
+conversation IDs, and settings values never enter an event. A shared link's
+path is normalized to `/app/:region/:organization/cv/:canvas` (with
+`/a/:artifact`), `/app/:region/:organization/sk/:sidekick`, `/app/:retired` for
+every retired form, or `/app/:unrecognized`; the page stays
+`workstream_handoff`, a recorded value dashboards already group by.
 
 Reporting is fire-and-forget. A page keeps at most 20 already-sanitized events
 in memory and sends immediately. Page leave, link clicks and handoff attempts ask
@@ -279,7 +285,6 @@ every site page would expose credential-bearing handoff URLs.
 
 **Consequences:** New landing variants must opt into the loader and CSP. Apollo
 tracking is separate from the first-party event and regional-delivery guarantees.
-
 
 ### 2026-10-11 — Report which ad platform's click identifier a landing carried
 

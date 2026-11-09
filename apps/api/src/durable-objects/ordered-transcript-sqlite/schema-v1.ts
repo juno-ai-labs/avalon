@@ -1,7 +1,7 @@
 /**
  * Immutable schema installed by every Durable Object that owns an ordered
  * participant transcript and Bind loop. The statements are copied verbatim
- * from SubstreamAgent migration 27; changing bytes here would rewrite that
+ * from AgentLoopDO migration 27; changing bytes here would rewrite that
  * released migration hash. Add a new versioned delta for future changes.
  */
 export const ORDERED_TRANSCRIPT_SCHEMA_V1: readonly string[] = [

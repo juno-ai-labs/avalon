@@ -76,7 +76,7 @@ beforeEach(async () => {
 });
 
 describe("a Durable Object's registration of its own identity", () => {
-  it("lets a SubstreamAgent recognize itself before its identity is written", async () => {
+  it("lets an AgentLoopDO recognize itself before its identity is written", async () => {
     const name = conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID);
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(name));
 

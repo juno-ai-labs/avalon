@@ -381,15 +381,15 @@ export function StatusDot({
 const socketStateCopy: Record<SocketState, { label: string; description: string }> = {
   idle: {
     label: 'Live updates are loading',
-    description: 'Live updates are waiting for this thread to load.',
+    description: 'Live updates are waiting for this conversation to load.',
   },
   connecting: {
     label: 'Connecting to live updates',
-    description: 'Rally is connecting to live thread updates.',
+    description: 'Rally is connecting to live updates.',
   },
   connected: {
     label: 'Live updates connected',
-    description: 'Live thread updates are connected.',
+    description: 'Live updates are connected.',
   },
   reconnecting: {
     label: 'Reconnecting live updates',
@@ -493,7 +493,7 @@ export function AvatarStack({
   const present = new Set(presentUserIds);
   const named = members.map((member) => (
     present.has(member.id) && member.id !== currentUserId
-      ? `${member.name} is viewing this thread.`
+      ? `${member.name} is here now.`
       : member.name
   ));
   if (overflow > 0) named.push(`and ${overflow} more`);
@@ -506,7 +506,7 @@ export function AvatarStack({
       {visible.map((member) => {
         const showingPresence = present.has(member.id) && member.id !== currentUserId;
         const tooltip = showingPresence
-          ? `${member.name} is viewing this thread.`
+          ? `${member.name} is here now.`
           : member.name;
         const presenceColor = (presentations.get(member.id) ?? member.presentation)?.color;
         const item = (
@@ -716,6 +716,8 @@ interface DropdownSelectProps {
   variant?: 'primary' | 'secondary' | 'pill';
   /** Where the list opens; it flips when there is no room. */
   side?: 'top' | 'bottom';
+  /** The glyph after the value, a chevron unless the control says otherwise (a sort's ⇵). */
+  icon?: ReactNode;
 }
 
 /** Shared settings selector: bordered for primary form controls, text-only for
@@ -729,6 +731,7 @@ export function DropdownSelect({
   value,
   variant = 'primary',
   side = 'bottom',
+  icon,
 }: DropdownSelectProps): React.JSX.Element {
   return (
     <Select.Root disabled={disabled} onValueChange={onValueChange} value={value}>
@@ -738,7 +741,7 @@ export function DropdownSelect({
       >
         <Select.Value />
         <Select.Icon aria-hidden="true" className="dropdown-select-chevron">
-          <ChevronDown size={variant === 'pill' ? 13 : 15} strokeWidth={1.7} />
+          {icon ?? <ChevronDown size={variant === 'pill' ? 13 : 15} strokeWidth={1.7} />}
         </Select.Icon>
       </Select.Trigger>
       <Select.Portal>
@@ -914,9 +917,12 @@ export function OpeningState({ label }: { label: string }): React.JSX.Element {
   return <LoadingState label={label} orbSize={64} orbState="connecting" />;
 }
 
-/** What an activity count says to a screen reader, which hears it in place of the badge. */
+/**
+ * What an Organization's count says to a screen reader, which hears it in
+ * place of the badge: its unseen Activity (`readerAttentionCount`).
+ */
 export function activityCountLabel(count: number): string {
-  return `${count} conversation${count === 1 ? '' : 's'} with new activity`;
+  return `${count} new in Activity`;
 }
 
 /** An Organization's activity count, or nothing at zero; the row carries `activityCountLabel`. */

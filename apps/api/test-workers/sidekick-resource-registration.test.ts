@@ -65,7 +65,6 @@ beforeEach(async () => {
   await reset();
   await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE, userId: USER, sessionId: "registration-session" });
   await workspace().initializeWorkspace(WORKSPACE, "wnam");
-  await workspace().finalizeSpaceBootstrap({ workspaceId: WORKSPACE });
   const credentials = await encryptString(JSON.stringify({ accessToken: "test-token", expiresAt: Date.now() + 3_600_000 }), env.CONNECTOR_CREDENTIALS_KEY, CONNECTION);
   await runInDurableObject(workspace(), (_instance, state) => {
     state.storage.sql.exec(`INSERT INTO connector_connections

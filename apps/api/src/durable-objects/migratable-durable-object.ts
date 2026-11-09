@@ -84,7 +84,7 @@ export abstract class MigratableDurableObject<TEnv extends Env = Env>
    * Every class already holds this promise — it is the `blockConcurrencyWhile`
    * its constructor stores — and every entry point already awaits it. Naming it
    * here is what lets the base await the migration without knowing how the
-   * subclass runs it, which is the difference between a `SubstreamAgent`, whose
+   * subclass runs it, which is the difference between an `AgentLoopDO`, whose
    * schema is applied by a store's constructor, and the three that call the
    * runner directly.
    */

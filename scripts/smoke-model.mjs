@@ -18,7 +18,7 @@ if (!accessToken) {
   const session = await request("/auth/dev/session", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ workspaceName: "Avalon model smoke" }),
+    body: JSON.stringify({ workspaceName: "Rally model smoke" }),
   });
   assert(session.response.status === 201 && session.body?.accessToken, "Development sign-in failed");
   accessToken = session.body.accessToken;
@@ -28,28 +28,32 @@ const headers = {
   "content-type": "application/json",
 };
 
-const created = await request("/workstreams", {
+// A Canvas under an id this check minted, and one message in its Chat.
+const canvasId = crypto.randomUUID();
+const created = await request("/canvases", {
+  method: "POST",
+  headers,
+  body: JSON.stringify({ canvasId, title: "Primary model smoke test" }),
+});
+assert(
+  created.response.status === 201 && created.body?.canvasId === canvasId,
+  `Canvas creation failed (${created.response.status})`,
+);
+const sent = await request(`/conversations/${canvasId}/substreams/0/messages`, {
   method: "POST",
   headers,
   body: JSON.stringify({
-    title: "Primary model smoke test",
-    objective: "Verify that Avalon's configured primary model completes a real request.",
-    participantUserIds: [],
-    openingMessage: "Reply with exactly AVALON_MODEL_SMOKE_OK. Do not call any tools.",
-    clientMessageId: `model-smoke-${crypto.randomUUID()}`,
+    text: "Reply with exactly RALLY_MODEL_SMOKE_OK. Do not call any tools.",
+    clientMessageId: `model-smoke-${canvasId}`,
   }),
 });
-assert(created.response.status === 201, `Work-stream creation failed (${created.response.status})`);
-const workstreamId = created.body?.workstream?.id;
-assert(workstreamId, "The model smoke work stream has no ID");
+assert(sent.response.status === 201, `The Canvas Chat refused the message (${sent.response.status})`);
 
 const deadline = Date.now() + 90_000;
 let detail;
 let assistant;
 while (Date.now() < deadline) {
-  // A channel is read through the conversation route; `GET /workstreams/:id`
-  // no longer exists and answered 404 on every poll.
-  detail = await request(`/conversations/${workstreamId}`, { headers });
+  detail = await request(`/conversations/${canvasId}`, { headers });
   const status = detail.body?.latestHarnessRun?.status;
   const transcript = detail.body?.transcript;
   // The snapshot's ranges can overlap, so a turn is keyed by its sequence.
@@ -74,10 +78,10 @@ assert(detail?.response.ok, "Could not read the completed model run");
 const run = detail.body?.latestHarnessRun;
 assert(run?.status === "completed", `The model run ended in ${run?.status ?? "an unknown state"}`);
 assert(run?.model === expectedModel, `Expected ${expectedModel}, received ${run?.model ?? "no model"}`);
-assert(assistant?.includes("AVALON_MODEL_SMOKE_OK"), "The primary model returned an unexpected smoke response");
+assert(assistant?.includes("RALLY_MODEL_SMOKE_OK"), "The primary model returned an unexpected smoke response");
 
 console.log(JSON.stringify({
-  workstreamId,
+  canvasId,
   status: run.status,
   model: run.model,
   response: "verified",

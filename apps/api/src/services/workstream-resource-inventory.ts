@@ -46,7 +46,7 @@ export function renderWorkstreamResourceInventoryAggregate(input: {
     .filter(({ count }) => count > 0)
     .map(({ kind, count }) => `- ${kind}: ${count}`);
   return [
-    "# Authoritative work-stream resource inventory",
+    "# Authoritative conversation resource inventory",
     `As of: ${asOf.toISOString()}`,
     `Visible resources: ${input.inventory.totalVisibleResources}`,
     `Message attachments: ${input.inventory.totalVisibleMessageAttachments}`,

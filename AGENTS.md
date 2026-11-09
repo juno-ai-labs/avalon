@@ -23,8 +23,17 @@ A **Substream** became a **Breakout**.
 
 Then, in the navigation redesign ([PRD](docs/PRDs/2026-10-10_channels-threads-navigation/prd.md)),
 a **Space** became a **Channel** and a **Channel** became a **Thread**.
-Storage names did not change: `spaces` holds Channels, and `channels` and
-`workstream` hold Threads.
+Storage names did not change: `spaces` held Channels, and `channels` and
+`workstream` held Threads.
+
+Then, in the Canvases and Sidekicks pivot ([PRD](docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md)),
+a **Thread**, a **Channel** and a **Breakout** became nothing: they were
+deleted, not renamed. The product is two sections, **Canvases** and
+**Sidekicks**; a **Canvas** is a conversation (its Chat) and the artifacts it
+generates. Storage names did not change: a Canvas id is a `workstream` id
+(`WorkstreamId`, `artifact_registry.workstream_id`), a Sidekick is an
+`automation`, and the conversation Durable Object, renamed `AgentLoopDO`,
+keeps its `SUBSTREAM_AGENTS` binding and `workstream:…:substream:…` ids.
 
 ## How we build
 
@@ -34,7 +43,7 @@ Before you begin see if there is one or more individual primitives that can be b
 
 Always have a platform mindset. You can always make a simple thing more complicated but never make a complex thing simpler.
 
-Prize **low latency** of opening resources (including spaces, channels, breakouts, artifacts, etc.), opening screens, switching between these, and otherwise interacting with the app or the backend. Keep an eye out for over-engineering and over-validating, trust the platform foundations to be correct and prize low latency instead of double checks. _Low latency is a goal._
+Prize **low latency** of opening resources (Canvases, Sidekicks, artifacts and the rest), opening screens, switching between these, and otherwise interacting with the app or the backend. Keep an eye out for over-engineering and over-validating, trust the platform foundations to be correct and prize low latency instead of double checks. _Low latency is a goal._
 
 ## Keeping the Legion up-to-date
 
@@ -74,11 +83,10 @@ whether it works, or on whether the next person can follow it.
 
 ## Platform
 
-We currently have a macOS electron app, browser SPA, and iOS app. When wither designing
-or implementing an app first consider which platform or platforms the feature should support.
-Some features are native macos only, and others are shared across platforms. When in doubt ask
-the (human) user before implementing the feature, if there is no answer assume macOS and web
-(iOS usually lags behind as it is a prototype non-production platform).
+We have a macOS Electron app and a browser SPA, and nothing else. When designing
+or implementing a feature, first consider which platform or platforms it should support.
+Some features are native macOS only, and others are shared across both. When in doubt ask
+the (human) user before implementing the feature; if there is no answer, assume macOS and web.
 
 ## Tool execution product policy
 

@@ -2,7 +2,7 @@ export { AshbyRegionalBridge } from "./ashby-regional-bridge";
 export { AshbyRoutingBridge } from "./ashby-routing-bridge";
 import workerEvents from "./worker-events";
 
-export { SubstreamAgent } from "./durable-objects/substream-agent";
+export { AgentLoopDO } from "./durable-objects/agent-loop-do";
 export { MigrationProbeDO } from "./durable-objects/migration-probe-do";
 export { WorkspaceDO } from "./durable-objects/workspace-do";
 export { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
@@ -10,8 +10,6 @@ export { ArtifactHostDO } from "./durable-objects/artifact-host-do";
 export { ArtifactAssetLoopback } from "./artifacts/asset-loopback";
 export { ConnectorPollWorkflow } from "./workflows/connector-poll";
 export { ConnectorEventWorkflow } from "./workflows/connector-event";
-export { WorkOpportunityWorkflow } from "./workflows/work-opportunity";
-export { DemoPreparationWorkflow } from "./workflows/demo-preparation";
 export { RegionalIdentityBridge } from "./regional-identity-bridge";
 export { GitHubRegionalBridge } from "./github-regional-bridge";
 export { GitHubRoutingBridge } from "./github-routing-bridge";

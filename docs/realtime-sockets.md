@@ -1,16 +1,15 @@
 # Realtime socket admission
 
-Every Rally WebSocket (workspace synchronization/commands, the retired Channel
-control socket that installed desktops and the iOS client still open, the direct
-conversation feed of a work stream or an automation, and the dictation bridge to
-Azure) is opened with a short-lived ticket rather than
+Every Rally WebSocket (workspace synchronization/commands, the direct
+conversation feed of a Canvas's Chat or a Sidekick's conversation, and the
+dictation bridge to Azure) is opened with a short-lived ticket rather than
 the session credential. This document owns how a purpose-specific ticket is
 issued, how it reaches the Worker, and how a handshake is accepted or refused.
-What happens *on* an open socket belongs elsewhere: workspace directory serving,
-invalidation, and command routing are `WorkspaceDO`'s, aggregate metadata is the
-Channel's parent's, hosted in `WorkspaceDO`
+What happens *on* an open socket belongs elsewhere: the Canvas and Sidekick
+lists, invalidation, presence and command routing are `WorkspaceDO`'s, a
+parent's own state is its hosted parent's in `WorkspaceDO`
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)),
-feed fan-out/replay/presence is `SubstreamAgent`'s whichever kind of parent the
+feed fan-out/replay is `AgentLoopDO`'s whichever kind of parent the
 conversation has, who may open a conversation is its parent's
 ([`workstream-durable-object.md`](workstream-durable-object.md)), and
 the dictation bridge's audio rules are in
@@ -20,34 +19,29 @@ The promise it makes is narrow and worth stating plainly: a socket is opened
 only by someone who just proved, over an authenticated HTTP request, that they
 may open that exact socket — and proving it leaves no credential anywhere a URL
 is recorded. [`websocket-architecture.md`](websocket-architecture.md) owns the
-client/server topology, Electron process split, proactive work-stream swarm, and
-connection lifecycle around that admission protocol.
+client/server topology, Electron process split, and connection lifecycle
+around that admission protocol.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/socket-tickets.ts` | The transport: the subprotocol sentinel, the deprecated query parameter, and the shared helpers both sides use. The single source of the wire format. |
-| `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, and conversation-feed ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. A feed ticket names the conversation's parent kind (`pk`) and id and carries the parent's archive decision. |
-| `apps/api/src/services/conversation-service.ts` | Gates a feed ticket on the parent's viewer decision and current authority, seats the reader on the conversation, and starts the recorded main SubstreamAgent's ticket-scoped admission and snapshot preparation as measurable, failure-isolated request background work. |
+| `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace and conversation-feed ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. A feed ticket names the conversation's parent kind (`pk`) and id and carries the parent's archive decision. |
+| `apps/api/src/services/conversation-service.ts` | Gates a feed ticket on the parent's viewer decision and current authority, seats the reader on the conversation, and starts the recorded main AgentLoopDO's ticket-scoped admission and snapshot preparation as measurable, failure-isolated request background work. |
 | `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its WorkspaceDO replay receipt and session lease, and the Azure upgrade. |
-| `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, conversation-feed (`/socket/conversations/:parentId/:substreamId`), and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, serves authoritative cursor-paged work-stream rows, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
-| `apps/api/src/durable-objects/hosted-parent.ts` | Accepts the retired Channel control socket for clients released before its state moved onto the workspace socket, and reads the per-viewer breakout list and background-agent counts every Channel row now carries. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and all substream-local commands (message, elicitation answer, pending-input reorder, stop, retry), consumes its distinct ticket in SQL, admits writes from the identity serialized when the socket was authorized, and refuses every write on a socket whose parent was archived. |
-| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, resumes its waterline, applies current work-stream rows, and invalidates workspace query surfaces. |
-| `apps/api/src/services/sidebar-reads.ts` | The automation and note statements plus row mappings the sidebar opens with, shared by WorkspaceDO's batch and the REST services so the two readings of one table cannot drift. |
-| `apps/desktop/src/renderer/lib/sidebar-list-store.ts` | The one receiver for the sidebar's two pushed lists: the opening batch and every push compare against its per-list waterline ledger rather than writing the caches directly. |
-| `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | The directory query. When the connect payload says `channelsBySpace`, it walks the Spaces for their Channel rows and drops what no Space returned; otherwise it pages the directory beyond the first page the payload delivered. It widens the list only when Debug enabled asks for system rows. |
-| `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Writes a Channel row's breakouts (waterlined per viewer) and running background agents into the caches the Channel menu and composer read, and reconciles receipt-backed breakout appearance. |
-| `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers; independently rejects stale state fields and older pin/page fields. |
-| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The typed write boundary for the shared work-stream list, the detail query key for Main and for a private child, and `patchCachedWorkstream`, the one write for an unversioned fact (a rename or scope event, a REST response, a command receipt) that the list row and the open detail entry must take together. |
-| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps a pooled, substream-addressed SubstreamAgent feed, resends idempotent child commands after reconnect until their private operation receipts arrive, and explicitly disables legacy feed-derived presence. |
-| `packages/contracts/src/workstream-transcript.ts` | Ordered turn/block, snapshot-fenced range, gap coverage, and nested UTC activity contracts used by the SubstreamAgent feed. |
-| `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the Channel Main feeds above the route, gives each mounted owner one opaque lease ID, warms one presence-free feed after a one-second sidebar hover, and retains recently viewed feeds without remounting their connection hooks. |
-| `apps/desktop/src/renderer/lib/realtime-socket.ts` | Preserves the browser `WebSocket` event/readiness contract for the work-stream hooks while routing Electron transport through one socket-ID-multiplexed privileged-bridge listener; browser development keeps the native constructor. |
+| `apps/api/src/routes/socket.ts` | Workspace (`/socket/workspaces/:workspaceId`), conversation-feed (`/socket/conversations/:parentId/:substreamId`), and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, sends each viewer's Canvas and Sidekick lists, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | `AgentLoopDO`: accepts the direct read/stream/download feed and all substream-local commands (message, elicitation answer, pending-input reorder, stop, retry), consumes its distinct ticket in SQL, admits writes from the identity serialized when the socket was authorized, and refuses every write on a socket whose parent was archived. |
+| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, resumes its waterline, applies the pushed Canvas and Sidekick lists, and invalidates workspace query surfaces. |
+| `apps/api/src/services/sidebar-reads.ts` | `SIDEBAR_LIST_LIMIT`, the bound each pushed list shares. |
+| `apps/desktop/src/renderer/lib/sidebar-list-store.ts` | The one receiver for the sidebar's pushed lists: the opening batch and every push compare against its per-list waterline ledger rather than writing the caches directly. |
+| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The detail query key a conversation renders from, for `"0"` and for a child, and the one write for an unversioned fact (a REST response, a pushed event, a command receipt) on that entry. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps the substream-addressed AgentLoopDO feed of the conversation on screen, resends idempotent child commands after reconnect until their private operation receipts arrive, and explicitly disables legacy feed-derived presence. |
+| `packages/contracts/src/workstream-transcript.ts` | Ordered turn/block, snapshot-fenced range, gap coverage, and nested UTC activity contracts used by the AgentLoopDO feed. |
+| `apps/desktop/src/renderer/lib/realtime-socket.ts` | Preserves the browser `WebSocket` event/readiness contract for the feed hook while routing Electron transport through one socket-ID-multiplexed privileged-bridge listener; browser development keeps the native constructor. |
 | `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Share strict dependency-free event/channel validation and register the main-window-only IPC capability. |
-| `apps/desktop/src/main/realtime-socket-broker.ts` | Owns Electron's SubstreamAgent feed TCP/TLS handshakes in Node (the only kind it admits), fixes the application Origin, follows the complete ordered PAC route, enforces the shared frame ceiling, and closes every owned connection when its renderer goes away. |
+| `apps/desktop/src/main/realtime-socket-broker.ts` | Owns Electron's AgentLoopDO feed TCP/TLS handshakes in Node (the only kind it admits), fixes the application Origin, follows the complete ordered PAC route, enforces the shared frame ceiling, and closes every owned connection when its renderer goes away. |
 | `apps/desktop/src/renderer/lib/api.ts` | Parses every ticket response, strips all query data, and attaches the handshake subprotocols. |
 
 ## How it works
@@ -60,31 +54,24 @@ admission is split in two.
    `GET /workspace/socket` for workspace sync/commands (members and guests: it
    is mounted with the workspace-relationship check, not the member-only
    `requireAuth`, because WorkspaceDO shapes a guest's socket itself),
-   `GET /workstreams/:id/control-socket` for the retired Channel control socket
-   (still served for installed desktops and the iOS client; the current desktop
-   never asks for it),
    `GET /conversations/:parentId/substreams/:substreamId/socket` for the feed
-   of a work stream's or an automation's conversation, or
+   of a Canvas's Chat or a Sidekick's conversation, or
    `GET /realtime/transcription/socket`. The Worker checks the caller may open
    that exact purpose and mints a 60-second HS256 JWT binding user, workspace,
    region, one-time `jti`, audience, only the target IDs that purpose requires,
    the current regional session ID, and, for a feed, the parent kind (`pk`),
    the parent id, the authenticated role (null for guests), the current authority generation,
    and whether the parent said it is archived (`parent_archived`). The
-   ticket also binds the authorized conversation membership version and the
-   contract-10 resolution-suggestion capability. The room persists the capability
-   in its attachment and adapts legacy snapshot, broadcast and replay delivery
-   as described in [conversation suggestions](conversation-suggestions.md#resolution-delivery-and-acceptance). Session
-   validation retains the existing workspace membership-incarnation check. An implicit workspace-member Main read uses
-   version zero; explicit grants use positive revisions and their existing local
-   freshness check. A guest has no implicit Main admission. The
+   ticket also binds the authorized conversation membership version (zero for
+   every admission a Canvas or a Sidekick makes). Session validation retains
+   the existing workspace membership-incarnation check. The
    conversation feed route also returns that `jti` as `ticketId` beside the
    ticket, the id of the credential and never the credential, because the
    upgrade it authorizes opens a new
    connection carrying no request id, and it is the only value the issuing
    route, the edge, and the room all hold. See
    [`performance-tracing.md`](performance-tracing.md). Once a main-feed ticket is
-   minted, its request schedules that recorded SubstreamAgent's ticket-scoped
+   minted, its request schedules that recorded AgentLoopDO's ticket-scoped
    admission and initial-snapshot preparation under `waitUntil`. The response
    does not await that work: object initialization, local visibility admission,
    a current D1 session/membership check, and eligible snapshot assembly overlap
@@ -92,12 +79,10 @@ admission is split in two.
    while a failed, revoked, evicted, stale-generation, or unfinished preparation
    leaves the ordinary regional upgrade checks as the fallback. Before any of
    that, the Worker resolves which kind of parent the id names
-   (`WorkspaceDO.resolveHostedParent` first, which answers a Channel or Space
-   or Sidekick with its authority in one call, else 404; a
-   Space is not a conversation this route opens),
-   asks that parent's `authorizeViewer`, and for an automation seats the reader
-   on the conversation, because the parent's rule is wider than the
-   conversation's participant list.
+   (`WorkspaceDO.resolveHostedParent`, which answers a Canvas or a Sidekick
+   with its authority and the viewer's decision in one call, else 404), and
+   seats an admitted reader on the conversation, because the parent's rule is
+   wider than the conversation's participant list.
    A non-main UUID is not warmed merely because its parent is visible; the
    parent must first have reserved that child.
    The transcription ticket's lifetime is the shared
@@ -106,20 +91,16 @@ admission is split in two.
    [`conversation-surfaces.md`](conversation-surfaces.md#dictation-capture-and-connection-startup).
 2. **Present.** The client opens the socket with the ticket as the second
    protocol: `[rally.ticket.v1, <ticket>]`. Native browser sockets send those
-   from the `WebSocket` constructor; Electron's work-stream broker passes the
+   from the `WebSocket` constructor; Electron's feed broker passes the
    same pair from Node's `ws` client and supplies the fixed application Origin
-   (`app://rallywithai`). iOS `URLSession` does not send `Origin` on a WebSocket
-   upgrade, so the native client sets that same allowlisted value on the
-   handshake request. Sideline's main process opens only the workspace
-   socket, from the `ws` client, and presents its own `app://sideline`
-   Origin rather than borrowing Rally's. Both become `Sec-WebSocket-Protocol`, the handshake header
+   (`app://rallywithai`). Both become `Sec-WebSocket-Protocol`, the handshake header
    available for browser-compatible ticket presentation. A ticket is a compact
    JWS — base64url joined by dots — which is a legal subprotocol token, so it
    needs no encoding.
 3. **Verify.** The Worker checks the `Upgrade` header and the exact `Origin`,
    reads the ticket off the offer, verifies the signature and the claims, and
-   rejects a region or work-stream mismatch.
-4. **Admit.** A feed upgrade reaches the exact `SubstreamAgent`. When the
+   rejects a region or parent mismatch.
+4. **Admit.** A feed upgrade reaches the exact `AgentLoopDO`. When the
    in-memory preparation matches every verified ticket claim and the object's
    local authority generation, the room reuses its ticket-transit
    session/membership decision and eligible prepared snapshot; otherwise it
@@ -128,25 +109,20 @@ admission is split in two.
    object-local visibility, and atomically consume the durable ticket receipt.
    Preparation never consumes a ticket. A constant-size revocation fence
    prevents older in-flight preparation from reappearing, and only the newest
-   room admission and newest completed snapshot are retained. A
-   Channel control upgrade from an older client reaches the workspace's
-   `WorkspaceDO` at the internal `/parent-socket` path, where the Channel's
-   hosted parent verifies D1 membership plus its local visibility projection
-   and accepts the socket tagged `parent-control:<id>`. A workspace upgrade reaches
-   the workspace's `WorkspaceDO`, which consumes a separate audience ticket and
-   serializes the verified session identity; every subscribe or later command
-   rechecks the current D1 session and membership, and both of its publish paths
-   sweep the connected set — immediately for a retracting topic, otherwise once
-   per 30 seconds — closing the sockets that no longer pass. Neither object
-   receives the signed bearer ticket.
-   A conversation under an automation, or any substream other than `0`, is
-   admitted on the parent's forwarded decision: the ticket's `pk`, parent id,
+   room admission and newest completed snapshot are retained. A workspace
+   upgrade reaches the workspace's `WorkspaceDO`, which consumes a separate
+   audience ticket and serializes the verified session identity; every
+   subscribe or later command rechecks the current D1 session and membership,
+   and a socket that no longer passes is closed by the
+   [access-revocation queue](access-revocation.md), never by a publish path.
+   Neither object receives the signed bearer ticket.
+   A conversation is admitted on its parent's forwarded decision: the ticket's `pk`, parent id,
    and `parent_archived` reach the object as `x-rally-parent-kind`,
    `x-rally-parent-id`, and `x-rally-parent-archived` headers, the object
    checks them against its own identity row, and an archived parent's
-   conversation is read-only from that socket. An automation parent has no
-   socket of its own: the automation's page holds the conversation feed and
-   nothing else.
+   conversation is read-only from that socket. A parent has no socket of its
+   own: a Canvas's or a Sidekick's page holds the conversation feed and nothing
+   else.
    Dictation consumes its `jti` and reserves a session lease in the owning
    WorkspaceDO — one serialized transaction, so two simultaneous upgrades
    cannot both pass the per-user/per-workspace concurrency caps — before
@@ -162,7 +138,7 @@ admission is split in two.
 
 ### Hibernation lifecycle
 
-An admitted SubstreamAgent feed also accepts correlated
+An admitted AgentLoopDO feed also accepts correlated
 `load_transcript_range` requests. The request names the opening `snapshotId`, a
 half-open sequence interval, and `resumeAfterEventSequence`; the answer names
 the interval actually inspected. The socket's existing admitted identity is
@@ -174,8 +150,8 @@ than silently reading a new fence. Active response/plugin/tool/thinking and
 compaction intervals carry their original UTC start plus the snapshot UTC and
 elapsed baseline; the client advances clocks locally.
 
-Both socket-holding objects, WorkspaceDO (workspace and Channel control
-sockets) and SubstreamAgent, follow Cloudflare's [WebSocket Hibernation
+Both socket-holding objects, WorkspaceDO (the workspace socket) and
+AgentLoopDO, follow Cloudflare's [WebSocket Hibernation
 server pattern](https://developers.cloudflare.com/durable-objects/examples/websocket-hibernation-server/):
 
 - The edge Worker validates the method, route, `Upgrade`, origin, ticket, and
@@ -189,7 +165,7 @@ server pattern](https://developers.cloudflare.com/durable-objects/examples/webso
   `state.getWebSockets()` when they need the connected set and validate
   `deserializeAttachment()` at every use, so eviction loses no required state.
 - WorkspaceDO attachments also carry explicit application foreground and the
-  renderer's foreground work-stream ID. Missing fields from an older deployment
+  renderer's foreground Canvas ID. Missing fields from an older deployment
   default to background during rollout; healthy attachments preserve presence
   through hibernation without a timer or database row.
 - Exact text `ping` frames receive `pong` through
@@ -207,52 +183,29 @@ server pattern](https://developers.cloudflare.com/durable-objects/examples/webso
 
 The main authenticated Electron renderer maintains exactly one native Chromium
 WorkspaceDO socket for the active workspace. It is not recreated when the user
-changes work streams, and it carries every Channel's metadata, breakout list
-and running background agents as that Channel's row. For each active work
-stream, every pinned work stream, the five most recently active unpinned work
-streams, and any other running work stream, the desktop also maintains one
-SubstreamAgent feed socket for Main, and nothing else per Channel. The renderer
-owns the feed's protocol state machine, caches, subscriptions, replay,
-heartbeat, reconnect jitter, and telemetry. Only its raw Electron transport
-crosses the typed preload bridge to a main-process Node broker. That broker
-starts every initial handshake as soon as its ticket arrives, so Chromium's
-same-endpoint CONNECTING lock cannot serialize a swarm. Main-to-renderer events use one bridge listener and an O(1)
-socket-ID lookup rather than broadcasting every frame to every warmed adapter.
+navigates, and it carries each viewer's Canvas and Sidekick lists. The
+conversation on screen has one AgentLoopDO feed socket, opened by the screen
+that shows it ([`websocket-architecture.md`](websocket-architecture.md) owns
+which and for how long). The renderer owns the feed's protocol state machine,
+caches, subscriptions, replay, heartbeat, reconnect jitter, and telemetry. Only
+its raw Electron transport crosses the typed preload bridge to a main-process
+Node broker, which starts the handshake as soon as its ticket arrives.
+Main-to-renderer events use one bridge listener and an O(1) socket-ID lookup.
 Browser development continues to use native WebSockets.
 The Node broker resolves every new destination through Electron's system/PAC
 proxy configuration and trusts both Node's bundled roots and the operating
 system CA store. Moving handshakes out of Chromium therefore does not opt the
-work-stream swarm out of managed-network routing or locally installed trust.
+feed out of managed-network routing or locally installed trust.
 Semicolon-delimited directives retain their order: a failed pre-open attempt
 advances to the next resolved proxy, and `DIRECT` is available only when policy
 returned it. Node and the two object endpoints use one shared 1 MB maximum
-application-frame size instead of `ws`'s 100 MB default.
-Switching away keeps the exact feed socket
-mounted for at least five minutes, so returning to a recently viewed work stream
-does not spend another ticket request, handshake, subscribe, or snapshot. The
-five-minute clock restarts each time the work stream leaves the foreground;
-background-running, pinned, and five-most-recent conversation streams remain
-connected beyond it while they retain that role. Holding a
-pointer over any sidebar work-stream row for one second warms its
-presence-free SubstreamAgent feed before navigation. Selection reuses that
-socket; it does not wait for detail REST. A hover snapshot is explicitly speculative: it does not
-settle the participant's unseen marker. Committed navigation promotes the
-already-admitted socket with one `mark_opened` frame, after the cached snapshot
-is available, so seen-state bookkeeping adds no click-to-paint request.
-Leaving, cancelling the pointer, unmounting the row, or opening it before the
-second passes cancels the warm-up. Once the feed opens, it can remain for up
-to five minutes, and a newly qualified hover replaces any other unopened warm
-feed; speculative warming is therefore bounded to one row. If the work stream
-opens, the retained owner reuses it. Keyboard focus alone does not
-warm a socket. Block sockets still
-close with the panel and recover from durable checkpoints when it is opened
-again. Access revocation is not delayed: the server closes every affected
-retained feed immediately, and that feed permanently stops reconnecting. On the
-workspace socket, which stays open for the sidebar, losing a Channel is that
-Channel's row arriving as a tombstone, which evicts its cached state.
+application-frame size instead of `ws`'s 100 MB default. Access revocation
+closes the affected feed immediately, and that feed permanently stops
+reconnecting. On the workspace socket, a Canvas or Sidekick the viewer can no
+longer open leaves the next list push.
 
 A cold feed open is bounded until route-matching detail and transcript caches
-make the work stream renderable. The first attempt covers ticket issue, PAC
+make the conversation renderable. The first attempt covers ticket issue, PAC
 resolution, handshake, subscribe, and canonical state with a 10-second
 deadline; two timeout retries use 20- and 40-second deadlines. A cacheless open
 always subscribes from sequence zero even when its retained resume registry has
@@ -271,16 +224,8 @@ and pre-state socket closes are not elapsed deadlines: they continue through
 the existing jittered reconnect loop and do not consume one of the three timed
 attempts.
 
-Opening telemetry treats the composer as send-ready only after its active
-work-stream handler is installed and the committed composer crosses a paint.
-That handler submits through the workspace socket's command queue, not either
-pooled work-stream socket, so connecting and reconnecting workspace transports
-can still be client-ready. `workstream_send_ready` records that transport state
-under the sidebar opening ID; it is not proof of delivery or server
-acknowledgement.
-
-The workspace socket carries its authoritative work-stream directory rows plus
-durable topic invalidations for the other D1-owned workspace modules. Its
+The workspace socket carries the pushed Canvas and Sidekick lists plus
+durable topic invalidations for the other workspace modules. Its
 `workspace_sync_events.waterline` is monotonic inside the WorkspaceDO and each
 row has a UUIDv7 trace ID. Live receivers ignore an equal/older waterline. On
 reconnect the object unions every missed topic and sends one event at the newest
@@ -315,13 +260,8 @@ Its complete topic catalog, and whose each one is:
 | `connector_connections` | Connection identity, type, scope/owner, account/display name, capabilities, health/reconnect/error state, catalog capabilities, GitHub repository access, and onboarding connector state. Credentials never enter this feed. | The connection's: its owner for a personal connection, everyone for the Organization's. The person alone for their own Slack identity link. A provider webhook delivery: its matched connections' audience (below). |
 | `connector_oauth_attempts` | Signals that a pending OAuth attempt should be read once from its authenticated endpoint. The renderer does not poll while the provider window is open. | The person who started the attempt. |
 | `terminal_policy` | Workspace Terminal capability, Daytona configuration availability, network allow/deny policy, version, and validation/failure state. | Organization. |
-| `digest_schedule` | Per-viewer digest enablement, cadence/timezone, destinations, and next run. | The person, for their own digest; the connection's audience when a connection a digest can deliver to changes. |
 | `automations` | Automation detail, drafts and runs. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. | Organization. |
-| `notes` | Note detail. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. | Organization. |
-| `resources` | Resource directory, hydration/watch/content availability, work-stream context links, and connector-derived resource changes. | Organization; the connection's audience for a connection change or a provider webhook delivery, since a personal connection's resources are its owner's. |
-| `activity` | Connector activity ingestion that can change opportunity generation or activity-derived UI. | Organization. |
-| `work_opportunities` | Suggested work/actions, audience, version, accepted/dismissed state, and resulting work-stream directory changes. | Organization. |
-| `workstream_directory` | Invalidates WorkspaceDO cursor-page membership/order and pin changes. Normal common/viewer state transitions instead push the current waterlined row directly. D1 is never a list fallback. | Organization. |
+| `resources` | Resource directory, hydration/watch/content availability, conversation links, and connector-derived resource changes. | Organization; the connection's audience for a connection change or a provider webhook delivery, since a personal connection's resources are its owner's. |
 | `viewer_preferences` | Telemetry and other current-user workspace preference surfaces. | The person. |
 | `feature_flags` | Effective client feature gates when a workspace-scoped producer explicitly publishes a change. | Organization. |
 
@@ -334,7 +274,7 @@ connection service publishes only what no request carries — an OAuth
 completion, which a provider's redirect reaches without a session (and which
 the Canva loopback, `POST /connections/canva/complete`, runs, so that route
 maps to nothing), and background tool-count discovery. A connection write
-publishes `connector_connections`, `resources` and `digest_schedule`, and not
+publishes `connector_connections` and `resources`, and not
 `automations`: no Sidekick read consults a connection, which a Sidekick reads
 only when one is applied or its principal is claimed, both of them Sidekick
 writes that publish `automations` themselves. Starting an authorization
@@ -349,120 +289,43 @@ connections in several workspaces, so it passes `audienceUserIds` itself, per
 workspace: `connector_connections` and `resources` go to everyone when any
 matched connection there is the Organization's, and otherwise only to the
 owners of the personal ones. A matched connection with no owner counts as
-the Organization's. `activity` goes to the whole Organization.
+the Organization's.
 
-Electron sends `list_workstreams` with a stable request ID, bounded limit,
-optional opaque `(access_or_creation_time, workstream_id)` cursor, and the system-row preference. WorkspaceDO responds
-with `workspace_workstream_page`, the directory waterline, each row's independent
-common/viewer waterlines plus the corresponding UUIDv7 row identities, parsed work-stream rows,
-and the next cursor. Pending page requests survive a transient reconnect
-and reject only when the provider is disposed or the user/session changes. A
-`workstream_directory` sync invalidation refetches these pages; it never asks a
-REST/D1 list endpoint to reconstruct them.
+**Retired: Thread and Channel listing.** `list_workstreams`
+(`workspace_workstream_page`), `space_channels` (`workspace_space_channels`),
+`channel_rails` (`workspace_channel_rails`), the foreground-visit
+`workspace_workstream_recency` frame, the Channel row
+(`workspace_workstream_state`) and `workspace_reach_changed` listed or moved
+Threads and Channels, which the Canvases and Sidekicks pivot removed. The
+contract no longer has them. A stored sync row naming a retired topic is
+dropped on read.
 
-A member's desktop loads its Channel rows a Space at a time. Once the Space
-hierarchy is whole, the sidebar that answers a member's `subscribe` carries
-every Space the viewer can see and no Channel rows, and says
-`channelsBySpace: true`.
-The desktop asks each Space with `space_channels`: a stable request ID, the
-`spaceId`, optionally `after` (the previous answer's `nextAfter`), and `rails`,
-whether to send rails with the rows. WorkspaceDO answers with one
-`workspace_space_channels` frame. It holds a page of up to 250 of the Space's
-Channels this viewer may see, in id order, as directory rows with their state
-versions. Each row carries its breakouts (`privateChildren`), so one answer is
-the Space's children and grandchildren. It also holds as many of those
-Channels' rails as fit the frame beside the rows. `nextAfter` is the page's
-last Channel when the page is full, and `null` when the Space ends there. A
-Space the viewer cannot see gets an empty page; a guest's pages hold what the
-listing rules give them ([`listing-rules.md`](listing-rules.md)). System Channels
-are left off, as the connect page leaves them off.
-
-The desktop walks every Space. It asks the Space on screen alone (else the
-first Space of the Channel in front). Once that Space's first page is in, it
-asks every other Space at once: the rest of the Space list, then archived
-Spaces. Pages within one Space follow each other, since each asks after the
-last. WorkspaceDO answers one request at a time either way, so asking together
-saves a round trip per Space rather than server work. It asks for rails unless
-it already holds one for every Channel it knows in that Space. Each page is
-written as it lands, so the Space on screen paints before the walk is over. A
-Space put on screen that no walk has returned, such as one created since the
-last walk, is asked for on its own; a walk running then reaches it itself. When the walk
-ends, a row held before it that no Space returned is dropped. A reconnect
-walks every Space again, and every Space counts as loading until the walk has
-returned it.
-
-A `workstream_directory` invalidation does not walk every Space. It is
-published to every socket in the Organization, for one person's pin as much as
-for a Channel moving between Spaces, so a whole walk there would make every
-desktop ask every Space at once. The desktop asks the Space on screen again,
-and marks every other loaded Space to be asked again when it next comes on
-screen. That re-read writes rows and drops none: a Channel that left a Space
-arrives as a pushed row, and the next reconnect's whole walk is what retires
-anything else.
-
-A Space whose request fails shows the rows held for it and is asked again
-when it next comes on screen. A whole walk that fails leaves the directory
-query in error, and the sidebar stops waiting on the Spaces it did not reach.
-
-A guest's socket is shaped by the same rules as a member's
-([`listing-rules.md`](listing-rules.md)), with Organization-wide scope admitting
-only members. The connect snapshot, `list_workstreams`, `workspace_workstream_state`
-frames, `channel_rails` and `set_presence` all ask whether this person may list
-the Channel, so a guest is sent nothing of an Organization-wide Channel they are
-not in, not even a tombstone, and foregrounding one closes the socket as it
-would a member's. A guest is sent no automations: the Sidekick library is a
+A guest's socket is shaped by the same rules as a member's, with
+Organization-wide scope admitting only members. The Canvas list and
+`set_presence` ask whether this person may open the Canvas by its audience
+([`canvases.md`](canvases.md#presence)), so a guest is sent no Canvas they are
+not on, and one they may not open is kept out of presence (recorded as no
+Canvas, not a close). A guest is sent no Sidekicks: the Sidekick library is a
 member's.
 
-The sidebar keeps the first page, and the desktop keeps `list_workstreams`
-paging, while **an Organization is still opening** (`spacesReady` false). A
-Channel can sit in no Space there, and the page is the only way it reaches the
-sidebar.
-
-Electron asks for Channel rails with `channel_rails`: a stable request ID and
-up to 250 named Channels (`workstreamIds`). The retired Space target
-(`spaceId`, `after`), which desktops 1.467.0 and 1.468.0 still send, is
-answered with one empty final frame, since refusing it would close their
-socket. Each
-Channel row carries `railWaterline`; a held rail is stale once a row's passes
-it. The desktop asks for stale rails by name, in order: the Channel in front,
-then its Spaces, then the other Spaces, then Channels in no Space. Rails
-mostly arrive with their Space's rows, so what is left is the rails that moved
-since, or did not fit beside their rows.
-
-WorkspaceDO answers with `workspace_channel_rails` frames, each at most
-`WORKSTREAM_REALTIME_MAX_FRAME_BYTES` by encoded length, the last one `final`:
-the rails that fit, `oversized` for a rail that fits no frame or fails its
-schema (the client paints that Channel from its snapshot), and `unavailable`
-for a named Channel the viewer is not sent a row for. Named Channels span as
-many frames as they need. Every frame carries `nextAfter: null`, a leftover of
-the Space target that desktops from before its removal still require. The rail
-itself is
-[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)'s.
-
-A validated foreground visit persists this user's access time and sends
-`workspace_workstream_recency` only to their subscribed sessions. This contains
-one workstream, its state version, and the directory waterline; system rows are
-included when visited. A cursor whose timestamp differs from its current row
-restarts at page one, so a pre-upgrade activity cursor cannot silently skip rows.
-
 Subscribing is answered with the sidebar itself. The `workspace_sync` event that
-answers `subscribe` carries a `sidebar` field: one `workstream_page` body plus
-the viewer's automations and notes, each bounded at 250 rows and each stamped
-with its own waterline. All three come from this object's own SQLite —
-`channels`, `automation_directory` and `notes` — read
-with no `await` between them, so the sidebar opens on one consistent snapshot
-and on no request at all. The client's `subscribe` frame names no collection, no
-filter and no page size; it carries a waterline, which is where that client got
-to, not what it would like.
+answers `subscribe` carries a `sidebar` field (`WorkspaceSidebarSchema`): the
+viewer's automations and Canvases, each bounded at 250 rows and each stamped
+with its own waterline, and the viewer's Activity page. A desktop from
+before the pivot, which cannot parse it, never reaches it: its ticket is
+refused (see [Failure modes and limits](#failure-modes-and-limits)).
+Both lists come from this object's own SQLite — `automation_directory` and
+`canvas_directory` with their read and pin tables — read with no `await`
+between them, so the sidebar opens on one consistent snapshot and on no
+request at all. The client's `subscribe` frame names no collection, no filter
+and no page size; it carries a waterline, which is where that client got to,
+not what it would like.
 
-The automation slice is deliberately limited to the two scopes the top-level
-sidebar renders: every `workspace` automation and the viewer's own `personal`
-automations. A `workstream` automation belongs only on its owning room's
-automation rail, even when the viewer authored it. This is a positive scope
-allowlist at the SQLite read, not an ownership inference after the read: the
-whole subscribe answer is schema-checked as one value, so admitting a third
-scope into that slice prevents the work-stream, note, project, and automation
-lists from being sent at all.
+The automation slice is deliberately limited to the Sidekicks the viewer may
+read: every `workspace` automation, the viewer's own `personal` ones, and the
+`people` ones that name them. This is a positive allowlist at the SQLite read,
+not an inference after the read: the whole subscribe answer is schema-checked
+as one value.
 
 Every subscribe carries it, cold or resuming. A resume where no topic moved
 still gets one, under `reason: "resume"` with an empty topic list — the one
@@ -471,14 +334,29 @@ rather than to report news. That matters because a push can be missed while a
 socket is away and produce no topic at all: a Sidekick moving its
 next run time in `automation_directory` is exactly that; it advances the
 automations list and its waterline without naming a `workspace_sync` topic. A resume that missed nothing costs the
-bytes and applies nothing, since every list carries the waterline its pushes
-carry and the client's comparison drops it. Receivers must apply the sidebar
+bytes and changes nothing, since an answer at the version the client already
+holds rewrites the same rows. Receivers must apply the sidebar
 *before* the topic-waterline guard, or a resume repeating a waterline the client
 already holds would be discarded along with the state it was sent to deliver.
-They must also skip `workstream_directory` while handling an event that carried
-the sidebar: `initial` names every topic, so invalidating that one would send
-the client back for the page the same event just delivered — the round trip this
-payload exists to remove, reintroduced one line below it.
+
+The answer is authoritative over the client's ledgers. WorkspaceDO reads it
+after every push an earlier socket delivered, so the renderer applies its lists
+whatever its per-list ledger holds and resets each ledger to the answer's
+version, and resets its sync cursor to the answer's waterline. An answer
+*below* the ledger means the object's counters went back (its storage was
+rebuilt behind a window that stayed open); keeping the old numbers would drop
+every push and every sync event until the object climbed past them, which is a
+window that stops hearing its lists until it is reloaded. A reconnect's answer
+that moves the Sidekick list also refreshes what a list push refreshes (the
+Sidekick page's detail and runs, and the library), because it stands in for
+pushes the dropped socket missed. Presence and every unanswered conversation
+preview are sent again on the new socket once it is answered.
+
+WorkspaceDO resolves the viewer's flags, the subscribe's one await, *before*
+it reads the sidebar and the sync log, and then sends the answer and marks the
+socket subscribed with no await between. A push goes only to sockets already
+marked subscribed, so a write landing between a read and that mark would reach
+neither the answer nor the socket.
 
 That private subscribe answer also carries the complete effective client
 feature-flag object for the socket's user. The renderer applies it before the
@@ -490,140 +368,73 @@ They are deliberately not a `workspace_sync` topic broadcast: two people in the
 same object may match different Flagship rules, so WorkspaceDO evaluates once
 per connected user and sends only to that user's sockets.
 
-A person joining or leaving a Channel or Breakout is sent as
-`workspace_reach_changed`, naming only the people and never the conversation.
-WorkspaceDO raises it where a directory projection flips a viewer's
-`is_participant`: the Channel viewer write and the Breakout viewer write, which
-every membership path reaches (direct add and remove, mention seating, Space
-sources, scope grants, Breakout participant changes), and where an operator's
-impersonation relationships are granted or revoked. It is addressed rather
-than broadcast: a socket hears a user id only when its own user is that person
-or holds an active impersonation relationship to them. It is not a
-`workspace_sync` topic, because the topic enum is closed and a new value would
-fail every older desktop's subscribe answer; an unknown event `type` is ignored
-instead. It is not on the waterline or replayed, so a listener rereads on every
-subscribe answer. Three clients listen. The desktop's own workspace socket rereads the
-conversation directory (`shared-navigation`) on it: Channel rows and Space
-pages already move on the same flip, but the directory says which conversation
-a Breakout-only Channel opens on, and without the reread a new grant's row
-opened on Main. Hosts with no workspace
-socket of their own — Sideline ([`impersonation.md`](impersonation.md)) and the
-lite browser client ([`browser-client.md`](browser-client.md)) — hold one
-through `watchWorkspaceReach` in `@rally/contracts/workspace-reach-watch`, which
-subscribes, discards the sidebar, and reports only this event and subscribe
-answers, with a diagnostic hook the host logs when it cannot connect. It is a
-filter over `watchWorkspaceSocket` in the same module, the transport alone,
-which the desktop's main process also uses to hold the Channel directory behind
-the menu bar ([`menu-bar.md`](menu-bar.md)).
-
 After a plan change, WorkspaceDO sends `workspace_usage`, the new usage meter,
 to every member socket, outside the waterline and never replayed.
 [`usage-metering.md`](usage-metering.md) owns it.
 
-With `channelsBySpace`, that page is empty and the directory comes from the
-Space walk above.
+The Canvas list rides its own event, `workspace_canvas_list`, with `canvases`
+as an optional key of the subscribe payload's sidebar and its own `canvases`
+waterline in `workspace_sidebar_list_state`. It is a separate event type
+rather than a second `workspace_sidebar_list` discriminator value because a
+released client fails a discriminator value it does not know and ignores an
+event type it does not know. A Canvas row, its participants, its Chat's latest
+message or who is in it now advance that waterline and push to every socket;
+one person's read or pins push to that person alone.
+[`canvases.md`](canvases.md#the-canvas-list) owns its rows. The Sidekick list
+is `workspace_sidebar_list` with `list: "automations"`.
 
-The directory page in that payload deliberately excludes system work streams.
-Debug enabled is rare and engineers only, and the server does not hold the
-preference — it lives in the desktop's own application settings — so a viewer
-who wants those rows re-draws the sidebar from a `list_workstreams` request
-carrying `includeSystem`. Loading the common case unasked and paying a round
-trip for the rare one is the way round that suits the p95; the reverse would put
-a debug preference in everyone's connect. The automations and notes do not vary
-by it at all.
+Each person's Activity rides `workspace_activity_list`
+`{occurredAt, waterline, unseenCount, items}`, with `activity` as an optional
+key of the subscribe payload's sidebar and its own `activity` waterline. It is
+sent only to the one person whose list moved: a row recorded for them, their
+read of a Canvas or a Sidekick, or their `activity_mark_all_seen` command,
+which the push answers. [`activity.md`](activity.md) owns it.
 
-Neither list has a REST fetcher behind it any more. WorkspaceDO re-sends the
-affected list whole as `workspace_sidebar_list` whenever it writes one of their
-rows, so the batch is the only load and the push is the only refresh — which is
-also why *every* first page is a batch, not just the cold one: a reconnect or a
-debug toggle reloads the directory, and those two lists have nothing else to
-reload them.
+Neither list has a REST fetcher behind it for a socket-holding client.
+WorkspaceDO re-sends the affected list whole whenever it writes one of its
+rows, so the batch is the only load and the push is the only refresh, which is
+also why *every* first page is a batch, not just the cold one: a reconnect
+reloads the lists, and they have nothing else to reload them. Every Sidekick
+write advances the `automations` waterline and republishes the list in the
+same call that changes the row; every Canvas write does the same for
+`canvases`.
 
-The two lists detect a change differently, because they have different writers.
-Notes go through `runWorkspaceSql`, the one entry point every write to that
-table passes through — a desktop REST write, a Workflow, and a workspace alarm —
-and `SIDEBAR_LIST_SOURCE_TABLES` maps the written table to the list it
-invalidates. Automations no longer have a workspace-local table to watch: the
-authority is each Sidekick's own `automation_directory` row in the same
-object, and every Sidekick write advances the `automations` waterline and
-republishes the list in the same call that changes the row. Both paths end in the same
-`workspace_sidebar_list` push.
-
-That push exists rather than another `workspace_sync` topic for a reason that
-predates the automation cutover and still holds: the writers that move a
-sidebar row carry no HTTP request — a workspace alarm then, an object-to-object
-projection now — so the mutation middleware that derives topics from a request
-path never saw them, and a sidebar row's next-run time stayed stale until
-something unrelated refetched the list.
+That push exists rather than another `workspace_sync` topic because the
+writers that move a sidebar row carry no HTTP request — an object-to-object
+projection, a workspace alarm — so the mutation middleware that derives topics
+from a request path never sees them.
 
 The event carries the whole list and a waterline for that list, monotonic within
-WorkspaceDO and advanced inside the transaction of the write that earned it. Two
-counters rather than one, because the lists change independently and one counter
-would let a note write hide an automation update. The opening batch carries the
-same two numbers, so the batch and every later push land in one client receiver
-that applies only a strictly greater version — `sidebar-list-store.ts` — rather
-than two handlers each trusting arrival order. What the lists do *not* carry is a
-version per row: unlike a work-stream row, which is assembled from child objects
-over an unordered Queue and needs one per field, the list is the unit here, and
-a row the viewer can no longer see is expressed by its absence, so archive and
-delete need no tombstone. Each list is read per socket, because a personal
-automation or note belongs to one viewer. The renderer applies WorkspaceDO-owned
-fields such as pin position only when that row's observed directory waterline is
-newer. Every socket reconnect also reloads a resident directory, because current
-state rows intentionally do not retain every intermediate push for replay.
+WorkspaceDO and advanced inside the transaction of the write that earned it. A
+counter per list rather than one, because the lists change independently and one
+counter would let a Canvas write hide a Sidekick update. The opening batch
+carries the same numbers, so the batch and every later push land in one client
+receiver that applies only a strictly greater version — `sidebar-list-store.ts`
+— rather than handlers each trusting arrival order. A push therefore always
+advances its list's waterline, even when only a derived field such as a Canvas
+row's presence moved: one sent at the waterline the client already holds is
+dropped. What the lists do *not* carry is a version per row: the list is the
+unit, and a row the viewer can no longer see is expressed by its absence, so
+archive, delete and an audience change need no tombstone. Each list is read
+per socket, because a personal Sidekick or a private Canvas belongs to its
+own audience.
 
-A Channel's row (`workspace_workstream_state`, and every row of a sidebar,
-page or recency answer) is a complete snapshot, not a partial patch. Sending
-null clears a prior value. Common and viewer fields each carry their own
-authority-local waterline and UUIDv7 row ID; they are time-sortable
-trace/deduplication identities, not a distributed causal clock. On the
-workspace socket, a row the viewer may see also carries what the Channel
-control socket used to add for its viewer: `privateChildren` (the ready,
-unarchived breakouts with this viewer on the roster) with its own
-`privateChildrenWaterline`, and `backgroundAgentCounts` (running background
-agents by the conversation they work for, counted only for Main and this
-viewer's breakouts). Absent means the row does not say, never "none": a REST
-row, an older server, and a Channel whose parent is still waiting for its
-import all leave the fields out. The breakout list has its own waterline
-because it moves with rosters, which do not advance the row's state version.
-
-A state change can still arrive more than once and out of order: a row is
-republished by the directory apply, by a breakout roster change, and on a
-redelivered effect, and the effects behind it cross an at-least-once, unordered
-Queue. Every copy goes through the same Electron ledger. A field applies only
-when its authority generation is newer or its own common/viewer waterline
-advances; advancing viewer state can never suppress a delayed common update. A
-breakout list applies only when its own waterline does not go back. No interval
-polling participates in convergence.
-
-The accepted breakout roster also reconciles cached Threads pages and their
-pinned copies: resolved children change rank and styling, and children absent
-from the roster are removed. Incoming REST pages use the same roster so an
-older response cannot restore a removed child. A thread visibility tombstone
-refreshes the navigation list; it is not itself proof of an archive.
-
-The retained feed sockets are deliberately not presence. Electron
-main reports whether the Rally application has any focused window; each
-renderer combines that with its own document/window focus and active route,
-then reports the result over the persistent WorkspaceDO socket after subscribe.
-Current SubstreamAgent subscriptions send `publishPresence: false`, so an
-inactive pin or recent row never enters the legacy feed viewer set. Omitted
-fields still default to `true` for older clients during compatibility, but the
-current renderer ignores `presence_changed` and resolves the inspector viewer
-list exclusively from WorkspaceDO's foreground user IDs.
-WorkspaceDO answers with a viewer-scoped snapshot for that one foreground work
-stream and excludes the viewer. This separates transport warmth from attention
-without adding another connection, heartbeat, or hibernation wake-up.
-Each command carries a socket-local revision because its D1 session check yields
-the Durable Object input gate; a handler that resumes late cannot restore an
-older focus state. Directory visibility changes synchronously revalidate and
-clear foreground attachments, and the renderer drops its cached snapshot on a
-route change or transport loss.
+The feed sockets are deliberately not presence. Electron main reports whether
+the Rally application has any focused window; each renderer combines that with
+its own document/window focus and active route, then reports the result over
+the persistent WorkspaceDO socket after subscribe. Current AgentLoopDO
+subscriptions send `publishPresence: false`, so a feed never enters the legacy
+feed viewer set; the current renderer ignores `presence_changed` and reads who
+is in a Canvas from WorkspaceDO alone. Each command carries a socket-local
+revision because its D1 session check yields the Durable Object input gate; a
+handler that resumes late cannot restore an older focus state. An audience
+change that removes someone clears their foreground attachment, and the
+renderer drops its cached snapshot on a route change or transport loss.
 After the socket's ordinary ticket handshake, presence never uses REST for
 write, read, replay, or recovery.
 
 The feed ticket signs the renderer's last applied sequence. A current
-SubstreamAgent performs session/membership admission once, stores that admitted
+AgentLoopDO performs session/membership admission once, stores that admitted
 role in the hibernation attachment, and completes the presence-free subscription
 before returning the upgrade. An explicit client `subscribe` remains only as a
 compatibility path for an older server that did not advertise ticket bootstrap.
@@ -654,7 +465,7 @@ therefore repairs a dropped or coalesced frame, serialization prevents a slow
 queued publication from arriving after the matching running state, and a slow
 viewer revalidation cannot retain one ever-growing text value per token batch.
 
-`SubstreamAgent` remains the only socket for transcript parts, attachments,
+`AgentLoopDO` remains the only socket for transcript parts, attachments,
 tool/elicitation/suggestion blocks, active token frames/checkpoints, explicit
 compaction activity, presence, replay cursors, snapshots, and resync/download. A
 compaction start is durable object-local state included in snapshots and resync
@@ -662,7 +473,7 @@ frames; the matching finish or a terminal run status clears it. No workspace or
 work-stream metadata is inferred from token frames or token silence.
 
 Transcript history is a correlated, viewer-specific request on that same
-SubstreamAgent socket. Electron sends `load_transcript_range` with the opening
+AgentLoopDO socket. Electron sends `load_transcript_range` with the opening
 snapshot ID, an explicit half-open canonical sequence interval,
 `resumeAfterEventSequence`, and a request UUID. The agent revalidates the
 socket's session and product visibility, requires the snapshot fence still to
@@ -710,7 +521,7 @@ payload-free `blocksOmitted` envelope rendered as a placeholder.
 
 ### The deprecated query transport
 
-Workspace, work-stream, conversation, and dictation issuers return query-free
+Workspace, conversation, and dictation issuers return query-free
 URLs and a separate ticket. Current clients discard all query data from older
 responses, including capability flags, and present the ticket in subprotocols.
 The upgrade service still accepts deprecated inbound query tickets for clients
@@ -726,9 +537,9 @@ existing checks; sender and durable-storage schemas remain strict. Unknown frame
 do not advance replay cursors or resolve pending commands. Dictation likewise
 ignores unknown provider events before they can bind a pending transcript item.
 
-Socket behavior is unconditional: URLs contain no capability configuration and
-a Channel row always carries appearance. Older stored socket
-attachments may contain obsolete capability fields; they are ignored on restore.
+Socket behavior is unconditional: URLs contain no capability configuration.
+Older stored socket attachments may contain obsolete capability fields; they
+are ignored on restore.
 
 ## Invariants
 
@@ -754,13 +565,12 @@ attachments may contain obsolete capability fields; they are ignored on restore.
   deliberate 401, 403, or 409 into an unhandled 500.
 - **No Durable Object receives the signed bearer ticket.** It is verified
   at the edge and stripped from the subrequest. The feed child consumes the JTI
-  in `durable_inbox_receipts`; WorkspaceDO consumes the workspace and Channel
-  control tickets in `workspace_socket_ticket_receipts`. Workspace membership remains in D1 while
-  work-stream participation/revocation is projected locally.
-- **Ticket audiences are not interchangeable.** Workspace, aggregate metadata,
-  and feed tickets cannot open one another's sockets, and a feed ticket names
-  its parent kind, so a ticket for one automation's conversation cannot open a
-  work stream's. Otherwise a narrow read
+  in `durable_inbox_receipts`; WorkspaceDO consumes the workspace ticket in
+  `workspace_socket_ticket_receipts`. Workspace membership remains in D1 while
+  conversation participation/revocation is projected locally.
+- **Ticket audiences are not interchangeable.** Workspace and feed tickets
+  cannot open one another's sockets, and a feed ticket names its parent kind,
+  so a ticket for a Sidekick's conversation cannot open a Canvas's. Otherwise a narrow read
   credential could become a workspace write credential.
 - **Origin is checked before the ticket is read.** An exact match against
   `ALLOWED_ORIGINS`, so a lookalike host cannot spend a ticket.
@@ -824,9 +634,39 @@ namespace helper.
   for another.
 - **Wrong audience, region, workspace, parent, or substream** (403
   `socket_ticket_scope_mismatch`).
+- **A desktop older than the served contract** — the workspace socket ticket
+  answers 426 `client_update_required` to a browser-context build whose
+  `x-rally-client-contract` is below `MINIMUM_SERVED_CLIENT_CONTRACT` (13, the
+  Canvases and Sidekicks pivot) or absent (`requireCurrentClientContract`).
+  The ticket is the one door: a build that cannot parse the sidebar is
+  refused there rather than admitted to a socket whose first frame it
+  discards. A build from before this release reads the 426 like any failed
+  dial: it retries with backoff to a 30 s ceiling and shows itself
+  reconnecting until the desktop auto-updater (first check ten minutes after
+  launch, then every three hours) installs the current build and offers
+  Restart to update; a stale web tab loops until it is reloaded. To such a
+  build the refusal is legible only in telemetry (`ticket_failed`) and the
+  API log. From this release on, the renderer reads the 426 as permanent:
+  the workspace socket's state becomes `update_required` and it never dials
+  again, the pages waiting on its lists say "This version of Rally is out of
+  date." with **Update Rally** (the desktop updater: install the downloaded
+  build, or check for one) or **Reload Rally** in a browser, and the sidebar
+  shows the same notice above its lists whatever they hold
+  (`WorkspaceUpdateNotice`), since a returning person's lists paint from the
+  device cache and an empty-list notice would never show. That helps only builds that carry it, so the
+  next raise of the minimum is the first one that tells anyone.
 - **A write on a conversation whose parent is archived** (the object answers
   409 `conversation_parent_archived` on the socket; the read side stays open).
 - **Disallowed origin** — 403 `socket_origin_forbidden`.
+- **What a client shows for any of these.** A browser hands a page no status
+  for a refused handshake, only a socket that fails before it opens, so the
+  workspace socket retries with backoff whatever the cause. A page waiting on
+  a list only the socket delivers (the Canvases home, the Sidekicks library)
+  shows `PushedListPending`: its opening state while the socket dials, and
+  "Rally can’t connect" with **Try again** (`retry()` on the socket context,
+  which dials at once) once a dial has failed, or the update state above for a
+  426 `client_update_required`. A list the device cache already painted keeps
+  showing it.
 - **Object refusal** — the object's own JSON status reaches the client unchanged:
   426, 400 `invalid_socket_identity`, 403 `forbidden`, 401
   `socket_ticket_replayed`, 409 `room_identity_mismatch`, 500
@@ -836,13 +676,14 @@ namespace helper.
 
 Once a workspace socket is open, its terminal close outcomes are distinct:
 
-- **Access was revoked** — `1008`. Electron stops reconnecting and reports
-  `workspace_access_revoked`.
-- **The session is inactive** — `4401`. Electron stops reconnecting and asks the
-  member to sign in again under `workspace_session_inactive`.
-- **The command frame is invalid** — `4400`. Electron stops resending the same
-  invalid command and reports `workspace_socket_invalid_message`, asking the
-  member to restart the app and retry.
+- **Access was revoked** — `1008` (`WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE`).
+- **The session is inactive** — `4401` (`WORKSPACE_SOCKET_SESSION_INACTIVE_CODE`).
+- **The command frame is invalid** — `4400` (`WORKSPACE_SOCKET_INVALID_MESSAGE_CODE`).
+
+On any of the three the client's provider (`workspace-socket.tsx`) stops
+reconnecting and moves to `unavailable`; a revocation also calls
+`onAccessRevoked` and reports the disconnect as `access_revoked`. The client
+shows no code-specific copy for the other two.
 
 WorkspaceDO records every identity, protocol, or inactive-session close as
 `workspace_socket_closed`, with the close code, fixed cause, operation, frame
@@ -951,11 +792,9 @@ provider aborts any ticket in flight, settles and closes its socket, and dials
 nothing until resume, the network coming back, or a person asking to
 reconnect.
 
-Directory pages are read-only and are not reconnect-resend commands. If
-Electron receives the browser `offline` signal while a page is in flight, it
-clears that request's 120-second timer and rejects immediately with
-`workspace_directory_offline`. Room message commands remain pending because
-their client message IDs make reconnect resend idempotent. Each pending command
+On the conversation socket (`use-workstream-socket.ts`), commands remain
+pending across a disconnect because their client message IDs make reconnect
+resend idempotent. Each pending command
 also remembers the socket instance that most recently accepted it: submitting a
 second command on a healthy connection sends only the new command, while a new
 socket instance after reconnect replays every command still awaiting its private
@@ -969,18 +808,17 @@ receipt.
 | `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @rally/api test` | Precedence and the negotiation decision, on Node. |
 | `apps/api/test/workstream-socket-warm.test.ts` | `pnpm --filter @rally/api test` | `ConversationService.socketTicket`: the parent's viewer decision gating the ticket, the parent kind and archive decision on it, and the deferred main-substream warm-up. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO and SubstreamAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; truthful bounded transcript ranges; indivisible-turn payload-free envelopes; revocation; compaction recovery; queued-run coalescing; and ticket replay on real workerd. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO and AgentLoopDO attachments/snapshots; resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; truthful bounded transcript ranges; indivisible-turn payload-free envelopes; revocation; compaction recovery; queued-run coalescing; and ticket replay on real workerd. |
 | `apps/api/test-workers/workspace-socket-first-frame.test.ts`, `apps/api/test/socket-first-frame-watch.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts`; `pnpm --filter @rally/api test` | The first-frame watch, through the real accept and alarm paths: silent sockets below the reset threshold are held, logged at warn, and kept without holding the alarm, and the one that reaches it resets; a held socket is let go once a later socket speaks; with the threshold at one, a silent socket on a silent object resets it, logs, and is dropped, also while the region is closed for maintenance and after its client has already closed it; each of the three "still hearing sockets" signals alone prevents a reset, including after a hibernation wake; the ledger forgets a socket once it speaks, lets go of a judged row, and does not reset a fresh instance after a reset or an eviction; accepting pulls the alarm in. |
-| `apps/api/test-workers/message-to-output-pipeline.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Fresh message admission and its private receipt on the authenticated SubstreamAgent socket, stable turn identity after hibernation/resend, and the message-to-provider pipeline on real workerd. |
-| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
-| `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Sync topic audiences on real sockets, live and on replay, and the Channel row's; the full list is in [`websocket-architecture.md`](websocket-architecture.md#testing). |
+| `apps/api/test-workers/message-to-output-pipeline.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Fresh message admission and its private receipt on the authenticated AgentLoopDO socket of a Canvas's Chat, stable turn identity after hibernation/resend, and the message-to-provider pipeline on real workerd. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `sidebar-list-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, waterline resume, the lists ordered by their own waterlines, the local cache, and the relay between windows. |
+| `apps/api/test-workers/workspace-socket-subscribe.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-subscribe.test.ts` | A Canvas created while a `subscribe` is still answering (held inside the flag evaluation) reaches the new socket, in the answer or the push after it. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (`resubscribes everything on a reconnect…`) | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workspace-socket.test.tsx` | A dropped socket's replacement sends `subscribe` from the old cursor, then presence and the unanswered preview again; its answer replaces the lists even below the window's ledger, refreshes the open Sidekick page, and a push and a sync event below the old numbers then apply. |
+| `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Sync topic audiences on real sockets, live and on replay; the full list is in [`websocket-architecture.md`](websocket-architecture.md#testing). |
 | `apps/api/test/workspace-realtime-service.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-realtime-service.test.ts` | The mutation map: each write's topics and audience. |
-| `apps/api/test-workers/channel-viewer-state.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Each viewer's own breakouts on the connect sidebar, per Channel; a roster change pushed to that breakout's members only; running background agents pushed to every reader and counted only where each can look; a lost Channel tombstoned without closing the socket; the current list after a resubscribe; nothing said for a parent still waiting for its import; foregrounding a Channel warms its Main. |
-| `apps/api/test-workers/channel-rails.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-rails.test.ts` | `channel_rails` answers on a real socket: rail contents, `unavailable`, `attached` absent until reported, frames within a lowered frame limit and `oversized`, a guest's answer, a corrupt stored row that still ends in `final`; and the row pushed with a higher `railWaterline` for each kind of rail change. `space_channels` on the same fixture: a Space's rows with their breakouts and rails for each viewer, rails that do not fit left out, paging by visible Channels, and the Spaces-only sidebar once the hierarchy is whole, for a member and a guest alike, with the retired `channels_by_space` ignored. |
-| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (breakouts block) | `pnpm --filter @rally/desktop test` | The breakout list and running agents taken from sidebar and pushed rows and kept with no screen observing them, waterline order, silence on an absent field, eviction on a tombstone, receipt-backed appearance, and pruning the disk cache to the roster. |
+
 | `apps/desktop/src/main/realtime-socket-broker.test.ts`, `realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop test` | Ordered PAC fallback, shared frame ceiling, normal-close removal, renderer-owner isolation, shared IPC channels, main-window authorization, and strict main-to-preload events. |
-| `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial admission for the pooled SubstreamAgent feed and that no Channel control ticket is ever requested, exact-feed reuse for five minutes after switching streams, background/recent overlap, expiry and backward-clock recovery, in-place route reconciliation, direct SubstreamAgent command/feed reconnect, private message receipts, streaming, explicit compaction lifecycle/reconciliation, range merging, oversized-turn placeholder rendering, and scroll thresholds/anchor preservation. |
-| `apps/api/test-workers/conversation-parent-contract.test.ts` | `pnpm --filter @rally/api test:workers` | `authorizeViewer` on both kinds of parent through the real ticket route, refusal of fresh tickets for a Sidekick archived with its room, and the read-only socket refusal for retained legacy room-archived Sidekicks. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx` | `pnpm --filter @rally/desktop test` | Initial admission for the AgentLoopDO feed, direct command/feed reconnect, private message receipts, streaming, explicit compaction lifecycle/reconciliation, range merging and oversized-turn placeholders. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
 
 **The trap, and it has already cost one bug:** Node's `Response` refuses status
@@ -1012,9 +850,59 @@ credential on this surface — a connector OAuth callback's `?code=` — is fixe
 the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
-Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
+Child archive admission uses the same `parent_archived` ticket field as parent archive; there is no per-command parent RPC. See [the conversation objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-11-09 — The sockets carry Canvases, Sidekicks and Activity, a pre-pivot desktop is refused, and the subscribe answer is authoritative
+
+**What changed:** A conversation ticket's `pk` may be `canvas`, and the route
+seats a Canvas reader in the Chat before minting, as it does for a Sidekick's
+conversation. The workspace socket carries each viewer's Canvas list
+(`workspace_canvas_list`), `set_presence` admits a Canvas, and each person's
+Activity page and `workspace_activity_list` go to that person's sockets alone,
+with `activity_mark_all_seen` the one command. The Thread listing, the Channel
+rows, rails and directory frames and the Channel control socket are deleted, and
+retired commands are ignored. The workspace ticket refuses a desktop below
+contract 13 (`MINIMUM_SERVED_CLIENT_CONTRACT`) with 426
+`client_update_required`, and the renderer stops on that answer and offers the
+update. The renderer applies each subscribe answer as authoritative over its
+per-list ledgers, sync cursor and per-topic waterlines, and WorkspaceDO resolves
+the viewer's flags before it reads what it answers with. A page waiting on a
+socket-owned list draws `PushedListPending`, which says when the socket cannot
+connect.
+
+**Why:** A Canvas's Chat is an ordinary conversation object, so it opens on the
+same feed socket. Empty placeholder fields were first kept so a pre-pivot
+desktop could parse the subscribe answer, but its strict sidebar schema rejected
+the answer anyway and it reconnected forever, so the minimum rose instead. The
+refusal tells that build nothing (the auto-updater is its way out, so the
+desktop release ships with the Worker), but no socket opens and no subscribe
+runs for a build that would discard it. After a local API restart an open window
+stopped hearing Sidekick updates: a write during the flags await reached neither
+the answer nor a push, a change missed while away refreshed nothing else, and a
+window kept ledgers above an object whose counters had gone back. The browser
+sat on "Loading Canvases…" for good when the API refused the socket's origin.
+
+**Considered and rejected:** Refusing the retired commands: a refusal on this
+socket is a permanent close. Resetting the ledgers only on
+`history_unavailable`, when a list's waterline and the sync log are separate
+counters. Refetching every Sidekick surface on each reconnect. A per-item
+Activity mark command, a second read state. Stopping retries on a refused
+socket: a browser cannot tell a 403 from a dropped connection.
+
+**Consequences:** A new sidebar list goes on its own event type, never as a new
+discriminator value of an existing one, and a sidebar change a served desktop
+cannot parse raises `MINIMUM_SERVED_CLIENT_CONTRACT` rather than carrying
+placeholder fields. The subscribe answer is the one producer allowed to move a
+ledger backwards, and nothing in `subscribe` may await between reading its
+answer and marking the socket subscribed. A person's Activity is never
+broadcast. A page that reads a socket-owned list draws `PushedListPending` for
+its `undefined`. The conversation object refuses a ticket whose kind disagrees
+with its root row.
+
+Shipped in juno-ai-labs/avalon#1490. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-16 — The dictation lease is held by the open socket, not by its frames
 
@@ -1395,7 +1283,6 @@ Ticket URLs are query-free across workspace, control, conversation, and dictatio
 The Azure upstream transcription intent is provider-owned and remains required.
 Clients predating tolerant reception still require an update to understand an
 expanded known frame; this change cannot retroactively change installed parsers.
-
 
 ### 2026-09-09 — One write for unversioned facts on both caches
 

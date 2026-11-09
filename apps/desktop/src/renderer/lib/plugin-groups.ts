@@ -245,11 +245,13 @@ export function countedGroup(groupKey: string): PluginGroup | undefined {
   return undefined;
 }
 
+// Named for what a person calls them now; the key is the plugin's stored
+// name, which the rename left alone.
 const AUTOMATIONS_GROUP: PluginGroup = {
   key: 'name:Automations',
-  name: 'Automations',
+  name: 'Sidekicks',
   icon: 'automations',
-  ...usedGroupVerbs('Automations'),
+  ...usedGroupVerbs('Sidekicks'),
 };
 
 /**

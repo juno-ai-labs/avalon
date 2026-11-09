@@ -1,78 +1,55 @@
 # Scoped invitations
 
-Scoped invitations share Main, individual children or a workstream with email
-addresses. A share belongs to the address: whoever signs in with that verified
+Scoped invitations share a Canvas (target kind `workstream`, its storage name)
+with email addresses. A share belongs to the address: whoever signs in with that verified
 address holds it, and there is no acceptance step, link secret or confirmation
-screen. The share and the grants it becomes live in the same Channel parent,
-hosted in `WorkspaceDO`
-([hosted conversation parents](hosted-conversation-parents.md)). Someone who
-already signs in with the address is claimed as the share is made; anyone else
-is claimed the first time they sign in. Until then they appear as a **Guest** in
-the sharing panel. The shared email panel creates shares, lists those still
-waiting for a sign-in, and revokes them, from the browser conversation header or
-the native participant dialog.
+screen. The share and the grant it becomes live with the Canvas, hosted in
+`WorkspaceDO` ([hosted conversation parents](hosted-conversation-parents.md)),
+and the grant's directory step adds the guest to the Canvas's participant list
+([`canvases.md`](canvases.md#guests)). Someone who already signs in with the
+address is claimed as the share is made; anyone else is claimed the first time
+they sign in. Until then they are a pending share. The shared email panel
+(`ScopeSharingPanel`) creates shares from the Canvas's Share dialog; listing
+and revoking waiting shares from the panel have no server route since the
+Channel share routes went.
 The panel reports a created invitation to its container rather than confirming it
 in place: the standalone share dialog dismisses itself, and the participant
 dialog, which embeds the panel beside its own controls, stays open on an emptied
-form. Participant mutations use the
-parent grant ledger for every ready conversation; transcript execution stays in the
-conversation owner.
-The People form becomes ready when the share commits. Its lists refresh in the
-background; successful addresses are suppressed from another submission until
-both reads settle, so a quick repeat does not send another invitation email.
+form.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/scope-grants.ts` | Batch, claim, revision and result contracts. |
-| `apps/desktop/src/renderer/components/scope-sharing-panel.tsx` | Shared email form, stable retry operation, and the Guests still waiting to sign in, each revocable. |
-| `apps/api/src/routes/sharing.ts` | Authenticated HTTP boundary; server-selected actor and recipient identities. |
-| `apps/api/src/services/scope-invitation-claims.ts` | Claiming at sign-in: which Channels hold a share for the user's verified addresses, and asking each to claim; plus the old `inv_` token read for shares made before claiming. |
-| `packages/db/migrations/0119_scope_share_recipients.sql` | `scope_share_recipients`: address to Channel lookup for shares still waiting for a sign-in. |
+| `apps/desktop/src/renderer/components/scope-sharing-panel.tsx` | Shared email form and stable retry operation. |
+| `apps/api/src/routes/sharing.ts` | Authenticated HTTP boundary (`POST /sharing`, `DELETE /sharing/:parentId/:invitationId`); server-selected actor and recipient identities. |
+| `apps/api/src/services/scope-invitation-claims.ts` | Claiming at sign-in: which Canvases hold a share for the user's verified addresses, and asking each to claim; plus the old `inv_` token read for shares made before claiming. |
+| `packages/db/migrations/0119_scope_share_recipients.sql` | `scope_share_recipients`: address to Canvas lookup for shares still waiting for a sign-in. |
 | `apps/api/src/services/scope-invitation-email.ts` | What the invitation says: the heading, the quoted preview, and the line about Rally. |
 | `apps/api/src/services/conversation-preview.ts` | The last turns of one conversation, named and truncated for somewhere outside the product. |
 | `apps/api/src/services/browser-session-service.ts`, `platform-onboarding-service.ts` | The two sign-in points that claim: browser session registration, and regional discovery. |
 | `apps/api/src/durable-objects/scope-invitation-service.ts` | Current sharing authority, relationship admission, grant activation on claim, and email delivery. |
+| `apps/api/src/durable-objects/hosted-canvas.ts` | A Canvas's shares: the service given its sharing rule (a manager of the Canvas), its `parent` hook (`targetsReady`, `title`) and a grant directory step that adds the claimed guest to the Canvas's participants and removes a revoked one. |
 | `apps/api/src/durable-objects/scope-invitation-storage.ts` | Operation receipts, share state, encrypted delivery and claim binding. |
-| `apps/api/src/durable-objects/hosted-parent.ts` | Addressed RPCs and delivery alarm execution. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Addressed RPCs (`createScopeInvitations`, `revokeScopeInvitation`, `claimScopeInvitations`), Canvas-only, and the invitation index and delivery alarms. |
 | `apps/api/src/services/workspace-service.ts` (`listInvitees`), `GET /workspace/invitees` | Pending Organization invitations as every member may see them: address and date, for the people pickers. |
 | `apps/desktop/src/renderer/lib/workspace-invitees.ts` | The invitee query, the member-shaped invitee (`status: 'invited'`), and the directory the `@address` chip resolves against. |
 
 ## How it works
 
-Creation validates the configured browser origin and signing/encryption keys before
-starting any forward-only participant handoff. Configuration failure leaves the
-existing conversation authority unchanged.
+Creation validates the configured browser origin and signing/encryption keys
+first; a configuration failure records nothing.
 
 `POST /sharing` takes a caller-generated operation ID, one parent, explicit
 targets, recipient emails and an explicit nullable expiry. The authenticated
 workspace and actor override no caller-provided identity fields: such fields are
-rejected by the public schema. Every target must be in that workstream, and
-current direct/inherited collaborator grants must authorize sharing it. Its
-participant-authority handoff must complete before an invitation is recorded.
-Grants are the only serving authority for Channels and Breakouts. New Main
-conversations finish the bootstrap handoff before creation returns; private
-children finish it when their opening content becomes durable and they become
-ready. Existing conversations import their historical rosters once, in the
-foreground when addressed or through the upgrade's durable migration alarms.
-Main imports preserve existing Channel grants; child imports use only the
-parent's historical child membership, never a stale child-local seat. If grants
-already exist, the handoff freezes and reconciles the source without importing
-its roster over those decisions. Frozen snapshots, incarnation bindings, receipts
-and alarms retain the existing recovery protocol.
-
-Sharing choices, transport, resource authorization and Breakout listings read
-grants. No serving path falls back to a directory or historical roster. Pending
-handoffs refuse admission until completion. The one exception is a guest's
-run check (`readRunAuthority` in `integrations.ts`): refused, it asks the
-parent to finish the handoff (`ensureParticipantAuthority`) and checks once
-more. Current relationships and grants are
-rechecked after external awaits; implicit Organization-wide reading does not
-confer sharing authority. An unpublished Breakout's local seats are bootstrap data
-only; it is not publicly readable until its parent publishes its grants. Hidden
-import agents remain creator-only reservations at the parent, with a signed
-bootstrap membership version; they are not ready Breakouts.
+rejected by the public schema. The parent must be a Canvas, its one target a
+`workstream` target naming it, and the actor one of its managers (its creator,
+an owner or administrator, or a manager of its writer Sidekick);
+`sharing_required` otherwise. Implicit Organization-wide reading does not
+confer sharing authority, and current relationships are rechecked after
+external awaits.
 
 One operation records an invitation per distinct email, with stable grant
 operation IDs and an encrypted email payload. Its transaction schedules the
@@ -80,55 +57,9 @@ existing alarm mechanism. Retrying the same operation returns its recorded
 invitations; changing its input conflicts. Delivery retries use the same
 provider idempotency key and encrypted body.
 
-Participant grant commands issued by message admission carry
-`participationReason: "message"` through their durable receipt and projection.
-That projection starts unread after existing history and suppresses the added
-notice because the canonical message sends the more specific mention notice.
-Ordinary shares and participant additions retain their existing behavior; the
-conversation admission rules are in
-[`workstream-durable-object.md`](workstream-durable-object.md).
-
-Manual adds, confirmed mentions and connector audiences all issue parent grant
-commands, for members and guests alike. Connector events retain immutable
-receipts, so replay cannot restore a participant revoked later. Correcting creator
-attribution does not itself seat anyone. Existing-conversation additions address
-only that conversation; inherited Channel shares must be managed at their owning
-scope. The owning Thread's Remove/Leave command retracts its direct parent and
-Main grants atomically; a conversation-only removal still refuses inherited
-access. Creation-time participants retain the new Thread's initial access.
-
-The conversation's `participants` table remains a versioned projection for names,
-unread state, participant epochs and socket admission. Its identity/status writes
-are frozen by SQLite triggers; only parent projections may update them. Opening
-and read-position metadata stay local. Ordinary messages whose participants are
-already seated need no grant RPC. Message admission sends all missing participants
-in one parent command and commits the entire audience without yielding, retaining
-one operation receipt per person. A migration wake is retired after its pending
-projections converge, so it cannot split a later foreground batch. Pending
-projections for a conversation travel in one callback, including connector
-admission and handoff recovery. The source hydrates active recipients and actors
-in one D1 batch and reuses those request-local profiles for notification names
-and realtime frames; profiles never authorize access. Removals need no profile
-hydration, and manual adds perform actor authorization once. First-post message
-admission seats an implicit public author before their mentioned audience.
-Visibility changes deliver the commit's exact common-effect receipt, including
-idempotent scope retries after queue delivery, so the sender cannot race an
-outbox deletion and a newly public reader can join immediately.
-
-Completing a handoff delivers the pending participant projections for the whole
-addressed conversation before returning. This includes the original sharer:
-their next socket ticket names the new projection revision too. Durable delivery
-intents and alarms recover interrupted transfers and projection calls. Recovery
-is armed before the first cross-object await; a completed migration with pending
-projections resumes delivery during ticket authorization too. Creation persists
-its opening turn, directory, notification and activity intents in one transaction
-before attempting the handoff. A failed handoff is fail-closed: it never restores
-legacy roster authority, and durable recovery or an operator must resolve an
-invalid source identity/authority before it can serve that conversation.
-
-Synchronous grant listing uses the shared current-membership SQL predicate. The
-socket, Breakout-list and Sidekick entry points learn a previously unknown
-Organization relationship before invoking it; subsequent reads stay local.
+The conversation's `participants` table is a projection for names, unread
+state and socket admission; who may read a Canvas is its audience
+(`canvasAdmits`), and the claimed guest is on it through `canvas_participants`.
 
 ### Claiming
 
@@ -142,7 +73,7 @@ sign-in is already a human proving they hold the mailbox.
 
 Creation writes one `scope_share_recipients` row per pending, unexpired address in
 the submitted operation, naming the
-Channel that holds the share, once the Organization object has recorded it, so
+Canvas that holds the share, once the Organization object has recorded it, so
 a refused caller writes no rows. One D1 batch records those lookup rows,
 establishes guest relationships for already-verified addresses without changing
 existing relationships, and reads those recipients' relationships. The share stays in the object, beside the
@@ -157,7 +88,7 @@ row clears instead of costing every later sign-in. Every refusal is logged as
 
 `claimScopeInvitations` (`scope-invitation-claims.ts`) looks up rows for the
 user's verified addresses in `user_verified_emails`, plus any address the caller
-has verified itself, in one D1 query, and asks each Channel to claim, in
+has verified itself, in one D1 query, and asks each Canvas to claim, in
 parallel. It runs at two
 points:
 
@@ -183,15 +114,15 @@ rows instead of delaying the response for cleanup. Replaying an already-settled
 creation does not recreate a deleted relationship.
 
 A claim, per pending share for one of the addresses, checks that it is usable
-(not revoked, not past `expiresAt`), that its targets have finished their
-participant migration, and that the sharer still holds the share in the
+(not revoked, not past `expiresAt`), that its Canvas still exists
+(`targetsReady`), and that the sharer still holds the share in the
 membership incarnation they shared it from. It establishes an ordinary guest
 relationship if absent, preserving full members and refusing suspended
 relationships, then re-reads the share and sharing state and commits all target
 grants with the claim receipt in one local transaction. A share that cannot be
 claimed yet stays pending and keeps its lookup row, so the next sign-in tries
-again; once nothing is pending for an address in that Channel, its row is
-deleted. A Channel that cannot be reached is logged as
+again; once nothing is pending for an address in that Canvas, its row is
+deleted. A Canvas whose object cannot be reached is logged as
 `scope_invitation_claim_failed`; a failed lookup is logged as
 `scope_invitation_claim_lookup_failed`. Neither fails the sign-in.
 
@@ -203,9 +134,10 @@ Whoever's claim created a guest relationship publishes it right away, rather
 than waiting for the cron sweep: the sharing route for a claim made as the share
 was created, and the claim service for one made at sign-in.
 
-The email's link is the conversation's own address,
-`<browser origin>/app/workspaces/<region>/<workspace>/workstreams/<channel>` with
-`/substreams/<id>` for a child share. It carries nothing a holder could present,
+The email's link is the Canvas's canonical link on the web app,
+`<browser origin>/app/<region>/<organization-base58>/cv/<canvas-base58>/`
+([`links.md`](links.md)), which hands it to the desktop app from there. It
+carries nothing a holder could present,
 so a forwarded copy opens a sign-in page and nothing more. Signing in with the
 right address lands in the conversation; any other address finds no access.
 Only one deployment exists today; if a second one serves Organizations, an
@@ -239,8 +171,8 @@ empty author row; it stays in place so the preview remains a contiguous suffix
 and “earlier messages” still means every omitted turn came before it.
 
 **Which conversation is the one the invitation opens onto**: the first target,
-which is Main for a work-stream offer and that conversation for a conversation
-offer. Never a second conversation, and never the parent of a child-only share.
+which is the Canvas's Chat (`"0"`) for a Canvas offer and that conversation
+for a conversation offer. Never a second conversation, and never the parent of a child-only share.
 The preview is bounded by the offered scope exactly as the grants are; a preview
 that widened would put work outside the share into a mailbox nobody has
 authenticated, which is the thing scoped invitations exist to prevent.
@@ -303,58 +235,17 @@ lookup row once nothing else waits for it there. If a claim won first, the calle
 must remove the scope grants explicitly; an invitation operation must not erase
 another independently granted scope.
 
-### Sharing interface and scoped listing
+### Sharing interface
 
-`POST /sharing/list` accepts an exact target and derives the actor from the
-session. The owner first checks sharing authority on that target, then releases
-only invitation summaries whose every target is still shareable by that actor.
-An invitation spanning Main and a child is hidden from someone who can share only
-the child, even if they could previously manage Main. Listing never returns
-credentials, email bodies or grant-operation receipts.
-
-The shared panel deduplicates normalized email addresses. A failed response keeps
-the same operation ID for the unchanged recipient/scope selection; success clears
-the draft and refreshes invitation summaries. Below the form it lists the shares
-for its conversation still waiting for a sign-in, each as a **Guest** row with
-the address and a remove control that revokes it at the displayed revision.
-Claimed shares are not listed there: their recipient is a participant, labelled
-Guest in the participant list when their relationship is a guest one, and is
-managed through grant/participant management.
-The panel reads `/sharing/:parentId/options` for shareable scope choices. Choices use canonical grants after any required historical import.
-Choices are advisory; creating the invitation repeats current authority checks.
-
-Several independent scopes can be selected. The complete-workstream choice is
-available only when the actor can share every existing ready restricted child
-and the parent. Its targets contain the parent grant and explicit restricted
-children, without redundant Main or inheriting-child grants. `completeWorkstream`
-asks the owner to verify current coverage immediately before committing creation;
-a newly added restricted child returns `scope_changed`, rather than accepting a
-stale incomplete selection. A committed operation still replays its original
-receipt after later children appear. Future restricted children are excluded by
-their new boundary, as stated in the UI.
-
-Preparing a parent grant also prepares all existing ready inheriting children.
-Those children need the same participant-authority handoff before guest serving,
-even though their access comes from the parent grant rather than an explicit
-child grant. Creation and acceptance require those handoffs to be complete.
-
-### Accepted-share management
-
-The panel lists direct grants in the selected scopes through
-`/sharing/grants/list`. The Channel's parent admits the authenticated actor against that
-exact scope, reads profiles only for its grantees, then rechecks the actor's
-relationship and local grants after those external profile reads. A suspension
-or loss of sharing authority during lookup returns denial rather than stale
-labels. This is not a workspace member-directory query.
-
-`/sharing/grants/revoke` supplies the server-selected actor and `active: false`
-to the existing grant mutation authority. The UI submits the displayed grant
-revision and retains an operation ID for that grant/revision across retries.
-A conflict refreshes the list for a new explicit action. A retried old removal
-cannot overwrite a later re-share. Lists refresh after success; they do not
-infer current access from an old operation receipt. Removing a direct child
-grant leaves Main, parent and sibling grants intact. Inherited access can remain,
-and the panel states that distinction. Existing last-participant rules apply.
+The shared panel deduplicates normalized email addresses. A failed response
+keeps the same operation ID for the unchanged recipient selection; success
+clears the draft. The list, options and grant routes the panel's waiting-shares
+list and accepted-share management called (`/sharing/list`,
+`/sharing/:parentId/options`, `/sharing/grants/list`, `/sharing/grants/revoke`)
+went with the Channel share code, so a Canvas's panel shows the form alone. A
+claimed guest is on the Canvas's participant list, and a manager removes them
+there (`POST /canvases/:id/audience`), which removes their access although the
+grant row that brought them stays.
 
 ### Invitees in the people pickers
 
@@ -379,32 +270,14 @@ Rally **AI**:
   never match, and the host shares the conversation with them before the
   message goes, after the send holds its attachments. An address already
   shared here is neither asked about nor shared again, since each share is its
-  own email. A personal Channel asks first, in the dialog that already asks
-  about members from outside.
-- **The People level of the title menu.** Suggested lists invitees with an
-  Add that shares by address, as typing the address and pressing Enter does.
-- **The new-Channel Participants row.** An invitee is held as a member-shaped
-  entry (`status: 'invited'`, id `invitee:<address>`), kept out of
-  `participantIds`, and shared the Channel once the create answers. That share
-  is not awaited, so the Channel opens on the create alone; a failure is logged
-  and shows as the address missing from the Channel's People. An address typed
-  into the search that no member holds is held the same way, which is how
-  someone outside the Organization is invited as the Channel is started.
-- **The breakout launch composer.** As the Channel composer, except the
-  breakout does not exist when the message is sent: the host shares it with the
-  named invitees once the create answers, unawaited, as the new Channel does.
+  own email.
 - **The Add a participant dialog.** Invitees not yet shared the target are
   listed after the members, and adding one shares it by address, the same
   write as the share panel the dialog embeds.
-- **A Space's participants.** Not a share: a Space grants no access, so its
-  invitees are listed by address and seated as participants when they accept
-  ([Spaces](spaces.md#participants)).
-- **iOS, the Channel details sheet.** Lists invitees under People and shares
-  the open conversation with the one tapped.
 
-When the invitee signs in, the claim makes them a guest of the Channel, and
+When the invitee signs in, the claim makes them a guest of the Canvas, and
 accepting the Organization invitation makes them a member, which keeps the
-grant.
+participant row.
 
 ## Invariants
 
@@ -421,15 +294,15 @@ grant.
 - A lookup row is a hint, never authority. The Organization object decides; a
   row with nothing pending behind it is removed by the delivery alarm or the
   next claim that reaches it.
-- A lookup row stays while anything is pending for its address in that Channel,
-  so a share that could not be claimed yet (migration, sharer state, a failure
+- A lookup row stays while anything is pending for its address in that Canvas,
+  so a share that could not be claimed yet (sharer state, a failure
   mid-transaction) is retried on the next sign-in.
 - Claiming never fails a sign-in.
 - An invitee's stand-in id (`invitee:<address>`) never reaches the server. It
   carries `status: 'invited'`, and every surface that sends ids already keeps a
   membership that is not active out of what it sends.
-- The preview reads the offered conversation and no other. Main is previewed
-  only where Main is what is offered.
+- The preview reads the offered conversation and no other. The Canvas's Chat
+  is previewed only where the Chat is what is offered.
 - Nothing rendered into the email can fail the invitation. A name, a title or a
   transcript that cannot be read is left out; only the link is load-bearing.
 - Email bodies are not returned by public routes. The only stored readable copy
@@ -439,12 +312,10 @@ grant.
 
 ## Boundary
 
-The workstream owns invitation/grant ordering. D1 owns verified identities and
-workspace relationships. Email providers own delivery, not admission. Browser
-routes and UI own presenting per-workstream progress when sharing several
-workstreams; there is no atomic transaction spanning their independent owners.
-New grants still require the existing participant-authority handoff and projection
-before serving conversation traffic. This module does not bypass that gate.
+The Canvas, in `WorkspaceDO`, owns invitation/grant ordering and the
+participant row a claim writes. D1 owns verified identities and workspace
+relationships. Email providers own delivery, not admission. Who may read the
+Canvas is [`canvases.md`](canvases.md)'s `canvasAdmits`, not this module's.
 
 ## Failure modes and limits
 
@@ -473,41 +344,27 @@ receipt or unavailable identity authority remains an error, never a grant.
 
 ## Testing
 
-`participant-notification.test.ts` drives confirmed guest mentions in personal
-and Organization-wide Channels, manual guest add/remove/re-add, creation-time
-participant and mention replay, and member/guest Breakout mentions through real
-workerd. It obtains tickets through `ConversationService`, upgrades them through
-`SocketService`, and receives a conversation snapshot for recipient and sharer.
-It also checks that a Breakout share does not admit Main and that revocation
-refuses a fresh ticket. Guest fixtures have a null role, matching production.
-Email-invitation cases start with a verified account absent from the Organization,
-then immediately obtain real Main or Breakout sockets and snapshots after the
-batch claim. Replaying the invitation after removal cannot restore access, and
-a Breakout-only email share still cannot open Main.
-
 `pnpm --filter @rally/api test:workers test-workers/scope-invitations.test.ts`
-runs real D1, `WorkspaceDO` SQLite, RPCs, alarms and HTTP routing. The fixture
-declares the D1 columns it uses and gives each case a fresh Organization object:
-an earlier case's in-flight delivery alarm must not repopulate the next case
-after `reset()`. It covers a share claimed as it is made for an
-existing account, one held for an address with no account and claimed by a
-real browser one-time-code sign-in with no further step, that someone else's
-claim reaching the same Channel takes nothing, a Global-verified address this
-deployment has not recorded, child-only access, atomic multi-target claiming
-with the share left pending after a rollback, re-claiming after removal and
-revocation, revoked and expired shares, a lookup outage that leaves the sign-in
-intact, a delete racing a new share's row, the old `inv_` token claiming only
-for the right address, sharer replacement, stable
-operation/email receipts, relationship publication, and the link's exact form.
-It also proves the bound the whole feature rests on, against real conversation
-objects with distinct transcripts in Main and in a child: an offer of the child
-quotes the child and never Main, an offer of Main quotes Main and never the
-child, and a system notice in either is not conversation and never leaves. That
-case needs the runtime — the Node fixture resolves every substream id to one
-database, so the same assertions there would pass with the boundary broken.
-It also checks that an `expiresAt` past the `Date` range is refused with the
-field named in the diagnostic, and that a preview failure is logged with the
-port code that says which authority refused.
+runs real D1, `WorkspaceDO` SQLite, RPCs, alarms and HTTP routing against a
+Canvas. The fixture declares the D1 columns it uses and gives each case a fresh
+Organization object. It covers a share held for an address with no account and
+claimed by a real browser one-time-code sign-in with no further step, a share
+claimed as it is made for an existing account (its lookup row then cleared by
+the delivery alarm), a share pending before lookup rows existed indexed by the
+`parent_invitation_index` alarm and then claimed, a revoked share and an
+expired one that no sign-in can claim, a repeated creation answered from its
+receipt with one delivery, a second claim that adds nothing, a revocation's
+lookup-row delete racing a new share's row, a lookup outage that leaves the
+sign-in intact, an address only Global verified, and the claim regional
+discovery makes. workerd runs the object's alarms on its own schedule as well
+as when a case calls `runDurableObjectAlarm`, and a run in flight takes every
+due entry, so `runDurableObjectAlarm` can return before the write it was meant
+to wait for lands: the cases read alarm-written D1 state with `expect.poll`,
+and scope every lookup-row read to their own Organization so an earlier case's
+late alarm is never read as theirs. The Thread-era cases (Breakout-only shares,
+previews of Main and a child, sharer replacement, multi-target rollback) went
+with the Channel host in plan step C-2; `canvas-hosting.test.ts` covers who an
+accepted Canvas share admits.
 `apps/api/test/scope-invitation-email.test.ts` covers the body: the heading and
 each of its fallbacks, a name carrying a newline, the quoted turns, the singular
 and plural earlier-message line, word truncation, the byte ceiling that bounds a
@@ -522,9 +379,6 @@ runtime suite proves the delivered payload carries both parts with the sender
 and the workspace in them, and that an invitation whose conversation cannot be
 previewed is still sent. The deliberate SQL failure is caught inside the real object because
 the test RPC bridge otherwise reports its expected rejection twice.
-`message-to-output-pipeline.test.ts` additionally exercises invitation-triggered
-handoff against real Main and child agents, including refusal to transfer for a
-nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
 

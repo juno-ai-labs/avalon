@@ -4,7 +4,6 @@ import {
   ConversationEffectEnvelopeSchema,
   ParentEffectEnvelopeSchema,
   type ConversationEffectEnvelope,
-  type ConversationParentKind,
   type ParentEffectEnvelope,
 } from "@rally/contracts";
 import type { Env } from "../../src/env";
@@ -140,7 +139,7 @@ export async function deliverParentEffects(env: Env, parent: DurableObjectStub):
 export function parentStubFor(
   env: Env,
   region: string,
-  parent: { workspaceId: string; parentKind: ConversationParentKind; parentId: string },
+  parent: { workspaceId: string; parentKind: string; parentId: string },
 ): DurableObjectStub {
   // Every parent (Channel, Space, Sidekick) is hosted by the Organization object.
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(

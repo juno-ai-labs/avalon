@@ -1,53 +1,45 @@
-import type { SqlStorageValue } from "@cloudflare/workers-types";
 import type { ConversationToolScope } from "./workspace-conversation-tool-protocol";
 
 /**
- * Which Rally conversations an agent loop may reach with the conversation
- * tools, decided from WorkspaceDO's own directories.
+ * Which Rally conversations a Sidekick may reach with the conversation tools,
+ * decided from WorkspaceDO's own directories.
  *
- * Two kinds of scope, one answer shape:
+ * A Sidekick reaches its own shared conversation (substream `"0"` under the
+ * Sidekick, `automation_directory`), every Canvas it writes
+ * (`canvas_directory.writer_sidekick_id`), and every Canvas's Chat attached to
+ * it in `sidekick_conversation_attachments`. A Canvas's Chat is the Canvas's
+ * conversation `"0"`, and its conversation id is the Canvas's id.
  *
- * - A **Sidekick** reaches its home (the Channel's Main conversation or the
- *   Breakout named by `automation_directory.owning_workstream_id` and
- *   `owning_substream_id`) and every conversation attached to it in
- *   `sidekick_conversation_attachments`. The home is always attached, so it is
- *   never a row there.
- * - A **Thread or Breakout loop** reaches its own conversation and, for a
- *   Breakout, its Thread's Main conversation, plus every Thread and Breakout
- *   in the readable Channels supplied by WorkspaceDO's Space storage.
+ * This is not `sidekick_attachments` (per conversation): that recorded that a
+ * Thread's conversation loaded a Sidekick as a skill, and reading it as "the
+ * Sidekick may read and post here" would have handed a Sidekick every
+ * conversation that ever used it.
  *
- * This is not `sidekick_attachments` (per conversation) or `parent_sidekicks`
- * (per Channel). Those record that a conversation may load a Sidekick as a
- * skill, and loading a skill writes them automatically; reading them as "the
- * Sidekick may read and post here" would hand a Sidekick every conversation
- * that ever used it.
- *
- * Everything here is a local read of `channels`, `breakouts`,
- * `channel_viewers`, `breakout_viewers` and Channel placements, so a list costs no call to a
- * Channel object and no D1 read. The rows are projections; the canonical
- * admission of a single target is still the hosted parent's `authorizeViewer`,
- * which the caller runs before a read or a post.
+ * Everything here is a local read, so a list costs no call to another object
+ * and no D1 read. The canonical admission of each target is still the hosted
+ * parent's `authorizeViewer` (`canvasAdmits` for a Canvas, `sidekickAdmits` for
+ * a Sidekick), which the caller runs for the acting person before a list, a
+ * read or a post.
  */
 
-/** A Rally conversation: a Channel's Main (`"0"`) or one of its Breakouts. */
+/** A Rally conversation a tool can name: a Sidekick's own, or a Canvas's Chat. */
 export interface ConversationAddress {
-  parentKind: "workstream";
+  parentKind: "automation" | "canvas";
   parentId: string;
   substreamId: string;
 }
 
+/** What a Sidekick's conversation attachment names: a Canvas's Chat. */
+export type AttachableAddress = ConversationAddress & { parentKind: "canvas" };
 
 export interface ScopedConversation extends ConversationAddress {
   conversationId: string;
-  kind: "channel" | "breakout";
+  kind: "canvas" | "sidekick";
   title: string;
-  isHome: boolean;
+  /** The Sidekick's own conversation, read from its configuration conversation. */
   isOwn: boolean;
-  /** A conversation the loop's own sits inside: a Breakout loop's Thread Main. */
+  /** The Sidekick's own conversation, read from one of its runs, which sits inside it. */
   isParent: boolean;
-  archived: boolean;
-  /** Whether the directories say this person can open it. */
-  readable: boolean;
 }
 
 /** The migration-86 table. Keyed by the Sidekick and the whole address, so a repeat attach is one row. */
@@ -65,195 +57,94 @@ export const SIDEKICK_CONVERSATION_ATTACHMENT_SCHEMA_STATEMENTS: readonly string
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
-/** `<channelId>` for a Main conversation, `<channelId>/<breakoutId>` for a Breakout. */
+/** `<parentId>` for a conversation `"0"`, `<parentId>/<substreamId>` for any other. */
 export function conversationIdOf(address: Pick<ConversationAddress, "parentId" | "substreamId">): string {
   return address.substreamId === "0" ? address.parentId : `${address.parentId}/${address.substreamId}`;
 }
 
-/** The inverse of {@link conversationIdOf}; null for anything that is not one. */
-export function parseConversationId(value: string): ConversationAddress | null {
-  const [parentId, substreamId, extra] = value.trim().split("/");
-  if (extra !== undefined || !parentId || !UUID.test(parentId)) return null;
-  if (substreamId === undefined) return { parentKind: "workstream", parentId: parentId.toLowerCase(), substreamId: "0" };
-  if (!UUID.test(substreamId)) return null;
-  return { parentKind: "workstream", parentId: parentId.toLowerCase(), substreamId: substreamId.toLowerCase() };
-}
-
-interface DirectoryFacts {
-  kind: "channel" | "breakout";
-  title: string;
-  archived: boolean;
-  readable: boolean;
-}
-
 /**
- * One conversation's directory facts for one person, or null when the
- * Organization holds no row for it.
- *
- * A Breakout is archived when it or its Channel is. Readable follows the
- * hosted parent's rule on the projected rows: a Main conversation admits
- * every member when its Channel is workspace-scoped and its participants
- * otherwise; a Breakout admits its own members only.
+ * The parent a conversation id names, or null for anything that is not one.
+ * Only a parent's conversation `"0"` is reachable, so an id is one UUID: a
+ * Canvas's or a Sidekick's. Which of the two it is, the directories say.
  */
-export function describeConversation(
-  sql: SqlStorage,
-  address: Pick<ConversationAddress, "parentId" | "substreamId">,
-  userId: string,
-): DirectoryFacts | null {
-  return describeConversations(sql, [address], userId).get(conversationIdOf(address)) ?? null;
+export function parseConversationId(value: string): { parentId: string; substreamId: "0" } | null {
+  const id = value.trim();
+  return UUID.test(id) ? { parentId: id.toLowerCase(), substreamId: "0" } : null;
 }
 
-/** One directory read for any number of addresses; canonical admission stays with the caller. */
-function describeConversations(
-  sql: SqlStorage,
-  addresses: readonly Pick<ConversationAddress, "parentId" | "substreamId">[],
-  userId: string,
-): Map<string, DirectoryFacts> {
-  if (addresses.length === 0) return new Map();
-  const rows = sql.exec<{
-    parent_id: string; substream_id: string; title: string; archived: number; readable: number;
-  }>(
-    `WITH requested AS (
-       SELECT json_extract(value, '$[0]') AS parent_id, json_extract(value, '$[1]') AS substream_id
-         FROM json_each(?1)
-     )
-     SELECT requested.parent_id, requested.substream_id,
-            CASE WHEN requested.substream_id = '0' THEN channel.title ELSE breakout.title END AS title,
-            (channel.archived_at IS NOT NULL OR breakout.archived_at IS NOT NULL) AS archived,
-            COALESCE(CASE WHEN requested.substream_id = '0'
-              THEN channel.scope = 'workspace' OR viewer.is_participant = 1
-              ELSE breakout_viewer.is_participant = 1 END, 0) AS readable
-       FROM requested
-       JOIN channels channel ON channel.workstream_id = requested.parent_id
-       LEFT JOIN channel_viewers viewer
-         ON viewer.workstream_id = requested.parent_id AND viewer.user_id = ?2
-       LEFT JOIN breakouts breakout
-         ON breakout.workstream_id = requested.parent_id AND breakout.substream_id = requested.substream_id
-       LEFT JOIN breakout_viewers breakout_viewer
-         ON breakout_viewer.workstream_id = requested.parent_id
-        AND breakout_viewer.substream_id = requested.substream_id AND breakout_viewer.user_id = ?2
-      WHERE requested.substream_id = '0' OR breakout.substream_id IS NOT NULL`,
-    JSON.stringify(addresses.map((address) => [address.parentId, address.substreamId])), userId,
-  ).toArray();
-  return new Map(rows.map((row) => [conversationIdOf({ parentId: row.parent_id, substreamId: row.substream_id }), {
-    kind: row.substream_id === "0" ? "channel" : "breakout",
-    title: row.title, archived: row.archived === 1, readable: row.readable === 1,
-  }]));
+/** A Canvas's title, or null when this Organization holds no such Canvas. */
+export function canvasTitle(sql: SqlStorage, canvasId: string): string | null {
+  return sql.exec<{ title: string }>(`SELECT title FROM canvas_directory WHERE canvas_id = ?`, canvasId)
+    .toArray()[0]?.title ?? null;
 }
 
-/** A Sidekick's home, or null for one no room owns (or one that was deleted). */
-export function sidekickHome(sql: SqlStorage, automationId: string): ConversationAddress | null {
-  const row = sql.exec<{ owning_workstream_id: string | null; owning_substream_id: string }>(
-    `SELECT owning_workstream_id, owning_substream_id FROM automation_directory
-      WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+/** A Sidekick's title, or null for one that does not exist or was deleted. */
+function sidekickTitle(sql: SqlStorage, automationId: string): string | null {
+  const row = sql.exec<{ title: string }>(
+    `SELECT title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
     automationId,
   ).toArray()[0];
-  if (!row?.owning_workstream_id) return null;
-  return { parentKind: "workstream", parentId: row.owning_workstream_id, substreamId: row.owning_substream_id };
+  return row ? row.title || "New Sidekick" : null;
 }
 
-function sidekickExists(sql: SqlStorage, automationId: string): boolean {
-  return sql.exec(
-    `SELECT 1 FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
-    automationId,
-  ).toArray().length > 0;
+function canvasConversation(canvasId: string, title: string): ScopedConversation {
+  return { parentKind: "canvas", parentId: canvasId, substreamId: "0", conversationId: canvasId,
+    kind: "canvas", title, isOwn: false, isParent: false };
 }
 
 /**
- * Every conversation in a scope that the Organization still has a directory
- * row for, with whether this person can open it and whether it is archived.
- *
- * Nothing is filtered on those two flags here: `conversation_list` omits both,
- * while a read or a post names the reason it refuses. Home (or own) comes
- * first, then Main for a Breakout loop, then Channel peers by id. A Sidekick
- * puts its home first and attachments in the order they were made.
+ * Every conversation in a Sidekick's scope that the Organization still holds,
+ * before admission: the Sidekick's own conversation first, then the Canvases it
+ * writes, newest made first (creation, not edit, so a list's pages do not
+ * move as a Canvas is edited), then the Canvases attached to it in the order they
+ * were attached. A Canvas both written and attached is listed once. An
+ * attachment of a retired Thread (`parent_kind = 'workstream'`) names nothing.
  */
-export function scopeConversations(
-  sql: SqlStorage,
-  scope: ConversationToolScope,
-  userId: string,
-  channelIds: readonly string[] = [],
-): ScopedConversation[] {
-  const addresses: Array<ConversationAddress & { isHome: boolean; isOwn: boolean; isParent: boolean }> = [];
-  if (scope.kind === "conversation") {
-    addresses.push({ parentKind: "workstream", parentId: scope.parentId, substreamId: scope.substreamId,
-      isHome: false, isOwn: true, isParent: false });
-    if (scope.substreamId !== "0") {
-      addresses.push({ parentKind: "workstream", parentId: scope.parentId, substreamId: "0",
-        isHome: false, isOwn: false, isParent: true });
-    }
-    // One hop from the current thread's Channels. A sibling's other Channel
-    // never expands the scope again. UNION deduplicates shared placements.
-    const ownIds = new Set(addresses.map(conversationIdOf));
-    for (const row of channelIds.length === 0 ? [] : sql.exec<{ workstream_id: string; substream_id: string }>(
-      `WITH threads AS (
-         SELECT DISTINCT workstream_id FROM space_channel_memberships
-          WHERE state = 'active' AND space_id IN (SELECT value FROM json_each(?))
-       )
-       SELECT workstream_id, '0' AS substream_id FROM threads
-       UNION
-       SELECT breakout.workstream_id, breakout.substream_id
-         FROM breakouts breakout JOIN threads USING (workstream_id)
-       ORDER BY 1, 2`,
-      JSON.stringify(channelIds),
-    ).toArray()) {
-      if (ownIds.has(conversationIdOf({ parentId: row.workstream_id, substreamId: row.substream_id }))) continue;
-      addresses.push({ parentKind: "workstream", parentId: row.workstream_id, substreamId: row.substream_id,
-        isHome: false, isOwn: false, isParent: false });
-    }
-  } else {
-    if (!sidekickExists(sql, scope.automationId)) return [];
-    const home = sidekickHome(sql, scope.automationId);
-    if (home) addresses.push({ ...home, isHome: true, isOwn: false, isParent: false });
-    for (const row of sql.exec<{ parent_id: string; substream_id: string }>(
-      `SELECT parent_id, substream_id FROM sidekick_conversation_attachments
-        WHERE automation_id = ? ORDER BY attached_at, parent_id, substream_id`,
-      scope.automationId,
-    ).toArray()) {
-      if (home && home.parentId === row.parent_id && home.substreamId === row.substream_id) continue;
-      addresses.push({ parentKind: "workstream", parentId: row.parent_id, substreamId: row.substream_id,
-        isHome: false, isOwn: false, isParent: false });
-    }
+export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope): ScopedConversation[] {
+  const title = sidekickTitle(sql, scope.automationId);
+  if (title === null) return [];
+  // The wizard's own conversation, the one a run sits inside, and where a post
+  // goes when it names no conversation.
+  const scoped: ScopedConversation[] = [{
+    parentKind: "automation", parentId: scope.automationId, substreamId: "0", conversationId: scope.automationId,
+    kind: "sidekick", title, isOwn: scope.authoring === true, isParent: scope.authoring !== true,
+  }];
+  const seen = new Set<string>();
+  for (const row of sql.exec<{ canvas_id: string; title: string }>(
+    `SELECT canvas_id, title FROM canvas_directory WHERE writer_sidekick_id = ?
+      ORDER BY created_at DESC, canvas_id`,
+    scope.automationId,
+  ).toArray()) {
+    seen.add(row.canvas_id);
+    scoped.push(canvasConversation(row.canvas_id, row.title));
   }
-  const descriptions = describeConversations(sql, addresses, userId);
-  const scoped: ScopedConversation[] = [];
-  for (const address of addresses) {
-    const facts = descriptions.get(conversationIdOf(address));
-    if (!facts) continue;
-    scoped.push({ ...address, conversationId: conversationIdOf(address), ...facts });
+  for (const row of sql.exec<{ canvas_id: string; title: string }>(
+    `SELECT canvas.canvas_id, canvas.title
+       FROM sidekick_conversation_attachments attachment
+       JOIN canvas_directory canvas ON canvas.canvas_id = attachment.parent_id
+      WHERE attachment.automation_id = ? AND attachment.parent_kind = 'canvas' AND attachment.substream_id = '0'
+      ORDER BY attachment.attached_at, attachment.parent_id`,
+    scope.automationId,
+  ).toArray()) {
+    if (seen.has(row.canvas_id)) continue;
+    seen.add(row.canvas_id);
+    scoped.push(canvasConversation(row.canvas_id, row.title));
   }
   return scoped;
-}
-
-/**
- * The conversation whose admission stands for `target` within `scope`.
- *
- * A Breakout has full access to its Channel's Main, so in a Breakout's scope
- * Main is admitted by the Breakout itself: a Breakout member who cannot open
- * the Channel still reads what was said there. Breakout membership does not
- * require the Channel, so this is what lets a Breakout's agent use the
- * Channel it was branched from at all for such a member. Every other target
- * is admitted as itself.
- *
- * Read access only: a Breakout loop is offered list and read, never post. A
- * post offered to it later must not take this path, or a member outside the
- * Channel could post to Main.
- */
-export function admissionAddress(
-  scope: ConversationToolScope,
-  target: Pick<ConversationAddress, "parentId" | "substreamId">,
-): Pick<ConversationAddress, "parentId" | "substreamId"> {
-  if (scope.kind === "conversation" && scope.substreamId !== "0"
-    && target.parentId === scope.parentId && target.substreamId === "0") {
-    return { parentId: scope.parentId, substreamId: scope.substreamId };
-  }
-  return target;
 }
 
 export type ReferenceMatch<T> =
   | { outcome: "found"; conversation: T }
   | { outcome: "ambiguous"; matches: T[] }
   | { outcome: "missing" };
+
+/** The candidate a reference names by its id or link, or null when it names none by id. */
+export function conversationNamedById<T extends { conversationId: string }>(candidates: readonly T[], reference: string): T | null {
+  const address = parseConversationId(reference);
+  if (!address) return null;
+  const id = conversationIdOf(address);
+  return candidates.find((candidate) => candidate.conversationId === id) ?? null;
+}
 
 /**
  * Which of `candidates` a model-supplied reference names: a `conversationId`
@@ -264,12 +155,8 @@ export function matchConversationReference<T extends { conversationId: string; t
   candidates: readonly T[],
   reference: string,
 ): ReferenceMatch<T> {
-  const address = parseConversationId(reference);
-  if (address) {
-    const id = conversationIdOf(address);
-    const byId = candidates.find((candidate) => candidate.conversationId === id);
-    if (byId) return { outcome: "found", conversation: byId };
-  }
+  const byId = conversationNamedById(candidates, reference);
+  if (byId) return { outcome: "found", conversation: byId };
   const title = reference.trim().toLowerCase();
   const byTitle = title ? candidates.filter((candidate) => candidate.title.trim().toLowerCase() === title) : [];
   if (byTitle.length === 1) return { outcome: "found", conversation: byTitle[0]! };
@@ -277,65 +164,32 @@ export function matchConversationReference<T extends { conversationId: string; t
   return { outcome: "missing" };
 }
 
-interface TitledConversation extends ConversationAddress, DirectoryFacts {
-  conversationId: string;
+/**
+ * Every Canvas titled `title`, compared without regard to case, for an attach
+ * that names a Canvas the way the person did. Unadmitted: the caller keeps
+ * only those the person can open before it names any.
+ */
+export function canvasesTitled(sql: SqlStorage, title: string): ScopedConversation[] {
+  return sql.exec<{ canvas_id: string; title: string }>(
+    `SELECT canvas_id, title FROM canvas_directory WHERE title = ? COLLATE NOCASE ORDER BY canvas_id`,
+    title.trim(),
+  ).toArray().map((row) => canvasConversation(row.canvas_id, row.title));
 }
 
-/**
- * Every Channel and Breakout titled `title` that this person can open, for an
- * attach that names a conversation the way the person did. Archived ones are
- * included so the refusal can say that is why.
- */
-export function conversationsTitled(sql: SqlStorage, title: string, userId: string): TitledConversation[] {
-  const rows = sql.exec<{ workstream_id: string; substream_id: string } & Record<string, SqlStorageValue>>(
-    `SELECT channel.workstream_id, '0' AS substream_id
-       FROM channels channel
-       LEFT JOIN channel_viewers viewer
-         ON viewer.workstream_id = channel.workstream_id AND viewer.user_id = ?1
-      WHERE channel.title = ?2 COLLATE NOCASE
-        AND (channel.scope = 'workspace' OR viewer.is_participant = 1)
-     UNION ALL
-     SELECT breakout.workstream_id, breakout.substream_id
-       FROM breakouts breakout
-       JOIN breakout_viewers viewer
-         ON viewer.workstream_id = breakout.workstream_id
-        AND viewer.substream_id = breakout.substream_id
-        AND viewer.user_id = ?1
-      WHERE breakout.title = ?2 COLLATE NOCASE AND viewer.is_participant = 1
-      ORDER BY 1, 2`,
-    userId, title.trim(),
-  ).toArray();
-  const found: TitledConversation[] = [];
-  for (const row of rows) {
-    const address: ConversationAddress = { parentKind: "workstream", parentId: row.workstream_id, substreamId: row.substream_id };
-    const facts = describeConversation(sql, address, userId);
-    if (facts) found.push({ ...address, ...facts, conversationId: conversationIdOf(address) });
-  }
-  return found;
-}
-
-/**
- * Record that a Sidekick may read and post in a conversation. Idempotent on
- * the Sidekick and the address; attaching the home is a no-op reported as
- * already attached, since the home always is.
- */
+/** Record that a Sidekick may read and post in a Canvas's Chat. Idempotent on the Sidekick and the Canvas. */
 export function attachSidekickConversation(sql: SqlStorage, input: {
   automationId: string;
-  address: ConversationAddress;
+  address: AttachableAddress;
   userId: string;
   now: number;
 }): { alreadyAttached: boolean } {
-  const home = sidekickHome(sql, input.automationId);
-  if (home && home.parentId === input.address.parentId && home.substreamId === input.address.substreamId) {
-    return { alreadyAttached: true };
-  }
   const inserted = sql.exec<{ automation_id: string }>(
     `INSERT INTO sidekick_conversation_attachments
        (automation_id, parent_kind, parent_id, substream_id, attached_by_user_id, attached_at)
-     VALUES (?, 'workstream', ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT DO NOTHING
      RETURNING automation_id`,
-    input.automationId, input.address.parentId, input.address.substreamId, input.userId, input.now,
+    input.automationId, input.address.parentKind, input.address.parentId, input.address.substreamId, input.userId, input.now,
   ).toArray();
   return { alreadyAttached: inserted.length === 0 };
 }

@@ -111,7 +111,6 @@ export interface ConversationResourceLinks {
 /** Merge live authorized sources, keeping the executing conversation's own links first. */
 export function conversationResourceLinks(
   own: ResourceObjectPort,
-  channel: () => ResourceObjectPort,
   sidekickSources?: (context: { sidekickId: string; substreamId: string }) => Promise<Array<{
     key: string; resources: ConversationResourceLinks;
   }>>,
@@ -124,9 +123,6 @@ export function conversationResourceLinks(
   const context = () => (identity ??= knownContext ? Promise.resolve(knownContext) : own.inheritanceContext());
   const inherited = async () => {
     const scope = await context();
-    if (scope.kind === "breakout") {
-      return [{ key: "thread", resources: conversationResourceLinks(channel(), channel, undefined, { kind: "none" }) }];
-    }
     return scope.kind === "sidekick" && sidekickSources ? sidekickSources(scope) : [];
   };
   return {
@@ -166,9 +162,6 @@ export function conversationResourceLinks(
         own.inventoryRevision(),
         Promise.all(sources.map(async (source) => [source.key, await source.resources.inventoryFingerprint()])),
       ]);
-      if ((await context()).kind === "breakout") {
-        return `inventory:${revision}/${fingerprints[0]![1]!.slice("inventory:".length)}`;
-      }
       return sources.length ? `inventory:${revision}/${await sha256Hex(JSON.stringify(fingerprints))}` : `inventory:${revision}`;
     },
   };
@@ -187,7 +180,7 @@ export function ownInventoryRevision(fingerprint: string): number | null {
 /**
  * Resolve the cross-authority resource projection without a cross-database
  * join. Link and watch state comes from the conversation that owns it
- * (`SubstreamAgent`), and for a Breakout from its Channel's Main as well; the
+ * (`AgentLoopDO`), and for a Breakout from its Channel's Main as well; the
  * workspace-owned resource and note authorization come from WorkspaceDO.
  */
 async function loadVisibleRows(

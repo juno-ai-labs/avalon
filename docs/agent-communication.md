@@ -15,11 +15,7 @@ and UI work is tracked in the [implementation plan](PRDs/2026-09-14_uninterrupte
 | `apps/api/src/services/agent-communication-service.ts` | Creation, contact authorization, attachment forwarding, delivery, discovery and owned stops. |
 | `apps/api/src/services/agent-communication-plugin.ts` | Model tools and coordination guidance. |
 | `apps/api/src/services/agent-message-content.ts` | Durable sender/reply content, rendered consistently on admission and context rebuild. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Independent execution, durable message admission and background stop gate. |
-| `apps/api/src/durable-objects/hosted-parent.ts` | Owned archive stops and per-conversation background counts from child projections. |
-| `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Takes the running background-agent counts from each Channel row on the workspace socket; a tombstoned Channel evicts them. |
-| `apps/desktop/src/renderer/components/workstream-composer.tsx` | Ordinary message entry and a noninteractive background count. |
-| `apps/desktop/src/renderer/components/background-agent-activity.tsx` | Retained count label, composer-edge reveal, shimmer and fading number wheel. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | Independent execution, durable message admission and background stop gate. |
 | `apps/api/test-workers/agent-teams.test.ts` | Real workerd migration and RPC coverage. |
 | `apps/api/test-workers/automation-post-result.test.ts` | Real creation, admission, continuation, reply and Sidekick contact coverage. |
 
@@ -53,7 +49,10 @@ preserve revoked domain access or reveal inaccessible names and descriptions.
 Recording a route does not prove a recipient accepted a message: recipient
 input admission owns delivery. Replays cannot change the original route.
 Recursive ownership queries return descendants, not teammates; reparenting and
-cycles are refused.
+cycles are refused. A Thread-era row (an agent id under a `workstream` or
+`space` parent) is skipped by name in a roster or a descendant list, and an
+owner or a message route that names one answers
+`conversation_parent_kind_retired:<kind>` as a team result.
 
 The host derives a stable UUID from the durable tool effect identity for creation
 and delivery replay. Start reserves an ordinary child under the same conversation
@@ -101,12 +100,12 @@ the existing composed-message and attachment limits, also enforced at admission.
 `sidekick_attach_resource({ sidekickId, resourceId })` shares one resource
 without a message, team membership or activation. Use the Sidekick UUID from
 creation or discovery and a Rally resource UUID visible to the calling
-conversation. The service applies the same Sidekick access and owning-thread
-rules as contacting its wizard, then uses the normal `attach_resources` product
+conversation. The service applies the same Sidekick access rule as contacting
+its wizard, then uses the normal `attach_resources` product
 operation on the wizard's conversation with its existing sharing rules.
 It returns `{ sidekickId, resourceId, alreadyAttached }`; repeats keep one link.
 The wizard and its runs use the
-[shared resource scope](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration).
+[shared resource scope](agent-attachments.md#authorized-conversation-discovery-and-text-hydration).
 This direct attachment remains until explicitly removed; it is independent of inherited home or conversation attachments.
 
 Conversation migration 60 stores the background principal and a stop timestamp.
@@ -208,47 +207,34 @@ its reply is still the thing to wait for. A stopped background agent reports
 no pending work until an explicit continuation resumes it.
 
 Background identity travels in the existing child common-state projection,
-with the agent's root conversation beside the flag. The conversation parent
-counts running background substreams, including nested workers, grouped by
-root, and sends the counts with control metadata as `backgroundAgentCounts`.
-A composer shows only its own conversation's count, so agents a Breakout starts
-never appear in Main or in a sibling Breakout. Each viewer's map holds only Main
-and the private Breakouts they belong to, the same set as `privateChildren`, so
-a Breakout's id never reaches someone outside it. Archiving a Breakout does not
-stop the workers rooted in it: they finish as usual, counted only in the total,
-since no composer shows an archived Breakout. An agent from before roots were
-recorded counts in Main. `backgroundAgentCount`, the Channel total, stays on
-the frame for desktop builds that predate the split. The desktop holds the
-counts only while that connection is available and renders a singular or
-plural line above the composer. It exposes no worker inspection or direct
-chat. The count shimmers subtly, emerges from behind the composer, and retreats
-behind it when work ends or the count becomes unavailable. Count changes roll
-vertically with fading digits. Reduced-motion preferences disable these effects.
-Participant messages use the ordinary safe-boundary admission path.
+with the agent's root conversation beside the flag. No composer shows a running
+background-agent count any longer: the count rode the Channel row's
+`backgroundAgentCounts`, which went with Channels, and
+[`websocket-architecture.md`](websocket-architecture.md#sidekick-library-synchronization)
+records where one would come from.
 
 Agent tools are preloaded through the existing persisted plugin-activation path,
 so they are available on the first model call. Bind still validates live execution
 authority before every tool invocation. The Sidekick directory tool reuses that
 command's active-member authorization through an internal WorkspaceDO read; it
-still filters personal ownership and workstream participation. Ordinary directory
+still filters personal ownership. Ordinary directory
 callers perform their own active-member check. This is a host-selected execution
 path, not a model argument, durable grant, or run-long authorization cache.
 
-Sidekick setup discovery filters the existing authorized directory to Sidekicks
-owned by the current thread and includes the current Sidekick even when it is
-personal or organization-scoped. Every item carries `isCurrentSidekick`: true
-only for the Sidekick this conversation configures or executes. Thread-owned
-candidates have `ownedByThisWorkstream` and `canEdit` set to true: eligibility
-reuses the existing access filter and
-`sidekickOwnership`, not a new permission model or per-candidate RPC. Actual
-messages and mutations retain their existing authorization checks. Another
-thread's, personal, and organization Sidekicks are not setup fallbacks. An empty
-list in ordinary setup tells the agent to create one here with `scope=workstream`
-and send setup instructions to its authoring agent. An execution with no listed
-candidates instead identifies the existing Sidekick and tells the agent to
-complete that activation; it never treats an empty list as a missing installation.
-A conversation acting for no thread instead
-receives guidance to set up from the intended thread. The returned authoring
+Sidekick setup discovery filters the existing authorized directory to the
+Sidekick this conversation belongs to, the one it configures or executes, marked
+`isCurrentSidekick: true` with `canEdit` true. A Thread owns no Sidekick, so
+setup from a Thread lists nothing. Eligibility reuses the existing access
+filter, not a new permission model or per-candidate RPC. Actual messages and
+mutations retain their existing authorization checks. Other personal and
+organization Sidekicks are not setup fallbacks; `find_sidekick` reaches one only
+by the exact name the person asked to change. An empty list in ordinary setup
+tells the agent to create one with `create_sidekick`, whose `scope` is
+`personal` (the default) or `workspace` (the Organization, only when the person
+asks), and send setup instructions to its authoring agent. An execution with no
+listed candidates instead identifies the existing Sidekick and tells the agent to
+complete that activation; it never treats an empty list as a missing
+installation. The returned authoring
 agent is the Sidekick wizard: the coordinator contacts it directly rather than
 creating a relay worker. Shared role guidance applies before and after plugin
 loading and limits exchanges to new results, blockers, questions and changed
@@ -320,6 +306,14 @@ back to the run like any reply, and the run sends it on as a new request.
 Because the model chooses the reply's destination, a run can post somewhere
 else.
 
+Where the answer goes has a stated tie-break, because the conversations
+plugin tells a run never to post its reply into the Sidekick's own
+conversation. A person who wrote in Rally (in the run, or in the Sidekick's
+shared conversation) reads the run's final message, so the answer goes there
+and nothing is posted; a person who wrote outside Rally, in the run's Slack
+thread, gets a post there. An email reply never continues a run, and no tool
+posts into an email thread. The wizard's continuation note (`renderRunContinuationNote` with
+`fromWizard`) points back at this guidance rather than restating it.
 
 ## Invariants
 
@@ -337,11 +331,19 @@ else.
   comes from the run's `automationRun`, never from a model argument; a field
   for it would let a run's model, steered by a Slack reply, address another
   Sidekick's wizard.
-- Only the owning thread may message a thread-owned Sidekick's authoring agent,
-  and ownership is per thread, Breakouts included. The host answers it; a
-  conversation that acts for no thread owns nothing. Returning a raw owner id to
-  the model, or letting a `null` thread match a `null` owner, brings back the
-  wrong-thread rewrite. Guarded by `automation-post-result.test.ts`.
+- A conversation may message a Sidekick's authoring agent when its principal
+  may view the Sidekick (grant-only for a guest) and manages it
+  (`authorizeWizardTurn`, `sidekick_edit_requires_manager` otherwise), because
+  the message starts a wizard turn with the authoring tools, which the shared
+  conversation gives a person only when they manage the Sidekick. The
+  Sidekick's own runs are held to it too: a run under a non-manager's own
+  access, or a delegate's who does not manage it, would reach the authoring
+  tools as that person, so its change request is refused by name and the run
+  tells the person. Being an eligible delegate is not managing. Behind the door,
+  every authoring write (`saveDefinition`) checks the manager rule on the
+  turn's principal. Where the message comes from is not checked: no Thread
+  owns a Sidekick. Guarded by `conversation-tools.test.ts` and
+  `sidekick-run-continuation.test.ts`.
 
 ## Boundary
 
@@ -371,11 +373,11 @@ share the same role selection, including workers spawned by Sidekicks.
 These are internal host RPCs, not model-callable team-management tools. Callers
 check execution and Sidekick domain authority before adding contacts. Membership
 grants no credentials, transcript access, resource access, or control over peers.
-SubstreamAgent owns content and execution. Conversation parents retain archive
+AgentLoopDO owns content and execution. Conversation parents retain archive
 and viewer authority; a hosted Sidekick owns setup, definitions, and schedules.
 
 Bind remains the core owner of the model/tool loop inside every conversation.
-SubstreamAgent supplies durable admission, leases, and persistence through the
+AgentLoopDO supplies durable admission, leases, and persistence through the
 existing harness ports. The background stop timestamp only holds future
 execution admission: an active lease still recovers and settles through Bind's
 existing fenced stop path. Messaging and responsiveness must preserve protocol
@@ -385,10 +387,9 @@ missing loop capability to Bind itself rather than bypassing it in Rally.
 ## Failure modes and limits
 
 Expected membership, received-message, ownership, and route conflicts return
-typed refusals. A Sidekick another thread owns refuses its authoring messages
-with `sidekick_owned_by_another_thread`. Within one thread, any conversation the
-person can reach may change a Sidekick made in another of its Breakouts; that
-is the per-thread rule, not a gap. Old tool results and stored notice text
+typed refusals. A Sidekick the principal may not view, or one archived, refuses
+its authoring messages with `sidekick_contact_forbidden`; nothing refuses by
+Thread any longer. Old tool results and stored notice text
 still show `automation/…` ids, which keep parsing. Storage and transport errors remain failures. Tool integration
 must translate domain codes into actionable model-facing explanations.
 No new membership or descendant-depth caps are introduced. Message contracts
@@ -404,9 +405,8 @@ exercises real WorkspaceDO migrations and RPCs for multi-team Sidekicks, scoped
 rosters, reply routes, replay, and descendant ownership. The latter clears only
 its own dedicated workspace's new tables between tests. The execution suite also covers hidden idempotent creation, inherited principal,
 stop/replay/continuation, a worker reply to the foreground, and independently
-owned Sidekick contact, the refusal from a thread that does not own a Sidekick,
-the ownership flags from a conversation that acts for no thread, and a guest's
-grant-only contact. Complete desktop behavior remains an implementation gate.
+owned Sidekick contact, the refusal of an inaccessible personal Sidekick, and a
+guest's grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
 
@@ -488,7 +488,6 @@ then spent repeated model turns acknowledging that everyone was waiting. The
 wizard already owns definition editing and normal messages deliver its result;
 a relay chain adds latency and can strengthen constraints the user never set.
 
-
 ### 2026-10-21 — Assign outcomes and carry procedures across delegation
 
 **What changed:** Shared role guidance asks every delegator to pass outcomes,
@@ -529,7 +528,6 @@ that target.
 
 **Consequences:** Recovery remains within current ownership and user intent.
 Refusals and remembered claims cannot stand in for submission or schedule state.
-
 
 ### 2026-10-15 — Only the owning thread changes a thread's Sidekick, and the model reads `sidekick/…`
 

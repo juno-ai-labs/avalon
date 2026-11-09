@@ -11,7 +11,8 @@ import { AttachmentKindSchema, ResourceSlugSchema, parseStoredSuggestedAttachmen
 import { AutomationLifecycleStateSchema,
   AutomationRunReferenceV1Schema,
   AutomationRunTriggerV1Schema,
-  AutomationScopeSchema } from "./automation-agent";
+  AutomationScopeSchema, SidekickAudienceSchema, StoredAutomationScopeSchema } from "./automation-agent";
+import { ConnectorConnectionCardInputSchema } from "./connector-connection-card";
 import { ConnectorInstallationSchema } from "./connector-installation";
 export * from "./conversation-attention";
 export * from "./conversation-source";
@@ -19,7 +20,6 @@ import { HarnessStatusSchema } from "./conversation-attention";
 export * from "./agent-communication";
 import { AgentExchangeSchema } from "./agent-communication";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
-import { DemoSeedSchema } from "./demo-seed";
 import { DesktopActionOutcomeSchema, DesktopActionRequestSchema } from "./desktop-actions";
 import {
   ActivitySourceBindingKeySchema,
@@ -33,15 +33,12 @@ import {
 } from "./identifiers";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { PersonalPresentationSchema } from './onboarding';
-import { ChannelMessageSchema, PersonalOrderSchema, PinnedOrderSchema, SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
-import { ArtifactPinListSchema, ChannelStatsSchema, PinListSchema } from "./navigation";
 import {
   ResourceDirectionSchema,
   WireResourceRelationshipTypeSchema,
 } from "./resource-relationships";
 import { HttpsUrlSchema, httpsUrlSchema, HttpUrlSchema, httpUrlSchema, WebSocketUrlSchema } from "./url-schemas";
-import { ConversationAccessRequestItemSchema } from "./access-requests";
-import { PickableWorkstreamIconKeySchema, WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
+import { PickableWorkstreamIconKeySchema, WorkstreamAppearanceSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
 import {
   TranscriptActivitySchema,
   PendingTranscriptInputSchema,
@@ -56,8 +53,8 @@ export * from "./automation-evaluators";
 export * from "./connector-connection-card";
 export * from "./conversation-effects";
 export * from "./conversation-parent";
-export * from "./demo-operations";
-export * from "./demo-seed";
+export * from "./canvases";
+export * from "./activity";
 export * from "./identifiers";
 export * from "./impersonation";
 export * from "./support-access";
@@ -65,11 +62,12 @@ export * from './onboarding';
 export * from "./workspace-retirement";
 export * from "./appearance-icons";
 export * from "./workstream-appearance";
-export * from "./access-requests";
 export * from "./workstream-transcript";
 
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
 import { ConversationParentKindSchema } from "./conversation-parent";
+import { CanvasSidebarListSchema, CanvasSummarySchema } from "./canvases";
+import { ActivityMarkAllSeenCommandSchema, ActivityPageSchema } from "./activity";
 import { RegionSchema, ConfiguredRegionSchema } from "./regions";
 
 export * from "./artifacts";
@@ -77,10 +75,6 @@ export * from "./attachment-contracts";
 export * from "./palette";
 export * from "./projects";
 export * from "./resource-relationships";
-export * from "./spaces";
-export * from "./conversation-merge";
-export * from "./conversation-suggestions";
-import { ConversationSuggestionSchema } from "./conversation-suggestions";
 export { MentionSchema } from "./mention-schema";
 import { MentionSchema } from "./mention-schema";
 export * from "./navigation";
@@ -123,15 +117,11 @@ type WorkspaceTarget,
 type WorkspaceTargetRegion
 } from "./workspace-target";
 export {
-LEGACY_WORKSTREAM_LINK_ORIGINS,LEGACY_WORKSTREAM_LINK_PATH_PREFIX,WORKSTREAM_LINK_PATH_PREFIX,
-isWorkstreamId,
-parseWorkstreamLink,parseWorkstreamLinkPath,
-parseSidekickLinkPathTarget,parseSpaceLinkPathTarget,parseWorkstreamLinkPathTarget,parseWorkstreamLinkTarget,sidekickCanonicalUrl,sidekickDeepLink,spaceCanonicalUrl,spaceDeepLink,workstreamCanonicalUrl,
-workstreamDeepLink,
-workstreamDeepLinkFromParsedTarget,
-type ParsedWorkstreamLinkTarget,type SidekickLinkTarget,type SpaceLinkTarget,
-type WorkstreamLinkTarget
-} from "./workstream-links";
+LEGACY_LINK_ORIGINS,LINK_PATH_PREFIX,RETIRED_LINK_MESSAGE,
+canvasCanonicalUrl,canvasDeepLink,isRetiredLinkPath,linkCanonicalUrl,linkDeepLink,
+organizationShellDeepLink,parseLinkPathTarget,parseLinkTarget,parseOrganizationShellTarget,sidekickCanonicalUrl,sidekickDeepLink,
+type CanvasLinkTarget,type LinkTarget,type OrganizationShellTarget,type SidekickLinkTarget
+} from "./links";
 export { uuidFromBase58, uuidToBase58 } from "./uuid-base58";
 
 export const TimestampSchema = z.string().datetime({ offset: true });
@@ -271,11 +261,6 @@ export const AGENT_MODEL_ROLES = [
   "workstream",
   "inline_child",
   "workstream_naming",
-  "work_opportunity_admission",
-  "work_opportunity_ranking",
-  "workstream_description",
-  "session_import",
-  "suggestion_draft",
   "memory_sweep",
   "sidekick_authoring",
 ] as const;
@@ -286,11 +271,6 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   workstream: "agent-model-workstream",
   inline_child: "agent-model-inline-child",
   workstream_naming: "agent-model-workstream-naming",
-  work_opportunity_admission: "agent-model-work-opportunity-admission",
-  work_opportunity_ranking: "agent-model-work-opportunity-ranking",
-  workstream_description: "agent-model-workstream-description",
-  session_import: "agent-model-session-import",
-  suggestion_draft: "agent-model-suggestion-draft",
   memory_sweep: "agent-model-memory-sweep",
   sidekick_authoring: "agent-model-sidekick-authoring",
 };
@@ -443,12 +423,14 @@ export const WorkspaceDepartureSchema = z.object({
   outcome: WorkspaceDepartureOutcomeSchema,
 });
 export const WorkspaceAttentionSchema = z.object({
+  /** This person's unseen `needs_input` Activity rows in the Organization: runs waiting on them. */
   waitingForYou: z.number().int().nonnegative(),
   waitingReason: z.enum(["mentioned", "needs_input", "unseen"]).nullable(),
   hasUnreadActivity: z.boolean(),
   /**
-   * Conversations (each Main and each Breakout) unread, unseen or mentioning
-   * this person: the sidebar attention menu's count, and the dock badge.
+   * This person's unseen Activity rows in the Organization, by the rule the
+   * Activity rail badge counts (`unseenCount`): the account menu's number for
+   * each Organization, and the push badge.
    */
   readerAttentionCount: z.number().int().nonnegative().default(0),
 });
@@ -474,16 +456,6 @@ export const ClientFeatureFlagsSchema = z.object({
   suggestedWorkEnabled: z.boolean().default(false),
   /** Whether Electron offers workspace switching and plural workspace setup. */
   multipleWorkspacesEnabled: z.boolean().default(false),
-  /**
-   * Whether live-artifact surfaces are shown in Electron for this person.
-   *
-   * Presentation only, and that distinction is load-bearing: it gates the
-   * rail's site detail, the preview pane, the Data view, and the artifact
-   * window. Nothing that protects an artifact's data is scoped by it —
-   * authorization is structural, so a URL somebody already holds keeps working
-   * through its session checks whether or not this is on.
-   */
-  liveArtifactsEnabled: z.boolean().default(false),
   pushNotificationsEnabled: z.boolean().default(false),
 });
 
@@ -492,7 +464,6 @@ export const ProductFeatureFlagKeySchema = z.enum([
   "suggested-work-enabled",
   "multiple-workspaces-enabled",
   "push-notifications-enabled",
-  "live-artifacts-enabled",
 ]);
 export const ProductFeatureFlagFanoutMessageSchema = z.strictObject({
   kind: z.literal("product_feature_flag_changed"),
@@ -541,11 +512,9 @@ export { MESSAGE_MAX_CHARACTERS,MESSAGE_TOO_LONG_MESSAGE } from "./message-limit
  * The most text a work stream's description may carry.
  *
  * Deliberately far below {@link MESSAGE_MAX_CHARACTERS}, because a description
- * is not a message: it is the line the sidebar shows under the title, the text
- * the routing classifier reads, and the standing context every run starts from
- * (see `docs/workstream-descriptions.md`). It is also stored in every workspace
- * directory row and pushed to every client on connect, so its size is paid on
- * reads that have nothing to do with the work stream it describes.
+ * is not a message: it is a one-line summary of the conversation, and the
+ * retired `docs/workstream-descriptions.md` records (in its 2026-08-24 entry)
+ * why the bound stayed here when the message ceiling was raised.
  *
  * Changing this number means changing the `length(description) <= 4000` CHECK on
  * `channels` and the producer-side bound in
@@ -553,35 +522,6 @@ export { MESSAGE_MAX_CHARACTERS,MESSAGE_TOO_LONG_MESSAGE } from "./message-limit
  * accepts commits into an outbox whose delivery can never succeed.
  */
 export const WORKSTREAM_DESCRIPTION_MAX_CHARACTERS = 4_000;
-
-/**
- * One breakout its viewer may open, as the Channel's rail draws it. Only ready,
- * unarchived breakouts with that viewer on their roster are listed.
- */
-export const WorkstreamPrivateChildSchema = z.strictObject({
-  /** Done, independently of whether it is archived or an agent run is active. */
-  resolved: z.boolean().optional(),
-  substreamId: SubstreamIdSchema.refine((value) => value !== "0", "A private child must be nonzero"),
-  title: z.string().min(1).max(500),
-  appearance: WorkstreamAppearanceSchema.optional(),
-  harnessStatus: HarnessStatusSchema.optional(),
-  unreadCount: z.number().int().nonnegative().optional(),
-  youAreMentioned: z.boolean().optional(),
-  unseen: z.boolean().optional(),
-  createdByUserId: UserIdSchema,
-  createdAt: TimestampSchema,
-  updatedAt: TimestampSchema,
-  /** The Main transcript turn the breakout was branched through; null when it was not branched from a turn. */
-  originTurnId: z.string().min(1).nullable().optional(),
-  /** When the breakout last had activity; absent until its directory state has arrived. */
-  lastActivityAt: TimestampSchema.optional(),
-});
-
-/**
- * Running background agents by the conversation they work for, keyed by
- * substream id. A conversation with none is absent.
- */
-export const WorkstreamBackgroundAgentCountsSchema = z.record(SubstreamIdSchema, z.number().int().positive());
 
 export const WorkstreamSchema = z.object({
   /** Done, independently of archiving and the current agent run. */
@@ -679,26 +619,6 @@ export const WorkstreamSchema = z.object({
   }).nullable().default(null),
   /** Retired workspace-wide pin position. New servers always return `null`. */
   pinPosition: z.number().int().nonnegative().nullable().default(null),
-  /**
-   * This viewer's pin positions for this Channel, one per Space placement.
-   * A Channel in several Spaces can be pinned independently in any subset of
-   * them; each position is meaningful only among pins carrying the same
-   * `spaceId`.
-   */
-  spacePins: z.array(z.strictObject({
-    spaceId: SpaceIdSchema,
-    position: z.number().int().nonnegative(),
-  })).superRefine((pins, context) => {
-    const seen = new Set<string>();
-    pins.forEach((pin, index) => {
-      if (seen.has(pin.spaceId)) context.addIssue({
-        code: "custom",
-        path: [index, "spaceId"],
-        message: "Space pin ids must be unique",
-      });
-      seen.add(pin.spaceId);
-    });
-  }).default([]),
   /** Workspace-owned visit time; omitted by older servers and child-owned responses. */
   lastAccessedAt: TimestampSchema.nullable().optional(),
   /**
@@ -713,55 +633,6 @@ export const WorkstreamSchema = z.object({
    */
   participantUserIds: z.array(IdSchema).max(WORKSTREAM_SIDEBAR_FACEPILE_LIMIT).default([]),
   participantExtraCount: z.number().int().nonnegative().default(0),
-  /**
-   * Every Space this Channel currently sits in.
-   *
-   * A Channel belongs to at least one Space and may belong to several; each is
-   * a *placement* of this same row rather than a copy of it, so a sidebar
-   * renders one entry per id and all of them open the same Channel.
-   *
-   * Uncapped, deliberately. The ids are the Channel's own memberships rather
-   * than a fan-out over the Organization — a Channel is in as many Spaces as
-   * somebody put it in — and truncating the list would make a placement
-   * disappear from one of the Spaces that actually holds it.
-   *
-   * Defaulted because a payload written before Spaces existed describes a
-   * Channel from the flat directory they replace.
-   */
-  spaceIds: z.array(SpaceIdSchema)
-    .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
-    .default([]),
-  /** Breakouts under this Channel that currently need this viewer. */
-  breakoutAttentionCount: z.number().int().nonnegative().optional(),
-  /**
-   * Set when this viewer is listed the Channel only through a Breakout, so
-   * Main is not theirs to open and the row's Main fields are emptied
-   * (`docs/listing-rules.md`). Absent means Main is this viewer's.
-   */
-  mainWithheld: z.literal(true).optional(),
-  /**
-   * The breakouts this viewer may open, on workspace-socket rows only.
-   *
-   * This and the two fields below are what the Channel control socket added to
-   * the directory row. They ride the row so one socket carries a Channel's
-   * whole state. Absent means this row does not say (a REST answer, an older
-   * server, or a Channel whose parent has not been imported yet), never that
-   * the list is empty.
-   */
-  privateChildren: z.array(WorkstreamPrivateChildSchema).optional(),
-  /**
-   * Orders `privateChildren` for this viewer. Independent of the row's state
-   * version: the list moves with breakout rosters, which do not advance it.
-   */
-  privateChildrenWaterline: z.number().int().nonnegative().optional(),
-  /** See {@link WorkstreamBackgroundAgentCountsSchema}; workspace-socket rows only. */
-  backgroundAgentCounts: WorkstreamBackgroundAgentCountsSchema.optional(),
-  /**
-   * Advances whenever this Channel's rail data (participants, Sidekicks,
-   * Channel resources) changes; a client holding an older rail asks again
-   * with `channel_rails`. Workspace-socket rows only; absent means not said.
-   */
-  railWaterline: z.number().int().nonnegative().optional(),
 });
 
 export const ExternalActorSchema = z.object({
@@ -864,6 +735,17 @@ export const ResourceRevisionSchema = z.object({
    * surfaces say a version is unattributed rather than inventing an author.
    */
   author: ResourceVersionAuthorSchema.nullable(),
+  /**
+   * The name a member or connector author goes by — the person's name, the
+   * connection's display name — so a client can name someone its
+   * conversation does not list. Null for an agent or system author (the
+   * surfaces call it Rally) and for an identity that no longer resolves;
+   * absent from a server older than it. Beside `author` rather than in it,
+   * because the author variants are strict and an older client would reject
+   * the key there. Bounded at 180, a connection's `displayName` bound and an
+   * external actor's: the names this carries already have that ceiling.
+   */
+  authorName: z.string().max(180).nullable().optional(),
   /**
    * A cause this client does not know reads as none, so a later cause leaves
    * the history listable rather than failing the whole response, as
@@ -1165,6 +1047,7 @@ export const ElicitationOptionSchema = z.object({
   label: z.string().min(1).max(300),
   description: z.string().max(800).nullable()
 });
+// Must stay non-strict (`z.object`, never `strictObject`): a desktop one release behind strips fields it does not know, such as allowOther and allowSkip.
 export const ElicitationSchema = z.object({
   id: IdSchema,
   workstreamId: IdSchema,
@@ -1179,150 +1062,26 @@ export const ElicitationSchema = z.object({
   answer: z.union([z.string(), z.array(z.string())]).nullable(),
   answeredByUserId: IdSchema.nullable(),
   createdAt: TimestampSchema,
-  answeredAt: TimestampSchema.nullable()
-});
-
-/**
- * One conversation on a Space's dashboard: a Channel, or one of a Channel's
- * breakouts.
- *
- * Both kinds are `WorkstreamSchema` plus two fields, rather than a union,
- * because the dashboard draws them as one row type: the same status dot, the
- * same title, the same activity time, in one list ordered by activity. A union
- * would have made every one of those a branch, and the difference between the
- * kinds is two facts and a destination.
- *
- * `id` is the *conversation's* id, which is the Channel id for a Channel and
- * the substream id for a breakout. That is what makes the list keyable and the
- * cursor total; `breakoutOf` carries the addressing a breakout needs on top —
- * its parent Channel, its substream id again (checked equal to `id`, so the
- * two can never drift) and the parent's title, which the row prints so a
- * breakout is not a name with no context.
- */
-export const SpaceConversationSchema = WorkstreamSchema.extend({
-  kind: z.enum(["channel", "breakout"]),
-  /** Non-null on exactly the breakouts. */
-  breakoutOf: z.strictObject({
-    workstreamId: IdSchema,
-    substreamId: IdSchema,
-    title: z.string().min(1).max(180),
-    appearance: WorkstreamAppearanceSchema.optional(),
-  }).nullable().default(null),
-}).superRefine((conversation, context) => {
-  if ((conversation.kind === "breakout") !== (conversation.breakoutOf !== null)) {
-    context.addIssue({
-      code: "custom",
-      path: ["breakoutOf"],
-      message: "A breakout carries its parent Channel and a Channel carries none",
-    });
-  }
-  if (conversation.breakoutOf && conversation.breakoutOf.substreamId !== conversation.id) {
-    context.addIssue({
-      code: "custom",
-      path: ["breakoutOf", "substreamId"],
-      message: "A breakout's id is its substream id",
-    });
-  }
-});
-export type SpaceConversation = z.infer<typeof SpaceConversationSchema>;
-
-/**
- * One page of the conversations a Space currently needs this viewer for.
- *
- * The route is still `GET /spaces/:id/channels` and this is still the answer
- * to it, but what it answers is *conversations*: the Space's member Channels
- * and those Channels' breakouts in one list, newest activity first, with
- * everything that is stale for this viewer left out entirely by default
- * (`conversationNeedsViewer`). Internal callers may request all visible rows
- * of one kind through the same reader. The name is kept because the route is, and
- * renaming a shipped path to describe its payload buys a reader nothing.
- *
- * The same rows the Channel directory serves, shaped for the viewer: General
- * holds every Channel in the Organization, so this is the one Space read that
- * cannot ride the workspace socket. It answered bare ids first, which made the
- * Space dashboard able to name only the Channels that happened to be in the
- * device's loaded directory page and say nothing about the rest — and a second
- * read per id would have been a round trip per row.
- *
- * It lives here rather than in `spaces.ts` because a page of conversations is
- * made of `WorkstreamSchema`, which is declared in this file; `spaces.ts` is
- * imported by it and cannot import back.
- *
- * Opaque cursor: the ordering is the authority's, and a client that could
- * construct a cursor could ask for a page the ordering no longer has. A page
- * may be shorter than the cursor suggests, because a membership the viewer may
- * not read is dropped after the page is taken.
- */
-export const SpaceChannelPageSchema = z.strictObject({
-  items: z.array(SpaceConversationSchema),
-  nextCursor: z.string().min(1).nullable(),
-});
-export type SpaceChannelPage = z.infer<typeof SpaceChannelPageSchema>;
-
-/**
- * One row of a Channel's feed: a thread placed in it that the viewer may open,
- * newest placement first. A private thread the viewer is not in is not a row.
- * `kind` stays because desktops shipped since 1.563 parse this row by it; it
- * can go once those builds no longer reach the API.
- */
-export const ChannelFeedItemSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("thread"),
-    placedAt: TimestampSchema,
-    /** The placement's position in the Channel's unread order (`ChannelStats`). */
-    attentionSequenceNumber: z.number().int().nonnegative(),
-    thread: WorkstreamSchema,
-  }),
+  answeredAt: TimestampSchema.nullable(),
   /**
-   * A message in the Channel itself, outside any thread. Served only to a
-   * build at `CHANNEL_MESSAGES_CLIENT_CONTRACT` or later: a build before it
-   * parses a feed row as a thread. See docs/spaces.md#channel-messages.
+   * A question a connection answers: a Sidekick run that a missing connection
+   * blocks asks for it this way, and the question shows the card that makes
+   * it. Optional so a desktop that predates it reads the question as a plain
+   * one (it strips the key) and a stored question without it still parses.
    */
-  z.strictObject({
-    kind: z.literal("message"),
-    placedAt: TimestampSchema,
-    /**
-     * The message's position in the Channel's unread order, zero for one that
-     * is not news (a Channel's opening messages). Absent for a build before
-     * `CHANNEL_MERGES_CLIENT_CONTRACT`.
-     */
-    attentionSequenceNumber: z.number().int().nonnegative().optional(),
-    message: ChannelMessageSchema,
-  }),
-]);
-export type ChannelFeedItem = z.infer<typeof ChannelFeedItemSchema>;
-
-/** One page of a Channel's feed. Opaque cursor, as on every Space read. */
-export const ChannelFeedPageSchema = z.strictObject({
-  items: z.array(ChannelFeedItemSchema),
-  nextCursor: z.string().min(1).nullable(),
+  connection: ConnectorConnectionCardInputSchema.optional(),
   /**
-   * The Channel's latest attention sequence number as the first page was read
-   * (`ChannelStats.latestAttentionSequenceNumber`); null on a later page.
-   * A reader reaching the newest end may acknowledge through it, including
-   * placements no longer listed. Loading this page alone does not mean its
-   * rows have been seen: a visit can open at an older read waterline.
+   * Whether the panel offers a typed answer beside the options ("Other").
+   * Absent reads as true; false means these options only, as the connection
+   * question sends (Continue or Decline). Optional so an older desktop strips it.
    */
-  latestAttentionSequenceNumber: z.number().int().nonnegative().nullable(),
-});
-export type ChannelFeedPage = z.infer<typeof ChannelFeedPageSchema>;
-
-/**
- * One page of the threads and breakouts this person takes part in, newest
- * activity first: the Threads tab. Rows are the dashboard's conversation rows,
- * so a breakout carries its thread for the chip it prints.
- */
-export const MyThreadsPageSchema = z.strictObject({
-  items: z.array(SpaceConversationSchema),
-  nextCursor: z.string().min(1).nullable(),
+  allowOther: z.boolean().optional(),
   /**
-   * On the first page, every thread and breakout this person pinned and may
-   * still list, whatever page its activity would put it on; empty on a later
-   * page. The Pinned section is drawn from this.
+   * Whether the panel offers Skip. Absent reads as true; the connection
+   * question sends false, since Decline is how a person lets the run go on without.
    */
-  pinned: z.array(SpaceConversationSchema),
+  allowSkip: z.boolean().optional(),
 });
-export type MyThreadsPage = z.infer<typeof MyThreadsPageSchema>;
 
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   /** Durable safe-boundary stop request for the one substream-owned loop. */
@@ -1596,11 +1355,10 @@ export const AutomationDraftSchema = z.object({
   customTools: z.array(SidekickCustomToolSchema).default([]),
   /**
    * Who will be able to see and change this automation, asked before it is
-   * submitted because it cannot be changed afterwards. `workstream` is the room
-   * the authoring run happened in — there is no ID to name here and none can
-   * be, because no other room is reachable.
+   * submitted because it cannot be changed afterwards. A revision stored while
+   * the retired `workstream` scope existed reads as `personal` (fail closed).
    */
-  suggestedScope: AutomationScopeSchema,
+  suggestedScope: StoredAutomationScopeSchema,
   followUpQuestion: z.string().nullable(),
   elicitation: AutomationDraftElicitationSchema.nullable().default(null),
   ready: z.boolean()
@@ -1816,14 +1574,6 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
   activitySourcePluginIds: ActivitySourcePluginIdsSchema,
   connectorBindings: z.record(z.string(), z.string()),
   scope: AutomationScopeSchema,
-  /** The Channel that owns a `workstream`-scoped automation; null for the other two scopes. */
-  owningWorkstreamId: IdSchema.nullable(),
-  /**
-   * The home conversation under `owningWorkstreamId`: `"0"` for the Channel's
-   * Main conversation, a Breakout id otherwise. The home is where a run posts
-   * by default with `conversation_post`.
-   */
-  owningSubstreamId: SubstreamIdSchema.default("0" as SubstreamId),
   runAsUserId: IdSchema,
   /** Per-run coordination is independent of the legacy human access entitlement. */
   coordinatorUserId: IdSchema.nullable().optional(),
@@ -1848,19 +1598,6 @@ export const AutomationRunStatusSchema = z.enum([
   "pending", "running", "needs_input", "completed", "failed", "stopped",
 ]);
 
-/**
- * The Thread that owns a `workstream`-scoped Sidekick, as the library and the
- * detail header name it: its title and the glyph it chose. Sent only to a
- * reader who is a participant of that Thread, so a Sidekick someone still
- * reads as its author never reveals a Thread they have left.
- */
-export const AutomationOwningThreadSchema = z.object({
-  id: IdSchema,
-  title: z.string(),
-  appearance: WorkstreamAppearanceSchema.optional(),
-});
-export type AutomationOwningThread = z.infer<typeof AutomationOwningThreadSchema>;
-
 export const AutomationSummarySchema = z.object({
   loadable: z.boolean().default(false),
   /**
@@ -1874,24 +1611,47 @@ export const AutomationSummarySchema = z.object({
   description: z.string(),
   emailAddress: z.string().email().nullable().default(null),
   scope: AutomationScopeSchema,
-  /** The room that owns a `workstream`-scoped automation; null for the other two. */
-  owningWorkstreamId: IdSchema.nullable().default(null),
-  /** The owning Thread's name and glyph; null for the other scopes and when the reader is not in it. */
-  owningThread: AutomationOwningThreadSchema.nullable().default(null),
   status: z.enum(["draft", "active", "paused"]),
   nextRunAt: TimestampSchema.nullable(),
+  runState: z.enum(["working", "needs_input"]).nullable().optional(),
+  /**
+   * Any run of the Sidekick is working now (queued or running), whichever run
+   * is newest: `runState` reads the newest run alone, so an older run still
+   * working behind a finished newer one read as idle. Absent from an older
+   * Worker and from reads that do not ask.
+   */
+  running: z.boolean().optional(),
+  pendingQuestion: z.string().nullable().optional(),
+  triggerKinds: z.array(z.enum(["manual", "schedule", "external_event", "inbound_email"])).optional(),
+  /**
+   * The IANA zone the schedule behind `nextRunAt` reads its wall-clock time
+   * in, so a client formats `nextRunAt` the way the schedule's own summary
+   * says it ("Every Friday at 2:00 PM"). Absent when the next schedule is an
+   * interval, when there is no schedule, and from a server that predates it.
+   */
+  scheduleTimeZone: z.string().optional(),
   lastRunAt: TimestampSchema.nullable(),
   updatedAt: TimestampSchema,
+  /** Who it is shared with; absent from a server that predates it. */
+  audience: SidekickAudienceSchema.optional(),
+  /**
+   * This viewer has not read the latest message in the Sidekick's shared
+   * conversation, or marked it unread. Sidebar rows only; absent elsewhere.
+   */
+  unread: z.boolean().optional(),
+  /** The Sidekick waits on someone: its delegation needs attention, or its shared conversation needs input. */
+  needsInput: z.boolean().optional(),
+  /** Its place in this viewer's Pinned group of Sidekicks; null when not pinned. Sidebar rows only; absent elsewhere. */
+  pinnedPosition: z.number().int().nonnegative().nullable().optional(),
 });
 
 /**
- * One automation in a work stream's rail: the summary without its scope and
- * owner, because every row in that list is owned by the work stream showing it.
+ * One automation in a work stream's rail: the summary without its scope. No
+ * Thread owns a Sidekick any more, so the rail's `owned` list is always empty;
+ * the schema stays because released clients parse that list.
  */
 export const WorkstreamAutomationSummarySchema = AutomationSummarySchema.omit({
   scope: true,
-  owningWorkstreamId: true,
-  owningThread: true,
 });
 export type WorkstreamAutomationSummary = z.infer<typeof WorkstreamAutomationSummarySchema>;
 
@@ -1938,6 +1698,10 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   runnable: z.boolean().default(false),
   connectorBindings: z.record(z.string(), z.string()),
   recentRuns: z.array(AutomationRunSchema),
+  /** The people a `people` Sidekick is shared with, besides its author; empty for the other audiences. Absent from a server that predates it. */
+  sharedWithUserIds: z.array(IdSchema).optional(),
+  /** The Canvases this Sidekick writes that the reader may open, most recently active first. Absent from a server that predates it. */
+  canvases: z.array(CanvasSummarySchema).optional(),
 });
 
 export const ApiErrorSchema = z.object({
@@ -2050,16 +1814,24 @@ export const DEFAULT_PUSH_PREFERENCES: PushPreferences = {
   runFinishedOthers: true,
 };
 /**
- * Where one notification can reach a person: a push to their devices, an
- * email, or any surface a connector declares for delivering to a person
- * (`userDelivery`). A new connector surface joins through
- * `AutomationDeliveryTargetTypeSchema` and needs no change here.
+ * Where one notification can reach a person: a push to their devices, or an
+ * email. Each is a sink that takes the one rendered notice
+ * (`docs/push-notifications.md`). `slack_agent_dm` is no longer offered: a
+ * stored list naming it reads without it (the lenient list below drops a
+ * channel it does not know), for one release and after.
  */
-export const NotificationChannelSchema = z.union([z.literal("push"), AutomationDeliveryTargetTypeSchema]);
+export const NotificationChannelSchema = z.enum(["push", "email"]);
 export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
-/** The kinds of Activity row a person chooses channels for, one per row in Settings. */
-export const NotificationKindSchema = z.enum(["mentions", "newMessages", "added", "newThreads", "newBreakouts", "runFinished", "merges", "artifactUpdates"]);
+/**
+ * The kinds of Activity row a person chooses channels for. A kind a stored
+ * record still names but this list does not (the Thread-era `newThreads`,
+ * `newBreakouts` and `merges`) is stripped on read.
+ */
+export const NotificationKindSchema = z.enum(["mentions", "newMessages", "added", "runFinished", "artifactUpdates", "accessRequests"]);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;
+/** The kinds Settings offers, in its order: each one a real producer records. */
+export const OFFERED_NOTIFICATION_KINDS = ["mentions", "newMessages", "added", "runFinished", "artifactUpdates", "accessRequests"] as const satisfies readonly NotificationKind[];
+export type OfferedNotificationKind = (typeof OFFERED_NOTIFICATION_KINDS)[number];
 /**
  * Lenient on read: a channel this build does not know (a newer server's, or
  * one a rollback left stored) is dropped rather than failing the whole record.
@@ -2070,19 +1842,17 @@ const NotificationChannelListSchema = z.array(z.string()).transform((channels) =
 }))]);
 /**
  * How each kind reaches this person. An empty list means it is only in
- * Activity and the daily digest.
+ * Activity.
  */
 export const NotificationChannelsSchema = z.object({
   mentions: NotificationChannelListSchema,
   newMessages: NotificationChannelListSchema.default(["push"]),
   added: NotificationChannelListSchema,
-  newThreads: NotificationChannelListSchema,
-  newBreakouts: NotificationChannelListSchema,
   runFinished: NotificationChannelListSchema,
-  /** Defaulted: a server older than merges does not send it. */
-  merges: NotificationChannelListSchema.default(["push"]),
   /** Defaulted: a server older than artifact pins does not send it. */
   artifactUpdates: NotificationChannelListSchema.default(["push"]),
+  /** Defaulted: a server older than Canvas access requests does not send it. */
+  accessRequests: NotificationChannelListSchema.default(["push"]),
 });
 export type NotificationChannels = z.infer<typeof NotificationChannelsSchema>;
 /**
@@ -2093,19 +1863,17 @@ export type NotificationChannels = z.infer<typeof NotificationChannelsSchema>;
 export const NotificationChannelsChoiceSchema = NotificationChannelsSchema
   .extend({
     newMessages: NotificationChannelsSchema.shape.newMessages.unwrap(),
-    merges: NotificationChannelsSchema.shape.merges.unwrap(),
     artifactUpdates: NotificationChannelsSchema.shape.artifactUpdates.unwrap(),
+    accessRequests: NotificationChannelsSchema.shape.accessRequests.unwrap(),
   })
   .partial();
 export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
-  mentions: ["push", "slack_agent_dm"],
+  mentions: ["push"],
   newMessages: ["push"],
-  added: ["push", "slack_agent_dm"],
-  newThreads: ["push"],
-  newBreakouts: ["push"],
+  added: ["push"],
   runFinished: ["push"],
-  merges: ["push"],
   artifactUpdates: ["push"],
+  accessRequests: ["push"],
 };
 export const MemberPreferencesSchema = z.object({
   /** Whether the transcript shows the agent's work: its thinking and its tool and plugin calls. */
@@ -2151,145 +1919,6 @@ export const UpdateWorkspaceRequestSchema = z.object({
   message: "Name or timezone is required.",
 });
 
-// --- Digest ---------------------------------------------------------------
-
-/** Sunday through Saturday, matching `Date#getDay` so no table maps between. */
-export const DigestWeekdaySchema = z.number().int().min(0).max(6);
-/** Local wall-clock minute in the schedule's own timezone. */
-export const DigestMinuteOfDaySchema = z.number().int().min(0).max(1439);
-
-/**
- * A destination a digest can be sent to: the person's own Personal Channel,
- * where it arrives as a new thread; `email`, which needs no connector; or a
- * connector's declared `userDelivery` surface. A connector declaring a new
- * surface becomes a digest destination with no change here.
- */
-export const DigestDeliveryTargetTypeSchema = z.union([z.literal("personal_channel"), AutomationDeliveryTargetTypeSchema]);
-
-export const DigestDeliveryTargetSchema = z.object({
-  type: DigestDeliveryTargetTypeSchema,
-  connectionId: IdSchema.nullable().default(null),
-  /** What the destination is called in the UI, frozen when it was chosen. */
-  displayName: z.string().min(1).max(320),
-  status: z.enum(["active", "needs_input", "disabled"]),
-  lastDeliveredAt: TimestampSchema.nullable().default(null),
-});
-
-export const DigestScheduleSchema = z.object({
-  id: IdSchema,
-  enabled: z.boolean(),
-  /** Deduplicated and ascending, so the UI never has to sort or dedupe. */
-  days: z.array(DigestWeekdaySchema).max(7),
-  times: z.array(DigestMinuteOfDaySchema).max(12),
-  /**
-   * Read-only. A digest runs in its owner's own day, so this mirrors their
-   * account timezone rather than storing a second one that could disagree.
-   */
-  timezone: IanaTimezoneSchema,
-  deliveryTargets: z.array(DigestDeliveryTargetSchema).max(8),
-  nextRunAt: TimestampSchema.nullable(),
-  lastDeliveredAt: TimestampSchema.nullable(),
-});
-
-/**
- * The one write. A digest is a small, wholly-owned configuration, so it is
- * replaced rather than patched — that keeps "no days selected" and "no times
- * selected" expressible, which a partial update cannot do.
- */
-export const UpdateDigestScheduleRequestSchema = z.object({
-  enabled: z.boolean(),
-  days: z.array(DigestWeekdaySchema).max(7),
-  times: z.array(DigestMinuteOfDaySchema).max(12),
-  deliveryTargets: z.array(z.object({
-    type: DigestDeliveryTargetTypeSchema,
-    connectionId: IdSchema.nullable().default(null),
-  })).max(8),
-}).refine(
-  // An enabled digest that names no day, no time, or nowhere to go would sit in
-  // the scheduler forever without ever producing anything a person receives.
-  (value) => !value.enabled
-    || (value.days.length > 0 && value.times.length > 0 && value.deliveryTargets.length > 0),
-  "An enabled digest needs at least one day, one time, and one destination",
-);
-
-export const WorkstreamCreationFieldsSchema = z.object({
-  /**
-   * The id the caller already listed this Channel under, so it can show it
-   * before the create returns. Refused `workstream_id_unavailable` if any
-   * conversation has it. Optional: a caller with nobody waiting on screen
-   * leaves the id to the server.
-   */
-  workstreamId: WorkstreamIdSchema.optional(),
-  /**
-   * The Spaces this Channel is born in; the API reauthorizes every one of them.
-   *
-   * A list rather than one id because a Channel belongs to as many Spaces as it
-   * was put in. Empty — which is what every connector, import, recovery and
-   * scheduled path sends — means General: every Channel has a home, and no
-   * caller without a person at a keyboard has one to choose. A Space named here
-   * is established with the Channel or the creation fails without publishing
-   * one, so there is no window in which a Channel exists outside the hierarchy.
-   */
-  spaceIds: z.array(SpaceIdSchema)
-    .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
-    .default([]),
-  title: z.string().min(1).max(180).optional(),
-  objective: z.string().trim().min(1).max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS).optional(),
-  /**
-   * Everyone the caller means to be in the room, uncapped.
-   *
-   * There used to be a `.max(25)` here, sized for a person naming the people
-   * they are starting work with. A connector conversation is the other kind of
-   * caller and is routinely larger — a Slack channel's resolved audience can be
-   * hundreds — and a cap it exceeded did not degrade, it failed the whole
-   * create on a Zod error. Truncating instead would have been Avalon deciding
-   * that some of the people the conversation contains are not in the room,
-   * which is the provider's fact to state, not ours. Every id here is still
-   * checked against active workspace membership before a participant row is
-   * written, so the list is bounded by the workspace in the only sense that
-   * matters for access.
-   */
-  participantUserIds: z.array(IdSchema).default([]),
-  openingMessage: z.string().max(MESSAGE_MAX_CHARACTERS),
-  mentions: z.array(MentionSchema).default([]),
-  clientMessageId: z.string().min(1).max(120),
-  attachmentIds: z.array(IdSchema).max(10).default([]),
-  annotations: AnnotationsSchema.optional(),
-  /**
-   * Pins every run of this work stream to one OpenRouter model, ahead of the
-   * `agent-model-workstream` flag. Sent only by the composer's developer-mode
-   * selector; omitted means the flag decides, which is what every other create
-   * path does.
-   */
-  modelOverride: AgentModelOverrideSchema.optional(),
-});
-
-/** Interactive creation starts a run; prepared history uses the same creation fields. */
-export const CreateWorkstreamRequestSchema = WorkstreamCreationFieldsSchema.superRefine(validateAnnotationAttachments).refine((value) => value.openingMessage.trim().length > 0 || value.attachmentIds.length > 0 || value.annotations?.some((annotation) => annotation.comment.trim().length > 0), {
-  message: "An opening message must include text, an attachment or a commented annotation",
-});
-
-export const WorkOpportunitySchema = z.object({
-  id: IdSchema,
-  version: z.number().int().positive(),
-  displayPrompt: z.string().min(1).max(180),
-  icon: AutomationPluginIconSchema,
-  sourceLabel: z.string().min(1).max(180),
-});
-export const WorkOpportunityPageSchema = z.object({
-  items: z.array(WorkOpportunitySchema).max(4),
-});
-export const RecordWorkOpportunityImpressionsRequestSchema = z.object({
-  opportunityIds: z.array(IdSchema).max(4),
-  surface: z.enum(["menu_bar", "workspace_home"]),
-});
-export const StartWorkOpportunityRequestSchema = z.object({
-  version: z.number().int().positive(),
-  idempotencyKey: z.string().trim().min(1).max(120),
-  surface: z.enum(["menu_bar", "workspace_home"]).optional(),
-  position: z.number().int().min(1).max(4).optional(),
-});
-
 export const UpdateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
   objective: z.string().max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS).optional(),
@@ -2303,92 +1932,6 @@ export const UpdateWorkstreamRequestSchema = z.object({
   scope: ScopeSchema.optional()
 });
 
-/**
- * A reusable cross-work-stream selection, expressed in product fields rather
- * than in the name of the surface that happened to build it.
- *
- * Both timestamps follow the ordinary half-open range convention. `pinned`
- * is viewer- and Space-specific; omitting it includes both pinned and unpinned
- * rows, and naming it requires the Space whose placement is being selected.
- *
- * The same range selects notes for `archive`, because a sidebar recency group
- * holds both and a person archiving one is archiving what they can see under
- * that heading. A note has no pin and no system kind, so `pinned: true`
- * selects none and `includeSystem` does not reach them.
- */
-export const WorkstreamBatchFilterSchema = z.strictObject({
-  /** Which timestamp the range selects; access falls back to creation for unvisited work streams. */
-  recency: z.enum(["activity", "access"]).optional(),
-  lastActivityAt: z.strictObject({
-    atOrAfter: TimestampSchema.optional(),
-    before: TimestampSchema.optional(),
-  }).optional(),
-  pinned: z.boolean().optional(),
-  spaceId: SpaceIdSchema.optional(),
-  includeSystem: z.boolean().default(false),
-}).superRefine((filter, context) => {
-  const atOrAfter = filter.lastActivityAt?.atOrAfter;
-  const before = filter.lastActivityAt?.before;
-  if (
-    atOrAfter !== undefined
-    && before !== undefined
-    && Date.parse(atOrAfter) >= Date.parse(before)
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["lastActivityAt", "before"],
-      message: "must be later than atOrAfter",
-    });
-  }
-  if (filter.pinned !== undefined && filter.spaceId === undefined) context.addIssue({
-    code: "custom",
-    path: ["spaceId"],
-    message: "Space is required when filtering by pin state",
-  });
-});
-
-/** The mutations the generic batch surface can currently enqueue. */
-export const WorkstreamBatchUpdateSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("mark_read") }),
-  z.strictObject({ kind: z.literal("archive") }),
-]);
-
-export const PreviewWorkstreamBatchRequestSchema = z.strictObject({
-  filter: WorkstreamBatchFilterSchema,
-});
-
-/**
- * What one apply of this filter would touch, counted per authority.
- *
- * `matchedCount` is work streams and `matchedNoteCount` is notes, because the
- * two are separate authorities that a single count would have to add together
- * and then be unable to explain: only `archive` reaches notes, and only the
- * notes this viewer owns and is not recording can be archived at all. The
- * caller shows the note half for `archive` and ignores it for `mark_read`.
- */
-export const WorkstreamBatchPreviewSchema = z.strictObject({
-  matchedCount: z.number().int().nonnegative(),
-  matchedNoteCount: z.number().int().nonnegative(),
-});
-
-export const ApplyWorkstreamBatchRequestSchema = z.strictObject({
-  operationId: IdSchema,
-  filter: WorkstreamBatchFilterSchema,
-  update: WorkstreamBatchUpdateSchema,
-});
-
-/**
- * Work streams are *enqueued* and notes are *archived*, and the names say so:
- * each work stream leaves as one Queue event for the object that owns it, while
- * the notes live in the workspace object this request already reached and are
- * done by the time it answers.
- */
-export const WorkstreamBatchAcceptedSchema = z.strictObject({
-  operationId: IdSchema,
-  enqueuedCount: z.number().int().nonnegative(),
-  archivedNoteCount: z.number().int().nonnegative(),
-});
-
 export const AcknowledgeWorkstreamReadRequestSchema = z.object({
   readThroughSequenceNumber: z.number().int().nonnegative(),
   observedManualUnreadGeneration: z.number().int().nonnegative(),
@@ -2399,31 +1942,20 @@ export const AcknowledgeWorkstreamReadRequestSchema = z.object({
   ]).optional(),
 });
 
-/**
- * The whole pinned list in its new order, not a move of one row.
- *
- * A drag produces a complete arrangement, and sending that arrangement is what
- * lets the server write a dense run without inferring one from an index whose
- * meaning depends on a list state the client may no longer share. Ids the
- * caller has since unpinned elsewhere are ignored rather than rejected, and
- * pins the caller does not name keep their relative order behind the ones it
- * did — a second window that pinned something a moment ago loses its position,
- * never its pin.
- *
- * The same bound as pin creation. A reorder is an all-or-nothing complete
- * arrangement, so this must admit every state the server can create while
- * refusing a payload the object can never legitimately hold.
- */
-export const MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER = 1_000;
-export const ReorderWorkstreamPinsRequestSchema = z.object({
-  spaceId: SpaceIdSchema,
-  workstreamIds: z.array(IdSchema).max(MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER),
-});
-
 /** The authoritative visible pending-input queue after a reorder command. */
 export const ReorderPendingLoopInputsResultSchema = z.object({
   pendingInputs: z.array(PendingTranscriptInputSchema),
 });
+
+/**
+ * What a message in a Sidekick's shared conversation is for, when its sender
+ * says. `edit_sidekick` marks it for the wizard, which edits the Sidekick, and
+ * the server accepts it only from someone who manages the Sidekick; a message
+ * without it that is addressed to the Sidekick starts a run, whoever sent it.
+ * Elsewhere it means nothing.
+ */
+export const SidekickMessageIntentSchema = z.enum(["edit_sidekick"]);
+export type SidekickMessageIntent = z.infer<typeof SidekickMessageIntentSchema>;
 
 export const CreateMessageRequestSchema = z.object({
   text: z.string().max(MESSAGE_MAX_CHARACTERS),
@@ -2434,6 +1966,7 @@ export const CreateMessageRequestSchema = z.object({
   /** Steer yields the in-flight loop at a turn boundary; queue never interrupts it. */
   annotations: AnnotationsSchema.optional(),
   runMode: z.enum(["steer", "queue"]).optional(),
+  intent: SidekickMessageIntentSchema.optional(),
 }).superRefine(validateAnnotationAttachments).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0 || value.annotations?.some((a) => a.comment.trim()), {
   message: "A message must include text or an attachment",
 });
@@ -2597,7 +2130,7 @@ export const UpdateCustomMcpToolPolicyRequestSchema = z.object({
 });
 
 /**
- * The REST recovery twin of the SubstreamAgent `snapshot` frame.
+ * The REST recovery twin of the AgentLoopDO `snapshot` frame.
  *
  * Normal opens subscribe directly and paint the first snapshot. This response
  * remains for an explicit unavailable-state retry and is assembled by the same
@@ -2613,13 +2146,11 @@ export const SubstreamSocketMutationTypeSchema = z.enum([
   "create_message",
   "answer_elicitation",
   "reorder_pending_inputs",
-  "set_workstream_appearance",
   "stop_harness",
   "retry_harness",
 ]);
 
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("set_workstream_appearance"), operationId: IdSchema, appearance: WorkstreamAppearancePatchSchema }),
   z.strictObject({
     type: z.literal("subscribe"),
     afterSequence: z.number().int().nonnegative(),
@@ -2686,68 +2217,20 @@ export const WORKSPACE_SYNC_TOPICS = [
   "connector_connections",
   "connector_oauth_attempts",
   "terminal_policy",
-  "digest_schedule",
   "automations",
-  "sidekick_activity",
-  "notes",
-  "projects",
   "resources",
-  "activity",
-  "work_opportunities",
-  "workstream_directory",
   "viewer_preferences",
   "feature_flags",
 ] as const;
 export const WorkspaceSyncTopicSchema = z.enum(WORKSPACE_SYNC_TOPICS);
-
-/**
- * Opaque stable ordering cursor for the note list's `(recency, id)` order.
- *
- * It carries the stored `last_activity_at` verbatim rather than an epoch, the
- * way the work-stream cursor beside it does: `notes.last_activity_at` is an ISO
- * string and the list orders by it as text, so a cursor in any other spelling
- * would have to be converted on every comparison to page correctly. The id is
- * a UUID and has no colon of its own, so the last colon is the separator.
- */
-export const NoteCursorSchema = z.string()
-  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu)
-  .max(61);
 
 /** Opaque stable ordering cursor for WorkspaceDO's `(recency, id)` directory. */
 export const WorkspaceWorkstreamCursorSchema = z.string()
   .regex(/^\d{1,16}:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu)
   .max(53);
 
-/**
- * How many Channels one `channel_rails` request may name: `list_workstreams`'
- * page bound, reused rather than chosen. A `space_channels` page is this size
- * too.
- */
-export const CHANNEL_RAILS_NAMED_LIMIT = 250;
-
-/** Storage names: a Channel is a space, and a Thread or Breakout is a workstream conversation. */
-export const SidekickActivityTargetSchema = z.strictObject({
-  parentKind: z.enum(['space', 'workstream']),
-  parentId: IdSchema,
-  substreamId: z.union([z.literal('0'), IdSchema]),
-});
-export type SidekickActivityTarget = z.infer<typeof SidekickActivityTargetSchema>;
-export const WorkspaceSidekickActivityEventSchema = z.strictObject({
-  type: z.literal("workspace_sidekick_activity"),
-  revision: z.number().int().nonnegative(),
-  target: SidekickActivityTargetSchema,
-  waterline: z.number().int().nonnegative(),
-  count: z.number().int().nonnegative(),
-});
-export type WorkspaceSidekickActivityEvent = z.infer<typeof WorkspaceSidekickActivityEventSchema>;
-
 export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
   ConversationViewRequestSchema,
-  z.strictObject({
-    type: z.literal("sidekick_activity"),
-    revision: z.number().int().positive(),
-    targets: z.array(SidekickActivityTargetSchema),
-  }),
   z.strictObject({
     type: z.literal("subscribe"),
     afterWaterline: z.number().int().nonnegative(),
@@ -2759,41 +2242,7 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     applicationState: z.enum(["foreground", "background"]),
     foregroundWorkstreamId: WorkstreamIdSchema.nullable(),
   }),
-  z.strictObject({
-    type: z.literal("list_workstreams"),
-    requestId: IdSchema,
-    limit: z.number().int().min(1).max(250),
-    before: WorkspaceWorkstreamCursorSchema.optional(),
-    includeSystem: z.boolean(),
-  }),
-  /**
-   * The Channel rail data for named Channels whose `railWaterline` moved.
-   *
-   * `spaceId` and `after` are the retired Space target, still sent by desktops
-   * 1.467.0 and 1.468.0. They are accepted so those desktops are not
-   * disconnected, and answered with one empty final frame.
-   */
-  z.strictObject({
-    type: z.literal("channel_rails"),
-    requestId: IdSchema,
-    spaceId: SpaceIdSchema.optional(),
-    after: WorkstreamIdSchema.optional(),
-    workstreamIds: z.array(WorkstreamIdSchema).min(1).max(CHANNEL_RAILS_NAMED_LIMIT)
-      .refine((ids) => new Set(ids).size === ids.length, "must be unique")
-      .optional(),
-  }),
-  /**
-   * One page of the Channels in a Space this viewer may see, in id order after
-   * `after`, with their rails when `rails` is set.
-   */
-  z.strictObject({
-    type: z.literal("space_channels"),
-    requestId: IdSchema,
-    spaceId: SpaceIdSchema,
-    /** The `nextAfter` of the previous answer for this Space. */
-    after: WorkstreamIdSchema.optional(),
-    rails: z.boolean(),
-  }),
+  ActivityMarkAllSeenCommandSchema,
 ]).superRefine((event, context) => {
   if (event.type === "set_presence"
     && event.applicationState === "background"
@@ -2810,126 +2259,19 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
 const WorkstreamStateEventIdSchema = IdSchema;
 
 /**
- * Coordinates one complete work-stream UI snapshot across its two authorities.
- *
- * `commonWaterline` orders the WorkstreamDO-owned shared row and
- * `viewerWaterline` orders the authenticated user's row. They are deliberately
- * independent: Cloudflare Queues is unordered, so advancing one must never
- * cause a delayed update for the other to be discarded. Each field carries
- * the UUID identity of its own state row unchanged over both socket paths.
- * New IDs are UUIDv7 traces; historical UUIDs remain valid. The waterlines,
- * rather than an ID's version or timestamp, determine ordering.
- */
-export const WorkstreamStateVersionSchema = z.strictObject({
-  commonEventId: WorkstreamStateEventIdSchema,
-  viewerEventId: WorkstreamStateEventIdSchema.nullable(),
-  authorityGeneration: z.number().int().positive(),
-  commonWaterline: z.number().int().positive(),
-  viewerWaterline: z.number().int().nonnegative(),
-}).superRefine((version, context) => {
-  if ((version.viewerWaterline === 0) !== (version.viewerEventId === null)) {
-    context.addIssue({
-      code: "custom",
-      path: ["viewerEventId"],
-      message: "must be null exactly when viewerWaterline is zero",
-    });
-  }
-});
-
-export const WorkspaceWorkstreamStateVersionSchema = WorkstreamStateVersionSchema.extend({
-  workstreamId: IdSchema,
-}).strict();
-
-/**
- * The body of one cursor-paged directory answer, shared by both events that
- * carry it: the page a scroll asks for, and the page inside the opening
- * sidebar batch. Held as fields plus a refinement rather than a schema so both
- * can spread it into their own strict object — `superRefine` returns a
- * `ZodEffects`, which cannot be extended.
- */
-const workspaceWorkstreamPageFields = {
-  directoryWaterline: z.number().int().nonnegative(),
-  items: z.array(WorkstreamSchema),
-  stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema),
-  nextCursor: WorkspaceWorkstreamCursorSchema.nullable(),
-} as const;
-
-function refineWorkstreamPagePairing(
-  page: { items: Array<{ id: string }>; stateVersions: Array<{ workstreamId: string }> },
-  context: z.RefinementCtx,
-): void {
-  const itemIds = new Set(page.items.map((item) => item.id));
-  const versionIds = new Set(page.stateVersions.map((version) => version.workstreamId));
-  if (itemIds.size !== page.items.length
-    || versionIds.size !== page.stateVersions.length
-    || itemIds.size !== versionIds.size
-    || [...itemIds].some((id) => !versionIds.has(id))) {
-    context.addIssue({
-      code: "custom",
-      path: ["stateVersions"],
-      message: "must contain exactly one state version for every work stream item",
-    });
-  }
-}
-
-/**
- * One page of a Space's Channel rows, answering `space_channels`.
- *
- * `rails` holds the rails that fit the frame beside the rows, and is empty
- * when none were asked for. A row with no rail here is asked for by name.
- * `nextAfter` is the last Channel on a full page, so the next request starts
- * after it; `null` means the Space ends here.
- */
-export const WorkspaceSpaceChannelsEventSchema = z.strictObject({
-  type: z.literal("workspace_space_channels"),
-  requestId: IdSchema,
-  directoryWaterline: z.number().int().nonnegative(),
-  items: z.array(WorkstreamSchema),
-  stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema),
-  rails: z.array(z.lazy(() => ChannelRailSchema)),
-  nextAfter: WorkstreamIdSchema.nullable(),
-}).superRefine(refineWorkstreamPagePairing);
-export type WorkspaceSpaceChannelsEvent = z.infer<typeof WorkspaceSpaceChannelsEventSchema>;
-
-/** A WorkspaceDO-owned, cursor-paged sidebar result sent on the workspace socket. */
-export const WorkspaceWorkstreamPageEventSchema = z.strictObject({
-  type: z.literal("workspace_workstream_page"),
-  requestId: IdSchema,
-  ...workspaceWorkstreamPageFields,
-}).superRefine(refineWorkstreamPagePairing);
-
-export const WorkspaceWorkstreamRecencyEventSchema = z.strictObject({
-  type: z.literal("workspace_workstream_recency"),
-  directoryWaterline: z.number().int().nonnegative(),
-  workstream: WorkstreamSchema,
-  stateVersion: WorkspaceWorkstreamStateVersionSchema,
-}).superRefine((event, context) => {
-  if (event.workstream.id !== event.stateVersion.workstreamId) {
-    context.addIssue({ code: "custom", path: ["stateVersion"], message: "must identify the work stream" });
-  }
-});
-
-/**
  * Everything the sidebar paints, sent unprompted when a workspace socket
- * subscribes.
+ * subscribes: this viewer's Sidekicks and Canvases.
  *
  * It answers no request and carries no correlation id: the ticket already
- * proved who connected and which workspace they opened, and all three lists are
- * WorkspaceDO's own SQLite — the directory, `automation_subscriptions` and
- * `notes`. There is nothing left for the client to tell the server before the
- * first paint, so it is not asked to.
+ * proved who connected and which workspace they opened, and both lists are
+ * WorkspaceDO's own SQLite (`automation_directory` and `canvas_directory`).
+ * There is nothing left for the client to tell the server before the first
+ * paint, so it is not asked to.
  *
- * Deliberately serves the p95 and not the debug case: the directory page here
- * excludes system work streams. Turning Debug enabled on is rare, engineers
- * only, and re-draws the sidebar from a `list_workstreams` request carrying
- * `includeSystem` — a follow-up that a person's own action asked for. Loading
- * the common case unasked and paying a round trip for the rare one is the right
- * way round; the reverse would put a debug preference in everyone's connect.
- *
- * The automation and note arrays are bounded rather than paged: neither has a
- * cursor, and a workspace past the bound is served its first rows and
- * reconciled by the next push. A bound that truncates keeps a very large
- * sidebar painting; a bound that rejects would fail the whole connect.
+ * The lists are bounded rather than paged: neither has a cursor, and a
+ * workspace past the bound is served its first rows and reconciled by the next
+ * push. A bound that truncates keeps a very large sidebar painting; a bound
+ * that rejects would fail the whole connect.
  *
  * Sent on every subscribe, cold or resuming, so a client that missed pushes
  * while it was away is correct again without replaying the gap. A resume where
@@ -2937,79 +2279,20 @@ export const WorkspaceWorkstreamRecencyEventSchema = z.strictObject({
  * waterline its pushes carry, so the client's ordinary comparison drops it.
  */
 export const WorkspaceSidebarSchema = z.strictObject({
-  workstreams: z.strictObject(workspaceWorkstreamPageFields)
-    .superRefine(refineWorkstreamPagePairing),
   automations: z.strictObject({
     waterline: z.number().int().nonnegative(),
     items: z.array(AutomationSummarySchema).max(250),
   }),
-  notes: z.strictObject({
-    waterline: z.number().int().nonnegative(),
-    items: z.array(z.unknown()).max(250).transform(() => [] as never[]),
-    /**
-     * The next page, or `null` when this one is the whole list. Optional only
-     * for the rolling deployment: a client that gets no cursor from an older
-     * server reads the list as complete, which is what it did before paging.
-     */
-    nextCursor: NoteCursorSchema.nullable().optional(),
-  }),
   /**
-   * Both Space directories at one waterline, for this viewer.
-   *
-   * Optional so a client reading a payload from a server that predates it
-   * treats the hierarchy as absent rather than failing the connect.
+   * This viewer's Canvases (`docs/canvases.md#the-canvas-list`). Optional, so a
+   * client reading a payload from a server that predates Canvases draws none.
    */
-  spaces: SpaceSnapshotSchema.optional(),
+  canvases: CanvasSidebarListSchema.optional(),
   /**
-   * Every list this viewer has arranged by hand, whatever contains it.
-   *
-   * Beside the Space directories rather than inside one, because it is the
-   * *viewer's* preference about three different containers — the Organization,
-   * a Space, a Channel — and only the first of those is a Space fact at all. It
-   * rides this payload because it is per viewer, it is small, and it has to
-   * reach the screen in the same frame as the lists it orders.
-   *
-   * Optional for the reason `spaces` is: a client reading a payload from a
-   * server that predates it draws every list in its natural order rather than
-   * failing the connect.
+   * This viewer's Activity (`docs/activity.md`). Optional, so a client
+   * reading a payload from a server that predates it draws no section.
    */
-  ordering: PersonalOrderSchema.optional(),
-  /**
-   * This viewer's order for **All**'s Pinned section: Channel ids, first to
-   * last. Its own field rather than a fourth kind in `ordering`, because a
-   * shipped client reads an order kind it does not know as a malformed
-   * ordering and drops the payload, while it ignores a key it does not know.
-   * Absent from a server that predates it, which reads as no order.
-   */
-  pinnedOrder: PinnedOrderSchema.optional(),
-  /**
-   * This viewer's pins of every kind, each kind in their order: the Pinned
-   * sections of the Channels and Threads tabs. A key of its own, absent from a
-   * server that predates it, for the reason `pinnedOrder` is.
-   */
-  pins: PinListSchema.optional(),
-  /** This viewer's pinned artifacts in their order; its own key for the reason `ArtifactPinSchema` gives. */
-  artifactPins: ArtifactPinListSchema.optional(),
-  /** Each listed Channel's thread count and last activity, for the Channels tab. */
-  channelStats: z.array(ChannelStatsSchema).optional(),
-  /**
-   * False while the Organization has not finished creating General and placing
-   * every Channel in it.
-   *
-   * The client shows the Organization-opening state rather than a hierarchy
-   * that is half built — a Channel with no Space, or a Space directory missing
-   * General, is not a state any surface is allowed to render. Optional and
-   * read as `true` when absent, so a payload from a server without the cutover
-   * is not permanently stuck opening.
-   */
-  spacesReady: z.boolean().optional(),
-  /**
-   * Set for a member once the Space hierarchy is whole: `workstreams` is then
-   * empty, and the client asks each Space for its Channels. Absent (a guest,
-   * or an Organization still opening) means `workstreams` is the directory's
-   * first page.
-   */
-  channelsBySpace: z.literal(true).optional(),
+  activity: ActivityPageSchema.optional(),
 });
 
 /**
@@ -3038,8 +2321,6 @@ export const WorkspaceSocketSyncEventSchema = z.strictObject({
   featureFlags: ClientFeatureFlagsSchema.optional(),
   /** This viewer's display preferences, beside `featureFlags` and for the same reason. */
   viewerPreferences: MemberPreferencesSchema.optional(),
-  /** The access requests waiting on this viewer, for the same reason again. */
-  accessRequests: z.array(ConversationAccessRequestItemSchema).optional(),
 }).superRefine((event, context) => {
   if (event.topics.length === 0 && event.sidebar === undefined) {
     context.addIssue({
@@ -3084,23 +2365,6 @@ export const WorkspacePresenceEventSchema = z.strictObject({
  * the single-use credential to present in `Sec-WebSocket-Protocol`.
  */
 export const SocketTicketSchema = z.object({ url: WebSocketUrlSchema, ticket: z.string().min(1) });
-
-/**
- * These people joined or left a Channel or a Breakout.
- *
- * Addressed rather than broadcast: a socket is told a person's id only when
- * its own user is that person or may act as them through an active
- * impersonation relationship. It names no conversation, so it discloses no
- * membership the receiver could not already read; a receiver that cares
- * rereads its own view. Outside the waterline and never replayed — a client
- * rereads on reconnect instead. Older clients ignore the unknown `type`.
- */
-export const WorkspaceReachChangedEventSchema = z.strictObject({
-  type: z.literal("workspace_reach_changed"),
-  occurredAt: TimestampSchema,
-  userIds: z.array(UserIdSchema).min(1),
-});
-export type WorkspaceReachChangedEvent = z.infer<typeof WorkspaceReachChangedEventSchema>;
 
 /**
  * What a resource shows at its newest version: the fields a new version can
@@ -3176,230 +2440,15 @@ export const WorkspaceSidebarListEventSchema = z.discriminatedUnion("list", [
     waterline: z.number().int().positive(),
     items: z.array(AutomationSummarySchema).max(250),
   }),
-  z.strictObject({
-    type: z.literal("workspace_sidebar_list"),
-    occurredAt: TimestampSchema,
-    list: z.literal("notes"),
-    waterline: z.number().int().positive(),
-    items: z.array(z.unknown()).max(250).transform(() => [] as never[]),
-    /**
-     * The newest page only ever carries the newest page, so a reader who has
-     * scrolled further needs to know whether this push is the whole list — in
-     * which case it replaces what they hold — or just its head, in which case
-     * it merges. `null` means the list ends here. Optional for the rolling
-     * deployment; an older server sending none reads as the whole list, which
-     * is what it was.
-     */
-    nextCursor: NoteCursorSchema.nullable().optional(),
-  }),
 ]);
-
-/**
- * The viewer's complete active and inactive Space state after a Space write.
- *
- * The shape the Project snapshot used, and for the same reasons: WorkspaceDO
- * owns both lists and their shared waterline, personal-Space visibility and
- * ordering are per viewer, and absence is the tombstone when somebody stops
- * being a participant. `spacesReady` travels with it because a write can be the write
- * that finishes the cutover, and a client holding `false` would otherwise keep
- * showing the opening state until it reconnected.
- */
-export const WorkspaceSpaceSnapshotEventSchema = z.strictObject({
-  type: z.literal("workspace_space_snapshot"),
-  occurredAt: TimestampSchema,
-  spaces: SpaceSnapshotSchema,
-  /**
-   * Every list this viewer has arranged by hand, in full.
-   *
-   * The whole ordering rather than the container that just moved, for the
-   * reason the directories are whole: this is the one message a viewer's other
-   * windows get, and a delta would make each of them keep a copy to apply it
-   * to. Required here and optional on the connect payload, because a server
-   * that sends this event is a server that has the ordering.
-   */
-  ordering: PersonalOrderSchema,
-  /** All's Pinned order, beside `ordering` for the reason the sidebar payload gives. */
-  pinnedOrder: PinnedOrderSchema.optional(),
-  /** Every pin, beside `pinnedOrder` for the reason the sidebar payload gives. */
-  pins: PinListSchema.optional(),
-  artifactPins: ArtifactPinListSchema.optional(),
-  channelStats: z.array(ChannelStatsSchema).optional(),
-  spacesReady: z.boolean(),
-});
-
-/**
- * This person's own navigation state after a write only they made: their pin
- * list, or their read state in one Channel. Sent to that person's sockets
- * alone, so a second window follows a pin or a read without the whole Space
- * snapshot being rebuilt for every socket they have. Each field present
- * replaces what is held: `pins` and `artifactPins` each the whole list, each
- * `channelStats` row the row for its Channel. A client that does not know this event ignores it.
- */
-export const WorkspaceNavigationStateEventSchema = z.strictObject({
-  type: z.literal("workspace_navigation_state"),
-  occurredAt: TimestampSchema,
-  pins: PinListSchema.optional(),
-  artifactPins: ArtifactPinListSchema.optional(),
-  channelStats: z.array(ChannelStatsSchema).optional(),
-});
-
-/**
- * The Space dashboards whose page this viewer should read again.
- *
- * A nudge with the current aggregate: it carries no rows or version, only the
- * Spaces whose list of "conversations that need you" could have moved and the
- * new count for each. The dashboard re-reads the page it is holding; the
- * sidebar applies the count without rebuilding the whole Space directory.
- *
- * **Nothing durable stands behind it.** The list is re-read on mount, on
- * reconnect and on this event, so a nudge lost to a closing socket costs one
- * stale view until the next event or the next reconnect — which is cheaper to
- * reverse than a per-viewer counter written on every message in the
- * Organization. `docs/spaces.md` records why that trade was taken.
- *
- * The ids are the ones *this* viewer may see. A Space a person cannot see is
- * never named: a personal Space's id on somebody else's socket is the
- * existence of that Space leaking through a shared Channel.
- */
-export const WorkspaceSpaceConversationsEventSchema = z.strictObject({
-  type: z.literal("space_conversations_changed"),
-  occurredAt: TimestampSchema,
-  /**
-   * At least one, because a nudge naming no Space asks for nothing. No upper
-   * bound: a Channel may be in as many Spaces as somebody puts it in, and the
-   * Organization has no number for that to trip over.
-   */
-  spaceIds: z.array(IdSchema).min(1),
-  /** Current dashboard totals for the same viewer and the same named Spaces. */
-  attentionCounts: z.array(z.strictObject({
-    spaceId: SpaceIdSchema,
-    count: z.number().int().nonnegative(),
-  })).default([]),
-  /**
-   * Whether a thread entered or left one of these Channels, rather than a
-   * thread already in one changing. Only a placement changes which threads a
-   * person's Threads and Activity lists hold, so only a placement re-reads
-   * them; a message in a thread re-reads the open Channel's feed alone.
-   * Absent from a server that predates it, which a client reads as `true`.
-   */
-  placementChanged: z.boolean().optional(),
-}).superRefine((event, context) => {
-  const named = new Set(event.spaceIds);
-  for (const [index, entry] of event.attentionCounts.entries()) {
-    if (!named.has(entry.spaceId)) context.addIssue({
-      code: "custom",
-      path: ["attentionCounts", index, "spaceId"],
-      message: "must name a Space in spaceIds",
-    });
-  }
-});
-
-/** A current state row pushed by WorkspaceDO after Queue ingestion. */
-export const WorkspaceWorkstreamStateEventSchema = z.strictObject({
-  type: z.literal("workspace_workstream_state"),
-  occurredAt: TimestampSchema,
-  workstreamId: IdSchema,
-  stateVersion: WorkstreamStateVersionSchema,
-  /** Null is a versioned visibility/archive tombstone for this viewer. */
-  workstream: WorkstreamSchema.nullable(),
-}).superRefine((event, context) => {
-  if (event.workstream && event.workstream.id !== event.workstreamId) {
-    context.addIssue({
-      code: "custom",
-      path: ["workstream", "id"],
-      message: "must match workstreamId",
-    });
-  }
-});
-
-/**
- * The WorkstreamDO-owned common metadata plus the authenticated viewer overlay.
- * Transcript, tools, presence, and streaming output intentionally remain on
- * the selected SubstreamAgent feed.
- */
-export const WorkstreamControlMetadataSchema = z.strictObject({
-  appearance: WorkstreamAppearanceSchema.optional(),
-  stateVersion: WorkstreamStateVersionSchema,
-  /** Independent of workspace viewer/notification projection ordering. */
-  privateChildrenWaterline: z.number().int().nonnegative().optional(),
-  revision: z.number().int().nonnegative(),
-  id: IdSchema,
-  workspaceId: IdSchema,
-  title: z.string().min(1).max(500),
-  description: z.string().max(4_000),
-  preview: z.string().max(1_000),
-  emailAddress: z.string().email().max(254).nullable(),
-  createdByUserId: IdSchema.nullable(),
-  titleStatus: z.enum(["naming", "automatic", "settled"]),
-  exactState: z.string().min(1).max(80),
-  harnessStatus: HarnessStatusSchema,
-  /**
-   * Every running background agent in the work stream. Kept for desktop
-   * clients released before `backgroundAgentCounts`; drop it once the oldest
-   * supported desktop reads that field instead.
-   */
-  backgroundAgentCount: z.number().int().nonnegative().optional(),
-  /**
-   * Running background agents by the conversation they work for, keyed by
-   * substream id. A conversation with none is absent. Omission of the whole
-   * field means this snapshot does not know the current counts.
-   */
-  backgroundAgentCounts: WorkstreamBackgroundAgentCountsSchema.optional(),
-  latestAttentionSequenceNumber: z.number().int().nonnegative(),
-  unreadTrackingStartSequenceNumber: z.number().int().nonnegative(),
-  lastActivityAt: TimestampSchema,
-  completedAt: TimestampSchema.nullable(),
-  archivedAt: TimestampSchema.nullable(),
-  createdAt: TimestampSchema,
-  updatedAt: TimestampSchema,
-  scope: ScopeSchema,
-  systemKind: z.enum(["digest"]).nullable(),
-  nextPendingWakeup: z.object({
-    dueAt: TimestampSchema,
-    promptPreview: z.string().min(1).max(WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH + 1),
-  }).nullable(),
-  nextTerminalActionAt: TimestampSchema.nullable(),
-  /** Ready non-main conversations this authenticated viewer may open. */
-  privateChildren: z.array(WorkstreamPrivateChildSchema).optional(),
-  viewer: z.strictObject({
-    isParticipant: z.boolean(),
-    listable: z.boolean(),
-    unreadCount: z.number().int().nonnegative(),
-    youAreMentioned: z.boolean(),
-    /** See `WorkstreamSchema.unseen`. False for anyone not in the room. */
-    unseen: z.boolean().default(false),
-    readThroughSequenceNumber: z.number().int().nonnegative(),
-    manualUnreadFromSequenceNumber: z.number().int().nonnegative().nullable(),
-    manualUnreadGeneration: z.number().int().nonnegative(),
-    latestMentionSequenceNumber: z.number().int().nonnegative(),
-  }),
-});
-
-export const WorkstreamControlSocketClientEventSchema = z.strictObject({
-  type: z.literal("subscribe"),
-});
-
-export const WorkstreamControlSocketEventSchema = z.strictObject({
-  type: z.literal("workstream_metadata"),
-  occurredAt: TimestampSchema,
-  metadata: WorkstreamControlMetadataSchema,
-});
 
 export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
 export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
 export type WorkspaceSocketSyncEvent = z.infer<typeof WorkspaceSocketSyncEventSchema>;
 export type WorkspacePresenceEvent = z.infer<typeof WorkspacePresenceEventSchema>;
 export type WorkspaceFeatureFlagsEvent = z.infer<typeof WorkspaceFeatureFlagsEventSchema>;
-export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
 export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
 export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
-export type WorkspaceSpaceSnapshotEvent = z.infer<typeof WorkspaceSpaceSnapshotEventSchema>;
-export type WorkspaceNavigationStateEvent = z.infer<typeof WorkspaceNavigationStateEventSchema>;
-export type WorkspaceSpaceConversationsEvent = z.infer<typeof WorkspaceSpaceConversationsEventSchema>;
-export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
-export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
-export type WorkstreamControlMetadata = z.infer<typeof WorkstreamControlMetadataSchema>;
-export type WorkstreamControlSocketEvent = z.infer<typeof WorkstreamControlSocketEventSchema>;
 
 /**
  * A direct response to one client command. It is deliberately outside the room
@@ -3426,7 +2475,6 @@ const WorkstreamSocketCommandErrorSchema = z.strictObject({
 });
 
 export const WorkstreamSocketCommandResultSchema = z.union([
-  z.strictObject({ type: z.literal("client_command_succeeded"), command: z.literal("set_workstream_appearance"), operationId: IdSchema }),
   z.strictObject({
     type: z.literal("client_command_succeeded"),
     command: z.literal("create_message"),
@@ -3566,25 +2614,9 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
      * transcript snapshot already carries the complete set.
      */
     pendingInputChunkCount: z.number().int().nonnegative(),
-    initialContextChunkCount: z.number().int().nonnegative().optional(),
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
     activeCompaction: AgentCompactionStateSchema.nullable().default(null),
     activeInferenceDelays: z.array(InferenceDelayStateSchema).default([]),
-    /**
-     * The open suggestions on the newest turns, for a build that draws them.
-     * Optional, and stripped by `safeParseSocketEvent` on a build that does
-     * not know the key. Builds that already know the key still reject unknown
-     * kind enum values: the server filters resolution suggestions below
-     * RESOLUTION_SUGGESTIONS_CLIENT_CONTRACT.
-     */
-    suggestions: z.array(ConversationSuggestionSchema).optional(),
-  }).strict(),
-  ServerEventBaseSchema.extend({
-    type: z.literal("initial_context_snapshot_chunk"),
-    snapshotId: z.string().min(1),
-    chunkIndex: z.number().int().nonnegative(),
-    chunkCount: z.number().int().positive(),
-    json: z.string(),
   }).strict(),
   ServerEventBaseSchema.extend({
     type: z.literal("pending_inputs_snapshot_chunk"),
@@ -3642,16 +2674,6 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("workstream_scope_changed"),
     scope: ScopeSchema
-  }),
-  /**
-   * A conversation suggestion was opened, filled with its draft, or resolved.
-   * The row's full state travels each time, so a client replaces what it
-   * holds for that suggestion id. A build that does not know the type ignores
-   * the frame, which is why the event needs no contract gate.
-   */
-  ServerEventBaseSchema.extend({
-    type: z.literal("conversation_suggestion_changed"),
-    suggestion: ConversationSuggestionSchema,
   }),
   StreamEventBaseSchema.extend({
     type: z.literal("stream_started"),
@@ -3745,26 +2767,6 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
  * consumer's processing-claim keys already use for host-owned metadata.
  */
 export const ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY = "_streamNotDigestible";
-
-/**
- * A place inside a provider that a work stream can be started from — a Slack
- * thread, a Linear issue, a GitHub pull request.
- *
- * This is the connector half of a work stream's origin attachment, and it
- * deliberately names no connection and no provider: a connector knows *which
- * object*, and only the host knows which installed credential it was reached
- * through. Keeping those apart is what stops an adapter from being able to
- * describe an origin against somebody else's connection.
- * See `docs/workstream-origin-attachments.md`.
- */
-export const ConnectorOriginResourceSchema = z.strictObject({
-  /** Must be one the connector's manifest declares in `resourceTypes`. */
-  resourceType: z.string().min(1).max(80),
-  providerResourceId: z.string().min(1).max(500),
-  title: z.string().min(1).max(300),
-  canonicalUrl: HttpUrlSchema.nullable().default(null),
-  metadata: z.record(z.string(), z.unknown()).default({}),
-});
 
 export const NormalizedActivitySchema = z.object({
   id: IdSchema,
@@ -3906,6 +2908,8 @@ export const SlackSearchAuthorizationSchema = z.strictObject({
   actionToken: z.string().min(1).max(4096)
 });
 
+// Not strict: a run context stored by the removed demo seeder carries a `seed`
+// key, which this schema strips rather than refuses (docs/agent-harness.md).
 export const WorkstreamWorkflowInputSchema = z.object({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
@@ -3978,6 +2982,13 @@ export const WorkstreamWorkflowInputSchema = z.object({
   }).optional(),
   /** The received agent exchange supplies discovery scope and the ordinary reply reference. */
   agentExchange: AgentExchangeSchema.optional(),
+  /**
+   * Set on a turn in a Sidekick's shared conversation (substream `"0"`), which
+   * the Sidekick has already routed to its wizard: every other input there
+   * starts a run or is refused before a turn exists. The only turn that loads
+   * the authoring tools; `docs/automation-lifecycle.md` owns the routing.
+   */
+  sidekickWizard: z.literal(true).optional(),
   /** Host-derived conversation kind; not a model-selectable execution option. */
   backgroundAgent: z.boolean().optional(),
   activityId: IdSchema.nullable(),
@@ -3998,16 +3009,6 @@ export const WorkstreamWorkflowInputSchema = z.object({
   telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).optional(),
   slackOrigin: SlackOriginContextSchema.optional(),
   slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),
-  /**
-   * Set on a run a demo seed started. The harness answers this run's provider
-   * requests from the seed's turn instead of reaching OpenRouter, and nothing
-   * else about the run differs. Carried from the message's authorization into
-   * the execution context at activation, and from an opening message's context
-   * at initialize. A run an elicitation answer resumes is built from the answer,
-   * not from this context, so it is never seeded. Optional so every existing
-   * producer keeps parsing unchanged; `docs/demo-workspaces.md` owns it.
-   */
-  seed: DemoSeedSchema.optional(),
   reason: z.string().min(1).max(500)
 });
 export const ConnectorPollWorkflowInputSchema = z.object({
@@ -4516,8 +3517,6 @@ export type ConnectorUserDelivery = z.infer<typeof ConnectorUserDeliverySchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
 export type Elicitation = z.infer<typeof ElicitationSchema>;
-export type WorkOpportunity = z.infer<typeof WorkOpportunitySchema>;
-export type WorkOpportunityPage = z.infer<typeof WorkOpportunityPageSchema>;
 export type AutomationDraft = z.infer<typeof AutomationDraftSchema>;
 export type AutomationMemoryTable = z.infer<typeof AutomationMemoryTableSchema>;
 export type AutomationMemoryTableColumn = z.infer<typeof AutomationMemoryTableColumnSchema>;
@@ -4527,14 +3526,6 @@ export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;
 export type AutomationRun = z.infer<typeof AutomationRunSchema>;
 export type AutomationRunStatus = z.infer<typeof AutomationRunStatusSchema>;
 export type ActivitySourcePluginIds = z.infer<typeof ActivitySourcePluginIdsSchema>;
-export type DigestSchedule = z.infer<typeof DigestScheduleSchema>;
-export type DigestDeliveryTarget = z.infer<typeof DigestDeliveryTargetSchema>;
-export type DigestDeliveryTargetType = z.infer<typeof DigestDeliveryTargetTypeSchema>;
-export type UpdateDigestScheduleRequest = z.infer<typeof UpdateDigestScheduleRequestSchema>;
-export type WorkstreamBatchFilter = z.infer<typeof WorkstreamBatchFilterSchema>;
-export type WorkstreamBatchUpdate = z.infer<typeof WorkstreamBatchUpdateSchema>;
-export type PreviewWorkstreamBatchRequest = z.infer<typeof PreviewWorkstreamBatchRequestSchema>;
-export type ApplyWorkstreamBatchRequest = z.infer<typeof ApplyWorkstreamBatchRequestSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type ConnectorOAuthProvider = z.infer<typeof ConnectorOAuthProviderSchema>;
 export type ConnectorOAuthAttemptStatus = z.infer<typeof ConnectorOAuthAttemptStatusSchema>;
@@ -4548,8 +3539,6 @@ export type WorkstreamMessageAdmissionReceipt = z.infer<typeof WorkstreamMessage
 export type ActiveStreamCheckpoint = z.infer<typeof ActiveStreamCheckpointSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
 export type NormalizedActivity = z.infer<typeof NormalizedActivitySchema>;
-export type ConnectorOriginResource = z.infer<typeof ConnectorOriginResourceSchema>;
-export type ConnectorOriginResourceInput = z.input<typeof ConnectorOriginResourceSchema>;
 export type ActivityQueueMessage = z.infer<typeof ActivityQueueMessageSchema>;
 export type SlackIngressQueueMessage = z.infer<typeof SlackIngressQueueMessageSchema>;
 export type ExecutionPrincipal = z.infer<typeof ExecutionPrincipalSchema>;
@@ -4712,7 +3701,7 @@ export type ConnectorResourceAuthorizationHint = z.infer<typeof ConnectorResourc
 
 export const ConnectorResourceAuthorizationRequestSchema = ConnectorResourceAuthorizationHintSchema.extend({
   connectionId: IdSchema,
-  parentKind: ConversationParentKindSchema.default("workstream"),
+  parentKind: ConversationParentKindSchema,
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
   failedToolInvocationId: z.string().min(1),
@@ -4741,7 +3730,7 @@ export function connectorResourceAuthorizationRequestFromToolEvent(
 }
 
 export const ConnectorResourceAuthorizationTargetSchema = z.strictObject({
-  parentKind: ConversationParentKindSchema.default("workstream"),
+  parentKind: ConversationParentKindSchema,
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
   failedToolInvocationId: z.string().min(1),
@@ -4881,67 +3870,6 @@ export const SidekickAttachmentSchema = z.object({
 });
 export type SidekickAttachment = z.infer<typeof SidekickAttachmentSchema>;
 
-/** A resource attached to a Channel's Main conversation, as its rail lists it. */
-export const ChannelRailResourceSchema = z.strictObject({
-  id: IdSchema,
-  title: z.string().max(300),
-  resourceType: z.string().min(1).max(80),
-  mimeType: z.string().max(160).nullable(),
-  direction: ResourceDirectionSchema,
-  currentVersion: z.number().int().positive(),
-});
-export type ChannelRailResource = z.infer<typeof ChannelRailResourceSchema>;
-
-/**
- * An owned Sidekick as the rail lists it: the summary without its run times
- * and update time, which move on every scheduled run and which the rail does
- * not show, so they do not advance the rail waterline.
- */
-export const ChannelRailOwnedSidekickSchema = WorkstreamAutomationSummarySchema.omit({
-  nextRunAt: true,
-  lastRunAt: true,
-  updatedAt: true,
-});
-export type ChannelRailOwnedSidekick = z.infer<typeof ChannelRailOwnedSidekickSchema>;
-
-/** Everything a Channel's rail lists beyond its row, for one viewer. */
-export const ChannelRailSchema = z.strictObject({
-  workstreamId: WorkstreamIdSchema,
-  railWaterline: z.number().int().nonnegative(),
-  /** Main's participants, newest first. */
-  participantUserIds: z.array(UserIdSchema),
-  sidekicks: z.strictObject({
-    /** Empty unless the viewer is a member participant, as the REST read. */
-    owned: z.array(ChannelRailOwnedSidekickSchema),
-    recommended: z.array(SidekickAttachmentSchema),
-    /** Main's attachments; absent until Main has reported them. */
-    attached: z.array(SidekickAttachmentSchema).optional(),
-  }),
-  resources: z.array(ChannelRailResourceSchema),
-});
-export type ChannelRail = z.infer<typeof ChannelRailSchema>;
-
-/**
- * One frame of a `channel_rails` answer. A long answer spans frames; the last
- * says `final`.
- */
-export const WorkspaceChannelRailsEventSchema = z.strictObject({
-  type: z.literal("workspace_channel_rails"),
-  requestId: IdSchema,
-  rails: z.array(ChannelRailSchema),
-  /** Rails too large for one frame; the client paints these from the snapshot. */
-  oversized: z.array(z.strictObject({ workstreamId: WorkstreamIdSchema, railWaterline: z.number().int().nonnegative() })),
-  /** Named Channels this viewer may not see, or that have no rail yet. */
-  unavailable: z.array(WorkstreamIdSchema),
-  /**
-   * Always null: it paged the Space target, which is gone. Still sent, since
-   * desktops before this change require it; optional so a later server can
-   * stop sending it.
-   */
-  nextAfter: WorkstreamIdSchema.nullable().optional(),
-  final: z.boolean(),
-});
-export type WorkspaceChannelRailsEvent = z.infer<typeof WorkspaceChannelRailsEventSchema>;
 export const SidekickAttachmentsSchema = z.object({ items: z.array(SidekickAttachmentSchema) });
 /** Sources eligible for an explicit workstream recommendation in this conversation. */
 export const SidekickRecommendationOptionsSchema = z.object({

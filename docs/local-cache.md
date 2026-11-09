@@ -1,13 +1,12 @@
 # Local cache
 
-Opening a Space, a Channel, or a Breakout paints from what the device last saw
-before the socket that owns it answers. The desktop keeps one IndexedDB
-database, `rally-local-cache`, holding the last first page of the workspace
-directory and the last canonical state of every conversation the reader opened
-or the socket pool warmed. It also holds [attachment image bytes](attachment-preview-cache.md),
+Opening a Canvas or a Sidekick paints from what the device last saw before the
+socket that owns it answers. The desktop keeps one IndexedDB database,
+`rally-local-cache`, holding the Canvases and Sidekicks lists and the last
+canonical state of every conversation the reader opened. It also holds [attachment image bytes](attachment-preview-cache.md),
 validated by the API before reuse. On the next launch, or the next open of a room whose
-socket is still cold, the sidebar, the Channel screen, and the transcript are
-on screen immediately; a small floating card says the live connection is on its
+socket is still cold, the sidebar and the transcript are on screen
+immediately; a small floating card says the live connection is on its
 way, and the composer accepts a draft but does not send until it has arrived.
 
 Nothing in the cache is authoritative. A cached value is a *seed*: it paints,
@@ -33,19 +32,15 @@ here, with reconciliation and retries owned by the linked projection document.
 | `apps/desktop/src/renderer/lib/local-cache-scope.tsx` | `LocalCacheScopeProvider` and `useLocalCacheScope`: the regional workspace every row below it belongs to. No provider, no cache. |
 | `apps/desktop/src/renderer/lib/conversation-cache.ts` | The `conversation` slice: one row per `(parent, substream)`, `hydrateConversation`, `mirrorConversation`, the seed marker, and the pruning and forgetting entry points. |
 | `apps/desktop/src/renderer/lib/organization-usage.ts` | The `usage` slice: one row per Organization scope holding the last `GET /workspace/usage` answer and when it arrived; `useOrganizationUsage`, which seeds from it and writes each answer back. |
-| `apps/desktop/src/renderer/lib/workspace-directory-cache.ts` | The `directory` slice: one row per workspace holding the Channel list, the automation and note lists, and both Space directories; `hydrateWorkspaceDirectory`, `mirrorWorkspaceDirectory`. |
+| `apps/desktop/src/renderer/lib/canvas-directory-cache.ts` | The `canvas-directory` slice: one row per workspace holding the Canvases and Sidekicks lists the socket last applied; `hydrateCanvasDirectory`, `mirrorCanvasDirectory`. |
 | `apps/desktop/src/renderer/lib/transcript.ts` (`openingTranscriptSnapshot`) | The shape a transcript is persisted in: its opening ranges only. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Hydrates a conversation at effect start, mirrors it while mounted, and treats a seed as neither a completed opening nor a snapshot fence. |
-| `apps/desktop/src/renderer/lib/channel-rails.ts` | Holds each Channel's rail at the waterline it was answered at, decides which rails are stale and what to ask for next, and reads and seeds the rails the directory row keeps. |
-| `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Prunes cached children that left the parent's private-child roster, from the breakout list each Channel row carries on the workspace socket; reads those lists for the directory row and seeds them back from it. |
-| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Hydrates the directory before connecting, mirrors it after the first subscribe answer, and prunes conversations whose parent that answer no longer lists. |
+| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Hydrates the `canvas-directory` row before connecting, mirrors it once the socket has applied each list, and prunes conversations whose Canvas or Sidekick the subscribe answer no longer lists. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `evictCachedWorkstream` and `evictCachedSubstream` forget the disk along with the memory. |
 | `apps/desktop/src/renderer/lib/app-session.tsx` | Wipes the whole cache when the account leaves the device and one workspace's rows when that membership ends or the workspace refuses the account, beside the draft cache's wipes. |
 | `apps/desktop/src/renderer/App.tsx` | Mounts the scope provider above the workspace socket provider. |
 | `apps/desktop/src/renderer/components/connecting-card.tsx` | The floating card, connecting, waiting for a connection, or failed with a retry, and the always-mounted slot that is its live region. |
-| `apps/desktop/src/renderer/components/substream-launch.tsx` | Carries the parent's card and send gate while a substream is branched off a seed. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Reads the seed marker: shows the card, gates sending, and holds range loads and read acknowledgements until the feed is live. |
-| `apps/desktop/src/renderer/screens/workstream.tsx` (`useChannelRail`) | Feeds the Channel title-pill menu's people, Sidekicks and artifacts from the Channel's rail while the conversation has no detail yet. |
 | `apps/desktop/src/renderer/components/workstream-composer.tsx` | `sendBlocked`: everything but sending. |
 
 ## How it works
@@ -60,10 +55,8 @@ retention starts. It does not create empty entries, fetch, change values, or
 change their garbage-collection duration. On release, the ordinary cache
 collection rules resume. Multiple producers can hold the same entry.
 
-The workspace socket holds its directories, feature flags, access-recovery
-nudge and work-stream
-ordering ledgers, and each Channel's breakout list and the version stored
-with it, which arrive on that Channel's row. Each conversation socket holds its
+The workspace socket retains exactly three entries: the `canvases` and
+`automations` sidebar lists and the client feature flags. Each conversation socket holds its
 detail, transcript, inherited context, streaming overlays, feed source and
 snapshot generation. These leases follow the socket-owning effects, including
 background retention and reconnects, rather than the visible route.
@@ -75,8 +68,8 @@ ones made without a mounted socket. New socket-owned entries use the lease;
 the sidebar ledger's explicit eviction still applies.
 
 `retainQueryData` holds in-memory entries. The adjacent
-`retainConversationParents` / `retainConversationChildren` calls instead prune
-the persisted cache to a keep-set; they do not supply these in-memory leases.
+`retainConversationParents` call instead prunes the persisted cache to a
+keep-set; it does not supply these in-memory leases.
 
 Explicit removal still wins: the lease releases the removed entry without
 recreating it or restoring its old data. If the producer later writes a new
@@ -105,8 +98,8 @@ rows, whatever order a wipe and a hydration run in. A guest's scope adds
 cached as a member; leaving the workspace deletes both ranges. A *kind* names the slice
 that owns the row's shape. The *subject* is what
 the row is about, for removal by identity rather than by key: every
-conversation under one work stream carries the work stream's id, so losing the
-work stream drops them all in one index scan. Two indexes, `[kind, subject]`
+conversation under one parent (a Canvas or a Sidekick) carries the parent's id,
+so losing the parent drops them all in one index scan. Two indexes, `[kind, subject]`
 and `[kind, key]`, are what let an eviction that knows only an id reach every
 scope.
 
@@ -130,13 +123,17 @@ for the same boundaries within one renderer, while other slices keep their
 existing global local-epoch behavior. This uses the existing entries store
 without a schema upgrade; metadata rows have an empty scope outside user rows.
 
-Three slices exist today, and the next surface that wants to paint before its
-answer arrives defines another:
+Three slices are listed below; the fourth, `resource-image-preview`, is
+[`attachment-preview-cache.md`](attachment-preview-cache.md)'s. The next surface that wants to paint before its
+answer arrives defines another. The `directory` slice, which held the Channel
+and Thread directory, is no longer read or written (2026-11 cutover); rows a
+device wrote before stay on disk, unread, until the workspace's rows are
+cleared.
 
 | Slice | Key | Subject | Holds |
 | --- | --- | --- | --- |
-| `directory` | `directory` | `directory` | The Channel list as the sidebar holds it, each of those Channels' breakout lists and rails, the automation list, the active and archived Space directories, and the compatible personal-order payload used by the manually arranged Space rail. |
-| `conversation` | `<parentId>:<substreamId>` | `<parentId>` | The `WorkstreamDetail` the header and composer read, the transcript trimmed to its opening ranges, and a private child's inherited context. |
+| `canvas-directory` | `canvas-directory` | `canvas-directory` | The Canvases list (`workspace_canvas_list` rows) and the Sidekicks list, each only once the socket has applied it in the writing session; an absent list seeds nothing. |
+| `conversation` | `<parentId>:<substreamId>` | `<parentId>` | The `WorkstreamDetail` the header and composer read, the transcript trimmed to its opening ranges, and a child conversation's inherited context. |
 | `usage` | `usage` | `usage` | The last `OrganizationUsage` answer, the plan, the share of the week's quota left, the reset instant and the month's overage, and `fetchedAt`, the time it arrived. |
 
 The store is best-effort by construction, like the draft cache beside it: every
@@ -144,121 +141,29 @@ operation resolves to its fallback rather than throwing. A renderer with no
 IndexedDB, no quota, or a corrupt database opens every screen the way it did
 before the cache existed, waiting for the socket.
 
+Every window on the origin shares one database, and the desktop app always
+has a second one: main builds the Settings window ahead of time and keeps it
+hidden. An upgrade or deletion of the database waits until every connection
+to it closes, and every open queued behind it waits too, with no success,
+error or blocked event, so one window that holds its connection hangs every
+cache read in every window, and a preview, which reads the cache before it
+fetches, never loads. A connection therefore closes itself as soon as it is
+told of a version change, and the next call reopens. An open that another
+connection blocks answers its fallback at once and stays queued; once it
+succeeds it serves the calls after it.
+
 ### What opening a workspace paints
 
-`WorkspaceSocketProvider` reads the `directory` row for its scope before it
-dials. If the work-stream list is still empty, the cached lists go straight
-into the query-cache entries the sidebar, the landing route, and the Space
-dashboard read: `['workstreams']` through `setCachedWorkstreams`, `['automations']`,
-`['spaces']`, `['spaces-inactive']`, and `['personal-order']` — the compatible
-ordering payload whose Organization entry arranges the Space pills. They go in directly,
-not through the versioned receivers, because a seed has no waterline and must
-not move a ledger; the ledgers stay at their empty state, which is what lets
-the socket's first subscribe answer apply over the seed whatever version it
-carries. The socket-owned directory is seeded as a unit or not at all. Navigation
-queries are seeded individually only when absent: the socket can win the race
-with disk without supplying the REST-owned My Threads page.
-
-The current navigation lists are restored in that same batch: pins, pinned
-artifacts, Channel stats and the first page of My Threads (including all pinned
-thread and breakout rows). Restoring just the directory would first draw every
-Channel unpinned, then animate the pins into place when the socket answers.
-The mirror watches these queries too, so pinning without a directory change
-updates the next launch. Only the first thread page is kept, with its cursor;
-My Threads refreshes through REST. Seeded Channel stats are explicitly
-invalidated without starting a refetch: they can paint immediately, but even
-Infinity-stale-time readers must refresh before choosing an opening unread
-position. A fresh REST or socket answer replaces the seed. Thread rows are validated as mapped client summaries, preserving
-fields such as preview, rather than as server wire objects. Each navigation
-list is parsed independently so an unreadable list does not discard the others.
-Existing in-memory answers always win over disk.
-Older rows without navigation remain readable and wait for the live lists.
-
-With the lists present, the sidebar draws rows instead of skeletons, the
-landing route resolves to the first Channel without waiting, and a Space
-dashboard renders its header and its placements. The subscribe answer then
-arrives through the ordinary path described in
-[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md): page one is
-merged over the resident rows, a whole-directory payload replaces them, and a
-resident row page one cannot account for triggers the existing reconciling
-refetch, which is what retires a seeded row for a work stream archived while
-the device was away.
-
-The ordering *is* on the row, and it did not move the version. Without it a cold
-launch paints the manually arranged Space pills in the directory's serialization
-order and reshuffles it a moment later — the visible flicker the seed exists to
-prevent. Legacy Space- and Channel-container entries remain in the shape but are
-ignored by the alphabetical Channel list and the Channel menu's Breakouts. A version 3 row written
-before it existed has no `ordering` key, and `parse` reads that absence as an
-empty arrangement: the natural order for one launch, corrected by the first
-payload. Bumping to version 4 to avoid that would have dropped every cached row
-and cost every person a cold, empty sidebar, which is the more expensive of the
-two by a wide margin. The rule the slice is under is unchanged — the version
-moves when the shape changes in a way `parse` *cannot* absorb.
-
-That absorption is the one claim the decision rests on, so
-`workspace-directory-cache.test.ts` writes a row at the slice's *own* version
-with no `ordering` key and asserts it hydrates with an empty arrangement.
-Written at version 3 rather than an older one deliberately: an older version
-never reaches `parse` at all, so a test that used one would pass on the version
-gate and prove nothing about the shape. Requiring the key makes it fail, which
-is what somebody tightening `parseCachedDirectory` later needs it to do — the
-alternative is every person on the branch getting a cold, empty sidebar on their
-next launch with nothing failing.
-
-For cached and live resolved state, see [merge-back](conversation-merge.md#resolution-and-archiving).
-
-**Each listed Channel's breakout list is on the row too**, under `breakouts`,
-keyed by Channel id and holding only the Channels the row keeps. A cold launch
-seeds them into the `workstream-children` entries the Channel menu and the
-Breakout ticks read, so a Channel's breakouts paint when its sidebar row does. They go in with no state
-version and no waterline, so the first live row for each Channel replaces its
-list whatever its numbers say, and a seed prunes nothing from the disk. A row
-written before the key existed reads as no lists, which is how every Channel
-waited before, for one launch; that absence has a correct reading, so the
-version did not move. A single Channel's list this build cannot read is left
-out alone, since it costs that Channel's menu its opening Breakouts and nothing else.
-
-`spacesReady` is deliberately **not** on the row. It is the Organization's
-current cutover state rather than something the device last saw, and a
-remembered `true` would paint a hierarchy the next connect may contradict; the
-surfaces read a missing answer as ready, which is the same thing a cached
-`true` would have said and one fewer place for it to go stale. The row's
-version went to **3** for the same reason in reverse: a version 2 row holds
-Project directories and Channel rows written before `spaceIds` existed, and a
-Channel in no Space is a state no surface is allowed to render.
-
-**Version 4 is a Space's `reach`**, and it is the other half of the same rule.
-A cached Space summary written before that field says nothing about *why this
-person* can see the Space, and a device holds nothing to derive it from — so
-`parse` has no reading to give it. Both absences it could be filled with are
-visibly wrong where a reader can see the row: the full relationship draws a
-plus, an **Add to space** entry and a drop target on a Space every write on
-which the server refuses, and the narrow one takes those controls off every
-Space on screen and puts them back a moment later.
-[`spaces.md`](spaces.md#who-may-see-a-space-and-why) owns what the field means.
-
-After the first live payload the provider mirrors those entries back to the
-row: any change to any of them schedules one write, coalesced over
-`LOCAL_CACHE_WRITE_COALESCE_MS`. Until that payload has landed the mirror
-observes and writes nothing, so the seed never persists itself.
-
-### What a Channel's menu shows before its conversation answers
-
-The Channel sidebar and its `renderOpeningSidebar` paint were removed with the
-shell redesign ([`desktop-shell.md`](desktop-shell.md)); no host passes either
-any more. The record kept the name: a Channel's *rail* is now what its title-pill
-menu reads while the conversation's snapshot is in flight (`useChannelRail` in
-`screens/workstream.tsx`), and the menu's Breakouts come from the breakout list.
-A rail is the Channel's people, its owned,
-recommended and attached Sidekicks, and its Channel resources, which the
-workspace socket sends with each Space's Channel rows ahead of need
-(`lib/channel-rails.ts`; the protocol is in
-[`realtime-sockets.md`](realtime-sockets.md)). Rails ride the `directory` row
-under `rails`, read like `breakouts`, each kept at the `railWaterline` it was
-answered at: a waterline and its data are committed together, so a live row at
-the same waterline asks for nothing. Without a rail, the people and the
-Sidekicks wait for the snapshot.
+`WorkspaceSocketProvider` reads the `canvas-directory` row for its scope before
+it dials and seeds the Canvases list and the Sidekicks list into their cache
+entries, each only if nothing has written it yet, so the sidebar draws rows
+instead of skeletons and the rail's counts are on screen at once. A seed goes in
+directly, not through the versioned receiver, because it has no waterline and
+must not move a ledger; the ledger stays empty, which is what lets the socket's
+first subscribe answer apply over the seed whatever version it carries. The
+mirror writes a list only once `sidebarListApplied` says the socket's waterline
+ledger holds it, which a seed never writes, so a launch that never connected
+cannot write its own seed back.
 
 ### What opening a conversation paints
 
@@ -308,9 +213,8 @@ and the hook's mirror starts persisting: every change to the three entries
 schedules one coalesced write of the detail (with presence emptied, since
 viewers are a live fact about other people's windows), the transcript trimmed
 by `openingTranscriptSnapshot`, and the child's context. The mirror lives for
-as long as the hook does, which for a pooled work stream is the pool's
-retention, so the rows of warm and recently viewed work streams stay fresh
-without anyone opening them.
+as long as the hook does, which is as long as its conversation is open; a
+conversation nobody opens keeps the row it last wrote.
 
 The transcript is persisted in its opening shape, never with the pages the
 reader scrolled into. The socket's first frame is an `initial` snapshot, which
@@ -325,9 +229,9 @@ swap is invisible and in every case it is never a collapse.
 `ConnectingCard` is one component with three states, and `ConnectingCardSlot`
 is where it floats. Over a conversation the slot is zero-height and sticky at
 the top of the transcript scroller, so the card floats over the first rows
-without pushing them down and leaves no layout jump when it goes; over a
-Space dashboard the slot is absolute, below the title bar's drag strip so the
-card never takes a window's drag handle. The slot is the `polite` live region
+without pushing them down and leaves no layout jump when it goes. A host that
+places the slot over something other than a scroller positions it below the
+title bar's drag strip so the card never takes a window's drag handle. The slot is the `polite` live region
 and stays mounted whether or not a card is in it: a live region that mounts
 with its text already present is generally not announced, only a change inside
 one is. The card lets the pointer through to the rows under it; only its
@@ -336,11 +240,9 @@ awaiting its snapshot, `Waiting for a connection to <name>…` while the desktop
 is offline, and `Rally could not connect to <name>.` with the hook's opening
 error and a **Retry** that restarts the opening sequence once the three
 attempts are spent; the line saying what waits for the connection stays on the
-failed card, since that is the moment someone tries to send. A work stream
-Rally is still naming is `this work stream` rather than its placeholder
-title. A Space's card follows the workspace
-socket instead: it shows until the first subscribe answer has replaced the
-seeded directory, since a Space has no socket of its own.
+failed card, since that is the moment someone tries to send. A conversation
+Rally is still naming is `this Canvas` or `this Sidekick` rather than its
+placeholder title.
 
 The composer over a seed is the ordinary composer with `sendBlocked`: typing,
 mentions, attachments, the slash commands, and the draft all work, and the
@@ -352,19 +254,7 @@ the card the eye is already on, and the send button's own label says it too,
 for whoever reaches the button without seeing the card. The gate lifts when
 the live snapshot lands, not when the socket opens: a message admitted against
 a seed's transcript would position its optimistic row against a fence the room
-has not confirmed. Branching a substream off a seed is gated the same way: the
-launch surface carries the parent's card and `sendBlocked`, because a branch
-persists the turn id it was taken from, which the room has not confirmed
-either.
-
-A Space painted from the seed is read-only until the directory is live.
-Every Space edit sends the whole record back, so a rename made against the
-seed would carry an icon, a colour, or an audience another client changed
-since the row was written. The rename, the appearance picker, the audience,
-the participants, archive and restore, and the resource and Sidekick defaults
-are disabled while `directoryFromLocalCache` holds, the card's second line says
-editing is available once Rally connects, and the Channel links and the **New
-channel** plus still navigate.
+has not confirmed.
 
 ### What the usage meter paints
 
@@ -390,22 +280,12 @@ write. The PRD owns what each state shows.
 
 The bound on this cache is membership, not a number or an age:
 
-- **The directory prunes parents.** A finished walk of every Space, or a live
-  subscribe answer that carries the whole directory (one with no
-  `nextCursor`), keeps the conversations whose
-  parent is a row in it or an automation in its list, and removes the rest for
-  that scope. Page one of a longer directory prunes nothing: it cannot tell a
-  parent on a later page from one that is gone, which is the same reason the
-  sidebar merges such a page rather than replacing its rows. On a paged
-  workspace the disk follows evictions and the child rosters. The directory row itself holds one
-  page of the flat list, `WORKSTREAM_PAGE_SIZE` rows, however many pages the
-  sidebar has loaded, so the next launch paints what a fresh subscribe answer
-  would carry and the live answer replaces it without a visible collapse.
-- **The Channel row prunes children.** A Channel's row on the workspace socket
-  names the private children this reader may still open; a cached child that
-  left that roster is removed. The roster followed is the one the version guard
-  accepted into the query cache, so a stale frame the cache rejects prunes
-  nothing. The main conversation always stays.
+- **The lists prune parents.** A live subscribe answer keeps the
+  conversations whose parent is a Canvas or a Sidekick in its lists, and
+  removes the rest for that scope.
+- **Children leave with their parent.** No list names a parent's children
+  since the Channel row went at the 2026-11 cutover, so a cached child, such as
+  a Sidekick run's conversation, is removed with its parent or by eviction.
 - **Eviction forgets the disk.** `evictCachedWorkstream` removes every row
   under the parent in every scope, and `evictCachedSubstream` one child, so an
   access revocation or an archive never leaves a transcript on disk that the
@@ -443,18 +323,12 @@ described in [attachment image caching](attachment-preview-cache.md).
   never merged with it.** Break either fence bypass, the transcript's or the
   resume registry's, and a room rebuilt since the row was written is dropped as
   older than the seed for the rest of the session.
-- **A remembered Space is read-only until the directory is live.** Break it
-  and a rename made under the card writes the seed's icon, colour, or audience
-  over what another client changed while the device was away.
 - **Only state the server delivered is persisted.** The conversation mirror
-  writes only while the feed source is `socket_snapshot`; the directory mirror
-  only after the first subscribe answer; the usage slice only a
+  writes only while the feed source is `socket_snapshot`; the `canvas-directory` mirror only a
+  list `sidebarListApplied` says the socket's waterline ledger holds; the usage slice only a
   `GET /workspace/usage` answer or a `workspace_usage` push. Break it and a seed, or a launch surface's
   optimistic turn, becomes what the next launch paints, with no live frame
   having vouched for it.
-- **A seeded breakout list holds no version.** Break it and the first live
-  row for a Channel, numbered below what the device remembered from a room
-  rebuilt since, is dropped, and the Channel menu shows breakouts that are gone.
 - **Hydration lands only in empty caches.** Break it and a read that lands
   after the live snapshot puts the older state back over it.
 - **A seed moves no ledger.** The waterline ledgers stay untouched by
@@ -492,7 +366,7 @@ gate. It does not own:
 | --- | --- |
 | The draft the composer keeps, a different database with a different lifetime on the same `createIndexedDbStore` | [`composer-drafts.md`](composer-drafts.md) |
 | Which channel carries what, and the waterline ledgers a seed must not touch | [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) |
-| The socket pool, retention, and the pair a work stream opens | [`websocket-architecture.md`](websocket-architecture.md) |
+| Socket ownership, retention, and the pair a conversation opens | [`websocket-architecture.md`](websocket-architecture.md) |
 | Ticket admission and what the first frame carries | [`realtime-sockets.md`](realtime-sockets.md) |
 | The feed, the composer, and the surface the card sits in | [`conversation-surfaces.md`](conversation-surfaces.md) |
 | What the `local_cache` feed source means to the open-latency events | [`telemetry.md`](telemetry.md) |
@@ -516,7 +390,7 @@ lifetimes.
 
 - **No IndexedDB, no quota, a corrupt database:** every read answers null and
   every write reports false. Screens wait for the socket as they did before.
-- **A row for a work stream archived or revoked while the device was away:**
+- **A row for a conversation archived or revoked while the device was away:**
   the sidebar seed lists it and, if it is opened, its transcript paints. The
   live directory then retires the row, the ticket request answers 404 and the
   hook keeps retrying with backoff, and the opening deadline reports the
@@ -533,7 +407,7 @@ lifetimes.
   after the revocation seeds nothing, because the hook's `stillWanted` reads
   `accessRevoked` as well as its own teardown.
 - **The seed's run state and unread marks are stale until the snapshot lands.**
-  A work stream that was running when the row was written paints as running
+  A conversation that was running when the row was written paints as running
   for the second or two the socket takes. The card is what says so.
 - **A quit inside the coalescing window** loses at most that window of changes;
   the previous row stands.
@@ -544,6 +418,11 @@ lifetimes.
   directory and the child rosters still list, each holding the opening ranges
   rather than the whole transcript. There is no count and no age; membership is
   the bound, and a workspace's rows go with its membership.
+- **A window running a build from before connections yielded** (a stale
+  browser tab across a deploy) can still hold the database open against an
+  upgrade or a deletion; opens queued behind it then wait with no event, and
+  previews in that browser stay on their placeholder until the tab closes.
+  There is no deadline on an open: one would be a limit the team sets.
 - **Fake timers in a test stall the fake IndexedDB**, which schedules its work
   on `setImmediate` at call time. See [Testing](#testing).
 
@@ -577,20 +456,17 @@ same way it backs the draft cache. Two traps, both already paid for once:
 
 The suites are `components/organization-usage.test.tsx` (the `usage` slice: cached paint, the offline label, the write-back; the plan-change push and the reread on subscribe are in `lib/workspace-socket.test.tsx`),
 `lib/local-cache.test.ts`, `lib/local-cache-mirror.test.ts`,
-`lib/conversation-cache.test.ts`, `lib/workspace-directory-cache.test.ts`,
+`lib/conversation-cache.test.ts`, `lib/canvas-directory-cache.test.ts`,
 `components/connecting-card.test.tsx`, the `openingTranscriptSnapshot` cases in
 `lib/transcript.test.ts`, and the local-cache blocks appended to
-`lib/use-workstream-socket.test.tsx`, `lib/workspace-socket.test.tsx`,
-`screens/workstream-open.test.tsx`,
-`screens/space-dashboard.test.tsx`, and
+`lib/use-workstream-socket.test.tsx`, `lib/workspace-socket.test.tsx`, and
 `components/workstream-composer.test.tsx`. Run one with
 `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/conversation-cache.test.ts`.
 
 The hook tests were proved able to fail the way the invariants say: skipping
 the fence bypass leaves the seed's title on screen after the live snapshot;
 letting a seed complete the opening stops the deadline counting attempts, so
-the terminal failure never arrives; dropping the directory's pruning leaves the
-forgotten conversation on disk; and removing the send gate lets the composer
+the terminal failure never arrives; and removing the send gate lets the composer
 send over a seed.
 
 ## Security and trust model
@@ -620,6 +496,31 @@ is small. The cost that would grow is the persisted transcript, and
 scrolling.
 
 ## Changelog
+
+### 2026-11-09 — A connection yields to another window's version change
+
+**What changed:** `createIndexedDbStore` closes its connection when told of a
+version change and reopens on the next call. An open another connection blocks
+still answers the fallback, and now serves later calls once it succeeds instead
+of leaving the cache off until reload.
+
+**Why:** A visual check deleted `rally-local-cache` from the main window while
+the hidden Settings window held it open. The deletion waited, every later open
+in every window waited behind it with no event, and artifact previews, which
+read the cache before fetching, sat on "Loading preview…" across reloads. No
+product code deletes the database, but any future version bump meets the same
+wait while another window holds the old version.
+
+**Considered and rejected:** A deadline on opening the database, or fetching
+a preview without waiting on the cache, would cover a window that never
+yields, but needs a number the team has not set; with every window of a build
+yielding, only a stale tab from an older build can still hold it.
+
+**Consequences:** Never hold a connection against a version change, and never
+assume the store's connection outlives one; it is reopened on demand. A
+version bump is safe across windows of builds that carry this change.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-21 — Fence image saves across browser tabs
 

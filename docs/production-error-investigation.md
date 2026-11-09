@@ -198,7 +198,7 @@ that the latest Parquet roll is already queryable.
 
 Use the inference lakehouse only when the question requires what Rally sent to
 or received from a model provider. Begin with typed dimensions for one Global
-work stream, substream, request, and bounded time range; retrieve raw request or
+conversation (`workstream_id`), substream, request, and bounded time range; retrieve raw request or
 response JSON only after the typed rows identify the exact inference pair. The
 full procedure is in
 [`Inspecting a run's raw inference`](runbook.md#inspecting-a-runs-raw-inference).
@@ -207,7 +207,7 @@ full procedure is in
 
 When an event says an action was requested or a log says a handler ran, inspect
 the store that owns the resulting fact. WorkspaceDO (which also hosts every
-Channel and Space parent), SubstreamAgent, D1 control tables, Queue receipts, and outboxes answer different
+Canvas and Sidekick parent), `AgentLoopDO`, D1 control tables, Queue receipts, and outboxes answer different
 questions. Do not create a cross-store “truth” by choosing whichever copy is
 easiest to query.
 
@@ -337,14 +337,14 @@ hypothesis.
 
 ### “The socket disconnected”
 
-1. Establish which socket: workspace, work stream, substream, or another
+1. Establish which socket: workspace, conversation, or another
    realtime surface.
 2. Separate WebSocket handler/session evidence from alarm, HTTP, queue, and
    scheduled invocations in the same Worker or Durable Object namespace.
 3. Correlate client connection/reconnect/heartbeat events with server upgrade,
    message, close/error, and hibernation/resync evidence.
 4. Ask whether the user lost state or merely reconnected. For a hibernated
-   SubstreamAgent, an empty in-memory replay buffer requires the canonical
+   `AgentLoopDO`, an empty in-memory replay buffer requires the canonical
    snapshot/resync path; it does not prove the socket transport failed.
 5. Treat ping/pong timeout telemetry as the client's reason for reconnecting,
    not proof of where packets were lost. Network transition, app suspension,
@@ -354,7 +354,7 @@ hypothesis.
 1. Use structured logs and authoritative run state to determine the run and
    terminal classification.
 
-3. For Global, query typed inference rows for the exact work stream, substream,
+3. For Global, query typed inference rows for the exact conversation (`workstream_id`), substream,
    request, and time range.
 
 4. Retrieve the raw pair only if the typed evidence cannot answer the question;

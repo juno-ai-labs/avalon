@@ -72,6 +72,24 @@ it("redeems email into a recoverable HttpOnly cookie without exposing session to
   expect(db.prepare("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n:1 });
 });
 
+it("offers and opens the development account as a cookie session only where development sign-in is on",async () => {
+  const devBindings = () => ({ ...bindings(),RALLY_DEV_AUTH:"true" });
+  const devRequest = (method:"GET"|"POST") => createApp().request(`${apiOrigin}/browser/dev/session`,{ method,headers:{ origin } },devBindings());
+  expect((await devRequest("GET")).status).toBe(204);
+  const opened = await devRequest("POST");
+  expect(opened.status).toBe(201);
+  const session = BrowserSessionSchema.parse(await opened.json());
+  expect(session.user.email).toBe("dev@avalon.local");
+  expect(session.workspace).toBeNull();
+  const cookie = opened.headers.get("set-cookie")!.split(";")[0]!;
+  expect((await createApp().request(`${apiOrigin}/browser/session`,{ headers:{ origin,cookie } },devBindings())).status).toBe(200);
+  // The suite's own bindings have development sign-in off.
+  expect((await request("dev/session")).status).toBe(404);
+  const refused = await request("dev/session",undefined,{});
+  expect(refused.status).toBe(404);
+  expect(refused.headers.get("set-cookie")).toBeNull();
+});
+
 it("rejects missing and foreign mutation origins before consuming a login proof or cookie",async () => {
   const entry = await login();
   for (const candidate of [undefined,"https://evil.example.test"]) {
@@ -143,7 +161,7 @@ it("forwards a cookie-authenticated message issue POST with its addressed worksp
   expect(await response.json()).toMatchObject({ auth:{ userId:entry.session.user.id,workspaceId },input });
 });
 
-it("forwards the member shell's route families and still refuses token minting and ingress",async () => {
+it("forwards the Canvases and Sidekicks shell's route families, and refuses the Thread families, token minting and ingress",async () => {
   const entry = await login();
   const workspaceId = workspace(entry.session.user.id,"member");
   await request("workspace/select",entry.cookie,{ workspaceId });
@@ -153,12 +171,12 @@ it("forwards the member shell's route families and still refuses token minting a
   const browser = new Hono<HonoAppEnv>();
   browser.route("/browser",createBrowserRoutes((forwarded,c) => api.fetch(forwarded,c.env)));
   browser.onError(errorHandler);
-  for (const family of ["spaces","navigation","projects","onboarding/account","onboarding/organization-suggestion","work-opportunities","digest","push-devices","workspaces"]) {
+  for (const family of ["canvases","conversations","sidekicks","automations","sharing","resources","search","onboarding/account","onboarding/organization-suggestion","push-devices","connections","workspaces"]) {
     const response = await browser.request(`${apiOrigin}/browser/api/${workspaceId}/${family}/probe`,{ headers:{ cookie:entry.cookie } },bindings());
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ path:`/${family}/probe`,workspaceId });
   }
-  for (const family of ["auth","internal","ingest","access","slack","sideline","dev"]) {
+  for (const family of ["auth","internal","ingest","access","slack","dev","spaces","workstreams","projects","navigation","work-opportunities","digest"]) {
     const response = await browser.request(`${apiOrigin}/browser/api/${workspaceId}/${family}/probe`,{ headers:{ cookie:entry.cookie } },bindings());
     expect(response.status).toBe(404);
   }
