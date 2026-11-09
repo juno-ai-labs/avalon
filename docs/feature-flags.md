@@ -106,9 +106,11 @@ and `agent-model-suggestion-draft` through `retireFlag`, as it does the
 keys, whose callers (session import, suggested work) were deleted too.
 `session_import`, `suggestion_draft` and `turn_disposition_classifier` stay in
 the usage contract's metered activities, so a usage event queued before the
-deploy still parses rather than going unbilled, and `OPENROUTER_STRUCTURED_MODEL`
-has no reader left; removing that Worker variable is a deploy-affecting change
-of its own. `workstream_naming`
+deploy still parses rather than going unbilled. `OPENROUTER_STRUCTURED_MODEL`
+has no reader left and leaves in two deploys: the Worker's environment schema
+stopped requiring it first, so a Worker still carrying the variable starts
+either way, and `wrangler.global.jsonc`, `scripts/sync-dev-env.mjs` and the
+inference-boundaries lint rule drop it in the deploy after. `workstream_naming`
 keeps its Thread-era name because it is a Flagship key, and now titles pasted
 text (`pasted-text-service.ts`); a rename would be a flag migration for no
 change in behaviour. The loop read a window of up to 600 messages to judge whether

@@ -191,7 +191,6 @@ export interface Env {
   OPENROUTER_PRIMARY_MODEL: string;
   OPENROUTER_FALLBACK_MODELS: string;
   OPENROUTER_CLASSIFIER_MODEL: string;
-  OPENROUTER_STRUCTURED_MODEL: string;
   AZURE_OPENAI_ENDPOINT?: string;
   AZURE_OPENAI_API_KEY?: string;
   AZURE_OPENAI_REALTIME_DEPLOYMENT?: string;
@@ -483,7 +482,6 @@ const EnvContractSchema = z.object({
   OPENROUTER_PRIMARY_MODEL: z.string().min(1),
   OPENROUTER_FALLBACK_MODELS: z.string(),
   OPENROUTER_CLASSIFIER_MODEL: z.string().min(1),
-  OPENROUTER_STRUCTURED_MODEL: z.string().min(1),
   AZURE_INFERENCE_ENDPOINT: AzureInferenceEndpointSchema.optional(),
   // Deliberately optional: Azure model routing degrades to OpenRouter when absent.
   AZURE_INFERENCE_API_KEY: z.string().min(1).optional(),

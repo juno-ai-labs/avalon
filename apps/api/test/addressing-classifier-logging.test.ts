@@ -30,7 +30,6 @@ function fixture(options: {
     OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
     OPENROUTER_FALLBACK_MODELS: "",
     OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
-    OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
     FLAGS: createCloudflareTestBinding<Flagship>({ getObjectDetails }),
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({
       put: payloadPut,
