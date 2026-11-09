@@ -22,7 +22,7 @@ routes the shell serves, or who owns the right panel.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp` and its routes: `/` (the landing), `/canvases`, `/canvases/:id`, `/sidekicks`, `/sidekicks/new`, `/sidekicks/:id`, `/automations/:id`, `/settings` (reached only in the browser; on the desktop Settings renders in its own window), `/opening`, and the redirects of the removed routes. |
+| `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp` and its routes: `/` (the landing), `/canvases`, `/canvases/:id`, `/sidekicks`, `/sidekicks/new`, `/sidekicks/:id`, `/automations/:id`, `/activity`, `/settings` (reached only in the browser; on the desktop Settings renders in its own window), `/opening`, and the redirects of the removed routes. |
 | `apps/desktop/src/renderer/screens/landing.tsx`, `lib/landing.ts` | The root route: the restorable `last-route`, else `/canvases`, once onboarding is finished. `LANDING_ROUTE`, `restorableRoute`, `RESTORED_ROUTE`, `useRestoredRouteFallback`, `useOpenLanding`. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | The shell around the routes: the sidebar, the main pane, the right slot's width, search, the dock badge, and the `last-route` and presence writes. |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
@@ -33,6 +33,7 @@ routes the shell serves, or who owns the right panel.
 | `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the rail, the account menu's trigger included. |
 | `apps/desktop/src/renderer/screens/canvases-home.tsx`, `canvas.tsx` | `/canvases` and `/canvases/:id` ([`canvases.md`](canvases.md#in-the-client)). |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx`, `automation.tsx` | `/sidekicks` and `/sidekicks/:id` ([`automation-lifecycle.md`](automation-lifecycle.md)). |
+| `apps/desktop/src/renderer/screens/activity-home.tsx` | `/activity`, with an empty state or a prompt to choose a row ([`activity.md`](activity.md)). |
 | `packages/ui/src/components/title-pill.tsx` | `TitlePill`, `TitlePillHeader`, the menu building blocks, `TitlePillAction` and `TitlePillClose`. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | One conversation: a Canvas's Chat or a Sidekick's conversation. Owns its right panel by conversation. |
 | `apps/desktop/src/renderer/lib/browser-rail-links.ts` | Routes a clicked web link to the pane it was clicked in. |
@@ -109,8 +110,8 @@ It holds two columns:
   because guests have no dashboard directory.
   The window's landing is its
   first route that belongs to a section, so a launch's redirect from `/` to
-  `/canvases` is the landing and not a navigation; landing on a section home
-  keeps the stored choice, and only a later navigation to a home moves it.
+  `/canvases` is the landing and not a navigation. Landing on a dashboard
+  keeps the stored choice. Landing on `/activity` selects Activity.
   Clicking **Canvases** always opens `/canvases`, including when a Canvas is
   already open and its rail entry is selected. The list header's **Canvas
   dashboard** home icon, immediately before New Canvas, uses the same action.
@@ -127,13 +128,12 @@ It holds two columns:
   navigated to before the list arrived; a link that names Activity
   (`rallywithai://activity`) selects the section, which then opens the row the
   same way; after an Organization change it first gives the pane the Canvases
-  home in place of `/opening`, which the top row then replaces. The first list
-  after entering decides: an
-  empty feed opens nothing, a navigation made before it arrived stands, and
-  rows arriving, Mark all seen and other clicks never move the pane until the
-  section is left and entered again. In the phone sheet the
-  sheet stays open over the row it opened (`sheetAfterNavigation`), since the
-  list is what was picked.
+  home in place of `/opening`, which the Activity destination then replaces.
+  The first list after entering decides where to go. An empty feed opens
+  `/activity` in the same history step the top row would take. A navigation
+  made before the list arrives stands, and later list updates leave the pane
+  where it is. On a phone the sheet stays open over a top row
+  (`sheetAfterNavigation`) and closes to reveal the empty page.
   Each section carries a red count (`RailBadge`, 15px in the danger red
   design.html draws; nothing at zero, `99+` past two digits), which the
   button's accessible name reads after the section ("Canvases, 10 unread",
@@ -152,7 +152,7 @@ It holds two columns:
   tile and its badge do not touch the tab's edge. Keyboard focus rings the
   34px tile in its own radius, not the whole button, and the account tile's
   avatar is the design's 28px. A section home names the window
-  ("Canvases · Rally", "Sidekicks · Rally"), as Settings does ("Settings ·
+  ("Canvases · Rally", "Sidekicks · Rally", "Activity · Rally"), as Settings does ("Settings ·
   Rally"), and so do a missing Canvas ("Canvas not found · Rally") and an
   unknown route ("Nothing here · Rally").
 - **One list**, titled with the section's name. **Canvases** is a Pinned
@@ -203,7 +203,7 @@ reappearing there; [`list-motion.md`](list-motion.md) owns the motion.
 
 `/` is the landing (`LandingScreen`). It reopens the route this person last had
 open on this device, `rally.desktop-layout:<organization>:<user>:last-route`,
-when that is a Canvas, a Sidekick or either home (`restorableRoute`), and
+when that is a Canvas, a Sidekick or a section home (`restorableRoute`), and
 otherwise opens `/canvases`. The app shell writes `last-route` on every
 navigation to such a route. A screen that leaves because what it showed is gone
 uses `useOpenLanding`, which replaces the entry so Back cannot return to it.
@@ -225,13 +225,12 @@ restored route on a Canvas they may ask into stays on its Request access pane
 ([`canvases.md`](canvases.md)).
 
 The removed surfaces' routes, `/channels/*`, `/spaces/*`, `/workstreams/*`,
-`/projects/*`, `/activity` and `/artifacts`, redirect to `/canvases`, so a
+`/projects/*` and `/artifacts`, redirect to `/canvases`, so a
 stored route, a bookmark or an old link opens the Canvases home rather than a
-dead screen. Activity has no route of its own: it is a rail section, and a deep
-link that names it opens that section, which opens its top row in the pane;
-a launch with Activity stored that lands on the Canvases home gives way to
-the top row the same way, while a restored Canvas or Sidekick route is kept
-(the rail section above).
+dead screen. `/activity` opens the Activity home and selects its list. The
+route remains open if restored at launch or revisited through history, even
+when the feed has rows. An Activity deep link selects the rail section, which
+uses the entry rule above.
 `/opening` is inert: a deep link that changes organization parks the pane there
 while its destination resolves. Settings opens in its own window on the desktop
 and as `/settings` in the browser.
@@ -425,6 +424,17 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-09 — Give an empty Activity feed its own page
+
+**What changed:** Entering Activity with an empty feed opens `/activity`.
+
+**Why:** Skipping navigation left the previous Chat and its artifact visible
+beside an empty list. A separate route lets the conversation release both
+panes and keeps the original address, including the artifact, one Back away.
+
+**Consequences:** Later feed updates change the message on the Activity home.
+The person chooses when to open a newly arrived row.
 
 ### 2026-11-09 — The Sidekicks rail button opens the dashboard
 

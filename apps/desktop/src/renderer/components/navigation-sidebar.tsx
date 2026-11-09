@@ -164,10 +164,9 @@ export function NavigationSidebar({
   // it open, the next row a click away.
   // The landing is the window's first route that belongs to a section: a
   // launch starts at "/" and the landing redirects to `/canvases`, which is
-  // where it landed, not a navigation. A section home there names no row, so
-  // the section the person left open is kept; only a Canvas or a Sidekick the
-  // landing opens moves it. Read from the route rather than counted in the
-  // effect, which StrictMode runs twice.
+  // where it landed, not a navigation. A dashboard landing keeps the stored
+  // section. The Activity home selects its own list. Read from the route
+  // rather than counted in the effect, which StrictMode runs twice.
   const landedOn = useRef<string | null>(null);
   const navigated = useRef(false);
   // Whether the landing is somewhere Activity's top row may replace: only a
@@ -184,7 +183,7 @@ export function NavigationSidebar({
     const opened = sectionForPath(pathname);
     const current = useUiStore.getState().sidebarSection;
     if (!opened || opened === current || current === 'activity') return;
-    if (!navigated.current && !routeNamesItem(pathname)) return;
+    if (!navigated.current && !routeNamesItem(pathname) && opened !== 'activity') return;
     setSection(opened);
   }, [pathname, setSection]);
   const panel = useRef<HTMLElement>(null);
@@ -213,9 +212,8 @@ export function NavigationSidebar({
   // first message of the folder it opens: the rail's button pushes, so Back
   // returns to what was open, and a launch with Activity stored replaces the
   // landing, so Back does not return to the Canvases home. The first list
-  // frame after entering decides; an empty one opens nothing, and nothing
-  // after it (rows arriving, Mark all seen, a click) moves the pane until the
-  // section is left and entered again. A launch waits for the landing,
+  // frame after entering decides; an empty one opens the Activity home.
+  // Later list updates leave the pane where it is. A launch waits for the landing,
   // replaces only a section home (a restored or linked Canvas or Sidekick is
   // kept), and gives way to any navigation since the landing; entering from
   // the rail gives way to a navigation made before the list arrived.
@@ -234,23 +232,37 @@ export function NavigationSidebar({
     if (mode === null || section !== 'activity' || activity === undefined) return;
     if (mode === 'replace' && landedOn.current === null) return;
     openTopRow.current = null;
-    const top = activity.items[0];
-    if (!top) return;
+    // The Activity home may itself be a history entry or the restored route.
+    if (pathname === '/activity') return;
     if (mode === 'replace' && (navigated.current || !landedOnDefault.current)) return;
     if (mode === 'push' && enteredAt.current !== `${pathname}${search}`) return;
-    const target = activityRoute(top);
+    const top = activity.items[0];
+    const target = top ? activityRoute(top) : '/activity';
     if (target === `${pathname}${search}`) return;
     // In the phone sheet the list is what was asked for: it stays open over
     // the row it opened. Only a new pathname closes the sheet, so only one
     // asks for it back.
     const { sidebarOpen: sheetOpen, setSheetAfterNavigation } = useUiStore.getState();
-    if (sheetOpen && target.split('?')[0] !== pathname) setSheetAfterNavigation(true);
+    if (sheetOpen && top && target.split('?')[0] !== pathname) setSheetAfterNavigation(true);
     void navigate(target, { replace: mode === 'replace' });
   }, [activity, navigate, pathname, search, section]);
   const openCanvasDashboard = (): void => {
     setSection('canvases');
     setSidebarOpen(false);
     void navigate('/canvases', { replace: pathname === '/canvases' });
+  };
+  const pickSection = (next: SidebarSection): void => {
+    if (next === 'canvases') {
+      openCanvasDashboard();
+      return;
+    }
+    if (next === 'activity' && section === 'activity' && activity?.items.length === 0) {
+      setSidebarOpen(false);
+      if (pathname !== '/activity') void navigate('/activity');
+      return;
+    }
+    setSection(next);
+    if (next === 'sidekicks' && !guest) openSidekicksHome();
   };
   return <ResizableSidebar
     aria-label="Rally navigation"
@@ -273,13 +285,7 @@ export function NavigationSidebar({
           icon={candidate.icon}
           key={candidate.id}
           label={candidate.label}
-          onClick={() => {
-            if (candidate.id === 'canvases') openCanvasDashboard();
-            else {
-              setSection(candidate.id);
-              if (candidate.id === 'sidekicks' && !guest) openSidekicksHome();
-            }
-          }}
+          onClick={() => pickSection(candidate.id)}
         />)}
         <div className="navigation-rail-spacer" />
         {accountMenu}
@@ -339,6 +345,7 @@ export function NavigationSidebar({
 
 /** The section a route belongs to, or null for one that belongs to neither. */
 export function sectionForPath(pathname: string): SidebarSection | null {
+  if (pathname === '/activity') return 'activity';
   if (/^\/canvases(\/|$)/.test(pathname)) return 'canvases';
   if (/^\/(sidekicks|automations)(\/|$)/.test(pathname)) return 'sidekicks';
   return null;
