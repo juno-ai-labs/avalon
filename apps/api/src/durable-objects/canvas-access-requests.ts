@@ -8,14 +8,14 @@ import { logInfo } from "../observability/logger";
 import { enqueueNotice } from "../services/push-delivery-service";
 import { chosenChannels } from "./member-preferences";
 import { workspaceRegionalDatabase } from "../services/workspace-runtime-database";
-import { MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION } from "./memory-digest-sync";
 import type { NoteActivity } from "./workspace-activity";
 import type { ParentNotice } from "./workspace-notification-intent-protocol";
 import { recordParentNotice } from "./workspace-notification-intent-storage";
 
 /**
- * WorkspaceDO migration 151: a member's request to open a Canvas they cannot
- * open, and the participant source it seats them with.
+ * Part of WorkspaceDO migration 136: a member's request to open a Canvas
+ * they cannot open. An approved one seats its requester with the `request`
+ * participant source, which `canvas_participants` admits from the start.
  *
  * One row per request. At most one is `pending` per (Canvas, person) — the
  * partial unique index — so asking again while one waits answers that one;
@@ -24,11 +24,6 @@ import { recordParentNotice } from "./workspace-notification-intent-storage";
  * are taken when each acts, so the decider's Activity row and the Share
  * panel name them without a read of D1. `docs/canvas-access-requests.md`
  * owns the mechanism.
- *
- * `canvas_participants.source` gains `request`; the CHECK cannot widen in
- * place, nothing references the table by foreign key, so it is copied as
- * migration 139 made it, and its index and the two memory-digest triggers
- * migration 144 hung on it are made again.
  */
 export const CANVAS_ACCESS_REQUESTS_STATEMENTS: readonly string[] = [
   `CREATE TABLE canvas_access_requests (
@@ -46,20 +41,6 @@ export const CANVAS_ACCESS_REQUESTS_STATEMENTS: readonly string[] = [
   ) STRICT`,
   `CREATE UNIQUE INDEX canvas_access_requests_pending_idx ON canvas_access_requests(canvas_id, user_id) WHERE state = 'pending'`,
   `CREATE INDEX canvas_access_requests_requester_idx ON canvas_access_requests(canvas_id, user_id, created_at DESC)`,
-  `CREATE TABLE canvas_participants_v151 (
-    canvas_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    source TEXT NOT NULL CHECK (source IN ('added', 'invitation', 'request')),
-    added_by_user_id TEXT,
-    added_at INTEGER NOT NULL CHECK (added_at >= 0),
-    PRIMARY KEY (canvas_id, user_id)
-  ) STRICT`,
-  `INSERT INTO canvas_participants_v151 (canvas_id, user_id, source, added_by_user_id, added_at)
-     SELECT canvas_id, user_id, source, added_by_user_id, added_at FROM canvas_participants`,
-  `DROP TABLE canvas_participants`,
-  `ALTER TABLE canvas_participants_v151 RENAME TO canvas_participants`,
-  `CREATE INDEX canvas_participants_user_idx ON canvas_participants(user_id, canvas_id)`,
-  ...MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION.filter((statement) => statement.includes(" ON canvas_participants ")),
 ];
 
 /** What a request and its decision need from the Organization object that holds the Canvas. */

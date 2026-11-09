@@ -3,14 +3,17 @@ import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import { PUSH_BODY_PREVIEW_CHARACTERS } from "@rally/contracts/push-notifications";
 
 /**
- * WorkspaceDO migration 148: each person's Activity, one row per event per
+ * WorkspaceDO migration 139: each person's Activity, one row per event per
  * recipient, and the one row per person that Mark all seen moves.
  *
  * A row is written by the code that records the event's notification intent,
  * in that intent's transaction (`recordPersonNotificationIntent`,
- * `recordSidekickRunNotices`), and carries the intent's id as its own, so a
- * replayed effect or a retried alarm converges on one row. The intents'
- * reaper never touches it.
+ * `recordSidekickRunNotices`, `recordParentNotice`), and carries the intent's
+ * id as its own, so a replayed effect or a retried alarm converges on one
+ * row. The intents' reaper never touches it. Its kinds are the intents' own
+ * (migration 137); `subject_id` names what a row is about beyond its parent:
+ * an artifact's resource id for `artifact_updated`, or the access request's
+ * id for the three access kinds.
  *
  * Seen is derived, never written per row: a row is seen once the recipient's
  * read cursor on its parent (`sidekick_viewer_reads`, the same projection the
@@ -20,98 +23,13 @@ import { PUSH_BODY_PREVIEW_CHARACTERS } from "@rally/contracts/push-notification
  * time, not copied here. Times are integer milliseconds, as the Canvas tables
  * keep them. `docs/activity.md` owns all of it.
  *
- * The sidebar-list waterline gains `activity`; the CHECK cannot widen in
- * place and nothing references the table, so it is copied, as migration 139
- * copied it.
+ * This runs after migration 138, which drops the Thread-era
+ * `workspace_activity_seen`; the table made here is a new one under the same
+ * name. The sidebar-list waterline's CHECK already admits `activity`
+ * (migration 136), so only its row is inserted.
  */
 export const WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE workspace_activity_items (
-    item_id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    recipient_user_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('mention', 'participant_added', 'needs_input', 'run_finished')),
-    parent_kind TEXT NOT NULL CHECK (parent_kind IN ('canvas', 'automation')),
-    parent_id TEXT NOT NULL,
-    substream_id TEXT,
-    message_id TEXT,
-    message_sequence INTEGER CHECK (message_sequence IS NULL OR message_sequence > 0),
-    run_id TEXT,
-    actor_kind TEXT NOT NULL CHECK (actor_kind IN ('person', 'rally', 'sidekick')),
-    actor_id TEXT,
-    preview TEXT,
-    attention_ordinal INTEGER CHECK (attention_ordinal IS NULL OR attention_ordinal >= 0),
-    created_at INTEGER NOT NULL CHECK (created_at >= 0)
-  ) STRICT`,
-  `CREATE INDEX workspace_activity_items_recipient_idx
-    ON workspace_activity_items(recipient_user_id, created_at DESC)`,
-  // Every accepted read report asks whether its reader has Activity about
-  // that parent (`hasActivityFor`), so the question is a seek.
-  `CREATE INDEX workspace_activity_items_parent_idx
-    ON workspace_activity_items(recipient_user_id, parent_id)`,
-  `CREATE TABLE workspace_activity_seen (
-    user_id TEXT PRIMARY KEY,
-    seen_through INTEGER NOT NULL CHECK (seen_through >= 0)
-  ) STRICT`,
-  `CREATE TABLE workspace_sidebar_list_state_v148 (
-    list TEXT PRIMARY KEY CHECK (list IN ('automations', 'notes', 'canvases', 'activity')),
-    waterline INTEGER NOT NULL CHECK (waterline >= 0)
-  ) STRICT`,
-  `INSERT INTO workspace_sidebar_list_state_v148 (list, waterline) SELECT list, waterline FROM workspace_sidebar_list_state`,
-  `DROP TABLE workspace_sidebar_list_state`,
-  `ALTER TABLE workspace_sidebar_list_state_v148 RENAME TO workspace_sidebar_list_state`,
-  `INSERT INTO workspace_sidebar_list_state (list, waterline) VALUES ('activity', 0)`,
-];
-
-/**
- * WorkspaceDO migration 150, beside the intents' rebuild: a row may be a
- * person's reply (`new_message`), a new version in a pinned Canvas
- * (`artifact_updated`), a request to open a Canvas (`access_request`) or that
- * request let in (`access_granted`), and names what it is about beyond its
- * parent in `subject_id`: the artifact's resource id, or the access request's
- * id. The kind CHECK cannot widen in place and nothing references the table,
- * so it is copied, as 148 made it.
- */
-export const WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS: readonly string[] = [
-  `CREATE TABLE workspace_activity_items_v150 (
-    item_id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    recipient_user_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('mention', 'participant_added', 'needs_input', 'run_finished',
-      'new_message', 'artifact_updated', 'access_request', 'access_granted')),
-    parent_kind TEXT NOT NULL CHECK (parent_kind IN ('canvas', 'automation')),
-    parent_id TEXT NOT NULL,
-    substream_id TEXT,
-    message_id TEXT,
-    message_sequence INTEGER CHECK (message_sequence IS NULL OR message_sequence > 0),
-    run_id TEXT,
-    actor_kind TEXT NOT NULL CHECK (actor_kind IN ('person', 'rally', 'sidekick')),
-    actor_id TEXT,
-    preview TEXT,
-    attention_ordinal INTEGER CHECK (attention_ordinal IS NULL OR attention_ordinal >= 0),
-    created_at INTEGER NOT NULL CHECK (created_at >= 0),
-    subject_id TEXT
-  ) STRICT`,
-  `INSERT INTO workspace_activity_items_v150
-     (item_id, workspace_id, recipient_user_id, kind, parent_kind, parent_id, substream_id, message_id,
-      message_sequence, run_id, actor_kind, actor_id, preview, attention_ordinal, created_at)
-   SELECT item_id, workspace_id, recipient_user_id, kind, parent_kind, parent_id, substream_id, message_id,
-      message_sequence, run_id, actor_kind, actor_id, preview, attention_ordinal, created_at
-     FROM workspace_activity_items`,
-  `DROP TABLE workspace_activity_items`,
-  `ALTER TABLE workspace_activity_items_v150 RENAME TO workspace_activity_items`,
-  `CREATE INDEX workspace_activity_items_recipient_idx
-    ON workspace_activity_items(recipient_user_id, created_at DESC)`,
-  `CREATE INDEX workspace_activity_items_parent_idx
-    ON workspace_activity_items(recipient_user_id, parent_id)`,
-];
-
-/**
- * WorkspaceDO migration 152, beside the intents' rebuild: a row may be a
- * declined request to open a Canvas (`access_denied`), sent to its
- * requester. Copied as 150 made it, `subject_id` included.
- */
-export const WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS: readonly string[] = [
-  `CREATE TABLE workspace_activity_items_v152 (
     item_id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
     recipient_user_id TEXT NOT NULL,
@@ -130,18 +48,17 @@ export const WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS: readonly string[] = [
     created_at INTEGER NOT NULL CHECK (created_at >= 0),
     subject_id TEXT
   ) STRICT`,
-  `INSERT INTO workspace_activity_items_v152
-     (item_id, workspace_id, recipient_user_id, kind, parent_kind, parent_id, substream_id, message_id,
-      message_sequence, run_id, actor_kind, actor_id, preview, attention_ordinal, created_at, subject_id)
-   SELECT item_id, workspace_id, recipient_user_id, kind, parent_kind, parent_id, substream_id, message_id,
-      message_sequence, run_id, actor_kind, actor_id, preview, attention_ordinal, created_at, subject_id
-     FROM workspace_activity_items`,
-  `DROP TABLE workspace_activity_items`,
-  `ALTER TABLE workspace_activity_items_v152 RENAME TO workspace_activity_items`,
   `CREATE INDEX workspace_activity_items_recipient_idx
     ON workspace_activity_items(recipient_user_id, created_at DESC)`,
+  // Every accepted read report asks whether its reader has Activity about
+  // that parent (`hasActivityFor`), so the question is a seek.
   `CREATE INDEX workspace_activity_items_parent_idx
     ON workspace_activity_items(recipient_user_id, parent_id)`,
+  `CREATE TABLE workspace_activity_seen (
+    user_id TEXT PRIMARY KEY,
+    seen_through INTEGER NOT NULL CHECK (seen_through >= 0)
+  ) STRICT`,
+  `INSERT INTO workspace_sidebar_list_state (list, waterline) VALUES ('activity', 0)`,
 ];
 
 /** One event for one recipient, as its recorder knows it. */

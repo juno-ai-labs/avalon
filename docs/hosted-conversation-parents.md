@@ -32,7 +32,7 @@ Sidekick does, and who may do it, is
 | `apps/api/src/durable-objects/hosted-canvas.ts`, `canvas-schema.ts` | `HostedCanvas`: one Canvas's parent, and its `canvas_directory` and audience tables. |
 | `apps/api/src/durable-objects/hosted-sidekick-schema.ts` | `WorkspaceDO` migrations 91, 132, 135 and 136: the definition columns on `automation_directory` and the `sidekick_*` tables. |
 | `apps/api/src/durable-objects/sidekick-directory-sql.ts` | The sidebar's Sidekick audience and viewer SQL and the stored-appearance parse. |
-| `apps/api/src/durable-objects/hosted-parent-schema.ts` | `WorkspaceDO` migration 72, kept because the migration list spreads it. Its `parent_*` tables hold retired Channel and Space rows, which the Thread retirement's inventory reads; migration 147 left them for that reason. |
+| `apps/api/src/durable-objects/hosted-parent-schema.ts` | `WorkspaceDO` migration 72, kept because the migration list spreads it. Its `parent_*` tables hold retired Channel and Space rows, which the Thread retirement's inventory reads; migration 138 left them for that reason. |
 | `apps/api/src/durable-objects/scope-grant-storage.ts`, `scope-invitation-storage.ts`, `scope-invitation-service.ts` | The grant and invitation repositories a Canvas share uses, scoped by `parent_id`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method answers here, through `hostedConversationParent`, which resolves a Sidekick or a Canvas. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: the Queue consumer step that opens a run's conversation and starts its loop, off the Organization's alarm. |
@@ -181,8 +181,8 @@ what the row says.
 
 Who reads a Sidekick is its own audience (`sidekickReaderAllows`): its author,
 the person it runs as, the people on its `people` list (`sidekick_audience`,
-WorkspaceDO migration 136) and, for an Organization one, every member; a
-guest only from the list. WorkspaceDO migration 137 converted every
+WorkspaceDO migration 135) and, for an Organization one, every member; a
+guest only from the list. WorkspaceDO migration 135 converted every
 Thread-owned Sidekick to the Organization's. The library listing takes the
 caller's access class and role from its authentication rather than reading them
 again. The sidebar's Sidekick audience and viewer SQL is
@@ -289,7 +289,7 @@ apply, the local outbox, the Channel rail and its `railWaterline`, the Channel
 control socket, and the per-viewer Channel row on the workspace socket. Plan
 step C-2 deleted it with the Thread, Channel, Space, Breakout and Activity
 modules ([`data-model.md`](data-model.md#changelog) lists them). WorkspaceDO
-migration 147 dropped the Thread-era tables nothing reads; the `parent_*`,
+migration 138 dropped the Thread-era tables nothing reads; the `parent_*`,
 `channels`, `breakouts` and `spaces` rows stay until the operator has run
 `retire_threads` in every Organization, since its inventory reads them. The
 migration statements of deleted modules moved byte for byte to
@@ -398,7 +398,7 @@ every change, and the entry's handler calls `projectSidekickRunRow` on `"0"`
 with the run as it stands. A Sidekick has its own audience, so
 `authorizeViewer` no longer asks a home Channel or Breakout, and it keeps each
 reader's read of `"0"` (`sidekick_viewer_reads`, from `"0"`'s `directory_user`
-effects). Migration 137 made every Thread-owned Sidekick an Organization one,
+effects). Migration 135 made every Thread-owned Sidekick an Organization one,
 and the Sidekick parent stopped reading `channels` and `breakouts`.
 
 Then `HostedParent` and every RPC, alarm lane, socket route and socket command
@@ -445,7 +445,7 @@ row: the write is idempotent and versioned by the run's `updated_at`, so the
 alarm's retry is all the delivery guarantee it needs, and a change that moves
 it onto the Queue must keep the handler reading the run at delivery time. The
 owning columns on `automation_directory` stay as dead columns, since released
-CHECKs name them. WorkspaceDO migration 147 dropped the Thread-era tables but
+CHECKs name them. WorkspaceDO migration 138 dropped the Thread-era tables but
 kept the `parent_*`, `channels`, `breakouts` and `spaces` rows, which the
 Thread retirement's inventory reads, until the operator has run
 `retire_threads` in every Organization.

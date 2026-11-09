@@ -95,7 +95,7 @@ An automation supplies its own scope, author, executor, `people` list
 membership and child registry, and `sidekickAdmits` decides from those alone:
 its author, its executor and the people it is shared with read it, and a member
 also reads an Organization-scoped one. No conversation owns an automation (the
-`workstream` scope was retired by WorkspaceDO migration 137), so none supplies
+`workstream` scope was retired by WorkspaceDO migration 135), so none supplies
 any access. Deleted automations are absent.
 A Canvas supplies its visibility, creator, participant list, its writer
 Sidekick's audience (read live) and whether the person is an owner or
@@ -177,7 +177,7 @@ A Space (the product's Channel until the Canvases and Sidekicks pivot) once
 lent its audience to a guest taking part in it, disclosed its mark to a
 Channel's readers, and shared a merged artifact with its members through
 `workspace_workstream_resource_links` rows. Spaces, Channels, merge and the
-link table are gone (WorkspaceDO migration 147), so no reader is derived from
+link table are gone (WorkspaceDO migration 138), so no reader is derived from
 a Space and `sharedThrough` names nothing; a resource is read through the
 Canvas or the Sidekick conversation that holds it.
 
@@ -526,7 +526,7 @@ generated in the Canvas's Chat and attached to it, so the attachment path
 already decides it.
 
 **Consequences:** A Thread-scoped Sidekick is an Organization one since
-WorkspaceDO migration 137 (plan step A-5), so its former Thread's people keep
+WorkspaceDO migration 135 (plan step A-5), so its former Thread's people keep
 reading it as members do. A guest reaches a Sidekick only by being named on
 its list, and a Canvas only from its participant list. The rule is one
 function; a reader that decides access some other way is a defect. The

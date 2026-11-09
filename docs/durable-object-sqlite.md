@@ -64,7 +64,15 @@ objects today.
 - A migration must preserve data and invariants for an object upgrading from
   every previously shipped version. A fresh-schema test is not enough.
 - Never edit an already shipped migration. Add the next version so existing and
-  newly created objects converge on the same schema.
+  newly created objects converge on the same schema. A version that has not
+  shipped is the branch's own and may be edited or folded into its neighbours
+  before it ships; folding is worth it when a tail creates a table and then
+  alters or copies it, because every object pays the whole tail at its first
+  wake. Which versions have shipped is pinned by a literal fingerprint test
+  per object class (`workspace-do-schema.test.ts`,
+  `workstream-object-schema.test.ts`); move its line forward when a branch
+  ships, never back. A fold must leave the final schema identical, columns,
+  constraints, indexes and triggers alike.
 - **Do not rely on `foreignKeys: "disabled_during_rebuild"` for a new
   migration.** `PRAGMA foreign_keys = OFF` is silently a no-op once anything in
   the same object event has touched SQLite, which by the time the runner reaches
