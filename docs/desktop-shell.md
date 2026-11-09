@@ -129,11 +129,12 @@ It holds two columns:
   (`rallywithai://activity`) selects the section, which then opens the row the
   same way; after an Organization change it first gives the pane the Canvases
   home in place of `/opening`, which the Activity destination then replaces.
-  The first list after entering decides where to go. An empty feed opens
-  `/activity` in the same history step the top row would take. A navigation
-  made before the list arrives stands, and later list updates leave the pane
-  where it is. On a phone the sheet stays open over a top row
-  (`sheetAfterNavigation`) and closes to reveal the empty page.
+  The first list after entering decides where to go. Picking the Activity
+  rail button again uses the same rule. An empty feed opens `/activity` in
+  the same history step the top row would take. A navigation made before
+  the list arrives stands, and later list updates leave the pane where it is.
+  On a phone the sheet stays open over a top row (`sheetAfterNavigation`)
+  and closes to reveal the empty page, including when it is already open.
   Each section carries a red count (`RailBadge`, 15px in the danger red
   design.html draws; nothing at zero, `99+` past two digits), which the
   button's accessible name reads after the section ("Canvases, 10 unread",
@@ -227,10 +228,10 @@ restored route on a Canvas they may ask into stays on its Request access pane
 The removed surfaces' routes, `/channels/*`, `/spaces/*`, `/workstreams/*`,
 `/projects/*` and `/artifacts`, redirect to `/canvases`, so a
 stored route, a bookmark or an old link opens the Canvases home rather than a
-dead screen. `/activity` opens the Activity home and selects its list. The
-route remains open if restored at launch or revisited through history, even
-when the feed has rows. An Activity deep link selects the rail section, which
-uses the entry rule above.
+dead screen. `/activity` opens the Activity home and selects its list. A
+direct visit or a return through history keeps the page open. On launch, a
+saved Activity home opens the top row if the first list has one. An Activity
+deep link selects the rail section, which uses the entry rule above.
 `/opening` is inert: a deep link that changes organization parks the pane there
 while its destination resolves. Settings opens in its own window on the desktop
 and as `/settings` in the browser.
@@ -434,7 +435,8 @@ beside an empty list. A separate route lets the conversation release both
 panes and keeps the original address, including the artifact, one Back away.
 
 **Consequences:** Later feed updates change the message on the Activity home.
-The person chooses when to open a newly arrived row.
+The person can choose a newly arrived row or pick Activity again to open the
+newest one. The same entry rule applies when launch restores the Activity home.
 
 ### 2026-11-09 — The Sidekicks rail button opens the dashboard
 
