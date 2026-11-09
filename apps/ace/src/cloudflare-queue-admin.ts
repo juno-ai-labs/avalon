@@ -73,7 +73,7 @@ async function request<Result>(env: Env, path: string, init?: RequestInit): Prom
     ...init,
     headers: {
       Accept: 'application/json',
-      Authorization: `Bearer ${env.CLOUDFLARE_FLAGSHIP_API_TOKEN}`,
+      Authorization: `Bearer ${env.CLOUDFLARE_QUEUES_API_TOKEN ?? env.CLOUDFLARE_FLAGSHIP_API_TOKEN}`,
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
     },
   });

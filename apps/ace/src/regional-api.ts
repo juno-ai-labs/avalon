@@ -128,11 +128,6 @@ export function regionalDatabase(env: Env, region: string): D1Database {
   if (!db) throw new Error('regional_database_unavailable');
   return db;
 }
-export function regionalFlagQueue(env: Env, region: string): Queue {
-  const queue = env[`${regionConfiguration(region).bindingPrefix}_PRODUCT_FLAG_QUEUE`];
-  if (!queue) throw new Error('regional_queue_unavailable');
-  return queue;
-}
 
 /** Move a workspace to a plan in the region that owns it. */
 export async function changeWorkspacePlan(

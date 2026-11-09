@@ -1,3 +1,4 @@
+import { COMPLETION_VERIFICATION_MODEL } from "@rally/contracts/runtime-config";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -8,7 +9,7 @@ import { aggregate, answers, caseSchema, shouldNudge, type EvalResult } from "./
 import { comparePolicies } from "./policies";
 import { promptVariants, variantNames } from "./prompt-variants";
 
-const [datasetArg, outputArg, model = "jev-1.14.0", timeoutArg = "1000", thresholdArg = "0.5", variantArg = "baseline"] = process.argv.slice(2);
+const [datasetArg, outputArg, model = COMPLETION_VERIFICATION_MODEL, timeoutArg = "1000", thresholdArg = "0.5", variantArg = "baseline"] = process.argv.slice(2);
 if (!datasetArg || !outputArg) throw new Error("Usage: run.ts <cases.jsonl> <report.json> [model] [timeoutMs] [threshold] [variant]");
 const confidenceThreshold = z.coerce.number().min(0).max(1).parse(thresholdArg);
 const variant = z.enum(variantNames).parse(variantArg);

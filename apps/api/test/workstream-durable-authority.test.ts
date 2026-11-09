@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { launchWorkstreamHarness } from "../src/services/workstream-service";
-import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   openWorkstreamAuthorityForTest,
@@ -56,11 +56,9 @@ describe("launching a run against the open authority", () => {
     const objectStores = new Map<string, DatabaseSync>();
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: "global",
-      FLAGS: createCloudflareTestBinding<Flagship>({
-        getObjectDetails: async (flagKey: string) => ({ flagKey, reason: "STATIC", value: {
-          model: flagKey === "agent-model-sidekick-authoring" ? "openai/gpt-6.1-sol" : "openai/gpt-5.6-terra",
-          fallbackModels: [],
-        } }),
+      AGENT_MODEL_ROUTING_JSON: JSON.stringify({
+        workstream: { model: "openai/gpt-5.6-terra", fallbackModels: [] },
+        sidekick_authoring: { model: "openai/gpt-6.1-sol", fallbackModels: [] },
       }),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
     });

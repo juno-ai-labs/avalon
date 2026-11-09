@@ -1,7 +1,8 @@
+import { AGENT_MODEL_DEFAULTS } from "../packages/contracts/src/runtime-config.ts";
+
 const baseUrl = process.env.AVALON_SMOKE_BASE_URL ?? "http://127.0.0.1:8787";
-// A hosted Worker serves its Flagship flag, not the checked-in default, so name
-// the model it should serve when that flag differs.
-const expectedModel = process.env.AVALON_SMOKE_EXPECTED_MODEL?.trim() || "openai/gpt-6.1-sol";
+// Set EXPECTED_MODEL when a deployment overrides its checked-in model default.
+const expectedModel = process.env.AVALON_SMOKE_EXPECTED_MODEL?.trim() || AGENT_MODEL_DEFAULTS.OPENROUTER_PRIMARY_MODEL;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);

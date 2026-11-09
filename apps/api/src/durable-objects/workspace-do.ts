@@ -137,7 +137,6 @@ import {
   WorkspaceActivityListEventSchema,
   WorkspaceSidebarSchema,
   WorkspaceSocketClientEventSchema,
-  WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
   type ResourceHead,
   type WorkspaceResourceVersionsEvent,
@@ -149,8 +148,6 @@ import {
   type WorkspaceSidebar,
   type WorkspaceSocketSyncEvent,
   type WorkspaceSyncTopic,
-  ProductFeatureFlagKeySchema,
-  type ProductFeatureFlagKey,
   UpdateOnboardingJourneySchema,
   type OnboardingJourney,
   type UpdateOnboardingJourney,
@@ -7368,49 +7365,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // Hibernation owns cleanup; a reconnect rereads the meter.
       }
     }
-    return sent;
-  }
-
-  /**
-   * Re-evaluate one product flag for every connected person and send the full
-   * client contract privately to each socket. The Queue/RPC wake-up carries no
-   * value: Flagship remains authoritative, and two members of this workspace
-   * may match different targeting rules.
-   */
-  async notifyProductFeatureFlagChanged(
-    flagKey: ProductFeatureFlagKey,
-    workspaceId: string,
-    placementAffinity: WorkspacePlacementAffinity,
-  ): Promise<number> {
-    await this.initialized;
-    this.ensureIdentity(workspaceId, placementAffinity);
-    const changedFlag = ProductFeatureFlagKeySchema.parse(flagKey);
-    const socketsByUser = new Map<string, WebSocket[]>();
-    for (const socket of this.state.getWebSockets()) {
-      const attachment = readAttachment(socket);
-      if (!attachment?.subscribed) continue;
-      socketsByUser.set(attachment.userId, [
-        ...(socketsByUser.get(attachment.userId) ?? []),
-        socket,
-      ]);
-    }
-    let sent = 0;
-    await Promise.all([...socketsByUser].map(async ([userId, sockets]) => {
-      const payload = JSON.stringify(WorkspaceFeatureFlagsEventSchema.parse({
-        type: "workspace_feature_flags",
-        occurredAt: new Date().toISOString(),
-        changedFlag,
-        flags: await resolveClientFeatureFlagsForSubject(this.env, { userId, workspaceId }),
-      }));
-      for (const socket of sockets) {
-        try {
-          socket.send(payload);
-          sent += 1;
-        } catch {
-          // Hibernation owns cleanup; a reconnect gets a fresh evaluation.
-        }
-      }
-    }));
     return sent;
   }
 

@@ -18,8 +18,6 @@ on:
       - "apps/mcp/**"
       # The Rally MCP server bundles the plugin's skills (apps/mcp/src/skills.ts).
       - "plugins/rally/skills/**"
-      # The engineering MCP compiles Ace's flag-administration contract.
-      - "apps/ace/src/protocol.ts"
       - "packages/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"

@@ -1,3 +1,4 @@
+import { JEV_LATEST_MODEL } from "@rally/contracts/runtime-config";
 import { z } from "zod";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import type { StructuredModelDiagnostic } from "../index";
@@ -22,7 +23,7 @@ import type { StructuredModelDiagnostic } from "../index";
 export const JEV_SYSTEM_ONE_URL = "https://api.typesafe.ai/v1/systemone";
 
 /** The alias that follows JEV's current release rather than pinning one. */
-export const JEV_LATEST_MODEL = "jev-latest";
+export { JEV_LATEST_MODEL };
 
 /**
  * A JEV request that did not produce an answer, carrying the code a log records.

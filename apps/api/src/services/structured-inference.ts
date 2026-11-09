@@ -1,3 +1,4 @@
+import { MEMORY_EMBEDDING_MODEL } from "@rally/contracts/runtime-config";
 import {
   OpenRouterClient,
   type EmbeddingDiagnostic,
@@ -11,7 +12,6 @@ import { createDeadline } from "../lib/deadline";
 import { runtimeDeferral, type WorkDeferral } from "../lib/defer";
 import { logStructuredEvent } from "../observability/logger";
 import {
-  AGENT_MODEL_FLAG_KEYS,
   resolveAgentModelRouting,
   type AgentModelFlagContext,
   type AgentModelRole,
@@ -26,7 +26,7 @@ const STRUCTURED_INFERENCE_TIMEOUT_MS = 2 * 60_000;
  * durable memory, whose vectors are gone, and it stays byte-identical because
  * the Turbopuffer namespace is hashed from it (`text-search.ts`).
  */
-export const MEMORY_EMBEDDING_MODEL = "qwen/qwen3-embedding-8b" as const;
+export { MEMORY_EMBEDDING_MODEL };
 /** Provider capitalization is not a change of embedding space. */
 export function isMemoryEmbeddingModel(model: string): boolean {
   // OpenRouter returns Qwen/Qwen3-Embedding-8B for the canonical routing slug.
@@ -43,7 +43,7 @@ type StructuredInferenceRole = Extract<
 type StructuredInferenceSource = StructuredInferenceRole;
 
 function structuredInferenceFeature(source: StructuredInferenceSource): string {
-  return AGENT_MODEL_FLAG_KEYS[source];
+  return `agent-model-${source.replaceAll("_", "-")}`;
 }
 
 export async function runEmbeddingInference(
@@ -167,7 +167,7 @@ export async function runStructuredInference<T>(
   env: Env,
   input: {
     context: AgentModelFlagContext & { substreamId?: string };
-    /** A persisted route bypasses current Flagship targeting and fallback defaults. */
+    /** A persisted route bypasses current model configuration and fallback defaults. */
     routing?: AgentModelRouting;
     requestId?: string;
     messages: ModelMessage[];

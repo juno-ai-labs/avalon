@@ -37,7 +37,6 @@ import {
   prepareTranscriptFact,
 } from "../src/durable-objects/workstream-transcript-storage";
 import type { Env } from "../src/env";
-import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import {
   admitFixturePendingInput,
   seedParticipantMessage,
@@ -66,12 +65,10 @@ const USER_ID = asUserId("00000000-0000-7000-8000-000000000104");
 const SESSION_ID = "runtime-test-session";
 
 beforeEach(async () => {
-  clearFlagTargetingAttributeCache();
   await reset();
 });
 
 afterEach(() => {
-  clearFlagTargetingAttributeCache();
   vi.restoreAllMocks();
 });
 
@@ -775,30 +772,6 @@ describe("Durable Objects in the Workers runtime", () => {
     } finally {
       first.close();
       second.close();
-    }
-  });
-
-  it("re-evaluates a changed product flag privately for subscribed users", async () => {
-    await seedOpenAuthority();
-    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
-      workspaceDOName("global", WORKSPACE_ID),
-    ));
-    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
-    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060b");
-    try {
-      const delivered = nextMessage(socket);
-      await expect(stub.notifyProductFeatureFlagChanged(
-        "multiple-workspaces-enabled",
-        WORKSPACE_ID,
-        "wnam",
-      )).resolves.toBe(1);
-      expect(JSON.parse(String((await delivered).data))).toMatchObject({
-        type: "workspace_feature_flags",
-        changedFlag: "multiple-workspaces-enabled",
-        flags: { multipleWorkspacesEnabled: false },
-      });
-    } finally {
-      socket.close(1000, "test complete");
     }
   });
 
