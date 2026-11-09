@@ -432,9 +432,9 @@ describe("shared Sidekick delegation admission", () => {
     await activate();
     await consent(other, true);
     const first = await stub().sidekickRunNow({ ...address, actor: actor(), idempotencyKey: "first-coordinator" });
-    expect(await stub().sidekickContinueRun({ ...address, runId: first.runId })).toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: creator } });
+    expect(await stub().sidekickContinueRun({ ...address, runId: first.runId, sender: { kind: "system" } })).toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: creator } });
     await consent(creator, false);
-    expect(await stub().sidekickContinueRun({ ...address, runId: first.runId })).toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: other } });
+    expect(await stub().sidekickContinueRun({ ...address, runId: first.runId, sender: { kind: "system" } })).toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: other } });
     expect((await runs()).find((row) => row.run_id === first.runId)?.coordinator_user_id).toBe(other);
     expect(AutomationRunDefinitionV1Schema.parse(await stub().sidekickReadRunDefinition({ ...address, runId: first.runId }))).toMatchObject({ coordinatorUserId: other });
     const second = await stub().sidekickRunNow({ ...address, actor: actor(), idempotencyKey: "second-coordinator" });

@@ -46,6 +46,7 @@ import type { AuthContext, Env } from "../src/env";
 import { encryptString } from "../src/lib/crypto";
 import { createAutomation } from "../src/services/automation-service";
 import { AgentCommunicationService } from "../src/services/agent-communication-service";
+import { ConversationService } from "../src/services/conversation-service";
 import { __integrationTesting } from "../src/services/integrations";
 import { externalBindingReplyAdmission } from "../src/services/slack-agent-service";
 import { admitExternalWorkstreamMessage } from "../src/services/workstream-service";
@@ -61,6 +62,7 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000c7a0");
 const AUTHOR_ID = asUserId("00000000-0000-7000-8000-00000000c7a1");
 const CLAIMANT_ID = asUserId("00000000-0000-7000-8000-00000000c7a2");
 const SESSION_ID = "00000000-0000-7000-8000-00000000c7a3";
+const CLAIMANT_SESSION_ID = "00000000-0000-7000-8000-00000000c7a4";
 const NOW = "2026-09-27T10:00:00.000Z";
 const TEST_ENV: Env = env;
 /** A run reaches the double and ends; sized for a contended multi-suite run. */
@@ -73,6 +75,8 @@ const AUTH: AuthContext = {
   region: "global",
   role: "member",
 };
+/** The second member, who reads the Sidekick once it is shared with every member. */
+const CLAIMANT_AUTH: AuthContext = { ...AUTH, sessionId: CLAIMANT_SESSION_ID, userId: CLAIMANT_ID };
 
 /**
  * Reassigned per test: a finished test's objects keep draining after
@@ -132,6 +136,8 @@ async function seedRegionalDatabase(): Promise<void> {
       VALUES (?, ?, 'active', 'member', ?)`).bind(WORKSPACE_ID, CLAIMANT_ID, NOW),
     env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
       VALUES (?, 'claimant@example.com', 'Claimant', NULL, 'UTC', ?)`).bind(CLAIMANT_ID, NOW),
+    env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(CLAIMANT_SESSION_ID, CLAIMANT_ID, WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstreams (
       id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, do_identity_anchor INTEGER NOT NULL DEFAULT 0
     )`),
@@ -270,16 +276,29 @@ async function product(stub: DurableObjectStub, body: unknown): Promise<{ status
   return { status: response.status, body: await response.json() };
 }
 
-/** The run-as author's message in the run child, which is the only seat a run has. */
-async function sendToRun(runId: string, text: string, clientMessageId: string): Promise<string> {
+/** A person's message in the run child: the author's unless `auth` names someone else the Sidekick is shared with. */
+async function sendToRun(runId: string, text: string, clientMessageId: string, auth: AuthContext = AUTH): Promise<string> {
+  // Seated as the app seats a reader who opens the run's conversation.
+  if (auth !== AUTH) await new ConversationService(TEST_ENV, auth).authorizeViewer(AUTOMATION_ID, runId);
   const sent = await product(childStub(runId), {
     operation: "create_message",
     parentKind: "automation",
-    auth: AUTH,
+    auth,
     input: { text, clientMessageId, mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] },
   });
   expect(sent.status, JSON.stringify(sent.body)).toBe(200);
   return (sent.body.turn as { turnId: string }).turnId;
+}
+
+/**
+ * Leave the author's seat in the run's room, so the next person to write is
+ * alone there and their message goes to the run without the addressing
+ * classifier, which this suite does not serve.
+ */
+async function authorLeavesRun(runId: string): Promise<void> {
+  await runInDurableObject(childStub(runId), (_instance, state) => {
+    state.storage.sql.exec("UPDATE participants SET status='removed', removed_at=? WHERE user_id=?", Date.now(), AUTHOR_ID);
+  });
 }
 
 /** The execution a turn started, once it has ended. */
@@ -375,7 +394,9 @@ describe("Sidekick run continuation", () => {
     const turnId = target === "worker"
       ? (await worker!.owner.send({ agentId: worker!.agentId, message: reply, attachmentIds: [] },
         { ...worker!.context, effectIntentId: crypto.randomUUID() })).messageId
-      : await sendToRun(runId, reply, "coordinator-failover");
+      // The remaining delegate writes: the author withdrew, and a person who
+      // is not a delegate may not continue a run that acts as one.
+      : await authorLeavesRun(runId).then(() => sendToRun(runId, reply, "coordinator-failover", CLAIMANT_AUTH));
     const execution = await settledExecutionFor(targetId, turnId);
     expect(execution.status).toBe("completed");
     expect(JSON.parse(execution.execution_context_json)).toMatchObject({
@@ -841,7 +862,7 @@ describe("Sidekick run continuation", () => {
     let approved: Awaited<ReturnType<WorkspaceDO["sidekickContinueRun"]>>;
     try {
       approved = await runInDurableObject(workspaceStub(), async (instance: WorkspaceDO) => {
-        const decided = await instance.sidekickContinueRun({ ...addressed(), runId });
+        const decided = await instance.sidekickContinueRun({ ...addressed(), runId, sender: { kind: "person", userId: AUTHOR_ID } });
         await instance.sidekickPause({ ...addressed(), actor: actor() });
         return decided;
       });
@@ -875,7 +896,7 @@ describe("Sidekick run continuation", () => {
 
     // A continuation approved after that stop acts through it: the fence
     // refuses only a stop the approval did not already see.
-    const later = await workspaceStub().sidekickContinueRun({ ...addressed(), runId });
+    const later = await workspaceStub().sidekickContinueRun({ ...addressed(), runId, sender: { kind: "person", userId: AUTHOR_ID } });
     if (later.outcome !== "continue") throw new Error(`expected a continuation, got ${later.code}`);
     await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, continued(later)))
       .resolves.toMatchObject({ automationRunId: runId });
@@ -893,7 +914,7 @@ describe("Sidekick run continuation", () => {
         AUTOMATION_ID, runId,
       );
     });
-    const decided = await workspaceStub().sidekickContinueRun({ ...addressed(), runId });
+    const decided = await workspaceStub().sidekickContinueRun({ ...addressed(), runId, sender: { kind: "person", userId: AUTHOR_ID } });
     if (decided.outcome !== "continue") throw new Error(`expected the run's authority, got ${decided.code}`);
 
     await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, {
@@ -910,6 +931,63 @@ describe("Sidekick run continuation", () => {
       automationRun: decided.automationRun,
       reason: "manual",
     })).resolves.toMatchObject({ automationRunId: runId });
+  });
+
+  it("refuses a message from a reader who is not a delegate, in a run that acts as one, and runs nothing", async () => {
+    await activeSidekick();
+    const runId = await completedRun();
+    // Shared with every member: the claimant reads the run and is seated in
+    // its conversation, but has not shared their access with the Sidekick.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE automation_directory SET scope='workspace' WHERE automation_id=?", AUTOMATION_ID);
+    });
+    await authorLeavesRun(runId);
+    const callsBefore = provider.calls.length;
+    const turnId = await sendToRun(runId, "Use the author's accounts for me.", "reader-not-delegate", CLAIMANT_AUTH);
+    await expect.poll(async () => ({ pending: await pendingInputs(runId), refused: await refusals(runId) }), {
+      timeout: RUN_SETTLE_TIMEOUT_MS,
+      interval: 100,
+    }).toEqual({ pending: 0, refused: [{ code: "run_continuation_requires_delegate", turnId }] });
+    expect(await receipts(runId)).toHaveLength(1);
+    expect(provider.calls.length).toBe(callsBefore);
+    expect(await workspaceStub().sidekickContinueRun({ ...addressed(), runId, sender: { kind: "person", userId: AUTHOR_ID } }))
+      .toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: AUTHOR_ID } });
+  });
+
+  it("refuses an answer from a reader who is not a delegate and keeps the question open for the author", async () => {
+    script = [{
+      callTool: {
+        name: "request_elicitation",
+        arguments: {
+          prompt: "Which founder first?",
+          responseType: "radio",
+          options: [
+            { value: "adam", label: "Adam", description: null },
+            { value: "kb", label: "KB", description: null },
+          ],
+          minimumSelections: 1,
+          maximumSelections: 1,
+        },
+      },
+    }];
+    await activeSidekick();
+    const { runId, status } = await startedRun();
+    expect(status).toBe("needs_input");
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE automation_directory SET scope='workspace' WHERE automation_id=?", AUTOMATION_ID);
+    });
+    const elicitationId = await runInDurableObject(childStub(runId), (_instance, state) =>
+      state.storage.sql.exec<{ elicitation_id: string }>(
+        `SELECT elicitation_id FROM elicitation_requests WHERE status = 'pending'`,
+      ).one().elicitation_id);
+    const answer = (auth: AuthContext) => product(childStub(runId), {
+      operation: "answer_elicitation", parentKind: "automation", auth, elicitationId, input: { answer: "kb" },
+    });
+    await new ConversationService(TEST_ENV, CLAIMANT_AUTH).authorizeViewer(AUTOMATION_ID, runId);
+    const refused = await answer(CLAIMANT_AUTH);
+    expect(refused).toMatchObject({ status: 403, body: { error: "run_continuation_requires_delegate" } });
+    const accepted = await answer(AUTH);
+    expect(accepted.status, JSON.stringify(accepted.body)).toBe(200);
   });
 
   it("keeps the run's context when a person answers a question the run asked", async () => {

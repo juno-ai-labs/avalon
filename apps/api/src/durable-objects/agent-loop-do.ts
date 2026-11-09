@@ -198,10 +198,12 @@ import {
   type PreparedCanonicalTranscriptFact,
 } from "./ordered-transcript-sqlite/canonical-payload-store";
 import {
+  continuationSender,
   continuationSource,
   continueSidekickRun,
   routeSidekickConversationMessage,
   sidekickAllowsManager,
+  sidekickRunInputRefusal,
   SIDEKICK_MESSAGE_REFUSAL_TEXT,
   SIDEKICK_RUN_REFUSAL_TEXT,
 } from "../services/sidekick-run-continuation";
@@ -1129,6 +1131,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         workspaceId: asWorkspaceId(input.workspaceId), automationId: input.automationId,
         actor: { userId: asUserId(input.actor.userId), actorRole: input.actor.actorRole },
       });
+      this.product.sidekickRunInputRefusal = (input) => sidekickRunInputRefusal(env, input);
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
       this.residentContext = new WorkstreamResidentContextStorage(state.storage);
@@ -3875,6 +3878,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
           workspaceId: identity.workspaceId,
           automationId: identity.parentId,
           runId: authorityRunId,
+          sender: continuationSender(pending),
         });
         // The answer took an RPC, and the loop may have moved meanwhile: a
         // second input admitted behind this one bumps its revision. Acting on

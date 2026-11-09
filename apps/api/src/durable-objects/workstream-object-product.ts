@@ -438,6 +438,18 @@ export class WorkstreamObjectProductService {
   sidekickAllowsManager: (input: {
     workspaceId: string; automationId: string; actor: { userId: string; actorRole: AuthContext["role"] };
   }) => Promise<boolean> = () => Promise.reject(new Error("sidekick_manager_check_unavailable"));
+  /** The refusal a person's input to a Sidekick run would get, set by the conversation object as above. */
+  sidekickRunInputRefusal: (input: {
+    workspaceId: string; automationId: string; runId: string; userId: string;
+  }) => Promise<string | null> = () => Promise.reject(new Error("sidekick_run_input_check_unavailable"));
+
+  /** The Sidekick run this conversation's input answers to: its own, or a worker's root run; `"0"` for none. */
+  private sidekickAuthorityRunId(): string {
+    const background = first(this.storage.sql.exec<{ root_substream_id: string | null }>(
+      "SELECT root_substream_id FROM background_agent WHERE id = 1",
+    ));
+    return background ? background.root_substream_id ?? "0" : this.externalSubstreamId();
+  }
 
   constructor(
     private readonly storage: DurableObjectStorage,
@@ -4608,6 +4620,16 @@ export class WorkstreamObjectProductService {
         actor: { userId: auth.userId, actorRole: auth.role },
       })) {
       throw new ApiError(403, "sidekick_edit_requires_manager", "Only the people who manage this Sidekick can answer its questions");
+    }
+    // In a run, the answer continues the run as its principal, so it is
+    // refused by the rule that refuses a message there, and before anything
+    // is reserved, so the question stays open for the person who may answer.
+    const runId = identity?.parentKind === "automation" ? this.sidekickAuthorityRunId() : "0";
+    if (identity && runId !== "0") {
+      const refusal = await this.sidekickRunInputRefusal({
+        workspaceId: auth.workspaceId, automationId: identity.parentId, runId, userId: auth.userId,
+      });
+      if (refusal) throw new ApiError(403, refusal, "Only the people this run acts for can answer its questions");
     }
     const localRoot = this.locallyAuthorizedRoot(auth);
     const reservationNow = Date.now();
