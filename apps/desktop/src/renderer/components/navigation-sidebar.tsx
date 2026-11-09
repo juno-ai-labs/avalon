@@ -1,5 +1,5 @@
 import { ShapeOutline } from '@rally/ui/components/identity-tile';
-import { IconChecks, IconDeviceDesktopDown, IconHexagon, IconMenu2, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
+import { IconChecks, IconDeviceDesktopDown, IconHexagon, IconHome, IconMenu2, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -148,8 +148,8 @@ export function NavigationSidebar({
     if (owner) setSection(owner);
   }, [pathname, setSection, sidebarOpen]);
   // Opening anything closes the sheet, whoever navigated: a row, a search
-  // result, a new Canvas. Switching sections does not navigate, so the sheet
-  // stays open on the list just picked. A navigation that asked for the sheet
+  // result, a new Canvas. Sidekicks switches only the list; Canvases opens
+  // its dashboard. A navigation that asked for the sheet
   // (`sheetAfterNavigation`) opens it here instead, once.
   useEffect(() => {
     const { sheetAfterNavigation, setSheetAfterNavigation } = useUiStore.getState();
@@ -159,7 +159,7 @@ export function NavigationSidebar({
   // Whatever opened it (a row, a deep link, a memory source, the account
   // menu), arriving at a Canvas or a Sidekick shows its section, so the list
   // beside it holds the row that is open. Only a navigation moves it:
-  // switching sections while one is open does not navigate.
+  // picking Sidekicks while one is open changes only the list.
   // Activity is a list of things to go to, so opening one of its rows keeps
   // it open, the next row a click away.
   // The landing is the window's first route that belongs to a section: a
@@ -243,6 +243,11 @@ export function NavigationSidebar({
     if (sheetOpen && target.split('?')[0] !== pathname) setSheetAfterNavigation(true);
     void navigate(target, { replace: mode === 'replace' });
   }, [activity, navigate, pathname, search, section]);
+  const openCanvasDashboard = (): void => {
+    setSection('canvases');
+    setSidebarOpen(false);
+    void navigate('/canvases', { replace: pathname === '/canvases' });
+  };
   return <ResizableSidebar
     aria-label="Rally navigation"
     className={clsx('sidebar single-sidebar navigation-sidebar', sidebarOpen && 'is-mobile-open')}
@@ -264,7 +269,7 @@ export function NavigationSidebar({
           icon={candidate.icon}
           key={candidate.id}
           label={candidate.label}
-          onClick={() => setSection(candidate.id)}
+          onClick={() => candidate.id === 'canvases' ? openCanvasDashboard() : setSection(candidate.id)}
         />)}
         <div className="navigation-rail-spacer" />
         {accountMenu}
@@ -288,6 +293,9 @@ export function NavigationSidebar({
           <div className="navigation-panel-actions window-no-drag">
             {downloadedUpdate !== null && <IconButton className="navigation-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
               <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
+            </IconButton>}
+            {barSection === 'canvases' && <IconButton label="Canvas dashboard" onClick={openCanvasDashboard}>
+              <IconHome aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
             {barSection === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => { setCreateCanvasError(null); void createCanvas().catch((cause: unknown) => setCreateCanvasError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))); }}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
