@@ -77,9 +77,6 @@ The regional bridge uses D1 only for identity and routing:
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause or resume, which call HostedSidekick in WorkspaceDO |
 | `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, Ace's retirement door: the D1 fence, then the graph walk over every object |
-| `dump_thread_transcripts` | Resolve the Organization in exactly one region | `thread-retirement-service.ts`: WorkspaceDO's Thread inventory, each conversation's AgentLoopDO, and R2 `PAYLOADS` |
-| `retire_threads` | Resolve the Organization in exactly one region | `thread-retirement-service.ts`: the dump receipts in R2, `retireObject` on each conversation's AgentLoopDO, and WorkspaceDO's row deletion |
-| `convert_threads_to_canvases` | Resolve the Organization in exactly one region | `thread-conversion-service.ts`: WorkspaceDO's conversion inventory and Canvas rows, the dump receipts in R2, `convertParentKind` on each Thread's Main and `retireObject` on its Breakouts, and WorkspaceDO's row deletion |
 | `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
 | `list_orgs`, `search_orgs` | None | D1 `workspaces` and `workspace_members` in every region, filtered there and ordered here |
@@ -88,7 +85,7 @@ The regional bridge uses D1 only for identity and routing:
 | `list_sidekicks` | Regional workspace identity at the open authority generation | `automation_directory` in WorkspaceDO, every lifecycle |
 | `list_artifacts` | Regional workspace identity at the open authority generation | `artifact_registry` in WorkspaceDO |
 | `run_workspace_sql` | Resolve, select one region, then revalidate the open workspace authority generation | WorkspaceDO SQLite |
-| `run_canvas_sql` | Resolve the parent's active route and, for a child, its registration (the Organization's parent tables, or a Sidekick's own registry), select one region, then revalidate | AgentLoopDO SQLite |
+| `run_canvas_sql` | Resolve the parent's active route and, for a child, its registration (the hosted conversation registry a Canvas and a Sidekick share in the Organization object), select one region, then revalidate | AgentLoopDO SQLite |
 | `run_artifact_sql` | Resolve the regional workspace identity and `artifact_registry` membership, select one region, then revalidate | ArtifactHostDO SQLite, the supervisor's own |
 | `run_d1_sql` | None: the caller names the region and the binding | The named D1 database in that region |
 
@@ -118,8 +115,9 @@ share `src/paging.ts`, which orders the merged set and pages it.
 (`conversationId`): the conversation object is named by that id, which is a
 `workstream` id in storage, and its main conversation, substream `0`. An
 optional `substreamId` reaches a registered child instead: a Sidekick run's
-conversation through the Sidekick's `sidekick_children`, or a background
-agent's through the parent tables, both in the Organization object. An
+conversation or a background agent's, through the parent's
+`sidekick_children` and `sidekick_child_projections` in the Organization
+object, which a Canvas and a Sidekick share. An
 unregistered child is not found rather than materialized. `list_canvases` and
 `list_sidekicks` return the workspace and parent IDs together.
 
@@ -253,51 +251,13 @@ resumes the walk.
 
 ### Retiring Threads
 
-`dump_thread_transcripts` and `retire_threads` are the two operator operations
-that retire an Organization's Threads, Breakouts and Channels, run in that
-order, in every Organization, immediately after the release that removes
-Threads deploys: they ship in that release, so they cannot run before it
-([`workspace-retirement.md`](workspace-retirement.md#the-deploy-order) has the
-deploy order, and what fails by design until they have run). The dump writes each of their
-conversations to R2 as text and reports `conversations`, `dumped`, `skipped`
-(already in R2) and `failed`, a stable code per conversation. The retirement
-is refused (`engineering_operation_failed:thread_retirement_conversion_pending`)
-while `convert_threads_to_canvases` below still has a Thread to convert, and
-(`engineering_operation_failed:thread_retirement_dump_incomplete`) until every
-conversation has its dump, then retires the conversation objects
-and deletes their rows, and reports `parents`, `conversations`,
-`retiredParents`, `retiredConversations`, `retainedOutbox` and `failed`; a
-rerun over a finished Organization reports zeros. It is annotated destructive.
-Both take `orgId` and `confirm`, which must equal `orgId`: the MCP refuses `thread_retirement_unconfirmed` before asking any
-region, and the regional bridge checks it again, then refuses
-`workspace_not_found` for an Organization the region does not hold. Being
-Organization-wide, they represent no user: its audit rows target the
-Organization (`target_type = 'workspace'`). The walk, its receipts and its
-failure codes are
-[`workspace-retirement.md`](workspace-retirement.md#retiring-threads-breakouts-and-channels)'s.
-
-`convert_threads_to_canvases` runs between the two: every Thread that made or
-linked an artifact becomes a Canvas with the same id, its Main the Canvas's
-Chat, and its Breakouts are retired. It takes `orgId`, `dryRun` (default
-`true`: list the candidates, each with its artifact, linked-artifact,
-participant, conversation and undumped counts, and change nothing) and
-`confirm`, which must equal `orgId` when `dryRun` is `false`. An apply is
-refused with `thread_retirement_dump_incomplete` as the retirement is, and
-reports `converted`, `alreadyConverted` (finished from an interrupted pass),
-`failed` with a code per Thread, and `artifactsWithoutThread`. It is annotated
-destructive and writes its audit rows on the same path; a dry run writes none.
-[`workspace-retirement.md`](workspace-retirement.md#converting-threads-that-have-artifacts)
-owns the mechanism. The order for an Organization is dump, convert, retire.
-
-**Who may call them.** These three tools sit behind the `confirm === orgId` gate
-and nothing else, with the same standing as `run_workspace_sql`: this server
-has no roles, and every principal its Access application admits is an
-operator who could already delete the same rows by hand. The confirmation is a
-consistency check on the request, not an authorization. So an agent-driven
-caller — a scheduled agent, a bot, or any MCP client acting without an operator
-reading each call — must not be given this server with these tools enabled; the
-decision was the reviewing engineer's on 2026-11-07, and a role split is the
-change to make if that ever has to differ.
+`dump_thread_transcripts`, `convert_threads_to_canvases` and `retire_threads`
+retired every Organization's Threads, Breakouts and Channels after the pivot,
+and were removed once the operator had run them in every Organization on
+2026-11-09 ([`workspace-retirement.md`](workspace-retirement.md#retiring-threads-breakouts-and-channels)).
+Their audit rows in `AUDIT_DB` (`engineering.dump_thread_transcripts.*`,
+`engineering.convert_threads_to_canvases.*`, `engineering.retire_threads.*`)
+stay as written; nothing parses the action names back.
 
 ### D1
 
@@ -475,9 +435,10 @@ A Canvas's parent state lives in WorkspaceDO, in `canvas_directory` and the
 included: listing is operator inspection, like `run_workspace_sql`. Reading a
 Chat is still the selected user's, through ordinary admission.
 
-`run_canvas_sql` checks the parent's route, not its kind: until
-`retire_threads` has run for an Organization, a Thread's id still resolves
-there, and nothing else in this MCP names one.
+`run_canvas_sql` checks the parent's route, not its kind: a retired Thread's
+id still resolves there, since its D1 anchor stays, and reaches its
+tombstoned Main through the permitted inspection door; nothing else in this
+MCP names one.
 
 A stateful artifact's facet database is outside this MCP for the reason above:
 its contents are reachable only through the product's admitted read path.
@@ -655,6 +616,32 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-11-09 — Remove the Thread operations
+
+**What changed:** `dump_thread_transcripts`, `convert_threads_to_canvases` and
+`retire_threads` are gone from the MCP, the regional bridge
+(`dumpThreadTranscripts`, `convertThreadsToCanvases`, `retireThreads`) and the
+contracts, with the `confirm` check only they used
+(`thread_retirement_unconfirmed`). The audit helper's action union loses their
+names. `run_canvas_sql` finds a child conversation in the hosted conversation
+registry alone, since no Thread parent tables are left to read.
+
+**Why:** The operator ran all three in every live Organization on 2026-11-09,
+and WorkspaceDO migration 141 drops the tables they read, so each would fail
+with `no such table` if called again.
+
+**Considered and rejected:** Keeping them as no-ops that report nothing to do:
+a tool that can only answer zero is surface an operator has to reason about.
+Keeping the action names in a read-side schema: `audit_events.action` is free
+text that nothing parses back into the union, so the stored rows stay readable
+without one.
+
+**Consequences:** Retiring Threads again would need new code; the dumps under
+`retired-conversations/` in `PAYLOADS` are the record of what was retired.
+
+Shipped in juno-ai-labs/avalon#1494. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/plan.md`.
 
 ### 2026-11-09 — Retire an Organization
 

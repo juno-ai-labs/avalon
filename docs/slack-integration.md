@@ -248,8 +248,8 @@ work.
 In a conversation Slack marks as not threadable, Rally never posts into a
 thread: results are posted at the top level.
 
-The `slack_agent_sessions` rows the retired Thread path wrote stay in storage,
-and nothing reads or writes them: routing is the binding's. A **feedback** modal
+The `slack_agent_sessions` rows the retired Thread path wrote were dropped
+with the table by WorkspaceDO migration 141: routing is the binding's. A **feedback** modal
 opened from an old task card is refused on submit ("This task is no longer
 available."), since the task it rated no longer exists. A person who joins an
 organization still has their Slack identity found by verified email and
@@ -487,9 +487,9 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
 - **Slack starts no conversation.** Every start surface answers with
   `conversation_ingress_retired` and creates nothing; a path that started work
   from Slack would bring back a conversation with no Canvas or Sidekick parent.
-- **Routing is the binding, not the session row.** A path that decides where a
-  message goes from `slack_agent_sessions` instead of
-  `resolveExternalConversation` will miss every Sidekick run's thread.
+- **Routing is the binding.** A path that decides where a message goes from
+  anything but `resolveExternalConversation` will miss every Sidekick run's
+  thread.
 - **The bot is only where it was invited or where a Sidekick source needs it.**
   A join Rally makes on its own reads, to everyone in the room, as an
   invitation it never received.

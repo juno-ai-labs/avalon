@@ -115,47 +115,17 @@ describe('authorization SQLite state', () => {
 
   // Every case below drives the state itself; blockConcurrencyWhile keeps the object's real
   // alarm from draining authorization_delivery before the assertion reads it.
+  // A Sidekick, the parent kind the backfill enumerates; its discovery rides the Queue.
   const directoryParent = (stub: DurableObjectStub<WorkspaceDO>) => runInDurableObject(stub, (_instance, state) => {
     state.storage.sql.exec(
-      `INSERT INTO channels
-         (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
-          title, description, preview, scope, exact_state, last_activity_at,
-          origin_type, title_status, latest_attention_ordinal,
-          unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
-       VALUES (?, 1, 1, ?, 'hash', 'Stuck', '', '', 'workspace', 'open', 0,
-               'ad_hoc', 'settled', 0, 0, 0, 0, 0)`,
-      parentId, `event:${parentId}`);
+      `INSERT INTO automation_directory
+         (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope, title, description, projected_at)
+       VALUES (?, ?, '00000000-0000-7000-8000-000000000b09', 1, 'hash', 'active', 'workspace', 'Stuck', '', 0)`,
+      parentId, workspaceId);
   });
 
   const deliveryKeys = (state: DurableObjectState) => state.storage.sql
     .exec<{ job_key: string }>('SELECT job_key FROM authorization_delivery').toArray().map((row) => row.job_key);
-
-  it('registers a hosted Channel\'s conversations when discovery starts, queueing only conversation jobs', async () => {
-    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName('authorization-storage-hosted-parent'));
-    await stub.initializeWorkspace(workspaceId, 'wnam');
-    await directoryParent(stub);
-    const reservedSubstreamId = '00000000-0000-7000-8000-000000000b08';
-    await runInDurableObject(stub, async (instance, state) => state.blockConcurrencyWhile(async () => {
-      state.storage.sql.exec(`INSERT INTO parent_metadata
-        (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
-        VALUES (?, 'workstream', ?, 'global', 1, 0, 0)`, parentId, workspaceId);
-      state.storage.sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_at, status)
-        VALUES (?, '0', 'main', 0, 'ready'), (?, ?, 'child', 0, 'ready'), (?, ?, 'child', 0, 'reserved')`,
-      parentId, parentId, siblingSubstreamId, parentId, reservedSubstreamId);
-
-      await instance.beginAuthorizationBackfill({ workspaceId });
-
-      // The parent's step ran here: no parent job waits for a Worker to ask this
-      // object for its own children, and a reserved child has nothing to read.
-      expect(deliveryKeys(state).sort()).toEqual([
-        JSON.stringify([parentId, '0']), JSON.stringify([parentId, siblingSubstreamId]),
-      ].sort());
-      expect(state.storage.sql.exec<{ completed: number }>(
-        'SELECT completed FROM authorization_backfill WHERE parent_id = ?', parentId).one().completed).toBe(1);
-      expect(await instance.authorizationBackfillStatus({ workspaceId }))
-        .toMatchObject({ pendingParents: 0, pendingChildren: 2 });
-    }));
-  });
 
   it('re-enqueues a tracked parent whose discovery never completed', async () => {
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName('authorization-storage-stuck-parent'));
@@ -182,7 +152,7 @@ describe('authorization SQLite state', () => {
       // authorization_projection_conversation_not_ready leaves behind.
       await instance.beginAuthorizationBackfill({ workspaceId, refresh: false });
       await instance.registerAuthorizationChildren({ workspaceId, parentId, substreamIds: ['0', siblingSubstreamId] });
-      await instance.applyAuthorizationLocations({ workspaceId, parentId, substreamId: siblingSubstreamId, parentKind: 'workstream',
+      await instance.applyAuthorizationLocations({ workspaceId, parentId, substreamId: siblingSubstreamId, parentKind: 'automation',
         revision: 1, validatedAt: Date.now(), resourceIds: [] });
       state.storage.sql.exec('DELETE FROM authorization_delivery');
       expect(state.storage.sql.exec<{ completed: number }>(
@@ -203,7 +173,7 @@ describe('authorization SQLite state', () => {
     await runInDurableObject(stub, async (instance, state) => state.blockConcurrencyWhile(async () => {
       await instance.beginAuthorizationBackfill({ workspaceId, refresh: false });
       await instance.registerAuthorizationChildren({ workspaceId, parentId, substreamIds: ['0'] });
-      await instance.applyAuthorizationLocations({ workspaceId, parentId, substreamId: '0', parentKind: 'workstream',
+      await instance.applyAuthorizationLocations({ workspaceId, parentId, substreamId: '0', parentKind: 'automation',
         revision: 1, validatedAt: Date.now(), resourceIds: [] });
       state.storage.sql.exec('DELETE FROM authorization_delivery');
       expect(await instance.authorizationBackfillStatus({ workspaceId })).toMatchObject({ complete: true });

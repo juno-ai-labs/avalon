@@ -104,12 +104,6 @@ async function bindingRows() {
   ).toArray());
 }
 
-async function spaceIds(): Promise<string[]> {
-  return runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ space_id: string }>(
-    "SELECT space_id FROM spaces WHERE system_role IS NULL ORDER BY space_id",
-  ).toArray().map((row) => row.space_id));
-}
-
 beforeEach(async () => {
   await reset();
   await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: USER_ID, sessionId: SESSION_ID });
@@ -525,9 +519,8 @@ describe("the connector side of a binding", () => {
       team_id: "T1",
       event: { type: "rally_sidekick_source_join", channel_ids: ["C8", "C9"] },
     });
-    // A join a Sidekick needs is not an invitation, and makes no room.
+    // A join a Sidekick needs is not an invitation, and binds nothing.
     expect(await bindingRows()).toEqual([]);
-    expect(await spaceIds()).toEqual([]);
   });
 
   it("joins again on every accepted revision of the same conversations, and once per revision", async () => {

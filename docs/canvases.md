@@ -238,10 +238,10 @@ list, and the next choice overwrites it.
 ### A Canvas that was a Thread
 
 A Canvas may have been a Thread. `convert_threads_to_canvases`, an operator
-operation run once per Organization after the pivot, makes every Thread that
-made or linked an artifact a Canvas with the same id
-([`workspace-retirement.md`](workspace-retirement.md#converting-threads-that-have-artifacts)
-owns it). What it keeps: the id, so `artifact_registry`, search, the D1 anchor
+operation run once in every Organization after the pivot and removed once it
+had, made every Thread that made or linked an artifact a Canvas with the same
+id ([`workspace-retirement.md`](workspace-retirement.md#converting-threads-that-have-artifacts)
+records it). What it kept: the id, so `artifact_registry`, search, the D1 anchor
 and the route already name the Canvas; the Thread's Main as the Chat, its
 conversation object's stored parent kind rewritten to `canvas`; its title, its
 creator (or its earliest viewer), its creation time and its last activity;
@@ -269,8 +269,8 @@ could not open, from a conversation that no longer exists. Dropping it from
 point is to keep a Thread's artifacts. Only the Canvas's artifacts move; any
 other resource a Breakout attached stays with the retired Breakout.
 
-What it does not keep: its Breakouts, retired as `retire_threads` retires them, and
-its unread state, which starts empty. Such a Canvas has no writer Sidekick and
+What it did not keep: its Breakouts, retired as `retire_threads` retired the
+rest, and its unread state, which starts empty. Such a Canvas has no writer Sidekick and
 no last editor until its Chat next publishes. A creator who had stopped being
 one of the Thread's viewers opens the Canvas again, as its creator.
 

@@ -289,9 +289,13 @@ apply, the local outbox, the Channel rail and its `railWaterline`, the Channel
 control socket, and the per-viewer Channel row on the workspace socket. Plan
 step C-2 deleted it with the Thread, Channel, Space, Breakout and Activity
 modules ([`data-model.md`](data-model.md#changelog) lists them). WorkspaceDO
-migration 139 dropped the Thread-era tables nothing reads; the `parent_*`,
-`channels`, `breakouts` and `spaces` rows stay until the operator has run
-`retire_threads` in every Organization, since its inventory reads them. The
+migration 139 dropped the Thread-era tables nothing reads, and migration 141,
+once the operator had run `retire_threads` in every Organization, dropped
+`channels`, `breakouts`, `spaces`, their viewers and the `parent_*` tables only
+a Thread or a Channel used. A Canvas's share still writes `parent_invitations`,
+`parent_grants` and their operation, import, revision, participant target and
+delivery tables under the Canvas's id, and `ScopeGrantStorage` joins
+`parent_children`, so those stay. The
 migration statements of deleted modules moved byte for byte to
 `retired-workspace-schema.ts`. The
 changelog below records why each of its mechanisms was shaped as it was; the
