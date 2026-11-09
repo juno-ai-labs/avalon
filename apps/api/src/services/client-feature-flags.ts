@@ -49,7 +49,6 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 
 /** Flagship flag key behind Application → Developer. Boolean; defaults to off. */
 export const DEVELOPER_SETTINGS_FLAG_KEY = "developer-settings";
-export const SUGGESTED_WORK_FLAG_KEY: ProductFeatureFlagKey = "suggested-work-enabled";
 export const MULTIPLE_WORKSPACES_FLAG_KEY: ProductFeatureFlagKey = "multiple-workspaces-enabled";
 
 interface ClientFeatureFlagSubject {
@@ -158,18 +157,15 @@ export async function resolveClientFeatureFlagsForSubject(
   };
   const [
     developerSettings,
-    suggestedWorkEnabled,
     multipleWorkspacesEnabled,
     pushNotificationsEnabled,
   ] = await Promise.all([
     resolveBooleanClientFlag(env, subject, DEVELOPER_SETTINGS_FLAG_KEY, context),
-    resolveBooleanClientFlag(env, subject, SUGGESTED_WORK_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, MULTIPLE_WORKSPACES_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, PUSH_NOTIFICATIONS_FLAG_KEY, context),
   ]);
   return {
     developerSettings,
-    suggestedWorkEnabled,
     multipleWorkspacesEnabled,
     pushNotificationsEnabled,
   };
