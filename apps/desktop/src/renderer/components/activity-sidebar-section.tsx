@@ -22,8 +22,6 @@ export function useActivityList(): ActivityList | undefined {
   return useSocketOwnedList<ActivityList>(SIDEBAR_LIST_QUERY_KEYS.activity).data;
 }
 
-export const ACTIVITY_EMPTY = 'Nothing yet. Mentions, new messages, Canvases you are added to, Sidekick runs that need you or finish, updates to Canvases you pinned, requests to open a Canvas and answers to yours show up here.';
-
 /** A run of the row's sentence: plain words, or a name drawn bold. */
 type RowPart = string | { strong: string };
 
@@ -159,7 +157,7 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
   return <section aria-label="Activity" className="navigation-section">
     <SectionHeading motionKey="activity">Recent</SectionHeading>
     {activity === undefined && <SidebarSkeletonRows count={5} hint />}
-    {activity !== undefined && activity.items.length === 0 && <p className="navigation-empty">{ACTIVITY_EMPTY}</p>}
+    {activity?.items.length === 0 && <p className="navigation-empty">Nothing yet</p>}
     {activity?.items.map((item) => {
       const active = isOpen(item);
       const parts = rowParts(item, who(item), where(item));

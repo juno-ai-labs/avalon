@@ -144,7 +144,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const navigate = useNavigate();
   const location = useLocation();
   useEffect(() => {
-    // A Canvas or a Sidekick, or either home: what reopens next time.
+    // A Canvas, a Sidekick or a section home: what reopens next time.
     const path = restorableRoute(location.pathname);
     if (path) writeLayout(layoutKey(workspace.id, workspace.currentUser.id, 'last-route'), path);
   }, [location.pathname, workspace.id, workspace.currentUser.id]);
