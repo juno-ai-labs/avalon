@@ -488,8 +488,11 @@ them null. A few legacy readers still look and tolerate null: the search
 audience projection (`search-authorization-projection.ts`) and the engineering
 inspection read (`apps/api/src/engineering-inspection-bridge.ts`).
 `AutomationScopeSchema` is `personal | workspace`, and a stored draft or
-transcript row that says `workstream` reads as `workspace`
-(`StoredAutomationScopeSchema`). The summary and detail no longer carry
+transcript row that says `workstream` reads as `personal`
+(`StoredAutomationScopeSchema`): fail closed, because the value does not say
+whether its Thread was private, and a draft writes its suggested scope on
+every submission, so reading it as the Organization would widen a private
+Thread's Sidekick past what the directory migration kept. The summary and detail no longer carry
 `owningWorkstreamId` or `owningThread`.
 
 `POST /sidekicks` creates a personal draft and its authoring conversation.
@@ -946,7 +949,10 @@ one identity and one history, and can complete more than once.
    message, an agent's and outside text. A person's message in `"0"` always
    queues, since the claim decides who answers it, and an agent's message
    there is taken only when the person it acts for manages the Sidekick
-   (refused `sidekick_edit_requires_manager` otherwise).
+   (refused `sidekick_edit_requires_manager` otherwise). Whether an input
+   steers is decided when it is admitted, so a delegate removed within the
+   one model step before their steered message joins still gets that one
+   message in; queued input is rechecked when it is claimed.
 3. The loop input carries `automationRun`, the run-as principal, and
    `automationContinuation: {stopGeneration, senderName, source}`; the sender stays
    the author of their own message. `readRunDefinition` reads the revision the
@@ -2383,7 +2389,8 @@ and cleared its home,
 archived any a room archive had paused under the old rule, and dropped the
 rail trigger that bumped an owning room. The scope enum is `personal |
 workspace`, with stored drafts and transcript rows that say `workstream`
-reading as `workspace`. Gone with it: the home color at creation, the Thread
+reading as `personal` (first `workspace`, which let a re-submitted draft
+widen a private Thread's Sidekick again; a review found it). Gone with it: the home color at creation, the Thread
 manager rule, `setOwningRoomArchived` and the archive cascade, the host's
 Channel reads, `listWorkstreamAutomations` and `GET /automations/workstream/:id`,
 the rail's owned list, the REST routes and loop tools for a Thread's attached
