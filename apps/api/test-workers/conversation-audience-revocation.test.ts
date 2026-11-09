@@ -153,6 +153,24 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("narrowing a conversation's audience", () => {
+  it("closes every open Chat feed when its Canvas is archived", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: OWNER, title: "Launch plan" });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId,
+      actor: { userId: OWNER, actorRole: "member" }, update: { visibility: "participants", userIds: [REMOVED, KEPT] } });
+    const owner = await openFeed(canvasId, OWNER);
+    const participant = await openFeed(canvasId, REMOVED);
+    const hops = await publishedRevocations(() => workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId,
+      actor: { userId: OWNER, actorRole: "member" } }));
+    expect(hops).toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId: OWNER, target: { scope: "substream", workstreamId: canvasId, substreamId: "0" } }),
+      expect.objectContaining({ userId: REMOVED, target: { scope: "substream", workstreamId: canvasId, substreamId: "0" } }),
+    ]));
+    await drain(hops);
+    expect((await owner.closed).code).toBe(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE);
+    expect((await participant.closed).code).toBe(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE);
+    expect(await heldBy(canvasId)).toEqual([]);
+  });
+
   it("closes the open Chat feed of a person a Canvas stopped admitting, and keeps the rest", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: OWNER, title: "Launch plan" });
     const share = (userIds: string[]) => workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId,

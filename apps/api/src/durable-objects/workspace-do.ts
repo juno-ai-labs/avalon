@@ -709,7 +709,7 @@ import {
 import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-batch";
 import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
 import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
-import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
+import { CANVAS_ARCHIVE_STATEMENTS, CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
 import { canvasAppearanceReporter, canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS, SIDEKICK_RUN_SEED_DROP_STATEMENTS } from "./hosted-sidekick-schema";
 import {
@@ -4401,6 +4401,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "drop the Thread, Breakout and Channel tables the Thread operations kept, and digest schedules",
   // See THREAD_ERA_PARENTS_DROP_MIGRATION and docs/workspace-retirement.md.
   statements: THREAD_ERA_PARENTS_DROP_MIGRATION,
+}, {
+  version: 142,
+  description: "retain a Canvas archive tombstone and remove archived Canvases from active admission",
+  statements: CANVAS_ARCHIVE_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -5293,6 +5297,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return (await this.hostedCanvas(input.canvasId, input.workspaceId)).detail(input);
   }
 
+  /** Archive for everyone and close the conversations it no longer admits. */
+  async canvasArchive(input: Parameters<HostedCanvas["archive"]>[0]): Promise<void> {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    await this.canvasWrite(() => this.closingNarrowedConversations(input.workspaceId, [input.canvasId], async () => {
+      canvas.archive(input);
+      this.broadcastPresence();
+    }));
+  }
+
   /** Record an artifact a publish attached to a Canvas; `noted: false` for an id that is no Canvas. See `HostedCanvas.noteArtifact`. */
   async canvasNoteArtifact(input: Parameters<HostedCanvas["noteArtifact"]>[0]) {
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
@@ -5310,12 +5323,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const input = parseRpcInput(CanvasForSidekickRunRequestSchema, rawInput, "canvas_for_sidekick_run");
     this.assertWorkspace(input.workspaceId);
     if (input.canvasId !== null) {
-      const row = this.state.storage.sql.exec<{ writer_sidekick_id: string | null }>(
-        `SELECT writer_sidekick_id FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, input.canvasId, input.workspaceId,
+      const row = this.state.storage.sql.exec<{ writer_sidekick_id: string | null; archived_at: number | null }>(
+        `SELECT writer_sidekick_id, archived_at FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, input.canvasId, input.workspaceId,
       ).toArray()[0];
       if (row?.writer_sidekick_id !== input.sidekickId) {
         throw new ApiError(404, "canvas_not_written_by_sidekick", "This Sidekick does not write that Canvas");
       }
+      if (row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
       return { canvasId: input.canvasId };
     }
     return { canvasId: this.state.storage.sql.exec<{ canvas_id: string }>(
