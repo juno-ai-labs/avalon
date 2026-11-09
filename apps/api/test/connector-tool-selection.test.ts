@@ -241,7 +241,6 @@ class ToolSelectionDatabase {
               id,
               name: detail?.name ?? "Unnamed",
               description: detail?.description ?? "",
-              emailAddress: null,
               status: detail?.status ?? "draft",
               nextRunAt: null,
               lastRunAt: null,
@@ -543,7 +542,6 @@ function automationDetail(
     runnable: true,
     name,
     description: `${name}, on request.`,
-    emailAddress: null,
     scope: "workspace",
     status: "active",
     nextRunAt: null,
@@ -1734,7 +1732,7 @@ describe("connector tools selected for harness runs", () => {
     });
   });
 
-  it("keeps connector writes on an inbound-email automation, like any other trigger", async () => {
+  it("keeps connector writes on an scheduled automation, like any other trigger", async () => {
     const database = new ToolSelectionDatabase(
       [connection(WORKSPACE_CONNECTION_ID, "workspace", null)],
       [
@@ -1744,7 +1742,7 @@ describe("connector tools selected for harness runs", () => {
         { capability: "sheets.write", connection_id: WORKSPACE_CONNECTION_ID },
       ],
     );
-    const input = automationRunInput("inbound_email");
+    const input = automationRunInput("schedule");
 
     const selected = await __integrationTesting.loadHarnessTools(env(database), input);
 

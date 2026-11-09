@@ -72,7 +72,7 @@ export function sidekickActivityAt(row: Pick<AutomationSummary, 'lastRunAt' | 'u
 
 /**
  * The home's Next column, as design.html §3 writes it: what wakes it ("On
- * alert", "On email"), else a schedule's next run ("Fri 2:00 PM"), else "On
+ * alert"), else a schedule's next run ("Fri 2:00 PM"), else "On
  * request". The design's Incident triage wakes on an alert and a weekday
  * schedule and reads "On alert", so an alert outranks the schedule.
  */
@@ -80,7 +80,6 @@ export function sidekickNext(row: Pick<AutomationSummary, 'nextRunAt' | 'schedul
   if (row.status !== 'active') return '—';
   const kinds = row.triggerKinds ?? [];
   if (kinds.includes('external_event')) return 'On alert';
-  if (kinds.includes('inbound_email')) return 'On email';
   if (row.nextRunAt && (kinds.length === 0 || kinds.includes('schedule'))) return formatNextRun(row.nextRunAt, 'short', now, row.scheduleTimeZone);
   if (kinds.includes('manual')) return 'On request';
   return '—';

@@ -3,12 +3,34 @@ import { connectorAuthorizationStatus } from '@rally/contracts';
 import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
 
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
-import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
+import {
+  ScopeSharingOptionsSchema,
+  ScopeInvitationsListSchema,
+  ScopeInvitationResultSchema,
+  type ScopeGrantTarget,
+  type CreateScopeInvitations,
+} from "@rally/contracts/scope-grants";
 import { WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
-import { MemberPreferencesSchema, MemoryForgetResponseSchema, MemoryReviewSchema, PersonalSystemPromptSchema, type MemoryForgetResponse, type MemoryReview, type MemberPreferences, type MemberPreferencesUpdate } from "@rally/contracts";
+import {
+  MemberPreferencesSchema,
+  MemoryForgetResponseSchema,
+  MemoryReviewSchema,
+  PersonalSystemPromptSchema,
+  type MemoryForgetResponse,
+  type MemoryReview,
+  type MemberPreferences,
+  type MemberPreferencesUpdate,
+} from "@rally/contracts";
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
-import { AccountOnboardingSchema, OrganizationNameSuggestionSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type OrganizationNameSuggestion, type UpdateAccountOnboarding } from "@rally/contracts";
+import {
+  AccountOnboardingSchema,
+  OrganizationNameSuggestionSchema,
+  UpdateAccountOnboardingSchema,
+  type AccountOnboarding,
+  type OrganizationNameSuggestion,
+  type UpdateAccountOnboarding,
+} from "@rally/contracts";
 
 import { SupportAccessSchema, type SupportAccess } from "@rally/contracts";
 import { UserTimezoneSchema, type UserTimezone } from "@rally/contracts";
@@ -345,7 +367,6 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
     titleStatus: workstream.titleStatus,
     appearance: workstream.appearance,
     objective: workstream.objective,
-    ...(workstream.emailAddress ? { emailAddress: workstream.emailAddress } : {}),
     ...(workstream.createdByUserId ? { createdByUserId: workstream.createdByUserId } : {}),
     harnessStatus: normalizeHarnessStatus(workstream.harnessStatus),
     latestAttentionSequenceNumber: workstream.latestAttentionSequenceNumber,
@@ -461,7 +482,6 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
   switch (trigger.type) {
     case 'manual': return 'On request';
-    case 'inbound_email': return 'When an email arrives';
     case 'calendar': return trigger.summary;
     case 'interval': return trigger.summary;
     case 'connector_activity': return `When there is matching activity in ${trigger.connectorType.replaceAll('_', ' ')}`;
@@ -501,7 +521,6 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     ...(automation.appearance ? { appearance: automation.appearance } : {}),
     name: automation.name,
     description: automation.description,
-    ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     scope: mapAutomationScope(automation.scope),
     status: automation.status,
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),

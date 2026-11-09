@@ -37,7 +37,20 @@ import {
   Volume2,
   X,
 } from 'lucide-react';
-import { Children, Fragment, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ButtonHTMLAttributes, type PropsWithChildren } from 'react';
+import {
+  Children,
+  Fragment,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type PropsWithChildren,
+} from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import {
   citationFootnotes,
@@ -2110,7 +2123,7 @@ export function HumanMessageBody({
  *
  * Most are a sentence — a scheduled wake-up, a delivery confirmation. A few are
  * the entire input a run was launched with: a digest brief, an automation's
- * opening prompt, an inbound email. Those arrive thousands of words long and
+ * opening prompt. Those arrive thousands of words long and
  * used to be laid out in full, burying the conversation they preface under a
  * screen or more of scrolling. Every system row is clamped to the five lines
  * that `--system-message-lines` sets, and the reader opens the rest; the short

@@ -79,7 +79,7 @@ function runKind(row: RunRow): 'workstream' | 'automation' | 'system' {
   return 'workstream';
 }
 
-function triggerType(row: RunRow): 'composer' | 'retry' | 'manual' | 'scheduled' | 'activity' | 'inbound_email' | 'digest' | 'system' {
+function triggerType(row: RunRow): 'composer' | 'retry' | 'manual' | 'scheduled' | 'activity' | 'digest' | 'system' {
   if (row.origin === 'human_message') return 'composer';
   if (row.origin === 'manual_retry') return 'retry';
   // The run reference's own trigger vocabulary, translated into the one the
@@ -89,7 +89,6 @@ function triggerType(row: RunRow): 'composer' | 'retry' | 'manual' | 'scheduled'
   // were these reported every scheduled and every event-triggered run as
   // `manual`, through the fallthrough below.
   if (row.automation_trigger_type === 'external_event') return 'activity';
-  if (row.automation_trigger_type === 'inbound_email') return 'inbound_email';
   if (row.automation_trigger_type === 'schedule') return 'scheduled';
   if (row.automation_id) return 'manual';
   return 'system';

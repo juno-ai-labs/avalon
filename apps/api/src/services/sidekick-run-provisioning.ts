@@ -17,7 +17,7 @@ import { createMessageObjectPort } from "../runtime/message-port";
 import { automationModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
 import { activateWorkstreamLoop } from "./integrations";
 import { refreshMemoryDigestCopy } from "./memory-digest-service";
-import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
+
 import { bootstrapConversationChildRuntime, provisionWorkstreamObject } from "./workstream-runtime-database";
 
 /**
@@ -56,8 +56,6 @@ export async function provisionSidekickRun(env: Env, message: SidekickRunProvisi
     createdByUserId: run.runAsUserId,
     participantUserIds: [run.runAsUserId],
     harnessStatus: "scheduled",
-    emailAddress: null,
-    emailRouteStatus: null,
     systemKind: null,
     modelOverride: run.modelOverride,
     now,
@@ -72,17 +70,6 @@ export async function provisionSidekickRun(env: Env, message: SidekickRunProvisi
   );
   let triggerMessageId: string | null = null;
   if (definition.opening) {
-    // Only an email is also a resource the run can open; an event is prose.
-    if (definition.opening.resourceId) {
-      await attachWorkstreamRuntimeResource(env, {
-        workspaceId: run.workspaceId,
-        workstreamId: run.automationId,
-        substreamId: run.runId,
-        resourceId: definition.opening.resourceId,
-        attachedByUserId: null,
-        relationshipType: "inbound_email",
-      });
-    }
     const appended = await createMessageObjectPort(env, run.workspaceId, run.automationId, undefined, run.runId)
       .appendMessage({
         messageId: uuidV7(Date.now()),

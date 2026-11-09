@@ -8,7 +8,6 @@
 > [data model](../../data-model.md),
 > [Queue versus RPC](../../choosing-queues-or-rpc.md),
 > [work-stream creation](../../workstream-creation.md),
-> [work-stream email addresses](../../workstream-email-addresses.md),
 > [work-stream pinning](../../pinning.md). Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
@@ -471,7 +470,7 @@ Finalization releases the named `SubstreamAgent` start gate through an
 idempotent typed effect. In the same target transaction, `SubstreamAgent`
 changes the gate to released and records the normal durable Workflow-dispatch
 intent. The finalizer waits for the existing Workflow start round trip, drains
-and verifies the directory facts, activates the minimal D1 route and email, and
+and verifies the directory facts, activates the minimal D1 route, and
 then settles the WorkspaceDO start receipt. A crash at any point resumes from
 the operation, gate, dispatch, and route receipts; a repeated release cannot
 start a second run. The HTTP request may wait for this completion when it stays
@@ -493,9 +492,7 @@ while a late effect could still commit. It then durably asks each authority to
 abandon only this never-activated draft: `SubstreamAgent` marks the gate and
 scheduled run cancelled, `WorkspaceDO` removes the draft membership, and the
 creation finalizer removes the never-active regional owner and verified D1 route.
-The Global email-address claim is a permanent tombstone and is never released or
-recycled; stale mail to it cannot find an active regional owner. Applied resource
-links disappear with the unactivated draft; this is draft cleanup, not removing
+Applied resource links disappear with the unactivated draft; this is draft cleanup, not removing
 an active work stream from a project. The operation becomes `cancelled` and
 releases the project configuration fence only after no setup lease is live and
 every supported cleanup receipt is durable. If final dispatch won the claim
@@ -1097,7 +1094,7 @@ member-audience mutations. These local receipts contain operation identity and
 generation, not a second copy of project authority.
 `SubstreamAgent` also owns the start gate beside the scheduled run and the
 idempotent release-to-Workflow-dispatch receipt. The D1 route stays `verified`
-and email stays inactive until the existing creation finalizer has both that
+and creation stays inactive until the existing creation finalizer has both that
 receipt and the directory-publication fence.
 Applying a default uses an idempotent typed effect and receipt rather than a
 cross-object SQL write. A `WorkspaceDO` alarm drains pending application IDs to
@@ -1272,7 +1269,7 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
    before the first agent turn begins. A durable WorkspaceDO start operation and
    SubstreamAgent gate release the scheduled run exactly once after the final
    receipt, even when the create request or desktop has gone away. The D1 route
-   and email do not activate before the existing Workflow and directory fences.
+   do not activate before the existing Workflow and directory fences.
    A personal project seats all project participants; a workspace project
    creates a workspace-scoped work stream.
 4. Dragging an existing work stream onto a project and choosing **Add to
@@ -1386,8 +1383,7 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
     remains discoverable there as **Preparing work stream…** with retry and
     cancellation on failure, including after a desktop restart. Cancellation
     waits for live setup claims, durably abandons the gated run and draft
-    regional authorities, retains the permanent Global email-address tombstone,
-    then releases the project configuration fence without activating the route.
+    regional authorities, then releases the project configuration fence without activating the route.
 18. Creating, joining, leaving, archiving, or restoring a project does not
     change a work stream's system prompt, compaction behavior, or available
     memory scopes.

@@ -2524,7 +2524,7 @@ describe("a member's message travels the whole pipeline", () => {
         text: "New help-list email. Help email ID: 1a16ff84e56cd0f1. Suggested reply: Thanks, we received it.",
         post: {
           type: "automation_activation", schemaVersion: 1, automationId, automationName: "Help desk",
-          runId: crypto.randomUUID(), deliveryId: clientMessageId, trigger: { kind: "inbound_email" },
+          runId: crypto.randomUUID(), deliveryId: clientMessageId, trigger: { kind: "schedule" },
           occurredAt: Date.now(),
         },
       });

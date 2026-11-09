@@ -114,8 +114,6 @@ describe("the health probe under a misconfigured environment", () => {
       ACTIVITY_QUEUE: { send: () => undefined },
       CONNECTOR_POLL_WORKFLOW: { create: () => undefined },
       CONNECTOR_EVENT_WORKFLOW: { create: () => undefined },
-      WORKSTREAM_EMAIL_ADDRESS_KEY: "a".repeat(48),
-      WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
       AVALON_REGION: "global",
       // Development, so the production-only checks stay out of `required` and
       // the contract is the single remaining fault.
@@ -127,9 +125,9 @@ describe("the health probe under a misconfigured environment", () => {
       checks: Record<string, { ok: boolean; message: string }>;
     };
     // Every check the probe blocks on, other than the contract, is satisfied.
-    // The unsatisfied remainder — openRouter, the OAuth pairs, resend — are
+    // The unsatisfied remainder — openRouter, the OAuth pairs, outbound email — are
     // deliberately non-blocking and do not decide `ok`.
-    for (const name of ["d1", "r2", "durableObjects", "queue", "workflows", "workstreamEmailRegistry"]) {
+    for (const name of ["d1", "r2", "durableObjects", "queue", "workflows"]) {
       expect(body.checks[name]).toEqual({ ok: true, message: expect.any(String) });
     }
     expect(body.checks.envContract?.ok).toBe(false);

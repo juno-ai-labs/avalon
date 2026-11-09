@@ -193,7 +193,6 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "sidekick_revisions",
   "sidekick_schedules",
   "sidekick_runs",
-  "sidekick_email_receipts",
   "sidekick_children",
   "sidekick_child_projections",
   "sidekick_child_receipts",

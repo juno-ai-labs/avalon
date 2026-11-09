@@ -28,7 +28,6 @@ import { onboardingRoutes } from "./routes/onboarding";
 import { navigationRoutes } from "./routes/navigation";
 import { pushDeviceRoutes } from "./routes/push-devices";
 import { realtimeRoutes } from "./routes/realtime";
-import { resendInboundRoutes } from "./routes/resend";
 import { resourceRoutes } from "./routes/resources";
 import { searchRoutes } from "./routes/search";
 import { slackIngressRoutes } from "./routes/slack";
@@ -37,7 +36,14 @@ import { speechRoutes } from "./routes/speech";
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from "./routes/telemetry";
 import { linkRoutes } from "./routes/links";
 import { telemetryOperatorRoutes } from './routes/telemetry-operations';
-import { connectedAppRoutes, deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
+import {
+  connectedAppRoutes,
+  deviceTimezoneRoutes,
+  workspaceMembers,
+  workspaceProfile,
+  workspaceRoutes,
+  workspaceSocketTicket,
+} from "./routes/workspace";
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
 import { mcpOAuthRoutes } from "./routes/mcp-oauth";
 import { workspaceOperatorRoutes } from './routes/workspace-operations';
@@ -139,7 +145,6 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/dev", devRoutes);
   app.route("/connections", connectionCallbackRoutes);
   app.route("/ingest", webhookIngestionRoutes);
-  app.route("/ingest/resend", resendInboundRoutes);
   app.route("/ingest/daytona", daytonaWebhookRoutes);
   app.route("/socket", socketRoutes);
   app.route("/slack", slackIngressRoutes);

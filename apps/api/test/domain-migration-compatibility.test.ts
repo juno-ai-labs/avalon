@@ -7,7 +7,7 @@ import {
 } from "../src/lib/desktop-handoff";
 import { addWorkspaceTarget, parseWorkspaceTarget } from "@rally/contracts/workspace-target";
 import { AuthService } from "../src/services/auth-service";
-import { __resendInboundEmailTesting } from "../src/services/resend-inbound-email-service";
+
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result } from "./helpers/cloudflare-test";
 import { contractCompleteEnv } from "./helpers/worker-env";
 
@@ -179,29 +179,5 @@ describe("deep links the server mints without a caller scheme", () => {
 
     expect(target.host).toBe("auth");
     expect(target.pathname).toBe("/complete");
-  });
-});
-
-describe("the work-stream email domain a deployment mints on", () => {
-  it("refuses a superseded domain rather than minting on it", () => {
-    // Accepting the old domain inbound is the point of the legacy list; minting
-    // new addresses on it is not, and would be silent.
-    expect(() => __resendInboundEmailTesting.configuredEmailDomain("automation.with-avalon.com"))
-      .toThrowError();
-    expect(() => __resendInboundEmailTesting.configuredEmailDomain("automaton.rallywith.ai"))
-      .toThrowError();
-    expect(() => __resendInboundEmailTesting.configuredEmailDomain("automation.rallywith.ai"))
-      .toThrowError();
-    expect(__resendInboundEmailTesting.configuredEmailDomain("rallywithai.com"))
-      .toBe("rallywithai.com");
-    expect(__resendInboundEmailTesting.configuredEmailDomain(undefined)).toBe("rallywithai.com");
-  });
-
-  it("still routes mail addressed to the superseded domain", () => {
-    const accepted = __resendInboundEmailTesting.acceptedEmailDomains("rallywithai.com");
-
-    expect(accepted.has("rallywithai.com")).toBe(true);
-    expect(accepted.has("automation.with-avalon.com")).toBe(true);
-    expect(accepted.has("automation.rallywith.ai")).toBe(true);
   });
 });

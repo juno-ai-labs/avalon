@@ -19,7 +19,7 @@
 
 A Sidekick is one object today and its Organization is another, and nearly
 every Sidekick request crosses between them. After this change a Sidekick's
-definition, revisions, schedules, runs, inbound-email receipts and parent
+definition, revisions, schedules, runs and parent
 contract live in `WorkspaceDO`, keyed by Sidekick id, in the same SQLite
 database as the Channel or Breakout it lives in, the people who may see it, the
 connector registrations it owns and the sidebar row that shows it. The
@@ -110,7 +110,7 @@ a 10-minute schedule, holds 432 runs from three days at about 120 bytes each.
 
 ## Goals
 
-1. A Sidekick's definition, revisions, schedules, runs, inbound-email receipts
+1. A Sidekick's definition, revisions, schedules, runs
    and children live in the Organization's `WorkspaceDO`, and no Sidekick fact
    is copied from one object into another.
 2. Every change to what a Sidekick has registered (publish, pause, resume,
@@ -135,38 +135,6 @@ a 10-minute schedule, holds 432 runs from three days at about 120 bytes each.
    Sidekick migration-tracker class, and the Sidekick node kind in retirement.
 
 ## Non-goals
-
-1. **Run conversations do not move.** Every Sidekick's authoring chat
-   (substream `0`) and every run stays its own `SubstreamAgent`. A transcript
-   and an agent loop are a real concurrency and size boundary, which is what
-   the small-object design was for. Rejected outright.
-2. **No model call runs in `WorkspaceDO`.** The semantic trigger classifier
-   stays in the Worker between `externalEventAdmissionPlan` and
-   `admitExternalEvent`, as
-   [semantic-activity-triggers.md](../../semantic-activity-triggers.md)
-   requires. Rejected outright.
-3. **No wire or identifier rename.** The parent kind stays `"automation"` on
-   the wire and in every `SubstreamAgent` identity, `AutomationId` stays, the
-   Global `workstream_email_routes.automation_subscription_id` column stays, and
-   run conversation names (`conversationObjectName`) do not change, since a
-   rename would orphan every existing run object. The new tables take the
-   product's name, as the Channel move did. Deferred to the rebrand inventory.
-4. **No change to what a Sidekick does.** Triggers, scopes, homes, attachments,
-   drafting, apply, pause, run-now, delivery and the Sidekick surfaces in the
-   client behave as they do today, except that the two library leaks in
-   Motivation 5 close. Product changes ride their own PRDs.
-5. **No new retention for run history.** `runs`, revisions and email receipts
-   are imported whole and keep growing as they do today. Decision 8 says they
-   fit; a retention policy is a separate, reversible decision if that changes.
-   Deferred.
-6. **No client changes.** `SidekickDO` holds no sockets, and the Sidekick row
-   already reaches clients on the workspace socket. macOS, web and iOS are
-   untouched. Rejected as unnecessary.
-7. **No zero-downtime dual write.** Each Sidekick is frozen for one export RPC,
-   as each Channel was. Rejected, for the reason the Channel move gave: a
-   per-parent export is cheaper to build and to verify.
-8. **No per-descendant revocation tracker.** Run feed sockets still close
-   through one Queue hop per run `SubstreamAgent`, as today. Out of scope.
 
 ## Product behavior
 
@@ -492,7 +460,6 @@ with `sidekick_id`; the authoritative record will be the migration and
 | `sidekick_revisions` | `definition_revisions` | Immutable, as today. |
 | `sidekick_schedules` | `schedules` | Replaced whole on apply, as today. |
 | `sidekick_runs` | `runs` | `UNIQUE (sidekick_id, occurrence_key)`, `UNIQUE (harness_run_id)`. History index on `(sidekick_id, created_at DESC, run_id)`. |
-| `sidekick_email_receipts` | `inbound_email_receipts` | Keyed by Resend id. |
 | `sidekick_imports` | none | The import ledger. Dropped in step 3. |
 
 If the delivery-reliability PRD's `deliveries` table has landed in
@@ -506,8 +473,7 @@ None in placement. A Sidekick's object is already named
 jurisdiction as its Organization's `<region>:<workspaceId>`, so the move is a
 data move inside one region, not a relocation
 ([regionalization.md](../../regionalization.md)). The only cross-region hop a
-Sidekick makes, the inbound-email reservation in Global
-`workstream_email_routes`, is keyed by Sidekick id and is unchanged; the
+Sidekick makes, its run provisioning, is keyed by Sidekick id and is unchanged; the
 regional handler addresses `WorkspaceDO` instead of `SidekickDO`.
 
 ## Security and trust model
@@ -528,7 +494,7 @@ regional handler addresses `WorkspaceDO` instead of `SidekickDO`.
   checked before they are written (decision 9).
 - **Operator SQL widens.** `run_sidekick_sql` is removed, and
   `run_workspace_sql` now reaches Sidekick customer content alongside every
-  Channel's: `sidekick_runs.opening_json`, which can hold inbound email text,
+  Channel's: `sidekick_runs.opening_json`, which holds trigger evidence,
   `sidekick_runs.trigger_json` and `sidekicks.connector_bindings_json`. The
   engineering MCP's audit rules apply as they do to the rest of
   `run_workspace_sql`.

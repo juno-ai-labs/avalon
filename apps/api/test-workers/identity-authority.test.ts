@@ -76,8 +76,6 @@ function provisionInput(overrides: Record<string, unknown> = {}): Record<string,
     createdByUserId: TAYLOR,
     participantUserIds: [TAYLOR],
     harnessStatus: "scheduled",
-    emailAddress: "brief@automation.with-avalon.com",
-    emailRouteStatus: "reserved",
     systemKind: null,
     automationSubscriptionId: "00000000-0000-7000-8000-0000000000b1",
     automationRunId: "00000000-0000-7000-8000-0000000000b2",
@@ -180,11 +178,9 @@ describe("identity authority on real workerd", () => {
     await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
 
     const first = await identity(stub, "adoptEmailAddress", {
-      emailAddress: "first@automation.with-avalon.com",
       now: 3,
     });
     const second = await identity(stub, "adoptEmailAddress", {
-      emailAddress: "second@automation.with-avalon.com",
       now: 4,
     });
 

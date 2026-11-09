@@ -6,7 +6,7 @@ import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
  * The workspace's resource inventory, as questions rather than SQL.
  *
  * `resources`, its version history, watches, upload-draft reservations, the
- * object-deletion outbox and the inbound-email receipts are WorkspaceDO
+ * object-deletion outbox is WorkspaceDO
  * tables that services reached as statements through the workspace runtime
  * facade — the router that classifies SQL by the table names in it and sends
  * anything it does not recognise to the regional database. A typed method
@@ -312,21 +312,6 @@ export const WorkspaceResourceSlugBacklogSchema = deferredZodSchema(() => z.stri
   items: z.array(IdSchema),
 }));
 
-export const WorkspaceInboundEmailResourceRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  /** The id the row gets if this email has no resource yet. */
-  candidateResourceId: IdSchema,
-  resendEmailId: z.string(),
-  title: z.string(),
-  contentRef: z.string(),
-  metadataJson: z.string(),
-  at: TimestampSchema,
-}));
-
-export const WorkspaceInboundEmailResourceResultSchema = deferredZodSchema(() => z.strictObject({
-  resourceId: IdSchema,
-}));
-
 export const WorkspaceDiscoveredResourceSchema = deferredZodSchema(() => z.strictObject({
   id: IdSchema,
   resourceType: z.string(),
@@ -423,12 +408,6 @@ export type WorkspaceResourceSlugBacklogRequest = z.infer<
   typeof WorkspaceResourceSlugBacklogRequestSchema
 >;
 export type WorkspaceResourceSlugBacklog = z.infer<typeof WorkspaceResourceSlugBacklogSchema>;
-export type WorkspaceInboundEmailResourceRequest = z.infer<
-  typeof WorkspaceInboundEmailResourceRequestSchema
->;
-export type WorkspaceInboundEmailResourceResult = z.infer<
-  typeof WorkspaceInboundEmailResourceResultSchema
->;
 export type WorkspaceDiscoveredResourcesRequest = z.infer<
   typeof WorkspaceDiscoveredResourcesRequestSchema
 >;

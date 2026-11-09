@@ -37,7 +37,6 @@ import { runSidekickAlarms, sidekickWorkspace } from "./helpers/sidekick";
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000cd10");
 const AUTHOR_ID = asUserId("00000000-0000-7000-8000-00000000cd11");
 const SESSION_ID = "00000000-0000-7000-8000-00000000cd12";
-const NOW = "2026-10-31T10:00:00.000Z";
 const TEST_ENV: Env = env;
 const RUN_SETTLE_TIMEOUT_MS = 20_000;
 
@@ -122,13 +121,6 @@ async function seedRegionalDatabase(): Promise<void> {
       source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL)`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
-    env.DB.prepare(`INSERT OR REPLACE INTO workstream_email_routes
-        (local_part, region, workspace_id, workstream_id, automation_subscription_id, created_at, updated_at)
-      VALUES (?, 'global', ?, NULL, ?, ?, ?)`).bind(`doubler-${ordinal}`, WORKSPACE_ID, AUTOMATION_ID, NOW, NOW),
   ]);
 }
 

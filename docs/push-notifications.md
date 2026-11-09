@@ -594,7 +594,6 @@ applied before the Worker. Correlation headers
 do not provide provider deduplication; the acceptance/settlement gap remains an
 explicit at-least-once delivery limitation.
 
-
 ### 2026-11-09 — Every kind renders once into a notice for the push and email sinks, checked against its Canvas or Sidekick, with an Activity row beside each intent
 
 **What changed:** `notificationDirectoryState` checks a recipient against the

@@ -2,7 +2,12 @@ import { CONVERSATION_VIEW_SOURCE_MIGRATION } from "./conversation-view-projecti
 import { SUBSTREAM_PERSONAL_SYSTEM_PROMPT_MIGRATION } from "./personal-system-prompt";
 import { CONVERSATION_LINK_SEARCH_SCHEMA } from './conversation-link-search';
 import { TOOL_PAGE_SCHEMA, TOOL_PAGE_CONSUMER_INDEX } from './tool-page-storage';
-import { CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS, CONVERSATION_SEARCH_AUDIENCE_MIGRATION_STATEMENTS, CONVERSATION_SEARCH_REPROJECTION_MIGRATION_STATEMENTS, TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS } from './search-projection-outbox';
+import {
+  CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS,
+  CONVERSATION_SEARCH_AUDIENCE_MIGRATION_STATEMENTS,
+  CONVERSATION_SEARCH_REPROJECTION_MIGRATION_STATEMENTS,
+  TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS,
+} from './search-projection-outbox';
 /**
  * Object-local SQL schema for the existing one-room-per-work-stream namespace.
  *
@@ -12,7 +17,6 @@ import { CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS, CONVERSATION_SEARCH_A
  * workspace authorization; WorkspaceDO owns cross-work-stream serving state.
  */
 
-import { RESOURCE_RELATIONSHIP_TYPES } from "@rally/contracts";
 import { SCHEDULED_ALARM_SCHEMA_STATEMENTS } from "./scheduled-alarms";
 import { ORDERED_TRANSCRIPT_SCHEMA_V1 } from "./ordered-transcript-sqlite/schema-v1";
 import { WORKSTREAM_RUNTIME_COMPAT_SCHEMA } from "./workstream-runtime-compat-schema";
@@ -61,7 +65,7 @@ const PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA = [
 ] as const;
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 85;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 86;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -80,7 +84,10 @@ const LEGACY_RESOURCE_RELATIONSHIP_TYPES = [
 const RESOURCE_RELATIONSHIP_CHECK_VALUES = LEGACY_RESOURCE_RELATIONSHIP_TYPES
   .map((relationshipType) => `'${relationshipType}'`)
   .join(", ");
-const CURRENT_RESOURCE_RELATIONSHIP_CHECK_VALUES = RESOURCE_RELATIONSHIP_TYPES
+// Frozen for migration 35; later vocabulary removals must not change its hash.
+const CURRENT_RESOURCE_RELATIONSHIP_CHECK_VALUES = [
+  "attachment", "message_attachment", "origin", "generated", "inbound_email", "context",
+]
   .map((relationshipType) => `'${relationshipType}'`)
   .join(", ");
 
@@ -3851,6 +3858,17 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     // Canvas fingerprint stopped naming the person, so nothing is backfilled.
     statements: [
       `ALTER TABLE terminal_workspace ADD COLUMN credential_principal_key TEXT`,
+    ],
+  },
+  {
+    version: 86,
+    description: "retire conversation mail addresses and preserve received resources as attachments",
+    statements: [
+      `ALTER TABLE workstream DROP COLUMN email_address`,
+      `ALTER TABLE workstream DROP COLUMN email_route_status`,
+      `UPDATE workstream_resource_links SET relationship_type = 'attachment',
+         resource_json = json_set(resource_json, '$.relationshipType', 'attachment')
+       WHERE relationship_type = 'inbound_email'`,
     ],
   },
 ];

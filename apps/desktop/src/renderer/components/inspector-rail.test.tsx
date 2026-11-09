@@ -46,7 +46,6 @@ const workstream: WorkstreamDetail = {
   id: 'workstream-1',
   title: 'Monday invoice review',
   titleStatus: 'settled' as const,
-  emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
   harnessStatus: 'completed',
   scope: 'workspace' as const,
   lastActivityAt: '2026-07-31T20:00:12.000Z',
@@ -212,14 +211,14 @@ describe('InspectorRail details', () => {
     expect(screen.getByText('workstream-1')).toBeVisible();
   });
 
-  it('collapses Details to the four human-facing rows when debugging is turned off', async () => {
+  it('collapses Details to the three human-facing rows when debugging is turned off', async () => {
     render(
       <Tooltip.Provider>
         <InspectorRail workstream={workstream} />
       </Tooltip.Provider>,
     );
 
-    const details = screen.getByText('Email').closest('dl') as HTMLElement;
+    const details = screen.getByText('Created by').closest('dl') as HTMLElement;
     const labels = (): string[] => [...details.querySelectorAll('dt')].map((term) => term.textContent ?? '');
 
     // The stored preference is on, so the wiring rows have to arrive before the
@@ -230,59 +229,8 @@ describe('InspectorRail details', () => {
     // change through the application-settings broadcast.
     announceApplicationSettings({ releaseChannel: 'stable', releaseChannelAvailable: true, lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
 
-    expect(labels()).toEqual(['Email', 'Created by', 'Created', 'Last activity']);
+    expect(labels()).toEqual(['Created by', 'Created', 'Last activity']);
     expect(within(details).queryByText('harness-run-1')).not.toBeInTheDocument();
-  });
-
-  it('clips the address to one line in both states so the row reads the same way', async () => {
-    render(
-      <Tooltip.Provider>
-        <InspectorRail workstream={workstream} />
-      </Tooltip.Provider>,
-    );
-
-    const address = (): HTMLElement => screen.getByText(workstream.emailAddress ?? '');
-    await waitFor(() => expect(screen.getByText('Harness run')).toBeVisible());
-    expect(address()).toHaveAttribute('title', workstream.emailAddress);
-
-    announceApplicationSettings({ releaseChannel: 'stable', releaseChannelAvailable: true, lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
-
-    expect(address()).toHaveAttribute('title', workstream.emailAddress);
-  });
-
-  it('shows the complete channel email address in Details and copies it with feedback', async () => {
-    render(
-      <Tooltip.Provider>
-        <InspectorRail workstream={workstream} />
-      </Tooltip.Provider>,
-    );
-
-    const emailAddress = 'luminous-tidal-structured-curie@automation.rallywith.ai';
-    expect(screen.getByText(emailAddress)).toBeVisible();
-
-    const copyButton = screen.getByRole('button', { name: 'Copy email address' });
-    fireEvent.click(copyButton);
-
-    expect(copyText).toHaveBeenCalledWith(emailAddress);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Copied' })).toHaveClass('copy-button-copied');
-    });
-  });
-
-  it('keeps the icon copy control retryable when the clipboard rejects the write', async () => {
-    copyText.mockRejectedValueOnce(new Error('clipboard unavailable'));
-
-    render(
-      <Tooltip.Provider>
-        <InspectorRail workstream={workstream} />
-      </Tooltip.Provider>,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Copy email address' }));
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Copy failed — click to retry' })).toBeEnabled();
-    });
-    expect(screen.getByText('Copy failed. Try again.')).toBeInTheDocument();
   });
 
   // The watch control sits beside the button that opens the resource, rather

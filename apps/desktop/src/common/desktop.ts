@@ -231,7 +231,7 @@ export type DesktopTelemetryProductIntent =
   }
   | {
     kind: 'content_copied';
-    contentType: 'workstream_link' | 'workstream_email' | 'workstream_id' | 'message_response' | 'code_block'
+    contentType: 'workstream_link' | 'workstream_id' | 'message_response' | 'code_block'
       | 'note_summary' | 'note_transcript' | 'note_id' | 'automation_email' | 'automation_id';
     resourceType: 'workstream' | 'message' | 'note' | 'automation';
     resourceId: string;

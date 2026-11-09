@@ -949,18 +949,6 @@ administration credential. Its stable invitation reference is correlation data,
 not a provider dedupe guarantee; an outbound provider failure revokes the new
 invitation before the API returns an error.
 
-Sidekick inbound addresses are routing identifiers, never authenticators.
-Cloudflare invokes the platform email handler directly. Only its first
-`Authentication-Results` header from `mx.cloudflare.net`, with `dmarc=pass`, sets
-the internal `senderAuthenticated` handoff; later fields, comments and quoted
-values cannot supply that verdict. Legacy Resend webhooks are verified against
-their untouched raw body before parsing. Both paths deduplicate by delivery ID. Received HTML, headers, attachments, sender
-identities, and quoted content are untrusted. Incoming mail is attached as a
-regional resource and system message; it never launches a write-capable agent run
-merely because the From address resembles a workspace member. Friendly addresses
-are immutable and permanently reserved so a stale sender can never reach a
-different conversation.
-
 Daytona lifecycle webhooks use the same shared Svix raw-body verifier, then
 check `DAYTONA_ORGANIZATION_ID`. Signed payloads are refresh hints: current
 metadata, regional routing, and the owner object's sandbox-ID/generation fence
@@ -984,7 +972,6 @@ decisions, and administrative actions.
 
 Local server keys live only in ignored `.env.local`. Renderer-safe values are an
 explicit `VITE_` allowlist containing API base URLs and the protocol name. Hosted
-secrets, including `RESEND_API_KEY`, use separate Cloudflare secrets per region.
 Cloudflare administrative credentials are local deployment inputs and never Worker
 bindings.
 
@@ -1138,22 +1125,8 @@ bound it on the thing a placeholder cannot fake, and add the bound to
 - **A tool call is a proposal, never an instruction.** Name, schema, principal,
   capability, limits, and idempotency state are all checked before execution.
 
-- **An inbound email address is a routing identifier, never an authenticator.** The
-  run acts as the person the From header names, under their own access when
-  they are not a delegate, and since 2026-09-03 it holds the same connector and
-  web tools as every other automation run. So the From must be authenticated:
-  the run is admitted only on the receiving server's aligned verdict for the
-  From domain (Cloudflare's trusted DMARC pass, or the existing Resend
-  `authentication` verdict for legacy receiving), and only for a sender the Sidekick admits as a reader
-  ([inbound email](automation-lifecycle.md#triggers-and-occurrences)). It is
-  only as strong as the sending domain's own spoofing protection, and DMARC and
-  DKIM authenticate the sending domain, not the mailbox: on a domain whose own
-  mail server does not bind From to the sending account, anyone who can send as
-  any address on that domain can still make a run act as a colleague there. The
-  changelog entry of 2026-09-03 records why the tool filter came out.
-
 - **An invitation token exists in D1 only as a SHA-256 hash**, and never in a query
-  string, log, audit event, or Resend tag.
+  string, log, audit event, or delivery correlation header.
 
 - **A Gitleaks exception is a bounded pattern**, never a path exemption or a
   fingerprint, and it ships with a case in
@@ -1379,22 +1352,6 @@ Canvas sandbox must record its principal before mounting
 in Settings and can disconnect one, which ends its session at once; a route
 that lists or ends grants must keep matching them on the caller's own user id
 and stay out of `MCP_ROUTES`.
-
-### 2026-11-09 — Native email preserves the receiving-server trust boundary
-
-**What changed:** Cloudflare email events carry an explicit authenticated-sender
-boolean computed from the first Cloudflare authentication verdict into Sidekick
-admission. Legacy signed Resend receiving retains its current checks.
-
-**Why:** A provider change must not turn a sender-controlled From header into a
-principal that can run connector and web tools. Cloudflare's native event supplies
-a different trusted authentication source; later headers and quoted/commented
-text are not that source.
-
-**Consequences:** Missing or failing Cloudflare DMARC results remain refused by
-the existing Sidekick gate. Sending uses a native binding and correlation headers,
-with no Cloudflare administration token or provider dedupe guarantee.
-
 
 ### 2026-11-03 — Cross-origin requests reach a site anonymously, not refused
 
@@ -1751,7 +1708,7 @@ Shipped in #725.
 ### 2026-09-11 — The five prompt trust labels are gone
 
 **What changed:** `renderUntrustedSlackOriginMessage`,
-`renderUntrustedInboundEmailMessage`, `renderUntrustedExternalEventMessage`,
+`renderUntrustedExternalEventMessage`,
 `renderUntrustedAutomationResultMessage` and `renderTriggerActivityMessage` are
 deleted from `packages/agent-harness/src/prompts/workstream.ts`. Slack
 surrounding context, an inbound trigger email, the event that started an
@@ -1874,44 +1831,6 @@ it.
 **Consequences:** The renderer CSP no longer admits an appearance frame and the
 main process registers no appearance-document handler. Remote fonts retain the
 existing generated allowlist, size cap, and optional integrity verification.
-
-### 2026-09-03 — An inbound-email run is no longer read-only
-
-**What changed:** The three `inbound_email` tool guards in
-`apps/api/src/services/integrations.ts` are gone: write-mode connector tools are
-no longer withheld from a mail-started run, the Firecrawl search and fetch tools
-are no longer omitted from one, and a child harness spawned by one keeps its web
-tools. The invariant above that said a spoofed From "buys a read-only run" is
-rewritten to say what is true now.
-
-**Why:** The filter named one trigger out of several that carry untrusted
-content. A `connector_activity` or `webhook` run reads equally untrusted
-third-party text while holding every write tool it was bound, so a boundary
-drawn around inbound email alone was not a boundary, and its presence in the
-document let a reader believe the exfiltration channel was closed when it was
-open for every other external trigger. The decision recorded in
-[`automation-lifecycle.md`](automation-lifecycle.md) is that trigger-content
-trust is decided once, for every external trigger, at the level that already
-screens who may start a run, rather than in a tool rule that knew only this one.
-
-**Considered and rejected:** *Keeping the guard until a general one exists*,
-which keeps a control that misdescribes itself as the protection and defers the
-general question indefinitely. *A per-run trust flag on the workflow input, gated
-at both tool-assembly sites*, which is the shape a general control would take and
-is the natural follow-up if one is wanted; it was not built here because no
-number or policy for it has been decided, and per the rule on defensive limits
-that decision is the team's, not a guess in a refactor.
-
-**Consequences:** Ingress screening carries the whole weight for mail: a sender
-must resolve to an active workspace member or the mail is refused before a run
-exists. A mail-started run's prompt is steered by the mail body the same way a
-connector-started run's is by the event payload, and the run may act on its
-connectors accordingly. Anyone re-tightening this should do it for every external
-trigger at once, and update this invariant and
-[`workstream-email-addresses.md`](workstream-email-addresses.md) in the same
-change.
-
-Shipped in #541.
 
 ### 2026-09-02 — A link to the active workspace uses the session in use
 

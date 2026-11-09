@@ -6,10 +6,8 @@
  * a model reads and writes identifiers on, where a UUID costs about thirteen
  * tokens each time it is mentioned and is easy to copy wrong.
  *
- * It is minted by the same generator work-stream email addresses use, over the
- * resource's own coordinates: one vocabulary, one set of collision odds, one
- * place to change either. The key is domain-separated from the address key so
- * a resource alias can never be an address candidate or the reverse.
+ * The shared friendly identifier generator supplies the vocabulary and HMAC
+ * mapping. Its key is domain-separated from artifact and branch naming.
  */
 
 import { asWorkspaceId } from "@rally/contracts";
@@ -18,30 +16,17 @@ import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { allocateWorkstreamEmailAddressCandidate } from "../lib/workstream-email-address";
+import { friendlyIdentifierCandidate } from "../lib/friendly-identifier";
 import { logWarn } from "../observability/logger";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 
 /** What the generator's frozen vocabulary produces: four lowercase words. */
 export const RESOURCE_SLUG_PATTERN = /^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u;
 
-/**
- * Attempts before allocation gives up, matching the work-stream address
- * reservation this borrows its generator — and its collision odds — from.
- * At one in a billion, reaching a second attempt is already remarkable.
- */
+/** Existing collision retry budget for resource aliases. */
 const MAXIMUM_SLUG_ALLOCATION_ATTEMPTS = 1_024;
 
-/**
- * The allocator's key, domain-separated from the work-stream address key.
- *
- * Separation makes the two mappings independent — a resource's alias reveals
- * nothing about a work stream's address and vice versa. It does not make the
- * two *value spaces* disjoint: both draw the same four words from the same
- * frozen vocabulary, so a slug can equal some work stream's local part. That
- * is harmless while nothing routes on a slug, and the reason a slug must never
- * become a routing key without changing its shape first.
- */
+/** Keep resource aliases independent from other friendly identifier callers. */
 async function resourceSlugKey(env: Env): Promise<string> {
   return sha256(`resource-slug:${env.SESSION_SIGNING_KEY}`);
 }
@@ -52,9 +37,9 @@ async function slugCandidate(
   resourceId: string,
   attempt: number,
 ): Promise<string> {
-  return allocateWorkstreamEmailAddressCandidate({
+  return friendlyIdentifierCandidate({
     secretKey,
-    workstreamId: `resource:${workspaceId}:${resourceId}`,
+    id: `resource:${workspaceId}:${resourceId}`,
     attempt,
   });
 }
