@@ -107,6 +107,27 @@ describe("buildRoutePlanWithConfigDegradation", () => {
     expect(result.plan.stages[0]?.candidates.map((c) => c.providerId)).toEqual([AZURE]);
   });
 
+  it("keeps a duplicate Azure deployment fenced instead of degrading the fallback to OpenRouter", () => {
+    const sharedDeployment: PlannerTransport = {
+      ...serving(AZURE),
+      resolveCandidate: (model) => ({
+        kind: "candidate",
+        candidate: { ...candidate(AZURE, model), providerInvocationModel: "shared-deployment" },
+      }),
+    };
+    const azureOnly: ProviderPolicy = { mode: "only", provider: AZURE };
+
+    const result = buildRoutePlanWithConfigDegradation({
+      ...request(azureOnly, [sharedDeployment, serving(OPENROUTER)], FALLBACK_MODEL),
+      policyFor: () => azureOnly,
+    }, DEFAULT_POLICY);
+
+    expect(result.degraded).toEqual([]);
+    expect(result.plan.stages.map((stage) => stage.candidates.map(
+      ({ providerId, providerInvocationModel }) => [providerId, providerInvocationModel],
+    ))).toEqual([[["azure", "shared-deployment"]], []]);
+  });
+
   it("degrades a fenced model whose provider serves but has no binding for it", () => {
     const azureWithoutBinding: PlannerTransport = {
       id: AZURE,

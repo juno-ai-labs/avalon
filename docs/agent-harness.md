@@ -5,7 +5,8 @@ Rally's production loop uses the local `@juno-ai/bind` workspace package in
 registration and activation, transcript healing, completion-defect detection,
 streaming resets, and route execution. The owning `AgentLoopDO` Durable Object
 hosts each conversation loop and stores admission, leases, transcript, receipts,
-streaming checkpoints, and terminal state in SQLite. `WorkspaceDO` owns
+streaming checkpoints, and terminal state in SQLite. Conversation recovery also
+runs in `AgentLoopDO`, and the pre-cutover drain has ended. `WorkspaceDO` owns
 Organization connector, resource, memory, and policy state and cross-conversation
 products. Regional D1 retains identity, membership, routing, migration, and
 operational records. R2 stores large outputs. Separate non-workstream loops may
@@ -1043,7 +1044,13 @@ leaves the completed receipt and its original output untouched.
 
 Each agent's default model and its fallback stages are one Cloudflare Flagship flag, resolved once per run and evaluated against the region, the environment, and the run's subject — the workspace, conversation, and user, each carrying the attributes a targeting rule matches on; the regional Worker variables remain the checked-in default that an absent flag, an unbound binding, and a failed evaluation all resolve to. [`feature-flags.md`](feature-flags.md) owns the flag keys, the value shape, and how a model change is rolled out.
 
-Standalone structured-output agents enter through `runStructuredInference`. The gateway resolves the role's flag, constructs the provider client, combines any caller cancellation with a two-minute ceiling, and emits redacted diagnostics for every request, repair, validation, fallback, and completion stage. ESLint prevents API feature modules from constructing `OpenRouterClient`, reading model-selection variables directly, or removing the gateway's signal and diagnostic hooks. The harness package has a separate portability boundary: production sources cannot import database, connector, API, or Node-only implementations and cannot read `process`; host capabilities arrive through explicit ports.
+Standalone structured-output agents enter through `runStructuredInference`. The gateway resolves the role's flag, constructs the provider client, combines any caller cancellation with a two-minute ceiling, and emits redacted diagnostics for every request, repair, validation, fallback, and completion stage. ESLint prevents API feature modules from constructing `OpenRouterClient`, reading model-selection variables directly, or removing the gateway's signal and diagnostic hooks.
+
+Bind and its Rally adapter both run on workerd and receive host capabilities
+through explicit ports. ESLint bars imports of database, connector, API, and
+Node-only implementations and reads of `process`. It requires direct Zod object
+constructors for strict and loose schemas to avoid allocating intermediate
+schemas at Worker startup.
 
 Provider routing is deterministic and versioned by Bind. Rally contributes a
 checked-in canonical-model binding and one planner transport per provider; Bind
@@ -1059,6 +1066,11 @@ root at `toModelToolDefinitions` for that reason, and
 [`agent-tools.md`](agent-tools.md) carries the rule an author has to follow. Other canonical models remain OpenRouter-only. A file-parser request, audio input, or another
 capability an Azure binding has not proved skips that candidate before any
 network request rather than sending a body the deployment may reject.
+
+Bind also exposes an opt-in configuration fallback helper. It checks endpoint
+viability before deduplication. When two canonical models name the same viable
+deployment, the later stage keeps its policy and the earlier stage owns the
+single attempt. The Rally adapter builds its routes with the plain planner.
 
 Inference defaults that belong to a model rather than to one task live in the
 harness's canonical-model defaults registry. Models absent from that registry
@@ -1840,6 +1852,8 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 Monad commit `f15a110a33a194bdc577f2353c699945d6be5f6e`, the source revision
 recorded for `@juno-ai/bind` 16.0.0. The adapter links to that source through pnpm,
 and Bind's tests run with Rally's Vitest and TypeScript toolchain.
+Bind's optional configuration fallback preserves the provider fence for stages
+whose viable endpoints were already scheduled in an earlier stage.
 
 **Why:** Rally needs to change, verify, and ship the kernel and its host adapter
 from a single checkout. The registry pin made a kernel fix depend on a separate
@@ -1850,7 +1864,9 @@ release dependency. Importing the source revision already in use isolates the
 move from runtime upgrades.
 
 **Consequences:** Fixes for Rally's kernel go in `packages/bind` and can ship with
-adapter changes in the same revision.
+adapter changes in the same revision. Monad maintains its own copy for its
+callers and publication pipeline. Its fixes reach Rally when they are ported
+into Avalon.
 
 ### 2026-11-09 — The prompts speak of Canvases and Sidekicks, a run's report is its final message, a blocked run asks, and seeded runs are gone
 

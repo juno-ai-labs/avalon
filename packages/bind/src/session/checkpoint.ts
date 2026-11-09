@@ -19,14 +19,14 @@ const toolCall = z.discriminatedUnion("type", [
   z.object({ id: z.string().min(1), type: z.literal("function"), function: z.object({ name: z.string().min(1), arguments: z.string() }) }),
   z.object({ id: z.string().min(1), type: z.literal("custom"), custom: z.object({ name: z.string().min(1), input: z.string() }) }),
 ]);
-const messageShape = z.object({
+const messageShape = z.looseObject({
   role: z.enum(["system", "developer", "user", "assistant", "tool"]),
   content: z.union([z.string(), z.array(contentPart)]).nullable().optional(),
   name: z.string().optional(),
   tool_calls: z.array(toolCall).optional(),
   tool_call_id: z.string().min(1).optional(),
   refusal: z.string().nullable().optional(),
-}).passthrough().superRefine((message, context) => {
+}).superRefine((message, context) => {
   const issue = (message: string) => context.addIssue({ code: "custom", message });
   if (message.role === "tool" && !message.tool_call_id) issue("Tool result needs an id");
   if (message.role !== "tool" && message.tool_call_id !== undefined) issue("Only a tool result has a tool_call_id");
@@ -59,7 +59,7 @@ function captureMessage(message: TranscriptMessage): TranscriptMessage {
   }
   return captured;
 }
-const stateSchema = z.object({
+const stateSchema = z.strictObject({
   messages: z.array(messageSchema),
   inputTokens: amount,
   outputTokens: amount,
@@ -69,44 +69,44 @@ const stateSchema = z.object({
   hasFreshTokenCount: z.boolean(),
   toolCalls: count,
   endedTurnViaTool: z.boolean().optional(),
-  suspended: z.object({
+  suspended: z.strictObject({
     toolCallId: z.string().min(1),
     reason: z.string(),
     resumeKind: z.literal("answer"),
     request: z.json().optional(),
-  }).strict().optional(),
-}).strict();
-const statsSchema = z.object({
+  }).optional(),
+});
+const statsSchema = z.strictObject({
   turns: count, toolCalls: count, inputTokens: amount, outputTokens: amount,
   cachedInputTokens: amount, costCents: amount, modelTimeMs: amount,
   toolTimeMs: amount, outputTokensPerSecond: amount.nullable(),
   toolTimeBreakdownMs: z.record(z.string(), amount),
-}).strict();
+});
 const positionSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("ready") }).strict(),
-  z.object({ kind: z.literal("waiting"), reason: z.enum(["waiting_for_reply", "resuming_later"]) }).strict(),
-  z.object({ kind: z.literal("finished"), reason: z.enum(["done", "iteration_limit", "aborted"]) }).strict(),
+  z.strictObject({ kind: z.literal("ready") }),
+  z.strictObject({ kind: z.literal("waiting"), reason: z.enum(["waiting_for_reply", "resuming_later"]) }),
+  z.strictObject({ kind: z.literal("finished"), reason: z.enum(["done", "iteration_limit", "aborted"]) }),
 ]);
 
 /** Host-owned configuration/version pins and restorable environment reference. No credentials. */
-export const CheckpointBindingsSchema = z.object({
+export const CheckpointBindingsSchema = z.strictObject({
   configuration: z.record(z.string(), z.json()),
   environment: z.json(),
-}).strict();
+});
 export type CheckpointBindings = z.infer<typeof CheckpointBindingsSchema>;
 
-const checkpointSchema = z.object({
+const checkpointSchema = z.strictObject({
   version: z.literal(1),
   executionId: z.string().min(1),
   revision: count,
-  parent: z.object({ executionId: z.string().min(1), revision: count }).strict().nullable(),
+  parent: z.strictObject({ executionId: z.string().min(1), revision: count }).nullable(),
   position: positionSchema,
   iterationsUsed: count,
   maxIterations: count,
   state: stateSchema,
   stats: statsSchema,
   bindings: CheckpointBindingsSchema,
-}).strict();
+});
 
 export type LoopCheckpoint = z.infer<typeof checkpointSchema>;
 
