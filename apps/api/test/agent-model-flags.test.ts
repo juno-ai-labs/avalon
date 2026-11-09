@@ -55,7 +55,6 @@ const baseEnv = createTestEnv({
   OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
   OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash, anthropic/claude-sonnet-4.5",
   OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
-  OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
 });
 
 type DetailsStub = (

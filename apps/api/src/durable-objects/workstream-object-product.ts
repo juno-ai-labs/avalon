@@ -398,25 +398,6 @@ function userFromRow(row: UserRow) {
  * connectors, automation labels, and pins resolve through WorkspaceDO.
  */
 
-/**
- * A message event's targets: who it mentions, then who takes part. Mentions
- * lead because the Activity tab reads them and a digest only ranks by them, and
- * the list is cut at the effect schema's hundred so a crowded thread can never
- * make the effect fail to parse inside the commit that carries it.
- */
-function activityTargets(
-  participantIds: readonly string[],
-  mentionedIds: readonly string[],
-  authorUserId: string | null,
-): Array<{ userId: string; relation: "mentioned" | "participant" }> {
-  return [
-    ...mentionedIds
-      .filter((userId) => userId !== authorUserId)
-      .map((userId) => ({ userId, relation: "mentioned" as const })),
-    ...participantIds.map((userId) => ({ userId, relation: "participant" as const })),
-  ].slice(0, 100);
-}
-
 export class WorkstreamObjectProductService {
   /**
    * The admissions this isolate believes it is still preparing, by input id.
@@ -2277,41 +2258,6 @@ export class WorkstreamObjectProductService {
     const title = truncateUtf16Safe(input.root.title, 500);
     return [
       {
-        partitionKey: `activity:${sourceId}`,
-        sourceVersion: 1,
-        dedupeKey: sourceId,
-        effect: {
-          kind: "activity_event" as const,
-          eventId: uuidV7(input.now),
-          eventType: "workstream_participant_added",
-          // Nothing in the transcript ordered this: a person joined the room,
-          // which sits outside the message sequence.
-          subjectSequenceNumber: null,
-          actorType: "user" as const,
-          actorUserId: input.actorUserId,
-          // Both names are truncated to the schema's own ceiling rather than
-          // trusted: they are read from `users.name`, and a value over the
-          // effect schema's bound would throw inside the effect callback —
-          // which, on the create path, is after the root has already committed.
-          actorLabel: truncateUtf16Safe(input.actorName, 300),
-          title,
-          body: truncateUtf16Safe(
-            `${input.actorName} added ${input.recipientName} to this ${
-              substreamId === "0" ? "work stream" : "substream"
-            }.`,
-            8_000,
-          ),
-          canonicalUrl: null,
-          digestible: true,
-          occurredAt,
-          sourceKind: "workstream_participant",
-          sourceId,
-          dedupeKey: sourceId,
-          metadata: { participantUserId: input.userId, addedByUserId: input.actorUserId, substreamId },
-          targets: [{ userId: input.userId, relation: "added" }],
-        },
-      },
-      {
         partitionKey: `notification:${intentId}`,
         sourceVersion: 1,
         dedupeKey: intentId,
@@ -3096,8 +3042,8 @@ export class WorkstreamObjectProductService {
         delivery.turnId,
       ));
       const messageType = turn?.message_type;
-      // Elicitation answers historically advance the transcript/directory but
-      // do not create a blank digest activity or a notification. Their typed
+      // Elicitation answers advance the transcript and directory but notify
+      // nobody. Their typed
       // structured payload remains in the canonical turn itself.
       if (messageType === "elicitation") continue;
       const authorLabel = truncateUtf16Safe(
@@ -3105,40 +3051,6 @@ export class WorkstreamObjectProductService {
           ?? (delivery.actor === "external" ? "External participant" : "Rally"),
         300,
       );
-      const actorType = delivery.actor === "human"
-        ? "user" as const
-        : delivery.actor === "external" ? "external" as const : "system" as const;
-      commands.push({
-        partitionKey: `activity:${delivery.turnId}`,
-        sourceVersion: 1,
-        dedupeKey: `message:${delivery.turnId}`,
-        effect: {
-          kind: "activity_event",
-          eventId: uuidV7(root.updated_at),
-          eventType: "workstream_message_created",
-          subjectSequenceNumber: delivery.transcriptSequence,
-          actorType,
-          actorUserId: delivery.authorUserId,
-          actorLabel: authorLabel,
-          title,
-          body: notificationMessageExcerpt(delivery.text),
-          canonicalUrl: null,
-          digestible: true,
-          occurredAt,
-          sourceKind: "workstream_message",
-          sourceId: delivery.turnId,
-          dedupeKey: `message:${delivery.turnId}`,
-          metadata: {
-            substreamId: this.externalSubstreamId(),
-            attentionOrdinal: delivery.attentionOrdinal,
-          },
-          targets: activityTargets(
-            delivery.affectedUserIds,
-            delivery.authorUserId === null ? [] : delivery.mentionedUserIds,
-            delivery.authorUserId,
-          ),
-        },
-      });
       if (delivery.authorUserId !== null) {
         for (const userId of delivery.mentionedUserIds) {
           if (userId === delivery.authorUserId) continue;
@@ -4485,34 +4397,6 @@ export class WorkstreamObjectProductService {
           effect: this.userEffect(current, userId),
         }));
         const occurredAt = new Date(now).toISOString();
-        const activityId = uuidV7(now);
-        const activity = {
-          partitionKey: `activity:${messageId}`,
-          sourceVersion: 1,
-          dedupeKey: `message:${messageId}`,
-          effect: {
-            kind: "activity_event" as const,
-            eventId: activityId,
-            eventType: "workstream_message_created",
-            subjectSequenceNumber: write.sequenceNumber,
-            actorType: "user" as const,
-            actorUserId: auth.userId,
-            actorLabel: people.get(auth.userId)?.name ?? "Workspace member",
-            title: truncateUtf16Safe(current.title, 500),
-            body: notificationMessageExcerpt(prepared.text),
-            canonicalUrl: null,
-            digestible: true,
-            occurredAt,
-            sourceKind: "workstream_message",
-            sourceId: messageId,
-            dedupeKey: `message:${messageId}`,
-            metadata: {
-              substreamId: this.externalSubstreamId(),
-              attentionOrdinal: write.attentionOrdinal,
-            },
-            targets: activityTargets(affectedUsers, personIds, auth.userId),
-          },
-        };
         const notifications = personIds.filter((userId) => userId !== auth.userId).map((userId) => ({
           partitionKey: `notification:${messageId}:${userId}`,
           sourceVersion: 1,
@@ -4537,7 +4421,7 @@ export class WorkstreamObjectProductService {
           text: prepared.text, attentionOrdinal: write.attentionOrdinal, transcriptSequence: write.sequenceNumber, occurredAt,
           toldOtherwise: personIds,
         });
-        return [common, ...userEffects, activity, ...notifications, ...(reply ? [reply] : [])];
+        return [common, ...userEffects, ...notifications, ...(reply ? [reply] : [])];
       },
     );
     return {
