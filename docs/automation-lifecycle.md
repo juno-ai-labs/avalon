@@ -914,9 +914,17 @@ one identity and one history, and can complete more than once.
    So is a Retry in a run child (`retryWithAuthority`), which re-runs the run
    under its definition as the retrier. Another agent's message counts as the
    person that agent acts for (`senderExecutionPrincipal` on the stored
-   input, which a background worker's own principal does not replace), except
-   the Sidekick's own wizard (`automation/<id>/0`), whose answer to a run's
-   change request is the Sidekick's. Outside text from a bound provider thread
+   input, which a background worker's own principal does not replace), and
+   the Sidekick's own wizard is no exception: a wizard turn acts for whoever
+   drove it, so its answer to a run's own change request acts for that run's
+   principal and continues it, while a wizard turn someone else drove is
+   screened as them. An agent acting for nobody (an Organization-authority
+   turn) is refused with `run_continuation_requires_rally_user`. An agent's
+   message to the wizard is admitted only when the person it acts for manages
+   the Sidekick (`sidekick_edit_requires_manager` otherwise), the rule a
+   person's message in the shared conversation follows; the Sidekick's own
+   runs and workers are exempt, since a change request is how the wizard
+   learns of one. Outside text from a bound provider thread
    counts as the Rally user its sender resolved to (`slackOrigin.matchedAvalonUserId`)
    and is refused with `run_continuation_requires_rally_user` when it resolved
    to nobody: every run acts as somebody, so an unnamed sender would steer it
@@ -2491,7 +2499,8 @@ and its account view names nobody once they leave the Organization. Every new pa
 pass the sender to `continueRun`; the `sender` field is required so a caller
 cannot omit it. Another agent's message and outside text in a bound provider
 thread are screened as the person they resolve to (outside text that resolves
-to nobody is refused), Rally's own input and the wizard's are not, and a delegate who continues a
+to nobody is refused, as is an agent acting for nobody), the wizard's as the
+person who drove its turn, Rally's own input not at all, and a delegate who continues a
 delegate's run acts as the run's principal, not as themselves. Any seated
 reader can Stop another person's run, and a refused message stays in the
 transcript as the room's context. The

@@ -1,6 +1,4 @@
 import {
-  agentIdForAddress,
-  asSubstreamId,
   asUserId,
   asWorkspaceId,
   ExternalActorSchema,
@@ -67,15 +65,17 @@ const UserPrincipalSchema = z.looseObject({ type: z.literal("user"), userId: z.s
  * - outside text from a bound provider thread names the Rally user the
  *   provider identity resolved to, or nobody (`external`);
  * - another agent's message names the person that agent acts for, so a
- *   reader's agent cannot do what the reader may not, except the Sidekick's
- *   own wizard (`automation/<id>/0`), whose replies to a run's change request
- *   are the Sidekick's own;
+ *   reader's agent cannot do what the reader may not. The Sidekick's own
+ *   wizard is no exception: its turn acts for whoever drove it, which for its
+ *   answer to a run's change request is the run's own principal, so that
+ *   answer continues the run and a wizard turn someone else drove does not.
+ *   An agent acting for nobody (an Organization-authority turn) names
+ *   nobody (`external`), and is refused like outside text no one resolved;
  * - anything else is Rally's own (`system`).
  */
 export function continuationSender(
   pending: { actor: string; author_user_id: string | null },
   authorization: unknown,
-  sidekickId: string,
 ): SidekickRunContinuationSender {
   if (pending.actor === "human" && pending.author_user_id !== null) return { kind: "person", userId: asUserId(pending.author_user_id) };
   const stored = SenderAuthorizationSchema.safeParse(authorization);
@@ -85,10 +85,8 @@ export function continuationSender(
     return matched ? { kind: "person", userId: asUserId(matched) } : { kind: "external" };
   }
   if (fields.agentExchange) {
-    const wizard = agentIdForAddress({ parentKind: "automation", parentId: sidekickId, substreamId: asSubstreamId("0") });
-    if (fields.agentExchange.senderAgentId === wizard) return { kind: "system" };
     const principal = UserPrincipalSchema.safeParse(fields.senderExecutionPrincipal ?? fields.executionPrincipal);
-    if (principal.success) return { kind: "person", userId: asUserId(principal.data.userId) };
+    return principal.success ? { kind: "person", userId: asUserId(principal.data.userId) } : { kind: "external" };
   }
   return { kind: "system" };
 }
