@@ -222,3 +222,28 @@ describe("the request bound", () => {
     expect(tooLarge.status).toBe(413);
   }, 60_000);
 });
+
+describe("browser-based clients", () => {
+  it("answers a hosted origin's preflight without a token, and lets it read the answer", async () => {
+    const binding = api(() => Response.json({ items: [] })).binding;
+    const preflight = await worker.fetch(new Request("https://mcp.example.test/mcp", { method: "OPTIONS", headers: {
+      origin: "https://claude.ai", "access-control-request-method": "POST", "access-control-request-headers": "authorization, content-type" } }) as Request<unknown, IncomingRequestCfProperties>, env(binding));
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe("https://claude.ai");
+    expect(preflight.headers.get("access-control-allow-headers")).toContain("authorization");
+
+    const answered = await worker.fetch(new Request("https://mcp.example.test/mcp", { method: "POST", headers: {
+      origin: "https://claude.ai", authorization: `Bearer ${live()}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify(call("list_canvases", {})) }) as Request<unknown, IncomingRequestCfProperties>, env(binding));
+    expect(answered.status).toBe(200);
+    expect(answered.headers.get("access-control-allow-origin")).toBe("https://claude.ai");
+  });
+
+  it("refuses any other origin, preflight or not", async () => {
+    const binding = api(() => Response.json({})).binding;
+    const preflight = await worker.fetch(new Request("https://mcp.example.test/mcp", { method: "OPTIONS",
+      headers: { origin: "https://evil.example" } }) as Request<unknown, IncomingRequestCfProperties>, env(binding));
+    expect(preflight.status).toBe(403);
+    expect(preflight.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});

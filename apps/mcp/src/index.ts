@@ -105,6 +105,28 @@ export default {
     }
 
     if (url.pathname !== "/mcp") return new Response("Not found", { status: 404 });
+    // A browser-based client must come from a hosted client's origin; a
+    // native or server-side client sends no Origin at all. Decided before the
+    // bearer, because a preflight carries none.
+    const requestOrigin = request.headers.get("origin");
+    let allowedOrigin: string | null = null;
+    if (requestOrigin !== null) {
+      let hostname = "";
+      try { hostname = new URL(requestOrigin).hostname; } catch { /* not an origin */ }
+      if (!hostedOriginHostnames.includes(hostname)) return Response.json({ error: "origin_not_allowed" }, { status: 403 });
+      allowedOrigin = requestOrigin;
+    }
+    const cors = allowedOrigin === null ? {} : {
+      "Access-Control-Allow-Origin": allowedOrigin,
+      "Access-Control-Expose-Headers": "WWW-Authenticate, Mcp-Session-Id, Mcp-Protocol-Version",
+      "Vary": "Origin",
+    };
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: { ...cors,
+        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "authorization, content-type, accept, mcp-protocol-version, mcp-session-id, last-event-id",
+        "Access-Control-Max-Age": "600" } });
+    }
     const bearer = inspectBearer(request.headers.get("authorization"));
     if (!bearer.ok) {
       // RFC 9728 §5.1: the challenge names the metadata, which is how a
@@ -114,27 +136,26 @@ export default {
         status: 401,
         headers: {
           ...CORS_HEADERS,
+          ...cors,
           "content-type": "application/json",
           "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"${error}`,
           "Access-Control-Expose-Headers": "WWW-Authenticate",
         },
       });
     }
-    // A browser-based client must come from a hosted client's origin; a
-    // native or server-side client sends no Origin at all.
-    const requestOrigin = request.headers.get("origin");
-    if (requestOrigin !== null && !hostedOriginHostnames.includes(new URL(requestOrigin).hostname)) {
-      return Response.json({ error: "origin_not_allowed" }, { status: 403 });
-    }
     const api = regionalApi(env, bearer.region);
     if (!api) return Response.json({ error: "region_unavailable" }, { status: 503 });
     const rally = new RallyApi(api, bearer.token, bearer.region);
     // One stateless server per request, for the connected person. The SDK's
     // handler serves both the 2026-07-28 revision and 2025-era clients.
-    return createMcpHandler(async () => {
+    const response = await createMcpHandler(async () => {
       const server = createRallyMcpServer(rally);
       (await rallySkillCatalog()).attach(server);
       return server;
     }, { maxRequestBodySize: MCP_MAX_REQUEST_BYTES }).fetch(request);
+    if (allowedOrigin === null) return response;
+    const answered = new Response(response.body, response);
+    for (const [name, value] of Object.entries(cors)) answered.headers.set(name, value);
+    return answered;
   },
 } satisfies ExportedHandler<Env>;
