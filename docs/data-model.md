@@ -1024,11 +1024,7 @@ and deletion promotion. The real-workerd suites in
 migration, object isolation, eviction, compaction state, pagination, agent
 checkpoint behavior, routed cleanup SQL, and actual R2 retention/deletion.
 `apps/api/test-workers/workspace-thread-parents-drop-migration.test.ts`
-upgrades an object populated at v140 through migration 141 and proves the
-Thread tables and triggers are gone while the connector poll's `schedules`
-row (every column), its index and fence triggers, a Canvas, its share rows,
-`parent_children`, a Thread's `authorization_locations` and
-`conversation_view_*` rows survive, with `foreign_key_check` clean.
+covers migration 141 on a populated object.
 These tests are required because the regional D1 suite cannot validate
 object-local SQLite lifecycle semantics.
 

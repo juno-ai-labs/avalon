@@ -12,14 +12,9 @@
  * a legacy object: every Channel and Space the directory knew when this ran.
  * Migration 75 drops the ledger once every import had run.
  *
- * Migration 141 dropped the `parent_*` tables only a Thread or a Channel
- * used, once the operator had retired every one. What a Canvas's share
- * primitive writes under the Canvas's own id stays (`parent_invitations`,
- * `parent_invitation_operations`, `parent_grants`, `parent_grant_operations`,
- * `parent_grant_imports`, `parent_grant_revision`,
- * `parent_participant_targets`, `parent_participant_deliveries`), and so does
- * `parent_children`, which `ScopeGrantStorage` still joins
- * (`THREAD_ERA_PARENTS_DROP_MIGRATION` in `retired-workspace-schema.ts`).
+ * Migration 141 dropped the Thread-only `parent_*` tables; see
+ * `THREAD_ERA_PARENTS_DROP_MIGRATION` in `retired-workspace-schema.ts` for
+ * what stayed.
  */
 export const HOSTED_PARENT_SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE workspace_workstream_directory RENAME TO channels`,

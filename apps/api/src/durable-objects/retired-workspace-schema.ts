@@ -1263,9 +1263,10 @@ export const THREAD_ERA_TABLES_DROP_MIGRATION: readonly string[] = [
  * cannot survive the copy's CHECK; migration 139's delete of
  * `digest_schedules` cascaded every one away, and the copy skips any left.
  *
- * Every trigger and table goes `IF EXISTS`, children before the tables they
- * reference, so an object that never had one, or a retired one, upgrades
- * cleanly.
+ * Every table goes `IF EXISTS`, children before the tables they reference, so
+ * an object that never had one, or a retired one, upgrades cleanly; each
+ * table's triggers go with it. The `schedules` rebuild is unconditional,
+ * because every object has `schedules`.
  */
 export const THREAD_ERA_PARENTS_DROP_MIGRATION: readonly string[] = [
   `CREATE TABLE schedules_v141 (
@@ -1304,21 +1305,6 @@ export const THREAD_ERA_PARENTS_DROP_MIGRATION: readonly string[] = [
       BEFORE UPDATE OF workspace_id ON schedules
       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
       BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
-  ...[
-    "memory_digest_thread_visibility", "memory_digest_breakout_visibility", "memory_digest_space_visibility",
-    "memory_digest_thread_participant_insert", "memory_digest_thread_participant_update",
-    "memory_digest_breakout_participant_insert", "memory_digest_breakout_participant_update",
-    "memory_digest_space_participant_insert", "memory_digest_space_participant_update",
-    "search_authz_workspace_workstream_directory_insert", "search_authz_workspace_workstream_directory_update",
-    "search_authz_workspace_workstream_directory_delete",
-    "search_authz_workspace_workstream_viewers_insert", "search_authz_workspace_workstream_viewers_update",
-    "search_authz_workspace_workstream_viewers_delete",
-    "parent_breakout_members_freeze_insert", "parent_breakout_members_freeze_update",
-    "parent_breakout_members_freeze_delete",
-    "digest_schedules_workspace_identity_insert", "digest_schedules_workspace_identity_update",
-    "slack_agent_sessions_workspace_identity_insert", "slack_agent_sessions_workspace_identity_update",
-    "slack_agent_feedback_workspace_identity_insert", "slack_agent_feedback_workspace_identity_update",
-  ].map((trigger) => `DROP TRIGGER IF EXISTS ${trigger}`),
   ...[
     "workspace_workstream_resource_links", "channel_viewers", "channels",
     "breakout_viewers", "breakouts", "space_viewers", "spaces",
