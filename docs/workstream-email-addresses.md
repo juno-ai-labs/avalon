@@ -33,7 +33,7 @@ New version-2 Sidekick definitions receive email only when inbound_email is conf
 | `apps/api/src/services/cloudflare-inbound-email.ts` | Platform-only Cloudflare email event handler and stream-size admission. |
 | `apps/api/src/lib/cloudflare-email-message.ts` | Stable recipient-scoped delivery identity and the published raw MIME ceiling. |
 | `apps/api/src/services/email.ts` | Shared native Cloudflare sender, diagnostic classification and caller-selected delivery receipts. |
-| `packages/db/migrations/0126_email_delivery_receipts.sql` | Opaque regional delivery claims and completion receipts, without message content. |
+| `packages/db/migrations/0127_email_delivery_receipts.sql` | Opaque regional delivery claims and completion receipts, without message content. |
 | `apps/api/src/services/user-delivery.ts` | The connector-declared personal delivery surfaces beside it. |
 
 ### The v1 format
@@ -565,7 +565,7 @@ has no documented send-idempotency option, so the acceptance/settlement gap rema
 an explicit at-least-once delivery limitation.
 
 **Consequences:** Outbound deployment needs verified Cloudflare sender domains.
-Migration `0126_email_delivery_receipts.sql` must precede the Worker. Transactional
+Migration `0127_email_delivery_receipts.sql` must precede the Worker. Transactional
 delivery claims park uncertain outcomes; completed notice receipts suppress queue
 redelivery while transient notice failures remain retryable. Incoming IDs exclude
 mutable hop headers and scope regional storage by recipient.

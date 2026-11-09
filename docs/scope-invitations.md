@@ -397,7 +397,7 @@ keep emailing an invitation whose provider acceptance is unknown.
 **Considered and rejected:** Treating a missing provider response as a confirmed
 refusal would allow alarm backoff to send the same invitation indefinitely.
 
-**Consequences:** Migration 0126 precedes the Worker. Reconcile parked receipts
+**Consequences:** Migration 0127 precedes the Worker. Reconcile parked receipts
 before resetting them; a completed provider receipt repairs a missing object-local
 delivered marker without sending again.
 

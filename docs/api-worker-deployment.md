@@ -34,7 +34,7 @@ and [Versions and gradual deployments](https://developers.cloudflare.com/workers
 
 The Global API's static `worker-events.ts` entrypoint handles Cloudflare Email
 Routing through `email()`, and the Wrangler config supplies `send_email` binding
-`EMAIL` for outgoing mail. Migration `0126_email_delivery_receipts.sql` applies
+`EMAIL` for outgoing mail. Migration `0127_email_delivery_receipts.sql` applies
 before the Worker and stores opaque send claims/completion receipts. `postal-mime`
 is bundled for regional MIME parsing;
 no runtime dependency loading or administration token is used. External sender
