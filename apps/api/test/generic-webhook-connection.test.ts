@@ -85,6 +85,17 @@ function fixture() {
   const database = new DatabaseSync(":memory:");
   databases.push(database);
   database.exec(`
+    CREATE TABLE connector_ingress_routes (
+      connection_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      region TEXT NOT NULL,
+      connector_type TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      provider_account_id TEXT,
+      provider_user_id TEXT,
+      status TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL);
     CREATE TABLE connector_connections (
       id TEXT PRIMARY KEY,

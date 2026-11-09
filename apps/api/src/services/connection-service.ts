@@ -3760,14 +3760,6 @@ export class ConnectionService {
   }
 
   private async routeIngressConnection(connectionId: string, connectorType: string): Promise<void> {
-    if (!this.env.WORKSPACE_DOS) {
-      const legacy = await this.env.DB.prepare(
-        `SELECT workspace_id FROM connector_connections
-          WHERE id = ? AND connector_type = ? AND status <> 'disabled'`,
-      ).bind(connectionId, connectorType).first<{ workspace_id: string }>();
-      if (!legacy) throw new ApiError(404, "connection_not_found", "Connector route not found");
-      return;
-    }
     const route = await workspaceRegionalDatabase(this.env).prepare(
       `SELECT workspace_id FROM connector_ingress_routes
         WHERE connection_id = ? AND region = ? AND connector_type = ? AND status = 'active'`,
@@ -3804,11 +3796,6 @@ export class ConnectionService {
   }
 
   private async syncConnectorIngressRoute(connectionId: string): Promise<void> {
-    // Focused unit/legacy environments without WorkspaceDO authority still
-    // write connector rows directly; migration triggers maintain the route in
-    // a real deployment. Explicit synchronization is required only after the
-    // connector row has moved into WorkspaceDO.
-    if (!this.env.WORKSPACE_DOS) return;
     const connection = await this.env.DB.prepare(
       `SELECT id, workspace_id, connector_type, scope, provider_account_id,
               status, config_json, updated_at
