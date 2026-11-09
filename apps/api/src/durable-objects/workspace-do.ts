@@ -131,6 +131,7 @@ import {
   WorkspaceAttentionSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceCanvasListEventSchema,
+  SidebarPinOrderRequestSchema,
   WorkspaceActivityListEventSchema,
   WorkspaceSidebarSchema,
   WorkspaceSocketClientEventSchema,
@@ -4408,6 +4409,24 @@ function conversationToolEntry(conversation: {
   };
 }
 
+/*
+ * The inputs of WorkspaceDO's own RPCs that the routes and services call
+ * with typed arguments. Parsed at the boundary like every other RPC
+ * (`parseRpcInput`), so a skewed caller is refused by the field it got
+ * wrong rather than failing somewhere below.
+ */
+const SetSidebarPinRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema, userId: UserIdSchema, accessClass: z.enum(["member", "guest"]),
+  kind: SidebarPinOrderRequestSchema.shape.kind, itemId: IdSchema, pinned: z.boolean(),
+});
+const ReorderSidebarPinsRequestSchema = SidebarPinOrderRequestSchema.extend({
+  workspaceId: WorkspaceIdSchema, userId: UserIdSchema,
+});
+const CanvasContextRequestSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, canvasId: IdSchema });
+const CanvasForSidekickRunRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema, sidekickId: IdSchema, runId: IdSchema, canvasId: IdSchema.nullable(),
+});
+
 /** Send a sidebar list push; a socket closing as it is sent is not a failure, since a reconnect receives the whole list. */
 function sendSidebarListFrame(socket: WebSocket, frame: string): void {
   try {
@@ -5543,8 +5562,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * one this Sidekick writes, or the one this run already made; `null` when
    * the run has made none yet, and its caller creates it.
    */
-  async canvasForSidekickRun(input: { workspaceId: string; sidekickId: string; runId: string; canvasId: string | null }): Promise<{ canvasId: string | null }> {
+  async canvasForSidekickRun(rawInput: { workspaceId: string; sidekickId: string; runId: string; canvasId: string | null }): Promise<{ canvasId: string | null }> {
     await this.initialized;
+    const input = parseRpcInput(CanvasForSidekickRunRequestSchema, rawInput, "canvas_for_sidekick_run");
     this.assertWorkspace(input.workspaceId);
     if (input.canvasId !== null) {
       const row = this.state.storage.sql.exec<{ writer_sidekick_id: string | null }>(
@@ -5573,7 +5593,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * conversation already admitted, so it names no viewer; `null` for an id
    * that is no Canvas.
    */
-  async canvasContext(input: { workspaceId: string; canvasId: string }) {
+  async canvasContext(rawInput: { workspaceId: string; canvasId: string }) {
+    const input = parseRpcInput(CanvasContextRequestSchema, rawInput, "canvas_context");
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
     const row = canvas?.row();
     if (!canvas || !row || row.workspace_id !== input.workspaceId) return null;
@@ -5827,11 +5848,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * list, or put that group in an order. The item must be one the viewer may
    * open; the change goes out as that list's rows, to that viewer.
    */
-  async setSidebarPin(input: {
+  async setSidebarPin(rawInput: {
     workspaceId: string; userId: string; accessClass: "member" | "guest";
     kind: "canvas" | "sidekick"; itemId: string; pinned: boolean;
   }): Promise<{ ok: boolean }> {
     await this.initialized;
+    const input = parseRpcInput(SetSidebarPinRequestSchema, rawInput, "set_sidebar_pin");
     this.assertWorkspace(input.workspaceId);
     const viewer: Viewer = { userId: input.userId, accessClass: input.accessClass };
     const visible = input.kind === "canvas"
@@ -5845,8 +5867,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { ok: true };
   }
 
-  async reorderSidebarPins(input: { workspaceId: string; userId: string; kind: "canvas" | "sidekick"; itemIds: string[] }): Promise<void> {
+  async reorderSidebarPins(rawInput: { workspaceId: string; userId: string; kind: "canvas" | "sidekick"; itemIds: string[] }): Promise<void> {
     await this.initialized;
+    const input = parseRpcInput(ReorderSidebarPinsRequestSchema, rawInput, "reorder_sidebar_pins");
     this.assertWorkspace(input.workspaceId);
     new WorkspacePinStorage(this.state.storage).reorder(input.userId, input.kind, input.itemIds, Date.now());
     this.publishPinnedList(input.kind, input.userId);
@@ -6297,10 +6320,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /** Own consent records remain readable without membership or Sidekick viewer access. */
-  async sidekickReadMyDelegations(input: { workspaceId: string; userId: string }) {
+  async sidekickReadMyDelegations(rawInput: { workspaceId: string; userId: string }) {
     await this.initialized;
+    const input = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }), rawInput, "sidekick_read_my_delegations");
     const userId = asUserId(input.userId);
-    asWorkspaceId(input.workspaceId);
     if (!this.workspaceId()) return { userId, delegations: [] };
     this.assertWorkspace(input.workspaceId);
     const grants = new SidekickDelegationStorage(this.state.storage).forUser(userId);
