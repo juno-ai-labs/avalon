@@ -352,8 +352,10 @@ closes, which is the case a construction-only fix does not reach.
 
 - **Who closed it.** The regional log line `workspace_retirement_pass` carries
   `workspace_id`, `operation_id` and `operator_id` — the operator UUID from the
-  credential map — and is the region's record; Ace writes `ace_workspace_retired`
-  with the Access subject in its own Worker's logs. The tombstone itself names
+  credential map for an Ace retirement, the engineering MCP's Access subject for
+  `retire_org` — and is the region's record; Ace writes `ace_workspace_retired`
+  with the Access subject in its own Worker's logs, and `retire_org` writes an
+  `engineering.retire_org` audit pair in `AUDIT_DB`. The tombstone itself names
   an operator retirement and no person. `operation_id` is minted per pass, so a
   resumed retirement logs a second id; correlate by `workspace_id`.
 - **What is left.** `WorkspaceDO.workspaceRetirementProgress` is permitted after
