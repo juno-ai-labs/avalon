@@ -83,7 +83,9 @@ Wire names are `conversation_list`, `conversation_list_next`,
 `conversation_read`, `conversation_read_next`, `conversation_post` and
 `conversation_attach`. A `conversationId` is the parent's id: a Canvas's for
 its Chat, a Sidekick's for its own conversation. `conversation` accepts that id
-or the exact title of a conversation in scope (compared without case); `attach`
+or the exact title of a conversation in scope that the acting person can open
+(compared without case); a title is matched only among those, so it never
+confirms a conversation the person cannot open, nor hands over its id. `attach`
 also accepts a Rally link, which the Worker turns into an id before WorkspaceDO
 sees it, or a Canvas's title among the Canvases the person can open.
 
@@ -215,6 +217,8 @@ Each refusal is a typed failure with a stable `code`, a model-visible sentence
 | read, search, post, attach | `conversation_access_denied` | `resourceId` |
 | read_next, list_next | the wrapper's page codes, per [`tool-pagination.md`](tool-pagination.md) | as there |
 
+`resourceId` is set only when the caller named the conversation by its id; a
+title that names nothing the person can open is `conversation_not_in_scope`.
 `available` is cut to the shared failure-detail bound,
 `MAXIMUM_FAILURE_AVAILABLE_VALUES`. A post refused inside the target for any
 other reason throws `conversation_post_refused:<code>`.
@@ -319,7 +323,13 @@ post in its Thread and now posts in its own conversation. The `home` option of
 group, not a conversation's, because that is the group its turns carry. A
 title names only Canvases the acting person can open: an attach by title
 admits every match before it reports one, so a private Canvas's id is never
-disclosed by a guess.
+disclosed by a guess. Read, search and post resolve a title the same way
+(`resolveConversationToolTarget`): the first build matched a title against the
+whole scope before admission, so a unique title the person could not open came
+back as `conversation_access_denied` carrying that Canvas's id, which reached
+the model. A refusal names a conversation's id only when the caller supplied
+it. A readable archived Canvas named by title now reads as not in scope rather
+than archived, the cost of matching titles only among what can be opened.
 
 Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
