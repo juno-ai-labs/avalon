@@ -121,6 +121,7 @@ class AuthorityDatabase {
       WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
         idFromName: (name: string) => createTestDurableObjectId(name),
         get: () => ({
+          authority: async () => ({ exists: true, authorityGeneration: 1, archived: this.state.archivedAt !== null }),
           connectorEvent: async () => (this.state.activityExists
             ? { connectorType: "github", activity: connectorActivity() }
             : null),

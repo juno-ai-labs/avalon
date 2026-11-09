@@ -1,7 +1,7 @@
 import type { CanvasDetail, WorkstreamAppearancePatch } from '@rally/contracts';
 import { AppearancePicker } from '@rally/ui/components/appearance-picker';
-import { TitleMenuItem, TitlePillHeader, TitlePillMenuAction, TitlePillTitleInput, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconId, IconLayoutSidebarRight, IconLink, IconPalette, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
+import { ActionTile, ActionTiles, TitleMenuItem, TitleMenuSeparator, TitlePillHeader, TitlePillTitleInput, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { IconArchive, IconLayoutSidebarRight, IconLink, IconPalette, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -11,11 +11,9 @@ import { CanvasAccessRequestPane } from '../components/canvas-access-request';
 import { CanvasMark, canvasHue } from '../components/canvas-mark';
 import { PaneState } from '../components/pane-state';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
-import { AvatarStack, Button, EmptyState, ErrorNotice, OpeningState, TitleSkeleton } from '../components/primitives';
+import { AvatarStack, Button, EmptyState, ErrorNotice, Modal, OpeningState, TitleSkeleton } from '../components/primitives';
 import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { copyLink } from '../lib/copy-link';
-import { desktopBridge } from '../lib/platform';
-import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { sidebarListApplied } from '../lib/sidebar-list-store';
 import { useDocumentTitle } from '../lib/document-title';
 import { ApiError } from '../lib/api';
@@ -101,6 +99,28 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   }, [alreadyOpen, refetchCanvas]);
   const { membersById } = useCanvasNameSources(api);
   const [sharing, setSharing] = useState(false);
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState<Error | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const archiveCanvas = async (): Promise<void> => {
+    if (!api || archiving) return;
+    setArchiving(true);
+    setArchiveError(null);
+    try {
+      await api.archiveCanvas(id);
+      queryClient.removeQueries({ queryKey: canvasDetailQueryKey(id) });
+      if (mounted.current) void navigate('/canvases', { replace: true });
+    } catch (cause) {
+      if (mounted.current) setArchiveError(cause instanceof Error ? cause : new Error('The Canvas could not be archived.'));
+    } finally {
+      if (mounted.current) setArchiving(false);
+    }
+  };
   const [choosingAppearance, setChoosingAppearance] = useState(false);
   const [pinError, setPinError] = useState<Error | null>(null);
   const [linkError, setLinkError] = useState<Error | null>(null);
@@ -136,11 +156,6 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     void navigate(`${location.pathname}${location.search}`, { replace: true, state: openResourceState(id, resourceId, { expanded: false }) });
   });
   const workspace = session?.workspace;
-  const copyCanvasId = (): void => {
-    void desktopBridge().copyText(id)
-      .then(() => reportTelemetryProductIntent({ kind: 'content_copied', contentType: 'workstream_id', resourceType: 'workstream', resourceId: id }))
-      .catch(() => undefined);
-  };
   const copyCanvasLink = (): void => {
     if (!workspace) return;
     setLinkError(null);
@@ -255,11 +270,17 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     open={choosingAppearance}
     renderGlyph={(chosen) => <CanvasMark appearance={chosen} id={id} kind={kind} size={24} />}
   />;
-  // The pill's menu, and the header's separate "⋯" button (design.html §2), offer the same.
-  const menuItems = <>
-    <TitleMenuItem icon={pinned ? <IconPinnedOff aria-hidden="true" size={16} stroke={1.8} /> : <IconPin aria-hidden="true" size={16} stroke={1.8} />} onSelect={togglePin}>
-      {pinned ? 'Unpin' : 'Pin'}
-    </TitleMenuItem>
+  // Keep the common actions in the same tile row as an artifact's title menu.
+  const menuItems = (panelOpen: boolean): React.JSX.Element => <>
+    <ActionTiles>
+      <ActionTile disabled={!canvas.data} icon={<IconUsers aria-hidden="true" size={20} stroke={1.6} />} label="Share" onSelect={() => setSharing(true)} />
+      <ActionTile disabled={!newestArtifact || panelOpen} disabledReason={!newestArtifact ? 'This Canvas has no artifacts yet.' : panelOpen ? 'The artifact panel is already open.' : undefined} icon={<IconLayoutSidebarRight aria-hidden="true" size={20} stroke={1.6} />} label="Open artifact" onSelect={() => {
+        // Replace the entry so Back leaves the Canvas rather than reopening its panel.
+        if (newestArtifact) void navigate(location.pathname, { replace: true, state: openResourceState(id, newestArtifact.resourceId, { expanded: false }) });
+      }} />
+      <ActionTile disabled={!workspace} icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={copyCanvasLink} />
+      <ActionTile disabled={!api} icon={pinned ? <IconPinnedOff aria-hidden="true" size={20} stroke={1.6} /> : <IconPin aria-hidden="true" size={20} stroke={1.6} />} label={pinned ? 'Unpin' : 'Pin'} onSelect={togglePin} />
+    </ActionTiles>
     <TitleMenuItem disabled={!api} icon={<IconPencil aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => { setRenameError(null); setRenaming(true); }}>
       Rename…
     </TitleMenuItem>
@@ -269,31 +290,16 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     }}>
       Change appearance
     </TitleMenuItem>
-    <TitleMenuItem disabled={!canvas.data} icon={<IconUsers aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => setSharing(true)}>
-      Share…
-    </TitleMenuItem>
-    <TitleMenuItem disabled={!workspace} icon={<IconLink aria-hidden="true" size={16} stroke={1.8} />} onSelect={copyCanvasLink}>
-      Copy link
-    </TitleMenuItem>
-    {/* For support, wherever the Canvas is named: the offline and refused
-        states keep this header, which replaced the bare menu that offered it. */}
-    <TitleMenuItem icon={<IconId aria-hidden="true" size={16} stroke={1.8} />} onSelect={copyCanvasId}>
-      Copy Canvas ID
-    </TitleMenuItem>
-    {/* A closed panel comes back from here, onto the newest artifact: each
-        navigation onto an artifact is a request of its own (a new location
-        key), so a second one reopens what was closed. Beside the Chat, as on
-        arrival, and replacing the entry as arrival, Rename… and Share… do:
-        a pushed one would put a Back onto the same Canvas, whose state then
-        opened the panel again, so Back looked dead. */}
-    {newestArtifact && <TitleMenuItem icon={<IconLayoutSidebarRight aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
-      void navigate(location.pathname, { replace: true, state: openResourceState(id, newestArtifact.resourceId, { expanded: false }) });
-    }}>
-      Open artifact
-    </TitleMenuItem>}
+    {canvas.data?.canManage && <>
+      <TitleMenuSeparator />
+      <TitleMenuItem danger disabled={!api || archiving} icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
+        setArchiveError(null);
+        setConfirmingArchive(true);
+      }}>Archive canvas</TitleMenuItem>
+    </>}
   </>;
   // Edited from the title the pill shows, so not before there is one to show.
-  const level = (): TitlePillLevel => renaming && (canvas.data || row) ? {
+  const level = (panelOpen: boolean): TitlePillLevel => renaming && (canvas.data || row) ? {
     // Set aside while the title is edited, so a click in the field is not a press of the menu.
     key: `canvas:${id}`,
     icon: mark,
@@ -310,23 +316,21 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     icon: mark,
     title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
     label: naming ? 'Canvas menu: Rally is choosing a name' : `Canvas menu: ${title}`,
-    menu: menuItems,
+    menu: menuItems(panelOpen),
     iconAction: appearancePicker,
   };
-  const header = (presentUserIds: readonly string[]): React.JSX.Element => {
+  const header = (presentUserIds: readonly string[], panelOpen: boolean): React.JSX.Element => {
     const present = presentUserIds.filter((userId) => userId !== session?.user.id).flatMap((userId) => {
       const member = membersById.get(userId);
       return member ? [member] : [];
     });
     return <TitlePillHeader
-      align="start"
-      current={level()}
+      current={level(panelOpen)}
       trailing={<span className="canvas-header-trailing">
         {present.length > 0 && <span aria-label={`${present.length} ${present.length === 1 ? 'person' : 'people'} here`} className="canvas-header-present" role="group">
           <AvatarStack currentUserId={session?.user.id ?? null} members={present} presentUserIds={presentUserIds} />
         </span>}
         <Button className="canvas-share-button" disabled={!canvas.data} onClick={() => setSharing(true)}>Share</Button>
-        <span className="canvas-header-more"><TitlePillMenuAction label="Canvas actions">{menuItems}</TitlePillMenuAction></span>
       </span>}
     />;
   };
@@ -337,16 +341,28 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     <ConversationSurface
       parentId={id}
       parentKind="canvas"
-      renderHeader={(context) => header(context.presentUserIds)}
+      renderHeader={(context) => header(context.presentUserIds, context.panelOpen)}
       // Offline, the Canvas is still named in the list: the pane keeps its
-      // pill, Share and "⋯" over the state rather than a bare Back and Forward.
-      stateHeader={header([])}
+      // pill and Share over the state rather than a bare Back and Forward.
+      stateHeader={header([], false)}
       substreamId="0"
     />
     {canvas.data && <CanvasShareDialog canvas={canvas.data} onOpenChange={(open) => {
       setSharing(open);
       if (!open) void queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(id) });
     }} open={sharing} />}
+    <Modal
+      footer={<>
+        <Button disabled={archiving} onClick={() => setConfirmingArchive(false)}>Cancel</Button>
+        <Button className="button-danger" disabled={archiving} onClick={() => void archiveCanvas()}>{archiving ? 'Archiving…' : 'Archive Canvas'}</Button>
+      </>}
+      onOpenChange={(open) => { if (!archiving) setConfirmingArchive(open); }}
+      open={confirmingArchive}
+      title="Archive Canvas"
+    >
+      <p className="modal-copy"><strong>{title}</strong> will be removed from everyone’s Canvases. Its conversation and artifacts will remain stored but will no longer be viewable in Rally. Rally does not offer a way to unarchive Canvases yet.</p>
+      {archiveError && <ErrorNotice occurrence={archiveError}>The Canvas could not be archived. Try again.</ErrorNotice>}
+    </Modal>
   </>;
 }
 

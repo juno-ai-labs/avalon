@@ -378,7 +378,15 @@ them. The menu bar does not read it; the dock badge, and the push badge, count i
 - **A desktop from before the pivot** is refused the workspace socket ticket
   (`MINIMUM_SERVED_CLIENT_CONTRACT`), so it is sent no Activity at all.
 
+Canvas archive excludes every row about that Canvas from both the page and the
+unseen count, including a denial notice. Denials remain visible for inaccessible
+active Canvases; archive removes the target altogether. The archive transaction
+notes every stored recipient so the change reaches already-open workspace sockets.
+
 ## Testing
+
+`test-workers/workspace-activity.test.ts` covers archive removing a mention
+and its unseen count from an open recipient socket and a fresh subscribe.
 
 `apps/api/test-workers/workspace-activity.test.ts`, on real workerd
 (`pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts
@@ -421,6 +429,13 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 | `workspace_sidebar_list_state` | `list` | Row `activity`: the list's waterline. |
 
 ## Changelog
+
+### 2026-11-09 — Remove archived Canvas Activity atomically
+
+Archive must remove the content and attention attached to a Canvas, not merely
+its sidebar row. The page and count share the archive predicate, and the archive
+transaction advances recipient waterlines so an open feed does not retain stale
+previews until reconnect.
 
 ### 2026-11-09 — Document created: Activity is a per-person feed written with the push it mirrors
 

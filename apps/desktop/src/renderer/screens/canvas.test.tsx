@@ -4,6 +4,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -25,6 +26,7 @@ const MAYA = asUserId('00000000-0000-7000-8000-0000000000a2');
 const CANVAS = '00000000-0000-7000-8000-0000000000c1';
 
 const getCanvas = vi.hoisted(() => vi.fn());
+const archiveCanvas = vi.hoisted(() => vi.fn());
 const setCanvasPinned = vi.hoisted(() => vi.fn());
 const setCanvasAudience = vi.hoisted(() => vi.fn());
 const renameCanvas = vi.hoisted(() => vi.fn());
@@ -36,7 +38,7 @@ const requestCanvasAccess = vi.hoisted(() => vi.fn());
 const decideCanvasAccess = vi.hoisted(() => vi.fn());
 vi.mock('../lib/collaboration-session', () => ({
   useCollaborationSession: () => ({
-    api: { getCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, setCanvasAppearance, createScopeInvitations, getCanvasAccess, requestCanvasAccess, decideCanvasAccess },
+    api: { getCanvas, archiveCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, setCanvasAppearance, createScopeInvitations, getCanvasAccess, requestCanvasAccess, decideCanvasAccess },
     session: { user: { id: ME }, workspace: { id: WORKSPACE, region: 'global', role: 'member' } },
   }),
   useOptionalCollaborationSession: () => null,
@@ -56,8 +58,12 @@ vi.mock('./conversation-surface', () => ({
   ConversationOpeningSkeleton: ({ label }: { label: string }) => <p>{label}</p>,
   ConversationSurface: (props: ConversationSurfaceProps) => {
     const location = useLocation();
+    const [panelOpen, setPanelOpen] = useState(false);
     surfaces.push({ props, requested: openResourceRequest(location.state)?.resourceId ?? null, expanded: expandRequest(location) !== null });
-    return <div>{props.renderHeader?.({ presentUserIds: [ME, MAYA] } as never)}</div>;
+    return <div>
+      {props.renderHeader?.({ presentUserIds: [ME, MAYA], panelOpen } as never)}
+      <button onClick={() => setPanelOpen((open) => !open)} type="button">{panelOpen ? 'Close test panel' : 'Open test panel'}</button>
+    </div>;
   },
 }));
 
@@ -78,7 +84,10 @@ function renderCanvas(entry: string | { pathname: string; state: unknown } = `/c
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<ErrorNoticeProvider><QueryClientProvider client={client}>
     <Tooltip.Provider><MemoryRouter initialEntries={[entry]}>
-      <Routes><Route element={<CanvasScreen />} path="/canvases/:id" /></Routes>
+      <Routes>
+        <Route element={<CanvasScreen />} path="/canvases/:id" />
+        <Route element={<p>Canvases home</p>} path="/canvases" />
+      </Routes>
     </MemoryRouter></Tooltip.Provider>
   </QueryClientProvider></ErrorNoticeProvider>);
   return client;
@@ -105,6 +114,7 @@ beforeEach(() => {
   copyText.mockReset().mockResolvedValue(undefined);
   window.localStorage.clear();
   getCanvas.mockReset().mockResolvedValue(detail());
+  archiveCanvas.mockReset().mockResolvedValue(undefined);
   setCanvasPinned.mockReset().mockResolvedValue(undefined);
   setCanvasAudience.mockReset();
   renameCanvas.mockReset();
@@ -121,6 +131,38 @@ beforeEach(() => {
 });
 
 describe('CanvasScreen', () => {
+  it('confirms Archive Canvas and leaves for Canvases only after success', async () => {
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive canvas' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive Canvas' });
+    expect(dialog).toHaveTextContent('removed from everyone’s Canvases');
+    expect(archiveCanvas).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive Canvas' }));
+    await waitFor(() => expect(archiveCanvas).toHaveBeenCalledWith(CANVAS));
+    expect(await screen.findByText('Canvases home')).toBeInTheDocument();
+  });
+
+  it('keeps the Canvas and confirmation available when archiving fails', async () => {
+    archiveCanvas.mockRejectedValue(new ApiError('Not allowed', 403, 'canvas_archive_forbidden'));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive canvas' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive Canvas' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive Canvas' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('The Canvas could not be archived. Try again.');
+    expect(screen.queryByText('Canvases home')).toBeNull();
+    expect(dialog).toBeInTheDocument();
+  });
+
+  it('offers no archive action to someone who cannot manage the Canvas', async () => {
+    getCanvas.mockResolvedValue(detail({ canManage: false }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Copy link' });
+    expect(screen.queryByRole('menuitem', { name: 'Archive canvas' })).toBeNull();
+  });
+
   it("opens the Canvas's Chat as a canvas conversation under a header naming it", async () => {
     renderCanvas();
     await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
@@ -169,7 +211,7 @@ describe('CanvasScreen', () => {
     await waitFor(() => expect(copyText).toHaveBeenCalledWith('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7Xe/cv/1111117Hxt1fAWDjN7Wp/'));
   });
 
-  it('reopens a closed panel onto the newest artifact, from either menu', async () => {
+  it('reopens a closed panel onto the newest artifact from the command menu', async () => {
     renderCanvas();
     await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
     surfaces.length = 0;
@@ -177,10 +219,6 @@ describe('CanvasScreen', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Open artifact' }));
     await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
     expect(lastSurface().expanded).toBe(false);
-    surfaces.length = 0;
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Canvas actions' }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open artifact' }));
-    await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
   });
 
   it('replaces the entry it reopens the panel on, so Back leaves the Canvas', async () => {
@@ -205,33 +243,49 @@ describe('CanvasScreen', () => {
     expect(await screen.findByText('Canvases home')).toBeInTheDocument();
   });
 
-  it('copies the Canvas id for support from its menu', async () => {
+  it('offers the four command shortcuts and opens Share from its tile', async () => {
     renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    expect(screen.queryByRole('button', { name: 'Canvas actions' })).toBeNull();
     await openMenu('Q4 revenue review');
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy Canvas ID' }));
-    await waitFor(() => expect(copyText).toHaveBeenCalledWith(CANVAS));
+    const shortcuts = await screen.findByRole('group', { name: 'Actions' });
+    expect(within(shortcuts).getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Share', 'Open artifact', 'Copy link', 'Pin']);
+    expect(screen.queryByRole('menuitem', { name: 'Copy Canvas ID' })).toBeNull();
+    fireEvent.click(within(shortcuts).getByRole('menuitem', { name: 'Share' }));
+    expect(await screen.findByRole('dialog', { name: 'Share Canvas' })).toBeInTheDocument();
   });
 
-  it('offers no artifact to open on a Canvas that has none', async () => {
+  it('disables the artifact shortcut on a Canvas that has none', async () => {
     getCanvas.mockResolvedValue(detail({ artifacts: [] }));
     renderCanvas();
     await waitFor(() => expect(getCanvas).toHaveBeenCalled());
     await openMenu('Q4 revenue review');
     await screen.findByRole('menuitem', { name: 'Copy link' });
-    expect(screen.queryByRole('menuitem', { name: 'Open artifact' })).toBeNull();
+    const shortcut = screen.getByRole('menuitem', { name: 'Open artifact' });
+    expect(shortcut).toHaveAttribute('aria-disabled', 'true');
+    act(() => shortcut.focus());
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('This Canvas has no artifacts yet.');
+  });
+
+  it('disables Open artifact while its panel is shown and enables it after close', async () => {
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Open artifact' });
+    const shortcut = () => screen.getByRole('menuitem', { name: 'Open artifact' });
+    expect(shortcut()).not.toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Open test panel' }));
+    expect(shortcut()).toHaveAttribute('aria-disabled', 'true');
+    act(() => shortcut().focus());
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('The artifact panel is already open.');
+    fireEvent.click(shortcut());
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close test panel' }));
+    expect(shortcut()).not.toHaveAttribute('aria-disabled', 'true');
   });
 
   it('pins the Canvas from its menu', async () => {
     renderCanvas();
     const trigger = await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
-    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
-    expect(setCanvasPinned).toHaveBeenCalledWith(CANVAS, true);
-  });
-
-  it('pins the Canvas from the header\'s separate actions button too', async () => {
-    renderCanvas();
-    const trigger = await screen.findByRole('button', { name: 'Canvas actions' });
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
     expect(setCanvasPinned).toHaveBeenCalledWith(CANVAS, true);
@@ -489,7 +543,7 @@ describe('CanvasScreen', () => {
     render(<Tooltip.Provider><MemoryRouter><WorkstreamErrorState description={undefined} header={stateHeader} onRetry={vi.fn()} workstreamId={CANVAS} /></MemoryRouter></Tooltip.Provider>);
     expect(screen.getByRole('button', { name: 'Canvas menu: Q4 revenue review' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Share' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Canvas actions' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Canvas actions' })).toBeNull();
     // The support menu belongs to the bare header the Canvas's replaces.
     expect(screen.queryByRole('button', { name: 'More Canvas actions' })).toBeNull();
     expect(screen.getByText('Rally can’t reach the server right now.')).toBeInTheDocument();

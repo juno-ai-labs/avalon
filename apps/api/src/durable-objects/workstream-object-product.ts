@@ -633,6 +633,18 @@ export class WorkstreamObjectProductService {
     );
   }
 
+  /** The owning parent closed this conversation; no viewer admission is needed. */
+  archiveFromParent(): void {
+    this.storage.transactionSync(() => {
+      const now = Date.now();
+      this.requestArchiveStopInTransaction(this.storage.sql, now);
+      this.storage.sql.exec(`UPDATE workstream SET archived_at = COALESCE(archived_at, ?),
+        exact_state = 'archived', updated_at = ? WHERE id = 1`, now, now);
+      this.storage.sql.exec(`UPDATE workstream_wakeups SET status = 'cancelled', cancelled_at = ?,
+        version = version + 1, updated_at = ? WHERE status = 'pending'`, now, now);
+    });
+  }
+
   private beginInputPreparation(inputId: string, now: number): void {
     const claim = this.activeInputPreparations.get(inputId);
     this.activeInputPreparations.set(inputId, {

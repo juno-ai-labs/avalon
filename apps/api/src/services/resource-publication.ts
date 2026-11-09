@@ -2,6 +2,7 @@ import { ResourceSchema } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 
 import type { Env } from "../env";
+import { ApiError } from "../lib/api-error";
 import { sha256Hex } from "../lib/crypto";
 import { AGENT_RESOURCE_TITLE_SQL } from "./agent-resource-title";
 import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
@@ -47,6 +48,13 @@ export class PublicationWriteFailed extends Error {
   }
 }
 
+function publicationFailure(error: unknown, operation: "insert" | "swap"): never {
+  if (error instanceof Error && /\bcanvas_archived\b/u.test(error.message)) {
+    throw new ApiError(409, "canvas_archived", "This Canvas was archived");
+  }
+  throw new PublicationWriteFailed(operation);
+}
+
 /**
  * The longest identity a row may carry: `ResourceSchema` bounds
  * `providerResourceId`, and one row past it stops every list that projects it.
@@ -89,6 +97,8 @@ function authorColumns(author: PublicationAuthor) {
 export async function insertPublishedResource(workspace: D1Database, input: {
   resourceId: string;
   workspaceId: string;
+  /** Persisted before attachment so archive fences a delayed publication. */
+  publicationParentId: string;
   resourceType: "generated_file" | "generated_site";
   providerResourceId: string;
   title: string;
@@ -108,18 +118,18 @@ export async function insertPublishedResource(workspace: D1Database, input: {
        (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
         content_ref, content_sha256, metadata_json, last_hydrated_at, uploaded_by_user_id,
         attachment_status, model_content_status, created_at, updated_at,
-        revision_author_kind, revision_author_run_id, revision_author_user_id, revision_cause)
-       VALUES (?, ?, ?, 'avalon_generated', ?, ?, ?, ?, ?, ?, ?, ?, 'attached', ?, ?, ?, ?, ?, ?, 'created')`,
+        revision_author_kind, revision_author_run_id, revision_author_user_id, revision_cause, publication_parent_id)
+       VALUES (?, ?, ?, 'avalon_generated', ?, ?, ?, ?, ?, ?, ?, ?, 'attached', ?, ?, ?, ?, ?, ?, 'created', ?)`,
     ).bind(
       input.resourceId, input.workspaceId, input.resourceType, input.providerResourceId, input.title,
       input.mimeType, input.contentRef, input.contentSha256, input.metadataJson, input.timestamp,
       input.uploadedByUserId, input.modelContentStatus, input.timestamp, input.timestamp,
-      author.kind, author.runId, author.userId,
+      author.kind, author.runId, author.userId, input.publicationParentId,
     ).run();
-  } catch {
+  } catch (error) {
     // The insert may have committed before its response was lost. The caller
     // keeps the stable identity, so a retry observes and attaches the row.
-    throw new PublicationWriteFailed("insert");
+    publicationFailure(error, "insert");
   }
 }
 
@@ -226,11 +236,11 @@ export async function swapPublishedContent(input: {
       author.kind, author.runId, author.userId, author.onBehalfOf,
       existing.id, workspaceId, existing.content_ref, existing.content_sha256,
     ).first<PublishedRow>();
-  } catch {
+  } catch (error) {
     // A failed WorkspaceDO response is not evidence that its transaction
     // failed. Keep the staged bytes so a pointer that committed before the
     // response was lost can never name a deleted object.
-    throw new PublicationWriteFailed("swap");
+    publicationFailure(error, "swap");
   }
   // The row is the witness, not a write counter: `meta.changes` on a
   // WorkspaceDO-routed statement counts the version triggers' writes too

@@ -119,7 +119,8 @@ describe("the WorkspaceDO Thread parents drop on workerd", () => {
     await runInDurableObject(stub, (_instance, state) => {
       applyDurableObjectSqliteMigrations({
         storage: state.storage,
-        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+        // Through 141, the migration under test; later migrations have their own upgrade coverage.
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((m) => m.version <= 141),
         component: COMPONENT,
         workerVersionId: "worker-thread-parents-drop",
         now: 2_000,

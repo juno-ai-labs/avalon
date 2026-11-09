@@ -7,6 +7,7 @@ import { resourceSearchCategory, resourceSearchText } from '../services/resource
 import { isUnlistedResourceMetadata } from '../services/resource-listing';
 import { searchDocumentId } from '../services/text-search';
 import type { SearchDocumentBatch, SearchDocument } from '../services/search-document';
+import { resourceCanvasState } from '../services/resource-read-rules';
 import { resourceSearchAudience } from '../services/search-audience';
 import { authorizationLocations } from './authorization-storage';
 
@@ -184,7 +185,10 @@ export async function prepareResourceSearch(sql: SqlStorage, env: Env, workspace
   // Search is an enumerating surface, so an unlisted resource has no category.
   // A null category also drives every source below to `live = false`, which
   // withdraws a row that was indexed before it was marked unlisted.
-  const category = row && !isUnlistedResourceMetadata(row.metadata_json)
+  const canvas = row?.provider === 'avalon_generated'
+    ? resourceCanvasState(sql, resourceId, typeof row.publication_parent_id === 'string' ? row.publication_parent_id : null)
+    : { ownedByCanvas: false, archived: false };
+  const category = canvas.archived ? null : row && !isUnlistedResourceMetadata(row.metadata_json)
     ? resourceSearchCategory(row.provider, row.canonical_url)
     : null;
   const categoryId = category ? await searchDocumentId(category, workspaceId, resourceId) : null;
@@ -197,7 +201,7 @@ export async function prepareResourceSearch(sql: SqlStorage, env: Env, workspace
     uploaded_by_user_id: typeof row.uploaded_by_user_id === 'string' ? row.uploaded_by_user_id : null,
     attachment_status: typeof row.attachment_status === 'string' ? row.attachment_status : null,
     connection_id: typeof row.connection_id === 'string' ? row.connection_id : null,
-  }, authorizationLocations(sql, resourceId)) : [];
+  }, authorizationLocations(sql, resourceId), canvas.ownedByCanvas) : [];
   const documents: SearchDocument[] = [];
   for (const source of ['files', 'artifacts', 'links'] as const) {
     const id = await searchDocumentId(source, workspaceId, resourceId);
