@@ -2034,6 +2034,18 @@ describe("a hosted Sidekick", () => {
     expect(message).toContain("draft.triggers");
   });
 
+  it("keeps a draft personal when its definition suggests the retired Thread scope", async () => {
+    await createDraft();
+    // A stored suggestion from a Thread-owned draft, re-submitted as the model read it back.
+    await workspaceStub().sidekickSubmitDefinition({
+      ...addressed(), draft: { ...DEFINITION, ready: false, suggestedScope: "workstream" } as never,
+      evaluatorRules: null, submittedByRunId: null,
+    });
+    const scope = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ scope: string }>(
+      `SELECT scope FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID).one().scope);
+    expect(scope).toBe("personal");
+  });
+
   it("rechecks the email trigger after delegate authorization yields", async () => {
     await activeAutomation();
     await submit({ ...DEFINITION, definitionVersion: 2, triggers: [{ type: "manual" }] });
