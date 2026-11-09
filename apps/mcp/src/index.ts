@@ -68,7 +68,14 @@ export const MCP_MAX_REQUEST_BYTES = Math.ceil(DEFAULT_MAX_ATTACHMENT_BYTES / 3)
 
 const OAUTH_ROUTES: Record<string, string> = { "/register": "/mcp-oauth/register", "/token": "/mcp-oauth/token", "/revoke": "/mcp-oauth/revoke" };
 
-const hostedOriginHostnames = MCP_HOSTED_REDIRECT_ORIGINS.map((origin) => new URL(origin).hostname);
+/**
+ * Whether a browser-based client's `Origin` is a hosted client's, compared as
+ * the exact serialized origin (scheme, host and port), so `http://claude.ai`
+ * and an opaque `null` origin are refused like any other.
+ */
+export function isHostedClientOrigin(origin: string): boolean {
+  return (MCP_HOSTED_REDIRECT_ORIGINS as readonly string[]).includes(origin);
+}
 
 export default {
   async fetch(request, env): Promise<Response> {
@@ -94,11 +101,16 @@ export default {
       const api = regionalApi(env, IDENTITY_REGION);
       if (!api) return publicJson({ error: "temporarily_unavailable", error_description: "Rally is unavailable" }, 503);
       const forwarded = new URL(oauthPath, "https://api.internal");
-      const response = await api.fetch(new Request(forwarded, {
+      // Streamed rather than buffered, so the API's own bound on these small
+      // bodies refuses an oversized one without this isolate holding it.
+      // `duplex` is what a streamed request body requires outside workerd.
+      const init: RequestInit & { duplex: "half" } = {
         method: "POST",
         headers: { "content-type": request.headers.get("content-type") ?? "application/x-www-form-urlencoded" },
-        body: await request.arrayBuffer(),
-      }));
+        body: request.body,
+        duplex: "half",
+      };
+      const response = await api.fetch(new Request(forwarded, init));
       const answer = new Response(response.body, response);
       for (const [name, value] of Object.entries(CORS_HEADERS)) answer.headers.set(name, value);
       return answer;
@@ -111,9 +123,7 @@ export default {
     const requestOrigin = request.headers.get("origin");
     let allowedOrigin: string | null = null;
     if (requestOrigin !== null) {
-      let hostname = "";
-      try { hostname = new URL(requestOrigin).hostname; } catch { /* not an origin */ }
-      if (!hostedOriginHostnames.includes(hostname)) return Response.json({ error: "origin_not_allowed" }, { status: 403 });
+      if (!isHostedClientOrigin(requestOrigin)) return Response.json({ error: "origin_not_allowed" }, { status: 403 });
       allowedOrigin = requestOrigin;
     }
     const cors = allowedOrigin === null ? {} : {
@@ -144,7 +154,7 @@ export default {
       });
     }
     const api = regionalApi(env, bearer.region);
-    if (!api) return Response.json({ error: "region_unavailable" }, { status: 503 });
+    if (!api) return Response.json({ error: "region_unavailable" }, { status: 503, headers: cors });
     const rally = new RallyApi(api, bearer.token, bearer.region);
     // One stateless server per request, for the connected person. The SDK's
     // handler serves both the 2026-07-28 revision and 2025-era clients.
@@ -153,6 +163,14 @@ export default {
       (await rallySkillCatalog()).attach(server);
       return server;
     }, { maxRequestBodySize: MCP_MAX_REQUEST_BYTES }).fetch(request);
+    // The SDK's own 413 says only that the body is too large. Plain text grows
+    // when JSON escapes it, so a text file under Rally's limit can still land
+    // here; the answer says how to send it instead.
+    if (response.status === 413) {
+      return Response.json({ error: "request_too_large", error_description:
+        `This request is larger than Rally accepts. Send large files, text included, as base64, which grows by exactly a third; a single file may be up to ${DEFAULT_MAX_ATTACHMENT_BYTES / 1_000_000} MB.` },
+        { status: 413, headers: cors });
+    }
     if (allowedOrigin === null) return response;
     const answered = new Response(response.body, response);
     for (const [name, value] of Object.entries(cors)) answered.headers.set(name, value);

@@ -23,8 +23,7 @@ Rally, with exactly their permissions.
 Rally, the agent inside the Canvas, does the work. You ask it:
 
 1. `send_canvas_message` with a clear request ("Add a risks section to the
-   launch plan", "Turn the table into a chart"). Use a fresh UUID as
-   `operationId`.
+   launch plan", "Turn the table into a chart").
 2. Rally answers asynchronously. `read_canvas_chat` to follow along; if it is
    still working, wait and read again rather than resending.
 3. `get_canvas` shows each artifact's new version; `read_artifact` reads one.
@@ -47,19 +46,8 @@ use the `publishing` skill: publish it, do not paste it into a message.
 - `decide_canvas_access_request` approves or denies a waiting request, listed
   in `get_canvas` as `pendingAccessRequests`.
 
-Only a Canvas's managers (its creator, the Organization's owners and admins)
-can change its audience, share it, or decide requests. When Rally refuses,
-report the refusal; do not retry with other arguments.
-
 ## Upkeep
 
 - `update_canvas` retitles a Canvas or sets its icon and colour.
 - `rename_artifact` renames an artifact.
 - `pin_canvas` pins it in the person's own list.
-
-## Retries
-
-Every tool that takes an `operationId` is safe to call again with the same
-`operationId` and arguments after a timeout or unclear result. Never mint a
-new one for a retry: that would create a second Canvas or send the message
-twice.

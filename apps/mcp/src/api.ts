@@ -1,4 +1,7 @@
+import type { z } from "zod";
+
 import { isConfiguredRegion, regionConfiguration, type Region } from "@rally/contracts/regions";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 
 import type { Env } from "./env";
 
@@ -14,6 +17,12 @@ export type TokenInspection =
   | { ok: true; token: string; region: Region }
   | { ok: false; reason: "missing" | "malformed" | "audience" | "expired" | "region" };
 
+/**
+ * The audience the API's `TOKEN_AUDIENCES.mcp` (`apps/api/src/services/
+ * auth-service.ts`) signs an MCP client's token for. Spelled again here
+ * because it lives only in the API Worker, and one Worker does not import
+ * another's source; change both together.
+ */
 export const MCP_TOKEN_AUDIENCE = "rally-mcp";
 
 export function inspectBearer(authorization: string | null, now = Date.now()): TokenInspection {
@@ -50,6 +59,22 @@ export class RallyApiError extends Error {
 }
 
 /**
+ * An answer Rally gave that does not match the contract this Worker was built
+ * against: a deployment skew between this Worker and the API. Its code names
+ * the fields that differ (`rally_response_invalid:items.0.kind:invalid_value`),
+ * never their values.
+ */
+export class RallyResponseError extends RallyApiError {
+  constructor(status: number, error: z.ZodError) {
+    super(status, zodDiagnosticCode(error, "rally_response") ?? "rally_response_invalid",
+      "Rally answered in a form this connector does not recognize, so the request may or may not have taken effect. Check in Rally before repeating it");
+    this.name = "RallyResponseError";
+  }
+}
+
+type Method = "GET" | "POST" | "PATCH" | "DELETE";
+
+/**
  * The product API as the connected person: every call carries their MCP
  * token and reaches the same route the app calls, so the Organization's
  * roles and each Canvas's audience decide exactly as they do there.
@@ -57,13 +82,21 @@ export class RallyApiError extends Error {
 export class RallyApi {
   constructor(private readonly api: Fetcher, private readonly token: string, private readonly region: Region) {}
 
-  async json<T = unknown>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<T> {
+  /** A call whose answer is parsed with the API route's own response schema. */
+  async json<S extends z.ZodType>(schema: S, method: Method, path: string, body?: unknown): Promise<z.output<S>> {
     const response = await this.send(method, path, body);
-    if (response.status === 204) return undefined as T;
-    return await response.json<T>();
+    const parsed = schema.safeParse(await response.json().catch(() => undefined));
+    if (!parsed.success) throw new RallyResponseError(response.status, parsed.error);
+    return parsed.data;
   }
 
-  async send(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<Response> {
+  /** A call whose route answers 204 with no body. */
+  async empty(method: Method, path: string, body?: unknown): Promise<void> {
+    const response = await this.send(method, path, body);
+    await response.body?.cancel();
+  }
+
+  async send(method: Method, path: string, body?: unknown): Promise<Response> {
     const headers = new Headers({ authorization: `Bearer ${this.token}`, accept: "application/json" });
     if (body !== undefined) headers.set("content-type", "application/json");
     const response = await this.api.fetch(new Request(new URL(path, regionConfiguration(this.region).apiUrl), {

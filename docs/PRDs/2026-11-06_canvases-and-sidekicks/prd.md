@@ -142,6 +142,27 @@ The brief needs its own update once this PRD is approved.
 The implementation plan written against these decisions is
 [plan.md](plan.md).
 
+### 2026-11-09 — A Canvas has one shared sandbox
+
+**Decided:** "A Canvas always has a single shared, consistent sandbox no
+matter which person is delegating or whether it is platform activity." The
+team's call, 2026-11-09. A Canvas's sandbox identity is the Canvas and its
+selected repository, not the acting person. Every participant's runs, Rally's
+own, background agents and a person's publication build use the one sandbox
+and its files. A Sidekick keeps its own rule.
+
+**Why:** The per-person identity replaced the sandbox, and deleted its files,
+each time a different person acted in the Canvas. That broke shared work, and
+left no stable place to build what a person publishes. A fresh sandbox per
+publish was considered and rejected.
+
+**Changes:** Trust widens inside a Canvas, and this is accepted: a file one
+participant's run wrote, including one fetched through that person's personal
+connector, is readable by every other participant's runs, and anything a
+participant runs can change what later runs and publication builds execute.
+`authorityFingerprint` in `services/terminal/coordinator.ts`;
+docs/terminal-workspaces.md, docs/security.md, docs/canvases.md.
+
 ### 2026-11-09 — A Thread-owned Sidekick keeps its Thread's audience
 
 **Decided:** When the Thread-owned Sidekick scope retires, a Sidekick keeps

@@ -32,9 +32,12 @@ CREATE TABLE mcp_oauth_codes (
 
 -- A session an MCP client holds. Its access tokens carry the `rally-mcp`
 -- audience, which reaches only the routes the MCP server calls, and only the
--- MCP token endpoint refreshes it; the desktop refresh refuses it.
+-- MCP token endpoint refreshes it; the desktop refresh refuses it. A client
+-- with grants cannot be deleted: the desktop refresh reads a session with no
+-- grant as its own, so dropping the grant would hand the session the desktop
+-- audience. Revoke the client's sessions first.
 CREATE TABLE mcp_oauth_grants (
   session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-  client_id TEXT NOT NULL REFERENCES mcp_oauth_clients(client_id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL REFERENCES mcp_oauth_clients(client_id) ON DELETE RESTRICT,
   created_at TEXT NOT NULL
 ) STRICT;

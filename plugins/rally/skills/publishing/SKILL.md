@@ -19,7 +19,7 @@ into a message: the artifact keeps its type, its versions and its address.
 
 - **`publish_file`** for a document, spreadsheet, image, PDF or any other
   file. Name it with its extension (`launch-plan.md`, `q3.csv`,
-  `chart.png`). Send text as text and anything else as base64.
+  `chart.png`), and keep the name to update it later. Send text as text and anything else as base64.
 - **`publish_site`** for anything that runs in a browser. It goes live at its
   own address. Send it in the shape you have:
   - an HTML artifact: one file named `index.html`, plus any CSS, scripts and
@@ -34,12 +34,6 @@ into a message: the artifact keeps its type, its versions and its address.
 A component that imports a library Rally does not provide is refused before
 anything runs, naming the import. Rewrite it without that library, or publish
 the built output (with its `index.html`) instead.
-
-## Versions
-
-The `name` is the artifact's identity in its Canvas. Publishing the same name
-again makes a new version of the same artifact at the same address; publishing
-unchanged content does nothing. Use a new name only for a separate artifact.
 
 ## After publishing
 
