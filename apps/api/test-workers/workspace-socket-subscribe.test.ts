@@ -19,6 +19,7 @@ import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 import { createTestEnv } from "../test/helpers/cloudflare-test";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { startWaitBudget, waitBudget } from "./helpers/wait-budget";
 
 let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000c5100");
 const USER = asUserId("00000000-0000-7000-8000-0000000c5101");
@@ -35,6 +36,9 @@ type CanvasList = { waterline: number; items: Array<{ id: string }> };
  * Flagship cannot run here, and its answer is the subscribe's one wait. The
  * double holds every evaluation until released, and says when the first one
  * has started, so a write can be made to land inside that wait every time.
+ * The test releases it in a `finally`: a hold left in place spins inside the
+ * Organization object after a failed test and holds its subscribe open into
+ * the next one.
  */
 async function holdFlagship(): Promise<{ entered: () => Promise<void>; release: () => void }> {
   // Flags, not promises: a promise settled in one Durable Object's context and
@@ -51,7 +55,7 @@ async function holdFlagship(): Promise<{ entered: () => Promise<void>; release: 
     } }).FLAGS;
   });
   return {
-    entered: async () => { await expect.poll(() => gate.entered).toBe(true); },
+    entered: async () => { await expect.poll(() => gate.entered, { timeout: waitBudget() }).toBe(true); },
     release: () => { gate.released = true; },
   };
 }
@@ -80,7 +84,7 @@ async function openSocket(): Promise<{ socket: WebSocket; frames: Frame[]; drain
   const drained = async (): Promise<void> => {
     const before = pongs;
     socket.send("ping");
-    await expect.poll(() => pongs).toBeGreaterThan(before);
+    await expect.poll(() => pongs, { timeout: waitBudget() }).toBeGreaterThan(before);
   };
   return { socket, frames, drained };
 }
@@ -101,14 +105,17 @@ beforeEach(async () => {
   await reset();
   WORKSPACE_ID = asWorkspaceId(crypto.randomUUID());
   await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: USER, sessionId: `session-${USER}` });
+  startWaitBudget();
 });
 
 describe("a workspace socket's subscribe", () => {
   it("delivers a Canvas created while it is still answering", async () => {
     await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
     const flagship = await holdFlagship();
-    const { socket, frames, drained } = await openSocket();
+    let opened: Awaited<ReturnType<typeof openSocket>> | undefined;
     try {
+      opened = await openSocket();
+      const { socket, frames, drained } = opened;
       socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
       await flagship.entered();
 
@@ -116,12 +123,13 @@ describe("a workspace socket's subscribe", () => {
       await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: CANVAS, title: "Launch",
         createdByUserId: USER, authorityGeneration: 1 });
       flagship.release();
-      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync")).toBe(true);
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: waitBudget() }).toBe(true);
       await drained();
 
       expect(newestCanvasList(frames)?.items.map((item) => item.id)).toEqual([CANVAS]);
     } finally {
-      socket.close(1000, "test complete");
+      flagship.release();
+      opened?.socket.close(1000, "test complete");
     }
   });
 });
