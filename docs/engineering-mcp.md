@@ -487,7 +487,7 @@ without one.
 **Consequences:** Retiring Threads again would need new code; the dumps under
 `retired-conversations/` in `PAYLOADS` are the record of what was retired.
 
-Shipped in juno-ai-labs/avalon#TBD. Design:
+Shipped in juno-ai-labs/avalon#1494. Design:
 `docs/PRDs/2026-11-06_canvases-and-sidekicks/plan.md`.
 
 ### 2026-11-09 — Retire an Organization

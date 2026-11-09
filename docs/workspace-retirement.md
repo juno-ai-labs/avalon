@@ -575,7 +575,7 @@ a graph node of kind `workstream` or `space` recorded by an earlier pass is
 still walked; the retirement kinds stay in `RetirementParentKindSchema` for it.
 Forward-fix only, as before.
 
-Shipped in juno-ai-labs/avalon#TBD. Design:
+Shipped in juno-ai-labs/avalon#1494. Design:
 `docs/PRDs/2026-11-06_canvases-and-sidekicks/plan.md`.
 
 ### 2026-11-09 — Dump, convert and retire an Organization's Threads, close its Canvases with it, and stop writing the demo register
