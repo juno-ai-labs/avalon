@@ -48,6 +48,14 @@ export interface RoutePlanResult {
  * across the whole plan, first occurrence wins.
  */
 export function buildRoutePlan(request: RoutePlanRequest): RoutePlanResult {
+  const { plan, skips } = planRoute(request);
+  return { plan, skips };
+}
+
+/** Also identify stages that had no viable endpoint before deduplication. */
+export function planRoute(request: RoutePlanRequest): RoutePlanResult & {
+  readonly unavailableStages: readonly RouteStage[];
+} {
   const skips: RouteSkip[] = [];
   const seenEndpoints = new Set<string>();
 
@@ -63,9 +71,11 @@ export function buildRoutePlan(request: RoutePlanRequest): RoutePlanResult {
       : [{ kind: "primary", model: request.primaryModel }];
 
   const stages: RouteStage[] = [];
+  const unavailableStages: RouteStage[] = [];
   for (const { kind, model } of stageModels) {
     const policy = request.policyFor(model);
     const candidates: RouteCandidate[] = [];
+    let hasViableEndpoint = false;
 
     for (const providerId of policyProviderOrder(policy)) {
       const transport = request.transports.get(providerId);
@@ -119,20 +129,21 @@ export function buildRoutePlan(request: RoutePlanRequest): RoutePlanResult {
         continue;
       }
 
+      hasViableEndpoint = true;
       const endpointKey = `${candidate.providerId}\u0000${candidate.providerInvocationModel}`;
       if (seenEndpoints.has(endpointKey)) continue;
       seenEndpoints.add(endpointKey);
       candidates.push(Object.freeze(candidate));
     }
 
-    stages.push(
-      Object.freeze({
-        kind,
-        canonicalModelId: model,
-        policy,
-        candidates: Object.freeze(candidates),
-      }),
-    );
+    const stage = Object.freeze({
+      kind,
+      canonicalModelId: model,
+      policy,
+      candidates: Object.freeze(candidates),
+    });
+    stages.push(stage);
+    if (!hasViableEndpoint) unavailableStages.push(stage);
   }
 
   const plan: RoutePlan = Object.freeze({
@@ -141,7 +152,7 @@ export function buildRoutePlan(request: RoutePlanRequest): RoutePlanResult {
     stages: Object.freeze(stages),
   });
 
-  return { plan, skips: Object.freeze(skips) };
+  return { plan, skips: Object.freeze(skips), unavailableStages };
 }
 
 function capabilityGaps(

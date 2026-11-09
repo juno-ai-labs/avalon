@@ -82,7 +82,7 @@ first constructing a default object schema and then deriving a second schema.
 This rule applies only when the chain starts directly at `z.object()`. A mode
 change on an existing or further-derived schema is a different operation and
 must stay explicit. ESLint enforces the direct cases in the API, contracts,
-agent-harness, and connector production graphs.
+Bind, agent-harness, and connector production graphs.
 
 ## Defer cold Zod schema graphs without changing Zod
 
