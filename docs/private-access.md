@@ -317,7 +317,9 @@ or numerical retention period is configured.
 
 **What changed:** Acknowledgements use the native Cloudflare sender. Only explicit
 quota refusals remain retryable; uncertain and permanent failures become
-`review_required` immediately. The Resend-specific 24-hour retry window is removed.
+`review_required` immediately. Provider acceptance followed by a failed D1
+settlement also requires review, rather than making the request retryable.
+The Resend-specific 24-hour retry window is removed.
 
 **Why:** Cloudflare has no send-idempotency parameter, so waiting inside a former
 provider's dedupe window cannot make an unknown send safe to repeat. The existing

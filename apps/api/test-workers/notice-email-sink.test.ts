@@ -7,13 +7,15 @@
  * ("Sinks") owns the design.
  */
 import { env } from 'cloudflare:workers';
-import { reset, runInDurableObject } from 'cloudflare:test';
+import { reset, runInDurableObject, createMessageBatch, createExecutionContext, getQueueResult } from 'cloudflare:test';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { asUserId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
 import { workspaceDOName } from '../src/durable-objects/names';
-import { deliverPush } from '../src/queues/push-delivery-consumer';
+import { deliverPush, consumePushDeliveryQueue } from '../src/queues/push-delivery-consumer';
 import { sendNoticeEmail } from '../src/services/notice-email';
 import type { Notice } from '../src/services/notification-notice';
+import { EMAIL_DELIVERY_TABLE } from './helpers/email-delivery-tables';
+import { createTestEnv } from '../test/helpers/cloudflare-test';
 
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-00000000e501');
 const canvasId = asWorkstreamId('00000000-0000-7000-8000-00000000e502');
@@ -53,6 +55,7 @@ const INTENTS: Array<[intentId: string, kind: string, parentId: string, payload:
 beforeEach(async () => {
   await reset();
   await env.DB.batch([
+    env.DB.prepare(EMAIL_DELIVERY_TABLE),
     env.DB.prepare(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT, region TEXT, abandoned_at TEXT, placement_affinity TEXT NOT NULL DEFAULT 'wnam')`),
     env.DB.prepare(`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, name TEXT)`),
     env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT NOT NULL DEFAULT 'member', workspace_id TEXT, user_id TEXT, status TEXT, role TEXT, revision INTEGER NOT NULL DEFAULT 1, incarnation TEXT NOT NULL DEFAULT 'existing-member')`),
@@ -113,12 +116,29 @@ it('sends no email for a kind left on push, and reads a stored Slack choice as n
   expect((await workspace().memberPreferences({ workspaceId, userId })).notify).toMatchObject({ mentions: [], added: ['email'] });
 });
 
+it('retries a transient Cloudflare failure through the notification queue', async () => {
+  await workspace().saveMemberPreferences({ workspaceId, userId, preferences: { notify: { mentions: ['email'] } } });
+  const send = vi.fn(async () => { throw Object.assign(new Error('temporarily unavailable'), { code: 'E_INTERNAL_SERVER_ERROR' }); });
+  // Local workerd cannot select a jurisdiction; storage and RPC stay on its real namespace.
+  const production = { ...env, APP_ENV: 'production' as const, EMAIL_NOTIFICATION_FROM: 'Rally <notify@rallywith.ai>', EMAIL: { send },
+    WORKSPACE_DOS: createTestEnv({ WORKSPACE_DOS: { jurisdiction: () => env.WORKSPACE_DOS } }).WORKSPACE_DOS };
+  const batch = createMessageBatch('avalon-global-push-deliveries', [{ id: 'email-retry', body: email('mention:one'), timestamp: new Date(), attempts: 1 }]);
+  const ctx = createExecutionContext();
+  await consumePushDeliveryQueue(batch, production);
+  const result = await getQueueResult(batch, ctx);
+  expect(result.retryMessages).toEqual([{ msgId: 'email-retry' }]);
+  expect(send).toHaveBeenCalledTimes(1);
+});
+
 it('sends one email per notice through Cloudflare, its subject the notice title and its key the intent', async () => {
   const send = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: 'cf_1' }));
   const production = { ...env, APP_ENV: 'production' as const, EMAIL_NOTIFICATION_FROM: 'Rally <notify@rallywith.ai>' };
   const notice: Notice = { intentId: 'new_message:one', kind: 'new_message', title: 'Avery in Launch plan', body: 'Moved the date',
     actorName: 'Avery', url: CANVAS_URL, workspaceId, recipientUserId: userId, parentId: canvasId, substreamId: '0', replyTo: null };
   expect(await sendNoticeEmail(production, notice, send)).toEqual({ outcome: 'sent' });
+  expect(await sendNoticeEmail(production, notice, send)).toEqual({ outcome: 'sent' });
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(await env.DB.prepare('SELECT state FROM email_delivery_receipts').all()).toMatchObject({ results: [{ state: 'sent' }] });
   const body = send.mock.calls[0]![0];
   expect(body.headers!["X-Rally-Delivery-Key"]).toBe(`rally-notice/${workspaceId}/new_message:one`);
   expect(body.subject).toBe('Avery in Launch plan');

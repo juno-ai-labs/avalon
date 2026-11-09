@@ -380,7 +380,8 @@ To cut over a deployment:
    existing encrypted delivery intent. Install Cloudflare's supplied SPF, DKIM,
    and other verification records; Resend verification does not transfer.
 2. Merge the email-provider PR after review and CI pass. The `Deploy Avalon API`
-   workflow runs automatically on the merge to `main` and deploys the checked-in
+   workflow runs automatically on the merge to `main`, applies ordinary migration
+   `0126_email_delivery_receipts.sql` before the Worker, and deploys the checked-in
    `EMAIL` binding, sender vars and `WORKSTREAM_EMAIL_DOMAIN=rallywithai.com`.
    Reconcile uncertain outbound attempts before reissuing
    them: Cloudflare does not deduplicate Resend keys or `X-Rally-Delivery-Key`.
@@ -405,6 +406,21 @@ To cut over a deployment:
    Remove receiving secrets only when retiring that path. Existing stored
    addresses and permanent claims are not rewritten or reassigned by this
    rollout. Historical storage names need no data migration.
+
+Sign-in and scoped-invitation delivery use opaque D1 `email_delivery_receipts`.
+`sent` suppresses a repeat, `pending` may retry after a confirmed quota refusal,
+and `failed` records a permanent provider refusal. `sending` after an interrupted
+attempt and `review_required` must be reconciled against Cloudflare before
+resending. Inspect `delivery_key`, `attempt_token`, `diagnostic_code` and
+`updated_at` in the sending region. After confirming acceptance, mark the same
+receipt `sent`; reset it to `pending` only after confirming no acceptance. Fence
+either update by the observed state and attempt token, and clear that token on a
+reset. Existing sign-in recovery can then settle or retry the challenge; an expired
+challenge needs a new sign-in. A scoped invitation needs its normal delivery alarm
+rearmed to settle or retry after reconciliation. Access acknowledgements continue
+to use Ace's existing generation-fenced recovery flow. Notice sends automatically
+retry transient failures, with completed receipts suppressing subsequent queue
+redeliveries; uncertain acceptance before settlement can still cause duplicates.
 
 Live setup on 2026-11-09: the account has Workers Paid. `rallywith.ai` is now
 onboarded to Email Sending with `enabled: true` and `preview_enabled: true`.
@@ -454,14 +470,14 @@ also leave Resend. New addresses avoid the limitation using the dedicated
 compatibility design is implemented. A higher rule limit alone does not create
 rules or keep future allocations synchronized.
 
-The native send API has no idempotency-key parameter. Caller-owned delivery
-receipts still suppress completed work, but a crash after provider acceptance
-and before local settlement can duplicate a later send. Only explicit quota
-refusals are classified retryable by the shared sender; unknown outcomes and
-permanent provider failures carry `retryable: false`. Access acknowledgements
-require operator reconciliation in that case. Email-login and invitation recovery
-still use their existing durable intents; their delivery is at least once, so
-provider-side exactly-once delivery must not be claimed. See
+The native send API has no idempotency-key parameter. Completed delivery receipts
+suppress repeat sends. Sign-in and scoped invitations claim their reference
+before sending and park uncertain outcomes for reconciliation; confirmed quota
+refusals may retry. Notice mail retries internal and unknown failures, so a crash
+after acceptance but before receipt settlement or a concurrent queue delivery
+can still duplicate a send. Explicit permanent provider refusals are not retried.
+Access acknowledgements use their existing generation-fenced review flow,
+including when provider acceptance is followed by failed D1 settlement. See
 [the email mechanism](workstream-email-addresses.md#cloudflare-transport).
 
 For non-interactive Wrangler commands, prefer `CLOUDFLARE_API_TOKEN`. The older global-key method requires both `CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` in `.env.local`; an API key by itself cannot authenticate a deployment.

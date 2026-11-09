@@ -34,7 +34,9 @@ and [Versions and gradual deployments](https://developers.cloudflare.com/workers
 
 The Global API's static `worker-events.ts` entrypoint handles Cloudflare Email
 Routing through `email()`, and the Wrangler config supplies `send_email` binding
-`EMAIL` for outgoing mail. `postal-mime` is bundled for regional MIME parsing;
+`EMAIL` for outgoing mail. Migration `0126_email_delivery_receipts.sql` applies
+before the Worker and stores opaque send claims/completion receipts. `postal-mime`
+is bundled for regional MIME parsing;
 no runtime dependency loading or administration token is used. External sender
 domain verification and receiving rules are separate deployment prerequisites,
 listed in [the runbook](runbook.md). New addresses use the dedicated
@@ -326,6 +328,7 @@ resident Channel agent reads the window snapshot once.
 **What changed:** Global exports an `email()` handler and binds `EMAIL` for native
 Cloudflare sending. The static bundle includes `postal-mime`; receiving rules and
 sender verification are configured outside Wrangler.
+An ordinary D1 migration adds opaque delivery receipts before Worker promotion.
 
 **Why:** The email provider switch can use the existing Worker and regional RPC
 boundary without an HTTP receiving secret for new mail. Resend's signed endpoint

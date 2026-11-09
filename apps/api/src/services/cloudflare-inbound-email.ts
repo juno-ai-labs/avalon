@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { numericEnv } from "../env";
+import { CLOUDFLARE_EMAIL_MAX_BYTES } from "../lib/cloudflare-email-message";
 import { ApiError } from "../lib/api-error";
 import { readBoundedRequestBytes } from "../lib/bounded-request-body";
 import { ResendInboundEmailRoutingService } from "./resend-inbound-email-service";
@@ -12,7 +12,7 @@ export async function receiveCloudflareEmail(message: ForwardableEmailMessage, e
     return;
   }
   await requireWorkstreamIngress(env);
-  const maxBytes = numericEnv(env, "INBOUND_EMAIL_MAX_BYTES", 2_000_000);
+  const maxBytes = CLOUDFLARE_EMAIL_MAX_BYTES;
   if (message.rawSize > maxBytes) {
     message.setReject("Email exceeds the configured size limit");
     return;
@@ -39,7 +39,11 @@ export async function receiveCloudflareEmail(message: ForwardableEmailMessage, e
   });
 }
 
-/** Trust only Cloudflare's first Authentication-Results verdict, never a sender's. */
+/**
+ * Cloudflare documents that it prepends this verdict BEFORE invoking the Worker:
+ * https://developers.cloudflare.com/email-service/api/route-emails/email-handler/#authentication-results
+ * Trust only that first verdict, never the sender's later headers.
+ */
 export function cloudflareSenderAuthenticated(headers: Headers): boolean {
   const header = headers.get("authentication-results");
   if (!header) return false;
