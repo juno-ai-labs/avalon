@@ -6932,6 +6932,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    at a higher specificity, so neither query hangs on source order. */
 .sidekicks-library { container: sidekicks-library / inline-size; }
 .sidekicks-library.canvases-home { container-name: canvases-home sidekicks-library; }
+.sidekicks-library.sidekicks-home { container-name: sidekicks-home sidekicks-library; }
 @container sidekicks-library (width < 760px) {
   .sidekick-list-facts { grid-template-columns: 110px 110px; }
   .sidekick-list-facts .sidekick-list-shared { display: none; }
@@ -6967,13 +6968,15 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    pane is that wide: the query reads the page's content box, so 900px is that
    pane less the page's two 48px margins and its stable scrollbar gutter
    (919px at 1440). Two below it; one at phone width. */
-.canvases-home-grid { display: grid; gap: 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
+.canvases-home-grid, .sidekicks-home-grid { display: grid; gap: 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
 @container canvases-home (min-width: 900px) { .canvases-home-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 640px) { .canvases-home-grid { grid-template-columns: minmax(0, 1fr); } }
-.canvas-card { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 14px; overflow: hidden; position: relative; }
-.canvas-card:hover { background-image: var(--hover-layer); }
-.canvas-card:has(.sidekick-list-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
-.canvas-card-shot { border-bottom: 1px solid var(--av-sys-color-border-default); box-sizing: border-box; display: grid; height: 150px; overflow: hidden; place-items: center; position: relative; }
+@container sidekicks-home (min-width: 900px) { .sidekicks-home-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container sidekicks-home (width < 480px) { .sidekicks-home-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) { .canvases-home-grid, .sidekicks-home-grid { grid-template-columns: minmax(0, 1fr); } }
+.canvas-card, .sidekick-card { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 14px; overflow: hidden; position: relative; }
+.canvas-card:hover, .sidekick-card:hover { background-image: var(--hover-layer); }
+.canvas-card:has(.sidekick-list-link:focus-visible), .sidekick-card:has(.sidekick-list-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
+.canvas-card-shot, .sidekick-card-preview { border-bottom: 1px solid var(--av-sys-color-border-default); box-sizing: border-box; display: grid; height: 150px; overflow: hidden; place-items: center; position: relative; }
 .canvas-card-presence { left: 12px; pointer-events: none; position: absolute; top: 12px; }
 .canvas-card-data { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 4px; padding: 4px 8px; position: absolute; right: 12px; top: 12px; }
 .canvas-card-body { padding: 12px 14px 14px; }
@@ -6983,6 +6986,17 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-card-body small > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .canvas-card-run { color: inherit; position: relative; text-decoration: none; z-index: 1; }
 .canvas-card-run:hover { color: var(--av-sys-color-text-default); text-decoration: underline; }
+/* Sidekicks use the Canvas card shell, carrying their own identity and facts. */
+.sidekick-card-glyph { height: 72px; width: 72px; }
+.sidekick-card-status { position: absolute; right: 12px; top: 12px; }
+.sidekick-card-preview .sidekick-needs-input-badge { left: 12px; margin: 0; position: absolute; top: 12px; }
+.sidekick-card-body { padding: 14px; }
+.sidekick-card-body h3 { font-size: 15px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
+.sidekick-card-body p { color: var(--av-sys-color-text-muted); display: -webkit-box; font-size: 13px; line-height: 1.5; margin: 6px 0 16px; min-height: 3em; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.sidekick-card-facts { border-top: 1px solid var(--av-sys-color-border-subtle); display: flex; flex-wrap: wrap; gap: 10px 20px; justify-content: space-between; margin: 0; padding-top: 12px; }
+.sidekick-card-facts div { min-width: 0; }
+.sidekick-card-facts dt { color: var(--av-sys-color-text-muted); font-size: 11.5px; margin-bottom: 3px; }
+.sidekick-card-facts dd { font-size: 12.5px; margin: 0; overflow-wrap: anywhere; }
 .canvas-prompt-card { border: 1px solid var(--av-sys-color-border-default); border-radius: 16px; max-width: 560px; padding: 20px; }
 .canvas-prompt-card h2 { align-items: center; display: flex; font-size: 16px; font-weight: 500; gap: 8px; margin: 0 0 6px; }
 .canvas-prompt-card p { color: var(--av-sys-color-text-muted); font-size: 14px; margin: 0 0 14px; }

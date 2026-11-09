@@ -180,14 +180,14 @@ describe('the Canvases and Sidekicks sections', () => {
     const width = window.innerWidth;
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
     try {
-      renderSidebar(workspace, '/canvases');
+      renderSidebar(workspace, '/sidekicks');
       fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-      fireEvent.click(screen.getByRole('button', { name: /Sidekicks/ }));
+      fireEvent.click(screen.getByRole('button', { name: /Canvases/ }));
 
       fireEvent.keyDown(window, { key: 'Escape' });
 
-      expect(useUiStore.getState().sidebarSection).toBe('canvases');
-      expect(screen.getByRole('heading', { name: 'Canvases' })).toBeInTheDocument();
+      expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
+      expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
     }
@@ -273,6 +273,26 @@ describe('the Canvases and Sidekicks sections', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New Sidekick' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/sidekicks/new');
   });
+
+  it.each(['/sidekicks/triage', '/sidekicks/new'])('opens the Sidekicks dashboard from %s', (route) => {
+    renderSidebar(workspace, route);
+    fireEvent.click(screen.getByRole('button', { name: 'Sidekicks home' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/sidekicks$/);
+  });
+
+  it.each(['/canvases', '/sidekicks/triage', '/sidekicks/new', '/sidekicks/triage?run=run-1', '/sidekicks'])(
+    'always opens the dashboard from the Sidekicks rail button (%s)', (route) => {
+      renderSidebar(workspace, route);
+      const button = within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Sidekicks/ });
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+      fireEvent.click(button);
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks$/);
+      expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+      expect(button).toHaveAttribute('aria-current', 'page');
+      fireEvent.click(button);
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks$/);
+    },
+  );
 
   it('offers a guest neither New action', () => {
     useUiStore.getState().setSidebarSection('canvases');

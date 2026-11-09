@@ -94,6 +94,9 @@ It holds two columns:
   the rail to its section (Activity excepted: once open, only a rail pick
   leaves it, whatever the pane opens and however, a row, a link inside the
   pane, a push or a deep link, and closing the phone sheet over it keeps it).
+  Clicking **Sidekicks** always opens `/sidekicks`, including when its list or
+  an individual Sidekick is already open. It also closes the phone sheet so
+  the dashboard is visible.
   The window's landing is its
   first route that belongs to a section, so a launch's redirect from `/` to
   `/canvases` is the landing and not a navigation; landing on a section home
@@ -149,7 +152,9 @@ It holds two columns:
   input**, then Pinned, then every Sidekick by what it last did, or by name
   from the heading's **Recent** control (the same `DropdownSelect` and ⇵
   glyph as the Canvases list's); its action is **New Sidekick**
-  (`/sidekicks/new`). A guest gets neither New action. **Activity** lists the
+  (`/sidekicks/new`), preceded by **Sidekicks home** (`/sidekicks`) to return
+  to the dashboard from any Sidekick. A guest gets neither New action.
+  **Activity** lists the
   person's mentions, adds and Sidekick run notices newest first, each a kind
   glyph, who did what where, the preview, a time and an unseen dot, opening
   the Canvas or the Sidekick's conversation, the rows about what the route has
@@ -408,6 +413,14 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-09 — The Sidekicks rail button opens the dashboard
+
+Clicking Sidekicks always navigates to `/sidekicks`, even when its section is
+already selected or a run is open, and dismisses the phone sheet. Merely
+selecting the list left the dashboard unreachable through the section button;
+the explicit navigation now makes the overview one click away. The Home action
+continues to provide the same destination beside New Sidekick.
 
 ### 2026-11-09 — Return to the Canvas dashboard from the sidebar
 
