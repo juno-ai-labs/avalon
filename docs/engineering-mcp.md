@@ -254,8 +254,11 @@ resumes the walk.
 ### Retiring Threads
 
 `dump_thread_transcripts` and `retire_threads` are the two operator operations
-that retire an Organization's Threads, Breakouts and Channels after the cutover
-to Canvases and Sidekicks, run in that order. The dump writes each of their
+that retire an Organization's Threads, Breakouts and Channels, run in that
+order, in every Organization, immediately after the release that removes
+Threads deploys: they ship in that release, so they cannot run before it
+([`workspace-retirement.md`](workspace-retirement.md#the-deploy-order) has the
+deploy order, and what fails by design until they have run). The dump writes each of their
 conversations to R2 as text and reports `conversations`, `dumped`, `skipped`
 (already in R2) and `failed`, a stable code per conversation. The retirement
 is refused (`engineering_operation_failed:thread_retirement_conversion_pending`)

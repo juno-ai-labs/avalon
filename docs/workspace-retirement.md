@@ -252,7 +252,9 @@ so it does not reuse `workspace_retirement_graph`: that table's completeness is
 defined by the Organization being retired, which here it never is. Each
 operation is an operator call per Organization, through the engineering MCP
 ([`engineering-mcp.md`](engineering-mcp.md#retiring-threads)); nothing runs it
-on a schedule or at deploy.
+on a schedule or at deploy. The operations exist only in the Worker that
+removes Threads, so they run after it deploys; the order is
+[the deploy order](#the-deploy-order) below.
 
 **What it visits.** `WorkspaceDO.threadRetirementInventory` names every Thread
 (`channels`, plus any `workstream` parent state left without its row) and every
@@ -279,8 +281,9 @@ and this one reads it through `identityForRetirement`.
 - **The R2 object is the receipt.** A pass skips any key that is already
   there, so a rerun writes nothing new and an interrupted pass resumes where it
   stopped. A conversation that moved after its dump keeps the earlier dump; the
-  dump and the retirement are meant to run back to back after the cutover,
-  when no reader is left to post. To dump one again, delete its object first.
+  dump, the conversion and the retirement run back to back right after the
+  deploy, when no client can post to a Thread any more. To dump one again,
+  delete its object first.
 - **An object that never held a conversation is written empty**, with
   `materialized: "false"` in its metadata, so the retirement's coverage check
   finds a receipt for it too. The read brings that object into existence, as
@@ -474,6 +477,40 @@ pass and its resume survives the resume. A Thread invitation still unclaimed
 at conversion is deleted, so its emailed link stops working; the Canvas's
 owner can share the Canvas again. Guests who had claimed one keep the Canvas:
 their `channel_viewers` rows become `canvas_participants`.
+
+### The deploy order
+
+`dump_thread_transcripts`, `convert_threads_to_canvases` and `retire_threads`
+ship in the same release that removes Threads, so they cannot run before it.
+The order, which the plan's deploy section repeats:
+
+1. **On the old Worker, retire the demo Organizations** (every live demo and
+   the demo template) through the existing retire route, with no preparation
+   Workflow running.
+2. **Deploy the Worker, and publish the pivot desktop release with it.** From
+   this release the workspace socket refuses a pre-pivot desktop with `426`;
+   its only way out is the auto-updater reaching the new build, so the build
+   must be there when the Worker is. A web tab left open on the old app needs
+   a reload.
+3. **Immediately, in every Organization: dump, convert, retire**, each until
+   it reports nothing failed. `retire_threads` refuses while a Thread with
+   artifacts is unconverted, so the order holds even if an operator slips.
+4. **Until step 3 has run in an Organization, expect its Threads to be
+   gone for users and its Thread traffic to fail by design.** The client has
+   no Thread surface; a Thread's conversation refuses every product read with
+   `conversation_parent_kind_retired`, and its `AgentLoopDO.alarm` clears its
+   alarm on every firing without running a lane; `receiveChildEffects`
+   answers `409 conversation_parent_kind_retired:<kind>`, so the Queue
+   dead-letters Thread effects. Those dead-letter entries are expected until
+   the walk runs, and are not a defect to chase.
+5. **Forward-fix only; never `wrangler rollback`.** The release runs Durable
+   Object migrations that the previous Worker refuses
+   (`<component>_schema_ahead:<version>`), and renames the conversation class
+   (`SubstreamAgent` to `AgentLoopDO`, wrangler migration `v15`).
+
+What the conversion drops on the way: a Thread invitation still unclaimed at
+conversion is deleted, so its emailed link stops working (the Canvas's owner
+can share the Canvas again); guests who had claimed one keep the Canvas.
 
 ## Boundary
 
@@ -878,6 +915,12 @@ conversion's sweep also deleted every `parent_*` row of the
 id, including invitations and grants made on the live Canvas between an
 interrupted pass and its rerun; the Thread's shares now go when the Canvas is
 made, and the sweep leaves `CANVAS_SHARE_TABLES` to the Canvas.
+
+The deploy order was also written as "before this deploys", which could not
+happen: the three operations ship in the release that removes Threads. They
+run in every Organization right after it deploys, with Thread traffic failing
+by design until then, and the release is forward-fix only (the deploy order
+above).
 
 **What a future change must respect:** the order is dump, convert, retire, and
 `retire_threads` enforces it. The

@@ -179,7 +179,15 @@ Recorded as the build went, from the reviews of each step. None blocks the merge
 
 **Deploy order.**
 
-- In every Organization, in this order, before this deploys: `dump_thread_transcripts`, then `convert_threads_to_canvases` (the 60 Threads with artifacts, counted on 2026-11-08 across 7 Organizations: Juno Labs 23, Forward Search 19, ThreadBury-Morgan 8, KB QA 7, one each in conscious, demo and Kiki & Alex, become Canvases keeping their ids; workspace-retirement.md), then `retire_threads`. The retirement must have run everywhere: `receiveChildEffects` answers 409 `conversation_parent_kind_retired:<kind>` for any live Thread, and the Queue dead-letters those effects by design.
+The Thread operations ship in this release, so they cannot run before it ([`workspace-retirement.md`](../../workspace-retirement.md#the-deploy-order) owns the order):
+
+1. On the old Worker, retire every live demo Organization and the demo template (`01a06d5d-4624-751e-8269-e7950b51a835`) through the existing retire route, with no preparation Workflow running.
+2. Deploy the Worker and publish the pivot desktop release together: from this release the workspace socket refuses a pre-pivot desktop with `426`, and the auto-updater reaching the new build is its only way out. A stale web tab needs a reload.
+3. Immediately, in every Organization: `dump_thread_transcripts`, then `convert_threads_to_canvases` (the 60 Threads with artifacts, counted on 2026-11-08 across 7 Organizations: Juno Labs 23, Forward Search 19, ThreadBury-Morgan 8, KB QA 7, one each in conscious, demo and Kiki & Alex, become Canvases keeping their ids), then `retire_threads`, each until nothing fails. `retire_threads` refuses while a Thread with artifacts is unconverted.
+4. Until step 3 has run in an Organization its Threads are gone for users, a Thread's `AgentLoopDO.alarm` clears its alarm without running, and `receiveChildEffects` answers 409 `conversation_parent_kind_retired:<kind>`, so expect those entries in the dead-letter queue until then.
+5. Forward-fix only, never `wrangler rollback`: the previous Worker refuses the migrated objects (`<component>_schema_ahead:<version>`), and the conversation class is renamed (`v15`).
+
+A Thread invitation still unclaimed at conversion is deleted, so its emailed link stops working (the Canvas's owner can share again); guests who had claimed one keep the Canvas.
 - Ace deploys with or after the API: `WorkspaceRetirementResult.failed[].parentKind` admits `canvas` (6389dd2).
 - The subscribe answer keeps an empty `workstreams` page and `notes: []` for one release so pre-pivot desktops still parse it; remove once every desktop has updated (realtime-sockets.md).
 
@@ -334,10 +342,8 @@ width is stored as a share of the pane; the demo functionality is removed
 stored names `DEMO_OPERATORS_JSON` and role `demos` kept); a dead-code PRD
 (2026-11-08_remove-dead-code-after-the-pivot) holds the removal inventory.
 
-Deploy order added by this round: retire every live demo Organization and
-the demo template (`01a06d5d-4624-751e-8269-e7950b51a835`) through the
-existing retire route while the old Worker still serves, with no preparation
-Workflow running; then deploy. D1 0126 (dropping `demo_operations`,
+Deploy order added by this round: retiring the demo Organizations on the old
+Worker, step 1 of the deploy order above. D1 0126 (dropping `demo_operations`,
 `demo_operation_phases`, `demo_seed_receipts`) is **not** in this pull
 request: the deploy job applies pending D1 migrations before promoting the
 Worker unless the file is in the Worker-first list, which only works for a
