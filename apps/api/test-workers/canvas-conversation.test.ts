@@ -436,6 +436,12 @@ describe("the Canvas list", () => {
     for (const { socket } of [creator, member]) socket.close(1000, "done");
   });
 
+  it("refuses a pin request that is not well formed by the field it got wrong", async () => {
+    const rejection = await workspace().setSidebarPin({ workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "member",
+      kind: "canvas", itemId: "not-an-id", pinned: true }).then(() => null, (error: unknown) => (error as Error).message);
+    expect(rejection).toMatch(/^set_sidebar_pin_invalid:.*itemId/u);
+  });
+
   it("refuses to pin, and keeps out of presence, a Canvas the viewer may not open", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     const creator = await connect(CREATOR);
