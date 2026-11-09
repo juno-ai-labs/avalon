@@ -639,8 +639,7 @@ the four kinds a hosted parent now records about itself (`new_message`,
 `artifact_updated`, `access_request`, `access_granted`) and adds a
 recipient-and-kind index the cooldown reads. The push consumer renders those
 four from `ParentNoticeSchema`. Settings offers only the kinds a producer
-records (`member-preferences.md`). [Client half: the push deep links, folded
-in at merge.]
+records (`member-preferences.md`). Client: no main-process or service-worker change was needed; both clients route a push by its link alone (`/cv/<id>/` and `/cv/<id>/a/<id>/`), so a reply's push opens the Canvas Chat at its newest message and an artifact push opens the Canvas with the artifact; a message-level landing would need a turn form on the canonical URL.
 
 A pinned Canvas's new version tells its pinners as `artifact_updated`
 ([A pinned Canvas's new version](#a-pinned-canvass-new-version)), recorded by

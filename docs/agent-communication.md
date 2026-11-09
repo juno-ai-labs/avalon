@@ -105,7 +105,7 @@ its wizard, then uses the normal `attach_resources` product
 operation on the wizard's conversation with its existing sharing rules.
 It returns `{ sidekickId, resourceId, alreadyAttached }`; repeats keep one link.
 The wizard and its runs use the
-[shared resource scope](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration).
+[shared resource scope](agent-attachments.md#authorized-conversation-discovery-and-text-hydration).
 This direct attachment remains until explicitly removed; it is independent of inherited home or conversation attachments.
 
 Conversation migration 60 stores the background principal and a stop timestamp.

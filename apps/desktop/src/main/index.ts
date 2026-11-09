@@ -39,10 +39,7 @@ import {
   OrganizationNameSuggestionSchema,
   UpdateAccountOnboardingSchema,
 } from '@rally/contracts';
-import {
-  DESKTOP_DEEP_LINK_PROTOCOL,
-  DESKTOP_DEEP_LINK_PROTOCOLS,
-} from '@rally/contracts/desktop-deep-link';
+import { DESKTOP_DEEP_LINK_PROTOCOLS } from '@rally/contracts/desktop-deep-link';
 import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from '@rally/contracts/http-headers';
 import { APNS_TOPICS } from '@rally/contracts/push-notifications';
 import type { Region } from "@rally/contracts/regions";
@@ -332,7 +329,6 @@ const allowedExternalProtocols = new Set(['https:', 'http:']);
  * trimmed rather than restated — a second literal here is exactly the copy
  * that would be missed when the legacy scheme is finally dropped.
  */
-const customProtocol = DESKTOP_DEEP_LINK_PROTOCOL.replace(/:$/u, '');
 const deepLinkProtocols: readonly string[] = DESKTOP_DEEP_LINK_PROTOCOLS
   .map((scheme) => scheme.replace(/:$/u, ''));
 const rendererProtocol = 'app';
@@ -1443,17 +1439,15 @@ const menuBarController = new MenuBarController({
     selected: (action) => { void telemetryReporter?.menuBarActionSelected(action); },
     open: (row) => {
       activateFromMenuBar();
-      // A Canvas opens through the conversation link form, which the renderer
-      // routes to `/canvases/:id`; a Sidekick's link names its Organization,
-      // the one the menu is showing.
-      if (row.kind === 'canvas') {
-        emitDeepLink(`${customProtocol}://workstreams/${row.id}`, 'menu_bar');
-        return;
-      }
+      // A Canvas or a Sidekick link names its Organization: the one the menu
+      // is showing.
       void loadStoredAuthSet().then((authSet) => {
         const active = authSet ? activeStoredCredential(authSet) : null;
         if (!active?.binding.workspaceId) return;
-        emitDeepLink(sidekickDeepLink({ region: active.binding.region, workspaceId: active.binding.workspaceId, sidekickId: row.id }), 'menu_bar');
+        const organization = { region: active.binding.region, workspaceId: active.binding.workspaceId };
+        emitDeepLink(row.kind === 'canvas'
+          ? canvasDeepLink({ ...organization, canvasId: row.id })
+          : sidekickDeepLink({ ...organization, sidekickId: row.id }), 'menu_bar');
       });
     },
     openRally: openMainWindowFromMenuBar,

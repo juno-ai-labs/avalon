@@ -113,7 +113,7 @@ export function SidekicksSection({ scroll }: { scroll: RefObject<HTMLElement | n
         motionKey="sidekicks"
         trailing={<DropdownSelect ariaLabel="Sort Sidekicks" icon={<ArrowDownUp aria-hidden="true" size={12} strokeWidth={1.8} />} onValueChange={(value) => setOrder(value === 'name' ? 'name' : 'recent')} options={SIDEKICK_ORDERS} value={order} variant="secondary" />}
       >All Sidekicks</SectionHeading>
-      {rows === undefined && <SidebarSkeletonRows count={5} hint />}
+      {rows === undefined && (down ? <SidebarListDown noun="Sidekicks" /> : <SidebarSkeletonRows count={5} hint />)}
       {rows !== undefined && rows.length === 0 && <p className="navigation-empty">No Sidekicks yet.</p>}
       {sorted.map((sidekick) => row(sidekick, { pinned: false, draggable: true }))}
     </section>

@@ -65,9 +65,6 @@ A Sidekick's shared conversation uses this surface in the main window. Generated
 The composer shows no running count above the input;
 [`websocket-architecture.md`](websocket-architecture.md#sidekick-library-synchronization)
 records where a running signal would come from.
-Losing that socket or unmounting its owner resets both kinds of count to unknown;
-the labels stay hidden until fresh directory and Sidekick subscription answers
-arrive after reconnect.
 
 ## Where the code lives
 
@@ -865,7 +862,7 @@ selection and message protocol.
 
 ## Changelog
 
-### 2026-11-08 — A Sidekick open is laid out as the design and a Canvas are
+### 2026-11-08 — A Sidekick open is laid out as the design and a Canvas are, and only the reader's own turn is a bubble on the right
 
 **What changed:** `SidekickDetailLayout` puts the conversation in the main
 column under one `TitlePillHeader` (Back and Forward, the Sidekick's glyph and
@@ -882,6 +879,8 @@ was up to 940px (v4-R2-2, v1-R2-2). An open question's Submit names the
 platform's modifier (`primaryShortcutLabel`: ⌘↵ on a Mac, Ctrl+Enter
 elsewhere, v4-R2-13), and its "Other" field is the form-field well
 (v3-R2-7).
+An answered question keeps its prompt as Rally's turn above
+the person's answer, in a run's view and a Canvas Chat alike.
 
 **Why:** The PRD makes design.html the authority for every screen. Its §4
 draws a Sidekick like a Canvas: conversation as the hero, details on the
@@ -898,14 +897,20 @@ ended 200px right of it; the design draws both in one column. The browser
 serves Windows and Linux, where the hard-coded ⌘↵ named a key they do not
 have, and the "Other" field drew a raw ramp step, the brightest surface in
 the dark form with a 2.31:1 placeholder.
+A question and its answer were given one id, so the answer
+replaced the question in its slot and an answered elicitation drew only the
+answer bubble: a run's view showed "apple" under nothing (round 2, R2-2),
+where design §4 keeps both.
 
-**Considered and rejected:** Rendering the header inside the conversation, as
-a Canvas does: it would vanish with the conversation when the details take its
-place at narrow widths. The header reads presence from the workspace socket
-instead.
+**Considered and rejected:** Rendering the Sidekick's header inside the
+conversation, as a Canvas does: it would vanish with the conversation when the
+details take its place at narrow widths. The header reads presence from the
+workspace socket instead.
 
-**What a future change must respect:** the page keeps one header at every
-width, and the conversation stays mounted behind the details.
+**What a future change must respect:** a Sidekick's page keeps one header at
+every width, and the conversation stays mounted behind the details. A turn's
+side follows `own-human-message`, so the same transcript reads from each
+person's own side.
 
 ### 2026-11-08 — Every open of a conversation sends one read report
 

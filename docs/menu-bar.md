@@ -315,7 +315,7 @@ login-item registration. It exposes two IPC channels —
 It does **not** own: the application menu bar at the top of the screen
 (`application-menu.ts`), the Dock and Finder icon
 ([`desktop-icons.md`](desktop-icons.md)), what a Canvas or Sidekick link means
-([`workstream-links.md`](workstream-links.md)), the lists' shapes and their waterlines
+([`links.md`](links.md)), the lists' shapes and their waterlines
 ([`websocket-architecture.md`](websocket-architecture.md)), or session storage
 and refresh — it borrows `loadStoredAuth` and the coalescing refresh and adds
 nothing to them.

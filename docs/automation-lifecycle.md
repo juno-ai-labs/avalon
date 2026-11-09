@@ -303,7 +303,7 @@ reason for polling. The authoring prompt points to the skill for that procedure.
 Every activation starts an independent conversation. The Sidekick's wizard,
 activations and background agents share one Terminal sandbox; a Canvas's Chat
 and other Sidekicks keep separate sandboxes. Transcripts remain separate;
-[`agent-attachments.md`](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration)
+[`agent-attachments.md`](agent-attachments.md#authorized-conversation-discovery-and-text-hydration)
 defines the resources each run can access. The authoring prompt saves resource
 IDs, recovery steps and shared-table access instructions because files can still be lost after
 a reset or expiry. For an existing site's refresh,
@@ -1293,6 +1293,11 @@ loaded into someone else's conversation, not a read of its own.
   that strips one. A trigger's own detail ("PagerDuty alert: checkout p95
   over 2s") is not carried: the run holds only the event's id and type, and
   its title is the connector event's, read elsewhere.
+The client mirrors the seat
+  as the row arrives (`advanceWorkstreamAttention`, from the block's
+  `sidekickRun.requesterUserId`, under the same condition), because the
+  room's read reaches it only with the detail's next refetch and the row drew
+  an unread divider and dot until then.
 
 ### Who a run acts as
 
@@ -2090,13 +2095,6 @@ answer for any viewer it shows Connected, which loops when the viewer's own
 personal connection is not the run's (the answer resumes, the run checks
 again, and asks again).
 
-**Consequences:** `running` and `runState` may describe different runs (an
-older run working behind a finished newer one is exactly the case). The
-client keeps its `runState` fallback for one release, until every Worker
-publishes `running`. The EXISTS reads the Sidekick's run history on each
-list read; a partial index over the working states is the fix if that ever
-shows, and is deliberately not added now.
-
 **Not changed:** a run that lacks a capability (no Terminal, no file
 publication) still ends `completed` with a message, since no person can grant
 a capability; the round-5 visual check observed it, and the body records it
@@ -2214,7 +2212,10 @@ entry above, is the same probe over all of the Sidekick's runs.) The question wa
 its last text turn, and the asking is an elicitation turn (v2-F2, v2-F6,
 v2-F8, v2-F10, v2-F25). v2-F11's stale time was the socket list sending no
 `lastRunAt` at all. The requester seat answers v2-F12: the row you have open
-turned unread for the run you just started. The question is read from the newest waiting run rather
+turned unread for the run you just started. The facts were a fixed 398px
+grid hidden only in a window under 760px, so once the sidebar took 416px of
+every window they squeezed the name to one letter per line between the
+desktop's 860px minimum and about 1150px. The question is read from the newest waiting run rather
 than the newest run (vis2-v2 R2-1): read from the newest run only, a waiting
 Sidekick fell back to "Needs input" after a reload, during a later run's
 Starting, and after a later run finished, while its question was still open. After an inline answer the run view showed the answer
@@ -2395,6 +2396,52 @@ source's join is keyed on the revision whose registrations named it.
 
 Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
+### 2026-11-07 — The review plan asks whether a tool could have settled its exceptions
+
+**What changed:** Self-review step 2 asks, for each item a saved tool returned
+as an exception that the run settled by hand, whether the tool could settle it
+itself if its read returned the fact the run looked up.
+
+**Why:** Daily Active Rally Organizations' manual self-review on 2026-11-07
+re-tuned its scanner but left it returning only a count per conversation, so
+every active conversation still came back as a membership exception for the
+model to settle in a second pass. The rule existed in the custom-tools guide,
+but nothing in the plan made the review look for it.
+
+**Considered and rejected:** Leaving it to the guide alone: that review showed
+a rule stated once in the guide is not applied when the plan does not ask for it.
+
+**Consequences:** The plan grows by one question per review; a review that finds
+no hand-settled exceptions answers it in a clause.
+
+Shipped in juno-ai-labs/avalon#1488.
+
+### 2026-11-07 — A run's first page says what it spent
+
+**What changed:** `sidekick_runs_read` adds each tool call's `ms` and a `usage`
+summary with a context-growth note on a run's first page (above).
+
+**Why:** The self-review now treats routine cost as evidence, but the reader had
+only the transcript: 965 turns to count by hand for Daily Active's run of
+2026-11-05, no tool times, and no tokens. A transcript also hides the cost of a
+turn: Daily Active's run of 2026-11-06 made 195 calls whose input grew from
+30,652 to 333,822 tokens, 42.8 million in all, for $17.20, and no message in it
+looked large.
+
+**Considered and rejected:** The usage ledger: it has no index by run, and
+`inference_attempts` holds the same costs in the run's own object (the
+2026-11-05 run sums to $197.09, what it was billed). Counting assistant turns:
+it carries no tokens and misses retries. A per-call token series: the first,
+last and largest call show the growth at a fraction of the size. Fencing the
+tool counts to the run's own activations: receipts carry no transcript
+sequence, and chat after a Sidekick run is rare.
+
+**Consequences:** `usage` is in the first page's content hash, so a receipt or
+attempt that settles between fragments of that page is refused as changed
+evidence, even when its turns did not move.
+
+Shipped in juno-ai-labs/avalon#1486.
+
 ### 2026-11-07 — A self-review counts cost, not only failure
 
 **What changed:** The self-review's reader reports what each run's routine work
@@ -2424,6 +2471,8 @@ to set it from, where the run's own report already says whether work was routine
 **Consequences:** A review can now revise a Sidekick whose runs all succeeded.
 Prod eval scenario P13 (`scripts/code-mode-evals.mjs`) checks that setup alone
 produces a tool that finishes a large scan in at most two calls.
+
+Shipped in juno-ai-labs/avalon#1485.
 
 ### 2026-11-06 — No saved instruction can turn a data report into a blocker
 

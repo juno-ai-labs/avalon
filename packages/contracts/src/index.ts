@@ -735,7 +735,6 @@ export const ResourceRevisionSchema = z.object({
    * surfaces say a version is unattributed rather than inventing an author.
    */
   author: ResourceVersionAuthorSchema.nullable(),
-  authorName: z.string().max(180).nullable().optional(),
   /**
    * The name a member or connector author goes by — the person's name, the
    * connection's display name — so a client can name someone its
