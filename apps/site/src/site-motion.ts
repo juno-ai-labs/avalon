@@ -11,11 +11,12 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /**
  * Seconds each step holds before the next. The last one holds, then the loop
- * restarts. The story runs from one person to three: Maya asks alone (1),
- * Rally drafts (2), Maya shares and Theo and Priya join (3), Theo comments (4),
- * Priya asks (5), Rally publishes version two (6).
+ * restarts. The story is a live Canvas first, then the team in it: a Linear
+ * issue closes (1), a Slack message moves the date (2) and a call's notes land
+ * (3), each publishing a new version; then Maya asks (4), and Rally answers
+ * while Theo comments (5).
  */
-const STEP_HOLD = [1.2, 2.4, 2.6, 2.8, 2.6, 2.2, 5] as const;
+const STEP_HOLD = [1.4, 2.8, 2.8, 2.8, 2.2, 5.5] as const;
 const LAST = STEP_HOLD.length - 1;
 
 function runDemo(demo: HTMLElement): void {
