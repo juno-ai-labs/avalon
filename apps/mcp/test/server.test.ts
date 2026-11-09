@@ -21,14 +21,13 @@ function env(binding: Fetcher): Env {
   return { BROWSER_APP_ORIGIN: "https://app.example.test", GLOBAL_API: binding };
 }
 
-const context = { waitUntil() {}, passThroughOnException() {}, props: {} } as unknown as ExecutionContext;
 
 async function rpc(binding: Fetcher, body: unknown, bearer = live()) {
   const response = await worker.fetch(new Request("https://mcp.example.test/mcp", {
     method: "POST",
     headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
     body: JSON.stringify(body),
-  }) as Request<unknown, IncomingRequestCfProperties>, env(binding), context);
+  }) as Request<unknown, IncomingRequestCfProperties>, env(binding));
   const text = await response.text();
   const data = text.startsWith("{") ? text : text.split("\n").find((line) => line.startsWith("data: "))!.slice(6);
   return { status: response.status, body: JSON.parse(data) as { result?: { content: Array<{ text: string }>; isError?: boolean } } };
@@ -40,7 +39,7 @@ const call = (name: string, args: Record<string, unknown>) =>
 describe("the OAuth surface", () => {
   it("challenges a request with no token toward its resource metadata", async () => {
     const response = await worker.fetch(new Request("https://mcp.example.test/mcp", { method: "POST" }) as Request<unknown, IncomingRequestCfProperties>,
-      env(api(() => new Response()).binding), context);
+      env(api(() => new Response()).binding));
     expect(response.status).toBe(401);
     expect(response.headers.get("www-authenticate")).toBe(
       'Bearer resource_metadata="https://mcp.example.test/.well-known/oauth-protected-resource"');
@@ -54,7 +53,7 @@ describe("the OAuth surface", () => {
 
   it("publishes the authorization server with the browser's consent page and forwards tokens to the identity API", async () => {
     const metadata = await worker.fetch(new Request("https://mcp.example.test/.well-known/oauth-authorization-server") as Request<unknown, IncomingRequestCfProperties>,
-      env(api(() => new Response()).binding), context);
+      env(api(() => new Response()).binding));
     expect(await metadata.json()).toMatchObject({
       issuer: "https://mcp.example.test",
       authorization_endpoint: "https://app.example.test/app/oauth/authorize",
@@ -62,13 +61,13 @@ describe("the OAuth surface", () => {
       code_challenge_methods_supported: ["S256"],
     });
     const resource = await worker.fetch(new Request("https://mcp.example.test/.well-known/oauth-protected-resource") as Request<unknown, IncomingRequestCfProperties>,
-      env(api(() => new Response()).binding), context);
+      env(api(() => new Response()).binding));
     expect(await resource.json()).toMatchObject({ resource: "https://mcp.example.test/mcp", authorization_servers: ["https://mcp.example.test"] });
 
     const upstream = api(async (request) => Response.json({ path: new URL(request.url).pathname, body: await request.text() }));
     const forwarded = await worker.fetch(new Request("https://mcp.example.test/token", { method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" }, body: "grant_type=refresh_token" }) as Request<unknown, IncomingRequestCfProperties>,
-      env(upstream.binding), context);
+      env(upstream.binding));
     expect(await forwarded.json()).toEqual({ path: "/mcp-oauth/token", body: "grant_type=refresh_token" });
   });
 });
@@ -141,5 +140,62 @@ describe("the Canvas tools", () => {
     const upstream = api(() => Response.json({ kind: "automation", title: "Digest", text: "hello", throughSequence: 3, nextAfterSequence: null }));
     const { body } = await rpc(upstream.binding, call("read_canvas_chat", { canvasId: "0190a000-0000-7000-8000-000000000001" }));
     expect(body.result).toMatchObject({ isError: true, content: [{ text: "That id names a Sidekick, not a Canvas" }] });
+  });
+});
+
+const request = (method: string, params: Record<string, unknown>) => ({ jsonrpc: "2.0", id: 1, method, params });
+
+describe("skills, resources and prompts", () => {
+  it("serves the plugin's skills, each file matching the digest its manifest advertises", async () => {
+    const binding = api(() => Response.json({})).binding;
+    const listed = (await rpc(binding, request("skills/list", {}))).body as unknown as {
+      result: { skills: Array<{ uri: string; frontmatter: { name: string }; resources: Array<{ uri: string; digest: string }> }> } };
+    expect(listed.result.skills.map((skill) => [skill.uri, skill.frontmatter.name])).toEqual([
+      ["skill://rally/canvases/SKILL.md", "canvases"],
+      ["skill://rally/publishing/SKILL.md", "publishing"],
+    ]);
+    for (const skill of listed.result.skills) {
+      for (const file of skill.resources) {
+        const read = (await rpc(binding, request("resources/read", { uri: file.uri }))).body as unknown as {
+          result: { contents: Array<{ text: string }> } };
+        const bytes = new TextEncoder().encode(read.result.contents[0]!.text);
+        const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
+        expect(file.digest).toBe(`sha256:${digest}`);
+      }
+    }
+  });
+
+  it("links get_canvas's artifacts as resources, and reads one back as text", async () => {
+    const canvasId = "0190a000-0000-7000-8000-000000000001";
+    const artifactId = "0190a000-0000-7000-8000-0000000000ee";
+    const upstream = api((incoming) => {
+      const path = new URL(incoming.url).pathname;
+      if (path === `/canvases/${canvasId}`) {
+        return Response.json({ id: canvasId, artifacts: [{ resourceId: artifactId, title: "Launch plan", version: 2, mimeType: "text/markdown" }] });
+      }
+      if (path.endsWith("/model-content")) return Response.json({ error: { code: "resource_version_content_unavailable", message: "x" } }, { status: 404 });
+      expect(path).toBe(`/resources/${artifactId}/versions/2/content`);
+      return new Response("# Launch plan", { headers: { "content-type": "text/markdown" } });
+    });
+    const { body } = await rpc(upstream.binding, call("get_canvas", { canvasId }));
+    expect(body.result!.content.slice(1)).toEqual([{ type: "resource_link", uri: `rally://artifact/${artifactId}/v2`, name: "Launch plan", mimeType: "text/markdown" }]);
+
+    const read = (await rpc(upstream.binding, request("resources/read", { uri: `rally://artifact/${artifactId}/v2` }))).body as unknown as {
+      result: { contents: Array<{ uri: string; text: string }> } };
+    expect(read.result.contents).toEqual([{ uri: `rally://artifact/${artifactId}/v2`, mimeType: "text/plain", text: "# Launch plan" }]);
+  });
+
+  it("refuses a resource whose id is not one, before asking Rally", async () => {
+    const upstream = api(() => Response.json({}));
+    const { body } = await rpc(upstream.binding, request("resources/read", { uri: "rally://canvas/..%2Fworkspace/chat" }));
+    expect(body).toHaveProperty("error");
+    expect(upstream.fetch).not.toHaveBeenCalled();
+  });
+
+  it("offers a catch-up prompt that names the Canvas the person asked about", async () => {
+    const { body } = await rpc(api(() => Response.json({})).binding, request("prompts/get", { name: "catch_up", arguments: { canvas: "Q3 launch" } }));
+    expect((body as unknown as { result: { messages: Array<{ role: string; content: { text: string } }> } }).result.messages).toEqual([{
+      role: "user", content: { type: "text",
+        text: "Catch me up on the Rally Canvas \"Q3 launch\": find it, read its whole Chat and its artifacts' latest versions, then tell me what changed, what was decided and what is still open." } }]);
   });
 });

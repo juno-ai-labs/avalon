@@ -11,9 +11,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.0.0",
+    "@modelcontextprotocol/server": "2.4.0",
     "@rally/contracts": "workspace:*",
-    "agents": "0.22.0",
     "zod": "catalog:"
   },
   "devDependencies": {

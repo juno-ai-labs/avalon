@@ -1,4 +1,4 @@
-import { createMcpHandler } from "agents/mcp/server";
+import { createMcpHandler } from "@modelcontextprotocol/server";
 
 import { IDENTITY_REGION } from "@rally/contracts/regions";
 import { MCP_HOSTED_REDIRECT_ORIGINS, MCP_SCOPE } from "@rally/contracts/mcp-oauth";
@@ -6,6 +6,7 @@ import { MCP_HOSTED_REDIRECT_ORIGINS, MCP_SCOPE } from "@rally/contracts/mcp-oau
 import { inspectBearer, RallyApi, regionalApi } from "./api";
 import type { Env } from "./env";
 import { createRallyMcpServer } from "./server";
+import { rallySkillCatalog } from "./skills";
 
 /**
  * Rally's MCP server for its users, at `mcp.rallywith.ai`. It is the OAuth
@@ -59,7 +60,7 @@ const OAUTH_ROUTES: Record<string, string> = { "/register": "/mcp-oauth/register
 const hostedOriginHostnames = MCP_HOSTED_REDIRECT_ORIGINS.map((origin) => new URL(origin).hostname);
 
 export default {
-  async fetch(request, env, context): Promise<Response> {
+  async fetch(request, env): Promise<Response> {
     const url = new URL(request.url);
     const origin = url.origin;
     if (request.method === "OPTIONS" && url.pathname !== "/mcp") return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -108,10 +109,23 @@ export default {
         },
       });
     }
+    // A browser-based client must come from a hosted client's origin; a
+    // native or server-side client sends no Origin at all.
+    const requestOrigin = request.headers.get("origin");
+    if (requestOrigin !== null && !hostedOriginHostnames.includes(new URL(requestOrigin).hostname)) {
+      return Response.json({ error: "origin_not_allowed" }, { status: 403 });
+    }
     const api = regionalApi(env, bearer.region);
     if (!api) return Response.json({ error: "region_unavailable" }, { status: 503 });
-    return createMcpHandler(() => createRallyMcpServer(new RallyApi(api, bearer.token, bearer.region)), {
-      allowedOriginHostnames: hostedOriginHostnames,
-    })(request, env, context);
+    const rally = new RallyApi(api, bearer.token, bearer.region);
+    // One stateless server per request, for the connected person. The SDK's
+    // handler serves both the 2026-07-28 revision and 2025-era clients; its
+    // request body bound is the SDK's own default (4 MiB), see
+    // `docs/rally-mcp.md#failure-modes-and-limits`.
+    return createMcpHandler(async () => {
+      const server = createRallyMcpServer(rally);
+      (await rallySkillCatalog()).attach(server);
+      return server;
+    }).fetch(request);
   },
 } satisfies ExportedHandler<Env>;
