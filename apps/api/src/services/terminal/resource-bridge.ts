@@ -179,6 +179,9 @@ function publishedOutput(row: PublishedRow, sizeBytes: number): TerminalPublishe
 
 /** The terminal tool's refusal for a publication write that may not have committed. */
 function publishWriteFailure(error: unknown, operation: "insert" | "swap"): never {
+  if (error instanceof ApiError && error.code === "canvas_archived") {
+    throw new TerminalToolError("canvas_archived", "This Canvas was archived. Publish into an active Canvas this Sidekick writes, or start a new Sidekick run.");
+  }
   if (!(error instanceof PublicationWriteFailed)) throw error;
   throw operation === "swap"
     ? new TerminalToolError(
@@ -980,6 +983,7 @@ export function createTerminalResourceBridge(
       });
       try {
         await insertPublishedResource(workspace, {
+          publicationParentId: target.parentId,
           resourceId,
           workspaceId: context.workspaceId,
           resourceType: "generated_file",
@@ -1000,7 +1004,8 @@ export function createTerminalResourceBridge(
             ? context.executionPrincipal.userId
             : null,
         }, target);
-      } catch {
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "canvas_archived") publishWriteFailure(error, "insert");
         // The resource insert may have committed before its response was lost.
         // Keep both the stable resource identity and staging fence intact so a
         // retry can observe and attach it without risking referenced bytes.
@@ -1195,6 +1200,7 @@ export function createTerminalResourceBridge(
         }
       } else {
         await insertPublishedResource(workspace, {
+          publicationParentId: target.parentId,
           resourceId,
           workspaceId: context.workspaceId,
           resourceType: "generated_site",

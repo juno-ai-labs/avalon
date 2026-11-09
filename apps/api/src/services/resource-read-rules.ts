@@ -19,11 +19,11 @@ export function isDraftUpload(row: ResourceReadRow): boolean {
 
 /**
  * Whether reading needs a readable conversation the resource is attached to.
- * An upload or a generated artifact needs one for everyone but its uploader;
+ * An upload needs one for everyone but its uploader; a generated artifact needs one for everyone;
  * an inbound email needs one for everyone. Every other provider is readable by
  * every member without one.
  */
 export function requiresAttachment(row: ResourceReadRow, owned: boolean): boolean {
-  return ((row.provider === 'avalon_upload' || row.provider === 'avalon_generated') && !owned)
+  return row.provider === 'avalon_generated' || (row.provider === 'avalon_upload' && !owned)
     || (row.provider === 'resend' && row.resource_type === 'email');
 }

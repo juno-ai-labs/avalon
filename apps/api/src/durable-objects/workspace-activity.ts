@@ -255,8 +255,8 @@ function listedSql(sidekickListedSql: string): string {
         WHERE CASE
                 -- A declined request is about a Canvas its recipient may not
                 -- open: it lists while the Canvas exists, naming it by id only.
-                WHEN mine.kind = 'access_denied' THEN canvas.canvas_id IS NOT NULL
-                WHEN canvas.canvas_id IS NOT NULL THEN (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
+                WHEN mine.kind = 'access_denied' THEN canvas.canvas_id IS NOT NULL AND canvas.archived_at IS NULL
+                WHEN canvas.canvas_id IS NOT NULL THEN canvas.archived_at IS NULL AND (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
                   OR (?3 = 1 AND canvas.visibility = 'workspace')
                   -- An owner or administrator may open every Canvas, so a row
                   -- about any lists for them: a request they decide on, or a

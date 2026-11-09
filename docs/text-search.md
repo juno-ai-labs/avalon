@@ -175,7 +175,9 @@ WorkspaceDO migration 76 widens that trigger to the inputs of a resource's
 resource is an email) and adds triggers on `authorization_locations`, so an
 inventory that attaches or detaches a resource rewrites its rows. The inventory
 writer changes only the location rows that differ, so an unchanged inventory
-rewrites nothing.
+rewrites nothing. Migration 142 requeues existing generated resources because
+publisher authorship no longer grants a separate user audience; their rows must
+be rewritten with conversation audiences even when no content changed.
 Duplicate description keys use the final occurrence, matching `JSON.parse`.
 Content hashes conservatively invalidate same-reference body replacements,
 including the one-time hash backfill during extraction.

@@ -164,6 +164,7 @@ export class CanvasPublicationService {
     });
     const title = [...(request.title ?? sourceName)].slice(0, 300).join("");
     await insertPublishedResource(runtime.DB, {
+      publicationParentId: canvasId,
       resourceId, workspaceId: this.auth.workspaceId, resourceType: "generated_file", providerResourceId, title, mimeType,
       contentRef: objectRef, contentSha256: digest, uploadedByUserId: this.auth.userId, modelContentStatus: derivativeStatus,
       timestamp, author,
@@ -239,6 +240,7 @@ export class CanvasPublicationService {
     } else {
       const timestamp = nowIso();
       await insertPublishedResource(runtime.DB, {
+      publicationParentId: canvasId,
         resourceId, workspaceId: this.auth.workspaceId, resourceType: "generated_site", providerResourceId, title,
         mimeType: SITE_MANIFEST_MIME_TYPE, contentRef: written.manifestRef, contentSha256: contentDigest,
         uploadedByUserId: this.auth.userId, modelContentStatus: "unsupported", timestamp, author,
