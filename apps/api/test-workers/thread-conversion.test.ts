@@ -18,7 +18,7 @@ import { env } from "cloudflare:workers";
 import { createExecutionContext, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
+import { asSubstreamId, asUserId, asWorkspaceId, WorkstreamWorkflowInputSchema } from "@rally/contracts";
 
 import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
@@ -29,7 +29,7 @@ import { AuthorizationService } from "../src/services/authorization-service";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
 import { insertChannelRow } from "./helpers/hosted-parent";
-import { seedParticipantMessage, seedWorkstreamRoot } from "./helpers/substream-fixture";
+import { runInput, seedParticipantMessage, seedRun, seedWorkstreamRoot } from "./helpers/substream-fixture";
 
 const TEST_ENV: Env = env;
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000c801");
@@ -374,6 +374,27 @@ describe("a conversation's parent kind conversion", () => {
         .rejects.toThrow("conversation_parent_kind_conversion_unsupported:workstream:automation");
     });
     expect(await storedParentKind(PLAIN_THREAD)).toBe("workstream");
+  });
+
+  it("re-addresses a Thread-era failed run's stored input, so Retry on the Canvas can read it", async () => {
+    const thread = await conversation(PLAIN_THREAD);
+    const runId = crypto.randomUUID();
+    await runInDurableObject(thread, (_instance, state) => {
+      seedRun(state, runId);
+      const threadEra = { ...runInput(runId, { workspaceId: WORKSPACE_ID, parentId: PLAIN_THREAD }), parentKind: "workstream" };
+      state.storage.sql.exec("UPDATE runs SET status = 'failed', execution_context_json = ? WHERE run_id = ?",
+        JSON.stringify(threadEra), runId);
+    });
+    await runInDurableObject(thread, (instance: AgentLoopDO) =>
+      instance.convertParentKind({ workspaceId: WORKSPACE_ID, parentId: PLAIN_THREAD, from: "workstream", to: "canvas" }));
+    await runInDurableObject(thread, (_instance, state) => {
+      const stored = state.storage.sql.exec<{ context: string }>(
+        "SELECT execution_context_json AS context FROM runs WHERE run_id = ?", runId).one().context;
+      // The schema Retry and the settled-run replay parse with.
+      expect(WorkstreamWorkflowInputSchema.parse(JSON.parse(stored))).toMatchObject({
+        parentKind: "canvas", parentId: PLAIN_THREAD, harnessRunId: runId,
+      });
+    });
   });
 
   it("re-addresses the Thread's undelivered effects to the Canvas", async () => {
