@@ -58,6 +58,11 @@ pnpm docs:check
 
 ## Desktop builds and releases
 
+Before packaging locally, get the existing `RALLY_DESKTOP_SESSION_KEY` from a
+desktop release maintainer and set it in the ignored `.env.local`. Both
+packaging commands read this file and verify that the key matches existing
+installs so the packaged app can open their saved sessions.
+
 ```text
 pnpm package:desktop
 pnpm start:desktop:packaged
