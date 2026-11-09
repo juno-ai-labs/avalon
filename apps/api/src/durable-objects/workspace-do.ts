@@ -877,12 +877,6 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
    * socket was.
    */
   accessClass?: "member" | "guest";
-  /**
-   * Whether this socket's build reads a Space scoped `individual`, from its
-   * signed ticket. Absent, as on every socket attached before it existed,
-   * reads as no: such a build is shown a Personal Channel as `personal`.
-   */
-  readsIndividualSpaces?: boolean;
   connectionId: string;
   connectedAt: string;
   subscribed: boolean;
@@ -4488,7 +4482,6 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       // for a socket that predates it: `member` is what every attachment
       // written before Spaces existed meant.
       accessClass: z.enum(["member", "guest"]).default("member"),
-      readsIndividualSpaces: z.boolean().default(false),
     }).safeParse(socket.deserializeAttachment());
     return parsed.success ? parsed.data : null;
   } catch {
@@ -11424,7 +11417,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const attachment: WorkspaceSocketAttachment = {
       ...identity.data,
       accessClass: auth.accessClass ?? "member",
-      readsIndividualSpaces: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_READS_INDIVIDUAL_SPACES) === "1",
       connectionId: uuidV7(),
       connectedAt: new Date(connectedAt).toISOString(),
       subscribed: false,
@@ -11543,9 +11535,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       },
       canvases: { waterline: this.canvasListWaterline(), items: this.canvasList(attachment) },
       activity: { waterline: this.activityListWaterline(), ...this.activityList(attachment) },
-      // One release of compatibility for a pre-pivot desktop; see the schema.
-      workstreams: { directoryWaterline: 0, items: [], stateVersions: [], nextCursor: null },
-      notes: { waterline: 0, items: [], nextCursor: null },
     });
   }
 

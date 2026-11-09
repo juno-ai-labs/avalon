@@ -388,11 +388,11 @@ others.
 The general rule behind it: **fields that change independently need independent
 counters.** Two families that advance together may share one; two that can move
 without each other must not, or updates to the faster one will hide updates to
-the slower one. `WorkstreamStateVersion` in `@rally/contracts` — an authority
-generation beside independent common and viewer waterlines — is the shape the
-retired per-conversation rows carried, and stays in the contract for the
-compatibility read of a pre-pivot desktop; it is the model to copy if a
-per-row versioned push comes back.
+the slower one. `WorkstreamStateVersion`, once in `@rally/contracts` — an authority
+generation beside independent common and viewer waterlines — was the shape
+the retired per-conversation rows carried, deleted once no served desktop
+read it (`git log -S WorkstreamStateVersionSchema -- packages/contracts`); it
+is the model to copy if a per-row versioned push comes back.
 
 ### One receiver, not one per socket
 

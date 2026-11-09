@@ -17,9 +17,7 @@ const ICON_SIZE = 14;
 /**
  * Each offered kind's copy. Which kinds, and their order, are the contract's
  * (`OFFERED_NOTIFICATION_KINDS`): exactly the kinds a producer records
- * (docs/member-preferences.md). `newThreads`, `newBreakouts` and `merges` are
- * still accepted when stored, but nothing records them, so they are never
- * offered.
+ * (docs/member-preferences.md).
  */
 const KIND_SETTINGS: Record<OfferedNotificationKind, SettingDefinition> = {
   mentions: settings.notifyMentions,

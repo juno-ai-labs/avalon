@@ -825,8 +825,9 @@ platform resources.
 lists: `spaces`, `ordering`, `pinnedOrder`, `pins`, `artifactPins`,
 `channelStats`, `spacesReady` and `channelsBySpace` leave
 `WorkspaceSidebarSchema`, and `accessRequests` leaves the sync event.
-`workstreams` (an empty page) and `notes` (an empty list) stay for one release
-as optional compatibility fields the current renderer ignores.
+`workstreams` and `notes` went too: a desktop from before the pivot is
+refused the socket ticket (`MINIMUM_SERVED_CLIENT_CONTRACT` 13) rather than
+sent placeholder fields it would reject alongside the changed ones.
 The client commands `list_workstreams`, `channel_rails`, `space_channels` and
 `sidekick_activity`, the sync topics `digest_schedule`, `sidekick_activity`,
 `notes`, `projects`, `activity`, `work_opportunities` and
@@ -895,9 +896,8 @@ as `workspace_sync_retired_topics_dropped`. A retired command from a desktop
 released before the pivot is an unknown type, which WorkspaceDO ignores under
 the socket's ignore-protocol-additions rule, logging
 `workspace_socket_retired_command_ignored`; refusing would close its socket
-for good. Such a desktop parses the subscribe answer only because the empty
-`workstreams` page and `notes` list are still sent: the compatibility window,
-which ends in the release after every desktop has updated. A click pays a
+for good; it reaches the socket only with a ticket issued before the
+minimum contract rose, since a new ticket is refused. A click pays a
 cold ticket, handshake and snapshot; the local cache keeps reading off that
 path, sending does not. The relay's consumer list is one window; a second
 secondary window that reads workspace state joins it the way Sidekicks did.

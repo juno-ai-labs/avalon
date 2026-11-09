@@ -17,7 +17,6 @@ import {
 } from "@rally/contracts/canvases";
 
 import type { HonoAppEnv } from "../env";
-import { clientReadsAccessDenials } from "../lib/client-contract";
 import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { namedZValidator, zValidator } from "../middleware/validation";
 import { CanvasService } from "../services/canvas-service";
@@ -63,13 +62,7 @@ canvasRoutes.post("/:id/pin", canvasIdParam, zValidator("json", SidebarPinReques
 // decider's answer. `docs/canvas-access-requests.md`.
 canvasRoutes.get("/:id/access", canvasIdParam, async (c) => {
   c.header("Cache-Control", "no-store");
-  const access = CanvasAccessSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).access(c.req.valid("param").id));
-  // A build before the denial contract parses `request` strictly: it is
-  // served the request without `decidedAt`, as before the field existed.
-  const served = access.request && !clientReadsAccessDenials((name) => c.req.header(name))
-    ? { ...access, request: { state: access.request.state, requestedAt: access.request.requestedAt } }
-    : access;
-  return c.json(CanvasAccessSchema.parse(served));
+  return c.json(CanvasAccessSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).access(c.req.valid("param").id)));
 });
 canvasRoutes.post("/:id/access-requests", canvasIdParam, namedZValidator("canvas_access_request",
   "An access request carries at most a message")("json", CanvasAccessRequestSchema), async (c) =>

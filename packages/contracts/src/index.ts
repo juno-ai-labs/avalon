@@ -1823,12 +1823,11 @@ export const DEFAULT_PUSH_PREFERENCES: PushPreferences = {
 export const NotificationChannelSchema = z.enum(["push", "email"]);
 export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 /**
- * The kinds of Activity row a person chooses channels for. `newThreads`,
- * `newBreakouts` and `merges` named Thread-era kinds that nothing produces
- * now: they stay accepted where a person stored them, for one release, but
- * are not offered, not defaulted and not consulted.
+ * The kinds of Activity row a person chooses channels for. A kind a stored
+ * record still names but this list does not (the Thread-era `newThreads`,
+ * `newBreakouts` and `merges`) is stripped on read.
  */
-export const NotificationKindSchema = z.enum(["mentions", "newMessages", "added", "newThreads", "newBreakouts", "runFinished", "merges", "artifactUpdates", "accessRequests"]);
+export const NotificationKindSchema = z.enum(["mentions", "newMessages", "added", "runFinished", "artifactUpdates", "accessRequests"]);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;
 /** The kinds Settings offers, in its order: each one a real producer records. */
 export const OFFERED_NOTIFICATION_KINDS = ["mentions", "newMessages", "added", "runFinished", "artifactUpdates", "accessRequests"] as const satisfies readonly NotificationKind[];
@@ -1849,13 +1848,7 @@ export const NotificationChannelsSchema = z.object({
   mentions: NotificationChannelListSchema,
   newMessages: NotificationChannelListSchema.default(["push"]),
   added: NotificationChannelListSchema,
-  /** Stored only: no producer, never defaulted. */
-  newThreads: NotificationChannelListSchema.optional(),
-  /** Stored only: no producer, never defaulted. */
-  newBreakouts: NotificationChannelListSchema.optional(),
   runFinished: NotificationChannelListSchema,
-  /** Stored only: no producer, never defaulted. */
-  merges: NotificationChannelListSchema.optional(),
   /** Defaulted: a server older than artifact pins does not send it. */
   artifactUpdates: NotificationChannelListSchema.default(["push"]),
   /** Defaulted: a server older than Canvas access requests does not send it. */
@@ -2266,37 +2259,6 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
 const WorkstreamStateEventIdSchema = IdSchema;
 
 /**
- * Coordinates one complete work-stream UI snapshot across its two authorities.
- *
- * `commonWaterline` orders the WorkstreamDO-owned shared row and
- * `viewerWaterline` orders the authenticated user's row. They are deliberately
- * independent: Cloudflare Queues is unordered, so advancing one must never
- * cause a delayed update for the other to be discarded. Each field carries
- * the UUID identity of its own state row unchanged over both socket paths.
- * New IDs are UUIDv7 traces; historical UUIDs remain valid. The waterlines,
- * rather than an ID's version or timestamp, determine ordering.
- */
-export const WorkstreamStateVersionSchema = z.strictObject({
-  commonEventId: WorkstreamStateEventIdSchema,
-  viewerEventId: WorkstreamStateEventIdSchema.nullable(),
-  authorityGeneration: z.number().int().positive(),
-  commonWaterline: z.number().int().positive(),
-  viewerWaterline: z.number().int().nonnegative(),
-}).superRefine((version, context) => {
-  if ((version.viewerWaterline === 0) !== (version.viewerEventId === null)) {
-    context.addIssue({
-      code: "custom",
-      path: ["viewerEventId"],
-      message: "must be null exactly when viewerWaterline is zero",
-    });
-  }
-});
-
-export const WorkspaceWorkstreamStateVersionSchema = WorkstreamStateVersionSchema.extend({
-  workstreamId: IdSchema,
-}).strict();
-
-/**
  * Everything the sidebar paints, sent unprompted when a workspace socket
  * subscribes: this viewer's Sidekicks and Canvases.
  *
@@ -2331,24 +2293,6 @@ export const WorkspaceSidebarSchema = z.strictObject({
    * reading a payload from a server that predates it draws no section.
    */
   activity: ActivityPageSchema.optional(),
-  /**
-   * Compatibility for one release: an always-empty Thread directory page and
-   * notes list, which a desktop released before the Canvases and Sidekicks
-   * pivot requires to parse this answer. The current renderer ignores both;
-   * they go in the release after every desktop has updated
-   * (`docs/websocket-architecture.md`, 2026-11-07).
-   */
-  workstreams: z.strictObject({
-    directoryWaterline: z.literal(0),
-    items: z.array(z.never()).max(0),
-    stateVersions: z.array(z.never()).max(0),
-    nextCursor: z.null(),
-  }).optional(),
-  notes: z.strictObject({
-    waterline: z.literal(0),
-    items: z.array(z.never()).max(0),
-    nextCursor: z.null(),
-  }).optional(),
 });
 
 /**
@@ -2505,7 +2449,6 @@ export type WorkspacePresenceEvent = z.infer<typeof WorkspacePresenceEventSchema
 export type WorkspaceFeatureFlagsEvent = z.infer<typeof WorkspaceFeatureFlagsEventSchema>;
 export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
 export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
-export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;
 
 /**
  * A direct response to one client command. It is deliberately outside the room
