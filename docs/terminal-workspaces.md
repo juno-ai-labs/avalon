@@ -656,15 +656,29 @@ personless; it is not duplicated into these product events.
   Durable Object never ends the context that would release it. Sessions left
   behind every status check ran that Worker out of memory.
 - **One regional sandbox generation belongs to one conversation and one frozen
-  authority fingerprint.** Ordinary conversations replace it after a principal
-  or imported-resource visibility change. Sidekick files and completed imports
-  stay shared across eligible coordinators, with delegation checked separately;
-  their stable file identity preserves existing generations. GitHub connection
-  and repository changes still require replacement. The
+  authority fingerprint.** A Canvas has one sandbox, whoever or whatever acts
+  in it: each person's runs, Rally's own, its background agents and a person's
+  publication build. Its fingerprint is the Canvas and its selected
+  repository, so a different person acting never replaces it; a revoked
+  imported resource and a GitHub connection or repository change still do.
+  A sandbox still under the identity of the person who last used it (from
+  before Canvas sandboxes were shared) moves to the Canvas's in place the
+  first time that person acts (`adoptAuthorityFingerprint`), and one under
+  anyone else's is replaced once. Sidekick files and completed imports stay
+  shared across eligible coordinators, with delegation checked separately;
+  their stable file identity preserves existing generations. The
   conversation is the one that owns the sandbox rows, which for a background
   agent is the conversation that started it, never the agent's own; two
   conversations under one parent (substreams of one `workstream` id) never
   share a generation, and a run never uses a sandbox under another parent.
+- **A publication build's lease is live until it expires.** A person's
+  publish that builds a component or project holds the operation lease as
+  `PUBLICATION_BUILD_HOLDER`, a holder with no run behind it
+  ([`rally-mcp.md`](rally-mcp.md#building)). The storage already keeps a
+  holder from elsewhere live while its lease is; the coordinator's takeover
+  check and the lifecycle sweep must not ask a conversation about its run,
+  since reading "no such run" as "yielded" would hand the sandbox to an agent
+  run, or stop it, mid-build.
 - **A lease held by a run in another conversation is judged by that
   conversation, never by this object's own run table.** The row records which
   conversation the holder ran in; the claim SQL reads liveness from `runs` only
@@ -840,8 +854,8 @@ network proxy, or a general GitHub administration surface.
   calls. Anything left running inside, a development server say, does not
   survive the stop, and the run's next call starts the sandbox again. The
   run-long lease held the sandbox for the whole run.
-- A background agent whose fingerprint no longer matches its owner's sandbox,
-  or whose owner's sandbox holds a revoked import, is refused with
+- A background agent whose owner's sandbox changed repository authority,
+  or holds a revoked import, is refused with
   `sandbox_authority_mismatch` until the owning conversation's next Terminal
   call reprovisions the sandbox.
 - An `edit_file` whose target changed since it was read answers `file_changed`
@@ -1059,7 +1073,11 @@ Daytona SDK is reachable only through the regional adapter.
 The Daytona project credential stays a Worker secret. GitHub installation tokens
 are minted just in time and narrowed to the selected repository and operation.
 Read credentials remain mounted through host-scoped Daytona placeholders and
-are rotated or removed on revocation/expiry. A full-access checkout establishes
+are rotated or removed on revocation/expiry. A Canvas's sandbox is shared by
+everyone in the Canvas, so the selected repository's access in it is too:
+any participant's run, and a project a participant publishes (whose build
+runs its own `npm` scripts), executes beside it. That is the same reach a
+participant already had by asking Rally to run a command there. A full-access checkout establishes
 the same short-lived, single-repository write credential once in the conversation
 sandbox; ordinary Git and the typed publisher share that already-authorized
 credential until the existing refresh boundary rotates it. The typed publisher
@@ -1346,6 +1364,25 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-09 — A Canvas has one shared sandbox, and a person's publish can build in it
+
+**What changed.** A Canvas's sandbox identity is the Canvas and its selected
+repository instead of the person acting, so every person's runs, Rally's own,
+background agents and a person's publication build share one sandbox and its
+files. Existing sandboxes move to the new identity in place when their owner
+next acts (`adoptAuthorityFingerprint`). A person's publish that needs a build
+holds the operation lease as `PUBLICATION_BUILD_HOLDER`, which the takeover
+check and the lifecycle sweep treat as live until it expires.
+
+**Why.** The product decision (2026-11-09) is that a Canvas always has a single
+shared, consistent sandbox, whoever delegates and whether the activity is a
+person's or the platform's. The per-person identity replaced the sandbox, and
+deleted its files, every time someone else acted in a Canvas, which also made
+it unusable for building what a person publishes. Building in a fresh sandbox
+per publish was considered and rejected by the same decision. A future change
+must not reintroduce the acting person into a Canvas's fingerprint, and must
+not let anything read a missing run row as a publication build having ended.
 
 ### 2026-10-23 — Retry observation without repeating a Terminal command
 

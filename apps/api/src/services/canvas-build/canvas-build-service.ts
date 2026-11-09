@@ -7,11 +7,11 @@ import { numericEnv } from "../../env";
 import { ApiError } from "../../lib/api-error";
 import { sha256Hex } from "../../lib/crypto";
 import { logStructuredEvent } from "../../observability/logger";
-import { createHarnessRunPortFactory } from "../../runtime/harness-run-port";
-import { createResourcePortFactory } from "../../runtime/resource-port";
+import { createHarnessRunPortFactory, type HarnessRunPortFactory } from "../../runtime/harness-run-port";
+import { createResourcePortFactory, type ResourcePortFactory } from "../../runtime/resource-port";
 import { parseTerminalRegionConfiguration } from "../terminal/contract";
-import { PUBLICATION_BUILD_HOLDER, TerminalSandboxCoordinator } from "../terminal/coordinator";
-import { createTerminalPortFactory } from "../terminal/object-port";
+import { PUBLICATION_BUILD_HOLDER, TerminalSandboxCoordinator, type TerminalClock } from "../terminal/coordinator";
+import { createTerminalPortFactory, type TerminalPortFactory } from "../terminal/object-port";
 import type { TerminalSandboxProvider } from "../terminal/provider-contract";
 import { terminalShellQuote as quote } from "../terminal/provider-contract";
 import { createTerminalProviderRpcClient } from "../terminal/provider-rpc-client";
@@ -53,31 +53,40 @@ export class CanvasBuildService {
   constructor(
     private readonly env: Env,
     private readonly auth: AuthContext,
-    /** A provider to build with in place of the region's Daytona; tests pass a double. */
-    private readonly injectedProvider?: TerminalSandboxProvider,
+    /**
+     * What a test builds with in place of the region's Daytona and the
+     * Canvas's own objects. Production passes nothing.
+     */
+    private readonly injected: {
+      provider: TerminalSandboxProvider;
+      terminalPort: TerminalPortFactory;
+      resourcePort: ResourcePortFactory;
+      runsPort: HarnessRunPortFactory;
+      clock?: TerminalClock;
+    } | null = null,
   ) {}
 
   async build(canvasId: string, source: { kind: "component"; entry: string } | { kind: "project" },
     files: ReadonlyArray<{ path: string; bytes: Uint8Array }>): Promise<BuiltSite> {
     const runtime = withWorkspaceRuntimeDatabase(this.env, this.auth.workspaceId);
     const configuration = parseTerminalRegionConfiguration(runtime);
-    if (!this.injectedProvider && configuration.capability !== "supported") {
+    if (!this.injected && configuration.capability !== "supported") {
       throw new ApiError(503, "canvas_build_unavailable", "Rally cannot build components or projects in this deployment; publish the built files with their index.html");
     }
-    const owned = this.injectedProvider ? null : configuration.capability === "supported"
+    const owned = this.injected ? null : configuration.capability === "supported"
       ? createTerminalProviderRpcClient(runtime.TERMINAL_PROVIDER, configuration) : null;
-    const provider = this.injectedProvider ?? owned!;
+    const provider = this.injected?.provider ?? owned!;
     const coordinator = new TerminalSandboxCoordinator(
       runtime,
-      createTerminalPortFactory(runtime, undefined, "0"),
-      createResourcePortFactory(runtime),
+      this.injected?.terminalPort ?? createTerminalPortFactory(runtime, undefined, "0"),
+      this.injected?.resourcePort ?? createResourcePortFactory(runtime),
       provider,
-      undefined,
+      this.injected?.clock,
       (workspaceId) => refreshWorkspaceSchedule(runtime, workspaceId),
       configuration.capability === "supported" ? configuration.emergencyDisabled : false,
       undefined,
       { parentKind: "canvas", backgroundAgent: false, runSubstreamId: PUBLICATION_BUILD_HOLDER, authoritySubstreamId: "0",
-        runsPort: createHarnessRunPortFactory(runtime) },
+        runsPort: this.injected?.runsPort ?? createHarnessRunPortFactory(runtime) },
     );
     const buildId = newId();
     const abort = new AbortController();

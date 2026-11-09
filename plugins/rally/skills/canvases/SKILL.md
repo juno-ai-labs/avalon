@@ -41,9 +41,15 @@ pasting it into a message:
 - `publish_file` for a document, spreadsheet, image or PDF. Name it with its
   extension (`launch-plan.md`, `q3.csv`); send text as text and anything else
   as base64.
-- `publish_site` for a web page or front end: `index.html` plus any CSS,
-  scripts and images it loads. A single HTML artifact is one file,
-  `index.html`. It goes live at its own address.
+- `publish_site` for anything that runs in a browser. It goes live at its own
+  address. Send:
+  - an HTML artifact as one file named `index.html` (plus any CSS, scripts
+    and images it loads);
+  - a React artifact as its one `.jsx`/`.tsx` file, unchanged: Rally builds it
+    with Tailwind, lucide-react, recharts and the common shadcn/ui pieces,
+    checks it renders, and reports the error if it does not;
+  - a project folder with its `package.json`, which Rally builds with its own
+    `build` script.
 
 Publishing the same name again updates the artifact and keeps its history;
 choose a new name only for a separate artifact. Then share the returned `url`.
