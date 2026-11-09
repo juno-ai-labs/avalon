@@ -437,198 +437,106 @@ pile.
 The desktop renderer, which the browser host also mounts, draws a Canvas from
 what the server already exposes; nothing in it is a new primitive. Canvases is
 the rail's first section and `/canvases` the landing route
-([`desktop-shell.md`](desktop-shell.md)).
+([`desktop-shell.md`](desktop-shell.md)). Layout, sizes and copy follow
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/design.html` (§1 the home, §2 an
+open Canvas, §5 the marks), which is the authority for every measurement; this
+section records only what the code decides.
 
 - **The list** is the `canvases` query the workspace socket fills
   (`workspace_canvas_list`, `applyVersionedSidebarList`), read with
   `useSocketOwnedList`; there is no list route. The home page and the sidebar
-  section group it client-side from the row's fields: Live now is a row with
-  someone other than the viewer in `presentUserIds`, Made by me is
-  `createdByUserId`, Shared with me `sharedWithMe`, From Sidekicks
-  `writerSidekickId`. A row's second line names who is there now, else its
-  last editor, else who made it. On a home card whose newest version a run
-  wrote, the last-editor line is that run instead, "<Sidekick> · run #N"
-  (`canvasWrittenByRun`), a link above the card's stretched title link that
-  opens the Sidekick's conversation at the run (`?run=`), in the live name
-  from the Sidekick list when the socket has it. The link carries the run's
-  number in its route state, so the run's pill reads "Run 5" before the
-  shared conversation that numbers it has loaded.
-- **The mark** (`CanvasMark`) is a sheet holding the chosen icon, else the
-  row's `artifactKind` glyph, in a pastel pair through `markColors`, the
-  mechanism a Sidekick's hexagon uses: the chosen colour, else the hue stable
-  for its id (`canvasHue`, as a person's accent is chosen), since design.html
-  §1, §2 and §5 colour each Canvas individually. The pill, the sidebar row,
-  the home card (beside its title, and on the paper of a Canvas that is only
-  its Chat) and a Canvas's Activity rows (a badge on the kind's glyph) draw
-  it; the pill's follows a choice from anywhere, which the list push writes
-  into the detail's cache as it writes a rename.
-- **The home page** is design.html §1's grid of cards, three to a row once the
-  pane is the design's 1024px main pane, two below it, one at phone width: each
-  card is a 150px shot of the Canvas, a "Live" chip with the faces of the
-  people in it now, its title, and who and when. A row carries no picture of
-  its artifact, so the shot is a sketch of its `artifactKind` (a file as a
-  document's lines, a site as a page in a frame, an archive as a board's
-  columns, a Canvas that is only its Chat as its mark on the paper). At phone
-  width the sheet's bar is the page's header, so the page draws no second
-  title or New Canvas. The sidebar's "All canvases" heading carries a
-  Recent/Name sort (the server's recent-activity order, or by title), which is
-  not remembered across launches.
+  group it client-side from the row's own fields: Live now is someone other
+  than the viewer in `presentUserIds`, Made by me `createdByUserId`, Shared
+  with me `sharedWithMe`, From Sidekicks `writerSidekickId`. A home card whose
+  newest version a run wrote names that run, "<Sidekick> · run #N"
+  (`canvasWrittenByRun`), and opens the Sidekick's conversation at it
+  (`?run=`); the link carries the run's number in its route state, so the run's
+  pill is numbered before the shared conversation has loaded.
+- **The mark** (`CanvasMark`) holds the chosen icon, else the row's
+  `artifactKind` glyph, in a pastel pair through `markColors`: the chosen
+  colour, else a hue stable for the id (`canvasHue`). The home card's picture
+  is a sketch of the `artifactKind`, since a row carries no image of its
+  artifact. Appearance is chosen from the pill's mark or the menu's **Change
+  appearance** with the Sidekick's `AppearancePicker`, a popup rather than a
+  submenu (a submenu has no room beside a phone-width menu); each click saves
+  through `PATCH /canvases/:id`.
 - **Making one** is `POST /canvases`, with the "Start from a prompt" card's
-  text as `prompt`; the client then opens the new Canvas, whose Chat already
-  holds the prompt as the creator's message.
+  text as `prompt`; the client opens the new Canvas, whose Chat already holds
+  the prompt as the creator's message. `useCreateCanvas` holds one attempt
+  series and guards the in-flight call, so a double click or a retry after a
+  lost answer reaches the server's replay rather than making a second Canvas.
 - **An open Canvas** is `ConversationSurface` with `parentKind: "canvas"` and
   substream `"0"`, so the composer, annotations (a Canvas's comments), the
   inspector rail, its resource cards and versions menu, and the
-  per-conversation panel restore (`artifact-panel:<canvas id>:0` in
-  `lib/desktop-layout.ts`) are the conversation surface's own. With nothing
-  saved there, the screen opens the newest artifact of `GET /canvases/:id`
-  beside the Chat, through `openResourceState` (`lib/navigation-routes.ts`)
-  with `expanded: false`; a link naming an artifact opens it expanded, as a
-  pinned artifact's row does. The surface does not close a requested panel
-  on the device cache's copy of the conversation, which may list none of its
-  artifacts. An artifact whose content was never stored
-  (`contentAvailable: false`, or a read answering
-  `resource_content_unavailable`) says "Nothing to show yet" in the panel.
-  With no artifact, the rail stays closed on the conversation's empty
-  state. Closing the panel clears what was saved,
-  so the next opening shows the newest artifact again.
-- **The header** is a `TitlePillHeader` naming the Canvas, drawn `align="start"`
-  as design.html §2 lays it out: the pill right after Back and Forward, then at
-  the pane's right edge the face pile of everyone else in it now
-  (`workspace_presence`, through the surface's `presentUserIds`), Share, and a
-  "⋯" button (`TitlePillMenuAction`). The "⋯" and the pill's menu offer the
-  same Pin, Rename…, **Change appearance**, Share…, Copy link and Copy Canvas ID (for support, and
-  kept in the offline and refused states, whose header this is), and, while
-  the Canvas has an artifact, **Open artifact**, which opens the panel on the
-  newest one beside the Chat, the way back to a panel the person closed; it
-  replaces the entry as arrival, Rename… and Share… do, so Back leaves the
-  Canvas. A phone keeps only the pill's menu. The pill's title is the detail's, and a change to the list row's
-  title (the `workspace_canvas_list` push a rename from anywhere produces) is
-  written into the detail's cache entry once the socket has applied the list,
-  so the header follows a rename without a refetch. The window is named `<title> · Rally` while it is open
-  (`useDocumentTitle`, `lib/document-title.ts`).
-- **Choosing its appearance.** The mark in the pill is the Sidekick's
-  appearance palette (`AppearancePicker`, in the pill's `iconAction` slot,
-  beside its menu trigger since a button cannot hold another), and the menu's
-  **Change appearance** opens the same palette there: the picker's `open` is
-  the screen's, and a palette opened from a menu is not closed by that menu
-  handing focus back to its own trigger; once that menu has handed focus back,
-  the palette moves it onto the chosen colour (else the first choice), so a
-  keyboard user starts inside it. Its unchosen colour selects the
-  Canvas's own hue (`defaults`) and its unchosen icon selects nothing, since
-  the kind's sketch is no catalog icon. Each click saves through
-  `PATCH /canvases/:id`, and the answered detail redraws the pill. A submenu
-  of the pill's menu was the first cut and was dropped: at phone width the
-  menu is the screen's width, so a 320px submenu beside it opened off-screen.
-- **A link to no Canvas** — a well-formed id that names nothing
-  (`canvas_not_found`, 404) or a malformed one (`canvas_id_invalid:id:<issue>`,
-  400) — draws the same "This Canvas does not exist." state, the pane's one
-  state (`PaneState`) with the shell's Back and Forward above it where the
-  host draws them (the desktop app; a browser tab has its own), no dialog over
-  it and nothing to try again
-  (`isNotFoundError` in `lib/landing.ts`), and a restored route that answers
-  either goes to the Canvases home. A well-formed id that answers 404 is asked
-  about once more (`GET /canvases/:id/access`, below) before this state is
-  drawn; only an id that exists in no Organization of the viewer's draws it.
-  A Canvas missing from this window's list
-  mounts its Chat only once the detail answers, so a link to one that does not
-  exist raises no conversation socket failure over that state; one in the list
-  opens at once, beside the detail read.
+  per-conversation panel restore (`artifact-panel:<canvas id>:0`) are the
+  surface's own. With nothing saved, the screen opens the newest artifact of
+  `GET /canvases/:id` beside the Chat (`openResourceState`, `expanded: false`);
+  a link naming an artifact opens it expanded. The surface does not close a
+  requested panel on the device cache's copy of the conversation, which may
+  list none of its artifacts. Closing the panel clears what was saved, and the
+  menus' **Open artifact** is the way back to it.
+- **The header** is a `TitlePillHeader` naming the Canvas (`align="start"`),
+  with the face pile of everyone else in it now, Share, and a "⋯" whose menu
+  matches the pill's: Pin, Rename…, Change appearance, Share…, Copy link, Copy
+  Canvas ID and, while there is an artifact, Open artifact. The pill's title is
+  the detail's, and a change to the list row's title is written into the
+  detail's cache once the socket has applied the list, so the header follows a
+  rename from anywhere without a refetch.
+- **A link to no Canvas** (`canvas_not_found`, or a malformed id,
+  `canvas_id_invalid:id:<issue>`) draws one in-pane "This Canvas does not
+  exist." state with nothing to try again (`isNotFoundError`), and a restored
+  route that answers either goes to the Canvases home. A well-formed id that
+  answers 404 is asked about once more (`GET /canvases/:id/access`) first. A
+  Canvas missing from this window's list mounts its Chat only once the detail
+  answers, so a missing one raises no socket failure over that state.
 - **A Canvas you cannot open.** When the access read answers `requestable`
-  (never the title), the pane draws "You don't have access to this Canvas"
-  with **Request access**, which opens one dialog with an optional one-line
-  message (the dialog opens on its field) and sends
-  `POST /canvases/:id/access-requests`
-  (`CanvasAccessRequestPane`, `components/canvas-access-request.tsx`). While
-  the viewer's request is pending (`request.state: 'pending'` on the access
-  read, so a reload keeps it) the button gives way to
-  "Request sent · <when>" alone; a declined request reads "Request declined
-  · <when>" with the button offered again, because a denial allows a new
-  request, and the requester's `access_denied` Activity row opens this pane
-  (canvas-access-requests.md, "In the client"). A refusal such
-  as `canvas_access_request_not_member` is the app's error notice over the
-  dialog. A restored route on a requestable Canvas stays, since it may be
-  granted later. The grant reopens the pane into the Canvas without a
-  refresh: the screen refetches the detail when the Canvas joins this
-  person's list, or when their `access_granted` Activity row for it arrives.
-  An `already_participant` answer (added by other means meanwhile) refetches
-  at once, and so does an access read answering 409 `canvas_access_open`: the
-  detail's 404 was stale, as right after a grant, so the pane opens the
-  Canvas rather than drawing either state.
-- **No connection.** A conversation socket that cannot open without the
-  server saying why is the PRD's offline state, "This Canvas opens when Rally
-  reconnects.", never "This Canvas is unavailable"; one the server refused
-  names the Canvas and keeps its reason behind Connection details. Either
-  keeps the Canvas's own header over it (`stateHeader`), its pill, Share and
-  "⋯", since the list row already names it. While the Organization socket
-  cannot open, the sidebar says so in place of its placeholder rows
-  (`SidebarListDown`) and a section home in place of its list
-  (`PushedListPending`): every one of these says "Rally can’t reach the server
-  right now." (`OFFLINE_TITLE`) and offers the same outlined Try again
-  (`OfflineRetry`).
-- **Naming.** While a row or the detail says `titleStatus: 'naming'` (a
-  Canvas made with no title, waiting for the title its opening message gives
-  it), the pill, the sidebar row and the home card draw the `TitleSkeleton`
-  placeholder ("Rally is choosing a name" to a screen reader) and the window
-  stays "Rally"; the title then arrives through the list push the pill
-  already follows. A Canvas made empty is `settled` as "Untitled Canvas" and
-  turns `naming` when its first person message lands, so the placeholder
-  never waits on a message nobody has sent (v1-F5, v4-F11); the server makes
-  that flip, and the client draws only what `titleStatus` says. A missing `titleStatus` (an older server) is settled.
-- **Renaming** is `PATCH /canvases/:id`, edited in the pill itself
-  (`TitlePillTitleInput`): Rename… in the pill's menu, or in a sidebar row's
-  context menu (which offers the pill's Pin, Rename…, Share… and Copy link;
-  Share… opens the Canvas on its panel with `SHARE_CANVAS_STATE`), which opens the Canvas with route state
-  (`RENAME_CANVAS_STATE`) that starts the edit. Enter saves, Escape cancels,
-  leaving the field saves a changed title. The client neither trims nor
-  measures the title: an empty or over-long one is the server's to refuse
-  (`canvas_rename_invalid:title:<issue>`), and the refusal is a notice titled
-  "The Canvas could not be renamed" (`canvasRenameRefusal`: words for
-  `too_small` and `too_big`, the server's message otherwise), with the field
-  left open on what was typed.
+  (never the title), the pane offers **Request access**
+  (`CanvasAccessRequestPane`), then shows "Request sent" while pending and
+  "Request declined" with the button again after a denial
+  ([`canvas-access-requests.md`](canvas-access-requests.md)). A restored route
+  on such a Canvas stays. The grant reopens the pane into the Canvas without a
+  refresh: the detail is refetched when the Canvas joins the person's list or
+  their `access_granted` Activity row arrives, and at once on an
+  `already_participant` answer or a 409 `canvas_access_open`.
+- **No connection.** A conversation socket that cannot open without a reason
+  is the PRD's offline state, "This Canvas opens when Rally reconnects.", with
+  the Canvas's own header kept over it (`stateHeader`); one the server refused
+  names the Canvas and keeps its reason behind Connection details. While the
+  Organization socket cannot open, the sidebar (`SidebarListDown`) and a
+  section home (`PushedListPending`) say so with one Try again.
+- **Naming.** While `titleStatus` is `naming`, the pill, the row and the card
+  draw the `TitleSkeleton` placeholder and the window stays "Rally"; the title
+  arrives through the list push. The server makes the flip on the first
+  person message; the client draws only what `titleStatus` says, and a missing
+  `titleStatus` (an older server) is settled.
+- **Renaming** is `PATCH /canvases/:id`, edited in the pill
+  (`TitlePillTitleInput`) from the pill's menu or a sidebar row's (which opens
+  the Canvas with `RENAME_CANVAS_STATE`). The client neither trims nor measures
+  the title: the server refuses an empty or over-long one
+  (`canvas_rename_invalid:title:<issue>`), and the notice
+  (`canvasRenameRefusal`) leaves the field open on what was typed. Leaving the
+  field saves only a title that differs from the one last sent.
 - **Share** offers the three visibilities and a people picker to someone the
-  detail says may manage it (`canManage`), and saves with
-  `POST /canvases/:id/audience`; anyone else sees the same audience read-only.
-  A Canvas a Sidekick writes is also open to everyone the Sidekick is shared
-  with, whichever visibility is chosen (the writer audience in
-  `canvasAdmits`), so its choices say so instead of "Nobody else can open it."
-  The picker never lists the viewer or the creator, and with "Everyone in the
-  Organization" it lists guests only, since members are in already; only the
-  chosen guests are sent with that visibility, and its people search shows
-  only once there is a guest to find or the guest section is open. Its radios
-  and checkboxes are the shared `.choice-control`, the guest invite a
-  disclosure with the title menus' chevron, and Cancel and Save sit at the
-  dialog's foot, below it. Save is the dialog's one primary action: the
-  addresses typed in the guest section are part of the form, and Save sends
-  the audience and then invites them through the conversation share's
-  `useScopeInvitations` with a `workstream` target naming the Canvas, without
-  its waiting-shares list, which has no server route. Only addresses typed
-  while the guest section is open are sent. Addresses that do not parse save
-  nothing: the app's error notice says why, over the dialog, which keeps what
-  was typed. For a decider, the panel opens with a **Requests** section
-  (`pendingAccessRequests` on the detail): each pending request's name,
-  message and when (the time never breaks across lines), with Approve and
-  Deny, which drop to a line of their own where the message would be
-  squeezed (`AccessDecisionActions`, the same
-  component the `access_request` Activity row uses, over
-  `POST /canvases/:id/access-requests/:userId/decision`). A decision reads
-  the detail again, so the request leaves the list; someone approved while
-  the panel is open joins its choice of people, and a visibility the server
-  changed meanwhile (an approval opens a creator-only Canvas to Specific
-  people) replaces the panel's, so a Save that follows does not take back the
-  access just given. A refusal
-  (`canvas_access_request_settled`, `canvas_access_decision_not_manager`) is
-  the app's error notice.
+  detail says may manage it (`canManage`), saving with
+  `POST /canvases/:id/audience`; anyone else sees the audience read-only. A
+  Canvas a Sidekick writes says it is also open to the Sidekick's audience. The
+  picker never lists the viewer or the creator, and with the Organization
+  visibility lists guests only. Save is the dialog's one primary action: it
+  sends the audience, then invites the typed guest addresses through
+  `useScopeInvitations` with a `workstream` target naming the Canvas. For a
+  decider, a **Requests** section lists `pendingAccessRequests` with
+  `AccessDecisionActions`, the component the Activity row uses; an approval
+  made while the panel is open joins its choice of people, and the visibility
+  the server moved to replaces the panel's, so a following Save does not take
+  back the access just given.
 - **Pinning** is `POST /canvases/:id/pin`, from the pill's menu, a row's
   context menu, or dragging a row into the section's Pinned group
-  (`useRowPinDrop`). A pin lands at the end of the group: the order is
-  `reorderSidebarPins` in `WorkspaceDO`, which `PUT /workspace/pinned-order`
-  exposes.
+  (`useRowPinDrop`); a pin lands at the end of the group
+  ([`pinning.md`](pinning.md)).
 
-Copying a Canvas's link is the pill menu's **Copy link**, the Canvas form
+Copying a Canvas's link is **Copy link**, the form
 `/app/<region>/<organization>/cv/<canvas>/` ([`links.md`](links.md)); a
-detached artifact window's **Copy link** adds the artifact's segment, and a
-link with one opens the Canvas with that artifact in the rail.
+detached artifact window's **Copy link** adds the artifact's segment.
 
 ## Invariants
 
