@@ -211,7 +211,7 @@ async function seedMainChild(stub: DurableObjectStub<WorkspaceDO>, workspaceId: 
  */
 function countingEnv(allowed: number) {
   const agents = TEST_ENV.SUBSTREAM_AGENTS;
-  const counter = { retires: 0 };
+  const counter = { retires: 0, inFlight: 0, maxInFlight: 0 };
   const namespace = {
     idFromName: (name: string) => agents.idFromName(name),
     idFromString: (id: string) => agents.idFromString(id),
@@ -219,11 +219,16 @@ function countingEnv(allowed: number) {
     get: (id: DurableObjectId) => {
       const real = agents.get(id);
       return {
-        retireObject: (tombstone: Parameters<typeof real.retireObject>[0]) => {
+        retireObject: async (tombstone: Parameters<typeof real.retireObject>[0]) => {
           counter.retires += 1;
-          return counter.retires > allowed
-            ? Promise.reject(new Error("durable_object_overloaded"))
-            : real.retireObject(tombstone);
+          if (counter.retires > allowed) throw new Error("durable_object_overloaded");
+          counter.inFlight += 1;
+          counter.maxInFlight = Math.max(counter.maxInFlight, counter.inFlight);
+          try {
+            return await real.retireObject(tombstone);
+          } finally {
+            counter.inFlight -= 1;
+          }
         },
       };
     },
@@ -234,6 +239,20 @@ function countingEnv(allowed: number) {
       : Reflect.get(target, property, receiver),
   });
   return { env: proxied, counter };
+}
+
+/** A further breakout under the first Channel, beside its Main child. */
+async function seedChild(stub: DurableObjectStub<WorkspaceDO>, substreamId: string, createdAt: number): Promise<void> {
+  await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
+    state.storage.sql.exec(
+      `INSERT OR IGNORE INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at)
+       VALUES (?, ?, 'child', ?, ?)`,
+      FIRST_ROOM_ID,
+      asSubstreamId(substreamId),
+      ACTOR_ID,
+      createdAt,
+    );
+  });
 }
 
 describe("workspace retirement graph", () => {
@@ -422,16 +441,7 @@ describe("workspace retirement graph", () => {
     await declareDemoOperations();
     await seedDirectory(stub, workspaceId);
     await seedMainChild(stub, workspaceId);
-    await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
-      state.storage.sql.exec(
-        `INSERT OR IGNORE INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at)
-         VALUES (?, ?, 'child', ?, ?)`,
-        FIRST_ROOM_ID,
-        asSubstreamId("00000000-0000-7000-8000-00000000e501"),
-        ACTOR_ID,
-        Date.now() + 1,
-      );
-    });
+    await seedChild(stub, "00000000-0000-7000-8000-00000000e501", Date.now() + 1);
 
     const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" } as const;
 
@@ -449,6 +459,25 @@ describe("workspace retirement graph", () => {
     // receipt this pass wakes both again.
     expect(resumed.counter.retires).toBe(1);
     expect(second.retiredChildren).toBe(1);
+  });
+
+  it("closes one parent's children several at a time, never more than the limit", async () => {
+    const workspaceId = freshWorkspaceId();
+    const stub = workspaceStub(workspaceId);
+    await declareDemoOperations();
+    await seedDirectory(stub, workspaceId);
+    await seedMainChild(stub, workspaceId);
+    await seedChild(stub, "00000000-0000-7000-8000-00000000e511", Date.now() + 1);
+    await seedChild(stub, "00000000-0000-7000-8000-00000000e512", Date.now() + 2);
+    const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" } as const;
+
+    const tracked = countingEnv(Number.POSITIVE_INFINITY);
+    const receipt = await retireWorkspaceGraph(tracked.env, { workspaceId, ...tombstone, childConcurrency: 2 });
+
+    expect(receipt.failed).toEqual([]);
+    expect(receipt.retiredChildren).toBe(3);
+    expect(receipt.complete).toBe(true);
+    expect(tracked.counter.maxInFlight).toBe(2);
   });
 
   it("closes children before parents and reports the pass", async () => {
