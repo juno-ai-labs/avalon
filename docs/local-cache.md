@@ -141,6 +141,17 @@ operation resolves to its fallback rather than throwing. A renderer with no
 IndexedDB, no quota, or a corrupt database opens every screen the way it did
 before the cache existed, waiting for the socket.
 
+Every window on the origin shares one database, and the desktop app always
+has a second one: main builds the Settings window ahead of time and keeps it
+hidden. An upgrade or deletion of the database waits until every connection
+to it closes, and every open queued behind it waits too, with no success,
+error or blocked event, so one window that holds its connection hangs every
+cache read in every window, and a preview, which reads the cache before it
+fetches, never loads. A connection therefore closes itself as soon as it is
+told of a version change, and the next call reopens. An open that another
+connection blocks answers its fallback at once and stays queued; once it
+succeeds it serves the calls after it.
+
 ### What opening a workspace paints
 
 `WorkspaceSocketProvider` reads the `canvas-directory` row for its scope before
@@ -407,6 +418,11 @@ lifetimes.
   directory and the child rosters still list, each holding the opening ranges
   rather than the whole transcript. There is no count and no age; membership is
   the bound, and a workspace's rows go with its membership.
+- **A window running a build from before connections yielded** (a stale
+  browser tab across a deploy) can still hold the database open against an
+  upgrade or a deletion; opens queued behind it then wait with no event, and
+  previews in that browser stay on their placeholder until the tab closes.
+  There is no deadline on an open: one would be a limit the team sets.
 - **Fake timers in a test stall the fake IndexedDB**, which schedules its work
   on `setImmediate` at call time. See [Testing](#testing).
 
@@ -480,6 +496,31 @@ is small. The cost that would grow is the persisted transcript, and
 scrolling.
 
 ## Changelog
+
+### 2026-11-09 — A connection yields to another window's version change
+
+**What changed:** `createIndexedDbStore` closes its connection when told of a
+version change and reopens on the next call. An open another connection blocks
+still answers the fallback, and now serves later calls once it succeeds instead
+of leaving the cache off until reload.
+
+**Why:** A visual check deleted `rally-local-cache` from the main window while
+the hidden Settings window held it open. The deletion waited, every later open
+in every window waited behind it with no event, and artifact previews, which
+read the cache before fetching, sat on "Loading preview…" across reloads. No
+product code deletes the database, but any future version bump meets the same
+wait while another window holds the old version.
+
+**Considered and rejected:** A deadline on opening the database, or fetching
+a preview without waiting on the cache, would cover a window that never
+yields, but needs a number the team has not set; with every window of a build
+yielding, only a stale tab from an older build can still hold it.
+
+**Consequences:** Never hold a connection against a version change, and never
+assume the store's connection outlives one; it is reopened on demand. A
+version bump is safe across windows of builds that carry this change.
+
+Shipped in juno-ai-labs/avalon#1490.
 
 ### 2026-10-21 — Fence image saves across browser tabs
 
