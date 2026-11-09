@@ -394,11 +394,13 @@ export interface HostedSidekickHost {
    */
   noteViewerReadChanged(userId: string): void;
   /**
-   * Inside the transaction that changed who may open the Canvases this
-   * Sidekick writes (its audience, which `canvasAdmits` reads live): every
-   * viewer's Canvas list moved.
+   * Inside the transaction that touched the directory row of a Sidekick that
+   * writes Canvases, with what decides who may open them (`sidekickReaderAllows`
+   * over scope, lifecycle, executor and `people` list, which `canvasAdmits`
+   * reads live). The host marks every viewer's Canvas list moved when that
+   * differs from the last it saw, so a run's own touches cost no list push.
    */
-  noteCanvasDirectoryChanged(): void;
+  noteWriterReaders(sidekickId: string, readers: string): void;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** See `HostedConversationHost.noteActivityChanged`. */
   noteActivityChanged(userId: string): void;
@@ -1108,11 +1110,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         request.update.audience === "workspace" ? "workspace" : "personal", now, this.sidekickId,
       );
       this.touchDirectory(now);
-      // A Canvas it writes admits its audience, so newly admitted readers
-      // gain those rows and removed ones lose them now, not at reconnect.
-      if (this.sql.exec(`SELECT 1 FROM canvas_directory WHERE writer_sidekick_id = ? LIMIT 1`, this.sidekickId).toArray().length > 0) {
-        this.host.noteCanvasDirectoryChanged();
-      }
     });
     return this.detail();
   }
@@ -3200,6 +3197,20 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     ));
     if (!touched) throw new Error("sidekick_missing");
     this.host.noteDirectoryChanged(this.sidekickId, touched.lifecycle === "deleted", now);
+    // A Canvas it writes admits whoever the Sidekick admits, so a change to
+    // any input of that rule (an audience change, an archive or restore, an
+    // executor change) moves those Canvases on every open list now, not at
+    // reconnect. Read here, once, so every writer of the row is covered.
+    const readers = first(this.sql.exec<{ readers: string }>(
+      `SELECT directory.scope || '|' || directory.lifecycle || '|' || COALESCE(directory.run_as_user_id, '') || '|'
+              || COALESCE((SELECT group_concat(user_id, ',') FROM (
+                   SELECT user_id FROM sidekick_audience WHERE sidekick_id = ?1 ORDER BY user_id)), '') AS readers
+         FROM automation_directory directory
+        WHERE directory.automation_id = ?1
+          AND EXISTS (SELECT 1 FROM canvas_directory WHERE writer_sidekick_id = ?1)`,
+      this.sidekickId,
+    ));
+    if (readers) this.host.noteWriterReaders(this.sidekickId, readers.readers);
   }
 }
 
