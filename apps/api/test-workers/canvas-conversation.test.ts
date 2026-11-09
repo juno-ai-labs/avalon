@@ -10,7 +10,7 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { uuidToBase58 } from "@rally/contracts/uuid-base58";
@@ -377,6 +377,42 @@ describe("the Canvas list", () => {
     // The change is pushed to every socket, each with its own rows.
     await expect.poll(() => canvasRows(before.frames), { timeout: waitBudget() }).toMatchObject([{ id: canvasId, unread: true, sharedWithMe: true }]);
     for (const { socket } of [creator, before]) socket.close(1000, "done");
+  });
+
+  it("logs a Canvas list push it cannot build by the field that failed, and still commits the write", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
+    const creator = await connect(CREATOR);
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // A row the list's own schema refuses (storage CHECKs keep real rows
+      // valid, so the read is made to return one): the push cannot be built.
+      await runInDurableObject(workspace(), async (instance: WorkspaceDO) => {
+        const target = Object.getPrototypeOf(instance) as { canvasList: (...args: unknown[]) => unknown[] };
+        const original = target.canvasList;
+        // The suite logs errors only; this test reads a warning.
+        const logged = (instance as unknown as { env: { LOG_LEVEL: string | undefined } }).env;
+        const level = logged.LOG_LEVEL;
+        logged.LOG_LEVEL = "warn";
+        target.canvasList = function (this: unknown, ...args: unknown[]) {
+          return (original.apply(this, args) as Record<string, unknown>[]).map((row) => ({ ...row, title: "x".repeat(400) }));
+        };
+        try {
+          await instance.canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
+            update: { visibility: "participants", userIds: [MEMBER] } });
+        } finally {
+          target.canvasList = original;
+          logged.LOG_LEVEL = level;
+        }
+      });
+      expect(await opens(MEMBER, canvasId)).toBe(true);
+      const unpublished = warned.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+        .filter((entry) => entry?.event === "workspace_canvas_list_unpublished");
+      expect(unpublished).toHaveLength(1);
+      expect(String(unpublished[0]!.code)).toContain("title");
+    } finally {
+      warned.mockRestore();
+      creator.socket.close(1000, "done");
+    }
   });
 
   it("shows who is in a Canvas now on its row, and pins it for one viewer", async () => {
