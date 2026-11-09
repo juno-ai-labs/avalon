@@ -22,14 +22,22 @@ export function PaneState({ action, description, header, title, trailing }: {
   /** Controls at the header's right edge, such as a menu that copies an id for support. */
   trailing?: ReactNode;
 }): React.JSX.Element {
+  return <PaneStateLayout header={header} trailing={trailing}>
+    <EmptyState action={action} description={description} title={title} />
+  </PaneStateLayout>;
+}
+
+export function PaneStateLayout({ children, header, trailing }: {
+  children: ReactNode;
+  header?: ReactNode;
+  trailing?: ReactNode;
+}): React.JSX.Element {
   return <div className="pane-state">
     {header ?? <header className="pane-state-header window-drag">
       <TitlePillLeading />
       <TitlePillNavigation />
       {trailing && <span className="pane-state-trailing window-no-drag">{trailing}</span>}
     </header>}
-    <div className="pane-state-body">
-      <EmptyState action={action} description={description} title={title} />
-    </div>
+    <div className="pane-state-body">{children}</div>
   </div>;
 }
