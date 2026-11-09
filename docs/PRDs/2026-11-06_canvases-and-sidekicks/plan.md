@@ -183,19 +183,24 @@ owns it: retire the demo Organizations on the old Worker; deploy the Worker
 with the pivot desktop release (a pre-pivot desktop is refused with `426`);
 let D1 0125 apply after promotion through the Worker-first list; then in every
 Organization run `dump_thread_transcripts`, `convert_threads_to_canvases` and
-`retire_threads`. Forward-fix only. Ace deploys with or after the API, since
+`retire_threads` (done on 2026-11-09). Forward-fix only. Ace deploys with or after the API, since
 its retirement result admits a `canvas` node.
 
-**After the operator's run in every Organization.** One migration drops
-`channels`, `spaces`, `breakouts`, their viewer tables, `parent_*` and their
-memory-digest and search triggers, `digest_schedules` (the `schedules`
-foreign key first), `slack_agent_sessions`, `slack_agent_feedback`,
-`external_registration_generations`, `workspace_workstream_effect_receipts`,
-and the D1 Thread authority tables once Canvas and Sidekick creation stop
-reading them; then `thread-retirement-service.ts` and the three operations
-can go. `authorization_locations` Thread rows and Thread `conversation_view_*`
-rows stay. A cleanup that drops Thread rows from D1 `workstreams` bumps the
-Turbopuffer namespace first ([`text-search.md`](../../text-search.md)).
+**After the operator's run in every Organization.** Done on 2026-11-09,
+after the run in all 41 live Organizations: WorkspaceDO migration 141 drops
+`channels`, `spaces`, `breakouts`, their viewer tables, the `parent_*` tables
+only a Thread or a Channel used and their memory-digest and search triggers,
+`digest_schedules` (`schedules` rebuilt without its foreign key first),
+`slack_agent_sessions`, `slack_agent_feedback`,
+`external_registration_generations`, `workspace_workstream_effect_receipts`
+and `workspace_workstream_resource_links`, and the three operations and their
+services are removed ([`workspace-retirement.md`](../../workspace-retirement.md#retiring-threads-breakouts-and-channels)).
+The `parent_*` tables a Canvas's share writes, and `parent_children`, which
+its grant writes join, stay. `authorization_locations` Thread rows and Thread
+`conversation_view_*` rows stay. Still open: the D1 Thread authority tables,
+once Canvas and Sidekick creation stop reading them; and a cleanup that drops
+Thread rows from D1 `workstreams` bumps the Turbopuffer namespace first
+([`text-search.md`](../../text-search.md)).
 
 **Dead code.** The code kept unreached and the stale comments are listed in
 [`2026-11-08_remove-dead-code-after-the-pivot`](../2026-11-08_remove-dead-code-after-the-pivot/prd.md).

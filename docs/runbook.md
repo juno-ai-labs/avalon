@@ -1347,18 +1347,17 @@ live conversation-to-object directory: creation writes it, and regional effect
 delivery fences on its `state`/`generation`.
 
 For a missing or stale product fact, inspect the source child's `durable_outbox`
-and the parent's outbox and receipts first: `parent_outbox` and
-`parent_child_receipts` in `WorkspaceDO` for a Canvas (see
-[`hosted-conversation-parents.md`](hosted-conversation-parents.md)), or
-`sidekick_child_receipts` in `WorkspaceDO` for a Sidekick.
+and the parent's receipts first: `sidekick_child_receipts` in `WorkspaceDO`,
+which a Canvas and a Sidekick share (see
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md)).
 For a missing push, Slack mention, or email notification from a Canvas's
 Chat or a Sidekick's conversation, inspect `WorkspaceDO.sidekick_child_receipts`
 (keyed by the parent id in `sidekick_id`, the substream and the message id)
 and `WorkspaceDO.workstream_notification_intents` (its `state` and
 `last_error_code`): the parent commits a mention's receipt in the transaction
 that records its intent, so a receipt with no intent row means the effect was
-not a mention. `WorkspaceDO.workspace_workstream_effect_receipts` is
-unwritten since 2026-11-07, dropped with the Thread-era tables. A receiver
+not a mention. `WorkspaceDO.workspace_workstream_effect_receipts`, the
+Thread host's inbox, was dropped by WorkspaceDO migration 141. A receiver
 receipt with no sender outbox row is the normal end state: the sender deleted
 its row when the Queue accepted the message, and the receiver committed the
 effect with its receipt. A sender outbox row that persists means the Queue is

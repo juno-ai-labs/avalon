@@ -1553,7 +1553,7 @@ already have committed across the object boundary.
 | `canvas_directory`, `canvas_participants`, `canvas_artifacts` | One row per Canvas, its participants and the resources its Chat generated; [`canvases.md`](canvases.md#data-model). |
 | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts`, `sidekick_viewer_reads` | The hosted-conversation tables, keyed by the parent id (a Sidekick's or a Canvas's) in `sidekick_id`. |
 | `automation_directory`, `workspace_external_event_registrations` | The workspace's whole automation surface: one row per Sidekick, which since migration 91 is its definition row too (lifecycle, scope, title, accepted revision, bindings, appearance, email address); and the typed external-event registration index, replaced whole per destination with the `effective_after_event_sequence` cutoff. A Sidekick's revisions, runs, schedules and receipts are the `sidekick_*` tables beside it; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick). Migration 31 dropped the delivery ledger, the creation claims, the cutover campaign, and the template tables. |
-| `schedules`, `digest_schedules` | The canonical due-work index for connector polling — automations left `schedules` in the durable-lifecycle cutover and keep their own `sidekick_schedules` entries. This object's own alarm reads it directly and mirrors each due time into `_internal_durable_alarms`; see [`durable-object-alarms.md`](durable-object-alarms.md). `digest_schedules` is kept, emptied, because a foreign key on `schedules` names it; migration 139 dropped the rest of the digest tables. |
+| `schedules` | The canonical due-work index for connector polling — automations left `schedules` in the durable-lifecycle cutover and keep their own `sidekick_schedules` entries. This object's own alarm reads it directly and mirrors each due time into `_internal_durable_alarms`; see [`durable-object-alarms.md`](durable-object-alarms.md). Migration 139 dropped the digest tables but `digest_schedules`, which a foreign key on `schedules` named; migration 141 rebuilt `schedules` without `digest_schedule_id` and dropped it. |
 | `resources`, `resource_versions`, `resource_watches` | Workspace resource metadata, monotonic semantic history, and workspace-level attachment/watch relationships. Every numbered version retains its original and derivative regional R2 refs; each AgentLoopDO separately owns its resource links and resource inventory revision. |
 | `resource_object_deletion_outbox`, `note_resource_deletion_outbox` | Durable lifecycle ownership for original, derivative, receipt, and note-linked R2 refs. Deletion bytes is a regional side effect performed only after an object-owned outbox claim. |
 | `notes`, `note_transcript_segments`, `note_privacy_change_outbox` | Note authority, transcript segments and privacy-delivery intent. A note's linked resource is a real local foreign key. |
@@ -1563,13 +1563,16 @@ already have committed across the object boundary.
 
 | `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds — the signed ticket's external contract and the one departure from the object's unix-ms rule — so the columns carry the unit (`*_s`); the import maps the unitless D1 names over. |
 | `workspace_sidebar_list_state` | The `automations` and `canvases` list waterlines each list push carries. |
-| `workspace_workstream_effect_receipts` | The Thread host's regional effect receipts, unwritten and unread since 2026-11-07; migration 139 did not drop it. A conversation's effects are receipted in `sidekick_child_receipts`. |
-| `channels`, `channel_viewers`, `spaces`, `space_viewers`, `breakouts`, `breakout_viewers`, `parent_*` | The retired Thread, Channel and Breakout directory and parent state, kept by migration 139 because the Thread retirement's inventory reads them; nothing else does, and they go once `retire_threads` has run in every Organization ([`workspace-retirement.md`](workspace-retirement.md)). |
+| `parent_children` and a Canvas's share tables (`parent_invitations`, `parent_invitation_operations`, `parent_grants`, `parent_grant_operations`, `parent_grant_imports`, `parent_grant_revision`, `parent_participant_targets`, `parent_participant_deliveries`) | What migration 141 kept of the retired Channel and Space host's parent state: a Canvas's email share writes the share tables under the Canvas's id, and `ScopeGrantStorage` joins `parent_children` on every grant it writes. |
 
 WorkspaceDO migration 139 dropped the Activity, suggested-work, digest,
 Space-ledger, Thread pin, order, access, resource-link and batch-dispatch
 tables with the Channel-rail and Channel-colour triggers; their statements
-live byte for byte in `retired-workspace-schema.ts`.
+live byte for byte in `retired-workspace-schema.ts`. Migration 141 dropped
+the Thread, Breakout and Channel directories and their viewers, the rest of
+the `parent_*` tables, the Thread host's effect receipts and
+`digest_schedules`, once the operator had retired every Thread
+([`workspace-retirement.md`](workspace-retirement.md)).
 
 `WorkspaceDO` stores these workspace products directly, not as copies of D1,
 and stores no conversation transcript. `workspace_identity` binds the whole
@@ -1592,8 +1595,9 @@ Each list the workspace socket carries holds at most `SIDEBAR_LIST_LIMIT`
 ### Retired: hosted Channel and Space parents
 
 A Channel's or Space's parent state was a set of `parent_*` tables in
-`WorkspaceDO`, every one keyed first by `parent_id`; the rows stay for the
-Thread retirement's inventory and nothing else reads them. What each held:
+`WorkspaceDO`, every one keyed first by `parent_id`. Migration 141 dropped
+every one below except `parent_children`, which `ScopeGrantStorage` still
+joins for a Canvas's share. What each held:
 
 | Table | Key and relationship |
 | --- | --- |
@@ -1632,7 +1636,7 @@ live state reopens a finished run (see
 | --- | --- |
 | `_sql_schema_migrations`, `object_versions` | Schema versions and the applied-migration receipts. |
 | `object_retirement` | Singleton tombstone, conversation-object schema v48; shared constant, see `WorkspaceDO`. |
-| `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. The root's `workstream_key` is the parent id and `parent_kind` (v39, default `workstream`) says which kind, written once except by `convertParentKind`, which turns a Thread's Main into a Canvas's Chat (`workstream` to `canvas` only); `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns, never written or projected, kept because the runtime-compat triggers in `workstream-runtime-compat-schema.ts` name them inside released migration hashes. Existing main data uses local context `0`. |
+| `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. The root's `workstream_key` is the parent id and `parent_kind` (v39, default `workstream`) says which kind, written once (the Thread conversion's `convertParentKind`, which turned a Thread's Main into a Canvas's Chat, was removed after it ran); `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns, never written or projected, kept because the runtime-compat triggers in `workstream-runtime-compat-schema.ts` name them inside released migration hashes. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
 | `participant_transcript_turns`, `participant_transcript_blocks`, `participant_transcript_attachments`, `participant_transcript_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose canonical turns reference content-addressed payloads plus exact attachment, mention, and large-content joins. Accepted human and assistant content, identity, and order never change. One stable tool turn may advance only its explicit lifecycle from started to terminal; a different turn under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; pending messages have no canonical order and enter Bind only through the persistent loop's delivery transaction. |
 | `substream_loops`, `pending_loop_inputs`, `delivered_loop_inputs`, `assistant_turn_reservations`, `bind_loop_heads`, `bind_loop_state_messages`, `bind_activation_inputs`, `bind_provider_boundaries` | One persistent loop lifecycle and execution fence, server-authoritative prepared input awaiting atomic promotion, minimal delivery replay identity after promotion, exact canonical slots reserved before assistant generation, the current Bind projection, immutable activation receipts, and provider-boundary hashes. `bind_loop_heads` is the only current Bind metadata authority; ordered message rows reference it directly. Pending inputs have neither transcript nor attention order until delivery; `starts_run = 0` marks one that lands in order but starts no run. |

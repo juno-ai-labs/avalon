@@ -372,8 +372,8 @@ snapshot starts with nothing active or recommended: only a Thread filed a
 loaded Sidekick as attached, and a Channel's defaults (`parent_sidekicks`) were
 the only recommendations, so no new execution has a `[Recommended]` catalog
 line. AgentLoopDO migration 84 dropped the Thread's `sidekick_attachments`
-table; `parent_sidekicks` stays in `WorkspaceDO` until the Thread retirement
-has run everywhere, and nothing writes it.
+table, and WorkspaceDO migration 141 dropped `parent_sidekicks` with the
+skill read's Channel branch that read it.
 
 A Sidekick's own reach is separate: `conversation_attach` files a Canvas's Chat
 in `sidekick_conversation_attachments` as `canvas`, and the conversation tools
@@ -469,7 +469,7 @@ adapter. Directory membership never grants access to an owner.
 
 No conversation owns a Sidekick. The `workstream` scope is retired, and
 WorkspaceDO migration 136 keeps each Thread-owned Sidekick's audience as
-`convertThreadToCanvas` keeps a Thread's: one owned by an Organization-wide
+the Thread conversion kept a Thread's: one owned by an Organization-wide
 Thread (and, for a Breakout's, an Organization-wide Breakout) becomes an
 Organization Sidekick; one owned by a personal Thread or a personal Breakout
 becomes a `people` Sidekick (`scope = 'personal'`) whose `sidekick_audience`
