@@ -117,15 +117,15 @@ export type CanvasDetail = z.infer<typeof CanvasDetailSchema>;
  * artifact is, whether it holds something this viewer has not read (its
  * Chat's read state, or an artifact version made since they last read it),
  * who is in it now, where the viewer pinned it, and whether it is in their
- * list only because someone shared it with them. The home page's groups are
- * these fields: Data (`hasLiveArtifact`), from Sidekicks
+ * list only because someone shared it with them. The home page filters by
+ * these fields: Data (`hasStoredData`), from Sidekicks
  * (`writerSidekickId`), shared with me (`sharedWithMe`), made by me
  * (`createdByUserId`).
  */
 export const CanvasSidebarRowSchema = CanvasSummarySchema.extend({
   artifactKind: CanvasArtifactKindSchema.nullable(),
   /** Holds a listed artifact with its own database. Absent from an older Worker. */
-  hasLiveArtifact: z.boolean().optional(),
+  hasStoredData: z.boolean().optional(),
   /**
    * The Sidekick run whose publish made the Canvas's newest version, so the
    * home card names it ("Weekly digest · run #3") and opens the run; null
