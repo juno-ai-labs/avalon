@@ -52,7 +52,10 @@ input returns its original result without reapplying it.
 A guest's conversation reads, feed tickets and read state are admitted with
 `requireGrantAuthority`: the viewer check reads the guest's relationship and
 admits them only from a Canvas's participant list or a Sidekick's `people`
-list. Organization-wide visibility never admits a guest.
+list. Organization-wide visibility never admits a guest, also on a path that
+does not set `requireGrantAuthority` (a mention's notice asks for whoever was
+named): `HostedCanvas` and `HostedSidekick` both read the person's role from
+their relationship rather than assuming a member.
 
 Pure policy tests run with `pnpm --filter @rally/api exec vitest run
 test/scope-grant-policy.test.ts`. Storage and populated-schema upgrade tests run
