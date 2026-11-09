@@ -379,29 +379,32 @@ To cut over a deployment:
    domain in Cloudflare, including `rallywith.ai` and any domain present in an
    existing encrypted delivery intent. Install Cloudflare's supplied SPF, DKIM,
    and other verification records; Resend verification does not transfer.
-2. Deploy the API with its checked-in `EMAIL` binding and sender vars. Retain the
-   old receiving credentials and signed `/ingest/resend` webhook for previously
-   issued automation-subdomain addresses and pending Resend events. Reconcile uncertain outbound attempts before reissuing
+2. Merge the email-provider PR after review and CI pass. The `Deploy Avalon API`
+   workflow runs automatically on the merge to `main` and deploys the checked-in
+   `EMAIL` binding, sender vars and `WORKSTREAM_EMAIL_DOMAIN=rallywithai.com`.
+   Reconcile uncertain outbound attempts before reissuing
    them: Cloudflare does not deduplicate Resend keys or `X-Rally-Delivery-Key`.
 3. Use the dedicated `rallywithai.com` zone for new inbound addresses. Enable
    Email Routing DNS at its apex and configure one catch-all to the
-   `avalon-api-global` Worker's `email()` handler. Hold new-address issuance
-   during activation using the existing release maintenance procedure: promote
-   the Worker, enable the catch-all, then reopen issuance. The checked-in
-   `WORKSTREAM_EMAIL_DOMAIN` is `rallywithai.com`; verify it in the deployed
-   version as part of activation. Preserve the domain's unrelated web DNS.
-   Existing `automation.rallywith.ai` and `automation.with-avalon.com` MX records
-   stay on Resend; their signed webhook remains active and both full domains stay
-   accepted by the new Worker. Google Workspace MX on `rallywith.ai` is separate.
-4. Send a test invitation, sign-in email, notification and incoming message on
-   each receiving domain. Verify provider acceptance, regional receipt/resource
+   `avalon-api-global` Worker's `email()` handler. After the workflow successfully
+   deploys that handler, enable the staged catch-all and verify delivery before
+   announcing inbound email as available. The owner confirmed on 2026-11-09 that
+   nobody uses the current incoming addresses, so this is a direct activation:
+   no compatibility rollout, issuance pause or second Worker deployment is
+   required. New-domain mail cannot arrive until the catch-all is enabled.
+   Verify the deployed `WORKSTREAM_EMAIL_DOMAIN` and preserve the domain's
+   unrelated web DNS. Google Workspace MX on `rallywith.ai` is separate.
+4. Send a test invitation, sign-in email and notification, plus an incoming
+   message to a new Sidekick address on `rallywithai.com`. Verify provider
+   acceptance, regional receipt/resource
    creation and Sidekick admission. `/health` checks code and bindings; it cannot
    verify external DNS, Email Sending enablement, or receiving-rule configuration.
-5. Retain the signed Resend webhook and `RESEND_WEBHOOK_SIGNING_SECRET` /
-   `RESEND_WEBHOOK_SECRET`, `RESEND_API_KEY` and optional `RESEND_RECEIVING_API_KEY`
-   while existing automation subdomains still receive through Resend. Draining
-   pending webhooks alone is not enough: people can write to issued addresses
-   indefinitely. Historical storage names need no data migration.
+5. Retire the unused Resend receiving path after activation and any pending
+   deliveries have been settled. The implementation retains its signed webhook, credentials
+   and legacy MX for now; keeping them is not a prerequisite for the new domain.
+   Remove receiving secrets only when retiring that path. Existing stored
+   addresses and permanent claims are not rewritten or reassigned by this
+   rollout. Historical storage names need no data migration.
 
 Live setup on 2026-11-09: the account has Workers Paid. `rallywith.ai` is now
 onboarded to Email Sending with `enabled: true` and `preview_enabled: true`.
