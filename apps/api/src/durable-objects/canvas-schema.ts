@@ -37,11 +37,6 @@
  * A participant's `source` is `added`, `invitation`, or `request` (seated by
  * an approved request to open the Canvas, `docs/canvas-access-requests.md`).
  */
-/** WorkspaceDO migration 142: retain archived Canvases without admitting or listing them. */
-export const CANVAS_ARCHIVE_STATEMENTS: readonly string[] = [
-  `ALTER TABLE canvas_directory ADD COLUMN archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0)`,
-];
-
 export const CANVAS_SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE canvas_directory (
     canvas_id TEXT PRIMARY KEY,
@@ -186,3 +181,33 @@ export const UNTITLED_CANVAS = "Untitled Canvas";
 
 /** The alarm kind that titles a Canvas made with no title from its opening message. */
 export const CANVAS_NAMING_ALARM_KIND = "canvas_naming";
+
+/** WorkspaceDO migration 142: retain archived Canvases without admitting or listing them. */
+export const CANVAS_ARCHIVE_STATEMENTS: readonly string[] = [
+  `ALTER TABLE canvas_directory ADD COLUMN archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0)`,
+  `ALTER TABLE resources ADD COLUMN publication_parent_id TEXT`,
+  `UPDATE resources SET publication_parent_id =
+     (SELECT canvas_id FROM canvas_artifacts WHERE resource_id = resources.id LIMIT 1)
+   WHERE EXISTS (SELECT 1 FROM canvas_artifacts WHERE resource_id = resources.id)`,
+  // Generated-artifact authorship no longer grants an independent search audience.
+  `INSERT INTO resource_search_versions(resource_id, revision, pending, not_before)
+   SELECT id, 1, 1, 0 FROM resources WHERE provider = 'avalon_generated'
+   ON CONFLICT(resource_id) DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0`,
+  `CREATE TRIGGER canvas_publication_insert BEFORE INSERT ON resources
+   WHEN EXISTS (SELECT 1 FROM canvas_directory WHERE canvas_id = NEW.publication_parent_id AND archived_at IS NOT NULL)
+   BEGIN SELECT RAISE(ABORT, 'canvas_archived'); END`,
+  `CREATE TRIGGER canvas_publication_update BEFORE UPDATE OF title, mime_type, content_ref, content_sha256, metadata_json, publication_parent_id ON resources
+   WHEN EXISTS (SELECT 1 FROM canvas_directory WHERE canvas_id = NEW.publication_parent_id AND archived_at IS NOT NULL)
+   BEGIN SELECT RAISE(ABORT, 'canvas_archived'); END`,
+  `CREATE TRIGGER canvas_artifact_registry_insert BEFORE INSERT ON artifact_registry
+   WHEN EXISTS (SELECT 1 FROM canvas_directory WHERE canvas_id = NEW.workstream_id AND archived_at IS NOT NULL)
+   BEGIN SELECT RAISE(ABORT, 'canvas_archived'); END`,
+  `CREATE TRIGGER canvas_artifact_registry_update BEFORE UPDATE ON artifact_registry
+   WHEN EXISTS (SELECT 1 FROM canvas_directory WHERE canvas_id = NEW.workstream_id AND archived_at IS NOT NULL)
+   BEGIN SELECT RAISE(ABORT, 'canvas_archived'); END`,
+];
+
+
+/** Durable archive fan-out entries share the existing per-object alarm store. */
+export const CANVAS_ARCHIVE_CONVERSATION_ALARM = "canvas_archive_conversation";
+export const CANVAS_ARCHIVE_ARTIFACT_ALARM = "canvas_archive_artifact";

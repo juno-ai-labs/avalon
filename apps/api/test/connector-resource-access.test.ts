@@ -90,6 +90,8 @@ async function fixture() {
     environment: { PUBLIC_API_BASE_URL: "https://api.example.test" },
     register: (created) => { openDatabases.push(created); },
   });
+  await workspaceObject.instance.canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: WORKSTREAM_ID,
+    title: "Creator content", createdByUserId: USER_ID, authorityGeneration: 1 });
   const baseEnv = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",

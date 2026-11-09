@@ -714,9 +714,25 @@ omit archived rows; parent authority reports archived, new admission and
 artifact authorization refuse them, and a late child projection or artifact
 notice cannot make them active again. A create replay cannot recreate an
 archived Canvas. Writer Sidekicks cannot select an archived Canvas for another
-publication. `closingNarrowedConversations` applies the existing audience-change
-revocation walk to every former reader, closing open Chat sockets. The Canvas
-list's ordinary waterline push removes it from every viewer's active list.
+publication, whether selected explicitly or reused implicitly for the same run.
+The transaction also marks memory digest copies for withdrawal, advances each
+Activity recipient's waterline, and saves one alarm entry per Chat child and
+live artifact. Those entries stop the child loop and cancel its timers, publish
+Chat revocations through the existing access-revocation Queue, and withdraw
+artifact viewer sessions. Failed deliveries retain their original targets behind
+the alarm store's retry gate; retrying the archive never needs to reconstruct an
+audience the tombstone already removed. The ordinary Canvas and Activity
+waterline pushes remove their rows and unseen counts from open windows.
+
+Migration 142 also records a publication's parent on `resources` and fences
+resource mutations and artifact-registry writes against that parent's tombstone
+inside SQLite. A publisher which prepared bytes or cached its destination before
+archive cannot advance the retained content afterwards. Existing generated-resource
+search rows are requeued to withdraw their former independent publisher audience.
+Artifact hosts retain a
+Canvas tombstone of their own (migration 3), so delayed pointer writes or open
+code minting cannot undo archive delivery. Existing anonymous public-site reads
+retain their publication policy; authenticated sessions are withdrawn.
 
 ## Data model
 
@@ -772,10 +788,15 @@ left; future commands should extend that menu rather than add another trigger.
 
 Archive Canvas adds the missing lifecycle operation, through a manager-only
 route and WorkspaceDO migration 142's nullable `archived_at` tombstone. It
-removes active discovery and admission, reuses the existing socket-revocation
-walk, and keeps content stored. Deleting the directory row was rejected because
+removes active discovery, Activity, memory and admission, and keeps content stored.
+Archive cleanup is committed as per-target entries in the existing alarm store:
+one failed Queue send must not strand access after admission already narrowed.
+Resource writes check the tombstone in their own SQLite commit, while children
+stop their loops and timers and artifact hosts withdraw viewer sessions. Deleting the directory row was rejected because
 retained conversations and writer-run identities still refer to it, and a
-late effect or create replay must not bring an archived Canvas back.
+late effect, publication, or create replay must not bring an archived Canvas back.
+The original archive audience must survive retries, and a writer/run identity
+must never be reused to recreate its archived Canvas.
 
 ### 2026-11-09 — Separate viewer presence from database-backed artifacts
 

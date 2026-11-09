@@ -457,6 +457,30 @@ describe("a stateful artifact's facet", () => {
 });
 
 describe("the supervisor around the facet", () => {
+  it("withdraws Canvas viewer sessions and open codes, and refuses late publication", async () => {
+    const version = await publish(VOTING_MODULE);
+    const host = hostStub();
+    const { code } = await host.openForViewer({ userId: VIEWER, appSessionId: "session-one", displayName: "Ada" });
+    const redeemed = await host.redeemCode(code);
+    expect(redeemed).not.toBeNull();
+    const pending = await host.openForViewer({ userId: VIEWER, appSessionId: "session-two", displayName: "Ada" });
+    await host.archiveCanvas({ workspaceId: WORKSPACE, canvasId: WORKSTREAM });
+    expect(await host.checkSession(redeemed!.session)).toEqual({ ok: false, reason: "no_session" });
+    expect(await host.redeemCode(pending.code)).toBeNull();
+    await expect(runInDurableObject(host, (instance: ArtifactHostDO) => instance.openForViewer({
+      userId: VIEWER, appSessionId: "session-three", displayName: "Ada" }))).rejects.toThrow("canvas_archived");
+    await expect(runInDurableObject(host, (instance: ArtifactHostDO) => instance.recordPublish({
+      artifactId: ARTIFACT, workspaceId: WORKSPACE, workstreamId: WORKSTREAM, resourceId: RESOURCE,
+      region: "global", manifest: manifest(version + 1) }))).rejects.toThrow("canvas_archived");
+    expect((await host.currentState())?.version).toBe(version);
+    // Delivery can beat a delayed artifact's very first publication as well.
+    const late = env.ARTIFACT_HOSTS.get(env.ARTIFACT_HOSTS.idFromName(artifactHostDOName("global", asArtifactId(crypto.randomUUID()))));
+    await late.archiveCanvas({ workspaceId: WORKSPACE, canvasId: WORKSTREAM });
+    await expect(runInDurableObject(late, (instance: ArtifactHostDO) => instance.recordPublish({ artifactId: ARTIFACT,
+      workspaceId: WORKSPACE, workstreamId: WORKSTREAM, resourceId: RESOURCE, region: "global",
+      manifest: manifest(1) }))).rejects.toThrow("canvas_archived");
+  });
+
   it("drops a removed member's sessions and names no children", async () => {
     await publish(VOTING_MODULE);
     const host = hostStub();

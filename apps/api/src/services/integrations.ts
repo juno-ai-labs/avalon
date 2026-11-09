@@ -7133,7 +7133,7 @@ async function readRunAuthority(
     recordOptionalTiming(onTiming, "conversation", startedAt);
     if (!access.authorized) throw new ConnectorError("unauthorized", "Shared conversation access has ended");
     if (access.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
-  } else if (input.substreamId && input.substreamId !== "0" && !input.automationRun) {
+  } else if (!input.automationRun && (input.parentKind === "canvas" || (input.substreamId && input.substreamId !== "0"))) {
     startedAt = Date.now();
     const parent = await conversationParentStub(env, input);
     const authority = await parent.authority({ workspaceId: input.workspaceId, parentId: input.parentId });

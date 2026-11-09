@@ -45,6 +45,7 @@ import type { Env } from "../env";
 import {
   assertDurableObjectJurisdiction,
 } from "../lib/durable-object-namespace";
+import { parseRpcInput } from "../lib/rpc-input";
 import { sha256Hex } from "../lib/crypto";
 import {
   FACET_HOST_CLASS,
@@ -146,6 +147,10 @@ export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   "INSERT INTO \"artifact_state\" SELECT * FROM \"_region_copy_artifact_state\"",
   "DROP TABLE \"_region_copy_artifact_state\"",
   "PRAGMA defer_foreign_keys = OFF"
+]
+}, { version: 3, description: "retain Canvas archive authority at the artifact serving boundary", statements: [
+  `CREATE TABLE archived_canvases (workspace_id TEXT NOT NULL, canvas_id TEXT NOT NULL,
+     PRIMARY KEY (workspace_id, canvas_id)) STRICT`,
 ]
 }];
 
@@ -362,9 +367,28 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
    * read) changes nothing. The same version again is admitted, so a retry
    * converges. `advanced` says whether this call moved what is served.
    */
+  /** WorkspaceDO's durable archive fan-out; a late first publish cannot erase it. */
+  async archiveCanvas(input: { workspaceId: string; canvasId: string }): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: z.string().uuid(), canvasId: z.string().uuid() }), input, "canvas_archive_artifact");
+    this.state.storage.transactionSync(() => {
+      const state = this.stateRow();
+      if (state && (state.workspace_id !== request.workspaceId || state.workstream_id !== request.canvasId)) {
+        throw new Error("canvas_archive_artifact_identity_mismatch");
+      }
+      this.state.storage.sql.exec(`INSERT OR IGNORE INTO archived_canvases VALUES (?, ?)`, request.workspaceId, request.canvasId);
+      this.state.storage.sql.exec(`DELETE FROM viewer_sessions`);
+    });
+  }
+
+  private canvasArchived(): boolean {
+    return this.state.storage.sql.exec(`SELECT 1 FROM archived_canvases LIMIT 1`).toArray().length > 0;
+  }
+
   async recordPublish(publish: ArtifactPublish): Promise<{ advanced: boolean }> {
     await this.initialized;
     const input = ArtifactPublishSchema.parse(publish);
+    if (this.canvasArchived()) throw new Error("canvas_archived");
     const now = Date.now();
     // One synchronous event: nothing interleaves between this read and the
     // fenced upsert below.
@@ -417,6 +441,9 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     const code = randomSecret();
     const now = Date.now();
     this.pruneExpired(now);
+    const pendingDigest = await sha256Hex(new TextEncoder().encode(`pending:${code}`));
+    const codeDigest = await sha256Hex(new TextEncoder().encode(code));
+    if (this.canvasArchived()) throw new Error("canvas_archived");
     this.state.storage.sql.exec(
       `INSERT INTO viewer_sessions (
          session_sha256, user_id, app_session_id, display_name,
@@ -425,13 +452,13 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       // The session digest is a placeholder until redemption swaps in the
       // cookie's own digest; the primary key needs a value now and this row is
       // unreachable without the code.
-      await sha256Hex(new TextEncoder().encode(`pending:${code}`)),
+      pendingDigest,
       input.userId,
       input.appSessionId,
       input.displayName,
       now,
       now + VIEWER_SESSION_LIFETIME_MS,
-      await sha256Hex(new TextEncoder().encode(code)),
+      codeDigest,
       now + ARTIFACT_OPEN_CODE_LIFETIME_MS,
       now,
     );

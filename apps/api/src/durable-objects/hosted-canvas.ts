@@ -55,7 +55,7 @@ import {
   settleCanvasAccessRequest,
   type CanvasAccessSubject,
 } from "./canvas-access-requests";
-import { CANVAS_NAMING_ALARM_KIND, UNTITLED_CANVAS } from "./canvas-schema";
+import { CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_NAMING_ALARM_KIND, UNTITLED_CANVAS } from "./canvas-schema";
 import type { ScheduledAlarmStore } from "./scheduled-alarms";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { canvasTitleFromOpening } from "../services/canvas-naming";
@@ -408,7 +408,26 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       this.sql.exec(`UPDATE canvas_directory SET archived_at = ?, updated_at = ?, title_status = 'settled' WHERE canvas_id = ?`,
         now, now, this.canvasId);
       this.host.alarms.cancel(CANVAS_NAMING_ALARM_KIND, this.canvasId);
+      // Save the audience before any delivery. Retrying an archive cannot
+      // reconstruct it from admission: the tombstone now admits nobody.
+      const users = this.sql.exec<{ user_id: string }>(
+        `SELECT user_id FROM workspace_member_status WHERE active = 1`,
+      ).toArray().map((member) => member.user_id);
+      for (const child of this.childRegistry()) this.host.alarms.schedule({
+        kind: CANVAS_ARCHIVE_CONVERSATION_ALARM, key: `${this.canvasId}:${child.substreamId}`, dueAt: now,
+        payload: JSON.stringify({ canvasId: this.canvasId, substreamId: child.substreamId, users }),
+      });
+      for (const artifact of this.sql.exec<{ artifact_id: string }>(
+        `SELECT artifact_id FROM artifact_registry WHERE workstream_id = ?`, this.canvasId,
+      ).toArray()) this.host.alarms.schedule({
+        kind: CANVAS_ARCHIVE_ARTIFACT_ALARM, key: artifact.artifact_id, dueAt: now,
+        payload: JSON.stringify({ canvasId: this.canvasId }),
+      });
       this.host.noteCanvasDirectoryChanged(this.canvasId);
+      for (const recipient of this.sql.exec<{ recipient_user_id: string }>(
+        `SELECT DISTINCT recipient_user_id FROM workspace_activity_items WHERE parent_kind = 'canvas' AND parent_id = ?`,
+        this.canvasId,
+      ).toArray()) this.host.noteActivityChanged(recipient.recipient_user_id);
     });
   }
 

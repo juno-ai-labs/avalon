@@ -218,6 +218,14 @@ export const MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION: readonly string[]
    END`,
 ];
 
+/** Migration 142: archiving withdraws facts from every digest which may hold them. */
+export const MEMORY_DIGEST_CANVAS_ARCHIVE_TRIGGER: readonly string[] = [
+  `CREATE TRIGGER memory_digest_canvas_archive AFTER UPDATE OF archived_at ON canvas_directory
+   WHEN OLD.archived_at IS NOT NEW.archived_at BEGIN
+     ${MARK_ALL}
+   END`,
+];
+
 /** Advance `memory_revision` inside the caller's transaction and answer the new value. */
 export function nextMemoryRevision(sql: SqlStorage): number {
   return sql.exec<{ revision: number }>(
@@ -402,7 +410,7 @@ function conversationLive(sql: SqlStorage, conversation: MemoryConversation): bo
     case "automation":
       return exists("SELECT 1 FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'", conversation.parentId);
     case "canvas":
-      return exists("SELECT 1 FROM canvas_directory WHERE canvas_id = ?", conversation.parentId);
+      return exists("SELECT 1 FROM canvas_directory WHERE canvas_id = ? AND archived_at IS NULL", conversation.parentId);
   }
 }
 

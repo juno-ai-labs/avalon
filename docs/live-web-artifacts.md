@@ -650,7 +650,22 @@ facet that holds a stateful artifact's data. It does not own:
   seconds. A publish carries at most 25,000,000 bytes, transcribed from the file
   path's existing bound rather than chosen. A data page returns at most 200 rows.
 
+Canvas archive records one durable `canvas_archive_artifact` alarm entry per
+registered site in WorkspaceDO. Delivery writes `archived_canvases` in the artifact
+host (migration 3) and deletes viewer sessions and pending open codes together.
+Late `recordPublish` and `openForViewer` calls refuse the retained tombstone,
+including when archive delivery beats the first publish. Resource and registry
+writes before that hand-off enforce their owning WorkspaceDO's tombstone.
+Anonymous public reads
+keep the site's existing public policy; this revokes identity-bearing access.
+Resource and registry writes are fenced in WorkspaceDO's own archive transaction
+boundary ([Canvases](canvases.md#archiving)).
+
 ## Testing
+
+`test-workers/artifact-facet.test.ts` covers session and pending-code withdrawal
+and delayed publishes; `test-workers/canvas-publication.test.ts` covers delivery
+from a real Canvas archive to its published site.
 
 | Suite | What it proves |
 | --- | --- |
@@ -756,6 +771,14 @@ shows its saved quote and image. The script and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-09 — Retain Canvas archive authority at the serving boundary
+
+An admitted artifact session otherwise lasts until expiry even after its Canvas
+closes. Queue-only Chat revocation cannot reach it. Archive uses the existing
+durable alarm store to withdraw each artifact and leaves a local tombstone, rather
+than polling parent authorization on every asset read. Delayed publishers and
+open-code minting must not recreate the withdrawn authenticated access.
 
 ### 2026-11-09 — A site version is claimed before it is written, and serving never moves back
 
