@@ -25,7 +25,7 @@ Three buttons run down the top of the rail, each an icon with its name under it.
 
 At the bottom of the rail sits your avatar, labelled **Settings**. It opens the account menu described [below](#the-account-menu). <kbd>⌘</kbd> <kbd>,</kbd> opens the Settings window from anywhere.
 
-The Dock icon and the Mac menu bar add up the **Canvases** and **Sidekicks** numbers. Activity's number stays on the rail.
+The Mac menu bar adds up the **Canvases** and **Sidekicks** numbers. The Dock icon shows **Activity**'s number, the rows you have not seen yet.
 
 ## The sidebar
 
