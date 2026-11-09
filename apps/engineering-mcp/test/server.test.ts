@@ -179,29 +179,6 @@ describe("Rally engineering MCP tools", () => {
     expect(global.setSidekickPaused).not.toHaveBeenCalled();
   });
 
-  it("retires an Organization only in the region that owns it, as the trusted operator", async () => {
-    const global = regionalBinding("global");
-    const enterprise = regionalBinding("enterprise");
-    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
-    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
-    vi.mocked(enterprise.retireOrg).mockResolvedValue({
-      region: "enterprise", workspaceId: orgId, complete: false, remaining: 2, parents: 3,
-      retiredParents: 1, retiredChildren: 1, retainedOutbox: 0,
-      failed: [{ parentKind: "workstream", parentId: "00000000-0000-7000-8000-000000000ef4", error: "child_unreachable" }],
-    });
-    const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name: "retire_org", arguments: { orgId } });
-    expect(response.result).not.toHaveProperty("isError", true);
-    expect(response.result).toMatchObject({ content: [{ type: "text", text: expect.stringContaining('"remaining": 2') }] });
-    expect(enterprise.retireOrg).toHaveBeenCalledExactlyOnceWith({ orgId }, principal);
-    expect(global.retireOrg).not.toHaveBeenCalled();
-  });
-
-  it("publishes retire_org as destructive", async () => {
-    const response = await rpc(testEnv(), "tools/list");
-    const tools = (response.result as { tools: Array<{ name: string; annotations?: Record<string, boolean> }> }).tools;
-    expect(tools.find((entry) => entry.name === "retire_org")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
-  });
-
   it("routes dump_thread_transcripts to the Organization's region only when confirm names it", async () => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
@@ -280,6 +257,29 @@ describe("Rally engineering MCP tools", () => {
     await rpc(env, "tools/call", { name: "convert_threads_to_canvases", arguments: { orgId, dryRun: false, confirm: orgId } });
     expect(enterprise.convertThreadsToCanvases).toHaveBeenLastCalledWith({ orgId, dryRun: false, confirm: orgId }, principal);
     expect(global.convertThreadsToCanvases).not.toHaveBeenCalled();
+  });
+
+  it("retires an Organization only in the region that owns it, as the trusted operator", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
+    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
+    vi.mocked(enterprise.retireOrg).mockResolvedValue({
+      region: "enterprise", workspaceId: orgId, complete: false, remaining: 2, parents: 3,
+      retiredParents: 1, retiredChildren: 1, retainedOutbox: 0,
+      failed: [{ parentKind: "workstream", parentId: "00000000-0000-7000-8000-000000000ef4", error: "child_unreachable" }],
+    });
+    const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name: "retire_org", arguments: { orgId } });
+    expect(response.result).not.toHaveProperty("isError", true);
+    expect(response.result).toMatchObject({ content: [{ type: "text", text: expect.stringContaining('"remaining": 2') }] });
+    expect(enterprise.retireOrg).toHaveBeenCalledExactlyOnceWith({ orgId }, principal);
+    expect(global.retireOrg).not.toHaveBeenCalled();
+  });
+
+  it("publishes retire_org as destructive", async () => {
+    const response = await rpc(testEnv(), "tools/list");
+    const tools = (response.result as { tools: Array<{ name: string; annotations?: Record<string, boolean> }> }).tools;
+    expect(tools.find((entry) => entry.name === "retire_org")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
   });
 
   it("sends Organization creation to only the named region", async () => {

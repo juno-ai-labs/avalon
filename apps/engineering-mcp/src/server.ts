@@ -10,13 +10,13 @@ import {
   SendEngineeringMessageResultSchema,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
-  RetireEngineeringOrgInputSchema,
-  RetireEngineeringOrgResultSchema,
   ThreadRetirementOperationInputSchema,
   DumpThreadTranscriptsResultSchema,
   RetireThreadsResultSchema,
   ConvertThreadsToCanvasesInputSchema,
   ConvertThreadsToCanvasesResultSchema,
+  RetireEngineeringOrgInputSchema,
+  RetireEngineeringOrgResultSchema,
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
   EngineeringSidekickListLookupSchema,
@@ -242,13 +242,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
       await (await organizationBinding(request.orgId)).setSidekickPaused({ ...request, paused }, principal))));
   }
 
-  server.registerTool("retire_org", {
-    description: "Retire an Organization permanently, through the same door as Ace's Retire button: nobody can sign in to it, every Channel, Thread, Sidekick and socket in it stops, and nothing reopens. There is no undo. Members simply lose it. Retiring the demo template stops new demos from being prepared. The result reports complete: false while parts are still open; call again with the same orgId to resume the walk.",
-    inputSchema: RetireEngineeringOrgInputSchema.unwrap().shape,
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "retire_org", { workspace_id: request.orgId },
-    async () => RetireEngineeringOrgResultSchema.parse(
-      await (await organizationBinding(request.orgId)).retireOrg(request, principal))));
   /** The typed confirmation, checked here before any region is asked and again by the region. */
   function confirmedOrg(request: { orgId: string; confirm: string }): string {
     if (request.confirm !== request.orgId) {
@@ -256,6 +249,14 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     }
     return request.orgId;
   }
+
+  server.registerTool("retire_org", {
+    description: "Retire an Organization permanently, through the same door as Ace's Retire button: nobody can sign in to it, every Canvas, Sidekick and socket in it stops, and nothing reopens. There is no undo. Members simply lose it. The result reports complete: false while parts are still open; call again with the same orgId to resume the walk.",
+    inputSchema: RetireEngineeringOrgInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "retire_org", { workspace_id: request.orgId },
+    async () => RetireEngineeringOrgResultSchema.parse(
+      await (await organizationBinding(request.orgId)).retireOrg(request, principal))));
 
   server.registerTool("dump_thread_transcripts", {
     description: "Write every Thread, Breakout and Channel conversation of orgId to R2 as room-visible text, under retired-conversations/<orgId>/<parentId>/<substreamId>.txt, before retire_threads deletes them. Canvases and Sidekicks are never dumped. A conversation already in R2 is skipped, so repeat the call to resume. confirm must equal orgId. Returns counts: conversations, dumped, skipped, and failed with a code per conversation.",
