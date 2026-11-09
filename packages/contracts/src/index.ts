@@ -222,12 +222,7 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * members share a version (`gpt-5.6-*`, `deepseek-v4-*`) and are ordered by
  * hand.
  *
- * Nothing reads position 0. An earlier note here claimed the first entry was
- * what the selector showed before anything was chosen, and that has not been
- * true since the unpinned state became a row of its own: the menu renders
- * `UNPINNED_AGENT_MODEL` above every group and labels it **Default**, on the
- * reasoning in `agent-models.ts` that the renderer cannot see which variation
- * `agent-model-workstream` served and so must not name a model for it.
+ * Nothing reads position 0.
  *
  * This is a *closed* list rather than a free-text model id on purpose: an
  * override bypasses the Flagship rollout for the work stream it is attached to,
@@ -3461,12 +3456,6 @@ export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((
 }).transform((manifest) => ({
   ...manifest,
   activityTypes: manifest.activityTriggers.map((trigger) => trigger.eventType),
-  // Derived rather than declared a second time: the descriptor is the single
-  // authority on digestibility, and a consumer asking "may this event type
-  // reach a digest" should not have to scan a list of descriptors to find out.
-  digestibleActivityTypes: manifest.activityTriggers
-    .filter((trigger) => trigger.digestible)
-    .map((trigger) => trigger.eventType),
 }));
 
 export type Region = z.infer<typeof RegionSchema>;

@@ -526,15 +526,6 @@ export type ConnectorNativeAgentAdapter<
 /** Backward-compatible name for native-agent call sites. */
 export type ConnectorNativeAgentExecutionContext = ConnectorAgentExecutionContext;
 
-export async function acknowledgeConnectorAgentActivation<Invocation, Command, Result>(
-  adapter: ConnectorAgentAdapter<Invocation, Command, Result>,
-  invocation: Invocation,
-  context: ConnectorAgentExecutionContext,
-): Promise<Result | null> {
-  const command = adapter.activationAcknowledgement?.(invocation) ?? null;
-  return command === null ? null : adapter.execute(command, context);
-}
-
 export interface ConnectorAuthorizationInput extends Record<string, unknown> {
   /**
    * The Avalon connection scope selected before leaving for the provider.
