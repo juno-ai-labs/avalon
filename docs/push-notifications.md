@@ -636,7 +636,7 @@ conversation emits one `new_message_notification` per message naming its
 recipients, the hosted parent batches it in a `reply_batch` alarm entry, and
 the entry records a `delivered` (or, within the cooldown, `skipped`) intent
 and a collapsing Activity row per recipient through `recordParentNotice`.
-WorkspaceDO migration 150 (folded into 137 before it shipped) widened the intents' `notification_kind` CHECK to
+WorkspaceDO migration 137 widens the intents' `notification_kind` CHECK to
 the four kinds a hosted parent now records about itself (`new_message`,
 `artifact_updated`, `access_request`, `access_granted`) and adds a
 recipient-and-kind index the cooldown reads. The push consumer renders those

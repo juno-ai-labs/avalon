@@ -389,7 +389,7 @@ SQL joins.
   `breakout_viewers` and the `parent_*` tables — stays in `WorkspaceDO` after
   migration 138 because the Thread retirement's inventory reads it; nothing
   else does ([`workspace-retirement.md`](workspace-retirement.md)). Migration
-  64 dropped the Project tables, and 147 dropped the Space ledgers, the
+  64 dropped the Project tables, and 138 dropped the Space ledgers, the
   Thread pins, order, access and resource links, and the batch dispatches.
 - **What the Thread era left.** The shipped migrations are the map of the
   Thread, Channel, Space and Project tables as they were; this list says only
@@ -418,7 +418,7 @@ SQL joins.
   see [`member-preferences.md`](member-preferences.md).
 - `workspace_pins` (migration 97) is one person's pins of every kind, keyed
   `(user_id, item_kind, item_id)`; migration 136 admits `canvas` and
-  `sidekick`, the only kinds written now, and 147 deleted every row of the
+  `sidekick`, the only kinds written now, and 138 deleted every row of the
   Thread-era kinds the shipped CHECK still admits. It is the one source of pin
   state; see [`pinning.md`](pinning.md).
 - `workspace_member_status` (migration 72), one row per person: their
