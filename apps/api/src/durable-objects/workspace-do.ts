@@ -251,10 +251,7 @@ import {
   type ScheduledAlarm,
   type ScheduledAlarmOutcome,
 } from "./scheduled-alarms";
-import {
-  applyDurableObjectSqliteMigrations,
-  type DurableObjectSqliteMigration,
-} from "./sqlite-migrations";
+import type { DurableObjectSqliteMigration } from "./sqlite-migrations";
 import {
   observableWorkspaceScheduledAlarmKind,
   WorkspaceAlarmInstrumentation,

@@ -1832,23 +1832,16 @@ embedded browser: a tool called the run's `desktopAction` executor,
 the desktop answered with `answer_desktop_action`; only the creator's answer
 was accepted (`answersDesktopActions`), the first answer won, and crash repair
 re-entered the `reenterable` browser tools against the durable row. It was
-built for the conversation importer and had no other user. Nothing reaches it:
-`AGENT_PROFILES` (`apps/api/src/services/agent-profiles.ts`) is empty, a run is
-handed `desktopAction` only through a profile's `plugins`,
-`createBrowserPlugin` has no caller outside
-`apps/api/test/desktop-action-tools.test.ts`, and nothing under
-`apps/desktop/src` or `packages/ui/src` handles the request or sends an answer.
-What survives, all unreached: the `desktop_actions` table
-(`workstream-object-schema.ts`, `workstream-desktop-action-storage.ts`); the two
-socket frames in `packages/contracts/src/index.ts`; the action union, results
-and failure codes in `packages/contracts/src/desktop-actions.ts`;
-`requestDesktopAction`, `answerDesktopAction`, `answersDesktopActions` and
-`offerPendingDesktopActions` in `agent-loop-do.ts`; `desktopAction` in
-`runtime/local-authorities.ts`; the `desktop_action_phase` diagnostic; the
-browser tools in `services/desktop-actions/browser-plugin.ts`; and the desktop
-executor in `apps/desktop/src/common/desktop-actions/`, which the equally
-unreached browser script runtime drives
-([its record](embedded-browser.md#retired-documents)). A feature that revives
+built for the conversation importer and had no other user. The dead-code pass
+deleted its server half (the AgentLoopDO methods, the local authority, the
+storage class and the browser plugin) and its desktop executor with the browser
+script runtime ([its record](embedded-browser.md#retired-documents)). What
+stays, for compatibility only: the two socket frames in
+`packages/contracts/src/index.ts` and the action schemas in
+`packages/contracts/src/desktop-actions.ts`, because a desktop still in use may
+send an `answer_desktop_action`, which AgentLoopDO parses, logs as
+`desktop_action_answer_dropped` and drops (the schemas go a release later); and
+the `desktop_actions` table, dropped with an AgentLoopDO migration. A feature that revives
 it inherits four decisions: only the conversation's creator answers unless the
 feature states whose desktop may act; an action is recorded before it is
 published and answered at most once, its answer stored before it is used;

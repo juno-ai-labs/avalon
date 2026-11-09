@@ -12,7 +12,7 @@ first dedicated consumer was removed with the browser session import
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/common/embedded-browser.ts` | Typed command, result, state, bounds, and URL validation. |
-| `apps/desktop/src/main/embedded-browser.ts` | Guest contents, tabs, navigation, page inspection, input, and native view placement. |
+| `apps/desktop/src/main/embedded-browser.ts` | Guest contents, tabs, navigation, and native view placement. |
 | `apps/desktop/src/main/index.ts` | Account ownership, the main window's browser, and IPC admission. |
 | `apps/desktop/src/preload/index.ts` | The named renderer bridge, without general IPC access. |
 | `apps/desktop/src/renderer/components/embedded-browser-view.tsx` | The shared pieces: tab state and commands, native page placement, navigation toolbar, tab strip, and keyboard shortcuts. |
@@ -50,9 +50,9 @@ placement observer tracks positioning and sizing styles only within menus and
 their positioned wrappers, so unrelated composer or transcript styles do not
 trigger browser placement.
 
-The address field navigates to an HTTP or HTTPS URL. Tabs, back, forward, and
-reload use the same typed command entry point as DOM inspection, screenshots,
-input, page JavaScript, and Chrome DevTools Protocol commands. A website popup
+The address field navigates to an HTTP or HTTPS URL. The typed command entry
+point carries only what the browser's own controls send: `open`, `close`,
+`select`, `move`, `navigate`, `back`, `forward`, `reload` and `stop`. A website popup
 destination opens in another rail tab. Sign-in flows that require a child
 window to call back through `window.opener` are not yet supported.
 The browser view owns link and redirect navigation. Rally's global app-window
@@ -101,42 +101,19 @@ as Google Chrome.
 - Native page bounds follow the rail and are hidden behind dialogs and
   overlapping Rally menus.
   Otherwise a guest page can paint above a dialog or outside the browser rail.
-- In a browser an agent drives (`agentDriven`, a constructor argument; the
-  import window was the only caller that set it, and nothing does now) every
-  tab records its page's network responses from creation through DevTools, and
-  copies Fetch and XHR bodies as each finishes, up to `NETWORK_BODY_BYTES_MAX`
-  (open: the team's number to set); a new document clears the record. The
-  rail's browser records nothing: a person's own browsing keeps no responses in
-  the main process. An agent reads the data a web app loaded instead of
-  rebuilding the request that loaded it, and reads it again after Chromium has
-  evicted its own copy. A tab under an open DevTools window records nothing,
-  because only one debugger can attach.
 - Hidden is parked, not collapsed: the active tab keeps its size outside the
-  window, without keyboard focus, and — in an agent-driven browser only —
-  unthrottled. An agent driving it reads,
-  captures and clicks the same page whether or not a Rally overlay covers it,
-  and the person cannot reach it while one does.
+  window, without keyboard focus, so the person cannot reach it while a Rally
+  overlay covers it and the page keeps its layout for when it returns.
 
 ## Boundary
 
-The browser owns local website state, navigation, page inspection, and page
-input. The Rally renderer owns the controls and layout; it cannot receive a
-`WebContents` or an arbitrary IPC channel. The one way an API agent loop could
-reach the browser is the desktop-action protocol
-([its retirement record](workstream-durable-object.md#retired-documents)): a typed request on the
-conversation's socket that the desktop executes through this same
-`command()` path, on one tab, never through another page controller. Tool
-receipts and retry policy stay with the harness. Every run is wired a
-desktop-action executor (`agent-loop-do.ts`), but the one plugin that uses it,
-the browser plugin, reaches a run only through an agent profile
-(`integrations.ts`), and since the session-import profile was removed no
-profile exists, so no run reaches the rail browser today.
-
-The browser supplies the signed-in page and its primitives — page script
-(`evaluate`), the accessibility tree (`snapshot`), a screenshot sized in DIPs so
-its pixels are input coordinates, input, and DevTools' network loader (`cdp`)
-for a file on an origin the page may not read. It does not decide what a page
-means; that is the caller's.
+The browser owns local website state and navigation. The Rally renderer owns
+the controls and layout; it cannot receive a `WebContents` or an arbitrary IPC
+channel, and the command protocol has no page script, input, inspection or
+DevTools command for it to send. No agent loop reaches the browser: the
+desktop-action protocol that once could
+([its retirement record](workstream-durable-object.md#retired-documents)) is
+gone from both the server and the desktop.
 
 ## Failure modes and limits
 
@@ -158,9 +135,7 @@ for `PublicKeyCredential` still waits forever.
 The native view cannot be layered under renderer dialogs, so the renderer hides
 it for dialogs and overlapping menus, and CSS — a blur, a scrim — cannot
 reach it. A surface that wants the page visible behind an overlay draws a capture of it instead.
-In an agent-driven browser a parked active tab renders at full speed, so a
-covered page costs what a visible one does; the rail's throttles as Chromium
-does for any hidden page.
+A parked tab throttles as Chromium does for any hidden page.
 
 ## Testing
 
@@ -176,12 +151,6 @@ cover the conversation.
 WebAuthn being off has no unit test, since a mocked `WebContentsView` cannot
 show whether Electron honors the flag. On macOS or Linux, evaluate
 `typeof PublicKeyCredential` in a guest tab and expect `'undefined'`.
-
-The model-facing orchestration realm and its handles, which nothing reaches
-today, are described in [the browser script runtime's retirement
-record](#retired-documents). This browser
-owns the run-to-realm map and disposes associated realms when tabs or the
-browser close, or when the owning renderer reloads or loses its process.
 
 ## Retired documents
 
@@ -203,13 +172,11 @@ answers `desktop_action_requested`
 ([the desktop actions record](workstream-durable-object.md#retired-documents)).
 Its one user was the session import, deleted with Threads.
 
-The code survives unreached and tested: `packages/contracts/src/browser-runtime.ts`
-(whose model instructions still name the deleted `import_finish` and
-`import_fail`), `apps/api/src/services/desktop-actions/browser-plugin.ts`, and
-on the desktop `common/browser-script-bootstrap.ts`,
-`common/browser-script-protocol.ts`, `main/browser-script-runtime.ts`,
-`main/browser-script-driver.ts` and this browser's run-to-realm map. A feature
-that gives a run these tools again inherits from that changelog: model code
+Its code was deleted in the dead-code pass: the model-facing contract, the
+API's browser plugin, and on the desktop the realm's bootstrap, protocol,
+runtime and driver, this browser's run-to-realm map, the agent-only commands
+and the network recorder. A feature that gives a run these tools again starts
+from that changelog, recoverable with `git log`: model code
 runs only in the disposable realm, never in Electron main or Rally's renderer;
 native RPC is a closed union pinned to the owner's tab that refuses script and
 reset, so a script cannot recurse; browser tools use write receipts and never
