@@ -44,6 +44,7 @@ import { useOpenRouterDouble, type ProviderReply } from "./helpers/openrouter-do
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { runSidekickAlarms, sidekickWorkspace } from "./helpers/sidekick";
+import { startWaitBudget, waitBudget } from "./helpers/wait-budget";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000c8a0");
@@ -59,8 +60,6 @@ const GUEST_ID = asUserId("00000000-0000-7000-8000-00000000c8a7");
 const GUEST_SESSION_ID = "00000000-0000-7000-8000-00000000c8a8";
 const NOW = "2026-11-06T10:00:00.000Z";
 const TEST_ENV: Env = env;
-/** A turn reaches the double and ends; sized for a contended multi-suite run. */
-const SETTLE_TIMEOUT_MS = 15_000;
 
 function auth(userId: string): AuthContext {
   const sessionId = userId === MEMBER_ID ? MEMBER_SESSION_ID : userId === ADMIN_ID ? ADMIN_SESSION_ID
@@ -236,7 +235,7 @@ async function wizardExecutions(): Promise<{ trigger: string | null; terminal: b
 /** Wait for the wizard's turn the message started to finish. */
 async function wizardAnswered(turnId: string): Promise<void> {
   await expect.poll(async () => (await wizardExecutions()).find((execution) => execution.trigger === turnId)?.terminal,
-    { timeout: SETTLE_TIMEOUT_MS }).toBe(true);
+    { timeout: waitBudget() }).toBe(true);
 }
 
 /** Whether the message has landed as a turn and nothing is still queued for the loop. */
@@ -306,7 +305,7 @@ async function rowReaches(runId: string, wanted: string): Promise<RunRowView> {
     await runDurableObjectAlarm(workspaceStub());
     latest = await runRow(runId);
     return latest.run?.state;
-  }, { timeout: SETTLE_TIMEOUT_MS, interval: 100 }).toBe(wanted);
+  }, { timeout: waitBudget(), interval: 100 }).toBe(wanted);
   return latest!;
 }
 
@@ -327,7 +326,7 @@ async function runSettled(runId: string, activations = 1): Promise<void> {
     } catch {
       return 0;
     }
-  }), { timeout: SETTLE_TIMEOUT_MS, interval: 100 }).toBe(activations);
+  }), { timeout: waitBudget(), interval: 100 }).toBe(activations);
 }
 
 beforeEach(async () => {
@@ -338,6 +337,7 @@ beforeEach(async () => {
   await seedRegionalDatabase();
   await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
     .initializeWorkspace(WORKSPACE_ID, "wnam");
+  startWaitBudget();
 });
 
 describe("a Sidekick's shared conversation", () => {
@@ -346,7 +346,7 @@ describe("a Sidekick's shared conversation", () => {
     await allowDelegation(MEMBER_ID);
     const question = "What shipped in the last release?";
     const turnId = await say(MEMBER_ID, question, "member-question");
-    await expect.poll(() => landed(turnId), { timeout: SETTLE_TIMEOUT_MS }).toBe(true);
+    await expect.poll(() => landed(turnId), { timeout: waitBudget() }).toBe(true);
     // The wizard did not answer: the conversation's own loop started nothing.
     expect(await wizardExecutions()).toEqual([]);
     const [run] = await sidekickRuns();
@@ -357,7 +357,7 @@ describe("a Sidekick's shared conversation", () => {
     });
     // The run reads the message as its opening, under the Sidekick's instructions.
     expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([run!.run_id]);
-    await expect.poll(() => callsThatSaw(question).length, { timeout: SETTLE_TIMEOUT_MS }).toBeGreaterThan(0);
+    await expect.poll(() => callsThatSaw(question).length, { timeout: waitBudget() }).toBeGreaterThan(0);
     // It ran in the run's own conversation, as the run, not in the wizard's.
     const runExecutions = await runInDurableObject(conversationStub(run!.run_id), (_instance, state) =>
       state.storage.sql.exec<{ execution_context_json: string }>(
@@ -387,7 +387,7 @@ describe("a Sidekick's shared conversation", () => {
   it("starts a run from a manager's message that is not marked as an edit", async () => {
     await activeSidekick();
     const turnId = await say(AUTHOR_ID, "What shipped this week?", "author-question");
-    await expect.poll(() => landed(turnId), { timeout: SETTLE_TIMEOUT_MS }).toBe(true);
+    await expect.poll(() => landed(turnId), { timeout: waitBudget() }).toBe(true);
     expect(await wizardExecutions()).toEqual([]);
     const runs = await sidekickRuns();
     // A delegate's own message runs as that delegate, with delegate access.
@@ -400,7 +400,7 @@ describe("a Sidekick's shared conversation", () => {
     await activeSidekick();
     await allowDelegation(MEMBER_ID);
     const turnId = await say(MEMBER_ID, "Stop including the importer.", "member-edit", true);
-    await expect.poll(() => systemNotes("sidekick-message-refused:"), { timeout: SETTLE_TIMEOUT_MS })
+    await expect.poll(() => systemNotes("sidekick-message-refused:"), { timeout: waitBudget() })
       .toEqual([{ code: "sidekick_edit_requires_manager", turnId }]);
     expect(await landed(turnId)).toBe(true);
     expect(await wizardExecutions()).toEqual([]);
@@ -464,7 +464,7 @@ describe("a Sidekick's shared conversation", () => {
     expect(accepted.status, await accepted.clone().text()).toBe(200);
     await runDurableObjectAlarm(conversationStub());
     await expect.poll(async () => (await wizardExecutions()).filter((execution) => execution.terminal).length,
-      { timeout: SETTLE_TIMEOUT_MS }).toBe(2);
+      { timeout: waitBudget() }).toBe(2);
     expect((await wizardExecutions()).every((execution) => execution.wizard)).toBe(true);
     expect(await sidekickRuns()).toEqual([]);
   });
@@ -472,7 +472,7 @@ describe("a Sidekick's shared conversation", () => {
   it("runs a non-delegate member's message under their own access, and keeps them as the run's principal", async () => {
     await activeSidekick();
     const turnId = await say(MEMBER_ID, "Summarize the release for me.", "member-without-delegation");
-    await expect.poll(() => landed(turnId), { timeout: SETTLE_TIMEOUT_MS }).toBe(true);
+    await expect.poll(() => landed(turnId), { timeout: waitBudget() }).toBe(true);
     expect(await systemNotes("sidekick-message-refused:")).toEqual([]);
     const [run] = await sidekickRuns();
     expect(run).toMatchObject({ occurrence_key: `message:${turnId}`, coordinator_user_id: MEMBER_ID, requester_user_id: MEMBER_ID });
@@ -494,7 +494,7 @@ describe("a Sidekick's shared conversation", () => {
     await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickSetAudience({
       ...addressed(), actor: actor(), update: { audience: "people", userIds: [GUEST_ID] } }));
     const turnId = await say(GUEST_ID, "Summarize the release for me.", "guest-on-the-list");
-    await expect.poll(() => landed(turnId), { timeout: SETTLE_TIMEOUT_MS }).toBe(true);
+    await expect.poll(() => landed(turnId), { timeout: waitBudget() }).toBe(true);
     expect(await systemNotes("sidekick-message-refused:")).toEqual([]);
     const [run] = await sidekickRuns();
     expect(run).toMatchObject({ occurrence_key: `message:${turnId}`, coordinator_user_id: GUEST_ID, requester_user_id: GUEST_ID });
@@ -784,6 +784,7 @@ describe("a Sidekick's shared conversation", () => {
     await deliverChildEffects(TEST_ENV, conversationStub());
     await read(AUTHOR_ID);
     await read(MEMBER_ID);
+    const opened: WebSocket[] = [];
     async function open(userId: string, sessionId: string) {
       const response = await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
         .fetch("https://workspace.test/socket", { headers: {
@@ -798,16 +799,18 @@ describe("a Sidekick's shared conversation", () => {
       const frames: Array<Record<string, unknown>> = [];
       socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); });
       socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
-      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
+      // Closed in the caller's `finally` even when the subscribe below fails.
+      opened.push(socket);
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: waitBudget() }).toBe(true);
       return { socket, frames };
     }
     const unreadIn = (frames: Array<Record<string, unknown>>) => frames
       .filter((frame) => frame.type === "workspace_sidebar_list" && frame.list === "automations")
       .map((frame) => (frame.items as Array<{ id: string; unread?: boolean }>)
         .find((item) => item.id === AUTOMATION_ID)?.unread);
-    const author = await open(AUTHOR_ID, SESSION_ID);
-    const member = await open(MEMBER_ID, MEMBER_SESSION_ID);
     try {
+      const author = await open(AUTHOR_ID, SESSION_ID);
+      const member = await open(MEMBER_ID, MEMBER_SESSION_ID);
       author.frames.length = 0;
       member.frames.length = 0;
       const started = await workspaceStub().sidekickRunNow({
@@ -818,7 +821,7 @@ describe("a Sidekick's shared conversation", () => {
       // No delivery from the conversation's outbox yet: the row's write was
       // applied where the Sidekick asked for it. Its other reader sees it
       // unread; the requester never sees their own run's row unread.
-      await expect.poll(() => unreadIn(member.frames).at(-1), { timeout: 5_000 }).toBe(true);
+      await expect.poll(() => unreadIn(member.frames).at(-1), { timeout: waitBudget() }).toBe(true);
       expect(unreadIn(author.frames).length).toBeGreaterThan(0);
       expect(unreadIn(author.frames).every((unread) => unread === false)).toBe(true);
       // The Queue's copies arrive afterwards and change nothing anyone sees.
@@ -826,8 +829,7 @@ describe("a Sidekick's shared conversation", () => {
       expect(unreadIn(author.frames).every((unread) => unread === false)).toBe(true);
       expect(unreadIn(member.frames).at(-1)).toBe(true);
     } finally {
-      author.socket.close();
-      member.socket.close();
+      for (const socket of opened) socket.close();
     }
   });
 
@@ -939,7 +941,7 @@ describe("a Sidekick's shared conversation", () => {
         recipient_user_id: string; kind: string; run_id: string; preview: string | null;
       }>(`SELECT recipient_user_id, kind, run_id, preview FROM workspace_activity_items WHERE kind = 'needs_input'
           ORDER BY recipient_user_id`).toArray());
-    }, { timeout: SETTLE_TIMEOUT_MS, interval: 100 }).toEqual([
+    }, { timeout: waitBudget(), interval: 100 }).toEqual([
       { recipient_user_id: AUTHOR_ID, kind: "needs_input", run_id: started.runId, preview: question },
       { recipient_user_id: ADMIN_ID, kind: "needs_input", run_id: started.runId, preview: question },
     ]);
@@ -981,7 +983,7 @@ describe("a Sidekick's shared conversation", () => {
       .map((frame) => (frame.items as Row[]).find((item) => item.id === AUTOMATION_ID))
       .map((row) => ({ needsInput: row?.needsInput, pendingQuestion: row?.pendingQuestion, runState: row?.runState }));
     try {
-      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: waitBudget() }).toBe(true);
       const elicitationId = await runInDurableObject(conversationStub(started.runId), (_instance, state) => state.storage.sql.exec<{
         elicitation_id: string;
       }>(`SELECT elicitation_id FROM elicitation_requests WHERE status = 'pending'`).one().elicitation_id);
@@ -995,7 +997,7 @@ describe("a Sidekick's shared conversation", () => {
       await runSettled(started.runId, 2);
       await deliverChildEffects(TEST_ENV, conversationStub(started.runId));
       await rowReaches(started.runId, "completed");
-      await expect.poll(() => rows().at(-1), { timeout: 5_000 }).toMatchObject({ needsInput: false });
+      await expect.poll(() => rows().at(-1), { timeout: waitBudget() }).toMatchObject({ needsInput: false });
       // Every frame from the answer to the run's end: while the row still
       // waits it says the question, never a bare "Needs input" (vis3 e2-N1).
       expect(rows().filter((row) => row.needsInput && row.pendingQuestion !== question)).toEqual([]);
@@ -1022,7 +1024,7 @@ describe("a Sidekick's shared conversation", () => {
     socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); });
     socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
     try {
-      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: waitBudget() }).toBe(true);
       const row = () => frames.filter((frame) => frame.type === "workspace_sidebar_list" && frame.list === "automations")
         .flatMap((frame) => frame.items as Array<{ id: string; name: string; status: string }>)
         .filter((item) => item.id === AUTOMATION_ID).at(-1);
@@ -1030,7 +1032,7 @@ describe("a Sidekick's shared conversation", () => {
       await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...DEFINITION, name: "Haiku writer" },
         evaluatorRules: null, submittedByRunId: null, actor: actor() });
       // Sent by the save itself, which the socket delivers as a message event.
-      await expect.poll(row, { timeout: 5_000 }).toMatchObject({ name: "Haiku writer", status: "active" });
+      await expect.poll(row, { timeout: waitBudget() }).toMatchObject({ name: "Haiku writer", status: "active" });
       // It wakes on request only: no schedule, so no zone.
       expect(row()).not.toHaveProperty("scheduleTimeZone");
     } finally {
@@ -1056,7 +1058,7 @@ describe("a Sidekick's shared conversation", () => {
     socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); });
     socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
     try {
-      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: waitBudget() }).toBe(true);
       const row = () => frames.filter((frame) => frame.type === "workspace_sidebar_list" && frame.list === "automations")
         .flatMap((frame) => frame.items as Array<{
           id: string; status: string; nextRunAt: string | null; scheduleTimeZone?: string;
@@ -1067,7 +1069,7 @@ describe("a Sidekick's shared conversation", () => {
         { type: "calendar", rrule: "FREQ=WEEKLY;BYDAY=FR;BYHOUR=14;BYMINUTE=0;BYSECOND=0", timezone: "America/Los_Angeles",
           summary: "Every Friday at 2:00 PM" },
       ] }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
-      await expect.poll(row, { timeout: 5_000 }).toMatchObject({ status: "active", scheduleTimeZone: "America/Los_Angeles" });
+      await expect.poll(row, { timeout: waitBudget() }).toMatchObject({ status: "active", scheduleTimeZone: "America/Los_Angeles" });
       // Read in that zone, the next run is the time the schedule's summary says.
       const next = row()!;
       expect(new Intl.DateTimeFormat("en-US", { timeZone: next.scheduleTimeZone, weekday: "long", hour: "numeric",
@@ -1079,6 +1081,7 @@ describe("a Sidekick's shared conversation", () => {
 
   it("sends a reader's own read of the shared conversation only to that reader's sockets", async () => {
     await activeSidekick();
+    const opened: WebSocket[] = [];
     async function open(userId: string, sessionId: string) {
       const response = await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
         .fetch("https://workspace.test/socket", { headers: {
@@ -1093,12 +1096,14 @@ describe("a Sidekick's shared conversation", () => {
       const frames: Array<Record<string, unknown>> = [];
       socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); });
       socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
-      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
+      // Closed in the caller's `finally` even when the subscribe below fails.
+      opened.push(socket);
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: waitBudget() }).toBe(true);
       return { socket, frames };
     }
-    const author = await open(AUTHOR_ID, SESSION_ID);
-    const member = await open(MEMBER_ID, MEMBER_SESSION_ID);
     try {
+      const author = await open(AUTHOR_ID, SESSION_ID);
+      const member = await open(MEMBER_ID, MEMBER_SESSION_ID);
       author.frames.length = 0;
       member.frames.length = 0;
       // The member's own read report from the shared conversation, as "0"
@@ -1116,13 +1121,12 @@ describe("a Sidekick's shared conversation", () => {
         instance.receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [envelope] }));
       const lists = (frames: Array<Record<string, unknown>>) => frames.filter((frame) =>
         frame.type === "workspace_sidebar_list" && frame.list === "automations");
-      await expect.poll(() => lists(member.frames).length, { timeout: 5_000 }).toBe(1);
+      await expect.poll(() => lists(member.frames).length, { timeout: waitBudget() }).toBe(1);
       expect(lists(member.frames)[0]).toMatchObject({ items: [expect.objectContaining({ id: AUTOMATION_ID, unread: false })] });
       // The author's row did not move, and their socket was told nothing.
       expect(lists(author.frames)).toEqual([]);
     } finally {
-      author.socket.close();
-      member.socket.close();
+      for (const socket of opened) socket.close();
     }
   });
 });

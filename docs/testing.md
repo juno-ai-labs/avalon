@@ -234,6 +234,19 @@ is the whole reason to write a poll: it fails with `expected 1 to be +0` and a
 line number, where a harness timeout names no assertion at all. A poll budgeted
 at the test budget is a poll whose message nobody will ever read.
 
+**Waits in one test share one deadline when they chain.** Three polls of 15
+seconds each in a 30-second test can need 45 seconds, and the test then dies
+as a bare timeout halfway through a wait. `apps/api/test-workers/helpers/wait-budget.ts`
+holds the shared deadline: `startWaitBudget()` at the end of the file's
+`beforeEach`, then `{ timeout: waitBudget() }` on each poll. Each poll gets the
+time left, which ends 5 seconds before the `testTimeout` in
+`vitest.workers.config.ts`, so the wait that runs out fails on its own
+assertion. `canvas-conversation`, `sidekick-shared-conversation` and
+`workspace-socket-subscribe` use it. A hold the test releases (a held stream,
+a held Flagship answer) is released in a `finally`, and every socket the test
+opens is closed in a `finally` or an `afterEach`. Otherwise a failed test
+leaves it spinning or open in an object the next test reuses.
+
 One thing not to over-correct for: a poll does not falsely expire because the box
 is loaded. Node fires the 50ms interval timer ahead of the one-second timeout
 timer when both come due together, so a stall alone cannot expire a poll — only
