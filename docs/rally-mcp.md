@@ -207,9 +207,12 @@ its files are, in the Worker, before any sandbox starts (`detectSiteSource`):
 
 A component may import only `COMPONENT_LIBRARIES` and the shadcn/ui modules
 the build provides (`COMPONENT_UI_MODULES`); anything else is refused as
-`canvas_build_unsupported_import:<module>`. Imports are read from the code
-with comments and string contents left out, so a commented-out import does
-not refuse a component.
+`canvas_build_unsupported_import:<module>`, as is a local import or
+stylesheet reference that is absolute, climbs above the published root, or
+names no published file, and a package subpath with a `..`. Imports are read
+from the code with comments and string contents left out, so a
+commented-out import does not refuse a component. That scan is a fast
+refusal, not the guard: the guard is in the sandbox (below).
 
 `CanvasBuildService` builds in the Canvas's own Terminal sandbox, the one its
 Chat's runs use ([`terminal-workspaces.md`](terminal-workspaces.md)). It
@@ -226,9 +229,15 @@ the sandbox as text, as `apply_patch.py` does:
 1. A component gets a host page that mounts its default export, the shadcn/ui
    pieces it imports, Tailwind generated from its classes and any CSS it
    imports, bundled with esbuild against pinned library versions installed
-   once per sandbox; companion files (images, fonts) are copied beside it. A
-   project runs `npm ci` (or `npm install`) and `npm run build`, and its
-   output is the first of `dist`, `build`, `out` holding an `index.html`.
+   once per sandbox with no install scripts; companion files (images, fonts)
+   are copied beside it. Every file the bundle read must be one that was
+   published or Rally's pinned toolchain, checked from esbuild's own input
+   list with real paths, or the publish is refused
+   (`canvas_build_outside_source`): the sandbox also holds the Canvas's
+   checkout and every participant's files, and the bundle is public. A
+   project runs `npm ci` (or `npm install`) with `--ignore-scripts`, so only
+   the member's own `npm run build` runs, and its output is the first of
+   `dist`, `build`, `out` holding an `index.html`.
 2. The result is opened in the sandbox's Chromium. An uncaught error, a failed
    request for one of its own files, or a page with no visible text or media
    refuses the publish (`canvas_build_check_failed`,
