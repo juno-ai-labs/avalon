@@ -368,6 +368,34 @@ the mounted token before any model command runs. The typed
 `publish_branch_and_pr` operation remains available as an optional convergent
 publisher, but it is not a gate around standard Git and GitHub CLI use.
 
+#### Repository credentials follow the person acting
+
+A Canvas's sandbox is shared, but the credentials mounted in it are one
+principal's: the read token behind `GITHUB_READ_BASIC` and `GH_TOKEN`, the
+checkout's `http.<url>.extraheader` that names it, and the write token the
+typed publisher mounts and leaves in place. `terminal_workspace.credential_principal_key`
+records whose they are. Bootstrap and the publisher write it
+(`recordCredentialMount`) before they mount, so a mount that fails part-way
+still counts; every generation bump resets it, since a new sandbox has no
+secrets.
+
+When a Canvas operation's principal differs from the record, `acquire`
+clears both places under the operation lease, after the sandbox is running and
+before the caller's preparation or tool runs: `clearGitHubReadAccess`, then a
+fixed utility command (`repository.credentials.clear`) that unsets every
+`http.*.extraheader` in `/workspace/.git/config` and fails if one is left.
+`recordCredentialsCleared` then hands the record to the acting principal, fenced
+on the generation and the record it cleared, and drops the cached token expiry
+in the same transaction, so that principal's bootstrap mints and mounts their
+own grant under the rules that already decide one. A run that still holds a
+ready handle sees the change in `claimForOperation`, which answers `stale` and
+sends it back through readiness. Either clear failing refuses the operation
+with `repository_credentials_not_cleared` and leaves the record, so the next
+attempt clears again. The same principal acting again reads the record and
+does nothing more. A publication build acts as the publishing person and mounts
+nothing, so it clears another person's credentials and runs with none. A
+Sidekick keeps its own rule and is never cleared here.
+
 A Sidekick's shell retains its selected repository connection, without
 cross-account shell retry. Repository bootstrap and the typed publisher check
 that a personal connection's owner is in the inventory's eligible delegation
@@ -675,6 +703,11 @@ personless; it is not duplicated into these product events.
   agent is the conversation that started it, never the agent's own; two
   conversations under one parent (substreams of one `workstream` id) never
   share a generation, and a run never uses a sandbox under another parent.
+- **A Canvas operation never runs beside another principal's GitHub
+  credentials.** The sandbox row names whose credentials it may hold, written
+  before every mount; a different principal's acquire clears them, under the
+  lease, before anything of theirs runs, and a failed clear refuses the
+  operation. The record is never read to skip a clear it names.
 - **A publication build's lease is live until it expires.** A person's
   publish that builds a component or project holds the operation lease as
   `PUBLICATION_BUILD_HOLDER`, a holder with no run behind it
@@ -1032,7 +1065,9 @@ workspace policy into WorkspaceDO:
 - `terminal_workspace` for generation, authority, provider, lease, lifecycle,
   retention, and final-diff state — including, since conversation schema 63,
   `operation_run_substream_id`: the conversation the lease holder's run
-  executes in when that is not this object's own, `NULL` otherwise;
+  executes in when that is not this object's own, `NULL` otherwise; and since
+  schema 85 `credential_principal_key`, whose GitHub credentials the
+  generation may hold;
 - `terminal_provider_observation` for generation-fenced provider readback, freshness,
   errors, and the next observation deadline (AgentLoopDO schema 57);
 - `terminal_tasks` for durable command submission and one final result; since
@@ -1079,10 +1114,14 @@ The Daytona project credential stays a Worker secret. GitHub installation tokens
 are minted just in time and narrowed to the selected repository and operation.
 Read credentials remain mounted through host-scoped Daytona placeholders and
 are rotated or removed on revocation/expiry. A Canvas's sandbox is shared by
-everyone in the Canvas, so the selected repository's access in it is too:
-any participant's run, and a project a participant publishes (whose build
-runs its own `npm` scripts), executes beside it. That is the same reach a
-participant already had by asking Rally to run a command there. A full-access checkout establishes
+everyone in the Canvas, but its GitHub credentials are the acting person's:
+another person's are cleared before their operation runs, and an operation
+whose clear fails is refused
+([repository credentials follow the person acting](#repository-credentials-follow-the-person-acting)).
+A process an earlier person's command left running can still use the next
+person's credentials while they are mounted; that is the shared-code widening
+in [`security.md`](security.md#shared-canvas-sandbox), not a fence this
+provides. A full-access checkout establishes
 the same short-lived, single-repository write credential once in the conversation
 sandbox; ordinary Git and the typed publisher share that already-authorized
 credential until the existing refresh boundary rotates it. The typed publisher
@@ -1378,7 +1417,11 @@ background agents and a person's publication build share one sandbox and its
 files. An existing sandbox, still under one person's identity, is replaced
 once on its next acquire. A person's publish that needs a build
 holds the operation lease as `PUBLICATION_BUILD_HOLDER`, which the takeover
-check and the lifecycle sweep treat as live until it expires.
+check and the lifecycle sweep treat as live until it expires. GitHub
+credentials stay the acting person's: the sandbox row records whose are
+mounted (`credential_principal_key`, schema 85), and a different person's
+acquire clears the secrets and the checkout's auth header before their
+operation runs, or refuses it (`repository_credentials_not_cleared`).
 
 **Why.** The product decision (2026-11-09) is that a Canvas always has a single
 shared, consistent sandbox, whoever delegates and whether the activity is a
@@ -1392,7 +1435,16 @@ Moving an old sandbox to the new identity in place was built and then
 removed: it kept files the per-person model already deleted whenever someone
 else acted, so a one-time replacement loses nothing a person could rely on.
 A guest cannot publish a project build, which runs the publisher's own
-scripts beside the repository's credentials (also the team's decision).
+scripts beside the repository's checkout (also the team's decision).
+Sharing the sandbox also left the last person's credentials, the write token
+the publisher leaves mounted among them, usable by any participant's run, a
+guest's included. The team decided to clear them on a person change only: the
+same person acting again must not pay a remount, and the publisher's write
+token keeps its lifetime otherwise. Rotating or clearing on every operation was
+rejected for that latency. Clearing costs a remount on each person change, and
+the provider's remount of a freshly created secret restarts the sandbox. A
+future change that mounts a credential another way must record its principal
+before mounting, or the clear will not know it is there.
 
 ### 2026-10-23 — Retry observation without repeating a Terminal command
 

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalSandboxCoordinator } from "../src/services/terminal/coordinator";
+import { bootstrapTerminalRepository, type TerminalGitHubReadGateway } from "../src/services/terminal/repository";
 import type {
   TerminalCheckoutRepositoryOutput,
   TerminalRepositorySelector,
@@ -1710,5 +1711,139 @@ describe("Daytona Terminal runtime", () => {
       expect(ledger.residentBlocks({ kind: "repository_instructions" })).toEqual([]);
       expect(ledger.allBlocks().map((block) => block.residency)).toEqual(["none"]);
     });
+  });
+});
+
+describe("GitHub credentials in a Canvas's shared sandbox", () => {
+  const CONNECTION = "00000000-0000-4000-8000-0000000000c1";
+  const BASE = "a".repeat(40);
+  const OTHER = asUserId("00000000-0000-4000-8000-0000000000c2");
+  const OTHER_EFFECT = "00000000-0000-4000-8000-0000000000c3";
+  const LATER_EFFECT = "00000000-0000-4000-8000-0000000000c4";
+  const AGAIN_EFFECT = "00000000-0000-4000-8000-0000000000c5";
+
+  /**
+   * Two people's runs in one Canvas with a selected repository, prepared by
+   * the real bootstrap: each mint is a different token, as each person's
+   * acquisition of a grant would be.
+   */
+  function sharedCanvas() {
+    const gateway: TerminalGitHubReadGateway = {
+      mintRepositoryToken: vi.fn(async () => ({
+        accessToken: `token-${vi.mocked(gateway.mintRepositoryToken).mock.calls.length}`,
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      })),
+      verifyRepositoryIdentity: vi.fn(async () => undefined),
+      resolveBaseRef: vi.fn(async () => BASE),
+    };
+    // The preparation runs after the fixture exists, so it reads it from here.
+    const built: { state?: ReturnType<typeof fixture> } = {};
+    const state = fixture(undefined, undefined, async (preparing, sandbox, sandboxProvider) => {
+      await bootstrapTerminalRepository(
+        createTestEnv({ DB: sqliteD1(built.state!.database) }), preparing, sandbox, sandboxProvider, gateway,
+        testTerminalPortFactory(built.state!.objectStore),
+      );
+    });
+    built.state = state;
+    const { database, objectStore } = state;
+    database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, granted_scopes_json, model_plugin_id, status, config_json, created_at, updated_at)
+      VALUES ('${CONNECTION}', '${W}', 'github', 'workspace', NULL, '123', 'GitHub',
+              '["github.contents.read"]', 'plugin_github', 'healthy',
+              '{"githubRepositoryAccess":{"version":1,"revision":1,"mode":"all_repositories","defaultAccess":"full_access","repositories":[]}}',
+              '2026-08-13', '2026-08-13');
+    `);
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_repository
+         (id, connection_id, repository_id, repository_full_name, base_ref, base_sha,
+          head_ref, state, selected_by_user_id, remote_access, created_at, updated_at)
+       VALUES (1, ?, 42, 'owner/repo', 'main', ?, 'rally/canvas', 'selected', ?, 'full_access', 1, 1)`,
+      CONNECTION, BASE, U,
+    );
+    seedWorkstreamRun(objectStore, { id: R2, executionPrincipalJson: JSON.stringify({ type: "user", userId: OTHER }) });
+    seedToolReceipt(objectStore, { id: OTHER_EFFECT, runId: R2, toolCallId: "call-other", toolName: "run_command" });
+    seedToolReceipt(objectStore, { id: LATER_EFFECT, runId: R, toolCallId: "call-later", toolName: "run_command", position: 1 });
+    seedWorkstreamRun(objectStore, { id: R3, executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
+    seedToolReceipt(objectStore, { id: AGAIN_EFFECT, runId: R3, toolCallId: "call-again", toolName: "run_command" });
+    const other: HarnessToolContext = {
+      ...context, harnessRunId: R2, toolCallId: "call-other", effectIntentId: OTHER_EFFECT,
+      executionPrincipal: { type: "user", userId: OTHER },
+    };
+    const later: HarnessToolContext = { ...context, toolCallId: "call-later", effectIntentId: LATER_EFFECT };
+    const again: HarnessToolContext = { ...context, harnessRunId: R3, toolCallId: "call-again", effectIntentId: AGAIN_EFFECT };
+    return { ...state, gateway, other, later, again };
+  }
+
+  /** When the provider saw each step, in one order. */
+  function order(provider: TerminalSandboxProvider, command: string) {
+    const commandIndex = vi.mocked(provider.runCommand).mock.calls.findIndex(([, input]) => input.command === command);
+    const headerIndex = vi.mocked(provider.runUtilityCommand).mock.calls
+      .findIndex(([, input]) => input.operation === "repository.credentials.clear");
+    return {
+      secrets: vi.mocked(provider.clearGitHubReadAccess).mock.invocationCallOrder.at(-1) ?? null,
+      header: headerIndex === -1 ? null : vi.mocked(provider.runUtilityCommand).mock.invocationCallOrder[headerIndex],
+      mount: vi.mocked(provider.configureGitHubReadAccess).mock.invocationCallOrder.at(-1) ?? null,
+      command: commandIndex === -1 ? null : vi.mocked(provider.runCommand).mock.invocationCallOrder[commandIndex],
+    };
+  }
+
+  it("clears the first person's credentials before the next person's command, and mounts only theirs", async () => {
+    const { objectStore, provider, runtime, other, later } = sharedCanvas();
+    await runtime.runCommand(context, { command: "git fetch", timeoutMs: 3_000 });
+    expect(provider.configureGitHubReadAccess).toHaveBeenLastCalledWith("sandbox-runtime", {
+      gitBasicCredential: btoa("x-access-token:token-1"), ghToken: "token-1",
+    });
+    expect(provider.clearGitHubReadAccess).not.toHaveBeenCalled();
+
+    await runtime.runCommand(other, { command: "gh pr list", timeoutMs: 3_000 });
+    const handover = order(provider, "gh pr list");
+    expect(handover.secrets).not.toBeNull();
+    expect(handover.secrets!).toBeLessThan(handover.header!);
+    expect(handover.header!).toBeLessThan(handover.mount!);
+    expect(handover.mount!).toBeLessThan(handover.command!);
+    expect(provider.configureGitHubReadAccess).toHaveBeenLastCalledWith("sandbox-runtime", {
+      gitBasicCredential: btoa("x-access-token:token-2"), ghToken: "token-2",
+    });
+    expect(workstreamObjectGet(objectStore, "SELECT credential_principal_key FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ credential_principal_key: `user:${OTHER}` });
+
+    // The first person's run still holds a ready handle; acting again is a
+    // person change too, so the second person's token goes before it runs.
+    await runtime.runCommand(later, { command: "git push", timeoutMs: 3_000 });
+    const back = order(provider, "git push");
+    expect(provider.clearGitHubReadAccess).toHaveBeenCalledTimes(2);
+    expect(back.secrets!).toBeLessThan(back.mount!);
+    expect(back.mount!).toBeLessThan(back.command!);
+    expect(provider.configureGitHubReadAccess).toHaveBeenLastCalledWith("sandbox-runtime", {
+      gitBasicCredential: btoa("x-access-token:token-3"), ghToken: "token-3",
+    });
+  });
+
+  it("neither clears nor remounts when the same person acts again", async () => {
+    const { provider, runtime, gateway, later, again } = sharedCanvas();
+    await runtime.runCommand(context, { command: "git fetch", timeoutMs: 3_000 });
+    await runtime.runCommand(later, { command: "git push", timeoutMs: 3_000 });
+    // A later run of theirs readies the sandbox afresh and finds it still theirs.
+    await runtime.runCommand(again, { command: "git status", timeoutMs: 3_000 });
+
+    expect(provider.clearGitHubReadAccess).not.toHaveBeenCalled();
+    expect(gateway.mintRepositoryToken).toHaveBeenCalledOnce();
+    expect(provider.configureGitHubReadAccess).toHaveBeenCalledOnce();
+  });
+
+  it("refuses the next person's command when the first person's credentials cannot be cleared", async () => {
+    const { objectStore, provider, runtime, gateway, other } = sharedCanvas();
+    await runtime.runCommand(context, { command: "git fetch", timeoutMs: 3_000 });
+    vi.mocked(provider.clearGitHubReadAccess).mockRejectedValueOnce(new Error("secret_list_forbidden"));
+
+    await expect(runtime.runCommand(other, { command: "gh pr list", timeoutMs: 3_000 }))
+      .rejects.toMatchObject({ code: "repository_credentials_not_cleared" });
+    expect(vi.mocked(provider.runCommand).mock.calls.some(([, input]) => input.command === "gh pr list")).toBe(false);
+    expect(gateway.mintRepositoryToken).toHaveBeenCalledOnce();
+    expect(workstreamObjectGet(objectStore, "SELECT credential_principal_key FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ credential_principal_key: `user:${U}` });
   });
 });
