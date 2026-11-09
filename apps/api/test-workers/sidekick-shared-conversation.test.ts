@@ -668,6 +668,18 @@ describe("a Sidekick's shared conversation", () => {
     expect(await wizardExecutions()).toEqual([]);
   });
 
+  it("does not admit a guest to an Organization Sidekick's run on a path that did not say it asks for a guest", async () => {
+    await activeSidekick("workspace");
+    // The mention notice's check: the Organization object, asked for a run
+    // child, with no `requireGrantAuthority`, because it asks for whoever was named.
+    const admits = async (userId: string) => (await workspaceStub().authorizeViewer({
+      workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, userId: asUserId(userId),
+      substreamId: asSubstreamId(crypto.randomUUID()),
+    })).authorized;
+    expect(await admits(MEMBER_ID)).toBe(true);
+    expect(await admits(GUEST_ID)).toBe(false);
+  });
+
   it("opens a personal Sidekick's conversation only to its author and the people it is shared with", async () => {
     await activeSidekick("personal");
     const opens = (userId: string) => new ConversationService(TEST_ENV, auth(userId)).authorizeViewer(AUTOMATION_ID)
