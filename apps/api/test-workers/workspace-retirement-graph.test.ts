@@ -203,6 +203,39 @@ async function seedMainChild(stub: DurableObjectStub<WorkspaceDO>, workspaceId: 
   });
 }
 
+/**
+ * The real conversation namespace, counting `retireObject` calls and refusing
+ * every one after `allowed` the way an overloaded object does. The overload is
+ * the platform's failure and cannot be produced here, so only that call is
+ * stood in for.
+ */
+function countingEnv(allowed: number) {
+  const agents = TEST_ENV.SUBSTREAM_AGENTS;
+  const counter = { retires: 0 };
+  const namespace = {
+    idFromName: (name: string) => agents.idFromName(name),
+    idFromString: (id: string) => agents.idFromString(id),
+    jurisdiction: () => namespace,
+    get: (id: DurableObjectId) => {
+      const real = agents.get(id);
+      return {
+        retireObject: (tombstone: Parameters<typeof real.retireObject>[0]) => {
+          counter.retires += 1;
+          return counter.retires > allowed
+            ? Promise.reject(new Error("durable_object_overloaded"))
+            : real.retireObject(tombstone);
+        },
+      };
+    },
+  };
+  const proxied = new Proxy(TEST_ENV, {
+    get: (target, property, receiver) => property === "SUBSTREAM_AGENTS"
+      ? namespace
+      : Reflect.get(target, property, receiver),
+  });
+  return { env: proxied, counter };
+}
+
 describe("workspace retirement graph", () => {
   it("records every parent before the tombstone, and keeps answering after it", async () => {
     const workspaceId = freshWorkspaceId();
@@ -362,28 +395,14 @@ describe("workspace retirement graph", () => {
   it("leaves a parent whose child could not be closed unreceipted, names why, and finishes on the next pass", async () => {
     // The one outcome that is a failure, and the only path that produces a
     // non-empty `failed`, the receipt shape the route and the Ace page render.
-    // The child's object answering overloaded is the platform's failure, which
-    // cannot be produced here, so only that one call is stood in for.
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
     await declareDemoOperations();
     await seedDirectory(stub, workspaceId);
     await seedMainChild(stub, workspaceId);
-    const agents = TEST_ENV.SUBSTREAM_AGENTS;
-    const unreachable = {
-      idFromName: (name: string) => agents.idFromName(name),
-      idFromString: (id: string) => agents.idFromString(id),
-      jurisdiction: () => unreachable,
-      get: () => ({ retireObject: () => Promise.reject(new Error("durable_object_overloaded")) }),
-    };
-    const failingEnv = new Proxy(TEST_ENV, {
-      get: (target, property, receiver) => property === "SUBSTREAM_AGENTS"
-        ? unreachable
-        : Reflect.get(target, property, receiver),
-    });
     const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" } as const;
 
-    const failed = await retireWorkspaceGraph(failingEnv, { workspaceId, ...tombstone });
+    const failed = await retireWorkspaceGraph(countingEnv(0).env, { workspaceId, ...tombstone });
     expect(failed.complete).toBe(false);
     expect(failed.remaining).toBe(1);
     expect(failed.failed).toEqual([
@@ -397,17 +416,13 @@ describe("workspace retirement graph", () => {
   });
 
   it("keeps the children a cut-off pass closed, and the next pass wakes only the rest", async () => {
-    // A parent can hold more conversations than one invocation can close. A
-    // demo's parent outlived two passes, each cancelled partway through its
-    // children, and each started over from the first child because only the
-    // parent carried a receipt. Here the pass is cut off after one child the
-    // way production cuts it: the next object call does not come back.
+    // Cut off after one child: the next object call does not come back.
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
     await declareDemoOperations();
     await seedDirectory(stub, workspaceId);
     await seedMainChild(stub, workspaceId);
-    await runInDurableObject(stub, (instance: WorkspaceDO, state) => {
+    await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
       state.storage.sql.exec(
         `INSERT OR IGNORE INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at)
          VALUES (?, ?, 'child', ?, ?)`,
@@ -416,36 +431,8 @@ describe("workspace retirement graph", () => {
         ACTOR_ID,
         Date.now() + 1,
       );
-      void instance;
     });
 
-    /** The real namespace, counting retires, and refusing every one after `allowed`. */
-    function countingEnv(allowed: number) {
-      const agents = TEST_ENV.SUBSTREAM_AGENTS;
-      const counter = { retires: 0 };
-      const namespace = {
-        idFromName: (name: string) => agents.idFromName(name),
-        idFromString: (id: string) => agents.idFromString(id),
-        jurisdiction: () => namespace,
-        get: (id: DurableObjectId) => {
-          const real = agents.get(id);
-          return {
-            retireObject: (tombstone: Parameters<typeof real.retireObject>[0]) => {
-              counter.retires += 1;
-              return counter.retires > allowed
-                ? Promise.reject(new Error("durable_object_overloaded"))
-                : real.retireObject(tombstone);
-            },
-          };
-        },
-      };
-      const proxied = new Proxy(TEST_ENV, {
-        get: (target, property, receiver) => property === "SUBSTREAM_AGENTS"
-          ? namespace
-          : Reflect.get(target, property, receiver),
-      });
-      return { env: proxied, counter };
-    }
     const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" } as const;
 
     const cut = countingEnv(1);
