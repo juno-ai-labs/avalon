@@ -41,7 +41,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
     activeWorkspace: active,
     attention: {
       [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
-        waitingForYou: 3, waitingReason: 'mentioned', hasUnreadActivity: true, readerAttentionCount: 3,
+        waitingForYou: 0, waitingReason: 'mentioned', hasUnreadActivity: true, readerAttentionCount: 3,
       },
     },
     currentUser,
@@ -211,7 +211,7 @@ describe('organization account menu', () => {
     expect(within(menu).getByText('Organizations')).toBeVisible();
     expect(within(menu).getByRole('menuitem', { name: /Global Studio.*global.*Current/u })).toBeVisible();
     const europe = within(menu).getByRole('menuitem', {
-      name: 'Europe Studio, enterprise, 3 new in Activity, 3 mentions waiting for you',
+      name: 'Europe Studio, enterprise, 3 new in Activity, You were mentioned',
     });
     expect(europe).toHaveTextContent(/^EEurope Studioenterprise3$/u);
 
@@ -223,7 +223,7 @@ describe('organization account menu', () => {
     renderMenu();
     openMenu();
     fireEvent.pointerMove(screen.getByText('3'));
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('3 mentions waiting for you');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('You were mentioned');
   });
 
   it('counts unread activity when nothing waits on the person, and shows nothing at zero', async () => {

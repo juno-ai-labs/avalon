@@ -516,6 +516,7 @@ the label returned nothing while `waitingForYou` was zero (F7); the server now
 ranks an unseen mention as the reason and the label names it ("You were
 mentioned") with no run waiting. "Counts last updated <when>" broke its time
 onto a second line in the menu label's column (F10); it is one line.
+
 ### 2026-11-08 — Discovery withholds nothing, and activation has no preparing state
 
 **What changed:** Regional discovery no longer drops the demo template and

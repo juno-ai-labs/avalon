@@ -171,7 +171,11 @@ everywhere else, so production never draws the button. Choosing it sends
 `POST /browser/dev/session`, which opens `createDevelopmentIdentitySession`'s
 account (`adam@avalon.local`, the seed's Adam) as an ordinary browser cookie
 session with no Organization, and the entry continues as after an email
-sign-in, to the Organization list.
+sign-in, to the Organization list. The development Organization's name is
+the first development sign-in's: `createDevelopmentSession` (the desktop's
+`POST /auth/dev/session`, which sends the onboarding's name, "Rally
+Development" by default) no longer renames a stored one, so every member and
+every surface read the one `workspaces.name`.
 
 A Canvas or Sidekick link's sign-in line names what it opens ("Sign in to open
 this Canvas."), and an Organization path's says "Sign in to open this
@@ -655,6 +659,14 @@ asked of the API rather than built into the client, because the browser bundle
 is a production Vite build even locally (`import.meta.env.DEV` is false). The
 link line said "Sign in with the email address the link was sent to.", which
 was the invitation's copy and wrong for a link copied from the app.
+
+After the round-5 visual check (F8): the same Organization read "Rally
+Development" in one member's chooser and "Avalon Development" in another's
+Settings. Both read `workspaces.name`; the desktop's development sign-in had
+rewritten it to its own default on every sign-in, and the seed and the
+browser's sign-in to "Avalon Development", so it flipped with whichever signed
+in last. Local development only; a development sign-in now keeps the stored
+name.
 
 **What a future change must respect:** both routes stay behind
 `APP_ENV=development` and `RALLY_DEV_AUTH=true`; the button's presence is the
