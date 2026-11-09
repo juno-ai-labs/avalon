@@ -11,7 +11,8 @@ import {
   conversationObjectName,
   workspaceDOName,
 } from "../durable-objects/names";
-import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace, workspacePlacementAffinity } from "../lib/durable-object-namespace";
+import { settledBatches } from "../lib/settled-batches";
 import { markDemoWorkspaceRetired } from "./demo-workspace-register";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { ConversationParentRetirementChildrenResultSchema } from "@rally/contracts";
@@ -36,6 +37,20 @@ import { ConversationParentRetirementChildrenResultSchema } from "@rally/contrac
  * the workspace closed.
  */
 
+/**
+ * How many of one parent's conversations the walk closes at once.
+ *
+ * Bounds: concurrent `retireObject` calls to cold `SubstreamAgent` objects
+ * from one pass. Without it, one at a time: each takes 0.1 to 1.7s, mostly
+ * waking the object, and a parent with a few hundred conversations outlived
+ * every pass. Set to 10 by the team on 2026-11-09, choosing between 6, 10 and
+ * 20. Cloudflare's 6 simultaneous open connections per invocation may or may
+ * not count Durable Object calls; if it does, the rest queue rather than fail.
+ * A batch waits for its slowest call, so this is about 6 conversations a
+ * second. On trip: nothing fails; the next batch starts when this one settles.
+ */
+export const RETIREMENT_CHILD_CONCURRENCY = 10;
+
 export interface WorkspaceRetirementInput {
   workspaceId: WorkspaceId;
   retiredAt: number;
@@ -57,6 +72,8 @@ export interface WorkspaceRetirementInput {
    * `workspace_retirement_pass` log says which one.
    */
   operatorId?: string;
+  /** Overrides `RETIREMENT_CHILD_CONCURRENCY`; tests set their own. */
+  childConcurrency?: number;
 }
 
 export interface WorkspaceRetirementReceipt {
@@ -94,11 +111,15 @@ export async function retireWorkspaceGraph(
   // Routed through the shared resolver rather than `idFromName`: a workspace
   // lives in one region with one placement affinity, and addressing its
   // objects directly is how a call ends up in the wrong jurisdiction.
+  // Read once and handed to every stub, so a batch of children starts its
+  // retires together rather than each waiting on its own lookup.
+  const affinity = await workspacePlacementAffinity(env, input.workspaceId);
   const workspace = await durableObjectStubForWorkspace(
     env,
     env.WORKSPACE_DOS,
     input.workspaceId,
     workspaceDOName(region, input.workspaceId),
+    affinity,
   );
 
   const tombstone = {
@@ -168,28 +189,40 @@ export async function retireWorkspaceGraph(
       if (listing.status === "identity_mismatch") throw new Error("conversation_parent_identity_mismatch");
       const children = listing.status === "ok" ? listing.children : [];
 
-      for (const child of children) {
-        const childName = conversationObjectName(
-          region,
-          input.workspaceId,
-          node.parentId,
-          asSubstreamId(child.substreamId),
-        );
-        const conversation = await durableObjectStubForWorkspace(
-          env,
-          env.SUBSTREAM_AGENTS,
-          input.workspaceId,
-          childName,
-        );
-        const childReceipt = await conversation.retireObject(tombstone);
-        receipt.retainedOutbox += childReceipt.retainedOutbox;
-        receipt.retiredChildren += 1;
-        // Receipted per child so a pass cut off inside a large parent resumes
-        // at the next child.
-        await workspace.recordRetiredChild({
-          parentId: node.parentId,
-          substreamId: child.substreamId,
-        });
+      // A batch at a time, and every call in a batch settles before the
+      // parent's outcome is decided, so a failure leaves no retire in flight.
+      // The first failure stops the parent; the children that closed keep
+      // their receipts.
+      for await (const batch of settledBatches(
+        children,
+        input.childConcurrency ?? RETIREMENT_CHILD_CONCURRENCY,
+        async (child) => {
+          const childName = conversationObjectName(
+            region,
+            input.workspaceId,
+            node.parentId,
+            asSubstreamId(child.substreamId),
+          );
+          const conversation = await durableObjectStubForWorkspace(
+            env,
+            env.SUBSTREAM_AGENTS,
+            input.workspaceId,
+            childName,
+            affinity,
+          );
+          const childReceipt = await conversation.retireObject(tombstone);
+          receipt.retainedOutbox += childReceipt.retainedOutbox;
+          receipt.retiredChildren += 1;
+          // Receipted per child so a pass cut off inside a large parent
+          // resumes at the next child.
+          await workspace.recordRetiredChild({
+            parentId: node.parentId,
+            substreamId: child.substreamId,
+          });
+        },
+      )) {
+        const failure = batch.find((result) => result.status === "rejected");
+        if (failure) throw failure.reason;
       }
 
       receipt.retiredParents += 1;
