@@ -479,7 +479,7 @@ their `channel_viewers` rows become `canvas_participants`.
 
 `dump_thread_transcripts`, `convert_threads_to_canvases` and `retire_threads`
 ship in the same release that removes Threads, so they cannot run before it.
-The order, which the plan's deploy section repeats:
+The order, which the Canvases and Sidekicks plan's follow-ups point to:
 
 1. **On the old Worker, retire the demo Organizations** (every live demo and
    the demo template) through the existing retire route, with no preparation
