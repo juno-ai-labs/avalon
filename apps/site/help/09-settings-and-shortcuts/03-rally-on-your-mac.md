@@ -26,8 +26,9 @@ Click the Rally mark and you get:
 
 If nothing is waiting for you, it says **Nothing needs your attention**. If you
 are signed out, it says **Sign in to Rally**. The number beside the mark is the
-same count as the Dock badge. The list refreshes when you click the
-icon, so it is always current.
+**Canvases** and **Sidekicks** numbers on the rail added together, which is
+not the Dock badge: that one counts your unseen Activity. The list keeps
+itself current while Rally runs, so it is up to date when you click the icon.
 
 The menu is the fastest way back into something you were working on an hour
 ago, from any app, without hunting for the Rally window. It also gives
