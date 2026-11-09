@@ -26,7 +26,7 @@ that first needed it ships separately, calling what is here.
 | --- | --- |
 | `apps/api/src/durable-objects/object-retirement.ts` | The tombstone, the gate that wraps every callable method of a retired object, the three dispositions, `ALWAYS_PERMITTED_METHODS`, and `isRetirementRefusal`, which every background caller reads. |
 | `apps/api/src/durable-objects/scheduled-alarms.ts` | `retireObject` and `objectRetirementState` on the base every gated class extends, plus the alarm clearing retirement performs. |
-| `apps/api/src/durable-objects/workspace-do.ts` | `beginWorkspaceRetirement`, `recordRetiredNode`, `workspaceRetirementProgress`, and the `workspace_retirement_graph` table behind them. |
+| `apps/api/src/durable-objects/workspace-do.ts` | `beginWorkspaceRetirement`, `recordRetiredNode`, `recordRetiredChild`, `workspaceRetirementProgress`, and the `workspace_retirement_graph` and `workspace_retirement_children` tables behind them. |
 | `apps/api/src/services/workspace-retirement-service.ts` | The pass that walks the recorded graph, closing children before parents, and the operator door in front of it. |
 | `apps/api/src/routes/workspace-operations.ts` | `/internal/workspaces/:id/retire`, behind the operator credential in the `demos` role. |
 | `apps/api/src/middleware/errors.ts` | Maps a refusal that reaches an HTTP route to `409 workspace_retired`. |
@@ -118,7 +118,12 @@ Retirement runs in this order, and the order is the design:
    the node stays unreceipted on every pass. Every node, a Channel's, a
    Space's or a Sidekick's, asks `WorkspaceDO.childrenForRetirement`, which is
    permitted on the already retired Organization object, and has no parent
-   object to retire after its children.
+   object to retire after its children. Each child is receipted as it closes
+   (`recordRetiredChild`, into `workspace_retirement_children`), and
+   `childrenForRetirement` leaves receipted children out, so a pass cut off
+   inside a large parent leaves the next pass only the children still open.
+   The child receipt only saves work; the parent's receipt still decides
+   completion.
 5. **Finish when nothing is left unreceipted.** Completion is the workspace's own
    tombstone plus the absence of NULLs in the graph table, rather than a flag
    somebody sets. The tombstone is what says the enumeration happened: reading
@@ -285,10 +290,16 @@ included.
   message, alarm or workflow behind it, so an interrupted pass waits for somebody
   to ask again. That is sized for the workspaces it was built for, which have a
   handful of parents; the receipt it answers with says what remains, and the
-  operator asks again.
+  operator asks again. A pass on a large workspace can be cut off before it
+  answers; each child is receipted, so asking again still converges. Do not
+  run passes that overlap: both walk the same unreceipted children. A pass has
+  ended when its `EngineeringInspectionBridge.jsrpc` invocation log appears.
 - **Stranded outbox rows are counted, not drained.** Draining means publishing
   out of a closed workspace; moving them means deciding whose they now are. The
-  count is what distinguishes retained residue from work still in flight.
+  count is what distinguishes retained residue from work still in flight. It
+  counts only the objects this pass woke: receipted parents and receipted
+  children are skipped, so their stranded rows are not in a later pass's
+  receipt.
 - **A parent the directory names but holds no rows for** answers `missing`,
   has no children, and is receipted; the Organization's tombstone already
   fences its id.
@@ -319,7 +330,8 @@ included.
 | Suite | Command | What it proves |
 | --- | --- | --- |
 | `apps/api/test-workers/object-retirement.test.ts` | `pnpm --filter @rally/api test:workers` | The gate on real workerd: refusal on every class, a refusal that crosses the RPC boundary with its code, `canReadWorkstream` answering `false`, sockets closed with `1008`, drop-and-acknowledge in the shapes the consumers parse, alarm clearing, a rebuilt retired agent not refilling its alarm index, that all three socket-holding object classes rebuild themselves after eviction and revoke access while retired, and that the gate's function is installed on every callable method. |
-| `apps/api/test-workers/workspace-retirement-graph.test.ts` | `pnpm --filter @rally/api test:workers` | The graph is captured before the tombstone, is idempotent and resumable — including over a parent retired but never receipted — an empty workspace reports closed, an identity mismatch leaves a node failed with a stable code, and the walk closes children before parents. |
+| `apps/api/test-workers/workspace-retirement-graph.test.ts` | `pnpm --filter @rally/api test:workers` | The graph is captured before the tombstone, is idempotent and resumable — including over a parent retired but never receipted — an empty workspace reports closed, an identity mismatch leaves a node failed with a stable code, the walk closes children before parents, and a pass cut off inside a parent leaves the next pass only the children still open. |
+| `apps/api/test/workspace-retirement-children-migration.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-retirement-children-migration.test.ts` | Against the real migrations: a retired v134 workspace with a partly receipted graph upgrades to 135 with its tombstone and receipts intact, and a replayed child receipt stays one row. |
 | `apps/api/test/workspace-operations.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-operations.test.ts` | Against the real migrations: the route admits only the `demos` role, refuses a confirmation naming another workspace, refuses an id this region does not own even when its row is present, writes `abandoned_at` before walking, and answers the contract's receipt. |
 | `apps/api/test/retirement-background-callers.test.ts` | `pnpm --filter @rally/api exec vitest run test/retirement-background-callers.test.ts` | Each background caller acknowledges a refusal: the flag fan-out, the revocation hop, and the digest pass, which also proves the pass finishes and writes its cursor. |
 | `apps/api/test/telemetry-operator-routes.test.ts` | `pnpm --filter @rally/api exec vitest run test/telemetry-operator-routes.test.ts` | The `demos` role is refused at the telemetry router, on every route. |
@@ -375,6 +387,7 @@ closes, which is the case a construction-only fix does not reach.
 | --- | --- | --- |
 | Every gated object's SQLite | `object_retirement` | One row. The tombstone: instant, operation, actor, reason. |
 | WorkspaceDO SQLite | `workspace_retirement_graph` | One row per parent, with a nullable `retired_at` receipt. |
+| WorkspaceDO SQLite | `workspace_retirement_children` | One row per conversation the walk closed, keyed by `(parent_id, substream_id)`. |
 
 The tombstone lives in the object rather than D1 because the gate answers during
 constructor recovery, before anything cross-authority could be consulted. Both
@@ -438,6 +451,39 @@ telemetry roles.
   workspaces it was built for.
 
 ## Changelog
+
+### 2026-11-09 — The walk receipts each conversation, so a cut-off pass keeps its progress
+
+**What changed:** WorkspaceDO migration 135 adds `workspace_retirement_children`.
+The walk calls `recordRetiredChild` after each conversation confirms its
+tombstone, and `childrenForRetirement` leaves receipted children out. The
+parent receipt and completion are unchanged.
+
+**Why:** Retiring a production demo stalled. Its fifth parent held a few hundred
+conversations, each `retireObject` took 100ms to 1.7s of wall time (almost all
+of it waking the object), and the pass was cancelled at about 240s, twice, before
+it reached that parent's receipt. Progress was saved per parent only, so each
+pass started that parent's children over from the first: asking again could
+never finish. The `workspace_retirement_pass` log never fired either, because it
+is written at the end of a pass, so the stall showed up only in the invocation
+logs (`outcome: canceled`).
+
+**Considered and rejected:** Retiring children in parallel. It would make most
+passes finish, but a concurrency figure is a limit the team sets, and it still
+loses all of a parent's progress on a big enough parent. Bounding each pass by
+time and answering a partial receipt: that is also a number to choose, and it is
+worth doing on top of this, not instead of it. Recording children in
+`workspace_retirement_graph`: it would make child rows count toward `remaining`,
+and they are discovered only as the walk reaches each parent, so the count would
+grow mid-walk.
+
+**Consequences:** One extra WorkspaceDO RPC per child, small next to waking the
+child. A child receipt is keyed by parent id and substream id, not parent kind,
+because that pair alone names the conversation object. `retainedOutbox` now
+skips receipted children as it already skipped receipted parents, so it counts
+one pass, not the whole retirement. Anything that lists a
+parent's children for retirement now sees only the open ones. Nothing re-invokes
+an interrupted walk yet, and two overlapping passes still duplicate work.
 
 ### 2026-09-19 — The graph admits a third parent kind, and the walk enumerates Spaces and knows which namespace to ask
 
