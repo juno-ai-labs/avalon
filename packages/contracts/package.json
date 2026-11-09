@@ -42,8 +42,6 @@
     "./platform-diagnostics": "./src/platform-diagnostics.ts",
     "./browser-session": "./src/browser-session.ts",
     "./client-session": "./src/client-session.ts",
-    "./desktop-actions": "./src/desktop-actions.ts",
-    "./browser-runtime": "./src/browser-runtime.ts",
     "./usage": "./src/usage.ts",
     "./message-issues": "./src/message-issues.ts"
   },

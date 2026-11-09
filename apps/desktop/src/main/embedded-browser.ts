@@ -8,18 +8,11 @@ import {
   type EmbeddedBrowserShortcut,
   type EmbeddedBrowserCommand,
   type EmbeddedBrowserHostRequest,
-  type EmbeddedBrowserNetworkResponse,
   type EmbeddedBrowserResult,
   type EmbeddedBrowserState,
 } from '../common/embedded-browser';
 
 import { clampBounds } from './artifact-viewers';
-import { BrowserScriptRuntime } from './browser-script-runtime';
-import { BrowserScriptDriver } from './browser-script-driver';
-
-interface RecordedResponse extends EmbeddedBrowserNetworkResponse {
-  body: { body: string; base64Encoded: boolean } | null;
-}
 
 interface BrowserTab {
   id: string;
@@ -27,30 +20,7 @@ interface BrowserTab {
   /** The tab the person opened that this popup tab belongs to, or null for one they opened. */
   popupOf: string | null;
   favicon: string | null;
-  /** What the page has received since it last navigated, by DevTools request id. */
-  network: Map<string, RecordedResponse>;
-  /** Bytes of copied bodies `network` holds, against `NETWORK_BODY_BYTES_MAX`. */
-  networkBytes: number;
 }
-
-/**
- * The resource types whose bodies are copied as they finish: what page script
- * fetched, which is where a web app's data arrives. Documents, scripts, images
- * and media are listed but read live from Chromium's own buffer.
- */
-const CACHED_RESOURCE_TYPES = new Set(['Fetch', 'XHR']);
-
-/**
- * The most body bytes one tab holds for one document; a body past it is
- * listed but left uncopied, and reads live from Chromium if it still has it.
- *
- * Open on purpose: the guard is written, the number is the team's to set (see
- * `docs/adding-security-defensive-and-other-limits.md`). Only an agent-driven
- * browser records, and a new document empties the record, so the arithmetic
- * is one conversation page's Fetch/XHR traffic: a ChatGPT conversation's JSON
- * runs from 0.2 to 5 MB.
- */
-export const NETWORK_BODY_BYTES_MAX = Number.POSITIVE_INFINITY;
 
 const embeddedBrowserContents = new WeakSet<WebContents>();
 
@@ -87,12 +57,10 @@ function dimensions(bounds: EmbeddedBrowserBounds, window: BrowserWindow): Embed
 
 /**
  * A local browser owned by one Rally account. A tab's remote page has no
- * preload, Node, or access to the app renderer. Agent actions can use this
- * command path when a desktop action transport is added.
+ * preload, Node, or access to the app renderer.
  */
 export class EmbeddedBrowser {
   private readonly tabs = new Map<string, BrowserTab>();
-  private readonly scriptRuntimes = new Map<string, { tabId: string; runtime: BrowserScriptRuntime }>();
   private activeTabId: string | null = null;
   private bounds: EmbeddedBrowserBounds = { x: 0, y: 0, width: 0, height: 0 };
   private visible = false;
@@ -106,12 +74,6 @@ export class EmbeddedBrowser {
     private readonly onState: (state: EmbeddedBrowserState) => void,
     /** Hands a shortcut pressed inside a page to the host's controls. */
     private readonly onHostRequest: (request: EmbeddedBrowserHostRequest) => void = () => undefined,
-    /**
-     * A browser an agent drives (the import window's): its tabs record their
-     * network from creation, and a covered active tab keeps rendering at full
-     * speed. A person's own browsing pays for neither.
-     */
-    private readonly agentDriven = false,
   ) {
     this.partition = browserPartition(userId);
     this.browserSession = session.fromPartition(this.partition);
@@ -121,14 +83,6 @@ export class EmbeddedBrowser {
     this.browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     this.browserSession.setPermissionCheckHandler(() => false);
     window.once('closed', () => this.dispose());
-    const clearRuntimes = () => {
-      for (const entry of this.scriptRuntimes.values()) entry.runtime.dispose();
-      this.scriptRuntimes.clear();
-    };
-    window.webContents.on('render-process-gone', clearRuntimes);
-    window.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
-      if (isMainFrame && !isInPlace) clearRuntimes();
-    });
   }
 
   state(): EmbeddedBrowserState {
@@ -166,16 +120,13 @@ export class EmbeddedBrowser {
   /**
    * The active tab keeps its size whether or not it is in view. Hidden, it is
    * parked outside the window: nobody can click or type into it, and a Rally
-   * overlay paints over where it was, but an agent driving it still reads,
-   * captures and clicks a full-size page that keeps rendering. Collapsing it
-   * to nothing — what hiding used to do — stopped an import mid-run whenever
-   * a dialog opened over the page.
+   * overlay paints over where it was, and the page keeps its layout for when
+   * it comes back.
    */
   private layout(): void {
     for (const tab of this.tabs.values()) {
       const active = tab.id === this.activeTabId;
       const contents = tab.view.webContents;
-      contents.setBackgroundThrottling(!(active && this.agentDriven));
       if (!active) tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
       else if (this.visible) tab.view.setBounds(this.bounds);
       else {
@@ -224,8 +175,6 @@ export class EmbeddedBrowser {
     const id = randomUUID();
     const contents = view.webContents;
     this.configureRemoteContents(contents, id);
-    const network = new Map<string, RecordedResponse>();
-    if (this.agentDriven) this.recordNetwork(contents, id);
     contents.on('page-title-updated', () => this.publish());
     contents.on('did-navigate', () => {
       // A new document starts without the last one's icon.
@@ -259,7 +208,7 @@ export class EmbeddedBrowser {
       // that went away on its own still needs it.
       if (this.forget(id)) this.publish();
     });
-    this.tabs.set(id, { id, view, popupOf, favicon: null, network, networkBytes: 0 });
+    this.tabs.set(id, { id, view, popupOf, favicon: null });
     this.window.contentView.addChildView(view);
     this.activeTabId = id;
     this.layout();
@@ -311,9 +260,6 @@ export class EmbeddedBrowser {
 
   /** Drops a tab and picks the next active one; false when it was already gone. */
   private forget(id: string): boolean {
-    for (const [runtimeId, entry] of this.scriptRuntimes) {
-      if (entry.tabId === id) { entry.runtime.dispose(); this.scriptRuntimes.delete(runtimeId); }
-    }
     const ids = [...this.tabs.keys()];
     const at = ids.indexOf(id);
     if (!this.tabs.delete(id)) return false;
@@ -329,104 +275,8 @@ export class EmbeddedBrowser {
     return tab;
   }
 
-  /**
-   * Records every response the page receives, from the tab's first request,
-   * so an agent can read the data a web app loaded instead of rebuilding the
-   * request that fetched it. Fetch and XHR bodies are copied as each finishes:
-   * Chromium evicts its own copies, and an agent may need one well after it
-   * arrived. A new document starts a new list, which keeps what is held to one
-   * page's traffic.
-   */
-  private recordNetwork(contents: WebContents, tabId: string): void {
-    const methods = new Map<string, string>();
-    // The tab is registered after its view, so it is looked up per event.
-    const recordOf = () => this.tabs.get(tabId);
-    contents.on('did-start-navigation', (...args: unknown[]) => {
-      const details = args[0] as { isMainFrame?: boolean; isSameDocument?: boolean } | undefined;
-      const isMainFrame = details?.isMainFrame ?? args[3] === true;
-      const isSameDocument = details?.isSameDocument ?? args[2] === true;
-      const tab = recordOf();
-      if (isMainFrame && !isSameDocument && tab) {
-        tab.network.clear();
-        tab.networkBytes = 0;
-        methods.clear();
-      }
-    });
-    contents.debugger.on('message', (_event, method: string, params: Record<string, unknown>) => {
-      const requestId = typeof params['requestId'] === 'string' ? params['requestId'] : null;
-      const tab = recordOf();
-      if (!requestId || !tab) return;
-      const network = tab.network;
-      if (method === 'Network.requestWillBeSent') {
-        const request = params['request'] as { method?: string } | undefined;
-        methods.set(requestId, request?.method ?? 'GET');
-      } else if (method === 'Network.responseReceived') {
-        const response = params['response'] as { url?: string; status?: number; mimeType?: string } | undefined;
-        network.set(requestId, {
-          requestId,
-          url: response?.url ?? '',
-          method: methods.get(requestId) ?? 'GET',
-          status: response?.status ?? 0,
-          mimeType: response?.mimeType ?? '',
-          resourceType: typeof params['type'] === 'string' ? params['type'] : 'Other',
-          size: null,
-          cached: false,
-          body: null,
-        });
-      } else if (method === 'Network.loadingFinished') {
-        const recorded = network.get(requestId);
-        if (!recorded) return;
-        recorded.size = typeof params['encodedDataLength'] === 'number' ? params['encodedDataLength'] : null;
-        if (!CACHED_RESOURCE_TYPES.has(recorded.resourceType)) return;
-        void (contents.debugger.sendCommand('Network.getResponseBody', { requestId }) as Promise<{ body: string; base64Encoded: boolean }>)
-          .then((body) => {
-            // A navigation may have started a new list while this was read.
-            if (network.get(requestId) !== recorded) return;
-            if (tab.networkBytes + body.body.length > NETWORK_BODY_BYTES_MAX) return;
-            tab.networkBytes += body.body.length;
-            recorded.body = { body: body.body, base64Encoded: body.base64Encoded };
-            recorded.cached = true;
-          })
-          .catch(() => undefined);
-      }
-    });
-    try {
-      if (!contents.debugger.isAttached()) contents.debugger.attach('1.3');
-      void contents.debugger.sendCommand('Network.enable').catch(() => undefined);
-    } catch {
-      // Another debugger (an open DevTools window) holds the page; nothing is recorded.
-    }
-  }
-
-  private async cdp(contents: WebContents, method: string, params: Record<string, unknown> = {}): Promise<unknown> {
-    if (!contents.debugger.isAttached()) contents.debugger.attach('1.3');
-    return await contents.debugger.sendCommand(method, params);
-  }
-
   async command(command: EmbeddedBrowserCommand): Promise<EmbeddedBrowserResult> {
     if (this.disposed) throw new Error('Browser is closed');
-    if (command.action === 'script_reset') {
-      const entry = this.scriptRuntimes.get(command.runtimeId);
-      if (entry && entry.tabId !== command.tabId) throw new Error('Browser runtime belongs to another tab');
-      entry?.runtime.dispose();
-      this.scriptRuntimes.delete(command.runtimeId);
-      return { kind: 'state', state: this.state() };
-    }
-    if (command.action === 'script') {
-      this.tab(command.tabId);
-      let entry = this.scriptRuntimes.get(command.runtimeId);
-      if (entry && entry.tabId !== command.tabId) throw new Error('Browser runtime belongs to another tab');
-      if (!entry) {
-        const driver = new BrowserScriptDriver(command.tabId, {
-          getEmbeddedBrowserState: async () => this.state(),
-          commandEmbeddedBrowser: request => this.command(request),
-        });
-        entry = { tabId: command.tabId, runtime: new BrowserScriptRuntime(command.tabId, driver) };
-        this.scriptRuntimes.set(command.runtimeId, entry);
-      }
-      const { stored, ...result } = await entry.runtime.execute(command.code);
-      return { kind: 'script', result, stored };
-    }
     if (command.action === 'open') {
       await this.open(command.url);
       return { kind: 'state', state: this.state() };
@@ -468,44 +318,6 @@ export class EmbeddedBrowser {
       contents.reload();
     } else if (command.action === 'stop') {
       contents.stop();
-    } else if (command.action === 'snapshot') {
-      const result = await this.cdp(contents, 'Accessibility.getFullAXTree');
-      return { kind: 'snapshot', url: contents.getURL(), title: contents.getTitle(), tree: result };
-    } else if (command.action === 'screenshot') {
-      // At the page's own size in DIPs, so a point read off the image is the
-      // point `click` and `scroll` send: input events are in DIPs, while the
-      // capture is in device pixels.
-      const view = this.tab(command.tabId).view.getBounds();
-      const captured = await contents.capturePage();
-      const image = view.width > 0 && view.height > 0 ? captured.resize({ width: view.width, height: view.height }) : captured;
-      const size = image.getSize();
-      return { kind: 'screenshot', mimeType: 'image/jpeg', data: image.toJPEG(80).toString('base64'), width: size.width, height: size.height };
-    } else if (command.action === 'click') {
-      contents.sendInputEvent({ type: 'mouseDown', x: command.x, y: command.y, button: 'left', clickCount: 1 });
-      contents.sendInputEvent({ type: 'mouseUp', x: command.x, y: command.y, button: 'left', clickCount: 1 });
-    } else if (command.action === 'scroll') {
-      contents.sendInputEvent({ type: 'mouseWheel', x: command.x, y: command.y, deltaX: command.deltaX, deltaY: command.deltaY });
-    } else if (command.action === 'type') {
-      contents.insertText(command.text);
-    } else if (command.action === 'key') {
-      contents.sendInputEvent({ type: 'keyDown', keyCode: command.key });
-      contents.sendInputEvent({ type: 'keyUp', keyCode: command.key });
-    } else if (command.action === 'evaluate') {
-      return { kind: 'value', value: await contents.executeJavaScript(command.expression, true) };
-    } else if (command.action === 'cdp') {
-      return { kind: 'value', value: await this.cdp(contents, command.method, command.params) };
-    } else if (command.action === 'network') {
-      const responses = [...this.tab(command.tabId).network.values()].map((recorded): EmbeddedBrowserNetworkResponse => ({
-        requestId: recorded.requestId, url: recorded.url, method: recorded.method, status: recorded.status,
-        mimeType: recorded.mimeType, resourceType: recorded.resourceType, size: recorded.size, cached: recorded.cached,
-      }));
-      return { kind: 'network', responses };
-    } else if (command.action === 'response_body') {
-      const recorded = this.tab(command.tabId).network.get(command.requestId);
-      if (!recorded) throw new Error('No response with that id since the page last navigated');
-      if (recorded.body) return { kind: 'response_body', ...recorded.body };
-      const live = await this.cdp(contents, 'Network.getResponseBody', { requestId: command.requestId }) as { body: string; base64Encoded: boolean };
-      return { kind: 'response_body', body: live.body, base64Encoded: live.base64Encoded };
     }
     this.publish();
     return { kind: 'state', state: this.state() };
@@ -514,8 +326,6 @@ export class EmbeddedBrowser {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    for (const entry of this.scriptRuntimes.values()) entry.runtime.dispose();
-    this.scriptRuntimes.clear();
     for (const tab of this.tabs.values()) {
       if (!this.window.isDestroyed()) this.window.contentView.removeChildView(tab.view);
       if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();

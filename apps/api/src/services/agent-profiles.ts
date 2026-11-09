@@ -3,8 +3,6 @@ import type { AgentModelRole, WorkstreamWorkflowInput } from "@rally/contracts";
 
 import type { Env } from "../env";
 
-import type { DesktopActionExecutor } from "./desktop-actions/executor";
-
 /**
  * A conversation that does one fixed job rather than a person's open-ended
  * work: what it is told, which model role routes it, the exact tools it
@@ -15,16 +13,14 @@ import type { DesktopActionExecutor } from "./desktop-actions/executor";
  * finds one gets nothing else: not the work-stream prompt, not the built-in or
  * connector plugins, not plugin discovery, not any skill it does not name. A
  * skill is instructions only, never a tool, so naming one keeps the surface as
- * narrow as before. A narrow surface is the
- * point — a conversation-import run drives a signed-in browser over page
- * content that may carry instructions, and the only Rally effect it can reach
- * is the one its desktop performs for it.
+ * narrow as before. A narrow surface is the point: a fixed job reaches only
+ * the effects it was built for.
  */
 export interface AgentProfile {
   role: AgentModelRole;
   systemPrompt(): string;
   /** Always-active plugins; the run's whole tool surface. */
-  plugins(input: WorkstreamWorkflowInput, desktop: DesktopActionExecutor | undefined): HarnessPlugin[];
+  plugins(input: WorkstreamWorkflowInput): HarnessPlugin[];
   /** The skills its catalog offers; each still loads only when the model asks. */
   skills: readonly HarnessSkill[];
   /**
