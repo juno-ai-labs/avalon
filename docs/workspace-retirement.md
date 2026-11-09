@@ -219,8 +219,9 @@ is refused by role even when it verifies.
   the region's record of who asked (see **Operations**).
 
 - **Retirement takes any workspace id, and infers nothing.** It is an operator
-  action behind Ace's Access policy, and the only protection between an operator
-  and an irreversible close is the confirmation the page asks for. A gate on a
+  action behind one of two Access policies, Ace's or the engineering MCP's, and
+  the only protection between an operator and an irreversible close is that
+  policy plus, in Ace, the confirmation the page asks for. A gate on a
   register of demo workspaces was built and then dropped, deliberately: the
   bookkeeping bought a second mechanism for a surface one Access policy already
   admits. The walk does not check a name, a register, or anything else.
@@ -388,9 +389,20 @@ made — and nothing here reads it back
 ## Security and trust model
 
 Retirement is irreversible and takes any workspace id. Nothing in this module
-authorizes it: the Ace Access policy admits the operator, and the page's
-confirmation — one that makes the operator name the workspace rather than click
-beside it — is the whole of the protection. The confirmation travels with the
+authorizes it. It has two callers, and each is admitted by its own Access
+policy:
+
+- **Ace**, whose page confirmation — one that makes the operator name the
+  workspace rather than click beside it — is the rest of the protection, and
+  which reaches the regional route with the `demos` credential described below.
+- **The engineering MCP's `retire_org`**, which reaches the door through the
+  regional `EngineeringInspectionBridge` over a private Service Binding. It
+  holds no `demos` credential and asks for no typed confirmation: Access
+  membership on the MCP is the whole of its authorization, and its audit pair in
+  `AUDIT_DB` names the operator
+  ([`engineering-mcp.md`](engineering-mcp.md#retiring-an-organization)).
+
+Ace's confirmation travels with the
 request, and Ace and the regional API each check that it names the workspace in
 the path; that is a consistency check that catches a page or a script naming
 one workspace and closing another, not a second confirmation, since a caller
@@ -400,7 +412,7 @@ table holds, so an id the other region owns is refused rather than "retired" as
 a set of new empty objects. The region records the operator's id in its pass
 log.
 
-The operator credential's `demos` role is one token per region, held by that
+The operator credential's `demos` role, which only the Ace route uses, is one token per region, held by that
 region's `DEMO_OPERATORS_JSON` and by Ace as that region's secret, and by
 nobody else: an operator credential never crosses regions, so a leak of one is
 destructive authority in one jurisdiction rather than both. Every operator
