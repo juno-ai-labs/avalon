@@ -1,0 +1,34 @@
+{
+  "name": "@juno-ai/bind",
+  "version": "16.0.0",
+  "private": true,
+  "description": "Agent loop, model routing, tool and skill mechanics for Rally.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./routing": "./src/routing/index.ts",
+    "./completion": "./src/completion/index.ts",
+    "./contracts": "./src/contracts/index.ts",
+    "./loop": "./src/loop/index.ts",
+    "./run": "./src/run/index.ts",
+    "./transcript": "./src/transcript/index.ts",
+    "./tools": "./src/tools/index.ts",
+    "./plugins": "./src/plugins/index.ts",
+    "./skills": "./src/skills/index.ts",
+    "./testing": "./src/testing/index.ts",
+    "./session": "./src/session/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "openai": "6.49.0",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

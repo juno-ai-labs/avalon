@@ -25,6 +25,7 @@ packages/
   contracts/               Zod API, WebSocket, agent, connector contracts
   db/                      D1 migrations, repositories, region-aware queries
   agent-harness/           Bind/OpenRouter adapter, prompts, skills, classifiers, tools
+  bind/                    Portable agent loop, model routing, and tool and skill primitives
   connectors/              Core adapters and credential-plugin descriptors
 docs/                      Product, architecture, security, setup, runbooks
 ```
@@ -315,8 +316,8 @@ connector authority, and resource metadata. The provider supplies isolation and 
 filesystem/lifecycle primitives, not Rally's receipts or authorization. See
 [`terminal-workspaces.md`](terminal-workspaces.md).
 
-The production entry point adapts `@juno-ai/bind` 15.0.0 to Rally's OpenRouter
-transport and durable ports. Bind owns transcript healing, plugin and skill
+The production entry point adapts the local `packages/bind` workspace package
+to Rally's OpenRouter transport and durable ports. Bind owns transcript healing, plugin and skill
 activation, turn/tool iteration, completion-defect recovery, epoch-aware
 streaming, and classified route traversal. Rally owns authorization, regional
 persistence, admission, accounting, and terminal state.
