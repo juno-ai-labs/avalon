@@ -239,8 +239,7 @@ to pair the attempt and result audit rows.
 
 `retire_org` calls `retireWorkspaceForOperator`, the same function behind Ace's
 Retire button, through a bridge method, `retireOrg`. So the region check,
-`workspaces.abandoned_at`, the tombstones, the resumable walk and the demo
-register's `retired_at` are all
+`workspaces.abandoned_at`, the tombstones and the resumable walk are all
 [`workspace-retirement.md`](workspace-retirement.md)'s, unchanged. The Access
 subject goes into the pass as its operator id, so the region's
 `workspace_retirement_pass` log names who closed it, and the audit pair targets
@@ -251,6 +250,7 @@ here the caller is a client that would fill both fields from the same value,
 and the tool's destructive annotation is what asks the client to check first.
 A receipt with `complete: false` means parts are still open; calling again
 resumes the walk.
+
 ### Retiring Threads
 
 `dump_thread_transcripts` and `retire_threads` are the two operator operations
@@ -536,8 +536,8 @@ workspace is inventoried as active, resolves at the open generation, and
 and executes against its initialized WorkspaceDO from regional identity alone.
 
 `apps/api/test-workers/engineering-org-retirement.test.ts` retires an
-Organization through the bridge and reads back the D1 fence, the tombstone, the
-demo register stamp and the audit pair; an id the region does not hold is
+Organization through the bridge and reads back the D1 fence, the tombstone and
+the audit pair; an id the region does not hold is
 refused as `workspace_not_found` and audited as failed.
 
 `apps/api/test-workers/engineering-sidekick-inspection.test.ts` lists a
