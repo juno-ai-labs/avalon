@@ -1505,7 +1505,8 @@ describe("a hosted Sidekick", () => {
     await runInDurableObject(workspaceStub(), (_instance, state) => {
       for (const [runId, trigger] of [
         [requested, JSON.stringify({ kind: "manual", requestedByUserId: OUTSIDER_ID })],
-        [scheduled, JSON.stringify({ kind: "schedule", scheduleId: "daily", scheduledFor: NOW })],
+        [scheduled, JSON.stringify({ kind: "schedule", scheduleId: "00000000-0000-7000-8000-00000000ad5d",
+          scheduleKind: "calendar", plannedFor: Date.parse(NOW) })],
       ] as const) {
         state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
             harness_run_id, state, summary, opening_json, run_as_user_id, coordinator_user_id, created_at, started_at,
