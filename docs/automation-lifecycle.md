@@ -2165,19 +2165,6 @@ survive as described above.
 
 ## Changelog
 
-### 2026-11-09 — A review notice stops writing `announceTo`
-
-**What changed:** a Sidekick review notice no longer carries `announceTo`, and
-the schema marks it optional.
-
-**Why:** nothing read it; the review runs in the Sidekick's shared
-conversation, so its report is the announcement (the dead-code PRD, phase 5).
-
-**Consequences:** the field leaves the schema once notices written before the
-change have drained.
-
-Shipped in juno-ai-labs/avalon#1500.
-
 ### 2026-11-09 — The shared conversation starts runs and shows them, a Sidekick has its own audience, and a blocked run asks and waits
 
 **What changed:** A message addressed to a Sidekick in its conversation (`"0"`)

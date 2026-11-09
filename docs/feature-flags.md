@@ -249,9 +249,7 @@ disabled pill with a chevron, behind the **Debug enabled** preference
 (`ComposerModelControl` in `composer-input.tsx`). Disabled rather than merely
 quiet is the honest shape here: the pin is written once, when the conversation
 is created, and nothing afterwards edits it, so a menu would offer a change the
-next run would not honour. No composer offers a choice any more: the creation
-pickers went with the Thread and Breakout launchers, and their `choice` shape
-was deleted with its menu in the dead-code pass.
+next run would not honour. No composer offers a choice.
 
 **Same place** is load-bearing and was not always true. The single-row message
 capsule the launchers and conversations wear has no room for a pill beside its

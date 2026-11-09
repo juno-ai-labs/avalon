@@ -42,7 +42,10 @@ export const MEETING_NOTES_RETIREMENT_MIGRATION: DurableObjectSqliteMigration = 
 
 /**
  * Commit retirement before considering finalization. A restored/populated
- * workspace must remain reachable at 57 while its cleanup is pending.
+ * workspace stays reachable at 57 while its cleanup is pending. That hold is
+ * now terminal: the operator RPCs that cleared it were deleted once every
+ * object had reached 58, so WorkspaceDO logs `workspace_meeting_retirement_held`
+ * on every wake of an object found there.
  * Keep the adopted-schema shim around 57 alone, never around other migrations.
  */
 export function applyMeetingRetirementMigrations(

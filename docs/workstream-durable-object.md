@@ -1867,8 +1867,11 @@ acted on an `activity_event` since migration 139 (the dead-code PRD, phase 5).
 change; a desktop still in use, or an effect already queued, would fail to
 parse.
 
-**Consequences:** the frame schemas, `WorkstreamActivityEffectSchema` and the
-`desktop_actions` table go in a later step, once the oldest desktop in use has
+**Consequences:** the desktop's embedded browser lost its script realm and
+every agent-only command with it, so its command protocol is now only what its
+own controls send ([`embedded-browser.md`](embedded-browser.md)). The frame
+schemas, `WorkstreamActivityEffectSchema` and the `desktop_actions` table go in
+a later step, once the oldest desktop in use has
 updated and the effect queue has drained.
 
 Shipped in juno-ai-labs/avalon#1500.
