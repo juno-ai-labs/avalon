@@ -201,7 +201,7 @@ person's text message arrives, which arms the entry again.
 characters as `canvas_rename_invalid:title:<issue>`, an icon or colour outside
 the storable vocabulary as `canvas_rename_invalid:appearance.<field>:<issue>`,
 and a body that changes nothing (no title, and no appearance field) as
-`canvas_rename_invalid:-root-:custom`, all under the rename's released label
+`canvas_rename_invalid:-root-:custom` (the object itself refuses an empty update as `canvas_update_empty`), all under the rename's released label
 with one sentence true of each, and every Canvas route
 refuses a malformed id as `canvas_id_invalid:id:<issue>`, through
 `namedZValidator`, each with a sentence the client shows; a well-formed id
@@ -590,7 +590,8 @@ the rail's first section and `/canvases` the landing route
 - **Pinning** is `POST /canvases/:id/pin`, from the pill's menu, a row's
   context menu, or dragging a row into the section's Pinned group
   (`useRowPinDrop`). A pin lands at the end of the group: the order is
-  `reorderSidebarPins` in `WorkspaceDO`, which no route exposes yet.
+  `reorderSidebarPins` in `WorkspaceDO`, which `PUT /workspace/pinned-order`
+  exposes.
 
 Copying a Canvas's link is the pill menu's **Copy link**, the Canvas form
 `/app/<region>/<organization>/cv/<canvas>/` ([`links.md`](links.md)); a
@@ -724,7 +725,7 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 | Table | Keyed by | Holds |
 | --- | --- | --- |
-| `canvas_directory` | `canvas_id` | The row: title, creator, times, last editor, writer Sidekick and run, visibility, authority generation, title status (`naming` until a Canvas made with no title is titled from its first message, migration 149), and the chosen icon and colour (`appearance_json`, `WorkstreamAppearanceSchema` JSON, null until chosen, migration 153). Indexed by recency, by writer Sidekick, and uniquely by `(writer_sidekick_id, writer_run_id)`. |
+| `canvas_directory` | `canvas_id` | The row: title, creator, times, last editor, writer Sidekick and run, visibility, authority generation, title status (`naming` until a Canvas made with no title is titled from its first message, migration 149), the chosen icon and colour (`appearance_json`, `WorkstreamAppearanceSchema` JSON, null until chosen, migration 153), and the run whose publish made the newest version (`last_writer_run_id`, migration 155). Its CHECK admits a run only beside a `sidekick` last editor, so a future writer that moves `last_editor_kind` without writing this column in the same statement fails its write. Indexed by recency, by writer Sidekick, and uniquely by `(writer_sidekick_id, writer_run_id)`. |
 | `canvas_participants` | `(canvas_id, user_id)` | Whom its managers added (`added`), a claimed share brought (`invitation`) or an approved access request let in (`request`, migration 151). Indexed by person for "shared with me". |
 | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts`, `sidekick_viewer_reads` | `(sidekick_id, …)`, the column holding the Canvas id | The hosted conversation's children, their projections and receipts, and each reader's read of the Chat. |
 | `workspace_sidebar_list_state` | `list` | Gains the `canvases` waterline; the table is rebuilt to widen its CHECK. |
@@ -843,8 +844,7 @@ resource's newest version and, when it is news by `artifactNewsSql`, records
 an `artifact_updated` intent and a collapsing Activity row for every pinner
 of the Canvas but the version's author (`tellCanvasPinners`), and enqueues
 their pushes, which open the Canvas onto the artifact. `noteArtifact` is
-async for it. [Client half: the Activity row's words and its `?artifact=`
-link, folded in at merge.]
+async for it. Client: the Activity row reads "<author> updated <artifact> in <Canvas>" and opens the Canvas with `?artifact=<resourceId>`; the push's `/cv/<id>/a/<id>/` link was already routed by both clients.
 
 **Why (pinners):** The owner asked on 2026-11-08 for pinned Canvas updates
 to come back: Settings offered **Pinned artifact updates** with no producer

@@ -1047,15 +1047,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         }
         return activeSession;
       };
-      if (intent.kind === 'new-workstream') {
-        if (!requireActiveWorkspace('Sign in before starting a Canvas.')) return;
-        setDeepLinkError(null);
-        markSurfaceEntrypoint(navigation.entrypoint);
-        // The link names no Canvas, so it opens the Canvases home; the
-        // sidebar's plus is what starts one.
-        navigateAppRoute('/');
-        return;
-      }
       if (intent.kind === 'canvas') {
         await runInDeepLinkWorkspace(intent.target, () => {
           setDeepLinkError(null);

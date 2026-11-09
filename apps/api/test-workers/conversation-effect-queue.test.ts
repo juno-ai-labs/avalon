@@ -39,6 +39,7 @@ import {
   workspaceDOName,
 } from "../src/durable-objects/names";
 import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import {
   consumeEffectBodies,
@@ -381,9 +382,12 @@ describe("a retired parent's effect", () => {
       effect: activityEffect("retired-activity-1"),
     });
     expect(await consumeEffectBodies(env, [envelope])).toEqual({ acked: 0, retried: 1 });
-    // The refusal the retry carries, named by kind.
-    await expect(workspaceStub().receiveChildEffects({ substreamId: envelope.substreamId, envelopes: [envelope] }))
-      .rejects.toThrow("conversation_parent_kind_retired:workstream");
+    // The refusal the retry carries, named by kind. Asked inside the object:
+    // a rejection over the stub is reported a second time as unhandled.
+    await runInDurableObject(workspaceStub(), async (instance: WorkspaceDO) => {
+      await expect(instance.receiveChildEffects({ substreamId: envelope.substreamId, envelopes: [envelope] }))
+        .rejects.toThrow("conversation_parent_kind_retired:workstream");
+    });
   });
 });
 

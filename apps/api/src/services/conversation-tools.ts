@@ -9,7 +9,6 @@ import {
   asSubstreamId,
   asWorkspaceId,
   parseLinkTarget,
-  ConversationMergeErrorCodeSchema,
   type AutomationActivationV1,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
@@ -221,13 +220,6 @@ export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput):
         { query: request.query, mode: "substring", limit: CONVERSATION_MAXIMUM_PAGE_SIZE, audience }, cursor), request.limit);
     },
     linkOrigins: [env.PUBLIC_WEB_BASE_URL, ...LEGACY_LINK_ORIGINS],
-    merge: async (request) => new ConversationMergeService(env, await actingAuth(env, input)).merge(request.threadId, {
-      body: request.body,
-      clientMessageId: request.clientMessageId,
-      ...(request.breakoutId ? { breakoutId: request.breakoutId } : {}),
-      ...(request.channelId ? { channelId: request.channelId } : {}),
-    }, { actingAgent: true }),
-    mergeChannels: async (threadId) => new ConversationMergeService(env, await actingAuth(env, input)).writableChannels(threadId),
   };
 }
 

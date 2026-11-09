@@ -72,7 +72,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
         {present.length > 0 && <span className="canvas-card-live"><AvatarStack members={present} nameTooltip={false} showTooltip={false} />Live</span>}
       </div>
       <div className="canvas-card-body">
-        <h3><Link className="sidekick-list-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
+        <h3><CanvasMark appearance={canvas.appearance} id={canvas.id} kind={canvas.artifactKind} size={20} /><Link className="sidekick-list-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
         <small><span>{run
           // Above the card's stretched title link, so it opens the run and not the Canvas.
           ? <Link className="canvas-card-run" state={{ runNumber: run.runNumber }} to={run.to}>{run.label}</Link>

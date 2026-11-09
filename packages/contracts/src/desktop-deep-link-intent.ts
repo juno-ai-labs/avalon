@@ -177,9 +177,6 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
   const target = addressed?.target ?? null;
   if (url.hash || url.username || url.password || url.port) return null;
 
-  if (url.hostname === "workstreams" && url.pathname === "/new") {
-    return !target && !url.search ? { kind: "new-workstream" } : null;
-  }
   if (url.hostname === "canvases") {
     const [encodedCanvasId = "", childKind, encodedArtifactId, ...extra] = url.pathname.slice(1).split("/");
     const canvasId = uuidFromBase58(encodedCanvasId);
