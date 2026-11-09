@@ -2,6 +2,7 @@ import type { CanonicalModelId } from "./canonical-model";
 import type { RouteSkip } from "./plan";
 import {
   buildRoutePlan,
+  planRoute,
   type RoutePlanRequest,
   type RoutePlanResult,
 } from "./planner";
@@ -20,7 +21,8 @@ import { policyProviderOrder, type ProviderPolicy } from "./policy";
  *
  * Scope: PLAN-TIME emptiness only — a stage with zero attemptable candidates
  * (transport unconfigured/invalid, no binding for the model, capability
- * mismatch). Runtime failures keep the fence semantics: a configured `only`
+ * mismatch). A viable endpoint can already belong to an earlier stage after
+ * deduplication. Runtime failures keep the fence semantics: a configured `only`
  * provider that errors at request time is never retried through another
  * provider; the executor's cross-provider traversal applies only
  * within the plan the policy allowed.
@@ -53,14 +55,11 @@ export function buildRoutePlanWithConfigDegradation(
   request: RoutePlanRequest,
   degradedPolicy: ProviderPolicy,
 ): DegradedPlanResult {
-  const first = buildRoutePlan(request);
+  const first = planRoute(request);
 
   const emptyStagePolicies = new Map<CanonicalModelId, ProviderPolicy>();
-  for (const stage of first.plan.stages) {
-    if (
-      stage.candidates.length === 0 &&
-      !policiesEqual(stage.policy, degradedPolicy)
-    ) {
+  for (const stage of first.unavailableStages) {
+    if (!policiesEqual(stage.policy, degradedPolicy)) {
       emptyStagePolicies.set(stage.canonicalModelId, stage.policy);
     }
   }
