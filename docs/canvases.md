@@ -417,7 +417,13 @@ the rail's first section and `/canvases` the landing route
   someone other than the viewer in `presentUserIds`, Made by me is
   `createdByUserId`, Shared with me `sharedWithMe`, From Sidekicks
   `writerSidekickId`. A row's second line names who is there now, else its
-  last editor, else who made it.
+  last editor, else who made it. On a home card whose newest version a run
+  wrote, the last-editor line is that run instead, "<Sidekick> · run #N"
+  (`canvasWrittenByRun`), a link above the card's stretched title link that
+  opens the Sidekick's conversation at the run (`?run=`), in the live name
+  from the Sidekick list when the socket has it. The link carries the run's
+  number in its route state, so the run's pill reads "Run 5" before the
+  shared conversation that numbers it has loaded.
 - **The mark** (`CanvasMark`) is a sheet holding the chosen icon, else the
   row's `artifactKind` glyph, in a pastel pair through `markColors`, the
   mechanism a Sidekick's hexagon uses: the chosen colour, else the hue stable
@@ -477,7 +483,9 @@ the rail's first section and `/canvases` the landing route
   beside its menu trigger since a button cannot hold another), and the menu's
   **Change appearance** opens the same palette there: the picker's `open` is
   the screen's, and a palette opened from a menu is not closed by that menu
-  handing focus back to its own trigger. Its unchosen colour selects the
+  handing focus back to its own trigger; once that menu has handed focus back,
+  the palette moves it onto the chosen colour (else the first choice), so a
+  keyboard user starts inside it. Its unchosen colour selects the
   Canvas's own hue (`defaults`) and its unchosen icon selects nothing, since
   the kind's sketch is no catalog icon. Each click saves through
   `PATCH /canvases/:id`, and the answered detail redraws the pill. A submenu
@@ -752,6 +760,47 @@ not the resource versioning layer. A version made outside a publish (a
 person's rename, a connector refetch) does not move it, just as it does not
 move the last editor. Only a `sidekick` editor's note may name a run; the
 column's CHECK and the note's schema both refuse anything else.
+
+After the round-5 visual check (F11): a card's "run #5" opened a run whose
+pill said "Run", because the pill reads the number from the shared
+conversation, not yet loaded when the run is opened straight from the card.
+The card's link now carries the number in its route state, which the pill
+reads while the conversation has not said.
+### 2026-11-08 — A Canvas's icon and colour can be chosen
+
+**What changed:** WorkspaceDO migration 153 adds
+`canvas_directory.appearance_json`, the Sidekick's own
+`WorkstreamAppearanceSchema` JSON. `PATCH /canvases/:id` takes a partial
+`appearance` beside or instead of the title (`HostedCanvas.update`, which
+replaces `rename`), by anyone the Canvas admits, merged field by field, not
+moving `updated_at`. The summary carries `appearance`, both fields null while
+unchosen; a stored value that no longer parses reads as unchosen and is logged
+by field. Client: the pill's mark is the Sidekick's palette
+(`AppearancePicker` in the pill's icon action) and its menu offers **Change
+appearance**, which opens it; the pill, the sidebar row, the home card and a Canvas's
+Activity rows draw the choice, else the kind's sketch and the id's hue.
+
+**Why:** The owner, 2026-11-08: "keep the ability to manually choose a color
+and icon for a canvas (and sidekick)". A Canvas had a stable hue and a kind
+sketch and no choice; the Sidekick's picker and schema already existed, so
+the Canvas reuses both rather than adding a second vocabulary. The rename
+route is widened rather than a second route added, and keeps its released
+refusal label (`canvas_rename_invalid:…`) so a released desktop still reads a
+title's refusal in its own words; its one sentence now holds for a title, an
+appearance and an empty body. Choosing is not activity, so it does not lift
+the Canvas in the recency list, unlike a retitle. A stored value is read with
+`parsedAppearance`, not `.parse`, because one row whose key a later catalog
+retired would otherwise fail every viewer's list (review of the first cut).
+
+**What a future change must respect:** an unchosen field draws the default,
+so `appearance` must never be filled in with the default on the server; the
+icon catalog and the ring are the Sidekick's, and a key added for one is
+offered to both. There is no "back to default" control yet: the route takes a
+null field, the picker sends none. The palette is a popup from the mark, not
+a submenu, because a submenu has no room beside a phone-width menu. After the
+round-5 visual check (F9), a palette opened from the menu moves focus onto
+its chosen colour once the menu has handed focus back to its own trigger;
+before, focus was left outside a palette of some hundred choices.
 
 ### 2026-11-08 — Retirement records: Naming a work stream, Work-stream descriptions
 

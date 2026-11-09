@@ -2725,7 +2725,10 @@ describe('Organization settings', () => {
     expect(await screen.findByRole('heading', { name: 'In this browser' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'On this Mac' })).toBeNull();
     // jsdom has no service worker, which is exactly the unsupported browser.
-    expect(await screen.findByText('This browser cannot show Rally notifications.')).toBeVisible();
+    const reason = await screen.findByText('This browser cannot show Rally notifications.');
+    expect(reason).toBeVisible();
+    // Inside the toggle's card, as a row of it, never loose below it.
+    expect(reason.closest('.settings-list-card')).toBe(screen.getByRole('switch', { name: /Show notifications/ }).closest('.settings-list-card'));
     expect(screen.getByRole('switch', { name: /Show notifications/ })).toBeDisabled();
   });
 

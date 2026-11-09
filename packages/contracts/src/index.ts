@@ -1048,6 +1048,7 @@ export const ElicitationOptionSchema = z.object({
   label: z.string().min(1).max(300),
   description: z.string().max(800).nullable()
 });
+// Must stay non-strict (`z.object`, never `strictObject`): a desktop one release behind strips fields it does not know, such as allowOther and allowSkip.
 export const ElicitationSchema = z.object({
   id: IdSchema,
   workstreamId: IdSchema,

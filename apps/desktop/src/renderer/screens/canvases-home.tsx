@@ -75,7 +75,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
         <h3><Link className="sidekick-list-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
         <small><span>{run
           // Above the card's stretched title link, so it opens the run and not the Canvas.
-          ? <Link className="canvas-card-run" to={run.to}>{run.label}</Link>
+          ? <Link className="canvas-card-run" state={{ runNumber: run.runNumber }} to={run.to}>{run.label}</Link>
           : canvasRowDetail(canvas, membersById, sidekicksById, currentUserId)}</span><RelativeTime format={formatSidebarActivityTime} value={canvas.updatedAt} /></small>
       </div>
     </li>;

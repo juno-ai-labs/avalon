@@ -190,13 +190,14 @@ export function canvasWrittenByRun(
   row: Pick<CanvasSidebarRow, 'lastWrittenBy' | 'presentUserIds'>,
   sidekicksById: ReadonlyMap<string, Pick<AutomationSummary, 'name'>>,
   currentUserId: string | undefined,
-): { label: string; to: string } | null {
+): { label: string; to: string; runNumber: number } | null {
   const run = row.lastWrittenBy;
   if (!run || othersPresent(row, currentUserId).length > 0) return null;
   const name = sidekicksById.get(run.sidekickId)?.name ?? run.sidekickName;
   return {
     label: `${name} · run #${run.runNumber}`,
     to: `/sidekicks/${encodeURIComponent(run.sidekickId)}${sidekickRunSearch(run.runId)}`,
+    runNumber: run.runNumber,
   };
 }
 

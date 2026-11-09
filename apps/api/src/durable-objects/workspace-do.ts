@@ -9565,7 +9565,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Member attention for the account menu's other Organizations and the push
    * badge: this person's unseen Activity, by the page's own filter and seen
    * rule (`activityCounts`), so the number is the one their Activity rail
-   * shows; `waitingForYou` is the unseen runs waiting on them.
+   * shows; `waitingForYou` is the unseen runs waiting on them. The reason
+   * ranks a waiting run over an unseen mention over anything else unseen.
    */
   async attention(input: WorkspaceAttentionRequest): Promise<WorkspaceAttentionResult> {
     await this.initialized;
@@ -9577,7 +9578,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       (sidekickId) => writerSidekickAdmits(this.state.storage.sql, sidekickId, { userId: request.userId, actorRole: member ? "member" : null }));
     return WorkspaceAttentionSchema.parse({
       waitingForYou: counts.unseenNeedsInput,
-      waitingReason: counts.unseenNeedsInput > 0 ? "needs_input" : counts.unseen > 0 ? "unseen" : null,
+      waitingReason: counts.unseenNeedsInput > 0 ? "needs_input" : counts.unseenMentions > 0 ? "mentioned" : counts.unseen > 0 ? "unseen" : null,
       hasUnreadActivity: counts.unseen > 0,
       readerAttentionCount: counts.unseen,
     });

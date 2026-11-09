@@ -45,7 +45,9 @@ again, so asking twice tells nobody twice. A new request is a row in
 bounded by the contract at the push's preview length
 (`PUSH_BODY_PREVIEW_CHARACTERS`), the one number the push and the preview
 already use, so a longer one is refused as `canvas_access_request:message:…`;
-an empty message is none.
+an empty message is none. A new request also republishes the requester's own
+Activity list (`noteActivityChanged`): a denied row of theirs on this Canvas
+reads as seen once they ask again, and an open socket is told so at once.
 
 ### Who is told, and who decides
 
@@ -96,7 +98,7 @@ approval tells them.
 
 ### In the client
 
-Client: a 404 on a well-formed Canvas id asks `GET /canvases/:id/access`; `requestable` draws "You don't have access to this Canvas" with Request access (one dialog opening on its optional message), "Request sent · <when>" alone, in the button's place, from the access read while pending, and 409 `canvas_access_open` read as "open it"; a restored route on a requestable Canvas stays, and the grant reopens the pane without a refresh (list row or `access_granted` row). A declined request reads "Request declined · <when>" (`decidedAt`, or when it was asked from a server older than that field) with Request access offered again, since a denial allows a new request. The requester's `access_denied` Activity row, "<decider> declined your request to open a Canvas" behind the lock glyph and never naming the Canvas, opens this pane; an open pane re-reads its access when that row arrives after its access read, so it says declined without a reload.
+Client: a 404 on a well-formed Canvas id asks `GET /canvases/:id/access`; `requestable` draws "You don't have access to this Canvas" with Request access (one dialog opening on its optional message), "Request sent · <when>" alone, in the button's place, from the access read while pending, and 409 `canvas_access_open` read as "open it"; a restored route on a requestable Canvas stays, and the grant reopens the pane without a refresh (list row or `access_granted` row). A declined request reads "Ask again if you still need it." over Request access and "Request declined · <when>" (`decidedAt`, or when it was asked from a server older than that field) under it, so "declined" is said once, since a denial allows a new request. The requester's `access_denied` Activity row, "<decider> declined your request to open a Canvas" behind the lock glyph and never naming the Canvas, opens this pane; an open pane re-reads its access when that row arrives after its access read, so it says declined without a reload.
 
 ## Invariants
 

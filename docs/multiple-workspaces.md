@@ -150,8 +150,11 @@ two digits, and a zero shows nothing; the row's accessible name says
 "3 new in Activity". When some of those rows are Sidekick runs waiting on the
 person (`waitingForYou`, the unseen `needs_input` rows), or the strongest
 reason WorkspaceDO ranks is a mention, that is the badge's tooltip and part of
-the row's accessible name ("2 Sidekick runs waiting for your input"). A failed
-read keeps the last counts and says "Counts last updated <when>". The Mac reads
+the row's accessible name ("2 Sidekick runs waiting for your input", "You were
+mentioned"). `attention()` ranks the reason a waiting run (`needs_input`), then
+an unseen mention (`mentioned`, with `waitingForYou` still the runs alone),
+then anything else unseen (`unseen`). A failed
+read keeps the last counts and says "Counts last updated <when>" on one line. The Mac reads
 each Organization with its stored credential; the browser, which holds none,
 reads them all through its identity cookie (`getWorkspaceAttention` on the app
 session, one shared `GET /browser/workspaces/attention` per refresh), as its
@@ -475,6 +478,44 @@ best-effort remote revocation.
 
 ## Changelog
 
+### 2026-11-08 — The account menu counts each Organization's unseen Activity, in the browser too
+
+**What changed:** The attention read behind a background Organization's row
+(`GET /workspace/attention`, `/browser/workspaces/attention`) answers the
+person's unseen Activity there as `readerAttentionCount` and the unseen runs
+waiting on them as `waitingForYou`, where it answered zeros since Threads
+were retired. The account menu's background rows read
+`readerAttentionCount` as that Organization's unseen Activity and say so ("3
+new in Activity", "2 Sidekick runs waiting for your input"). The app session
+gains `getWorkspaceAttention`: the Mac's bridge with the stored credential, as
+before, and in the browser the identity-cookie read
+`GET /browser/workspaces/attention`, shared by one refresh's asks, so the
+browser's account menu shows counts where it showed none (its bridge refused
+every Organization but the open one).
+
+**Why:** The owner said "fix this" on 2026-11-08 for the account menu's
+other-Organization counts: `attention()` returned zeros once Threads were
+retired, so every row read nothing. The server now counts unseen Activity;
+the client's words still said "conversations with new activity", which no
+longer names what is counted.
+
+**Considered and rejected:** Summing each Canvas's and Sidekick's unread
+messages: a different number from the Activity rail the person sees on
+switching, and a second rule to keep in step. A browser read per Organization:
+the cookie route already answers every membership in one request.
+
+**Consequences:** The count is `activityCounts`, the Activity page's own
+filter and seen rule; a change to that rule changes this number. The browser's onboarding rows count as holding a credential
+(`credentialStored: true`) for the attention gate, since the cookie reads
+them all. A membership whose attention the route leaves out (its read failed)
+keeps its last count under "Counts last updated".
+
+After the round-5 visual check: an unseen mention in another Organization read
+only "1 new in Activity", because `attention()` never ranked `mentioned` and
+the label returned nothing while `waitingForYou` was zero (F7); the server now
+ranks an unseen mention as the reason and the label names it ("You were
+mentioned") with no run waiting. "Counts last updated <when>" broke its time
+onto a second line in the menu label's column (F10); it is one line.
 ### 2026-11-08 — Discovery withholds nothing, and activation has no preparing state
 
 **What changed:** Regional discovery no longer drops the demo template and

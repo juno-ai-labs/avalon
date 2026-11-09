@@ -1205,7 +1205,8 @@ loaded into someone else's conversation, not a read of its own.
   summary of the newest run that *waits*, whichever run is newest, and null
   when none waits. The two can describe different runs, deliberately: a
   Sidekick with an older run waiting and a newer one working reads
-  **Working** with the old question as its second line, because the question
+  **Working** with the old question as its second line ("● Working · Which
+  page?", the word beside the dot so colour alone never says it), because the question
   is still open and is what a person needs; a row whose question depended on
   the waiting run being the newest lost it after a reload, when a later run
   started, and while one was starting. `nextRunAt` was already the next scheduled
@@ -2029,6 +2030,10 @@ stale. It uses the states `sidekickRowRunState` calls working, so no new
 publish was needed. The coordinator settled the badge order as: running
 outranks the lifecycle and `runState` on the pill and the row, and the
 Needs input badge stays beside a working pill.
+
+Client, after the round-5 visual check (F12): a sidebar row both waiting and
+working put the green dot before its question with no word, so only colour
+said Working; it now reads "Working · <question>".
 
 **Considered and rejected:** a stored `running` column on the directory row,
 written on every run transition. Every writer of a run state would have had
