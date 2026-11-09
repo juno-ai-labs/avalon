@@ -48,6 +48,8 @@ import { issueWorkspaceSocketTicket } from "../services/socket-service";
 import { OrganizationUsageSchema, WorkspacePlanChangeSchema } from "@rally/contracts/usage";
 import { publishOrganizationUsage, readOrganizationUsage } from "../services/usage-metering";
 import { ApiError } from "../lib/api-error";
+import { ConnectedMcpAppsSchema } from "@rally/contracts/mcp-oauth";
+import { McpOAuthService } from "../services/mcp-oauth-service";
 
 const invitationParam = z.object({ id: IdSchema });
 const memberParam = z.object({ userId: IdSchema });
@@ -124,6 +126,22 @@ export const deviceTimezoneRoutes = new Hono<HonoAppEnv>();
 deviceTimezoneRoutes.put("/", zValidator("json", DeviceTimezoneRequestSchema), async (c) =>
   c.json(UserTimezoneSchema.parse(
     await reportDeviceTimezone(c.env, getWorkspaceAuth(c).userId, c.req.valid("json").timezone))));
+
+/**
+ * The MCP apps this person connected (Claude, ChatGPT and others), and
+ * disconnecting one: Settings › Account, for members and guests alike, since
+ * either can connect one. Mounted beside the profile with a support session
+ * refused: the list spans the person's other Organizations, which a grant
+ * to one of them does not open to Rally staff. Not in `MCP_ROUTES`, so an
+ * MCP client cannot list or end another client's grant. `docs/rally-mcp.md`.
+ */
+export const connectedAppRoutes = new Hono<HonoAppEnv>();
+connectedAppRoutes.get("/", async (c) =>
+  c.json(ConnectedMcpAppsSchema.parse({ apps: await new McpOAuthService(c.env).connectedApps(getWorkspaceAuth(c).userId) })));
+connectedAppRoutes.delete("/:id", zValidator("param", z.object({ id: z.string().min(1) })), async (c) => {
+  await new McpOAuthService(c.env).disconnect(getWorkspaceAuth(c).userId, c.req.valid("param").id);
+  return c.body(null, 204);
+});
 
 workspaceRoutes.get("/attention", async (c) =>
   c.json(WorkspaceAttentionSchema.parse(await workspaceAttention(c.env, getAuth(c)))));

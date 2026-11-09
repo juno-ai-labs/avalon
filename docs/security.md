@@ -460,8 +460,15 @@ reserved continuation-message ID.
 Every connector tool checks its execution principal, connection
 scope, granted capability, and resource visibility. Workspace-scoped connector
 capabilities roll down to every conversation in that workspace and execute as the
-workspace principal; participants do not implicitly share their personal
-connectors.
+workspace principal. A participant's personal connector is not granted to
+another participant's runs: a connector tool runs as the run's execution
+principal, the person who started it. A Sidekick acting through a delegate's
+access is the one exception, and
+[delegation](automation-lifecycle.md#delegation-consent-authority) governs it.
+That rule covers the call, not what it returns. In a Canvas, a file a run writes to the
+shared sandbox, including one fetched through a personal connector, is readable
+by every other participant's runs there, by the 2026-11-09 decision
+([shared Canvas sandbox](#shared-canvas-sandbox)).
 
 WebSocket upgrades require an exact match against `ALLOWED_ORIGINS`; missing
 origins and suffix lookalikes are rejected before the short-lived socket ticket is
@@ -528,6 +535,69 @@ authority. Its route lookup returns only a coarse two-value decision; its
 capability permits only the registered pre-authentication event names. Handoff
 tokens and resource identifiers remain in the local page parser and never become
 telemetry properties.
+
+### MCP authorization server
+
+Rally runs a public OAuth 2.1 authorization server so MCP clients such as
+Claude and ChatGPT can act for a person. [`rally-mcp.md`](rally-mcp.md) owns
+the flow; this section owns its trust surface.
+
+- **Public endpoints.** The MCP Worker serves the discovery documents
+  (`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`)
+  and forwards `/register`, `/token` and `/revoke` to the API's `/mcp-oauth`
+  routes (`routes/mcp-oauth.ts`, `services/mcp-oauth-service.ts`). Consent is
+  the browser app's `/app/oauth/authorize`, which needs a signed-in browser
+  session and calls `/browser/oauth/*`.
+- **Registration is unauthenticated** (RFC 7591). Anyone can register a client
+  under any name. What stops a registration from collecting codes is the
+  redirect allowlist in `packages/contracts/src/mcp-oauth.ts`: each redirect
+  must be a loopback address on any port, or under the exact origins
+  `https://claude.ai`, `https://claude.com` or `https://chatgpt.com`. The
+  allowlist is checked at registration and again on every authorization. Since
+  the client name is self-chosen, the consent page also shows the redirect
+  origin.
+- **PKCE is S256 only.** Every client is public and stores no secret. A code is
+  single use, hashed at rest, bound to its client and redirect, and consumed in
+  the statement that reads it.
+- **The resource check.** A request naming an RFC 8707 `resource` other than
+  the configured `MCP_RESOURCE` is refused `invalid_target`, at describe,
+  approve and token time. Without it, another MCP server that names Rally as
+  its authorization server could have a client fetch a Rally token for it and
+  replay it against the API.
+- **A grant is a workspace session.** It is an ordinary session for the chosen
+  Organization, so membership, incarnation and session expiry apply unchanged.
+  Its access tokens carry the `rally-mcp` audience
+  (`services/auth-service.ts`), not the desktop's. `mcp_oauth_grants` keeps the
+  two refresh paths apart: the MCP token endpoint refreshes only a session its
+  client holds, and the desktop refresh only a session no client holds. A grant
+  references its client `ON DELETE RESTRICT`, because a session with no grant
+  reads as a desktop session and would gain the desktop audience.
+- **An exact route allowlist.** A `rally-mcp` token reaches only the (method,
+  path) pairs in `MCP_ROUTES` (`mcpRouteAllowed`, `middleware/auth.ts`); any
+  other request is 403 `mcp_route_unavailable`. Inside those, the person's own
+  role and the Canvas's audience decide, as for the app.
+- **Canvas only.** For an MCP token, conversation routes admit only a Canvas
+  (`canvasOnly`, `services/conversation-service.ts`); a Sidekick's conversation
+  is not found.
+- **Artifacts through the Canvas.** An MCP token cannot reach `/resources`. It
+  reads an artifact only through
+  `GET /canvases/:id/artifacts/:resourceId/versions/:version/{content,model-content}`
+  (`routes/canvases.ts`), which checks the resource is one of that Canvas's
+  artifacts before the ordinary resource read.
+
+- **The person can end a grant.** Settings › Account › Connected apps lists
+  the person's live grants in every Organization of the region
+  (`GET /workspace/me/connected-apps`) and disconnects one
+  (`DELETE /workspace/me/connected-apps/:id`), which ends that session exactly
+  as the client's own RFC 7009 `/revoke` does. Both match the grant on the
+  caller's own user id, so another person's grant or a desktop session is
+  `connected_app_not_found`. Neither is in `MCP_ROUTES`, so one client cannot
+  list or end another, and both refuse a support session, since the list spans
+  Organizations the support grant does not cover. The listed name is the one
+  the client registered, so the row says so and shows where the app returns to.
+
+Otherwise a grant ends when the session expires or the person's membership
+ends.
 
 ### Side effects and retries
 
@@ -705,10 +775,14 @@ neither. Discovering the Terminal plugin
 performs no provider operation; an explicit load starts the sandbox acquisition
 in the background and returns, so the model is never held behind provider work
 and a provider failure surfaces on the first Terminal tool rather than at load.
-That acquisition freezes the execution principal, visible-resource authority,
-selected immutable GitHub repository identity, and connection into a
-sandbox-generation fingerprint; narrowing or revocation destroys that
-generation before another tool can observe its filesystem, and a repository
+That acquisition freezes an owner and the selected immutable GitHub repository
+identity and connection into a sandbox-generation fingerprint. For a Canvas the
+owner is the Canvas itself, not the person acting, so every participant's runs
+share one sandbox ([shared Canvas sandbox](#shared-canvas-sandbox)). A
+Sidekick keeps its own rule: its stable file identity
+([`terminal-workspaces.md`](terminal-workspaces.md)). A repository change, or in
+a Canvas an imported resource the acting person can no longer read, destroys
+that generation before another tool can observe its filesystem, and a repository
 that fails revalidation rejects the shared acquisition every waiting tool holds
 rather than being cleaned up after one of them has already proceeded.
 The GitHub connector policy is checked before selection, sandbox bootstrap, and
@@ -758,7 +832,75 @@ conversation branch before each model-facing operation. GitHub cannot scope an
 installation token to one branch, so branch discipline is explicit model
 guidance rather than a custom proxy or claimed technical boundary. Policy
 changes invalidate the cached expiry and force credential rotation before the
-next command.
+next command, and in a Canvas a different person's operation clears the
+credential first ([shared Canvas sandbox](#shared-canvas-sandbox)).
+
+#### Shared Canvas sandbox
+
+The team decided on 2026-11-09 that "a Canvas always has a single shared,
+consistent sandbox no matter which person is delegating or whether it is
+platform activity" ([decision log](PRDs/2026-11-06_canvases-and-sidekicks/prd.md#decision-log)).
+`authorityFingerprint` in `services/terminal/coordinator.ts` therefore names
+the Canvas and its selected repository, not the acting person. A sandbox made
+under an old per-person identity is replaced once.
+
+This widens trust inside a Canvas, and the widening is accepted, not fenced:
+
+- **Files cross people.** A file any participant's run wrote is readable by
+  every other participant's runs in that Canvas. That includes a file fetched
+  through the first person's personal connector, so the second person's run
+  can read data that person could not fetch themselves.
+- **Code crosses people.** Anything a participant runs can change what later
+  runs execute: a planted script, a changed dependency, an edited build file.
+  That reaches other people's agent runs, Rally's own runs, and a later
+  publication build another person starts in the same sandbox
+  ([Canvas publication](canvases.md#artifacts-and-versions)).
+  A guest cannot start a project build, which runs the publisher's own
+  `package.json` scripts with no model in between and beside the selected
+  repository's checkout
+  (`canvas_build_project_members_only`). A guest's component build runs only
+  the pinned toolchain on their code; the toolchain itself is cached in the
+  sandbox, so it is within the "code crosses people" widening above.
+- **A member's project build runs its dependencies' code.** Install scripts
+  are off (`--ignore-scripts`), but `npm run build` runs the build tool and
+  every package it loads, fetched from npm at publish time (ranges float
+  without a lockfile), beside the Canvas's checkout and the publishing
+  member's own GitHub access, with no model in between. A compromised
+  package release would run there. The team accepted this on 2026-11-09
+  rather than drop project builds or require a lockfile; a component build
+  is fenced instead by the pinned toolchain and the bundler's input check.
+
+**GitHub credentials do not cross people.** They are the one thing in the
+sandbox that is a person's grant rather than the Canvas's work: the
+installation token behind `GITHUB_READ_BASIC` and `GH_TOKEN`, the checkout's
+`http.<url>.extraheader` that names it, and the write token
+`publish_branch_and_pr` mounts and leaves in place. The sandbox row records
+whose they are (`credential_principal_key`), written before a mount so a mount
+that failed part-way still counts. When the principal acting differs from that
+record, the coordinator clears the Daytona secrets and the header, under the
+operation lease and before anything of the new principal's runs, then hands
+the record to them; their own bootstrap then mounts their grant under the rules
+that already decide one. A clear that fails refuses the operation
+(`repository_credentials_not_cleared`) rather than run beside the old
+credentials. The same person acting again changes nothing. A publication build
+acts as the publishing person and is covered by the same rule; a build mounts
+no credential of its own. The rule is in `coordinator.ts`
+(`holdsAnotherPrincipalsCredentials`).
+
+What the clear does not reach is code: a process an earlier person's command
+left running can use the next person's credentials while they are mounted,
+because Daytona substitutes the placeholders for any process in the sandbox.
+That is the "code crosses people" widening above, not a credential leak, and
+nothing here fences it.
+
+Nothing tags a sandbox file with the person or connector it came from, and
+apart from the GitHub credentials nothing scans or resets the sandbox between
+people. The fences that remain are
+the Canvas's audience (only someone the Canvas admits can run in it), the
+selected repository's connector policy, and the import check: a resource
+imported into the sandbox that the acting person can no longer read through the
+Canvas's links replaces the generation. A Sidekick keeps its own rule and is not
+part of this widening.
 
 ### Code Mode boundary
 
@@ -1199,6 +1341,40 @@ receive no application bridge. See
 [artifact annotations](artifact-annotations.md) for the protocol.
 
 ## Changelog
+
+### 2026-11-09 — MCP clients get their own audience, and a Canvas's sandbox is shared by its people
+
+**What changed:** Rally runs a public OAuth 2.1 server for MCP clients. Its
+tokens carry the `rally-mcp` audience and reach only an exact route list,
+Canvas conversations and a Canvas's own artifacts, and a person can list and
+disconnect the apps they connected from Settings. Separately, a Canvas's
+sandbox identity is now the Canvas, so files and code written by one
+participant's run reach every other participant's runs there. GitHub
+credentials do not: they are cleared before a different person's operation
+runs, and an operation whose clear fails is refused.
+
+**Why:** People want to use Rally from Claude and ChatGPT, and a token that
+reached the whole product API would hold more than the consent page asks for.
+The shared sandbox is the team's 2026-11-09 product decision. Sharing it left
+the last person's GitHub credentials mounted for every other participant, a
+guest included, to use with an ordinary command; the team decided to clear
+them on a person change only, so the same person acting again pays nothing.
+The reasoning is
+in [`terminal-workspaces.md`](terminal-workspaces.md#changelog) and
+[`rally-mcp.md`](rally-mcp.md#changelog).
+
+**Considered and rejected:** A route-family allowlist for MCP tokens. It
+admitted every route under `/resources` and `/conversations`, uploads and
+socket tickets included, rather than only the calls the tools make.
+
+**Consequences:** A new MCP tool must add its exact route to `MCP_ROUTES`. A
+personal connector's output is no longer private to its owner inside a Canvas;
+a change that assumes it is must fence it. A new way to mount a credential in a
+Canvas sandbox must record its principal before mounting
+(`recordCredentialMount`), or the clear will not know to remove it. A person sees their connected apps
+in Settings and can disconnect one, which ends its session at once; a route
+that lists or ends grants must keep matching them on the caller's own user id
+and stay out of `MCP_ROUTES`.
 
 ### 2026-11-03 — Cross-origin requests reach a site anonymously, not refused
 

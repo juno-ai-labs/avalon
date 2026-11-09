@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { resolveShareableResources } from './resource-share-rules';
 import { annotationAllowedForResource, type Annotation, ArtifactManifestSchema, artifactAssetKey } from "@rally/contracts";
@@ -201,7 +202,7 @@ export class ResourceService {
   async upload(file: File, title: string | undefined, draftId: string,
     importIdentity?: { operationId: string; sourceRole: "user" | "assistant"; sourceKind: "attachment" | "artifact"; fileIndex: string },
     pastedText = false) {
-    const maxBytes = numericEnv(this.env, "MAX_ATTACHMENT_BYTES", 25_000_000);
+    const maxBytes = numericEnv(this.env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
     if (file.size === 0) throw new ApiError(422, "attachment_empty", "Empty files cannot be attached");
     if (file.size > maxBytes) throw new ApiError(413, "attachment_too_large", `Attachments may not exceed ${maxBytes} bytes`);
     const id = draftId;

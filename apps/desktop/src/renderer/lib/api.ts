@@ -12,6 +12,7 @@ import { AccountOnboardingSchema, OrganizationNameSuggestionSchema, UpdateAccoun
 
 import { SupportAccessSchema, type SupportAccess } from "@rally/contracts";
 import { UserTimezoneSchema, type UserTimezone } from "@rally/contracts";
+import { ConnectedMcpAppsSchema, type ConnectedMcpApps } from "@rally/contracts/mcp-oauth";
 
 import {
   CanvasAccessDecisionSchema,
@@ -879,6 +880,16 @@ export class RallyApi {
 
   forgetMyMemory(factId: string): Promise<MemoryForgetResponse> {
     return this.request(`/workspace/me/memory/${encodeURIComponent(factId)}`, { method: 'DELETE', schema: MemoryForgetResponseSchema });
+  }
+
+  /** The MCP apps (Claude, ChatGPT and others) this person connected, in every Organization of this region (`docs/rally-mcp.md`). */
+  getConnectedApps(signal?: AbortSignal): Promise<ConnectedMcpApps> {
+    return this.request('/workspace/me/connected-apps', { schema: ConnectedMcpAppsSchema, signal });
+  }
+
+  /** Ends one connected app's access: the same as the app revoking its own grant. */
+  async disconnectConnectedApp(id: string): Promise<void> {
+    await this.requestVoid(`/workspace/me/connected-apps/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
   /** What Rally remembers about the Organization. */

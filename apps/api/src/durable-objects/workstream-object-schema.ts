@@ -61,7 +61,7 @@ const PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA = [
 ] as const;
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 84;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 85;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3836,6 +3836,20 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `DROP TABLE private_child_membership_authority`,
       `DROP TABLE private_child_lifecycle_authority`,
       `DROP TABLE IF EXISTS sidekick_attachments`,
+    ],
+  },
+  {
+    version: 85,
+    description: "record whose GitHub credentials a Terminal sandbox generation may hold",
+    // A Canvas's sandbox is shared by everyone acting in it, and the GitHub
+    // credentials mounted in it are one person's. The coordinator clears them
+    // before a different person's operation runs (docs/terminal-workspaces.md,
+    // "Repository credentials follow the person acting"). NULL is a
+    // generation nobody has mounted credentials into: every generation bump
+    // resets it, and a row from before this version was replaced when the
+    // Canvas fingerprint stopped naming the person, so nothing is backfilled.
+    statements: [
+      `ALTER TABLE terminal_workspace ADD COLUMN credential_principal_key TEXT`,
     ],
   },
 ];
