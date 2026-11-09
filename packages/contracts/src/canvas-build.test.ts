@@ -51,6 +51,13 @@ import { helper } from "./helper";`);
     expect(refused([{ path: "App.jsx", text: component("", 'import "./theme.css";') },
       { path: "theme.css", text: '.a { background: url(/etc/hostname); }' }]))
       .toMatchObject({ kind: "refused", code: "canvas_build_unsupported_import:/etc/hostname" });
+    expect(refused([{ path: "App.jsx", text: component("", 'import data from "lodash/../../workspace/data.json";') }]))
+      .toMatchObject({ kind: "refused", code: "canvas_build_unsupported_import:lodash/../../workspace/data.json" });
+    expect(refused([{ path: "App.jsx", text: component("", 'import { a } from "./helper.mjs";') },
+      { path: "helper.mjs", text: 'export { a } from "../../workspace/a.js";' }]))
+      .toMatchObject({ kind: "refused", code: "canvas_build_unsupported_import:../../workspace/a.js" });
+    expect(refused([{ path: "App.jsx", text: component("", 'const data = require ("../../workspace/data.json");') }]))
+      .toMatchObject({ kind: "refused", code: "canvas_build_unsupported_import:../../workspace/data.json" });
     // What it does publish resolves as esbuild resolves it: with or without an extension, or a folder's index.
     expect(refused([
       { path: "App.jsx", text: component("", 'import { a } from "./lib/a";\nimport { b } from "./lib";\nimport "./styles/theme.css";') },
