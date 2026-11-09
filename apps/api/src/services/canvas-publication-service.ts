@@ -32,6 +32,8 @@ import { existingArtifactForResource, pointArtifactAtVersion, registerArtifact, 
 import { TerminalToolError } from "./terminal/tools";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
+import { CanvasBuildService } from "./canvas-build/canvas-build-service";
+import { detectSiteSource } from "@rally/contracts/canvas-build";
 
 /**
  * A person publishing something made elsewhere into a Canvas: a document or
@@ -45,7 +47,9 @@ import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
  * a retry of a call that landed changes nothing. `docs/rally-mcp.md#publishing`.
  */
 export class CanvasPublicationService {
-  constructor(private readonly env: Env, private readonly auth: AuthContext) {}
+  constructor(private readonly env: Env, private readonly auth: AuthContext,
+    /** What builds a component or project; the Canvas's Terminal sandbox unless a test passes another. */
+    private readonly builder?: Pick<CanvasBuildService, "build">) {}
 
   async publish(canvasId: string, request: CanvasPublishRequest): Promise<CanvasPublishedArtifact> {
     // The person must be able to take part in the Canvas; a Sidekick's
@@ -159,8 +163,14 @@ export class CanvasPublicationService {
       return { path: normalizePublishPath(file.path), bytes, sha256: await sha256Hex(bytes) };
     }));
     this.assertSize(files.reduce((total, file) => total + file.bytes.byteLength, 0));
-    // The site's identity is its files, not the manifest that describes them,
-    // which carries a version number and a timestamp.
+    // What the files are, from the files alone, before any sandbox starts.
+    const source = detectSiteSource(files.map((file) => ({ path: file.path,
+      text: /\.(?:html?|jsx?|tsx?|mjs|json)$/u.test(file.path) ? new TextDecoder().decode(file.bytes) : null })));
+    if (source.kind === "refused") throw new ApiError(422, source.code, source.message);
+    // The site's identity is the files it was published from, not the
+    // manifest that describes them (which carries a version number and a
+    // timestamp), and for a built site not what the build made: an unchanged
+    // component republished is unchanged without starting a sandbox.
     const contentDigest = await sha256Hex(new TextEncoder().encode(JSON.stringify(
       [...files].sort((left, right) => left.path.localeCompare(right.path)).map((file) => [file.path, file.sha256]),
     )));
@@ -168,13 +178,18 @@ export class CanvasPublicationService {
     if (existing && previous && existing.content_sha256 === contentDigest) {
       return { resourceId: existing.id, title: existing.title, outcome: "unchanged" as const };
     }
+    const built = source.kind === "static" ? null
+      : await (this.builder ?? new CanvasBuildService(this.env, this.auth)).build(canvasId, source, files);
+    const served = built?.files ?? files;
+    const build = built && source.kind !== "static"
+      ? { source: source.kind, files: built.files.length, renderedTextLength: built.renderedTextLength } : undefined;
     const resourceId = existing?.id ?? newId();
     const version = (previous?.version ?? 0) + 1;
     const title = [...(request.title ?? name.split("/").at(-1) ?? "site")].slice(0, 300).join("");
     const written = await writeArtifactVersion(runtime, {
       workspaceId: this.auth.workspaceId, workstreamId: canvasId, region: this.env.AVALON_REGION,
       artifactId: previous?.artifactId ?? null, resourceId, version, mode: "static", stateful: false,
-      files, fallbackTitle: title, serverModuleSha256: null,
+      files: served, fallbackTitle: title, serverModuleSha256: null,
     });
     // The public origin before the row, as Rally's own publish orders it, so
     // a retry after a lost response still registers and points at these bytes.
@@ -211,7 +226,8 @@ export class CanvasPublicationService {
       artifactId: written.artifactId, workspaceId: this.auth.workspaceId, workstreamId: canvasId, resourceId,
       region: this.env.AVALON_REGION, manifest: written.manifest,
     });
-    return { resourceId, title: existing?.title ?? title, outcome: existing ? "updated" as const : "created" as const };
+    return { resourceId, title: existing?.title ?? title, outcome: existing ? "updated" as const : "created" as const,
+      ...(build ? { build } : {}) };
   }
 
   private assertSize(bytes: number) {

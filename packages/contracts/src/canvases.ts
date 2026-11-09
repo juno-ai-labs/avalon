@@ -3,7 +3,6 @@ import { z } from "zod";
 import { IdSchema, UserIdSchema, WorkstreamIdSchema } from "./identifiers";
 import { PUSH_BODY_PREVIEW_CHARACTERS } from "./notification-text";
 import { WorkstreamAppearancePatchSchema, WorkstreamAppearanceSchema } from "./workstream-appearance";
-import { ARTIFACT_SERVER_ENTRY, ARTIFACT_STATIC_ENTRY } from "./artifacts";
 
 /**
  * A Canvas is a conversation first: its id is the parent id of its
@@ -291,9 +290,11 @@ export type CanvasPublishContent = z.infer<typeof CanvasPublishContentSchema>;
 /**
  * `POST /canvases/:id/artifacts`: publish something made elsewhere (in
  * Claude, ChatGPT, OpenCode) into a Canvas as the person's own artifact. A
- * `file` is one document; a `site` is a static site whose `index.html` is
- * its entry. A site with a server module (`index.js`) is Rally's to publish
- * from its sandbox, not a person's to upload. `docs/rally-mcp.md#publishing`.
+ * `file` is one document; a `site` is files ready to serve (an `index.html`),
+ * a React component, or a project with a build script, which Rally builds in
+ * the Canvas's sandbox and checks renders before publishing. A site with a
+ * server module (`index.js`) is Rally's to publish from its sandbox, not a
+ * person's to upload. `docs/rally-mcp.md#publishing`.
  */
 export const CanvasPublishRequestSchema = z.discriminatedUnion("kind", [
   z.strictObject({
@@ -310,11 +311,11 @@ export const CanvasPublishRequestSchema = z.discriminatedUnion("kind", [
     name: CanvasPublishPathSchema,
     title: z.string().trim().min(1).max(300).optional(),
     description: z.string().trim().min(1).max(2000).optional(),
+    // What the files are (ready to serve, a component, a project) is decided
+    // by `detectSiteSource` once they are decoded; here only their shape.
     files: z.array(z.strictObject({ path: CanvasPublishPathSchema, content: CanvasPublishContentSchema })).min(1)
       .superRefine((files, context) => {
         const paths = files.map((file) => file.path);
-        if (!paths.includes(ARTIFACT_STATIC_ENTRY)) context.addIssue({ code: "custom", message: `needs an ${ARTIFACT_STATIC_ENTRY}` });
-        if (paths.includes(ARTIFACT_SERVER_ENTRY)) context.addIssue({ code: "custom", message: `cannot carry a server module (${ARTIFACT_SERVER_ENTRY})` });
         if (paths.some((path) => path === ".rally" || path.startsWith(".rally/"))) context.addIssue({ code: "custom", message: "cannot use the reserved .rally directory" });
         if (new Set(paths).size !== paths.length) context.addIssue({ code: "custom", message: "names a path twice" });
       }),
@@ -331,5 +332,11 @@ export const CanvasPublishedArtifactSchema = z.strictObject({
   outcome: z.enum(["created", "updated", "unchanged"]),
   /** The Canvas opened on this artifact, when the deployment has a link host. */
   url: z.string().nullable(),
+  /** For a site Rally built from a component or a project: what it built, and what the check saw rendered. */
+  build: z.strictObject({
+    source: z.enum(["component", "project"]),
+    files: z.number().int().nonnegative(),
+    renderedTextLength: z.number().int().nonnegative(),
+  }).optional(),
 });
 export type CanvasPublishedArtifact = z.infer<typeof CanvasPublishedArtifactSchema>;
