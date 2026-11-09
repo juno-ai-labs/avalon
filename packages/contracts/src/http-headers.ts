@@ -65,55 +65,13 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
  */
 export const CLIENT_CONTRACT_VERSION = 13;
 /**
- * First client contract that reads `CanvasAccess.request.decidedAt`. That
- * object is strict, so an older build is served the request without it.
- */
-export const ACCESS_DENIED_CLIENT_CONTRACT = 13;
-/** Access previews include the requester's pending and emailed state. */
-export const PENDING_ACCESS_REQUESTS_CLIENT_CONTRACT = 12;
-/** Import verification includes explicit check outcomes and parallel file downloads. */
-export const SESSION_IMPORT_CLIENT_CONTRACT = 3;
-/**
  * First client contract that opens a guest relationship. A desktop before it
  * asks member-only routes for every stored workspace, so it is not offered one.
+ * Read by platform discovery, which an outdated desktop still reaches to be
+ * told to update; every other feature contract is at or below
+ * {@link MINIMUM_SERVED_CLIENT_CONTRACT} and so needs no gate of its own.
  */
 export const GUEST_WORKSPACES_CLIENT_CONTRACT = 4;
-/**
- * First client contract that reads a Space scoped `individual`. An older
- * desktop parses Space summaries strictly, so it is shown such a Space as
- * `personal` (`spaceScopeForClient`) rather than dropping every snapshot.
- */
-export const INDIVIDUAL_SPACE_CLIENT_CONTRACT = 5;
-/**
- * First client contract that reads a Channel feed item of kind `message`. An
- * older desktop parses the feed strictly, so it is served the feed without
- * them.
- */
-export const CHANNEL_MESSAGES_CLIENT_CONTRACT = 6;
-/**
- * First client contract that reads a merged thread's result in a Channel: a
- * Channel message's `merge` and a message item's `attentionSequenceNumber`.
- * Both schemas are strict, so an older desktop is served the message without
- * them, as a plain message from the person who merged.
- */
-export const CHANNEL_MERGES_CLIENT_CONTRACT = 7;
-/**
- * First client contract that reads an Activity row about a pinned artifact's
- * new version. `ActivityItemSchema` is strict, so an older desktop is served
- * the page without those rows.
- */
-export const ARTIFACT_UPDATES_CLIENT_CONTRACT = 8;
-/**
- * First client contract that reads a Channel merge from a thread the reader
- * cannot open (`merge.private`). The merge schema is strict, so an older
- * desktop is served the feed without those merges, as before they existed.
- */
-export const CHANNEL_PRIVATE_MERGES_CLIENT_CONTRACT = 9;
-/** Human reply Activity rows and their preview. */
-export const NEW_MESSAGES_CLIENT_CONTRACT = 11;
-
-/** Conversation snapshots may contain the mark_resolved suggestion kind. */
-export const RESOLUTION_SUGGESTIONS_CLIENT_CONTRACT = 10;
 
 /**
  * The oldest client contract a Worker still answers.
@@ -129,8 +87,12 @@ export const RESOLUTION_SUGGESTIONS_CLIENT_CONTRACT = 10;
  * workspace socket's opening sidebar with a strict schema whose keys the pivot
  * changed, and every Thread route it calls is gone, so it could only reconnect
  * forever to an empty sidebar. It is refused the socket ticket with 426
- * `client_update_required` instead; the desktop auto-updates, and a build that
- * cannot is told to update.
+ * `client_update_required` instead. A build from before this release reads
+ * that like any failed dial: it retries with backoff to a 30 s ceiling and
+ * shows itself reconnecting until the desktop auto-updater (first check ten
+ * minutes after launch, then every three hours) installs the pivot build and
+ * offers Restart to update; a stale web tab loops until it is reloaded. The
+ * 426 itself is legible only in telemetry (`ticket_failed`) and the API log.
  */
 export const MINIMUM_SERVED_CLIENT_CONTRACT = 13;
 
@@ -180,13 +142,6 @@ export const RALLY_HEADERS = Object.freeze({
    * its own. Internal only; the edge strips every inbound spelling first.
    */
   SOCKET_IMPERSONATOR_ID: "x-rally-socket-impersonator-id",
-  /**
-   * `1` when the build that asked for a workspace socket ticket reads a Space
-   * scoped `individual` (`INDIVIDUAL_SPACE_CLIENT_CONTRACT`), signed into the
-   * ticket and forwarded on upgrade. Internal only, stripped like the
-   * impersonator id; a socket without it is told `personal`.
-   */
-  SOCKET_READS_INDIVIDUAL_SPACES: "x-rally-socket-reads-individual-spaces",
   SOCKET_SPECULATIVE: "x-rally-socket-speculative",
   SOCKET_TICKET_EXPIRES_AT: "x-rally-socket-ticket-expires-at",
   SOCKET_TICKET_ID: "x-rally-socket-ticket-id",

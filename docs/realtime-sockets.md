@@ -311,9 +311,9 @@ member's.
 Subscribing is answered with the sidebar itself. The `workspace_sync` event that
 answers `subscribe` carries a `sidebar` field (`WorkspaceSidebarSchema`): the
 viewer's automations and Canvases, each bounded at 250 rows and each stamped
-with its own waterline, plus an always-empty `workstreams` page and `notes`
-list kept for one release so a pre-pivot desktop still parses it (see
-[`websocket-architecture.md`](websocket-architecture.md#changelog), 2026-11-07).
+with its own waterline, and the viewer's Activity page. A desktop from
+before the pivot, which cannot parse it, never reaches it: its ticket is
+refused (see [Failure modes and limits](#failure-modes-and-limits)).
 Both lists come from this object's own SQLite — `automation_directory` and
 `canvas_directory` with their read and pin tables — read with no `await`
 between them, so the sidebar opens on one consistent snapshot and on no
@@ -640,7 +640,12 @@ namespace helper.
   Canvases and Sidekicks pivot) or absent (`requireCurrentClientContract`).
   The ticket is the one door: a build that cannot parse the sidebar is
   refused there rather than admitted to a socket whose first frame it
-  discards. The desktop auto-updates; a build that cannot is told to update.
+  discards. A build from before this release reads the 426 like any failed
+  dial: it retries with backoff to a 30 s ceiling and shows itself
+  reconnecting until the desktop auto-updater (first check ten minutes after
+  launch, then every three hours) installs the current build and offers
+  Restart to update; a stale web tab loops until it is reloaded. The refusal
+  is legible only in telemetry (`ticket_failed`) and the API log.
 - **A write on a conversation whose parent is archived** (the object answers
   409 `conversation_parent_archived` on the socket; the read side stays open).
 - **Disallowed origin** — 403 `socket_origin_forbidden`.
@@ -936,9 +941,13 @@ Sidekick's conversation. The workspace socket carries each viewer's Canvas
 list: `canvases` on the subscribe payload's sidebar and a
 `workspace_canvas_list` push; `set_presence` admits a Canvas the viewer may
 open as its foreground conversation. `list_workstreams`, `space_channels` and
-`channel_rails` are ignored, the sidebar's `workstreams` page is always empty,
+`channel_rails` are ignored, the sidebar's `workstreams` page and `notes` list are gone,
 and Channel rows, rails, recency and the Channel directory frames are no
-longer sent; the guest rules apply to the Canvas list and presence alone.
+longer sent; the guest rules apply to the Canvas list and presence alone. The
+workspace socket ticket refuses a desktop below the pivot contract
+(`MINIMUM_SERVED_CLIENT_CONTRACT` is 13) with 426 `client_update_required`,
+and the ticket no longer carries `ind` (`readsIndividualSpaces`), which
+nothing read.
 `GET /workstreams/:id/control-socket`, `/socket/workstreams/:id`,
 `WorkstreamControlSocketService` and its ticket audience
 (`avalon-workstream-control-socket`) were deleted with the Thread routes, and
@@ -954,11 +963,19 @@ know. Plan step C-2 deleted the Channel directory the retired frames read, and
 no client asks for them after B-1 to B-6; Channels and Threads are gone from
 every client, so nothing can name a Channel to open, and the control socket
 was kept only for desktops released before the workspace socket carried a
-Channel's state. An ignored command keeps an old desktop's socket open. The
-empty page stays, with an empty `notes` list beside it, as optional
-compatibility fields the current renderer ignores: a desktop released before
-the pivot requires both to parse the subscribe answer, and without them it
-reconnects forever without painting.
+Channel's state. An ignored command keeps an old desktop's socket open. An
+always-empty `workstreams` page and `notes` list were first kept so a
+pre-pivot desktop could parse the subscribe answer, but that desktop rejects
+the answer anyway (its strict sidebar schema's other keys changed) and
+reconnects forever without painting, and every Thread route it calls is
+gone. So the minimum contract rose and the empty fields went. The refusal
+does not tell a released build anything: it retries the ticket with backoff
+like any failed dial and shows itself reconnecting, and the desktop
+auto-updater (first check ten minutes after launch, then every three hours)
+is its way out, so the pivot's desktop release has to be published with the
+Worker deploy. What the refusal buys is that no socket opens and no
+WorkspaceDO subscribe runs for a build that would discard it, and that the
+failure is legible in telemetry.
 
 **Considered and rejected:** Refusing the retired commands. A refusal on this
 socket is a permanent close, so an old desktop that still sends one would lose
@@ -967,8 +984,9 @@ its socket for asking.
 **Consequences:** The conversation object refuses a ticket whose kind
 disagrees with its root row, so a Canvas id cannot be opened as a Thread. A
 new sidebar list goes on its own event type, never as a new discriminator
-value of an existing one. The empty `workstreams` page and `notes` list are
-removed in the release after every desktop has updated.
+value of an existing one. A sidebar change a served desktop cannot parse
+raises `MINIMUM_SERVED_CLIENT_CONTRACT` rather than carrying placeholder
+fields.
 
 Shipped in juno-ai-labs/avalon#1490. Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 

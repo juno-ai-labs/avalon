@@ -4,9 +4,6 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../src/lib/api-error";
 import {
   clientOpensGuestWorkspaces,
-  clientReadsIndividualSpaces,
-  clientReadsAccessDenials,
-  clientReadsNewMessages,
   requireCurrentClientContract,
   type ClientRequestHeaders,
 } from "../src/lib/client-contract";
@@ -87,36 +84,5 @@ describe("whether a client opens a guest relationship", () => {
     expect([undefined, "1", "2", "3", "4", "5", "three"].map((declared) =>
       clientOpensGuestWorkspaces(request(declared === undefined ? {} : { "x-rally-client-contract": declared }))))
       .toEqual([false, false, false, false, true, true, false]);
-  });
-});
-
-describe("who is shown a Space scoped individual", () => {
-  it("is a browser build at contract 5 or later, or a native client that declares nothing", () => {
-    expect(clientReadsIndividualSpaces(request({ origin: "app://rallywithai", "x-rally-client-contract": "5" }))).toBe(true);
-    expect(clientReadsIndividualSpaces(request({}))).toBe(true);
-  });
-
-  it("is not a browser build before it, or one that declares nothing or something unreadable", () => {
-    expect(clientReadsIndividualSpaces(request({ origin: "app://rallywithai", "x-rally-client-contract": "4" }))).toBe(false);
-    expect(clientReadsIndividualSpaces(request({ origin: "app://rallywithai" }))).toBe(false);
-    expect(clientReadsIndividualSpaces(request({ origin: "app://rallywithai", "x-rally-client-contract": "5junk" }))).toBe(false);
-  });
-});
-
-
-describe("human reply compatibility", () => {
-  it("withholds reply rows from builds before contract 11 and admits them from it", () => {
-    const resolutionBuild = request({ origin: "app://rallywithai", "x-rally-client-contract": "10" });
-    expect(clientReadsNewMessages(resolutionBuild)).toBe(false);
-    const replyBuild = request({ origin: "app://rallywithai", "x-rally-client-contract": "11" });
-    expect(clientReadsNewMessages(replyBuild)).toBe(true);
-  });
-});
-
-describe("access denial compatibility", () => {
-  it("withholds a denied request's decidedAt from builds before contract 13 and admits it from it", () => {
-    expect(clientReadsAccessDenials(request({ origin: "app://rallywithai", "x-rally-client-contract": "12" }))).toBe(false);
-    expect(clientReadsAccessDenials(request({ origin: "app://rallywithai", "x-rally-client-contract": "13" }))).toBe(true);
-    expect(clientReadsAccessDenials(request({}))).toBe(true);
   });
 });

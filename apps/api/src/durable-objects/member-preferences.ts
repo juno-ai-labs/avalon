@@ -6,7 +6,6 @@ import {
   NotificationChannelSchema,
   NotificationChannelsChoiceSchema,
   NotificationKindSchema,
-  OFFERED_NOTIFICATION_KINDS,
   PushPreferencesSchema,
   WorkspaceIdSchema,
   type MemberPreferences,
@@ -55,29 +54,15 @@ export const WORKSPACE_MEMBER_NOTIFY_PREFERENCES_MIGRATION: readonly string[] = 
 
 /**
  * The push switch each kind of channel list mirrors for an older client. A
- * kind newer than the switches (`merges`) has none: an older client never
- * shows it, and its channels read from the default until the person sets them.
+ * kind newer than the switches has none: its channels read from the default
+ * until the person sets them.
  */
 const PUSH_SWITCH: Partial<Record<NotificationKind, keyof PushPreferences>> = {
   mentions: "mentions",
   added: "added",
-  newThreads: "newThreads",
-  newBreakouts: "newBreakouts",
   runFinished: "runFinished",
 };
 const KINDS = NotificationKindSchema.options;
-/**
- * The kinds a desktop of the previous release requires in the record, with
- * the defaults it had. Not offered, not consulted; emitted for one release so
- * that desktop still parses its preferences, and removed once every desktop
- * has updated (`docs/member-preferences.md`). `merges` needs none: that
- * desktop defaults it.
- */
-const PREVIOUS_RELEASE_DEFAULTS: Partial<Record<NotificationKind, readonly NotificationChannel[]>> = {
-  newThreads: ["push"],
-  newBreakouts: ["push"],
-};
-const OFFERED: ReadonlySet<NotificationKind> = new Set(OFFERED_NOTIFICATION_KINDS);
 
 /**
  * The kind of channel list a pushed notification of this kind reads. Only
@@ -150,22 +135,16 @@ export function storedMemberPreferences(row: {
   notify_json: string;
 } | undefined): MemberPreferences {
   // No row reads through the same shaping as an empty one, so a person who
-  // never saved gets the same record (previous-release kinds included) as
-  // one who did.
+  // never saved gets the same record as one who did.
   const stored = row ?? { show_agent_work: 1, push_json: "{}", notify_json: "{}" };
   const legacy = storedPushPreferences(stored.push_json);
   const chosen = storedNotify(stored.notify_json);
-  // An offered kind reads as chosen, else its default; `merges` is in the
-  // record only as stored. `newThreads` and `newBreakouts` are offered and
-  // read nowhere, but a desktop of the previous release requires them, so
-  // for one release they read as they did then (`PREVIOUS_RELEASE_DEFAULTS`).
-  const notify = Object.fromEntries(KINDS.flatMap((kind) => {
-    const previous = PREVIOUS_RELEASE_DEFAULTS[kind];
-    if (!OFFERED.has(kind) && previous === undefined) return chosen[kind] === undefined ? [] : [[kind, chosen[kind]]];
-    const defaults = DEFAULT_NOTIFICATION_CHANNELS[kind] ?? previous ?? [];
+  // Each kind reads as chosen, else its default with an old push switch applied.
+  const notify = Object.fromEntries(KINDS.map((kind) => {
+    const defaults = DEFAULT_NOTIFICATION_CHANNELS[kind];
     const legacySwitch = PUSH_SWITCH[kind];
-    return [[kind, chosen[kind] ?? (legacySwitch === undefined ? [...defaults]
-      : withPush(defaults, defaults.includes("push") && legacy[legacySwitch]))]];
+    return [kind, chosen[kind] ?? (legacySwitch === undefined ? [...defaults]
+      : withPush(defaults, defaults.includes("push") && legacy[legacySwitch]))];
   })) as NotificationChannels;
   return { showAgentWork: stored.show_agent_work === 1, push: mirroredPush(legacy, notify), notify };
 }
