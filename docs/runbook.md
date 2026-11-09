@@ -44,22 +44,10 @@ Deployment order for the dedicated Ashby ingress is in
 - The Worker, Durable Object namespaces, Workflows, and `CRASH_SYMBOLICATOR`
   Container declared in the regional Wrangler file
 
-One account-wide Flagship app, `avalon-api`, holds the agent model-routing and
-client product flags and is bound by configured regional Workers; it is not a
-per-region resource because a flag holds configuration rather than workspace
-data. Configured deployments do send it an evaluation context carrying workspace,
-conversation, and user *attributes* — slugs, counts, ages, roles, origins, email
-domains — bounded by the rules in
-[`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
-
-`avalon-api` and its per-agent flags are provisioned, and both regional Wrangler
-files carry the `app_id`; [the feature-flag
-document](feature-flags.md#provisioning) has the commands for rebuilding them in
-a fresh account. Each model flag is seeded with the ids already in the
-`OPENROUTER_*` variables. Ace automatically ensures the
-`multiple-workspaces-enabled` flag exists with an off default on
-every merge that deploys it. Changing their targeting happens in Ace rather
-than the Flagship dashboard so connected clients receive the Queue push.
+Feature flags and agent model routing use centralized constants and optional
+Worker environment overrides. No hosted feature flag service or flag-change
+Queue is required. See [`feature-flags.md`](feature-flags.md) for variable names
+and model pin precedence.
 
 Set these shared Worker secrets separately in each regional deployment:
 

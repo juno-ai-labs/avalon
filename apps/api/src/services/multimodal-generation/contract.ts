@@ -9,10 +9,12 @@ import type { ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 import { deferredZodSchema, memoizedValue } from "@rally/contracts/deferred-zod-schema";
 
-export const MULTIMODAL_GENERATION_MODEL = "gpt-image-2";
-export const MULTIMODAL_GENERATION_PRICING_MODEL_ID = "openai/gpt-image-2";
-export const MULTIMODAL_AUDIO_MODEL = "gpt-4o-mini-tts";
-export const MULTIMODAL_AUDIO_PRICING_MODEL_ID = "openai/gpt-4o-mini-tts";
+export {
+  MULTIMODAL_GENERATION_MODEL,
+  MULTIMODAL_GENERATION_PRICING_MODEL_ID,
+  MULTIMODAL_AUDIO_MODEL,
+  MULTIMODAL_AUDIO_PRICING_MODEL_ID,
+} from "@rally/contracts/runtime-config";
 export const MULTIMODAL_AUDIO_DEFAULT_VOICE = "marin";
 export const MULTIMODAL_GENERATION_TIMEOUT_MS = 300_000;
 

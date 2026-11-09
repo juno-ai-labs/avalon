@@ -1,25 +1,17 @@
-import type { ProductFeatureFlagKey } from '@rally/contracts';
 import type { AccessEnvironment } from './access';
-
-export interface FlagChangeMessage {
-  kind: 'flagship_product_flag_changed';
-  flagKey: ProductFeatureFlagKey;
-}
 
 export interface Env extends AccessEnvironment {
   ASSETS: Fetcher;
   GLOBAL_DB: D1Database;
   [binding: `${string}_DB`]: D1Database;
-  PRODUCT_FLAG_CHANGE_QUEUE: Queue<FlagChangeMessage>;
-  GLOBAL_PRODUCT_FLAG_QUEUE: Queue;
-  [binding: `${string}_PRODUCT_FLAG_QUEUE`]: Queue;
   APP_ENV: 'development' | 'test' | 'staging' | 'production';
   APP_VERSION?: string;
   ACE_DEV_AUTH?: string;
   CLOUDFLARE_ACCOUNT_ID: string;
-  FLAGSHIP_APP_ID: string;
-  /** Historical name; the dedicated Ace token also holds Queues Edit. */
-  CLOUDFLARE_FLAGSHIP_API_TOKEN: string;
+  /** Dedicated token with Queues Edit permission only. */
+  CLOUDFLARE_QUEUES_API_TOKEN?: string;
+  /** Legacy Queue credential name, accepted while the new secret is installed. */
+  CLOUDFLARE_FLAGSHIP_API_TOKEN?: string;
   /**
    * The regional API Workers Ace's operator pages call, and the operator
    * token presented to each. One token per region, held by that

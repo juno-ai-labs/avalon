@@ -9,6 +9,15 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(contractCompleteEnv())).not.toThrow();
   });
 
+  it("allows all model overrides to be absent when code supplies the defaults", () => {
+    const env = contractCompleteEnv();
+    delete env.OPENROUTER_PRIMARY_MODEL;
+    delete env.OPENROUTER_FALLBACK_MODELS;
+    delete env.OPENROUTER_CLASSIFIER_MODEL;
+    delete env.AGENT_MODEL_ROUTING_JSON;
+    expect(() => assertEnvContract(env)).not.toThrow();
+  });
+
   it("refuses a malformed retry budget rather than parsing a prefix out of it", () => {
     // `countEnv` reads this key with `Number.parseInt`, which would take `1` out
     // of `"1oops"` and out of `"1.5"`. It never sees either: the contract holds

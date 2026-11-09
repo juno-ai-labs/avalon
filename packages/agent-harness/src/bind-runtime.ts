@@ -1,3 +1,4 @@
+import { MODEL_IDS, AZURE_MODEL_DEPLOYMENTS } from "@rally/contracts/runtime-config";
 import { createLoopCheckpoint, parseLoopCheckpoint, advanceLoopCheckpoint } from "@juno-ai/bind/session";
 import { INFERENCE_TTFT_TIMEOUT_MS } from "./inference-delay";
 import {
@@ -53,7 +54,6 @@ import { createRunDeadline } from "@juno-ai/bind/run";
 import { validateAndHealMessages } from "@juno-ai/bind/transcript";
 import { z } from "zod";
 import {
-  AGENT_MODEL_FLAG_KEYS,
   readStructuredFailure,
   type HarnessFailureCode,
 } from "@rally/contracts";
@@ -158,7 +158,7 @@ const MODEL_ROUTE_REGISTRY = parseModelRouteRegistry({
   unboundDefault: { mode: "only", provider: "openrouter" },
   boundDefault: { mode: "ordered", providers: ["azure", "openrouter"] },
   models: {
-    "openai/gpt-5.6-sol": { mode: "only", provider: "azure" },
+    [MODEL_IDS.GPT_5_6_SOL]: { mode: "only", provider: "azure" },
   },
 });
 const OPENROUTER_CAPABILITIES: ReadonlySet<InferenceCapability> = new Set(
@@ -177,8 +177,8 @@ interface AzureModelBinding {
 }
 
 const AZURE_MODEL_BINDINGS = new Map<CanonicalModelId, AzureModelBinding>([
-  [canonicalModelIdSchema.parse("openai/gpt-5.6-sol"), {
-    deployment: "gpt-5.6-sol",
+  [canonicalModelIdSchema.parse(MODEL_IDS.GPT_5_6_SOL), {
+    deployment: AZURE_MODEL_DEPLOYMENTS[MODEL_IDS.GPT_5_6_SOL],
     capabilities: new Set([
       "chat_completions",
       "streaming",
@@ -190,15 +190,15 @@ const AZURE_MODEL_BINDINGS = new Map<CanonicalModelId, AzureModelBinding>([
     cachedTokenSemantics: "subset",
     fingerprint: "azure:gpt-5.6-sol:2026-07-09:global-standard",
   }],
-  [canonicalModelIdSchema.parse("x-ai/grok-4.3"), {
-    deployment: "grok-4.3",
+  [canonicalModelIdSchema.parse(MODEL_IDS.GROK_4_3), {
+    deployment: AZURE_MODEL_DEPLOYMENTS[MODEL_IDS.GROK_4_3],
     capabilities: new Set(["chat_completions", "streaming", "tools"]),
     maxCompletionTokens: null,
     cachedTokenSemantics: "disjoint",
     fingerprint: "azure:grok-4.3:v1:global-standard",
   }],
-  [canonicalModelIdSchema.parse("x-ai/grok-4.6"), {
-    deployment: "grok-4.6",
+  [canonicalModelIdSchema.parse(MODEL_IDS.GROK_4_6), {
+    deployment: AZURE_MODEL_DEPLOYMENTS[MODEL_IDS.GROK_4_6],
     capabilities: new Set([
       "chat_completions",
       "streaming",
@@ -2310,7 +2310,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             ? buildOpenRouterTracePayload(
                 args.input.traceContext ?? {
                   source: "agent_harness",
-                  feature: AGENT_MODEL_FLAG_KEYS.workstream,
+                  feature: "agent-model-workstream",
                   workspaceId: args.input.workspaceId,
                   workstreamId: args.input.workstreamId,
                   harnessRunId: args.input.harnessRunId,

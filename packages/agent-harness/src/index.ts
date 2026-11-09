@@ -1,3 +1,4 @@
+import { ADDRESSING_FALLBACK_MODEL, TYPESAFE_ADDRESSING_MODEL, MODEL_IDS } from "@rally/contracts/runtime-config";
 import type { RallyCheckpointPort } from "./evaluation";
 import type { ToolPaginationResult } from "@rally/contracts/tool-pagination";
 export { runRallyEvaluation, parseRallyCheckpoint, type RallyCheckpoint, type RallyCheckpointPort } from "./evaluation";
@@ -34,7 +35,6 @@ import {
   jevChoiceQuestion,
   jevSingleChoiceAnswers,
   runConfidenceCascade,
-  JEV_LATEST_MODEL,
 } from "./jev";
 import { createInferenceDelayObserver, INFERENCE_TTFT_TIMEOUT_MS } from "./inference-delay";
 import { createInferenceStreamWatchdog } from "./inference-stream-watchdog";
@@ -217,7 +217,7 @@ export interface AzureModelPricing extends AzureModelTokenRates {
 
 export interface OpenRouterTraceContext {
   source: string;
-  /** Flagship model-routing key for this inference category. */
+  /** Stable model-routing label for this inference category. */
   feature: string;
   workspaceId?: string;
   workstreamId?: string;
@@ -2372,7 +2372,7 @@ const addressingJsonSchema = {
   required: ["classification", "confidence", "rationaleCode"]
 };
 
-export const TYPESAFE_ADDRESSING_MODEL = JEV_LATEST_MODEL;
+export { TYPESAFE_ADDRESSING_MODEL };
 export const TYPESAFE_ADDRESSING_CONFIDENCE_THRESHOLD = 0.5;
 // The measured JEV p95 is about 350 ms. Three times that tail keeps ordinary
 // variation on the primary while bounding message admission tightly enough for
@@ -2382,7 +2382,7 @@ export const TYPESAFE_ADDRESSING_TIMEOUT_MS = 1_000;
 // seconds preserves that observed tail while keeping the terminal local floor
 // reachable during a stalled connection.
 export const ADDRESSING_FALLBACK_TIMEOUT_MS = 15_000;
-export const ADDRESSING_FALLBACK_MODEL = "deepseek/deepseek-v4-flash-0731";
+export { ADDRESSING_FALLBACK_MODEL };
 export const ADDRESSING_FALLBACK_PROVIDER = "wafer/fast";
 
 const ADDRESSING_CHOICES = [
@@ -2683,7 +2683,7 @@ function addressingProviderRouting(model: string): OpenRouterProviderPreferences
       requireParameters: true,
     };
   }
-  if (model !== "deepseek/deepseek-v4.1-flash") return undefined;
+  if (model !== MODEL_IDS.DEEPSEEK_V4_1_FLASH) return undefined;
   return {
     order: ["modal", "together"],
     allowFallbacks: false,

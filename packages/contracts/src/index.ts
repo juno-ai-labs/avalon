@@ -1,3 +1,4 @@
+import { AGENT_MODEL_OVERRIDES } from "./runtime-config";
 export * from './artifact-picker';
 export * from "./sidekick-delegation";
 import { AnnotationsSchema, validateAnnotationAttachments } from './artifact-annotations';
@@ -225,33 +226,19 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * Nothing reads position 0.
  *
  * This is a *closed* list rather than a free-text model id on purpose: an
- * override bypasses the Flagship rollout for the work stream it is attached to,
+ * override bypasses the deployment default for the work stream it is attached to,
  * so the set of models that can be reached that way is a product decision
  * reviewed here rather than whatever string a client sends. Removing a model
  * from it stops new overrides naming it; work streams already pinned to it fall
- * back to the flag, because the API re-validates the stored value on read.
+ * back to the configured default, because the API re-validates the stored value on read.
  *
- * See `docs/feature-flags.md` for how an override composes with the flags.
+ * See `docs/feature-flags.md` for how an override composes with configuration.
  */
-export const AGENT_MODEL_OVERRIDES = [
-  "x-ai/grok-4.6",
-  "x-ai/grok-4.5",
-  "x-ai/grok-4.3",
-  "google/gemini-3.8-flash",
-  "google/gemini-3.7-flash",
-  "google/gemini-3.6-flash",
-  "google/gemini-3.5-flash",
-  "google/gemini-3-flash-preview",
-  "openai/gpt-5.6-sol",
-  "openai/gpt-5.6-terra",
-  "openai/gpt-5.6-luna",
-  "deepseek/deepseek-v4-pro",
-  "deepseek/deepseek-v4-flash-0731",
-] as const;
+export { AGENT_MODEL_OVERRIDES };
 export const AgentModelOverrideSchema = z.enum(AGENT_MODEL_OVERRIDES);
 export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
 
-/** Every distinct model-using Rally task whose route is controlled by Flagship. */
+/** Every distinct model-using Rally task with a configurable model route. */
 export const AGENT_MODEL_ROLES = [
   "workstream",
   "inline_child",
@@ -261,19 +248,10 @@ export const AGENT_MODEL_ROLES = [
 ] as const;
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 
-/** Flagship flag key per model-using task. */
-export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
-  workstream: "agent-model-workstream",
-  inline_child: "agent-model-inline-child",
-  workstream_naming: "agent-model-workstream-naming",
-  memory_sweep: "agent-model-memory-sweep",
-  sidekick_authoring: "agent-model-sidekick-authoring",
-};
-
 /** One task's primary OpenRouter model and its ordered fallback route. */
 export const AgentModelRoutingSchema = z.object({
   model: z.string().trim().min(1),
-  // Older or manually-authored Flagship values may omit the array. Treating
+  // Environment overrides may omit the array. Treating
   // that shape as no fallbacks keeps every evaluator and operator surface in
   // agreement instead of silently substituting a different checked-in route.
   fallbackModels: z.array(z.string().trim().min(1)).default([]),
@@ -452,17 +430,11 @@ export const ClientFeatureFlagsSchema = z.object({
   pushNotificationsEnabled: z.boolean().default(false),
 });
 
-/** Product flags Ace is allowed to manage and publish to connected clients. */
+/** Legacy product keys retained for the workspace socket event contract. */
 export const ProductFeatureFlagKeySchema = z.enum([
   "multiple-workspaces-enabled",
   "push-notifications-enabled",
 ]);
-export const ProductFeatureFlagFanoutMessageSchema = z.strictObject({
-  kind: z.literal("product_feature_flag_changed"),
-  flagKey: ProductFeatureFlagKeySchema,
-  workspaceId: IdSchema,
-});
-
 export const ParticipantSchema = z.object({
   user: UserSchema,
   participationReason: z.enum(["creator", "explicit", "message", "elicitation", "action"]),
@@ -2386,9 +2358,8 @@ export const WorkspaceResourceVersionsEventSchema = z.strictObject({
 export type WorkspaceResourceVersionsEvent = z.infer<typeof WorkspaceResourceVersionsEventSchema>;
 
 /**
- * User-specific flags sent outside the workspace waterline. Two people in one
- * WorkspaceDO can match different Flagship rules, so these values must never
- * ride the common `workspace_sync` event.
+ * Legacy flag-update event accepted by clients across rolling deployments.
+ * Current configuration is delivered on workspace subscription and HTTP reads.
  */
 export const WorkspaceFeatureFlagsEventSchema = z.strictObject({
   type: z.literal("workspace_feature_flags"),
@@ -3468,7 +3439,6 @@ export type AssignableMemberRole = z.infer<typeof AssignableMemberRoleSchema>;
 export type UpdateWorkspaceMemberRoleRequest = z.infer<typeof UpdateWorkspaceMemberRoleRequestSchema>;
 export type ClientFeatureFlags = z.infer<typeof ClientFeatureFlagsSchema>;
 export type ProductFeatureFlagKey = z.infer<typeof ProductFeatureFlagKeySchema>;
-export type ProductFeatureFlagFanoutMessage = z.infer<typeof ProductFeatureFlagFanoutMessageSchema>;
 export type Workstream = z.infer<typeof WorkstreamSchema>;
 export type WorkstreamDetail = z.infer<typeof WorkstreamDetailSchema>;
 export type WorkstreamBoot = z.infer<typeof WorkstreamBootSchema>;

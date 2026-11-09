@@ -16,10 +16,6 @@ import {
 import { consumeMigrationCommandQueue } from "./queues/migration-command-consumer";
 import { consumeUsageQueue, isUsageQueue } from "./queues/usage-consumer";
 import { pruneUsageEvents } from "./services/usage-metering";
-import {
-  consumeProductFeatureFlagQueue,
-  isProductFeatureFlagQueue,
-} from "./queues/product-feature-flag-consumer";
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { dispatchWorkspaceRelationshipChanges } from "./services/workspace-relationship-delivery";
 import { consumeActivityQueue } from "./queues/activity-consumer";
@@ -156,11 +152,6 @@ export default {
     // accepted records into a regional dead-letter backlog.
     if (isInferenceLakehouseQueue(batch.queue)) {
       return consumeInferenceLakehouseQueue(batch, env);
-    }
-    // Flag changes describe configuration already committed in Flagship. They
-    // must still reach open sockets while product mutations are paused.
-    if (isProductFeatureFlagQueue(batch.queue)) {
-      return consumeProductFeatureFlagQueue(batch, env);
     }
     // Accepted analytics is also a projection, so it drains through product
     // maintenance rather than converting an operational cutover into a DLQ.

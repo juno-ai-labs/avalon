@@ -8,7 +8,6 @@ import {
   AnswerElicitationRequestSchema,
   AutomationDraftSchema,
   SidekickCustomToolSchema,
-  AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_OVERRIDES,
   AgentModelOverrideSchema,
   AGENT_MODEL_ROLES,
@@ -193,26 +192,17 @@ describe("boundary contracts", () => {
 
   it("accepts a model override only from the closed list of selectable models", () => {
     expect(AgentModelOverrideSchema.parse("deepseek/deepseek-v4-pro")).toBe("deepseek/deepseek-v4-pro");
-    // An override bypasses the rollout, so the reachable set is reviewed here
-    // rather than being whatever string a client sends.
     expect(AgentModelOverrideSchema.safeParse("x-ai/grok-9").success).toBe(false);
     expect(new Set(AGENT_MODEL_OVERRIDES).size).toBe(AGENT_MODEL_OVERRIDES.length);
   });
 
-  it("owns the complete model-role, Flagship-key, and route-value contract", () => {
+  it("owns the complete model-role and route-value contract", () => {
     expect(AGENT_MODEL_ROLES).toEqual([
       "workstream",
       "inline_child",
       "workstream_naming",
       "memory_sweep",
       "sidekick_authoring",
-    ]);
-    expect(AGENT_MODEL_ROLES.map((role) => AGENT_MODEL_FLAG_KEYS[role])).toEqual([
-      "agent-model-workstream",
-      "agent-model-inline-child",
-      "agent-model-workstream-naming",
-      "agent-model-memory-sweep",
-      "agent-model-sidekick-authoring",
     ]);
     expect(AgentModelRoutingSchema.parse({ model: "openai/gpt-6.1-sol", reasoningEffort: "low" })).toEqual({
       model: "openai/gpt-6.1-sol", fallbackModels: [], reasoningEffort: "low",
