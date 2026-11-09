@@ -1701,11 +1701,6 @@ export class SlackAgentService {
     connection: SlackConnectionRow,
     eventType: string,
   ): Promise<boolean> {
-    // Focused unit tests construct partial Worker environments. Production
-    // cannot take this path because the environment contract requires the
-    // WorkspaceDO binding; a partial environment simply has no durable
-    // registration authority to report a subscriber.
-    if (!this.env.WORKSPACE_DOS) return false;
     const result = await this.workspaceDirectory(connection.workspace_id)
       .then((workspace) => workspace.hasActiveExternalEventRegistration({
         workspaceId: connection.workspace_id,
@@ -1966,16 +1961,6 @@ export class SlackAgentService {
       `SELECT workspace_id, connection_id FROM slack_installation_routes
         WHERE team_id = ? AND region = ? AND status = 'active'`,
     ).bind(teamId, this.env.AVALON_REGION).first<{ workspace_id: string; connection_id: string }>();
-    if (!route && !this.env.WORKSPACE_DOS) {
-      const legacy = await this.env.DB.prepare(
-        `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
-                credential_key_version, granted_scopes_json, status
-           FROM connector_connections
-          WHERE connector_type = 'slack' AND scope = 'workspace'
-            AND provider_account_id = ? AND status <> 'disabled'`,
-      ).bind(teamId).first<SlackConnectionRow>();
-      if (legacy) return legacy;
-    }
     if (!route) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Rally");
     this.env = withWorkspaceRuntimeDatabase(this.env, route.workspace_id);
     const row = await this.env.DB.prepare(
@@ -1994,15 +1979,6 @@ export class SlackAgentService {
       `SELECT workspace_id FROM slack_installation_routes
         WHERE connection_id = ? AND region = ? AND status = 'active'`,
     ).bind(id, this.env.AVALON_REGION).first<{ workspace_id: string }>();
-    if (!route && !this.env.WORKSPACE_DOS) {
-      const legacy = await this.env.DB.prepare(
-        `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
-                credential_key_version, granted_scopes_json, status
-           FROM connector_connections
-          WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace'`,
-      ).bind(id).first<SlackConnectionRow>();
-      if (legacy) return legacy;
-    }
     if (!route) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Rally");
     this.env = withWorkspaceRuntimeDatabase(this.env, route.workspace_id);
     const row = await this.env.DB.prepare(

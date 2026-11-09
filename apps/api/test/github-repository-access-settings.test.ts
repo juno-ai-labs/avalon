@@ -11,6 +11,7 @@ import {
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
+  testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
@@ -330,6 +331,9 @@ function environment(database: DatabaseSync): Env {
     GITHUB_APP_CLIENT_SECRET: "secret",
     GITHUB_APP_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nunused\n-----END PRIVATE KEY-----",
     GITHUB_WEBHOOK_SECRET: "webhook-secret",
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: { refreshSchedule: async () => ({ alarmAt: null }) },
+    }),
   });
 }
 
