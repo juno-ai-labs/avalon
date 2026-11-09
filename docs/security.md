@@ -585,9 +585,19 @@ the flow; this section owns its trust surface.
   (`routes/canvases.ts`), which checks the resource is one of that Canvas's
   artifacts before the ordinary resource read.
 
-A person cannot yet list or revoke a connected app from the product. A grant
-ends only when the client revokes it (RFC 7009 `/revoke`), when the session
-expires, or when the person's membership ends.
+- **The person can end a grant.** Settings › Account › Connected apps lists
+  the person's live grants in every Organization of the region
+  (`GET /workspace/me/connected-apps`) and disconnects one
+  (`DELETE /workspace/me/connected-apps/:id`), which ends that session exactly
+  as the client's own RFC 7009 `/revoke` does. Both match the grant on the
+  caller's own user id, so another person's grant or a desktop session is
+  `connected_app_not_found`. Neither is in `MCP_ROUTES`, so one client cannot
+  list or end another, and both refuse a support session, since the list spans
+  Organizations the support grant does not cover. The listed name is the one
+  the client registered, so the row says so and shows where the app returns to.
+
+Otherwise a grant ends when the session expires or the person's membership
+ends.
 
 ### Side effects and retries
 
@@ -1303,7 +1313,8 @@ receive no application bridge. See
 
 **What changed:** Rally runs a public OAuth 2.1 server for MCP clients. Its
 tokens carry the `rally-mcp` audience and reach only an exact route list,
-Canvas conversations and a Canvas's own artifacts. Separately, a Canvas's
+Canvas conversations and a Canvas's own artifacts, and a person can list and
+disconnect the apps they connected from Settings. Separately, a Canvas's
 sandbox identity is now the Canvas, so files and code written by one
 participant's run reach every other participant's runs there.
 
@@ -1319,9 +1330,10 @@ socket tickets included, rather than only the calls the tools make.
 
 **Consequences:** A new MCP tool must add its exact route to `MCP_ROUTES`. A
 personal connector's output is no longer private to its owner inside a Canvas;
-a change that assumes it is must fence it. A person cannot see or revoke a
-connected app yet, so a leaked grant lasts until the client revokes it, the
-session expires, or the membership ends.
+a change that assumes it is must fence it. A person sees their connected apps
+in Settings and can disconnect one, which ends its session at once; a route
+that lists or ends grants must keep matching them on the caller's own user id
+and stay out of `MCP_ROUTES`.
 
 ### 2026-11-03 — Cross-origin requests reach a site anonymously, not refused
 
