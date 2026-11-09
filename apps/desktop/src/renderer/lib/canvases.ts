@@ -1,4 +1,4 @@
-import type { CanvasEditor, CanvasSidebarRow } from '@rally/contracts';
+import { asWorkstreamId, type CanvasEditor, type CanvasSidebarRow } from '@rally/contracts';
 import { useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -217,14 +217,14 @@ export function canvasWrittenByRun(
 export function useCreateCanvas(): (prompt?: string) => Promise<void> {
   const api = useOptionalCollaborationSession()?.api;
   const navigate = useNavigate();
-  const series = useRef<{ text: string; canvasId: string; clientMessageId: string; inFlight: Promise<void> | null } | null>(null);
+  const series = useRef<{ text: string; canvasId: ReturnType<typeof asWorkstreamId>; clientMessageId: string; inFlight: Promise<void> | null } | null>(null);
   return useCallback((prompt?: string) => {
     if (!api) return Promise.reject(new Error('Rally is not connected yet.'));
     const text = prompt?.trim() ?? '';
     const current = series.current;
     if (current?.inFlight) return current.inFlight;
     const attempt = current?.text === text ? current
-      : { text, canvasId: uuidV7(), clientMessageId: crypto.randomUUID(), inFlight: null };
+      : { text, canvasId: asWorkstreamId(uuidV7()), clientMessageId: crypto.randomUUID(), inFlight: null };
     series.current = attempt;
     const inFlight = api.createCanvas({
       canvasId: attempt.canvasId,

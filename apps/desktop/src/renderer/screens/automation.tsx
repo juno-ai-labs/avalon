@@ -11,10 +11,10 @@ import type { AutomationDetail } from '../lib/types';
 import { SidekickDetailLayout, type SidekickDetailHeaderContext } from '../components/sidekick-detail-layout';
 import { useSidekickList } from '../components/sidekick-sidebar-section';
 import { AutomationGlyph } from '../components/workstream-glyph';
-import { canvasRoute, useCanvasNameSources } from '../lib/canvases';
+import { canvasRoute } from '../lib/canvases';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
-import { AvatarStack, Button, EmptyState, IconButton, OpeningState } from '../components/primitives';
+import { Button, EmptyState, IconButton, OpeningState } from '../components/primitives';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { copyLink } from '../lib/copy-link';
 import { useDocumentTitle } from '../lib/document-title';
@@ -255,19 +255,15 @@ function SidekickHeader({ context, detail, onCopyLink, onRunNow }: {
   /** Absent while the Sidekick cannot start a run; the details say why. */
   onRunNow: (() => void) | undefined;
 }): React.JSX.Element {
-  const { api, session } = useCollaborationSession();
+  // No presence here: the workspace socket records only an open Canvas as
+  // anyone's foreground (`set_presence`), so a Sidekick never has any.
+  const { api } = useCollaborationSession();
   const [search, setSearch] = useSearchParams();
   const runId = search.get('run');
   const name = detail.currentDefinition?.name ?? detail.name;
   const row = useSidekickList()?.find((candidate) => candidate.id === detail.id);
   const pinned = row?.pinnedPosition != null;
   const [menuError, setMenuError] = useState<string | null>(null);
-  const { membersById } = useCanvasNameSources(api);
-  const presentUserIds = useOptionalWorkspaceSocket()?.presenceUserIdsByWorkstream[detail.id] ?? NO_PRESENCE;
-  const present = presentUserIds.filter((userId) => userId !== session?.user.id).flatMap((userId) => {
-    const member = membersById.get(userId);
-    return member ? [member] : [];
-  });
   const mark = <span className="sidekick-pill-mark"><AutomationGlyph {...(detail.appearance ? { appearance: detail.appearance } : {})} id={detail.id} /></span>;
   const sidekickLevel: TitlePillLevel = {
     key: `sidekick:${detail.id}`,
@@ -311,9 +307,6 @@ function SidekickHeader({ context, detail, onCopyLink, onRunNow }: {
       ancestors={ancestors}
       current={current}
       trailing={<span className="canvas-header-trailing">
-        {present.length > 0 && <span aria-label={`${present.length} ${present.length === 1 ? 'person' : 'people'} here`} className="canvas-header-present" role="group">
-          <AvatarStack currentUserId={session?.user.id ?? null} members={present} presentUserIds={presentUserIds} />
-        </span>}
         {context.compact && <IconButton aria-pressed={context.detailsOpen} className="title-pill-action" label="Sidekick details" onClick={context.toggleDetails}>
           <PanelRight aria-hidden="true" size={16} />
         </IconButton>}
@@ -322,7 +315,6 @@ function SidekickHeader({ context, detail, onCopyLink, onRunNow }: {
   </>;
 }
 
-const NO_PRESENCE: readonly string[] = [];
 
 /**
  * The Sidekick's shared conversation (substream `"0"`), or one run's own
