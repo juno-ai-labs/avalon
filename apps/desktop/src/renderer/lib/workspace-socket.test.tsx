@@ -12,6 +12,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { StrictMode, useEffect, type JSX } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from './workspace-socket';
+import { ApiError } from './api';
 import { PushedListPending } from '../components/pushed-list-pending';
 import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
@@ -1003,6 +1004,35 @@ describe('WorkspaceSocketProvider', () => {
       expect(FakeWebSocket.instances).toHaveLength(2);
       act(() => FakeWebSocket.instances[1]!.open());
       expect(screen.getByText('Loading Canvases…')).toBeInTheDocument();
+    });
+
+    it('stops dialling when the server no longer serves this build, and offers the update', async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      const getWorkspaceSocketTicket = vi.fn(async () => {
+        throw new ApiError('Update Rally to continue.', 426, 'client_update_required');
+      });
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <WorkspaceSocketProvider region="global"
+            api={{ getWorkspaceSocketTicket }}
+            workspaceId="00000000-0000-7000-8000-000000000001"
+          >
+            <PushedListPending label="Loading Canvases…" noun="Canvases" />
+          </WorkspaceSocketProvider>
+        </QueryClientProvider>,
+      );
+      await flushPromises();
+      expect(screen.getByText('This version of Rally is out of date.')).toBeInTheDocument();
+      // The browser build reloads into the build the server serves.
+      expect(screen.getByRole('button', { name: 'Reload Rally' })).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+      act(() => { globalThis.dispatchEvent(new Event('offline')); globalThis.dispatchEvent(new Event('online')); });
+      await flushPromises();
+      expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
+      expect(FakeWebSocket.instances).toHaveLength(0);
+      expect(screen.getByText('This version of Rally is out of date.')).toBeInTheDocument();
+      expect(socketTelemetry()).toContainEqual(expect.objectContaining({ state: 'stopped', cause: 'ticket_failed' }));
     });
 
     it('does not give up on a socket that opened and synchronized', async () => {

@@ -26,7 +26,7 @@ const WorkspaceSyncPublicationSchema: z.ZodType<WorkspaceSyncPublication> = z.di
   z.strictObject({
     type: z.literal('state'),
     ...identity,
-    state: z.enum(['connecting', 'connected', 'reconnecting', 'unavailable']),
+    state: z.enum(['connecting', 'connected', 'reconnecting', 'unavailable', 'update_required']),
   }),
   z.strictObject({ type: z.literal('detach'), ...identity }),
   z.strictObject({

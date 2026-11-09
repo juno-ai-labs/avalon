@@ -37,7 +37,7 @@ import {
   useState,
   type PropsWithChildren,
 } from 'react';
-import { mapAutomationSummary, type RallyApi } from './api';
+import { ApiError, mapAutomationSummary, type RallyApi } from './api';
 import { retainConversationParents } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
 import { applyPushedOrganizationUsage, organizationUsageQueryKey } from './organization-usage';
@@ -811,6 +811,14 @@ export function WorkspaceSocketProvider({
         });
       } catch (error) {
         if (stopped || generation !== connectGeneration) return;
+        // The server no longer serves this build. Dialling again cannot
+        // change that, so the loop stops and the page offers the update.
+        if (error instanceof ApiError && error.status === 426 && error.code === 'client_update_required') {
+          permanentlyClosed = true;
+          socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'ticket_failed' });
+          setState('update_required');
+          return;
+        }
         if (!stopped) {
           const offline = isOffline();
           if (offline) reportHandshake(diagnosticAttemptId, 'offline_blocked');
@@ -841,6 +849,7 @@ export function WorkspaceSocketProvider({
       else void connect();
     };
     const offline = (): void => {
+      if (permanentlyClosed) return;
       const hadAttempt = socket !== null || connecting;
       if (pendingHandshakeDiagnostic) {
         reportHandshake(pendingHandshakeDiagnostic.id, 'offline_blocked');
