@@ -824,6 +824,12 @@ waiting state is new:
   account, a permission on the provider): the model asks with
   `request_elicitation`, naming what to grant, with a continue and a decline
   option.
+- **A capability the run does not hold** (no Terminal, no file publication)
+  is not asked for: no person can grant a capability from a question, so the
+  run still ends `completed` with a final message saying what it could not do
+  ("No Canvas note was published because this run has no Terminal or file
+  publication tools"). It reads to a person much as a blocked run did; that
+  is known, and a question here would only wait for something no answer gives.
 
 While it waits, the run's row shows the question, the Sidekick's list row reads
 Needs input with that question (`AUTOMATION_RUN_STATE_SQL`), and the
@@ -2090,6 +2096,17 @@ client keeps its `runState` fallback for one release, until every Worker
 publishes `running`. The EXISTS reads the Sidekick's run history on each
 list read; a partial index over the working states is the fix if that ever
 shows, and is deliberately not added now.
+
+**Not changed:** a run that lacks a capability (no Terminal, no file
+publication) still ends `completed` with a message, since no person can grant
+a capability; the round-5 visual check observed it, and the body records it
+beside the connection rule.
+
+**Consequences:** A personal-scope question is answered by whoever connects,
+but only the run's principal's personal connection serves the run; a manager
+who is not the principal connecting their own account resumes a run that asks
+again. The Needs input notice still goes to the requester and the managers, as
+for any question a run asks.
 
 ### 2026-11-08 — Retirement records: Work-stream appearance, Work-stream markers
 
