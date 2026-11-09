@@ -148,8 +148,8 @@ export function NavigationSidebar({
     if (owner) setSection(owner);
   }, [pathname, setSection, sidebarOpen]);
   // Opening anything closes the sheet, whoever navigated: a row, a search
-  // result, a new Canvas. Sidekicks switches only the list; Canvases opens
-  // its dashboard. A navigation that asked for the sheet
+  // result, a new Canvas. Dashboard shortcuts close the sheet even when
+  // already at their destination. A navigation that asked for the sheet
   // (`sheetAfterNavigation`) opens it here instead, once.
   useEffect(() => {
     const { sheetAfterNavigation, setSheetAfterNavigation } = useUiStore.getState();
@@ -159,7 +159,7 @@ export function NavigationSidebar({
   // Whatever opened it (a row, a deep link, a memory source, the account
   // menu), arriving at a Canvas or a Sidekick shows its section, so the list
   // beside it holds the row that is open. Only a navigation moves it:
-  // picking Sidekicks while one is open changes only the list.
+  // picking a section that only changes its list does not navigate.
   // Activity is a list of things to go to, so opening one of its rows keeps
   // it open, the next row a click away.
   // The landing is the window's first route that belongs to a section: a
@@ -204,6 +204,10 @@ export function NavigationSidebar({
   const createCanvas = useCreateCanvas();
   const [createCanvasError, setCreateCanvasError] = useState<Error | null>(null);
   const navigate = useNavigate();
+  const openSidekicksHome = (): void => {
+    setSidebarOpen(false);
+    if (`${pathname}${search}` !== '/sidekicks') void navigate('/sidekicks');
+  };
   const workspaceSocket = useOptionalWorkspaceSocket();
   // Entering Activity opens its top row, the way a mail client opens the
   // first message of the folder it opens: the rail's button pushes, so Back
@@ -269,7 +273,13 @@ export function NavigationSidebar({
           icon={candidate.icon}
           key={candidate.id}
           label={candidate.label}
-          onClick={() => candidate.id === 'canvases' ? openCanvasDashboard() : setSection(candidate.id)}
+          onClick={() => {
+            if (candidate.id === 'canvases') openCanvasDashboard();
+            else {
+              setSection(candidate.id);
+              if (candidate.id === 'sidekicks' && !guest) openSidekicksHome();
+            }
+          }}
         />)}
         <div className="navigation-rail-spacer" />
         {accountMenu}
@@ -299,6 +309,9 @@ export function NavigationSidebar({
             </IconButton>}
             {barSection === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => { setCreateCanvasError(null); void createCanvas().catch((cause: unknown) => setCreateCanvasError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))); }}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
+            </IconButton>}
+            {barSection === 'sidekicks' && !guest && <IconButton label="Sidekicks home" onClick={openSidekicksHome}>
+              <IconHome aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
             {barSection === 'sidekicks' && !guest && <IconButton label="New Sidekick" onClick={() => void navigate('/sidekicks/new')}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />

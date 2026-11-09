@@ -66,13 +66,13 @@ describe('CanvasesHomeScreen', () => {
     ]));
     const card = (title: string): HTMLElement => screen.getByRole('link', { name: title }).closest('li')!;
     for (const [title, glyph] of [['Chosen', 'flag'], ['Unchosen', 'file-text'], ['Archive', 'archive'], ['Chat only', 'panels-top-left']] as const) {
-      expect(card(title).querySelectorAll('.canvas-card-shot svg')).toHaveLength(1);
-      expect(card(title).querySelector('.canvas-card-shot svg')).toHaveClass(`lucide-${glyph}`);
+      expect(card(title).querySelectorAll('.dashboard-card-preview svg')).toHaveLength(1);
+      expect(card(title).querySelector('.dashboard-card-preview svg')).toHaveClass(`lucide-${glyph}`);
       expect(card(title).querySelector('h3 svg')).toBeNull();
     }
-    expect(card('Chosen').querySelector('.canvas-card-shot')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-orange)' });
-    expect(card('Chosen').querySelector('.canvas-card-shot > svg')).toHaveAttribute('stroke', 'var(--av-sys-color-project-ink-orange)');
-    expect(card('Unchosen').querySelector('.canvas-card-shot')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-emerald)' });
+    expect(card('Chosen').querySelector('.dashboard-card-preview')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-orange)' });
+    expect(card('Chosen').querySelector('.dashboard-card-preview > svg')).toHaveAttribute('stroke', 'var(--av-sys-color-project-ink-orange)');
+    expect(card('Unchosen').querySelector('.dashboard-card-preview')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-emerald)' });
   });
 
   it('keeps Canvases in activity order independently of stored data or viewer presence', async () => {

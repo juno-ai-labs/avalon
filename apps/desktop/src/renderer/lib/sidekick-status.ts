@@ -1,9 +1,9 @@
 import type { AutomationSummary } from './types';
 
 /**
- * Where a Sidekick stands, as its sidebar row and its home row say it (the
- * PRD's "working, next run, paused", design.html §3): waiting on someone
- * first, then a run under way, then its lifecycle.
+ * Where a Sidekick stands in the sidebar: waiting on someone first, then a
+ * run under way, then its lifecycle. The dashboard uses this for Needs input;
+ * its only lifecycle pill is Paused, even for a paused Sidekick with a run in flight.
  */
 export type SidekickStatus = 'needs_input' | 'working' | 'paused' | 'draft' | 'active';
 

@@ -453,13 +453,12 @@ records where a running signal would come from.
 ### Creation and ownership
 
 The Sidekicks home (`/sidekicks`, in the main window on both hosts) lists all
-accessible personal and workspace entries, including drafts, as rows with
-their status (Needs input, Draft, Paused or Active), who they are shared with
-and when they next wake, filtered by Everyone, Only you, Organization or
-Paused. The row's facts give way on the pane's width, a container query on
-the page rather than a viewport rule: Shared with drops first, and in a narrow
-pane the status pill and Next sit under the description, so the name keeps
-its room at the desktop's 860px minimum beside the 416px sidebar. `GET /sidekicks` uses
+accessible personal and workspace entries, including drafts, as cards filtered
+by Everyone, Only you, Organization or Paused, with search, sharing and next-wake
+information. Paused is the only lifecycle pill; drafts, active Sidekicks and
+working Sidekicks are intentionally unmarked, while Needs input remains visible.
+Dashboard layout and navigation belong to [`desktop-shell.md`](desktop-shell.md).
+`GET /sidekicks` uses
 `WorkspaceDO.listSidekickDirectoryForAuthorizedMember`: the request's session
 authentication already joined the caller's active member row, so the object
 applies only the per-row scope filter and does not read `workspace_members`
