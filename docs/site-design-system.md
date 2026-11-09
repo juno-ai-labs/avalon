@@ -36,15 +36,24 @@ started from a blank page rather than from any earlier look.
    thing to act on. People never wear it: Maya, Theo and Priya each have
    their own colour for cursors, bubbles and selections.
 5. **Positioning.** Every other AI tool is built for one person in one chat;
-   Rally is for the team. The hero says "One place for you, your coworkers,
-   and AI." and the page closes on "Work isn't single-player."
+   Rally works for one person and keeps working as people join. The hero says
+   "One place for you, your coworkers, and AI.", its kicker says "Start alone.
+   Bring your team when you're ready.", and the page closes on "Start alone.
+   Bring everyone." A reader who works alone must see that Rally is for them
+   today, and a team must see it was built for them.
 6. **Story order.** After the pivot the product is two things, so the home
    page says that plainly ("Two parts. That's the whole product.") and then
    explains each: Canvases, then Sidekicks, then the proof (pricing,
    technology, team, comparisons).
-7. **Show, don't claim.** Figure 1 is a working Canvas, not a picture: people
-   ask, Rally reads their tools, the artifact appears, a teammate comments, and
-   Rally publishes a second version.
+7. **Show, don't claim.** Figure 1 is a working Canvas, not a picture, and it
+   tells the solo-to-team story itself: Maya starts alone ("Only you"), Rally
+   reads her tools and drafts, she shares the Canvas ("Specific people · 3"),
+   Theo and Priya appear, Theo comments on a line, and Rally publishes a
+   second version.
+8. **Say how it scales.** The "From one to everyone" band (`#scale`) right
+   after the opening statement shows three stages, 1, 3 and 30+, each with
+   its people, what Rally does at that size, and the audience labels the
+   product shows there.
 
 ## Where the code lives
 
@@ -108,14 +117,23 @@ A **highlight** (`<mark class="hl hl-maya" data-name="Maya">`) is a person's
 selection: their colour behind the words, a bar at the start and their name
 flag above, drawn from `data-name`. The "Why Rally" statement uses three.
 
+The **scale** band (`.scale`) is three stages on one ruled line that ends in
+an arrow. Each stage is a crowd of faces, a head count in the serif, a
+heading, a sentence, and its audience labels (`.scale-states`). The labels
+are the product's own: "Only you", "Specific people" and "Everyone in the
+Organization" for a Canvas; "Only you", "Shared · 3 people" and
+"Organization" for a Sidekick.
+
 Shared markup is never copied between pages. A page holds a marker such as
 `<!-- rally:canvas-demo -->` and `renderSiteChrome` in `site-chrome.ts`
 replaces it at build time and in the dev server.
 
 ### The Canvas demo
 
-`canvas-demo.html` is plain HTML. `site-motion.ts` steps it through six
-states: each step adds `s<n>` to the figure, so CSS places the cursors and
+`canvas-demo.html` is plain HTML. `site-motion.ts` steps it through seven
+states (Maya asks alone, Rally drafts, Maya shares, Theo comments, Priya asks,
+Rally publishes version two), with the audience label and the joining faces
+switching at the share step: each step adds `s<n>` to the figure, so CSS places the cursors and
 swaps the artifact's version per step, and turns on every `[data-at]`
 element whose step has arrived. The loop runs only while the figure is on
 screen. The timings live in `STEP_HOLD`.
@@ -135,6 +153,10 @@ and nothing reveals or drifts.
   person's colour.
 - **Both themes, from tokens.** A colour written into a rule instead of a
   token breaks one of the two themes; check both before shipping.
+- **Solo and team, both visible.** Every page that sells Rally says it works
+  for one person and grows to a team: the hero kicker, Figure 1, the scale
+  band, the product pages' copy and the closing line. Copy that only speaks
+  to teams, or only to one person, breaks the positioning.
 - **Product truth.** Every claim on these pages must be something the
   product does, in the product's words. The demo shows people present, a
   comment on a line and a published version, all of which ship; it does not
@@ -185,7 +207,8 @@ in light and dark, before a change ships, as the repository's rule on visible ch
 stylesheet now sets a new system: warm paper and ink in light and dark
 themes, Instrument Serif, Geist and Geist Mono, a single ultramarine accent
 for Rally and a colour for each person. The home page leads with an animated
-Canvas as Figure 1 and is organised around Canvases and Sidekicks;
+Canvas as Figure 1 that goes from one person to three, adds a "From one to
+everyone" band, and is organised around Canvases and Sidekicks;
 `/canvases/` and `/sidekicks/` were added; the blog, comparison and Trust
 Center pages took on the same system.
 

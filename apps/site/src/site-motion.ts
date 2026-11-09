@@ -9,8 +9,13 @@
  */
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/** Seconds each step holds before the next. The last one holds, then the loop restarts. */
-const STEP_HOLD = [1.2, 2.4, 2.8, 2.6, 2.2, 4.8] as const;
+/**
+ * Seconds each step holds before the next. The last one holds, then the loop
+ * restarts. The story runs from one person to three: Maya asks alone (1),
+ * Rally drafts (2), Maya shares and Theo and Priya join (3), Theo comments (4),
+ * Priya asks (5), Rally publishes version two (6).
+ */
+const STEP_HOLD = [1.2, 2.4, 2.6, 2.8, 2.6, 2.2, 5] as const;
 const LAST = STEP_HOLD.length - 1;
 
 function runDemo(demo: HTMLElement): void {
