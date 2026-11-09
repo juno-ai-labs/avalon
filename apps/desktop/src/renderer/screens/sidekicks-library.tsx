@@ -62,7 +62,7 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
     && `${item.name} ${item.description}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
   );
   const newSidekick = <Link className="button button-primary window-no-drag" to="/sidekicks/new"><Plus aria-hidden="true" size={16} />New Sidekick</Link>;
-  return <main className="sidekicks-library sidekicks-home">
+  return <main className="sidekicks-library dashboard-home">
     <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1><p>AI teammates your whole team can talk to.</p></div><div className="sidekicks-library-actions">{newSidekick}</div></header>
     <div className="sidekicks-library-controls">
       <SidebarSearch mode="input" aria-label="Search Sidekicks" placeholder="Search Sidekicks" value={search} onChange={(event) => setSearch(event.target.value)} />
@@ -74,7 +74,7 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
     <section aria-labelledby="sidekick-results-title">
     <div className="sidekick-results-heading"><h2 id="sidekick-results-title">{search ? 'Search results' : 'Your Sidekicks'}</h2><span role="status" aria-label="Sidekick count">{query.isSuccess ? `${items.length} ${items.length === 1 ? 'Sidekick' : 'Sidekicks'}` : ''}</span></div>
     {query.isLoading ? (socket ? <PushedListPending label="Loading Sidekicks…" noun="Sidekicks" /> : <OpeningState label="Loading Sidekicks…" />) : query.error ? <ErrorNotice occurrence={query.error}>{query.error.message}</ErrorNotice> : items.length === 0 ? <EmptyState action={query.data?.length ? undefined : newSidekick} title={query.data?.length ? "No matching Sidekicks" : "No Sidekicks yet"} description={query.data?.length ? "Try a different search or ownership filter." : "Describe what you would like to delegate to create one."} /> :
-      <ul className="sidekicks-home-grid">{items.map((item) => <SidekickCard item={item} key={item.id} />)}</ul>}
+      <ul className="dashboard-grid">{items.map((item) => <SidekickCard item={item} key={item.id} />)}</ul>}
     </section>
   </main>;
 }
@@ -82,14 +82,14 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
 /** The title link covers the card, with one keyboard stop for opening it. */
 function SidekickCard({ item }: { item: AutomationSummary }): React.JSX.Element {
   const { tint } = resolveWorkstreamAppearance(item.id, item.appearance ?? undefined);
-  return <li className="sidekick-card">
-    <div className="sidekick-card-preview" style={{ background: `color-mix(in srgb, ${tint} 45%, var(--av-sys-color-surface-raised))` }}>
+  return <li className="dashboard-card">
+    <div className="dashboard-card-preview" style={{ background: `color-mix(in srgb, ${tint} 45%, var(--av-sys-color-surface-raised))` }}>
       <span className="sidekick-card-glyph"><AutomationGlyph {...(item.appearance ? { appearance: item.appearance } : {})} id={item.id} /></span>
       {item.status === 'paused' && <span className="sidekick-card-status"><span className="sidekick-status-pill is-paused"><IconPlayerPause aria-hidden="true" size={13} stroke={1.8} />Paused</span></span>}
       {sidekickStatus(item) === 'needs_input' && <span className="sidekick-needs-input-badge">Needs input</span>}
     </div>
     <div className="sidekick-card-body">
-      <h3><Link className="sidekick-list-link" to={`/sidekicks/${encodeURIComponent(item.id)}`}>{item.name}</Link></h3>
+      <h3><Link className="dashboard-card-link" to={`/sidekicks/${encodeURIComponent(item.id)}`}>{item.name}</Link></h3>
       <p>{item.description}</p>
       <dl className="sidekick-card-facts">
         <div><dt>Shared with</dt><dd>{sharedWithLabel(item)}</dd></div>
