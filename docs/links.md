@@ -18,8 +18,11 @@ by mail clients, and is dead for anyone without the app.
 
 The Space, Channel, Breakout and Thread link forms went with those surfaces in
 the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
-Nothing mints them and nothing reads them; the handoff page and the web app
-recognize their shapes only to say that what they named no longer exists.
+Nothing mints them. A Thread link is read as a link to the Canvas of the same
+id, because the conversion kept every Thread with artifacts as a Canvas under
+its id ([`workspace-retirement.md`](workspace-retirement.md#converting-threads-that-have-artifacts));
+a Thread that was retired instead answers as any missing Canvas does. The
+other forms are recognized only to say that what they named no longer exists.
 
 Read this before emitting or parsing a link anywhere, and before changing the
 handoff page or the Slack unfurl card.
@@ -55,7 +58,8 @@ handoff page or the Slack unfurl card.
 | **Canvas at a message** | Canvas link plus `?turn=<turn-uuid>&sequence=<n>` (no artifact segment) | A mention's or a reply's push and email |
 | **Sidekick** | `/app/<region>/<organization-base58>/sk/<sidekick-base58>/` | The Sidekick header's **Copy link**, a notification about a Sidekick's conversation or one of its runs, a Slack App Home row |
 | **Deep link** | `rallywithai://workspace/<region>/<organization-base58>/canvases/<canvas-base58>` (plus `/artifacts/<artifact-base58>`, or `?turn=<turn-uuid>&sequence=<n>`), or `.../sidekicks/<sidekick-base58>` | The handoff page's last hop, the desktop's own navigation |
-| **Retired** | `/app/<region>/<organization>/s/...` (Space, Channel, Breakout, artifact), `/app/<region>/<organization>/i/...` (import), `/app/workspaces/<region>/<organization>/workstreams/...` (addressed Channel), `/app/workstreams/<id>` (ID-only) | Nothing; `isRetiredLinkPath` recognizes the shape. The web app's own Organization shell, `/app/workspaces/<region>/<organization>`, is not retired |
+| **Thread, read as its Canvas** | `/app/<region>/<organization>/s/<space>/c/<thread>` (plus `/a/<artifact>`), `/app/workspaces/<region>/<organization-uuid>/workstreams/<thread-uuid>`, and the deep link `rallywithai://workspace/<region>/<organization>/spaces/<space>/channels/<thread>` (plus `/artifacts/<artifact>`); no query | Nothing any more; `parseLinkPathTarget` and `parseLinkTarget` read it as the Canvas link of the Thread's id, and the Space segment is checked for shape and dropped |
+| **Retired** | `/app/<region>/<organization>/s/<space>` (Space), a Thread link plus `/b/<breakout>` (Breakout), `/app/<region>/<organization>/i/...` (import), the addressed form plus `/substreams/...`, `/app/workstreams/<id>` (ID-only, which names no Organization) | Nothing; `isRetiredLinkPath` recognizes the shape. The web app's own Organization shell, `/app/workspaces/<region>/<organization>`, is not retired |
 
 `canvasCanonicalUrl`, `sidekickCanonicalUrl` and `linkCanonicalUrl` mint the
 HTTPS form; `canvasDeepLink`, `sidekickDeepLink` and `linkDeepLink` the deep
@@ -240,9 +244,13 @@ the table.
 - **A server-minted link comes from the parent's kind, asked of the
   Organization's object.** A conversation id alone does not say whether it is
   a Canvas, a Sidekick or a Thread.
-- **Nothing mints or reads a Space, Channel, Breakout or Thread link.**
-  `isRetiredLinkPath` recognizes their shapes so the reader is told the thing
-  is gone; it never reads an id out of one.
+- **Nothing mints a Space, Channel, Breakout or Thread link, and only a
+  Thread's is read**, as the Canvas of its id, inside `parseLinkPathTarget`
+  so every reader (the handoff page, the web app, the desktop paste path, the
+  link title route, `conversation_attach`) agrees. `isRetiredLinkPath`
+  recognizes the other shapes so the reader is told the thing is gone; it
+  never reads an id out of one, and it is false for any path
+  `parseLinkPathTarget` reads.
 - **A notification about a conversation with no link sends nothing that
   points at nothing**, and says why in a named reason.
 - **The `_redirects` rewrite is load-bearing.** Deleting it turns every shared
@@ -286,7 +294,9 @@ Every browser handoff reports only its closed type (`canvas`, `sidekick`, or
 `browser` method and its local validity through the public-site telemetry
 boundary. The ids, the deep link, query and fragment are deliberately excluded,
 and the path is classified (`/app/:region/:organization/cv/:canvas`,
-`.../cv/:canvas/a/:artifact`, `.../sk/:sidekick`, `/app/:retired`,
+`.../cv/:canvas/a/:artifact`, `.../sk/:sidekick`,
+`/app/:region/:organization/s/:space/c/:thread`,
+`/app/workspaces/:region/:organization/workstreams/:thread`, `/app/:retired`,
 `/app/:unrecognized`). The site event is an attempt, not proof the app opened.
 
 ## Failure modes and limits
@@ -294,8 +304,13 @@ and the path is classified (`/app/:region/:organization/cv/:canvas`,
 - **A desktop build older than this change refuses a Canvas deep link** and
   shows its generic link error; the web app, always current, opens it. The
   site must deploy before a desktop release that relies on a new path.
-- **A Thread link in someone's inbox opens the gone page**, by design. Its
-  title is not looked up.
+- **A Thread link in someone's inbox opens the Canvas of its id.** For a
+  converted Thread that is the Canvas, title and all; for a retired one, the
+  API answers `canvas_not_found` and the reader sees the missing-Canvas state,
+  not the gone page. A Breakout's link and the ID-only form still open the
+  gone page. The desktop main process still refuses an old `spaces/…` deep
+  link handed to it by the OS (`isRetiredDeepLink`); the handoff page mints the
+  Canvas deep link instead, so only a deep link pasted outside Rally meets it.
 - **A Canvas card in Slack keeps the name it was posted with.**
 - **A Canvas link's name is visible to whoever holds the link**, private
   Canvas or not (the 2026-10-07 product call).
@@ -438,8 +453,13 @@ interim. Saying a retired link's thing is gone is the honest answer; a 404
 reads as a broken link.
 
 **Considered and rejected:** Keeping the Thread readers so an old link opens
-"the Canvas with that id". Thread ids and Canvas ids share a namespace but no
-meaning, so an old link would open the unavailable state at best. A Canvas
+"the Canvas with that id". Thread ids and Canvas ids shared a namespace but no
+meaning, so an old link would open the unavailable state at best. That
+changed on 2026-11-08, when the conversion kept every Thread with artifacts
+(about 60) as a Canvas under its own id: a Thread link is now read as that
+Canvas inside `parseLinkPathTarget`, and a retired Thread's link answers
+`canvas_not_found`. Reading it in the parser rather than at the handoff page
+means the web app, the desktop paste path and the link title route agree. A Canvas
 path under a Space-like hierarchy (`/s/.../cv/...`): a Canvas belongs to the
 Organization, as a Sidekick does. Recording Canvas cards for a refresh sweep:
 a name-only card has no status to keep current.
