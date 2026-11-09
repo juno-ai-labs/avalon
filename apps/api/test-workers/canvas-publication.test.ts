@@ -2,7 +2,7 @@
 // publish, on real workerd: WorkspaceDO's resource rows and version triggers,
 // the Chat's object, R2 and the artifact host. `docs/rally-mcp.md#publishing`.
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asArtifactId, asUserId, asWorkspaceId } from "@rally/contracts";
@@ -10,6 +10,10 @@ import { asArtifactId, asUserId, asWorkspaceId } from "@rally/contracts";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { artifactHostDOName, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
+import { createAccessContext } from "../src/services/authorization-service";
+import { projectAuthorization } from "../src/services/authorization-projection-service";
+import { conversationObjectName } from "../src/durable-objects/names";
+import { asSubstreamId } from "@rally/contracts";
 import { CanvasPublicationService } from "../src/services/canvas-publication-service";
 import { CanvasService, createCanvas } from "../src/services/canvas-service";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
@@ -92,6 +96,10 @@ beforeEach(async () => {
     UNIQUE(region, artifact_id))`).run();
 });
 
+async function publisherCanvasArchive(canvasId: string): Promise<void> {
+  await new CanvasService(TEST_ENV, auth(CREATOR)).archive(canvasId);
+}
+
 describe("publishing into a Canvas", () => {
   it("lands a file as the person's artifact, versions it on a republish, and changes nothing on a repeat", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
@@ -117,6 +125,60 @@ describe("publishing into a Canvas", () => {
       { version: 1, kind: "member", user: CREATOR, cause: "created" },
       { version: 2, kind: "member", user: CREATOR, cause: "published" },
     ]);
+  });
+
+  it("refuses a first publication whose bytes were prepared before Canvas archive", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const hold = heldBucket("put", (key) => key.includes("/published/"));
+    const pending = new CanvasPublicationService(hold.env, auth(CREATOR)).publish(canvasId,
+      { kind: "file", name: "first.md", content: text("Late first publication") }).then(() => "published", (error: unknown) => error instanceof Error && "code" in error ? error.code : "refused");
+    try {
+      await hold.atHold;
+      await publisherCanvasArchive(canvasId);
+    } finally { hold.release(); }
+    expect(await pending).toBe("canvas_archived");
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM resources WHERE publication_parent_id = ?", canvasId).one().n)).toBe(0);
+  });
+
+  it("fences a publication already preparing bytes when its Canvas is archived", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const publisher = new CanvasPublicationService(TEST_ENV, auth(CREATOR));
+    const first = await publisher.publish(canvasId, { kind: "file", name: "plan.md", content: text("Before archive") });
+    await projectAuthorization(TEST_ENV, { type: "authorization_projection_v1", region: "global", workspaceId: WORKSPACE_ID,
+      parentId: canvasId, substreamId: asSubstreamId("0") });
+    const decide = () => createAccessContext(TEST_ENV, auth(CREATOR)).check({ kind: "resource", workspaceId: WORKSPACE_ID,
+      resourceId: first.resourceId });
+    expect((await decide()).status).toBe("allowed");
+    const hold = heldBucket("put", (key) => key.includes("/published/"));
+    const pending = new CanvasPublicationService(hold.env, auth(CREATOR)).publish(canvasId,
+      { kind: "file", name: "plan.md", content: text("After archive") }).then(() => "published", (error: unknown) => error instanceof Error && "code" in error ? error.code : "refused");
+    try {
+      await hold.atHold;
+      await publisherCanvasArchive(canvasId);
+    } finally { hold.release(); }
+    expect(await pending).toBe("canvas_archived");
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ version: number }>(
+      "SELECT MAX(version) AS version FROM resource_versions WHERE resource_id = ?", first.resourceId).one().version)).toBe(1);
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId, asSubstreamId("0"))));
+    expect((await decide()).status).toBe("denied");
+    // Retained bytes and versions stay readable to storage, not to their publisher.
+    expect(await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec("SELECT 1 FROM workstream WHERE id = 1").toArray().length)).toBe(1);
+  });
+
+  it("revokes a published site's active viewer session through durable Canvas archive fan-out", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const published = await new CanvasPublicationService(TEST_ENV, auth(CREATOR)).publish(canvasId,
+      { kind: "site", name: "dashboard", files: [{ path: "index.html", content: text("<h1>Dashboard</h1>") }] });
+    const artifactId = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ artifact_id: string }>(
+      "SELECT artifact_id FROM artifact_registry WHERE resource_id = ?", published.resourceId).one().artifact_id);
+    const host = env.ARTIFACT_HOSTS.get(env.ARTIFACT_HOSTS.idFromName(artifactHostDOName("global", asArtifactId(artifactId))));
+    const { code } = await host.openForViewer({ userId: CREATOR, appSessionId: `session-${CREATOR}`, displayName: "Creator" });
+    const session = await host.redeemCode(code);
+    expect((await host.checkSession(session!.session)).ok).toBe(true);
+    await publisherCanvasArchive(canvasId);
+    await runDurableObjectAlarm(workspace());
+    await expect.poll(() => host.checkSession(session!.session)).toEqual({ ok: false, reason: "no_session" });
   });
 
   it("publishes a static site from its files", async () => {

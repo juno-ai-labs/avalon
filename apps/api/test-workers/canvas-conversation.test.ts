@@ -12,7 +12,7 @@ import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { CanvasArtifactKind } from "@rally/contracts";
 import { uuidToBase58 } from "@rally/contracts/uuid-base58";
 
@@ -32,6 +32,7 @@ import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-
 import { bootstrapWorkstreamRuntimeEnvironment } from "../src/services/workstream-runtime-database";
 import { createTranscriptObjectPort } from "../src/runtime/transcript-port";
 import { CANVAS_NAMING_ALARM_KIND } from "../src/durable-objects/canvas-schema";
+import { __integrationTesting } from "../src/services/integrations";
 import { ConversationService } from "../src/services/conversation-service";
 import { verifySocketTicket } from "../src/services/socket-service";
 import { deliverChildEffects } from "./helpers/conversation-effects";
@@ -561,6 +562,55 @@ describe("a Canvas's title and pin order", () => {
     }
   });
 
+  it("archives a streaming Chat, fences its member run, and stops the active loop", async () => {
+    held.firstPartSent = false;
+    held.released = false;
+    held.finished = false;
+    try {
+      const { canvasId } = await new CanvasService(TEST_ENV, auth(CREATOR)).create({ title: "Story",
+        prompt: { text: LONG_REPLY_PROMPT, clientMessageId: "canvas-archive-stream" } });
+      const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+      await expect.poll(() => held.firstPartSent, { timeout: waitBudget() }).toBe(true);
+      await runInDurableObject(chat, (_instance, state) => { state.storage.sql.exec(
+        `INSERT INTO workstream_wakeups (wakeup_id, execution_principal_json, prompt, due_at, status,
+          idempotency_key, version, created_at, updated_at) VALUES ('archive-timer', ?, 'Wake later', ?, 'pending', 'archive-timer', 1, 1, 1)`,
+        JSON.stringify({ type: "user", userId: CREATOR }), Date.now() + 60_000); });
+      // Hold the durable hand-off so the run-authority check must observe the
+      // parent tombstone, before the child receives its local archive fence.
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec(`CREATE TRIGGER hold_canvas_archive_delivery AFTER INSERT ON _internal_durable_alarms
+          WHEN NEW.kind = 'canvas_archive_conversation' BEGIN
+          UPDATE _internal_durable_alarms SET retry_at = ${Date.now() + 60_000}
+           WHERE kind = NEW.kind AND alarm_key = NEW.alarm_key; END`);
+      });
+      await new CanvasService(TEST_ENV, auth(CREATOR)).archive(canvasId);
+      expect(await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+        "SELECT archived_at FROM workstream WHERE id = 1").one().archived_at)).toBeNull();
+      await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, {
+        region: "global", workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: canvasId,
+        loopId: `workstream:${canvasId}:substream:0:loop`, harnessRunId: asHarnessRunId(crypto.randomUUID()), triggerMessageId: null,
+        activityId: null, executionPrincipal: { type: "user", userId: CREATOR }, reason: "human_message",
+      })).rejects.toThrow(/no longer active/u);
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec("DROP TRIGGER hold_canvas_archive_delivery");
+        state.storage.sql.exec("UPDATE _internal_durable_alarms SET retry_at = 0 WHERE kind = 'canvas_archive_conversation'");
+      });
+      await runDurableObjectAlarm(workspace());
+      await expect.poll(() => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+        "SELECT archived_at FROM workstream WHERE id = 1").one().archived_at), { timeout: waitBudget() }).not.toBeNull();
+      expect(await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ status: string }>(
+        "SELECT status FROM workstream_wakeups WHERE wakeup_id = 'archive-timer'").one().status)).toBe("cancelled");
+      held.released = true;
+      await expect.poll(() => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ status: string }>(
+        "SELECT status FROM substream_loops WHERE id = 1").one().status), { timeout: waitBudget() }).toBe("idle");
+      const transcript = await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ payload_json: string }>(
+        "SELECT payload_json FROM transcript_payloads").toArray().map((row) => row.payload_json).join("\n"));
+      expect(transcript).toContain("assistant_turn_stopped");
+      expect(transcript).not.toContain("THE END");
+      expect(await workspace().canvasContext({ workspaceId: WORKSPACE_ID, canvasId })).toBeNull();
+    } finally { held.released = true; held.finished = true; }
+  });
+
   it("titles a Canvas made with no title from its opening message, on every open list", () => withNamingModel(async () => {
     const creator = await connect(CREATOR);
     const { canvasId } = await new CanvasService(TEST_ENV, auth(CREATOR)).create({
@@ -882,6 +932,17 @@ describe("a Canvas's artifacts", () => {
     await expect(resolveTerminalPublicationHome(TEST_ENV, { workspaceId: WORKSPACE_ID, parentKind: "automation", parentId: sidekickId,
       substreamId: asSubstreamId("0"), executionPrincipal: { type: "user", userId: CREATOR } }, { canvas: canvasId }))
       .rejects.toMatchObject({ code: "canvas_argument_unsupported" });
+  });
+
+  it("refuses an archived Sidekick publication home for both explicit and implicit selection", async () => {
+    const sidekickId = crypto.randomUUID();
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
+    const run = { workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId: sidekickId,
+      substreamId: asSubstreamId(crypto.randomUUID()), executionPrincipal: { type: "user" as const, userId: CREATOR } };
+    const home = await resolveTerminalPublicationHome(TEST_ENV, run);
+    await new CanvasService(TEST_ENV, auth(CREATOR)).archive(home!.parentId);
+    await expect(resolveTerminalPublicationHome(TEST_ENV, run)).rejects.toMatchObject({ code: "canvas_archived" });
+    await expect(resolveTerminalPublicationHome(TEST_ENV, run, { canvas: home!.parentId })).rejects.toMatchObject({ code: "canvas_archived" });
   });
 
   it("publishes a Sidekick run into a Canvas it makes, open to whoever the Sidekick is shared with", async () => {

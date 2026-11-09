@@ -218,7 +218,7 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
   reserveChild(input: ConversationParentReserveChildRequest): ConversationParentReserveChildResult {
     const request = parseRpcInput(ConversationParentReserveChildRequestSchema, input, "reserve_child");
     const identity = this.assertParent(request.workspaceId, request.parentId);
-    if (request.kind === "child" && identity.archived) throw new Error("workstream_archived");
+    if (identity.archived) throw new Error("workstream_archived");
     this.registerChild(request.substreamId, request.kind, request.createdByUserId, Date.now());
     return ConversationParentReserveChildResultSchema.parse({ reserved: true, authorityGeneration: identity.authorityGeneration });
   }

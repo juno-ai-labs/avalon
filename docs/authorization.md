@@ -29,8 +29,8 @@ participants or become a new canonical owner of memberships.
 `packages/contracts/src/scope-grants.ts` defines member/guest workspace access
 classes and exact conversation grant addresses; `services/scope-grant-policy.ts`
 evaluates those facts. Guests never receive the implicit workspace-public
-member rule. Suspension overrides every grant, while archive preserves reading
-and disables mutation.
+member rule. Suspension overrides every grant; Canvas archive withdraws both reading
+and mutation.
 
 Who may read a conversation is its parent's audience: `canvasAdmits` for a
 Canvas, `sidekickAdmits` for a Sidekick (below). A grant is the receipt of a
@@ -115,7 +115,9 @@ read from `workspace_members.access_class`. Guests cannot use a legacy conversat
 Sidekick authoring fallback. For a non-owned resource, a guest always needs a
 canonical attachment in an authorized migrated conversation, including resources
 whose provider ordinarily makes them workspace-wide for members. Their own upload
-drafts retain the existing ownership rule. Connector execution capability checks
+drafts retain the existing ownership rule. Generated artifacts require an admitted
+attachment for their publisher as well: publishing is authorship, not a grant
+which survives archiving the owning Canvas. Connector execution capability checks
 remain separate from this resource metadata/content disclosure decision.
 
 Guests can upload and delete their own unsent drafts through the ordinary resource
@@ -495,6 +497,17 @@ changelog is the record of why a guest is never admitted by Organization-wide
 scope.
 
 ## Changelog
+
+### 2026-11-09 — Generated artifact authorship does not bypass its conversation
+
+Generated artifacts now require an admitted attachment for their publisher too.
+Treating the publishing user as an uploader let an archived Canvas's artifacts
+remain downloadable to that user after every conversation grant was withdrawn.
+Independent upload drafts retain their existing ownership rule; artifact reads
+compose the canonical conversation decision instead of minting a permanent
+ownership grant when an agent publishes on somebody's behalf. Migration 142
+requeues existing generated-resource search rows so their old publisher audience
+is withdrawn through the existing projection pipeline too.
 
 ### 2026-11-09 — A conversation's read is answered by its Canvas or Sidekick alone, through one audience rule
 
