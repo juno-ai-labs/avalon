@@ -317,8 +317,11 @@ A **sink** takes a notice and adds only its transport's form. There are two:
   Rally button to the link, and names the Settings row that sent it. It goes
   through `sendEmail` and the native Cloudflare `EMAIL` binding (production
   only). `rally-notice/<organization>/<intent>` is its correlation reference;
-  Cloudflare does not deduplicate it, so retries across the provider-acceptance
-  and local-settlement gap can send a duplicate.
+  Cloudflare does not deduplicate it. D1 `email_delivery_receipts` records a
+  completed send so a later queue delivery skips the provider. Internal and
+  unknown failures retry; explicit permanent refusals are acknowledged. Retries
+  across the provider-acceptance and local-settlement gap, or concurrent queue
+  deliveries before settlement, can still send a duplicate.
 
 A producer that records an intent calls `enqueueNotice` with the channels its
 recipient chose for the kind (`chosenChannels`, read from the object's own
@@ -578,13 +581,16 @@ signed-Mac APNs/universal-link acceptance is claimed.
 
 **What changed:** `sendNoticeEmail` uses the shared native Cloudflare sender;
 its recipient checks, notice text and notification intent reference stay the same.
+D1 delivery receipts suppress already-completed sends on queue redelivery;
+internal/unknown provider failures stay retryable and retain diagnostic codes.
 
 **Why:** The requested provider migration must cover the current generic sink,
 which replaced the retired per-kind email services. A single transport preserves
 one template and one notification policy across every kind.
 
 **Consequences:** Production needs the `EMAIL` binding and
-`EMAIL_NOTIFICATION_FROM` (or its transactional fallback). Correlation headers
+`EMAIL_NOTIFICATION_FROM` (or its transactional fallback), with migration 0126
+applied before the Worker. Correlation headers
 do not provide provider deduplication; the acceptance/settlement gap remains an
 explicit at-least-once delivery limitation.
 

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { createApp } from "../src/app";
 import { AuthService, verifyAccessToken, purgeExpiredEmailLoginChallenges } from "../src/services/auth-service";
-import { configuredEmailLoginPolicy, startEmailLogin, redeemEmailLogin, openEmailLoginSecret, deliverEmailLogin } from "../src/services/email-login-service";
+import { configuredEmailLoginPolicy, startEmailLogin, redeemEmailLogin, openEmailLoginSecret, deliverEmailLogin, recoverEmailLoginDeliveries } from "../src/services/email-login-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -143,6 +143,33 @@ describe("passwordless email login", () => {
     expect(sent).toHaveLength(2);
     expect(sent[0]).toEqual(sent[1]);
     expect(db.prepare("SELECT delivery_sent_at FROM email_login_challenges WHERE id=?").get(challengeId)?.delivery_sent_at).toEqual(expect.any(Number));
+  });
+
+  it("fences overlapping request and scheduled recovery sends for one challenge", async () => {
+    const { env, challengeId } = await challenge();
+    let release!: (result: EmailSendResult) => void;
+    let arrived!: () => void;
+    const started = new Promise<void>((resolve) => { arrived = resolve; });
+    const send = vi.fn(async () => { arrived(); return new Promise<EmailSendResult>((resolve) => { release = resolve; }); });
+    const production: Env = { ...env, APP_ENV: "production", EMAIL: { send } };
+    const first = deliverEmailLogin(production, challengeId);
+    await started;
+    await recoverEmailLoginDeliveries(production);
+    release({ messageId: "accepted" });
+    await first;
+    await deliverEmailLogin(production, challengeId);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(db.prepare("SELECT delivery_sent_at FROM email_login_challenges WHERE id=?").get(challengeId)?.delivery_sent_at).toEqual(expect.any(Number));
+  });
+
+  it("keeps uncertain sign-in delivery parked across scheduled recovery", async () => {
+    const { env, challengeId } = await challenge();
+    const send = vi.fn(async () => { throw new Error("connection lost after acceptance"); });
+    const production: Env = { ...env, APP_ENV: "production", EMAIL: { send } };
+    await expect(deliverEmailLogin(production, challengeId)).rejects.toMatchObject({ details: { retryable: false } });
+    await recoverEmailLoginDeliveries(production);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(db.prepare("SELECT state FROM email_delivery_receipts").all()).toEqual([{ state: "review_required" }]);
   });
 });
 

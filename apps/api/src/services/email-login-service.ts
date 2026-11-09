@@ -157,7 +157,7 @@ export async function deliverEmailLogin(env: Env, challengeId: string): Promise<
   if (!row) return;
   const payload = DeliverySchema.parse(await openEmailLoginSecret(env,challengeId,row.delivery_payload_encrypted));
   const outcome = await sendEmail(env,{ recipientEmail:payload.email,from:payload.from,text:payload.text,subject:payload.subject,
-    sender:"transactional",idempotencyKey:`email-login:${challengeId}`,category:"email-login",region:env.AVALON_REGION,
+    sender:"transactional",durableDelivery:"review",idempotencyKey:`email-login:${challengeId}`,category:"email-login",region:env.AVALON_REGION,
     errors:{ unavailable:{ code:"email_login_delivery_unavailable",message:"Sign-in email delivery is unavailable" },
       failed:{ code:"email_login_delivery_failed",message:"Sign-in email delivery failed" } } });
   if (outcome === "sent") await env.DB.prepare("UPDATE email_login_challenges SET delivery_sent_at=? WHERE id=?")
@@ -171,6 +171,7 @@ export async function recoverEmailLoginDeliveries(env: Env): Promise<void> {
     .bind(Date.now()).all<{ id:string }>();
   for (const row of rows.results) {
     try { await deliverEmailLogin(env,row.id); }
-    catch { logWarn(env,"email_login_delivery_pending",{ challenge_id:row.id }); }
+    catch (error) { logWarn(env,"email_login_delivery_pending",{ challenge_id:row.id,
+      code: error instanceof ApiError ? error.diagnosticCode ?? error.code : "email_login_delivery_attempt_failed" }); }
   }
 }
