@@ -176,8 +176,12 @@ resource is an email) and adds triggers on `authorization_locations`, so an
 inventory that attaches or detaches a resource rewrites its rows. The inventory
 writer changes only the location rows that differ, so an unchanged inventory
 rewrites nothing. Migration 142 requeues existing generated resources because
-publisher authorship no longer grants a separate user audience; their rows must
-be rewritten with conversation audiences even when no content changed.
+publisher authorship no longer grants Canvas-owned artifacts a separate user
+audience; their rows must be rewritten with conversation audiences even when no
+content changed. Standalone artifacts retain uploader ownership.
+`resourceCanvasState` supplies the same ownership and archive facts to canonical
+reads and the resource projection. Archiving queues the owned resources, and the
+projection withdraws their rows rather than indexing retained archived content.
 Duplicate description keys use the final occurrence, matching `JSON.parse`.
 Content hashes conservatively invalidate same-reference body replacements,
 including the one-time hash backfill during extraction.
@@ -526,6 +530,11 @@ The cursor follows [Turbopuffer attribute pagination](https://turbopuffer.com/do
 
 ## Testing
 
+`test-workers/search-audience.test.ts` proves a Canvas-owned artifact has only its
+conversation audience, archive advances its search revision, and preparation
+withdraws all search documents. `test/search-audience.test.ts` distinguishes
+Canvas ownership from attaching a standalone artifact.
+
 `apps/api/test-workers/resource-update-cost.test.ts` exercises the populated v42
 upgrade, each search input, duplicate description keys against canonical extraction,
 no-op writes, and deletion watermarks using real workerd storage.
@@ -708,6 +717,15 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-11-09 — Withdraw archived Canvas artifacts from resource search
+
+Canvas-owned artifacts have no publisher group independent of their Canvas.
+Canonical reads and the resource projection share `resourceCanvasState`, so a
+retained archive cannot stay searchable through a publisher or another attachment.
+Archive advances the owned resources' search revisions and queues withdrawal;
+migration 142 refreshes older audiences. Standalone generated artifacts keep their
+uploader group, since attaching one elsewhere does not transfer its ownership.
 
 ### 2026-11-09 — Search groups follow a Canvas's and a Sidekick's own audiences
 

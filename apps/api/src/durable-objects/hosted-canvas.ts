@@ -407,6 +407,10 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       const now = Date.now();
       this.sql.exec(`UPDATE canvas_directory SET archived_at = ?, updated_at = ?, title_status = 'settled' WHERE canvas_id = ?`,
         now, now, this.canvasId);
+      this.sql.exec(`INSERT INTO resource_search_versions(resource_id, revision, pending, not_before)
+        SELECT id, 1, 1, 0 FROM resources WHERE provider = 'avalon_generated'
+          AND (publication_parent_id = ? OR id IN (SELECT resource_id FROM canvas_artifacts WHERE canvas_id = ?))
+        ON CONFLICT(resource_id) DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0`, this.canvasId, this.canvasId);
       this.host.alarms.cancel(CANVAS_NAMING_ALARM_KIND, this.canvasId);
       // Save the audience before any delivery. Retrying an archive cannot
       // reconstruct it from admission: the tombstone now admits nobody.
