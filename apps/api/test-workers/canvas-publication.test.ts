@@ -3,7 +3,7 @@
 // the Chat's object, R2 and the artifact host. `docs/rally-mcp.md#publishing`.
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 
@@ -135,6 +135,33 @@ describe("publishing into a Canvas", () => {
       .toMatchObject({ outcome: "unchanged", version: 1 });
     await expect(publisher.publish(canvasId, { kind: "file", name: "home", content: text("x") }))
       .rejects.toMatchObject({ code: "canvas_artifact_kind_changed" });
+  });
+
+  it("builds a component into a site, recognizes an unchanged one from its source, and refuses what cannot build before any sandbox", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const builtPage = new TextEncoder().encode("<!doctype html><title>Dashboard</title><div id=root></div>");
+    const builder = { build: vi.fn(async () => ({ renderedTextLength: 42, files: [{ path: "index.html", bytes: builtPage,
+      sha256: [...new Uint8Array(await crypto.subtle.digest("SHA-256", builtPage))].map((b) => b.toString(16).padStart(2, "0")).join("") }] })) };
+    const publisher = new CanvasPublicationService(TEST_ENV, auth(CREATOR), builder);
+    const dashboard = { kind: "site" as const, name: "dashboard", files: [{ path: "Dashboard.jsx",
+      content: text('import { TrendingUp } from "lucide-react";\nexport default function Dashboard() { return <TrendingUp />; }') }] };
+
+    const first = await publisher.publish(canvasId, dashboard);
+    expect(first).toMatchObject({ kind: "site", outcome: "created", version: 1, build: { source: "component", files: 1, renderedTextLength: 42 } });
+    expect(builder.build).toHaveBeenCalledWith(canvasId, { kind: "component", entry: "Dashboard.jsx" }, expect.any(Array));
+    // What was served is what the build made, not the source.
+    const served = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ artifact_id: string; current_version: number }>(
+      "SELECT artifact_id, current_version FROM artifact_registry WHERE resource_id = ?", first.resourceId).one());
+    expect(await (await env.PAYLOADS.get(`artifact/${served.artifact_id}/v${served.current_version}/assets/index.html`))!.text())
+      .toBe(new TextDecoder().decode(builtPage));
+
+    expect(await publisher.publish(canvasId, dashboard)).toMatchObject({ outcome: "unchanged", version: 1 });
+    expect(builder.build).toHaveBeenCalledOnce();
+
+    await expect(publisher.publish(canvasId, { kind: "site", name: "scene", files: [{ path: "Scene.jsx",
+      content: text('import * as THREE from "three";\nexport default function Scene() { return null; }') }] }))
+      .rejects.toMatchObject({ status: 422, code: "canvas_build_unsupported_import:three" });
+    expect(builder.build).toHaveBeenCalledOnce();
   });
 
   it("refuses someone the Canvas does not admit, and writes nothing", async () => {

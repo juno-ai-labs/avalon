@@ -30,6 +30,8 @@ system.
 | `apps/api/src/middleware/auth.ts` | `MCP_ROUTE_FAMILIES`: the routes an MCP token reaches. |
 | `apps/api/src/services/canvas-publication-service.ts` | `CanvasPublicationService`: a person publishing a file or a static site into a Canvas, behind `POST /canvases/:id/artifacts`. |
 | `apps/api/src/services/resource-publication.ts` | The publication writes Rally's own publish and a person's share: the identity, the INSERT, the content swap, with the revision's author as a parameter. |
+| `packages/contracts/src/canvas-build.ts` | `detectSiteSource`: what a site's files are (static, component, project), and the libraries a component may import. |
+| `apps/api/src/services/canvas-build/canvas-build-service.ts`, `build.sandbox.mjs` | `CanvasBuildService`, which builds a component or project in the Canvas's sandbox under a publication build's lease, and the script that builds and checks it there. |
 | `apps/browser/src/mcp-consent.tsx` | The consent page at `/app/oauth/authorize`. |
 | `packages/db/migrations/0126_mcp_oauth.sql` | `mcp_oauth_clients`, `mcp_oauth_codes`, `mcp_oauth_grants`. |
 | `plugins/rally/`, `.claude-plugin/marketplace.json` | The Claude Code plugin (the server and a Canvases skill) and the marketplace that lists it. |
@@ -115,7 +117,7 @@ the API's 401 with a message to reconnect.
 | `pin_canvas` | `POST /canvases/:id/pin` |
 | `rename_artifact` | `PATCH /conversations/:id/resources/:resourceId` |
 | `publish_file` | `POST /canvases/:id/artifacts` with `kind: "file"` |
-| `publish_site` | `POST /canvases/:id/artifacts` with `kind: "site"` |
+| `publish_site` | `POST /canvases/:id/artifacts` with `kind: "site"`: files to serve, a React component, or a project ([Building](#building)) |
 
 `GET /canvases` and `GET /conversations/:id/text` were added for this server:
 the app reads the list over its workspace socket and the transcript as blocks.
@@ -153,6 +155,55 @@ publish makes, with the person as the revision's author (`member`):
 The answer is the artifact's id, title, kind, current version, the outcome,
 and the Canvas's link opened on it. A site with a server module (`index.js`)
 is refused: running code is Rally's to publish from its sandbox.
+
+### Building
+
+A site's files are not always ready to serve. Claude's and ChatGPT's React
+artifacts are one `.jsx` or `.tsx` file with a default export that imports
+`lucide-react`, `recharts` and shadcn/ui from paths that exist only in their
+own renderer, and Claude Code or OpenCode produce projects with a build step.
+So a `site` publish first decides what its files are, in the Worker, before
+any sandbox starts (`detectSiteSource` in `packages/contracts/src/canvas-build.ts`):
+
+| Files | Becomes |
+| --- | --- |
+| a root `package.json` with a `build` script | a project: built by its own script |
+| a root `index.html` | a static site, published as it is |
+| one root `.jsx`/`.tsx` with a default export | a component: built with Rally's toolchain |
+| anything else | refused, naming why (`canvas_build_entry_missing`, `canvas_build_entry_ambiguous`, `canvas_build_script_missing`) |
+
+A component may import only `COMPONENT_LIBRARIES` (React, lucide-react,
+recharts, lodash, clsx, tailwind-merge) and the shadcn/ui modules the build
+provides (`COMPONENT_UI_MODULES`); anything else is refused as
+`canvas_build_unsupported_import:<module>` without starting a sandbox.
+
+`CanvasBuildService` then builds in the Canvas's own Terminal sandbox, the one
+its Chat's runs use ([`terminal-workspaces.md`](terminal-workspaces.md)). It
+acquires the sandbox through the same coordinator as an agent run, as the
+person, and holds the operation lease as `PUBLICATION_BUILD_HOLDER`: an agent
+run waits for it (`sandbox_busy`) and the idle sweep leaves it alone until the
+lease expires. It stages the files under `/tmp/rally-canvas-build/<id>`,
+outside the agent's `/workspace`, and runs `build.sandbox.mjs`, which ships
+into the sandbox as text as `apply_patch.py` does:
+
+1. A component gets a host page that mounts its default export, the shadcn/ui
+   pieces it imports, and Tailwind generated from its classes, bundled with
+   esbuild against pinned library versions installed once per sandbox and
+   reused. A project runs `npm ci` (or `npm install`) and `npm run build`, and
+   its output is the first of `dist`, `build`, `out` holding an `index.html`.
+2. The result is opened in the sandbox's Chromium. An uncaught error, a failed
+   request for one of its own files, or an empty page refuses the publish
+   (`canvas_build_check_failed`, `canvas_build_check_empty`) with what went
+   wrong.
+3. The output is listed with its digests, read back, checked against the
+   listing, and published as a static site through the path above. The build
+   directory is deleted and the lease released whatever happened.
+
+The libraries are copied into the artifact at build time, so a published site
+never loads code from anywhere else when it is viewed. Its identity is the
+source it was published from, so an unchanged republish answers `unchanged`
+without starting a sandbox. The answer's `build` says what was built and how
+much text the check saw rendered.
 
 `read_artifact` reads Rally's text form of a version, which extraction
 writes a moment after a publish; until then a version whose original is
@@ -239,6 +290,16 @@ message. Sidekicks have no tools here.
   In practice a model's tool call is bounded far lower by its output length,
   well under a megabyte, so large binaries come from a client that sends
   them without the model writing them out. No cap is set here.
+- **A build needs the Terminal.** In a deployment without it (local
+  development by default), a component or project is refused with
+  `canvas_build_unavailable`; files with an `index.html` still publish.
+- **A build's latency** is the sandbox's acquisition (a stopped sandbox
+  starts, a missing one is created), the toolchain install on the first
+  component build in a sandbox (about 10 s locally), then about 2 s per
+  component; a project pays its own install and build. It runs within the
+  Terminal's command ceiling (900 s) inside the 16-minute lease. A build
+  while Rally is mid-command in the same Canvas is refused
+  `canvas_build_sandbox_busy` rather than queued.
 - There is no tool to delete a Canvas or remove an artifact: the app has no
   route for the first, and the second's effect on a Canvas's generated
   artifacts is not settled.
@@ -258,6 +319,17 @@ message. Sidekicks have no tools here.
   nothing.
 - `pnpm --filter @rally/contracts exec vitest run src/canvas-publish.test.ts`:
   the path and site rules a publish is held to.
+- `pnpm --filter @rally/contracts exec vitest run src/canvas-build.test.ts`:
+  what a site's files are detected as, and the imports a component is held to.
+- `pnpm --filter @rally/api exec vitest run test/canvas-build-service.test.ts`:
+  the build runs under the publication build's lease over the real coordinator,
+  returns only output matching its listing, and releases the lease and deletes
+  its directory on every path. Daytona is a double.
+- `build.sandbox.mjs` itself is checked by hand, as Daytona cannot run in a
+  suite: run it with a request naming a component's directory (it prints its
+  report on the last line). On 2026-11-09 it built a Claude-style dashboard
+  (recharts, lucide-react, shadcn Card/Button/Badge, Tailwind), a timer and a
+  Vite project, and refused a component that throws on render.
 - `pnpm --filter @rally/mcp test`: the challenge, the metadata, token
   forwarding and the tools, with a double for the API's service binding only.
 - `claude plugin validate ./plugins/rally` and `claude plugin validate .`
@@ -294,7 +366,9 @@ endpoint forwards there. To connect a client:
 
 **What changed.** A new Worker at `mcp.rallywith.ai` with fifteen Canvas
 tools, including publishing a file or a static site made elsewhere into a
-Canvas through a new `POST /canvases/:id/artifacts`, an OAuth 2.1 authorization server split between the identity API and
+Canvas through a new `POST /canvases/:id/artifacts` (building a React
+component or a project in the Canvas's sandbox, and checking it renders,
+before it publishes), an OAuth 2.1 authorization server split between the identity API and
 the browser app's consent page, a `rally-mcp` token audience confined to the
 Canvas routes, `GET /canvases` and `GET /conversations/:id/text`, and a Claude
 Code plugin.
@@ -308,6 +382,11 @@ made an MCP client useful for work already done in Claude, ChatGPT or
 OpenCode; it was built on the write steps lifted out of Rally's own publish
 (`resource-publication.ts`) rather than a second writer, and rather than
 asking Rally to republish an attachment, which would put a model run between
-the person and their exact bytes. A future change must keep MCP and desktop
+the person and their exact bytes. Claude's and ChatGPT's React artifacts are
+source, not a page, so a publish detects what it was given in the Worker and
+builds only what needs it, in the Canvas's own sandbox (the product decision
+of 2026-11-09 that a Canvas has one shared sandbox); compiling in the page
+from a CDN was rejected because it loads code from elsewhere on every view
+and never checks the page renders. A future change must keep MCP and desktop
 refresh apart, keep `MCP_ROUTE_FAMILIES` to the routes the tools call, and
 change a publication write in `resource-publication.ts` for both publishers.

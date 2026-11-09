@@ -279,7 +279,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
 
   server.registerTool("publish_site", {
     title: "Publish a site to a Canvas",
-    description: "Publish a static web page or site you made (an HTML artifact, a built front end) into a Canvas as a live site Rally serves at its own address, for everyone who can open the Canvas. files must include index.html, its entry page; other files (CSS, scripts, images) are served beside it at their paths. A self-contained HTML page is one file, index.html. Publish under the same name again to update the site at the same address. Server code (index.js) is not accepted here; ask Rally in the Canvas to build a site that needs one.",
+    description: "Publish something that runs in a browser into a Canvas as a live site Rally serves at its own address, for everyone who can open the Canvas. Send any of: (1) files ready to serve, with an index.html entry page, such as a self-contained HTML artifact; (2) a React component exactly as Claude or ChatGPT writes it, one .jsx or .tsx file with a default export, which may use Tailwind classes, react, lucide-react, recharts, lodash and shadcn/ui's card, button, badge, input, textarea, label, separator, progress, alert and tabs; (3) a project with a package.json build script. Rally builds a component or project in the Canvas's workspace, opens it in a browser, and refuses it with the reason if it throws or shows nothing. Building can take from a few seconds to a minute. Publish under the same name again to update the site at the same address. Server code (index.js) is not accepted here.",
     inputSchema: {
       canvasId: CanvasId,
       name: Name,
