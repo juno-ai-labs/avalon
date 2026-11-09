@@ -5433,6 +5433,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   // object's storage and relationships. See docs/canvases.md.
   // ---------------------------------------------------------------------------
 
+  /**
+   * What decided who may open each writer Sidekick's Canvases when this
+   * instance last saw its directory row (`noteWriterReaders`). In memory: a
+   * fresh instance marks the list once on a Sidekick's first touch, which
+   * costs one extra push and never a missed one.
+   */
+  private readonly writerSidekickReaders = new Map<string, string>();
   /** Set by a hosted Canvas write that moved a directory row; the Canvas list is published after it. */
   private canvasDirectoryMoved = false;
   /** Readers whose read of a Canvas's Chat moved; see `publishCanvasList`. */
@@ -5871,7 +5878,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.sidekickReadersMoved.add(userId);
       },
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
-      noteCanvasDirectoryChanged: () => this.noteCanvasDirectoryMoved(),
+      noteWriterReaders: (sidekickId, readers) => {
+        if (this.writerSidekickReaders.get(sidekickId) === readers) return;
+        this.writerSidekickReaders.set(sidekickId, readers);
+        this.noteCanvasDirectoryMoved();
+      },
       noteActivityChanged: (userId) => this.noteActivityMoved(userId),
       noteActivityReadMoved: (userId, parentId) => this.noteActivityReadMoved(userId, parentId),
       sendRunProvision: async (message) => {
@@ -6027,7 +6038,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return await run(sidekick);
     } finally {
       this.publishSidekickList();
-      // A no-op unless the call moved the Canvases it writes (`noteCanvasDirectoryChanged`).
+      // A no-op unless the call moved who may open the Canvases it writes (`noteWriterReaders`).
       this.publishCanvasList();
       this.publishActivityList();
       await this.afterHostedWrite();
@@ -7080,6 +7091,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             return await sidekick.runAlarm(alarm, sidekickTarget.key);
           } finally {
             this.publishSidekickList();
+            this.publishCanvasList();
             this.publishActivityList();
           }
         }
