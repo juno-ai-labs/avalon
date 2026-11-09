@@ -663,8 +663,10 @@ closes, which is the case a construction-only fix does not reach.
   Workflow instance). Retire each from Ace's Workspaces tab through this door,
   while the old Worker still revokes the `demo:<operation>` impersonation
   edges as it closes the Organization. Then deploy the Worker. D1 migration
-  0126, which drops `demo_operations`, `demo_operation_phases` and
-  `demo_seed_receipts`, is not part of that change: it ships in a separate pull request that adds `0126_drop_demo_tables.sql` together with its name in the Worker-first list in `scripts/classify-pending-d1-migrations.mjs`, merged only once 0125 has shipped and no other migration is pending in any region's ledger. The
+  `0125_drop_demo_tables.sql`, which drops `demo_operations`,
+  `demo_operation_phases` and `demo_seed_receipts`, ships in the same change
+  on the deploy job's Worker-first list, so it applies after the new Worker
+  is promoted. The
   deploy job applies pending migrations before it promotes the Worker unless
   a Worker-first migration is the sole pending entry, and fails closed when it
   has a companion ([`runbook.md`](runbook.md)); the old Worker's discovery
@@ -871,8 +873,8 @@ revoke a demo's `demo:<operation>` impersonation edges, and no longer stamps
 `retired_at` on that table once the graph is closed
 (`markDemoWorkspaceRetired` is deleted). Operations gained the step that
 retires every live demo Organization and the template before the removal
-ships, and the deploy order around D1 migration 0126, which follows as a
-Worker-first migration in its own pull request.
+ships, and the deploy order around D1 migration 0125, which drops the demo
+tables as a Worker-first migration after the Worker is promoted.
 
 **Why:** The owner's instruction of 2026-11-08: "remove the demo
 functionality completely". The walk was the demo feature's one write into

@@ -1182,9 +1182,10 @@ The deploy job applies configured deployments' migrations before it deploys eith
 
 Migrations `0090_drop_legacy_product_tables.sql`,
 `0094_retire_agent_inference_payload_ledger.sql`,
-`0097_email_routes_use_full_address.sql`, `0106_configurable_regions.sql`, and
-`0113_drop_legacy_observability_tables.sql` are deliberate reverse-order
-exceptions. These change schemas or deployment identifiers the previous Worker
+`0097_email_routes_use_full_address.sql`, `0106_configurable_regions.sql`,
+`0113_drop_legacy_observability_tables.sql`,
+`0115_drop_workspace_product_authority_ledger.sql`, and
+`0125_drop_demo_tables.sql` are deliberate reverse-order exceptions. These change schemas or deployment identifiers the previous Worker
 still expects, so applying them first can break live requests until deployment finished — or
 indefinitely if deployment failed. The deployment workflow reads each remote
 pending-migration ledger; when one configured Worker-first migration is the sole
@@ -1207,6 +1208,9 @@ tables before dropping them; the dedicated telemetry and audit stores already
 serve all producers. The pre-retirement Global health check must pass before the
 drop. Rolling back to the old reaper afterward stops telemetry delivery because
 its first query names a removed table; roll forward with compatible code instead.
+For 0125, the replacement Worker no longer reads `demo_operations` (the old one
+reads it on every regional discovery), so the demo tables are dropped only after
+it is promoted.
 A manual deploy with migrations disabled postpones the drop and leaves inactive
 legacy rows unreaped until a migration-enabled deploy completes the cleanup.
 Therefore a failed Worker deploy leaves the old schema untouched,
