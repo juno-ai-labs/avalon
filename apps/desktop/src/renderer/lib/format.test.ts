@@ -4,11 +4,39 @@ import {
   formatSidebarActivityTime,
   formatDayLabel,
   formatDuration,
+  formatMessageTime,
   formatSparseRelativeDate,
   statusDescription,
   statusLabel,
   harnessMarkerStatus,
 } from './format';
+
+describe('formatMessageTime', () => {
+  const at = new Date(2026, 9, 19, 15, 48).toISOString();
+
+  it('shows only the compact time through exactly twelve hours', () => {
+    expect(formatMessageTime(at, new Date(2026, 9, 19, 16))).toBe('3:48PM');
+    expect(formatMessageTime(at, new Date(2026, 9, 20, 3, 48))).toBe('3:48PM');
+  });
+
+  it('adds the date immediately after twelve hours, including earlier on the same day', () => {
+    expect(formatMessageTime(at, new Date(2026, 9, 20, 3, 48, 0, 1))).toBe('Oct 19 · 3:48PM');
+    expect(formatMessageTime(new Date(2026, 9, 19, 0, 5).toISOString(), new Date(2026, 9, 19, 15)))
+      .toBe('Oct 19 · 12:05AM');
+  });
+
+  it('adds the year for older messages from a prior local calendar year', () => {
+    expect(formatMessageTime(new Date(2025, 9, 19, 15, 48).toISOString(), new Date(2026, 9, 20)))
+      .toBe('Oct 19 2025 · 3:48PM');
+    expect(formatMessageTime(new Date(2025, 11, 31, 23, 30).toISOString(), new Date(2026, 0, 1, 1)))
+      .toBe('11:30PM');
+  });
+
+  it('keeps future times compact and identifies invalid timestamps', () => {
+    expect(formatMessageTime(at, new Date(2026, 9, 19, 15))).toBe('3:48PM');
+    expect(formatMessageTime('not-a-date', new Date(2026, 9, 19))).toBe('Unknown time');
+  });
+});
 
 describe('presentation rules', () => {
   const localDate = (year: number, month: number, day: number, hour = 0, minute = 0): string => (
