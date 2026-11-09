@@ -763,7 +763,8 @@ pre {
 
 /* One token per state, all from the same group, because these are eight
    answers to one question — `sys.color.workstream` in the token registry, and
-   `docs/workstream-markers.md` for which of them wins when several are true.
+   the retired `workstream-markers.md` for which of them wins when several are
+   true (record: `docs/automation-lifecycle.md#retired-documents`).
    `app.css` names tokens and never a colour: `docs/theming.md`. */
 .status-needs_input .status-dot { background: var(--av-sys-color-workstream-needs-input); }
 .status-failed .status-dot { background: var(--av-sys-color-workstream-failed); }
@@ -948,11 +949,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 /* macOS draws the traffic lights over the web contents, centered by the main
    process over the 76px section switcher. At their widest (macOS 26: 14px
    buttons on a 23px pitch from x: 8) they end at 68px, and this clears them by
-   14. `.meeting-titlebar` reserves the
-   same band and reaches it a different way — a flat 82px on every platform,
-   because that window renders no `.workspace-shell` and so has no class to be
-   told the platform by. Neither reads the other; the numbers agree because they
-   are the same measurement, and this comment is the only thing saying so. */
+   14. */
 .workspace-shell.has-overlay-window-controls { --window-controls-inset: 82px; }
 
 .main-pane {
@@ -1636,22 +1633,6 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 }
 .title-skeleton.title-skeleton-header { width: 22ch; }
 
-.account-trigger {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  color: var(--av-sys-color-text-default);
-  display: flex;
-  gap: 8px;
-  margin: 2px 12px 12px;
-  min-height: 40px;
-  padding: 6px 8px;
-  text-align: left;
-  width: calc(100% - 24px);
-}
-
-.account-trigger:hover { background-image: var(--hover-layer); }
 /* A support session: the staff member acting, beside the person acted as. */
 .account-impersonator { display: flex; flex-shrink: 0; }
 .account-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
@@ -3176,7 +3157,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
    three loud rows among five quiet ones, and the amber needs-input label was
    the least legible text in the list. Colouring the other five instead would be
    five more decisions to keep in step with the tokens. See
-   `docs/workstream-markers.md`.
+   `docs/automation-lifecycle.md#retired-documents`.
 
    The first column is a fixed track so every title starts on the same edge
    whatever marker precedes it, which is what a per-row `auto` column cannot do:
@@ -6763,7 +6744,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 /* While composing, the dock spans the body and dock rows and centres in them;
    launching drops it back into the dock row. Not animated, and the padding is
    the settled dock's so the inherited padding transition has nothing to move —
-   see docs/workstream-creation.md "What moves". */
+   see "What moves" in the retired workstream-creation.md (record:
+   docs/hosted-conversation-parents.md#retired-documents). */
 .new-chat-screen:not(.is-launching) > .launch-dock {
   align-self: center;
   grid-row: 2 / 4;
@@ -7190,18 +7172,12 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-section-list > li { align-items: center; display: flex; }
 
 .sidebar-footer { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 56px; gap: 4px; margin-top: auto; padding: 8px 12px; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.app-shell .sidebar .sidebar-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .resizable-sidebar.is-compact .sidebar-footer { gap: 0; }
 .resizable-sidebar.is-compact .sidebar-footer.has-leading-content { padding: 8px; }
 /* A toggle-only footer is the same layout in every hierarchy rail. Derived
    padding carries its 30px control to the centre through the width animation;
    changing `justify-content` at the endpoint would make it jump. */
 .resizable-sidebar.is-compact .sidebar-footer.is-toggle-only { padding: 8px calc((100% - 30px) / 2) 8px 8px; }
-/* The avatar is centred by its padding rather than `justify-content`, which
-   would jump it at the start of the travel. The floor travels, not a fixed
-   height: the row's content is shorter than either floor, so the floor is
-   the height, and a taller copy would grow it rather than be clipped. */
-.app-shell .sidebar.is-compact .sidebar-footer .account-trigger { gap: 0; min-height: 38px; padding: 6px 6px 6px 10.5px; }
 .sidebar-footer > .icon-button,
 .sidebar-footer > .sidebar-collapse-footer-toggle { flex-shrink: 0; }
 .sidebar-collapse-footer-toggle { display: flex; }

@@ -229,12 +229,6 @@ const wireResourcePageSchema = CursorPageSchema(WireResourceSchema).extend({ com
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
 const wireInviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) });
-/**
- * A Channel feed page as an API from before 2026-10-13 may still send it, with
- * a `locked` row for a private thread the reader is not in. The client drops
- * those rather than refusing the page, so a client that updates before the API
- * still opens the Channel. Remove once every region serves thread rows only.
- */
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
 const wireExecutionPrincipalClaimSchema = AutomationExecutionPrincipalClaimSchema;
 const wireConnectionPageSchema = z.object({ items: z.array(WireConnectionSchema) });

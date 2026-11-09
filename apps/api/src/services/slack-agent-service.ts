@@ -2147,12 +2147,6 @@ function slackBindingLifecycleApplies(event: Record<string, unknown>, botUserId:
   return SLACK_BINDING_LIFECYCLE_EVENTS.has(type);
 }
 
-/**
- * Where a Slack thread's message goes, decided by its binding before a
- * Channel is looked up or created. `bound`: the thread already routes to a
- * Channel. `spawn`: an addressed message under a linked room creates a
- * Channel in the room's Space, claiming the thread's binding with its birth.
- */
 /** What a thread is told when Rally could not place its message, by reason. */
 /**
  * The admission a reply in a thread bound to a Sidekick run child becomes:

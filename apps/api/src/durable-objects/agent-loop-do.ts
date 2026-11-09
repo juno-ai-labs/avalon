@@ -552,8 +552,7 @@ const RoomIdentitySchema = z.object({ workspaceId: WorkspaceIdSchema, workstream
 export type SubstreamProductRequest = z.infer<typeof ProductRequestSchema>;
 /**
  * What a caller puts on the wire, where `parentKind` may be absent because the
- * parse supplies `workstream`. Every existing caller means a Channel and says
- * nothing; the Space authority is the one that has to say so.
+ * parse supplies the default.
  */
 export type SubstreamProductRequestInput = z.input<typeof ProductRequestSchema>;
 export type SubstreamRuntimeResourceRequest = z.infer<typeof RuntimeResourceRequestSchema>;
@@ -3244,18 +3243,14 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   ): Promise<Response> {
     // The parent kind first, before the session read and before any other
     // object is addressed. A conversation is reached by *id*, so this is the
-    // only place that can tell a Channel's main conversation from a Space's
-    // hidden one — and a Space's has no product surface to offer: no feed, no
-    // transcript, no archive, no scope. Every member holds every Space id off
-    // the workspace socket, so without this `PATCH /workstreams/<spaceId>`
-    // archives General or makes it personal behind the Space authority's back.
+    // only place that can tell a Canvas's conversation from a Sidekick's, and a
+    // request naming the wrong kind must not act on the other's.
     //
     // Ahead of authentication deliberately. This is a statement about the
     // address rather than about the caller — the answer is the same for
     // everybody — and running it first keeps a misaddressed request from
     // costing a D1 round trip. `not found` rather than a refusal that confirms
-    // the id: the caller asked a question about a Channel, and there is no
-    // Channel here.
+    // the id: there is no conversation of the asked kind here.
     const identity = this.objectStore.identity();
     if (identity && identity.parentKind !== request.parentKind) {
       span.setError("conversation_parent_kind_mismatch");
