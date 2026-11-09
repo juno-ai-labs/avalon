@@ -143,9 +143,13 @@ card into a Slack channel, where people who never opened the link read it.
 ### The desktop app
 
 The main process accepts only the deep links `parseDesktopDeepLinkIntent`
-reads, so a Space, Channel, Breakout or Thread deep link (`rallywithai://…/spaces/…`,
-`…/workstreams/…`, addressed or not, `workstreams/new` included) is refused
-there. `emitDeepLink` does not drop it silently: `isRetiredDeepLink` in
+reads, and a Thread's own deep link (`rallywithai://workspace/…/spaces/<space>/channels/<thread>`,
+optionally `/artifacts/<artifact>`), which `acceptedDeepLink` delivers as the
+Canvas deep link of the Thread's id, read by `parseLinkTarget` as the HTTPS
+form is. That is the path a click on a pre-pivot deep link in Slack or mail
+takes on a Mac. Any other Space, Channel, Breakout or Thread deep link
+(`…/spaces/<space>`, a Breakout's, `…/workstreams/…`, addressed or not,
+`workstreams/new` included) is refused there. `emitDeepLink` does not drop it silently: `isRetiredDeepLink` in
 `apps/desktop/src/main/deep-links.ts` recognizes the retired deep-link shapes
 and main opens its deep-link error window with `RETIRED_LINK_MESSAGE`
 (`@rally/contracts/links`), the sentence the web app's entry card shows:
@@ -308,9 +312,8 @@ and the path is classified (`/app/:region/:organization/cv/:canvas`,
   converted Thread that is the Canvas, title and all; for a retired one, the
   API answers `canvas_not_found` and the reader sees the missing-Canvas state,
   not the gone page. A Breakout's link and the ID-only form still open the
-  gone page. The desktop main process still refuses an old `spaces/…` deep
-  link handed to it by the OS (`isRetiredDeepLink`); the handoff page mints the
-  Canvas deep link instead, so only a deep link pasted outside Rally meets it.
+  gone page, and the desktop's deep-link error window says the same for a
+  Breakout's deep link.
 - **A Canvas card in Slack keeps the name it was posted with.**
 - **A Canvas link's name is visible to whoever holds the link**, private
   Canvas or not (the 2026-10-07 product call).
