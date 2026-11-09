@@ -11,8 +11,6 @@ import {
 } from "./inference-lakehouse";
 import { emitInferenceUsage } from "./usage-metering";
 
-type AgentInferenceSource = "workstream" | "inline_child";
-
 /** One diagnostic for the first provider request of an eligible durable attempt. */
 export function createInferenceStartBreakdownReporter(
   env: Env,
@@ -49,7 +47,7 @@ export interface AgentInferenceLogContext {
   userId?: string;
   requestId: string;
   draftId?: string;
-  source: AgentInferenceSource;
+  source: "workstream";
   workstreamId?: string;
   substreamId?: string;
   parentRequestId?: string;
