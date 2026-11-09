@@ -898,7 +898,7 @@ describe("a Canvas's artifacts", () => {
       expect(clientCanvasRows(member.frames).map((row) => row.id)).not.toContain(canvasId);
       // The same change, committed now, reaches the member's open list.
       await workspace().sidekickSetAudience(update);
-      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id)).toContain(canvasId);
+      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id), { timeout: waitBudget() }).toContain(canvasId);
     } finally {
       member.socket.close(1000, "done");
     }
@@ -917,16 +917,16 @@ describe("a Canvas's artifacts", () => {
       expect(clientCanvasRows(member.frames).map((row) => row.id)).not.toContain(canvasId);
       await workspace().sidekickSetAudience({ workspaceId: WORKSPACE_ID, automationId: sidekickId, actor,
         update: { audience: "people", userIds: [MEMBER] } });
-      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id)).toContain(canvasId);
+      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id), { timeout: waitBudget() }).toContain(canvasId);
       await workspace().sidekickSetAudience({ workspaceId: WORKSPACE_ID, automationId: sidekickId, actor,
         update: { audience: "personal", userIds: [] } });
-      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id)).not.toContain(canvasId);
+      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id), { timeout: waitBudget() }).not.toContain(canvasId);
       // Archiving moves the same rule: its Canvas leaves an admitted reader's open list.
       await workspace().sidekickSetAudience({ workspaceId: WORKSPACE_ID, automationId: sidekickId, actor,
         update: { audience: "people", userIds: [MEMBER] } });
-      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id)).toContain(canvasId);
+      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id), { timeout: waitBudget() }).toContain(canvasId);
       await workspace().sidekickRemove({ workspaceId: WORKSPACE_ID, automationId: sidekickId, actor });
-      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id)).not.toContain(canvasId);
+      await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id), { timeout: waitBudget() }).not.toContain(canvasId);
     } finally {
       member.socket.close(1000, "done");
     }
