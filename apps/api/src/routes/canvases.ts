@@ -11,6 +11,8 @@ import {
   CanvasAudienceUpdateSchema,
   CanvasDetailSchema,
   CanvasListSchema,
+  CanvasPublishRequestSchema,
+  CanvasPublishedArtifactSchema,
   CanvasUpdateRequestSchema,
   CreateCanvasRequestSchema,
   CreatedCanvasSchema,
@@ -20,6 +22,7 @@ import {
 import type { HonoAppEnv } from "../env";
 import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { namedZValidator, zValidator } from "../middleware/validation";
+import { CanvasPublicationService } from "../services/canvas-publication-service";
 import { CanvasService } from "../services/canvas-service";
 
 const idParam = z.object({ id: IdSchema });
@@ -60,6 +63,14 @@ canvasRoutes.patch("/:id", canvasIdParam, namedZValidator("canvas_rename",
 canvasRoutes.post("/:id/audience", canvasIdParam, zValidator("json", CanvasAudienceUpdateSchema), async (c) =>
   c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c))
     .setAudience(c.req.valid("param").id, c.req.valid("json")))));
+// Publish something made elsewhere as one of this Canvas's artifacts, as the
+// person; the same name again is a new version. `docs/rally-mcp.md#publishing`.
+canvasRoutes.post("/:id/artifacts", canvasIdParam, namedZValidator("canvas_publish",
+  "A publish names a file or a static site, with a relative name and its content")("json", CanvasPublishRequestSchema), async (c) => {
+  const published = await new CanvasPublicationService(c.env, getWorkspaceAuth(c))
+    .publish(c.req.valid("param").id, c.req.valid("json"));
+  return c.json(CanvasPublishedArtifactSchema.parse(published), published.outcome === "created" ? 201 : 200);
+});
 canvasRoutes.post("/:id/pin", canvasIdParam, zValidator("json", SidebarPinRequestSchema), async (c) => {
   await new CanvasService(c.env, getWorkspaceAuth(c)).pin("canvas", c.req.valid("param").id, c.req.valid("json").pinned);
   return c.body(null, 204);

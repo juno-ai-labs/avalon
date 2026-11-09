@@ -3,6 +3,7 @@ import { z } from "zod";
 import { IdSchema, UserIdSchema, WorkstreamIdSchema } from "./identifiers";
 import { PUSH_BODY_PREVIEW_CHARACTERS } from "./notification-text";
 import { WorkstreamAppearancePatchSchema, WorkstreamAppearanceSchema } from "./workstream-appearance";
+import { ARTIFACT_SERVER_ENTRY, ARTIFACT_STATIC_ENTRY } from "./artifacts";
 
 /**
  * A Canvas is a conversation first: its id is the parent id of its
@@ -268,3 +269,67 @@ export const CanvasAccessDecisionSchema = z.strictObject({
   state: z.enum(["approved", "denied"]),
 });
 export type CanvasAccessDecision = z.infer<typeof CanvasAccessDecisionSchema>;
+
+/**
+ * A relative path a person publishes under: `/`-separated segments, none
+ * empty, `.` or `..`, with no backslash or control character, so it names
+ * the same file wherever it is stored or served. It is the artifact's
+ * identity in its Canvas: publishing the same name again makes a new version.
+ */
+export const CanvasPublishPathSchema = z.string().min(1).max(1024).refine((path) =>
+  !path.startsWith("/") && ![...path].some((character) => character === "\\" || character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f)
+    && path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== ".."),
+{ message: "must be a relative path of named segments" });
+
+/** Content as text, or as base64 for bytes that are not text. */
+export const CanvasPublishContentSchema = z.strictObject({
+  encoding: z.enum(["text", "base64"]),
+  data: z.string(),
+});
+export type CanvasPublishContent = z.infer<typeof CanvasPublishContentSchema>;
+
+/**
+ * `POST /canvases/:id/artifacts`: publish something made elsewhere (in
+ * Claude, ChatGPT, OpenCode) into a Canvas as the person's own artifact. A
+ * `file` is one document; a `site` is a static site whose `index.html` is
+ * its entry. A site with a server module (`index.js`) is Rally's to publish
+ * from its sandbox, not a person's to upload. `docs/rally-mcp.md#publishing`.
+ */
+export const CanvasPublishRequestSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("file"),
+    name: CanvasPublishPathSchema,
+    title: z.string().trim().min(1).max(300).optional(),
+    description: z.string().trim().min(1).max(2000).optional(),
+    /** What the publisher says it is; the bytes decide when they are recognizable. */
+    mimeType: z.string().max(160).optional(),
+    content: CanvasPublishContentSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("site"),
+    name: CanvasPublishPathSchema,
+    title: z.string().trim().min(1).max(300).optional(),
+    description: z.string().trim().min(1).max(2000).optional(),
+    files: z.array(z.strictObject({ path: CanvasPublishPathSchema, content: CanvasPublishContentSchema })).min(1)
+      .superRefine((files, context) => {
+        const paths = files.map((file) => file.path);
+        if (!paths.includes(ARTIFACT_STATIC_ENTRY)) context.addIssue({ code: "custom", message: `needs an ${ARTIFACT_STATIC_ENTRY}` });
+        if (paths.includes(ARTIFACT_SERVER_ENTRY)) context.addIssue({ code: "custom", message: `cannot carry a server module (${ARTIFACT_SERVER_ENTRY})` });
+        if (paths.some((path) => path === ".rally" || path.startsWith(".rally/"))) context.addIssue({ code: "custom", message: "cannot use the reserved .rally directory" });
+        if (new Set(paths).size !== paths.length) context.addIssue({ code: "custom", message: "names a path twice" });
+      }),
+  }),
+]);
+export type CanvasPublishRequest = z.infer<typeof CanvasPublishRequestSchema>;
+
+/** What a publish did: the artifact, its version now, and whether this call changed it. */
+export const CanvasPublishedArtifactSchema = z.strictObject({
+  resourceId: IdSchema,
+  title: z.string(),
+  kind: z.enum(["file", "site"]),
+  version: z.number().int().positive(),
+  outcome: z.enum(["created", "updated", "unchanged"]),
+  /** The Canvas opened on this artifact, when the deployment has a link host. */
+  url: z.string().nullable(),
+});
+export type CanvasPublishedArtifact = z.infer<typeof CanvasPublishedArtifactSchema>;

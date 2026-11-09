@@ -1,9 +1,10 @@
 # Rally MCP server
 
-Rally's MCP server lets a person connect Claude, ChatGPT or any other MCP
-client to Rally and work with their Canvases from there: find them, create
-them, ask Rally to make or change their artifacts, read their Chats, change
-who can open them, share them with guests, and keep them tidy. It runs at
+Rally's MCP server lets a person connect Claude, ChatGPT, OpenCode or any
+other MCP client to Rally and work with their Canvases from there: find them,
+create them, ask Rally to make or change their artifacts, publish artifacts
+they already made in that tool into a Canvas, read their Chats, change who
+can open them, share them with guests, and keep them tidy. It runs at
 `https://mcp.rallywith.ai/mcp` and is the product's own surface for its users,
 unlike the [engineering MCP](engineering-mcp.md), which is an operator tool
 behind Cloudflare Access.
@@ -27,6 +28,8 @@ system.
 | `apps/api/src/routes/browser.ts` | `/browser/oauth/authorization`, `/browser/oauth/approve`, `/browser/oauth/deny`: the consent half, behind the browser cookie and its Origin check. |
 | `apps/api/src/services/auth-service.ts` | `AccessTokenAudience`, `createMcpSession`, and `refresh`'s separation of desktop and MCP sessions. |
 | `apps/api/src/middleware/auth.ts` | `MCP_ROUTE_FAMILIES`: the routes an MCP token reaches. |
+| `apps/api/src/services/canvas-publication-service.ts` | `CanvasPublicationService`: a person publishing a file or a static site into a Canvas, behind `POST /canvases/:id/artifacts`. |
+| `apps/api/src/services/resource-publication.ts` | The publication writes Rally's own publish and a person's share: the identity, the INSERT, the content swap, with the revision's author as a parameter. |
 | `apps/browser/src/mcp-consent.tsx` | The consent page at `/app/oauth/authorize`. |
 | `packages/db/migrations/0126_mcp_oauth.sql` | `mcp_oauth_clients`, `mcp_oauth_codes`, `mcp_oauth_grants`. |
 | `plugins/rally/`, `.claude-plugin/marketplace.json` | The Claude Code plugin (the server and a Canvases skill) and the marketplace that lists it. |
@@ -111,12 +114,45 @@ the API's 401 with a message to reconnect.
 | `decide_canvas_access_request` | `POST /canvases/:id/access-requests/:userId/decision` |
 | `pin_canvas` | `POST /canvases/:id/pin` |
 | `rename_artifact` | `PATCH /conversations/:id/resources/:resourceId` |
+| `publish_file` | `POST /canvases/:id/artifacts` with `kind: "file"` |
+| `publish_site` | `POST /canvases/:id/artifacts` with `kind: "site"` |
 
 `GET /canvases` and `GET /conversations/:id/text` were added for this server:
 the app reads the list over its workspace socket and the transcript as blocks.
 The list is `canvasSidebarRows`, the read the sidebar socket sends
 (`WorkspaceDO.canvasListFor`); the text is `ConversationService.readText`,
 which the engineering MCP's Chat reads share.
+
+### Publishing
+
+`publish_file` and `publish_site` bring something made outside Rally (a
+Claude or ChatGPT artifact, a file in an OpenCode workspace) into a Canvas as
+one of its artifacts, exactly as written. Before this, only Rally's own
+`publish_resource`, inside a run, could put an artifact in a Canvas; a
+person's upload is a message attachment, which never becomes one.
+
+`POST /canvases/:id/artifacts` (`CanvasPublicationService`) takes a `file`
+(one document, as text or base64) or a static `site` (files with an
+`index.html`). It authorizes the person as a reader who can take part in the
+Canvas, then writes through `resource-publication.ts`, the same writes Rally's
+publish makes, with the person as the revision's author (`member`):
+
+1. The identity is `canvas:<canvasId>:<name>`. The same name again finds the
+   same row: equal content is `unchanged`, new content is a swap and a new
+   version, and a name already published as the other kind is refused
+   (`canvas_artifact_kind_changed`).
+2. A file's bytes go to R2 and the row is inserted or swapped; a site's
+   files are written as a version (`writeArtifactVersion`), its hostname
+   reserved, its row inserted or swapped, registered, and its host pointed at
+   the new version last, in the order Rally's publish uses.
+3. The resource is attached to the Chat and noted on the Canvas
+   (`canvasNoteArtifact`) with the person as its last editor. Both are
+   idempotent and run on every outcome, so a retry finishes a call that wrote
+   the row but lost its answer.
+
+The answer is the artifact's id, title, kind, current version, the outcome,
+and the Canvas's link opened on it. A site with a server module (`index.js`)
+is refused: running code is Rally's to publish from its sandbox.
 
 The server's initialization instructions tell the model that Rally, the agent
 in the Canvas, does the work: a change to an artifact is a message to the
@@ -142,6 +178,14 @@ Chat, followed by reading the Chat.
   `apps/api/test/mcp-oauth.test.ts`.
 - **A code is used once, by its client, with its verifier.** Guard: the replay
   and verifier cases in `apps/api/test/mcp-oauth.test.ts`.
+- **A person's publish writes as the person.** Each revision it makes is
+  authored `member` with their id, never as Rally's run, and the Canvas's
+  last editor is the person. Guard: the version case in
+  `apps/api/test-workers/canvas-publication.test.ts`.
+- **A publish path names a file inside the artifact.** No segment is empty,
+  `.` or `..`, and none carries a backslash or control character, so a path
+  cannot alias another or leave the artifact's storage prefix. Guard:
+  `packages/contracts/src/canvas-publish.test.ts`.
 - **Every tool is a product route.** A tool that wrote storage itself would
   skip the audience and role checks. Guard: review; each tool in
   `apps/mcp/src/server.ts` calls `RallyApi`.
@@ -171,6 +215,10 @@ message. Sidekicks have no tools here.
 - **The list** is the sidebar's, capped at `SIDEBAR_LIST_LIMIT`.
 - **A revoked session** keeps passing the Worker's unverified check until its
   access token expires; each tool then reports the API's 401.
+- **A published artifact** is capped at `MAX_ATTACHMENT_BYTES` (25 MB by
+  default), the limit Rally's own publish and uploads use, counted over all of
+  a site's files; a site is also capped at `ARTIFACT_MAX_ASSET_COUNT` files.
+  The content arrives as JSON, so base64 bytes cost a third more on the wire.
 - There is no tool to delete a Canvas or remove an artifact: the app has no
   route for the first, and the second's effect on a Canvas's generated
   artifacts is not settled.
@@ -181,6 +229,13 @@ message. Sidekicks have no tools here.
   registration, consent through a real email sign-in, the PKCE exchange, the
   route boundary, refresh in both directions and revocation, over the real
   migrations.
+- `pnpm --filter @rally/api test:workers test-workers/canvas-publication.test.ts`:
+  a person's file and site land as Canvas artifacts on real workerd, a
+  republish versions the same artifact with the person as each revision's
+  author, a repeat changes nothing, and someone the Canvas does not admit
+  writes nothing.
+- `pnpm --filter @rally/contracts exec vitest run src/canvas-publish.test.ts`:
+  the path and site rules a publish is held to.
 - `pnpm --filter @rally/mcp test`: the challenge, the metadata, token
   forwarding and the tools, with a double for the API's service binding only.
 - `claude plugin validate ./plugins/rally` and `claude plugin validate .`
@@ -205,13 +260,19 @@ endpoint forwards there. To connect a client:
   before customers can install it this way.
 - **Claude.ai and Claude Desktop:** add a custom connector with the server URL.
 - **ChatGPT:** in developer mode, add an app with the server URL and OAuth.
+- **OpenCode:** add the server to `opencode.json` under `mcp.servers`,
+  `{"mcp": {"servers": {"rally": {"type": "remote", "url": "https://mcp.rallywith.ai/mcp"}}}}`,
+  then `opencode mcp auth rally`. OpenCode tries a client ID metadata
+  document first, which this server does not advertise, then registers
+  itself, and signs in with a loopback redirect, which registration admits.
 
 ## Changelog
 
 ### 2026-11-09 — Rally's MCP server for its users
 
-**What changed.** A new Worker at `mcp.rallywith.ai` with thirteen Canvas
-tools, an OAuth 2.1 authorization server split between the identity API and
+**What changed.** A new Worker at `mcp.rallywith.ai` with fifteen Canvas
+tools, including publishing a file or a static site made elsewhere into a
+Canvas through a new `POST /canvases/:id/artifacts`, an OAuth 2.1 authorization server split between the identity API and
 the browser app's consent page, a `rally-mcp` token audience confined to the
 Canvas routes, `GET /canvases` and `GET /conversations/:id/text`, and a Claude
 Code plugin.
@@ -220,6 +281,11 @@ Code plugin.
 reach tools only over MCP with OAuth. A grant is an ordinary session rather
 than a token store of its own (Cloudflare's OAuth provider library was the
 alternative) so every rule that ends or narrows a session ends or narrows a
-grant without a second implementation. A future change must keep MCP and
-desktop refresh apart and keep `MCP_ROUTE_FAMILIES` to the routes the tools
-call.
+grant without a second implementation. A person's publish was the gap that
+made an MCP client useful for work already done in Claude, ChatGPT or
+OpenCode; it was built on the write steps lifted out of Rally's own publish
+(`resource-publication.ts`) rather than a second writer, and rather than
+asking Rally to republish an attachment, which would put a model run between
+the person and their exact bytes. A future change must keep MCP and desktop
+refresh apart, keep `MCP_ROUTE_FAMILIES` to the routes the tools call, and
+change a publication write in `resource-publication.ts` for both publishers.
