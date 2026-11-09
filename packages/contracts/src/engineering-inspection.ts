@@ -14,6 +14,7 @@ import {
 import { SpaceIdSchema, SpaceSummarySchema, type SpaceDirectory } from "./spaces";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { ReadTranscriptRequestSchema } from "./workstream-transcript";
+import { WorkspaceRetirementResultSchema } from "./workspace-retirement";
 
 /** Trusted Access identity supplied by the MCP Worker, never a tool argument. */
 export const EngineeringOperatorSchema = z.strictObject({
@@ -110,6 +111,16 @@ export const SetEngineeringSidekickPausedResultSchema = deferredZodSchema(() => 
   lifecycle: z.enum(["paused", "active"]),
 }));
 export type SetEngineeringSidekickPausedResult = z.infer<typeof SetEngineeringSidekickPausedResultSchema>;
+
+export const RetireEngineeringOrgInputSchema = deferredZodSchema(() => z.strictObject({
+  orgId: WorkspaceIdSchema.describe("The Organization to close for good. Retiring it again resumes an unfinished walk."),
+}));
+export type RetireEngineeringOrgInput = z.infer<typeof RetireEngineeringOrgInputSchema>;
+/** Ace's retirement receipt, plus the region that answered. */
+export const RetireEngineeringOrgResultSchema = deferredZodSchema(() => WorkspaceRetirementResultSchema.extend({
+  region: RegionSchema,
+}));
+export type RetireEngineeringOrgResult = z.infer<typeof RetireEngineeringOrgResultSchema>;
 
 export const ReadEngineeringChannelInputSchema = deferredZodSchema(() => z.strictObject({
   ...engineeringViewer,
@@ -535,6 +546,7 @@ export interface EngineeringInspectionRpcBinding {
   listUserConversations(input: ListEngineeringUserConversationsInput): Promise<SpaceChannelPage>;
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
+  retireOrg(input: RetireEngineeringOrgInput, operator: EngineeringOperator): Promise<RetireEngineeringOrgResult>;
   readChannel(input: ReadEngineeringChannelInput): Promise<EngineeringTextResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;
