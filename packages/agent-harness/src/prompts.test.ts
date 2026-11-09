@@ -203,7 +203,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "cc809f65694208ab735cf6a2ff838b27294b0b6afb7cb9c3f6bdb7a688f516c4",
+        hash: "a9cbe9fabab08a99d58ed5311ee8e37e8d2f0f47a3f50eac59c693fcd7ba7f92",
       },
     };
 
@@ -306,7 +306,7 @@ describe("prompt renderers", () => {
     expect(prompt).toContain("A data report is always delivered, and this rule outranks the saved instructions.");
     expect(prompt).toContain("never fill the gap with estimates or remembered numbers");
     // The tie-break with the access rule: a source missing for want of access is asked for first.
-    expect(prompt).toContain("a source that fails for missing access is the access rule's case below, so ask and wait first.");
+    expect(prompt).toContain("When one source or every source fails for missing access, the access rule below comes first: ask and wait, and report only once that is declined or impossible.");
     expect(prompt).toContain("When the person declines, or neither tool is available, report the unresolved problem once in this activation's final message");
     expect(prompt).toContain("do not claim delivery");
     expect(prompt).not.toContain("# Result delivery");
