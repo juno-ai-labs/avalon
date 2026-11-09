@@ -30,6 +30,23 @@ and [Versions and gradual deployments](https://developers.cloudflare.com/workers
 | Contracts | `src/services/document-processing-contract.ts`, `src/services/terminal/provider-rpc-contract.ts`, `src/telemetry/telemetry-delivery-contract.ts` | Typed RPC inputs and outputs imported by caller and callee. |
 | Rollout | `.github/workflows/deploy-api.yml` | Profiles, version upload, migration ordering, promotion, health, and retained evidence. |
 
+### Email Service
+
+The Global API's static `worker-events.ts` entrypoint handles Cloudflare Email
+Routing through `email()`, and the Wrangler config supplies `send_email` binding
+`EMAIL` for outgoing mail. Migration `0127_email_delivery_receipts.sql` applies
+before the Worker and stores opaque send claims/completion receipts. `postal-mime`
+is bundled for regional MIME parsing;
+no runtime dependency loading or administration token is used. External sender
+domain verification and receiving rules are separate deployment prerequisites,
+listed in [the runbook](runbook.md). New addresses use the dedicated
+`rallywithai.com` apex catch-all. The owner confirmed that current incoming
+addresses are unused: deploy once, then enable the new catch-all and verify
+delivery before announcing availability. No staged compatibility rollout or
+issuance pause is required. The old `automation.*` Resend path remains available
+but can be retired after pending deliveries are settled; it does not gate
+activation of the new domain.
+
 ### Dedicated Ashby ingress
 
 `ashby.rallywith.ai` belongs to `avalon-connector-ashby-global`, a separate static
@@ -305,6 +322,23 @@ for Azure-bound models in its route plan; each
 resident Channel agent reads the window snapshot once.
 
 ## Changelog
+
+### 2026-11-09 — Bind email to the API Worker
+
+**What changed:** Global exports an `email()` handler and binds `EMAIL` for native
+Cloudflare sending. The static bundle includes `postal-mime`; receiving rules and
+sender verification are configured outside Wrangler.
+An ordinary D1 migration adds opaque delivery receipts before Worker promotion.
+
+**Why:** The email provider switch can use the existing Worker and regional RPC
+boundary without an HTTP receiving secret for new mail. Resend's signed endpoint
+is retained for existing automation-subdomain addresses and pending deliveries.
+
+**Consequences:** A successful build does not prove DNS, sending-domain or
+receiving-rule configuration. The dedicated `rallywithai.com` apex supplies one
+catch-all for new addresses; old subdomains keep Resend receiving. Follow the
+runbook's sequence and retain legacy receiving credentials while those addresses
+remain served.
 
 ### 2026-10-06 — Retry the Pipeline binding form of error 10021 once
 

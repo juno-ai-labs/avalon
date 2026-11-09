@@ -5,10 +5,11 @@ import { ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvi
   WorkspaceRelationshipSchema, type ScopeGrant, type ScopeAccessRequest, type ScopeAccessResult, type ScopeInvitationResult, type ScopeInvitationSummary } from "@rally/contracts/scope-grants";
 import { canvasCanonicalUrl } from "@rally/contracts/links";
 import type { Env } from "../env";
+import { ApiError } from "../lib/api-error";
 import { encryptString, decryptString } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
 import { ensureGuestRelationship, type WorkspaceRelationship } from "../services/workspace-relationship-service";
-import { sendResendEmail } from "../services/resend";
+import { sendEmail } from "../services/email";
 import { readConversationPreview } from "../services/conversation-preview";
 import { PREVIEW_BYTES, PREVIEW_TURNS, PREVIEW_WORDS, scopeInvitationEmailParts } from "../services/scope-invitation-email";
 import { ObjectPortError } from "../runtime/object-port";
@@ -367,16 +368,24 @@ export class ScopeInvitationService {
     const sealed = SealedSchema.parse(JSON.parse(current.deliveryEncrypted));
     const delivery = DeliverySchema.parse(JSON.parse(await decryptString(sealed.ciphertext, sealed.iv,
       this.env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)));
-    await sendResendEmail(this.env, { recipientEmail: delivery.recipientEmail, text: delivery.text,
-      // Absent rather than undefined: an invitation composed before this email
-      // had an HTML part delivers as the text it was composed as.
-      ...(delivery.html ? { html: delivery.html } : {}),
-      subject: "An invitation to collaborate in Rally",
-      idempotencyKey: `scope-invitation:${id}`, category: "scope_invitation", region: this.env.AVALON_REGION,
-      sender: "transactional", errors: {
-        unavailable: { code: "scope_invitation_delivery_unavailable", message: "Invitation email is not configured" },
-        failed: { code: "scope_invitation_delivery_failed", message: "Invitation email could not be delivered" },
-      } });
+    try {
+      await sendEmail(this.env, { recipientEmail: delivery.recipientEmail, text: delivery.text,
+        // Absent rather than undefined: an invitation composed before this email
+        // had an HTML part delivers as the text it was composed as.
+        ...(delivery.html ? { html: delivery.html } : {}),
+        subject: "An invitation to collaborate in Rally",
+        idempotencyKey: `scope-invitation:${id}`, category: "scope_invitation", region: this.env.AVALON_REGION,
+        sender: "transactional", durableDelivery: "review", errors: {
+          unavailable: { code: "scope_invitation_delivery_unavailable", message: "Invitation email is not configured" },
+          failed: { code: "scope_invitation_delivery_failed", message: "Invitation email could not be delivered" },
+        } });
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.details?.retryable !== false) throw error;
+      logStructuredEvent(this.env, "warn", "scope_invitation_delivery_review_required", {
+        invitation_id: id, code: error.diagnosticCode ?? error.code,
+      });
+      return;
+    }
     this.invitations.acknowledgeDelivery(id);
   }
 

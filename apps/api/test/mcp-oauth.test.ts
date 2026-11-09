@@ -24,7 +24,7 @@ function bindings() {
   return createTestEnv({ DB:sqliteD1(db),APP_ENV:"development",RALLY_DEV_AUTH:"false",AVALON_REGION:"global",
     ALLOWED_ORIGINS:origin,PUBLIC_API_BASE_URL:apiOrigin,LOG_LEVEL:"error",
     SESSION_SIGNING_KEY:"mcp-test-signing-key",OAUTH_STATE_ENCRYPTION_KEY:"mcp-test-encryption-key",
-    BROWSER_APP_ORIGIN:origin,MCP_RESOURCE:"https://mcp.example.test/mcp",RESEND_FROM_EMAIL:"Rally <login@example.test>",
+    BROWSER_APP_ORIGIN:origin,MCP_RESOURCE:"https://mcp.example.test/mcp",EMAIL_FROM:"Rally <login@example.test>",
     EMAIL_LOGIN_POLICY_JSON:JSON.stringify({ otpDigits:6,ttlSeconds:600,maxFailedAttempts:3 }) });
 }
 

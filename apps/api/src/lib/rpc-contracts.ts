@@ -139,7 +139,15 @@ export const SlackCommandRpcInputSchema = z.object({
   bodyHash: z.string().min(1).max(200),
 });
 
+export const CloudflareEmailPayloadSchema = z.object({
+  senderAuthenticated: z.boolean().optional(),
+  raw: rawBody,
+  from: z.string(),
+  to: z.string().email(),
+});
+
 export const ResendRegionalEmailInputSchema = z.object({
+  cloudflareEmail: CloudflareEmailPayloadSchema.optional(),
   resendEmailId: z.string().min(1).max(200),
   svixId: z.string().min(1).max(200),
   receivedAt: z.string().datetime({ offset: true }),

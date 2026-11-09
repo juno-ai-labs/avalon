@@ -2,7 +2,7 @@ import "../../../tests/isolated-region";
 import { mockAccessMail } from './helpers/access-providers';
 import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { listAccessRequests, issueDownloadGrant, redeemDownloadGrant, downloadGrantUrl } from '@rally/db/private-access';
 import type { Env, HonoAppEnv } from '../src/env';
 import { privateAccessRoutes } from '../src/routes/private-access';
@@ -14,7 +14,7 @@ import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 
 let sqlite: DatabaseSync;
 let env: Env;
-let provider: Mock<typeof fetch>;
+let provider: ReturnType<typeof mockAccessMail>;
 const app = new Hono<HonoAppEnv>().route('/access', privateAccessRoutes).onError(errorHandler);
 const originalContent = { ...accessAcknowledgementContent };
 function submit(email: string, origin = 'https://rallywith.ai') {
@@ -25,8 +25,8 @@ function submit(email: string, origin = 'https://rallywith.ai') {
 beforeEach(() => {
   sqlite = migratedSqliteDatabase();
   env = createTestEnv({ DB: sqliteD1(sqlite), AVALON_REGION: 'global', APP_ENV: 'production',
-    PUBLIC_API_BASE_URL: 'https://api.rallywith.ai', ALLOWED_ORIGINS: 'https://rallywith.ai', TURNSTILE_SECRET_KEY: 'test-turnstile-key', RESEND_API_KEY: 'test-not-a-key', RESEND_FROM_EMAIL: 'Rally <test@example.com>' });
-  provider = mockAccessMail().mockImplementation(async () => Response.json({ id: 'test-email' }));
+    PUBLIC_API_BASE_URL: 'https://api.rallywith.ai', ALLOWED_ORIGINS: 'https://rallywith.ai', TURNSTILE_SECRET_KEY: 'test-turnstile-key', RESEND_API_KEY: 'test-not-a-key', EMAIL_FROM: 'Rally <test@example.com>' });
+  provider = mockAccessMail(env).mockImplementation(async () => ({ messageId: 'test-email' }));
 });
 afterEach(() => { sqlite.close(); Object.assign(accessAcknowledgementContent, originalContent); vi.restoreAllMocks(); });
 
@@ -72,9 +72,9 @@ describe('private access against regional migrations', () => {
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({ email: 'person@example.com', acknowledgementStatus: 'sent' });
     expect(requests[0]?.acknowledgedAt).toBeTruthy();
-    const message = JSON.parse(String(provider.mock.calls[0]?.[1]?.body));
-    expect(message.to).toEqual(['person@example.com']);
-    expect(message.from).toBe('Adam @ Rally <hi@rallywith.ai>');
+    const message = provider.mock.calls[0]![0];
+    expect(message.to).toBe('person@example.com');
+    expect(message.from).toEqual({ name: 'Adam @ Rally', email: 'hi@rallywith.ai' });
     expect(message.subject).toBe('We got your Rally request');
     expect(message.text).toContain('3 things they already want to share or collaborate on');
     expect(message.text).not.toContain('**');
@@ -83,28 +83,25 @@ describe('private access against regional migrations', () => {
   });
 
   it('retains failed requests and retries the original content and provider key', async () => {
-    provider.mockResolvedValueOnce(new Response('provider unavailable', { status: 503 }));
+    provider.mockRejectedValueOnce(Object.assign(new Error('quota'), { code: 'E_RATE_LIMIT_EXCEEDED' }));
     expect((await submit('retry@example.com')).status).toBe(502);
     expect(await listAccessRequests(env.DB)).toMatchObject([{ acknowledgementStatus: 'failed' }]);
     accessAcknowledgementContent.from = 'Another sender <another@example.com>';
     accessAcknowledgementContent.subject = 'Changed subject';
     accessAcknowledgementContent.markdown = 'Changed body';
-    env.RESEND_FROM_EMAIL = 'Changed default <default@example.com>';
+    env.EMAIL_FROM = 'Changed default <default@example.com>';
     expect((await submit('retry@example.com')).status).toBe(202);
-    expect(provider.mock.calls[1]?.[1]?.body).toEqual(provider.mock.calls[0]?.[1]?.body);
-    expect(provider.mock.calls[1]?.[1]?.headers).toEqual(provider.mock.calls[0]?.[1]?.headers);
+    expect(provider.mock.calls[1]?.[0]).toEqual(provider.mock.calls[0]?.[0]);
+    expect(provider.mock.calls[1]?.[0].headers).toEqual(provider.mock.calls[0]?.[0].headers);
     const row = sqlite.prepare('SELECT id FROM access_requests WHERE email = ?').get('retry@example.com') as { id: string };
-    expect(new Headers(provider.mock.calls[0]?.[1]?.headers).get('idempotency-key')).toBe(`rally-access-request/${row.id}/0`);
+    expect(new Headers(provider.mock.calls[0]?.[0].headers).get('X-Rally-Delivery-Key')).toBe(`rally-access-request/${row.id}/0`);
     expect(await listAccessRequests(env.DB)).toMatchObject([{ acknowledgementStatus: 'sent' }]);
   });
 
   it.each([
-    [401, 'restricted_api_key'],
-    [403, 'validation_error'],
-    [422, 'missing_required_field'],
-    [409, 'invalid_idempotent_request'],
-  ])('requires operator review for provider %i %s without blaming the recipient or resending', async (status, name) => {
-    provider.mockResolvedValueOnce(Response.json({ name }, { status }));
+    'E_SENDER_NOT_VERIFIED', 'E_VALIDATION_ERROR', 'E_HEADER_NOT_ALLOWED', 'E_ACCOUNT_SUSPENDED',
+  ])('requires operator review for provider %s without blaming the recipient or resending', async (code) => {
+    provider.mockRejectedValueOnce(Object.assign(new Error('rejected'), { code }));
     for (let attempt = 0; attempt < 2; attempt++) {
       const response = await submit('rejected@example.com');
       expect(response.status).toBe(503);

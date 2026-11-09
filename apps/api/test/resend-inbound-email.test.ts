@@ -21,6 +21,7 @@ import {
   createTestWorkspaceDO,
   workspaceObjectRpcs,
 } from "./helpers/workspace-object-rpcs";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const NOW = Date.parse("2026-08-02T18:00:00.000Z");
 const SECRET_BYTES = new TextEncoder().encode("avalon-resend-webhook-test-secret-v1");
@@ -219,6 +220,124 @@ class FakeBucket {
     }
   }
 }
+
+// Routing queries use migrated D1 SQL; regional resources use their real
+// workspace store. Sidekick admission is covered on real workerd separately.
+describe("Cloudflare incoming email", () => {
+  const mime = [
+    "From: =?UTF-8?B?RXh0ZXJuYWw=?= <outside@example.com>",
+    "To: public@example.com",
+    "Reply-To: Reply team: Display Only, reply@example.com;",
+    "Cc: Partners: Display Only, cc@example.com;",
+    "Subject: =?UTF-8?B?UXVhcnRlcmx5IHVwZGF0ZQ==?=",
+    "Message-ID: <same-header@example.com>",
+    'Content-Type: multipart/mixed; boundary="parts"',
+    "", "--parts", "Content-Type: text/plain; charset=utf-8",
+    "Content-Transfer-Encoding: base64", "", "SGVsbG8gJiB3ZWxjb21l", "--parts",
+    'Content-Type: text/plain; name="notes.txt"',
+    'Content-Disposition: attachment; filename="notes.txt"', "", "Attachment contents",
+    "--parts--", "",
+  ].join("\r\n");
+
+  it("routes SMTP recipients, including Bcc, and deduplicates each recipient independently", async () => {
+    const database = migratedSqliteDatabase();
+    identityStores.push(database);
+    const legacyAddress = `${LOCAL_PART}@${LEGACY_DOMAIN}`;
+    const dedicatedAddress = `${LOCAL_PART}@rallywithai.com`;
+    // Distinct owners may share a local part across domains. Seed the legacy
+    // claim first so a local-part-only query selects the wrong owner.
+    const claims = [
+      { address: legacyAddress, automationId: "00000000-0000-7000-8000-000000000006" },
+      { address: EMAIL_ADDRESS, automationId: "00000000-0000-7000-8000-000000000005" },
+      { address: dedicatedAddress, automationId: AUTOMATION_ID },
+    ];
+    const insert = database.prepare(`INSERT INTO workstream_email_routes
+      (email_address, address_source, region, workspace_id, workstream_id,
+       automation_subscription_id, created_at, updated_at)
+      VALUES (?, 'owner', 'enterprise', ?, NULL, ?, ?, ?)`);
+    for (const claim of claims) {
+      insert.run(claim.address, WORKSPACE_ID, claim.automationId,
+        new Date(NOW).toISOString(), new Date(NOW).toISOString());
+    }
+    const dispatched: ResendRegionalEmailInput[] = [];
+    const routing = new ResendInboundEmailRoutingService(createTestEnv({
+      DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test",
+      WORKSTREAM_EMAIL_DOMAIN: "rallywithai.com",
+    }), {
+      now: () => NOW,
+      dispatchInRegion: async (_region, input) => {
+        dispatched.push(input);
+        return { accepted: true, duplicate: false, messageId: "stored", resourceId: "resource" };
+      },
+    });
+    const message = { raw: new TextEncoder().encode(mime).buffer, from: "outside@example.com", to: dedicatedAddress };
+    await expect(routing.ingestCloudflare(message)).resolves.toMatchObject({ routedCount: 1 });
+    await expect(routing.ingestCloudflare(message)).resolves.toMatchObject({ duplicate: true });
+    await expect(routing.ingestCloudflare({ ...message, to: EMAIL_ADDRESS })).resolves.toMatchObject({ routedCount: 1 });
+    await expect(routing.ingestCloudflare({ ...message, to: EMAIL_ADDRESS.toUpperCase() })).resolves.toMatchObject({ duplicate: true });
+    await expect(routing.ingestCloudflare({ ...message, to: legacyAddress })).resolves.toMatchObject({ routedCount: 1 });
+    await expect(routing.ingestCloudflare({ ...message, to: legacyAddress })).resolves.toMatchObject({ duplicate: true });
+    expect(dispatched.map((input) => ({ address: input.emailAddress, automationId: input.automationSubscriptionId })))
+      .toEqual([claims[2], claims[1], claims[0]]);
+    expect(dispatched[0]!.resendEmailId).toMatch(/^cf_[a-f0-9]{64}$/u);
+    expect(new Set(dispatched.map((input) => input.resendEmailId)).size).toBe(3);
+    expect(database.prepare(`SELECT resend_email_id, event_type, routed_at, error_json
+      FROM resend_webhook_receipts ORDER BY svix_id`).all()).toEqual(
+      dispatched.map((input) => ({
+        resend_email_id: input.resendEmailId,
+        event_type: "email.received", routed_at: new Date(NOW).toISOString(), error_json: null,
+      })).sort((left, right) => left.resend_email_id.localeCompare(right.resend_email_id)),
+    );
+    await expect(routing.ingestCloudflare({ ...message, raw: new TextEncoder().encode(
+      `Received: by mx.cloudflare.net with new-hop-id\r\nAuthentication-Results: mx.cloudflare.net; dmarc=pass\r\nARC-Seal: changed\r\n${mime}`,
+    ).buffer })).resolves.toMatchObject({ duplicate: true });
+    // Reusing a Message-ID with different content is a new delivery.
+    await routing.ingestCloudflare({ ...message, raw: new TextEncoder().encode(`${mime}Changed`).buffer });
+    expect(dispatched).toHaveLength(4);
+    expect(dispatched[3]!.resendEmailId).not.toBe(dispatched[0]!.resendEmailId);
+    expect(database.prepare("SELECT count(*) AS count FROM resend_webhook_receipts").get()).toEqual({ count: 4 });
+    // An earlier unauthenticated copy cannot poison a later authenticated delivery.
+    await expect(routing.ingestCloudflare({ ...message, senderAuthenticated: true })).resolves.toMatchObject({ routedCount: 1 });
+    expect(dispatched).toHaveLength(5);
+    expect(dispatched[4]!.resendEmailId).not.toBe(dispatched[0]!.resendEmailId);
+  });
+
+  it.each([true, false, undefined])("parses Cloudflare MIME and preserves the trusted authentication verdict %s", async (senderAuthenticated) => {
+    const database = new FakeDatabase();
+    database.activeMembers.set("outside@example.com", OWNER_USER_ID);
+    const bucket = new FakeBucket();
+    const fetcher = vi.fn(async () => { throw new Error("Cloudflare mail must not fetch Resend"); });
+    const admitInboundEmail = vi.fn(async () => ({ admitted: true, duplicate: false, outcomeCode: "admitted", runId: "00000000-0000-7000-8000-0000000000aa" }));
+    const service = new ResendRegionalEmailService(environment(database, "enterprise", bucket, { admitInboundEmail }), { fetch: fetcher, now: () => NOW });
+    const input = { ...automationRegionalInput(), resendEmailId: "cf_mime_test", cloudflareEmail: {
+      raw: new TextEncoder().encode(mime).buffer, from: "outside@example.com", to: EMAIL_ADDRESS,
+      ...(senderAuthenticated === undefined ? {} : { senderAuthenticated }),
+    } };
+    await expect(service.ingest(input)).resolves.toMatchObject({ accepted: true });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(admitInboundEmail).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      automationId: AUTOMATION_ID, senderUserId: OWNER_USER_ID, senderAuthenticated: senderAuthenticated === true,
+      textContent: expect.stringContaining("Hello & welcome"),
+      structuredContent: expect.objectContaining({ provider: "cloudflare", untrusted: true, subject: "Quarterly update", to: [EMAIL_ADDRESS], attachmentCount: 1 }),
+    }));
+    expect(database.emailResources()).toHaveLength(1);
+    const payload = JSON.parse([...bucket.values.values()][0]!);
+    expect(payload).toMatchObject({ provider: "cloudflare", from: "outside@example.com", cc: ["cc@example.com"], replyTo: ["reply@example.com"], attachments: [{ filename: "notes.txt" }] });
+    expect(payload.text).not.toContain("Attachment contents");
+  });
+
+  it("rejects MIME metadata beyond the existing receiving schema bounds", async () => {
+    const database = new FakeDatabase();
+    database.activeMembers.set("outside@example.com", OWNER_USER_ID);
+    const service = new ResendRegionalEmailService(environment(database, "enterprise", new FakeBucket(), {
+      admitInboundEmail: async () => ({ admitted: true, duplicate: false, outcomeCode: "admitted", runId: "00000000-0000-7000-8000-0000000000aa" }),
+    }), { now: () => NOW });
+    const raw = new TextEncoder().encode(`From: outside@example.com\r\nCc: ${Array.from({ length: 101 }, (_, index) => `reader${index}@example.com`).join(", ")}\r\n\r\nHello`).buffer;
+    await expect(service.ingest({ ...automationRegionalInput(), resendEmailId: "cf_invalid_fields",
+      cloudflareEmail: { raw, from: "outside@example.com", to: EMAIL_ADDRESS },
+    })).rejects.toMatchObject({ code: "invalid_received_email", diagnosticCode: expect.stringContaining("cc") });
+  });
+});
 
 describe("Resend inbound-email routing", () => {
   it("verifies exact signed bytes before touching global route state", async () => {
@@ -749,7 +868,9 @@ describe("regional Resend email ingestion", () => {
 
 describe("Resend text normalization", () => {
   it("extracts only the exact Avalon local part and removes active HTML content", () => {
-    const accepted = __resendInboundEmailTesting.acceptedEmailDomains(DOMAIN);
+    const accepted = __resendInboundEmailTesting.acceptedEmailDomains("rallywithai.com");
+    expect(__resendInboundEmailTesting.recipientAddress(`${LOCAL_PART}@rallywithai.com`, accepted))
+      .toEqual({ localPart: LOCAL_PART, domain: "rallywithai.com" });
     expect(__resendInboundEmailTesting.recipientAddress(
       `Name <${EMAIL_ADDRESS}>`,
       accepted,
@@ -784,7 +905,7 @@ describe("Resend text normalization", () => {
   });
 });
 
-/** Workspace object databases, closed after each test. */
+/** Workspace object and migrated routing databases, closed after each test. */
 const identityStores: DatabaseSync[] = [];
 
 /** A fresh in-memory database whose close is owned by the shared afterEach. */
@@ -829,7 +950,7 @@ function environment(
     WORKSPACE_DOS: workspaceBinding,
     AVALON_REGION: region,
     APP_ENV: "test",
-    WORKSTREAM_EMAIL_DOMAIN: DOMAIN,
+    WORKSTREAM_EMAIL_DOMAIN: "rallywithai.com",
     RESEND_WEBHOOK_SIGNING_SECRET: WEBHOOK_SECRET,
     // One Full access key is intentionally shared by transactional sending and
     // received-message retrieval. RESEND_RECEIVING_API_KEY remains an override.

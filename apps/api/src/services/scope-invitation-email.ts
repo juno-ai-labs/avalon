@@ -1,5 +1,5 @@
 import type { ConversationPreview } from "./conversation-preview";
-import { escapeHtml, singleLine } from "./resend";
+import { escapeHtml, singleLine } from "./email";
 
 /**
  * What a scoped invitation says, in both parts of the same message.

@@ -5144,7 +5144,7 @@ function principalSystemSectionFor(
  *
  * Each channel is filtered by the predicate its own sender uses, not by one
  * convenient guess. Email delivers only from `active`, and only in production —
- * `sendResendEmail` refuses to send transactional mail from a developer's
+ * `sendEmail` refuses to send transactional mail from a developer's
  * machine — while Slack deliberately delivers from `needs_input` too, its
  * comment in `slack-agent-service.ts` says why, and skips a member who turned
  * that notification off. A third predicate that disagreed with any of those

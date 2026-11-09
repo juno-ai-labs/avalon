@@ -1,13 +1,11 @@
 import { vi } from 'vitest';
+import type { Env } from '../../src/env';
 
-/** Only external HTTP is doubled; routes, claims and schema execute normally. */
-export function mockAccessMail() {
-  const mail = vi.fn<typeof fetch>();
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-    if (String(input) === 'https://challenges.cloudflare.com/turnstile/v0/siteverify') {
-      return Response.json({ success: true, hostname: 'rallywith.ai', action: 'access_request' });
-    }
-    return mail(input, init);
-  });
+/** The external provider binding is doubled; routes, claims and SQL stay real. */
+export function mockAccessMail(env: Env) {
+  const mail = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>();
+  env.EMAIL = { send: mail };
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+    Response.json({ success: true, hostname: 'rallywith.ai', action: 'access_request' }));
   return mail;
 }
