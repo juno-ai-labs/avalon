@@ -36,6 +36,24 @@ describe("development authentication", () => {
     });
   });
 
+  it("keeps the Organization's stored name when the development account signs in again with another", async () => {
+    const database = migratedSqliteDatabase();
+    databases.push(database);
+    const service = new AuthService(createTestEnv({
+      APP_ENV: "development",
+      RALLY_DEV_AUTH: "true",
+      AVALON_REGION: "global",
+      DB: sqliteD1(database),
+      PUBLIC_API_BASE_URL: "http://127.0.0.1:8787",
+    }));
+    const first = await service.createDevelopmentSession();
+    // The desktop's sign-in sends its own default name; the browser's sends none.
+    await expect(service.createDevelopmentSession("Rally Development"))
+      .resolves.toMatchObject({ workspace: { id: first.workspace!.id, name: "Avalon Development" } });
+    expect(database.prepare("SELECT name FROM workspaces WHERE id = ?").get(first.workspace!.id))
+      .toEqual({ name: "Avalon Development" });
+  });
+
   it("reopens the fixed development authority after its final member closes it", async () => {
     const database = migratedSqliteDatabase();
     databases.push(database);

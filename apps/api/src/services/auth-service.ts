@@ -421,11 +421,15 @@ export class AuthService {
          VALUES (?, 'development-user', 'dev@avalon.local', 'Adam', NULL, ?, ?)
          ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`,
       ).bind(DEVELOPMENT_USER_ID, at, at),
+      // The name is only the first sign-in's: a later one keeps the stored
+      // name, so the desktop's sign-in (which sends its own default) and the
+      // browser's (which sends none) no longer rename the Organization under
+      // each other's members.
       this.env.DB.prepare(
         `INSERT INTO workspaces (id, name, slug, region, timezone, created_by_user_id, created_at, updated_at)
          VALUES (?, ?, 'avalon-development', ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
-           name = excluded.name, updated_at = excluded.updated_at, abandoned_at = NULL`,
+           updated_at = excluded.updated_at, abandoned_at = NULL`,
       ).bind(
         DEVELOPMENT_WORKSPACE_ID,
         workspaceName.trim(),

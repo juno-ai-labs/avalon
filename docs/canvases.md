@@ -766,6 +766,7 @@ pill said "Run", because the pill reads the number from the shared
 conversation, not yet loaded when the run is opened straight from the card.
 The card's link now carries the number in its route state, which the pill
 reads while the conversation has not said.
+
 ### 2026-11-08 — A Canvas's icon and colour can be chosen
 
 **What changed:** WorkspaceDO migration 153 adds

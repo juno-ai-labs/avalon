@@ -101,15 +101,14 @@ function regionLabel(region: RallyRegion): string {
  */
 function waitingLabel(attention: WorkspaceAttention): string | null {
   const count = attention.waitingForYou;
-  // A mention is named though no run waits: the server ranks an unseen
-  // mention as the reason with `waitingForYou` at zero.
-  if (count === 0) return attention.waitingReason === 'mentioned' ? 'You were mentioned' : null;
+  // The server ranks an unseen mention as the reason only while no run
+  // waits, so `waitingForYou` is zero then and the mention is named alone.
+  if (attention.waitingReason === 'mentioned') return 'You were mentioned';
+  if (count === 0) return null;
   const plural = count === 1 ? '' : 's';
-  return attention.waitingReason === 'mentioned'
-    ? `${count} mention${plural} waiting for you`
-    : attention.waitingReason === 'needs_input'
-      ? `${count} Sidekick run${plural} waiting for your input`
-      : `${count} new in Activity you have not seen`;
+  return attention.waitingReason === 'needs_input'
+    ? `${count} Sidekick run${plural} waiting for your input`
+    : `${count} new in Activity you have not seen`;
 }
 
 function IndicatorTooltip({ children, label }: { children: React.ReactElement; label: string }): React.JSX.Element {
@@ -190,7 +189,7 @@ export function WorkspaceAccountMenu({
   // and the rows agree.
   const counted = backgroundAttention.filter((value) => value.readerAttentionCount > 0);
   const backgroundHasAttention = counted.length > 0;
-  const backgroundAttentionDescription = counted.some((value) => value.waitingForYou > 0)
+  const backgroundAttentionDescription = counted.some((value) => value.waitingForYou > 0 || value.waitingReason === 'mentioned')
     ? 'attention in another organization'
     : backgroundHasAttention ? 'unread activity in another organization' : null;
   const multipleRegions = new Set(workspaces.map((workspace) => workspace.region)).size > 1;
