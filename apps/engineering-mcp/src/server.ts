@@ -14,6 +14,8 @@ import {
   SendEngineeringMessageResultSchema,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
+  RetireEngineeringOrgInputSchema,
+  RetireEngineeringOrgResultSchema,
   ReadEngineeringChannelInputSchema,
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
@@ -261,6 +263,14 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     }, async () => SetEngineeringSidekickPausedResultSchema.parse(
       await (await organizationBinding(request.orgId)).setSidekickPaused({ ...request, paused }, principal))));
   }
+
+  server.registerTool("retire_org", {
+    description: "Retire an Organization permanently, through the same door as Ace's Retire button: nobody can sign in to it, every Channel, Thread, Sidekick and socket in it stops, and nothing reopens. There is no undo. Members simply lose it. Retiring the demo template stops new demos from being prepared. The result reports complete: false while parts are still open; call again with the same orgId to resume the walk.",
+    inputSchema: RetireEngineeringOrgInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "retire_org", { workspace_id: request.orgId },
+    async () => RetireEngineeringOrgResultSchema.parse(
+      await (await organizationBinding(request.orgId)).retireOrg(request, principal))));
 
   server.registerTool("read_channel", {
     description: "Read the Channel feed visible to userId as plain text, with messages and Thread cards in app order. The app's ordinary feed pagination applies; follow the returned cursor for older history. Does not read the contents of every Thread.",
