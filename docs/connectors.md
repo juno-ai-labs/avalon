@@ -1630,6 +1630,31 @@ surface that tells somebody about connector activity reads
 
 ## Changelog
 
+### 2026-11-09 — Provider webhooks run only on WorkspaceDO authority
+
+**What changed:** `ProviderWebhookService` lost its regional-authority path
+(activity and resource inserts fenced on the receipt, the legacy connection
+query, its own receipt finish), and `ConnectionService` lost its
+`!WORKSPACE_DOS` route and route-sync branches. `acknowledgeConnectorAgentActivation`,
+`resolveFrozenDeliveryIdentity`, `persistPolledActivity` and the manifest's
+`digestibleActivityTypes` were deleted with no production caller. The provider
+webhook tests now run on a migrated regional database and a real WorkspaceDO
+per Organization.
+
+**Why:** `WORKSPACE_DOS` is a required binding, so production never took those
+branches; only tests did, through a hand-written fake database, so the suite
+proved a path nothing ran (the dead-code PRD, phase 3).
+
+**Considered and rejected:** keeping the fake and adding a WorkspaceDO case
+beside it, which would have left two answers to what a delivery writes.
+
+**Consequences:** a webhook test asserts on the stores production writes:
+receipts and ingress routes in D1, connections and resources in the object,
+activities on the queue. `withWorkspaceRuntimeDatabase` keeps its no-binding
+fallback as a declared test seam (the PRD's decision log says why).
+
+Shipped in juno-ai-labs/avalon#TBD.
+
 ### 2026-10-22 — Report shortened Sheets cell text
 
 **What changed:** Sheets reads include shortened cell strings in `truncated` and

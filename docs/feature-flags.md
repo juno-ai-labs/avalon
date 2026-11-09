@@ -1054,6 +1054,26 @@ hiding the Notifications section.
 
 ## Changelog
 
+### 2026-11-09 — `suggested-work-enabled` and the structured model variable leave
+
+**What changed:** `suggested-work-enabled` left `ProductFeatureFlagKeySchema`,
+the served flags object and the API's resolver. The Worker's environment schema
+stopped requiring `OPENROUTER_STRUCTURED_MODEL`. The composer's unbuilt `choice`
+model control and its menu were deleted, leaving the read-only pill.
+
+**Why:** each had no reader since the pivot (the dead-code PRD, phases 2, 4
+and 7).
+
+**Considered and rejected:** removing the variable from Wrangler in the same
+deploy; a Worker built before this change requires it at start-up.
+
+**Consequences:** the variable leaves `wrangler.global.jsonc`,
+`scripts/sync-dev-env.mjs` and the inference-boundaries lint rule in the next
+deploy, followed by `pnpm lint:fresh`. Older desktops parse the flags object
+loosely with a false default, so the dropped field reads as off.
+
+Shipped in juno-ai-labs/avalon#TBD.
+
 ### 2026-10-21 — Route the Sidekick wizard independently on Sol
 
 **What changed:** Sidekick authoring Main uses `agent-model-sidekick-authoring`,

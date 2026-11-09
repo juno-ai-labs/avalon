@@ -101,7 +101,20 @@ session import or digests; this makes the code agree.
 
 ## Decision log
 
-None yet.
+1. **2026-11-09: `withWorkspaceRuntimeDatabase` keeps its no-binding
+   fallback.** Production never takes it, but 34 focused Node tests in 8 files
+   build an environment without `WORKSPACE_DOS` and rely on it to run their
+   SQL on the D1 stand-in. Removing it would make each of them build a binding
+   that does the same thing. It stays as a declared test seam; every other
+   `!WORKSPACE_DOS` branch in `services/` is gone.
+2. **2026-11-09: every agent-only embedded-browser command goes, not only
+   `script` and `script_reset`.** With the executor deleted, `snapshot`,
+   `screenshot`, the input commands, `evaluate`, `cdp`, `network` and
+   `response_body` had no sender either, and two of them put page script and
+   DevTools on the main process's IPC surface.
+3. **2026-11-09: the meeting-cleanup RPCs go now.** The production checkpoint
+   recorded every WorkspaceDO at 58 or later, so the cleanup they drove is
+   finished.
 
 ## Key design decisions
 
@@ -172,6 +185,35 @@ two deploys in order. Phase 8 waits for the operator's run everywhere. Each
 item was found on 2026-11-08 with `git grep` over `apps/`, `packages/` and
 `scripts/`; re-run that grep before deleting, and update the owning document in
 the same change.
+
+### Progress
+
+Shipped in juno-ai-labs/avalon#TBD: phases 1 to 4 in full (the runtime
+database fallback kept, decision 1); phase 5's desktop-action server half, the
+browser plugin and realm (decision 2), the `activity_event` producers and
+`announceTo`'s writer; phase 7's first deploy. Phase 8's WorkspaceDO drops
+shipped earlier in #1494 and #1495, with `schedules` and `digest_schedules`
+kept by the #1495 hotfix.
+
+Left, each waiting on something named:
+
+- **One desktop release or a drained queue** (decision 3 of Key design
+  decisions): the `answer_desktop_action` and `desktop_action_requested` frame
+  schemas and `packages/contracts/src/desktop-actions.ts`;
+  `WorkstreamActivityEffectSchema`; `announceTo` in the review notice schema;
+  the AgentLoopDO `desktop_actions` tables (phase 8).
+- **Phase 7's second deploy:** `OPENROUTER_STRUCTURED_MODEL` out of
+  `wrangler.global.jsonc`, `scripts/sync-dev-env.mjs` and the
+  inference-boundaries lint rule, then `pnpm lint:fresh`.
+- **Open questions 1 to 3:** the artifact-pins route, the digest deep-link
+  section, `SubstreamInitialContext`, the `resource_watch` trigger type and
+  the metered activities.
+- **Not started:** digestibility as one list, `membershipVersion`, the
+  four-kind parent enums and the memory subject kinds (phase 6), and the
+  `memory_facts` rebuild and D1 Thread authority tables (phase 8). The
+  support-session Workers proof against a Canvas Chat is not yet restored.
+- **Operator:** change the GitHub App description in every region's app
+  settings to match `config/provider-apps/github.json`.
 
 ### Phase 1: comments, test names and orphaned CSS
 

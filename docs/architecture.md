@@ -821,6 +821,25 @@ kept as documents; changelog entries that cite one name it as text.
 
 ## Changelog
 
+### 2026-11-09 — The meeting-cleanup RPCs are deleted
+
+**What changed:** `retiredMeetingInventory`, `purgeMeetingSearchAuthorization`,
+`purgeMeetingNoteObjects` and `finalizeMeetingRetirement`, with their
+retirement-gate permits and `purgeRetiredMeetingObjects`, were deleted. The
+migration-57 shim and the migration-58 guard stay, and their workers proof now
+drives them through cold starts.
+
+**Why:** the production checkpoint recorded every WorkspaceDO at 58 or later,
+so the operator cleanup they drove is finished and nothing calls them.
+
+**Considered and rejected:** deleting the 57 shim and 58 guard too; they run on
+every cold start and an object restored from before 58 still needs them.
+
+**Consequences:** an object found below 58 again has no operator path to clean
+up; that would need the RPCs back from history.
+
+Shipped in juno-ai-labs/avalon#TBD.
+
 ### 2026-11-09 — The product is Canvases and Sidekicks; Threads, Channels, Breakouts, the iOS client and demos are deleted
 
 **What changed:** The deployment surfaces are the Electron desktop and the
