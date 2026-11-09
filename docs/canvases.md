@@ -254,7 +254,12 @@ renamed to the Canvas's source; and a Sidekick's attachment to its Main.
 **A Thread becomes one Canvas, Breakouts included.** An artifact a Breakout
 attached, private Breakout or not, is carried into the Chat before the
 Breakout is retired, so every reader of the Canvas opens it as they open an
-artifact the Chat made; the Canvas lists it either way. Listing it while only
+artifact the Chat made; the Canvas lists it either way. This widens access:
+a private Breakout's members chose a smaller audience, and the conversion
+opens those artifacts' content, not only their titles, to every reader of
+the Canvas, which for an Organization-wide Thread is the whole Organization.
+That is the implementer's reading of the conversion rule, open to the owner,
+not the owner's call. Listing it while only
 its uploader could open it was the rejected half: a reader saw a title they
 could not open, from a conversation that no longer exists. Dropping it from
 `canvas_artifacts` was the other option, rejected because the conversion's

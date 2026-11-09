@@ -295,9 +295,8 @@ async function shareRows(parentId: string) {
 const MADE_IN_BREAKOUT = "00000000-0000-7000-8000-00000000c825";
 const BREAKOUT_FILE = "00000000-0000-7000-8000-00000000c826";
 
-describe("an artifact a Thread published only in a Breakout", () => {
-  it("is carried into the Chat, so every Canvas reader opens it once the Breakout is retired", async () => {
-    // VIEWER takes part in the personal Thread but did not upload the artifact.
+/** VIEWER takes part in the personal Thread but did not upload the artifact; the Breakout attached it and a file. */
+async function seedBreakoutArtifact(): Promise<void> {
     await TEST_ENV.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-11-07T09:00:00.000Z')`).bind(WORKSPACE_ID, VIEWER).run();
     await runInDurableObject(organization(), (_instance, state) => {
@@ -314,10 +313,16 @@ describe("an artifact a Thread published only in a Breakout", () => {
           VALUES (?, ?, 0, 'attachment', json_object('id', ?), ?, ?)`, resourceId, USER_ID, resourceId, AT, AT);
       }
     });
-    const opens = async () => (await new AuthorizationService(TEST_ENV).checkMany(
-      { workspaceId: WORKSPACE_ID, userId: VIEWER, delegation: null },
-      [{ kind: "resource", workspaceId: WORKSPACE_ID, resourceId: MADE_IN_BREAKOUT }],
-    ))[0]?.status;
+}
+
+const opens = async () => (await new AuthorizationService(TEST_ENV).checkMany(
+  { workspaceId: WORKSPACE_ID, userId: VIEWER, delegation: null },
+  [{ kind: "resource", workspaceId: WORKSPACE_ID, resourceId: MADE_IN_BREAKOUT }],
+))[0]?.status;
+
+describe("an artifact a Thread published only in a Breakout", () => {
+  it("is carried into the Chat, so every Canvas reader opens it once the Breakout is retired", async () => {
+    await seedBreakoutArtifact();
     await dump();
 
     const result = await apply();
@@ -342,6 +347,21 @@ describe("an artifact a Thread published only in a Breakout", () => {
       THREAD, BREAKOUT, USER_ID);
     });
     expect(await apply()).toMatchObject({ alreadyConverted: 1, failed: [{ threadId: ORPHAN_THREAD }] });
+    expect(await opens()).toBe("allowed");
+  });
+
+  it("is placed in the Chat by a resume when the pass stopped after carrying it", async () => {
+    await seedBreakoutArtifact();
+    await dump();
+    // The first pass's steps up to the carry, and no further.
+    await organization().convertThreadToCanvas({ workspaceId: WORKSPACE_ID, threadId: THREAD, title: "Launch plan" });
+    const chat = await conversation(THREAD);
+    await chat.convertParentKind({ workspaceId: WORKSPACE_ID, parentId: THREAD, from: "workstream", to: "canvas" });
+    const { links } = await (await conversation(THREAD, BREAKOUT)).attachmentsForConversion();
+    await chat.adoptAttachmentsForConversion({ workspaceId: WORKSPACE_ID, parentId: THREAD,
+      links: links.filter((link) => link.resource_id === MADE_IN_BREAKOUT) });
+
+    expect(await apply()).toMatchObject({ alreadyConverted: 1 });
     expect(await opens()).toBe("allowed");
   });
 });
