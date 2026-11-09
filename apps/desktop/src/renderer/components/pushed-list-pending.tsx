@@ -2,6 +2,7 @@ import { RefreshCcw } from 'lucide-react';
 
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { Button, EmptyState, OpeningState } from './primitives';
+import { UpdateRallyAction } from './update-rally-action';
 
 /**
  * Rally's one sentence for a connection it cannot open, said the same way by
@@ -9,6 +10,9 @@ import { Button, EmptyState, OpeningState } from './primitives';
  * sidebar's lists.
  */
 export const OFFLINE_TITLE = 'Rally can’t reach the server right now.';
+
+/** What those surfaces say instead when the server no longer serves this build. */
+export const UPDATE_REQUIRED_TITLE = 'This version of Rally is out of date.';
 
 /** The one Try again those surfaces offer: outlined, with its arrow. */
 export function OfflineRetry({ onRetry }: { onRetry: () => void }): React.JSX.Element {
@@ -30,6 +34,13 @@ export function PushedListPending({ label, noun }: {
   noun: string;
 }): React.JSX.Element {
   const socket = useOptionalWorkspaceSocket();
+  if (socket?.state === 'update_required') {
+    return <EmptyState
+      action={<UpdateRallyAction />}
+      description={`Your ${noun} appear once Rally is up to date.`}
+      title={UPDATE_REQUIRED_TITLE}
+    />;
+  }
   if (socket && (socket.state === 'reconnecting' || socket.state === 'unavailable')) {
     return <EmptyState
       action={<OfflineRetry onRetry={() => socket.retry()} />}
@@ -46,10 +57,16 @@ export function PushedListPending({ label, noun }: {
  */
 export function usePushedListsDown(): boolean {
   const socket = useOptionalWorkspaceSocket();
-  return Boolean(socket && (socket.state === 'reconnecting' || socket.state === 'unavailable'));
+  return Boolean(socket && (socket.state === 'reconnecting' || socket.state === 'unavailable'
+    || socket.state === 'update_required'));
 }
 
 /** The sidebar's line in place of its placeholder rows while the socket is down. */
 export function SidebarListDown({ noun }: { noun: string }): React.JSX.Element {
+  const socket = useOptionalWorkspaceSocket();
+  // The page beside it carries the update action; one per window is enough.
+  if (socket?.state === 'update_required') {
+    return <p className="navigation-empty" role="status">{`${UPDATE_REQUIRED_TITLE} Your ${noun} appear once it is updated.`}</p>;
+  }
   return <p className="navigation-empty" role="status">{`${OFFLINE_TITLE} Your ${noun} appear when Rally reconnects.`}</p>;
 }
