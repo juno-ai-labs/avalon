@@ -11,6 +11,8 @@ import { EmailMentionContext, emailMentionDirectory } from '../lib/workspace-inv
 import { SidekickMentionContext, sidekickMentionDirectory } from '../lib/sidekick-mentions';
 import * as connectorMentions from './connector-mentions';
 import type { ElicitationData, Message } from '../lib/types';
+import { normalizeElicitation } from '../lib/elicitation';
+import { ElicitationSchema } from '@rally/contracts';
 import { applyTheme } from '../lib/theme';
 import {
   createConnectorMentionToken,
@@ -243,6 +245,33 @@ describe('ElicitationPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
     expect(await screen.findByText('This question couldn’t be skipped. Try again.')).toBeVisible();
     expect(screen.queryByText(skipDiagnostic)).not.toBeInTheDocument();
+  });
+
+  it('offers only the options and no Skip when the question allows neither, as the connection question does', () => {
+    // The wire question as the server sends a connection question, through the
+    // same normalization a transcript block takes.
+    const wire = ElicitationSchema.parse({
+      id: '01960000-0000-7000-8000-0000000000e1', workstreamId: '01960000-0000-7000-8000-0000000000e2',
+      harnessRunId: '01960000-0000-7000-8000-0000000000e3', prompt: 'Approve the export?', responseType: 'radio',
+      options: [
+        { value: 'continue', label: 'Continue', description: null },
+        { value: 'decline', label: 'Decline', description: null },
+      ],
+      minimumSelections: 1, maximumSelections: 1, targetUserId: null, status: 'open', answer: null,
+      answeredByUserId: null, createdAt: '2026-11-08T10:00:00.000Z', answeredAt: null,
+      allowOther: false, allowSkip: false,
+    });
+    const { unmount } = render(<ElicitationPanel elicitation={normalizeElicitation(wire)} onAnswer={vi.fn(async () => undefined)} />);
+    expect(screen.getAllByRole('radio').map((radio) => radio.closest('label')?.textContent)).toEqual(['ContinueA', 'DeclineB']);
+    expect(screen.queryByRole('radio', { name: 'Other' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Skip' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Submit/u })).toBeVisible();
+    unmount();
+
+    // A question that says nothing keeps both, as every other question does.
+    render(<ElicitationPanel elicitation={singleSelectElicitation} onAnswer={vi.fn(async () => undefined)} />);
+    expect(screen.getByRole('radio', { name: 'Other' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Skip' })).toBeVisible();
   });
 
   it('repairs TeX in the question and in the option labels beside it', () => {

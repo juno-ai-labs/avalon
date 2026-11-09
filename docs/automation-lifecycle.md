@@ -810,7 +810,11 @@ waiting state is new:
   says "Connect *name* so this run can continue." (the catalog's `label`,
   "for the Organization" for a workspace scope), offers **Continue**
   (`CONNECTION_QUESTION_CONTINUE_ANSWER`) and **Decline**, and carries the
-  card's selection as `Elicitation.connection`. The question panel, on the run's
+  card's selection as `Elicitation.connection`, with `allowOther: false` and
+  `allowSkip: false` (both optional on the contract, absent reading as true), so
+  the panel offers those two options alone: no "Other" answer and no Skip, since
+  Decline is how a person lets the run go on without; a touch screen also drops
+  the Submit shortcut's keycap. The question panel, on the run's
   row in the shared conversation and in the run's view, draws the connection
   card above the options; connecting there answers Continue for the person
   (`ConnectorConnectionCard.onNewlyConnected`, which fires only on a change
@@ -2030,6 +2034,33 @@ Needs input badge stays beside a working pill.
 written on every run transition. Every writer of a run state would have had
 to keep it true, and one missed transition would leave a Sidekick Working
 for good; the probe cannot go stale.
+
+**Consequences:** `running` and `runState` may describe different runs (an
+older run working behind a finished newer one is exactly the case). The
+client keeps its `runState` fallback for one release, until every Worker
+publishes `running`. The EXISTS reads the Sidekick's run history on each
+list read; a partial index over the working states is the fix if that ever
+shows, and is deliberately not added now.
+### 2026-11-08 — A run a missing connection or grant blocks asks for it and waits
+
+**What changed:** A Sidekick run holds the connection-state check and the
+connection card, and in a run the card is a question: it opens an
+elicitation carrying the card's selection (`Elicitation.connection`, optional)
+and the run waits in `needs_input`. The question panel draws the card;
+connecting answers Continue, and Decline ends the run `completed` with its
+reason. The question says it is answered by those two options alone
+(`allowOther` and `allowSkip` false): the round-5 visual check found the panel
+offering a typed "Other" answer and Skip, neither of which means anything to a
+run waiting on a connection. A missing grant is asked with `request_elicitation`. The activation
+prompt's permission rule says to ask and wait, and to report in the final
+message only on a decline or when no tool can ask.
+
+**Why:** The owner, on plan §9's "a run blocked on permissions ends
+`completed` after saying what is blocked": "fix this to show needs input". A
+run that finished with the work undone looked done on its row and on the
+Sidekick's list row, and nobody was asked for the one thing that would have
+let it finish; the elicitation path already had the waiting state, the
+Activity row, the notice and the resume.
 
 **Considered and rejected:** keeping a run that is blocked finishing
 `completed` with a message saying what is blocked, which is what the owner

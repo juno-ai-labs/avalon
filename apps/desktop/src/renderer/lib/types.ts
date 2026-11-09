@@ -436,6 +436,8 @@ export interface ElicitationData {
   minimumSelections?: number;
   maximumSelections?: number;
   allowOther?: boolean;
+  /** Whether Skip is offered; absent reads as true. */
+  allowSkip?: boolean;
   targetUserId?: string;
   status: 'open' | 'answered' | 'cancelled';
   answer?: unknown;
