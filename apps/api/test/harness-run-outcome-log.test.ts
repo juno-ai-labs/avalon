@@ -1,11 +1,12 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { asHarnessRunId, asWorkspaceId } from '@rally/contracts';
+import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { logHarnessRunOutcome } from '../src/services/integrations';
 import { createTestEnv } from './helpers/cloudflare-test';
 
 const env = createTestEnv({ LOG_LEVEL: 'debug', AVALON_REGION: 'global' });
-const input = { harnessRunId: 'run-1', workspaceId: 'workspace-1', parentId: 'parent-1' };
+const input = { harnessRunId: asHarnessRunId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d4'), workspaceId: asWorkspaceId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2'), parentId: 'parent-1' };
 
-const logged = (spy: ReturnType<typeof vi.spyOn>) => spy.mock.calls.map(([entry]) => entry as Record<string, unknown>);
+const logged = (spy: MockInstance<(...data: unknown[]) => void>) => spy.mock.calls.map((call) => call[0] as Record<string, unknown>);
 
 describe('a harness run that did not complete, in the log', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -16,7 +17,7 @@ describe('a harness run that did not complete, in the log', () => {
     logHarnessRunOutcome(env, input, { status: 'needs_input' }, false);
     expect(logged(warn)).toEqual([]);
     expect(logged(info)).toMatchObject([{ level: 'info', event: 'workstream_harness_run_waiting',
-      request_id: 'run-1', workspace_id: 'workspace-1', workstream_id: 'parent-1' }]);
+      request_id: '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d4', workspace_id: '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2', workstream_id: 'parent-1' }]);
   });
 
   it('keeps a failed run at warn with its failure code, kind and message', () => {
