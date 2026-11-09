@@ -2517,6 +2517,7 @@ export function ElicitationPanel({
   const isMulti = elicitation.responseType === 'multi_select';
   const isText = elicitation.responseType === 'text';
   const allowOther = elicitation.allowOther ?? true;
+  const allowSkip = elicitation.allowSkip ?? true;
   const minimumSelections = isText ? 1 : Math.max(1, elicitation.minimumSelections ?? 1);
   const maximumSelections = isMulti ? elicitation.maximumSelections : 1;
   const selectionCount = selected.length + (allowOther && customSelected && text.trim() ? 1 : 0);
@@ -2748,7 +2749,7 @@ export function ElicitationPanel({
       {!isAnswered && (
         <div className="elicitation-actions">
           {error && <ErrorNotice>{error}</ErrorNotice>}
-          <Button className="elicitation-skip" disabled={submitting} onClick={() => void skip()}>Skip</Button>
+          {allowSkip && <Button className="elicitation-skip" disabled={submitting} onClick={() => void skip()}>Skip</Button>}
           <Button className="elicitation-submit" disabled={!canSubmit || submitting} onClick={() => void submit()}>
             {submitting ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
             Submit <kbd aria-hidden="true">{primaryShortcutLabel({ apple: '↵', other: 'Enter' })}</kbd>

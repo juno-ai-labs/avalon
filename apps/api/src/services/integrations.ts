@@ -8862,7 +8862,9 @@ async function openToolQuestion(
     minimumSelections: question.minimumSelections, maximumSelections: question.maximumSelections,
     targetUserId: null, status: "open" as const, answer: null,
     answeredByUserId: null, createdAt: at, answeredAt: null,
-    ...(question.connection ? { connection: question.connection } : {}),
+    // A connection question is answered by its two options alone: no typed
+    // answer, and no Skip, since Decline is how a person lets the run go on without.
+    ...(question.connection ? { connection: question.connection, allowOther: false, allowSkip: false } : {}),
   };
   const summary = question.connection
     ? `Asked for the ${question.connection.connectorId} ${question.connection.scope} connection`

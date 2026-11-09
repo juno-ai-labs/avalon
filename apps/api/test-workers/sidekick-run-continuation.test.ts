@@ -1011,10 +1011,14 @@ describe("A Sidekick run a missing connection blocks", () => {
         `SELECT structured_content_json FROM canonical_conversation_turn_details
           WHERE structured_content_json LIKE '%"kind":"elicitation"%' ORDER BY sequence_number LIMIT 1`,
       ).one();
-      return { ...row, connection: (JSON.parse(block.structured_content_json) as { elicitation: { connection?: unknown } }).elicitation.connection };
+      const { elicitation } = JSON.parse(block.structured_content_json) as { elicitation: Record<string, unknown> };
+      return { ...row, connection: elicitation.connection, options: elicitation.options, allowOther: elicitation.allowOther, allowSkip: elicitation.allowSkip };
     });
-    // The question names the connection and carries the card that makes it.
-    expect(question).toMatchObject({ prompt: ASKED, connection: { connectorId: "notion", scope: "personal" } });
+    // The question names the connection, carries the card that makes it, and
+    // is answered by its two options alone: no typed answer, no Skip.
+    expect(question).toMatchObject({ prompt: ASKED, connection: { connectorId: "notion", scope: "personal" },
+      allowOther: false, allowSkip: false });
+    expect((question.options as Array<{ label: string }>).map((option) => option.label)).toEqual(["Continue", "Decline"]);
     await deliverChildEffects(TEST_ENV, childStub(runId));
     expect(await runState(runId)).toBe("needs_input");
     const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))

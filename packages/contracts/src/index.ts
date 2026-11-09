@@ -1070,6 +1070,17 @@ export const ElicitationSchema = z.object({
    * one (it strips the key) and a stored question without it still parses.
    */
   connection: ConnectorConnectionCardInputSchema.optional(),
+  /**
+   * Whether the panel offers a typed answer beside the options ("Other").
+   * Absent reads as true; false means these options only, as the connection
+   * question sends (Continue or Decline). Optional so an older desktop strips it.
+   */
+  allowOther: z.boolean().optional(),
+  /**
+   * Whether the panel offers Skip. Absent reads as true; the connection
+   * question sends false, since Decline is how a person lets the run go on without.
+   */
+  allowSkip: z.boolean().optional(),
 });
 
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({
