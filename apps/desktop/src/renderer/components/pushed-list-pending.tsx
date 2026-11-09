@@ -64,9 +64,26 @@ export function usePushedListsDown(): boolean {
 /** The sidebar's line in place of its placeholder rows while the socket is down. */
 export function SidebarListDown({ noun }: { noun: string }): React.JSX.Element {
   const socket = useOptionalWorkspaceSocket();
-  // The page beside it carries the update action; one per window is enough.
+  // `WorkspaceUpdateNotice` above the lists says why and carries the action.
   if (socket?.state === 'update_required') {
-    return <p className="navigation-empty" role="status">{`${UPDATE_REQUIRED_TITLE} Your ${noun} appear once it is updated.`}</p>;
+    return <p className="navigation-empty" role="status">{`Your ${noun} appear once Rally is up to date.`}</p>;
   }
   return <p className="navigation-empty" role="status">{`${OFFLINE_TITLE} Your ${noun} appear when Rally reconnects.`}</p>;
+}
+
+/**
+ * The sidebar's notice that the server no longer serves this build, shown
+ * above its lists whatever they hold: a returning person's lists paint from
+ * the device cache (`hydrateCanvasDirectory`), so a notice that waited for an
+ * empty list would never show them why nothing moves.
+ */
+export function WorkspaceUpdateNotice(): React.JSX.Element | null {
+  const socket = useOptionalWorkspaceSocket();
+  if (socket?.state !== 'update_required') return null;
+  return (
+    <div className="navigation-update-notice" role="status">
+      <p>{`${UPDATE_REQUIRED_TITLE} Lists here stop updating until it is.`}</p>
+      <UpdateRallyAction />
+    </div>
+  );
 }

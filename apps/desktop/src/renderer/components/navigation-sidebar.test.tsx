@@ -27,7 +27,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 /** The workspace socket the sidebar sends Mark all seen on; only its command is used. */
-const socket = vi.hoisted(() => ({ markAllActivitySeen: vi.fn() }));
+const socket = vi.hoisted(() => ({ markAllActivitySeen: vi.fn(), state: 'connected' as string }));
 vi.mock('../lib/workspace-socket', () => ({ useOptionalWorkspaceSocket: () => socket }));
 
 const ME = '00000000-0000-7000-8000-0000000000a1';
@@ -94,6 +94,7 @@ function renderSidebar(person: Workspace = workspace, route: InitialEntry = '/',
 
 beforeEach(() => {
   vi.clearAllMocks();
+  socket.state = 'connected';
   localStorage.clear();
   useUiStore.getState().setSidebarSection('canvases');
   useUiStore.getState().setSidebarOpen(false);
@@ -184,6 +185,15 @@ describe('the Canvases and Sidekicks sections', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/canvases/00000000-0000-7000-8000-0000000000c9'));
     expect(api.createCanvas).toHaveBeenCalledWith({});
+  });
+
+  it('says the build is out of date above lists the device cache painted, and offers the update', () => {
+    socket.state = 'update_required';
+    renderSidebar();
+    // The cached rows still paint, so nothing about an empty list can say why they stopped moving.
+    expect(within(screen.getByRole('region', { name: 'All canvases' })).getByRole('link', { name: /Q4 revenue review/ })).toBeInTheDocument();
+    expect(screen.getByText('This version of Rally is out of date. Lists here stop updating until it is.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reload Rally' })).toBeInTheDocument();
   });
 
   it('says so when New Canvas fails, rather than doing nothing', async () => {

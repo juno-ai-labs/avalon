@@ -51,4 +51,16 @@ describe('the link handoff page', () => {
     expect(document.querySelector<HTMLAnchorElement>('#open-rally')!.href)
       .toBe(`rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/canvases/1111117Hxt1fAWDjN7TX?turn=${turn}&sequence=4`);
   });
+
+  it('opens a link whose message query is malformed on the plain Canvas', async () => {
+    history.replaceState(null, '', '/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/?turn=not-a-turn&sequence=0');
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)');
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    await import('../src/link-handoff');
+    expect(visible('#link-error')).toBe(false);
+    expect(document.querySelector<HTMLAnchorElement>('#open-browser')!.href)
+      .toBe('http://localhost:8794/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/');
+    expect(document.querySelector<HTMLAnchorElement>('#open-rally')!.href)
+      .toBe('rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/canvases/1111117Hxt1fAWDjN7TX');
+  });
 });
