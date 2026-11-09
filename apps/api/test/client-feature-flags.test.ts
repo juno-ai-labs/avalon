@@ -233,7 +233,6 @@ describe("client feature flags", () => {
     await expect(resolveClientFeatureFlags(envWithAccounts(), auth(staffUserId)))
       .resolves.toEqual({
         developerSettings: false,
-        suggestedWorkEnabled: false,
         multipleWorkspacesEnabled: false,
         pushNotificationsEnabled: false,
       });
@@ -299,7 +298,6 @@ describe("client feature flags", () => {
         "developer-settings",
         "multiple-workspaces-enabled",
         "push-notifications-enabled",
-        "suggested-work-enabled",
       ]);
   });
 });
@@ -337,7 +335,6 @@ describe("GET /feature-flags", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       developerSettings: true,
-      suggestedWorkEnabled: true,
       multipleWorkspacesEnabled: true,
       pushNotificationsEnabled: true,
     });
@@ -359,7 +356,6 @@ describe("GET /feature-flags", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       developerSettings: false,
-      suggestedWorkEnabled: false,
       multipleWorkspacesEnabled: false,
       pushNotificationsEnabled: false,
     });

@@ -3372,7 +3372,7 @@ function embeddedBrowserFor(window: BrowserWindow): EmbeddedBrowser {
     if (window.isDestroyed()) return;
     window.webContents.focus();
     window.webContents.send('embedded-browser:host-request', request);
-  }, false);
+  });
   embeddedBrowsers.set(window, { userId, browser });
   window.once('closed', () => embeddedBrowsers.delete(window));
   return browser;

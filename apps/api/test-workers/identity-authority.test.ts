@@ -144,7 +144,7 @@ describe("identity authority on real workerd", () => {
     });
   });
 
-  it.each([false, true])("stores the Channel colour and preserves an existing appearance (existing=%s)", async (existing) => {
+  it.each([false, true])("stores the conversation colour and preserves an existing appearance (existing=%s)", async (existing) => {
     const stub = agent();
     await boot(stub);
     await runInDurableObject(stub, (_instance, state) => {

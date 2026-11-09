@@ -615,12 +615,6 @@ export async function refreshWorkspaceSchedule(
   env: Pick<Env, "DB" | "WORKSPACE_DOS" | "AVALON_REGION" | "APP_ENV">,
   workspaceId: string,
 ): Promise<void> {
-  // Focused unit environments omit the namespace deliberately — the same
-  // allowance `withWorkspaceRuntimeDatabase` makes, and for the same reason:
-  // binding it pulls this workspace's whole SQL surface into the test. The
-  // environment contract requires it before request dispatch, so production
-  // never reaches this branch.
-  if (!env.WORKSPACE_DOS) return;
   const workspace = await durableObjectStubForWorkspace(
     env,
     env.WORKSPACE_DOS,

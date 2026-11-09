@@ -104,7 +104,7 @@ import {
   type InstallationRotationPrepare,
 } from './connector-installation-protocol';
 import { createInstallation, readInstallation, readInstallations, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
-import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, purgeRetiredMeetingObjects, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
+import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
 import { AgentIdSchema, type AgentId, type RetirementParentKind } from "@rally/contracts";
 import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
@@ -251,10 +251,7 @@ import {
   type ScheduledAlarm,
   type ScheduledAlarmOutcome,
 } from "./scheduled-alarms";
-import {
-  applyDurableObjectSqliteMigrations,
-  type DurableObjectSqliteMigration,
-} from "./sqlite-migrations";
+import type { DurableObjectSqliteMigration } from "./sqlite-migrations";
 import {
   observableWorkspaceScheduledAlarmKind,
   WorkspaceAlarmInstrumentation,
@@ -783,9 +780,8 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",
-  // Claims live on `claimWebhookReceipt`; the only generic statements left
-  // naming this table are the connection service's pre-cutover branches, which
-  // run only when WORKSPACE_DOS is unbound and so never reach this object.
+  // Claims live on `claimWebhookReceipt`; no generic statement names this
+  // table any more.
   // `connector_oauth_attempts` is deliberately absent: the attempt-bind
   // statement batched with a connection mutation in
   // `persistConnectionMutation` still arrives generically, and refusing the
@@ -3875,7 +3871,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 94,
   description: "make every private Space Organization-wide",
   // Every Space is Organization-wide. A Space grants no reader to its
-  // Channels, so no Channel changes; see docs/spaces.md#every-space-is-organization-wide.
+  // Channels, so no Channel changes; see docs/architecture.md#spaces-space-access-sources-and-projects.
   statements: SPACE_PUBLIC_ONLY_MIGRATION,
 }, {
   version: 95,
@@ -3894,7 +3890,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 98,
   description: "a Channel's unread waterline and each person's read position in it",
   // Breakout-identical columns, advanced only by placing a thread; see
-  // workspace-channel-read-storage.ts and docs/spaces.md#channel-read-state.
+  // workspace-channel-read-storage.ts and docs/architecture.md#spaces-space-access-sources-and-projects.
   statements: WORKSPACE_CHANNEL_READS_MIGRATION,
 }, {
   version: 99,
@@ -3915,7 +3911,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 102,
   description: "a Space may be individual: each member's Personal Channel",
   // A rebuild, because SQLite cannot widen a CHECK; see
-  // SPACE_INDIVIDUAL_SCOPE_MIGRATION and docs/spaces.md#the-personal-channel.
+  // SPACE_INDIVIDUAL_SCOPE_MIGRATION and docs/architecture.md#spaces-space-access-sources-and-projects.
   statements: SPACE_INDIVIDUAL_SCOPE_MIGRATION,
 }, {
   version: 103,
@@ -3933,7 +3929,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 104,
   description: "messages in a Channel itself, outside any thread",
   // Existing Generals get what General opens with from migration 103's pass; see
-  // SPACE_MESSAGES_MIGRATION and docs/spaces.md#channel-messages.
+  // SPACE_MESSAGES_MIGRATION and docs/architecture.md#spaces-space-access-sources-and-projects.
   statements: SPACE_MESSAGES_MIGRATION,
 }, {
   version: 105,
@@ -3977,7 +3973,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 109,
   description: "a Channel message can be a thread's merged result and Channel news",
-  // See SPACE_MESSAGE_MERGES_MIGRATION and docs/conversation-merge.md.
+  // See SPACE_MESSAGE_MERGES_MIGRATION and docs/architecture.md#retired-documents.
   statements: SPACE_MESSAGE_MERGES_MIGRATION,
 }, {
   version: 110,
@@ -4044,7 +4040,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 115,
   description: "every open thread listed for the suggestion backfill",
-  // See SUGGESTION_BACKFILL_MIGRATION and docs/conversation-suggestions.md.
+  // See SUGGESTION_BACKFILL_MIGRATION and docs/workstream-durable-object.md#retired-documents.
   statements: SUGGESTION_BACKFILL_MIGRATION,
 }, {
   version: 116,
@@ -4064,7 +4060,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 119,
   description: "a watch on every conversation import's reservation, archiving one whose thread has not opened an hour on",
-  // See IMPORT_RESERVATION_RECLAIM_MIGRATION and docs/session-import.md.
+  // See IMPORT_RESERVATION_RECLAIM_MIGRATION and docs/workstream-durable-object.md#retired-documents.
   statements: IMPORT_RESERVATION_RECLAIM_MIGRATION,
 }, {
   version: 120,
@@ -4853,6 +4849,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
       }));
+      // Held at 57 is terminal now: the operator RPCs that cleared the hold
+      // are gone, so an object here misses every later migration. Say so on
+      // every wake rather than fail quietly.
+      if (state.storage.sql.exec<{ version: number }>(
+        "SELECT COALESCE(MAX(version), 0) AS version FROM _sql_schema_migrations",
+      ).one().version === 57) {
+        logError(env, "workspace_meeting_retirement_held", { workspace_id: this.workspaceId() });
+      }
       this.detectUnheardLedger();
       await this.armNextAlarm();
     });
@@ -9454,76 +9458,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }));
   }
 
-  /** Operator-only RPC, including closed workspaces; no product route exposes it. */
-  async purgeMeetingNoteObjects(resourceId?: string) {
-    await this.initialized;
-    const workspaceId = this.workspaceId();
-    if (!workspaceId) throw new Error("workspace_object_identity_missing");
-    return purgeRetiredMeetingObjects(this.state.storage, this.env.PAYLOADS, this.env.AVALON_REGION, workspaceId, resourceId === undefined ? undefined : IdSchema.parse(resourceId));
-  }
-
-  /** Delete only decisions whose canonical resource has verified meeting provenance. */
-  async purgeMeetingSearchAuthorization() {
-    await this.initialized;
-    const sql = this.state.storage.sql;
-    const keys = sql.exec<{ cache_key: string }>(`SELECT cache_key FROM search_authorization_keys
-      WHERE resource_id IN (SELECT resource_id FROM retired_meeting_resources)`).toArray();
-    for (const { cache_key: key } of keys) {
-      // The retirement check rejects new registrations and publications. Drain an
-      // already admitted KV write before deleting its external copy.
-      await this.searchPublications.get(key)?.catch(() => {});
-      if (this.env.AUTHORIZATION_CACHE) await this.env.AUTHORIZATION_CACHE.delete(key);
-      this.state.storage.transactionSync(() => {
-        sql.exec('DELETE FROM search_authorization_dependencies WHERE cache_key = ?', key);
-        sql.exec('DELETE FROM authorization_snapshots WHERE cache_key = ?', key);
-        sql.exec('DELETE FROM search_authorization_keys WHERE cache_key = ?', key);
-      });
-    }
-    sql.exec(`DELETE FROM search_authorization_push WHERE kind = 'resource'
-      AND target_id IN (SELECT resource_id FROM retired_meeting_resources)`);
-    return { deletedKeys: keys.length };
-  }
-
-  /** Operator calls after verifying external cleanup; pending cleanup is an error. */
-  async finalizeMeetingRetirement() {
-    await this.initialized;
-    await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
-      storage: this.state.storage,
-      migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
-      component: MIGRATION_COMPONENT,
-      workerVersionId: this.env.APP_VERSION ?? "unknown",
-    }));
-    this.detectUnheardLedger();
-    return { schemaVersion: 58 };
-  }
-
   private isRetiredMeetingResource(resource: z.infer<typeof AuthorizationResourceSchema>): boolean {
     return resource.kind === 'resource' && this.state.storage.sql.exec(
       'SELECT 1 FROM retired_meeting_resources WHERE resource_id = ?', resource.resourceId).toArray().length > 0;
-  }
-
-  async retiredMeetingInventory() {
-    await this.initialized;
-    const sql = this.state.storage.sql;
-    const tables = sql.exec<{ name: string }>("SELECT name FROM sqlite_schema WHERE type = 'table'").toArray();
-    const references: Array<{ table: string; count: number }> = [];
-    for (const { name } of tables) {
-      // Cloudflare's hidden KV tables are not accessible through SQL.
-      if (name === 'retired_meeting_resources' || /^(?:_+cf_|sqlite_)/.test(name)) continue;
-      const quoted = '"' + name.replaceAll('"', '""') + '"';
-      if (!sql.exec<{ name: string }>(`PRAGMA table_info(${quoted})`).toArray().some(column => column.name === 'resource_id')) continue;
-      const count = sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM ${quoted} WHERE resource_id IN (SELECT resource_id FROM retired_meeting_resources)`).one().count;
-      if (count) references.push({ table: name, count });
-    }
-    return {
-      workspaceId: this.workspaceId(),
-      schemaVersion: sql.exec<{ version: number }>('SELECT MAX(version) AS version FROM _sql_schema_migrations').one().version,
-      featureTables: tables.map(row => row.name).filter(name => ['notes', 'note_transcript_segments', 'note_privacy_change_outbox', 'note_resource_deletion_outbox', 'workspace_batch_dispatch_note_targets'].includes(name)),
-      references,
-      resources: sql.exec<{
-        resource_id: string; note_id: string | null; objects_deleted: number;
-      }>('SELECT resource_id, note_id, objects_deleted FROM retired_meeting_resources ORDER BY resource_id').toArray(),
-    };
   }
 
   async createConnectorInstallation(input: InstallationCreate) {
@@ -11846,10 +11783,6 @@ applyRetirementGate(WorkspaceDO, {
     // report that it had reached them.
     // Only the entry points. A permit carries the whole call beneath it, so the
     // private helpers these reach need no entry of their own.
-    "purgeMeetingNoteObjects",
-    "purgeMeetingSearchAuthorization",
-    "finalizeMeetingRetirement",
-    "retiredMeetingInventory",
     "beginWorkspaceRetirement",
     "recordRetiredNode",
     "recordRetiredChild",

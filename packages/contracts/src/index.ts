@@ -222,12 +222,7 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * members share a version (`gpt-5.6-*`, `deepseek-v4-*`) and are ordered by
  * hand.
  *
- * Nothing reads position 0. An earlier note here claimed the first entry was
- * what the selector showed before anything was chosen, and that has not been
- * true since the unpinned state became a row of its own: the menu renders
- * `UNPINNED_AGENT_MODEL` above every group and labels it **Default**, on the
- * reasoning in `agent-models.ts` that the renderer cannot see which variation
- * `agent-model-workstream` served and so must not name a model for it.
+ * Nothing reads position 0.
  *
  * This is a *closed* list rather than a free-text model id on purpose: an
  * override bypasses the Flagship rollout for the work stream it is attached to,
@@ -452,8 +447,6 @@ export const GOOGLE_MAIL_CALENDAR_CAPABILITIES = [
 export const ClientFeatureFlagsSchema = z.object({
   /** Whether Application → Developer may be offered on this device. */
   developerSettings: z.boolean().default(false),
-  /** Whether Suggested Work surfaces are shown in Electron for this person. */
-  suggestedWorkEnabled: z.boolean().default(false),
   /** Whether Electron offers workspace switching and plural workspace setup. */
   multipleWorkspacesEnabled: z.boolean().default(false),
   pushNotificationsEnabled: z.boolean().default(false),
@@ -461,7 +454,6 @@ export const ClientFeatureFlagsSchema = z.object({
 
 /** Product flags Ace is allowed to manage and publish to connected clients. */
 export const ProductFeatureFlagKeySchema = z.enum([
-  "suggested-work-enabled",
   "multiple-workspaces-enabled",
   "push-notifications-enabled",
 ]);
@@ -513,8 +505,8 @@ export { MESSAGE_MAX_CHARACTERS,MESSAGE_TOO_LONG_MESSAGE } from "./message-limit
  *
  * Deliberately far below {@link MESSAGE_MAX_CHARACTERS}, because a description
  * is not a message: it is a one-line summary of the conversation, and the
- * retired `docs/workstream-descriptions.md` records (in its 2026-08-24 entry)
- * why the bound stayed here when the message ceiling was raised.
+ * retired `workstream-descriptions.md` recorded (in its 2026-08-24 entry; see
+ * `docs/canvases.md#retired-documents`) why the bound stayed here when the message ceiling was raised.
  *
  * Changing this number means changing the `length(description) <= 4000` CHECK on
  * `channels` and the producer-side bound in
@@ -3461,12 +3453,6 @@ export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((
 }).transform((manifest) => ({
   ...manifest,
   activityTypes: manifest.activityTriggers.map((trigger) => trigger.eventType),
-  // Derived rather than declared a second time: the descriptor is the single
-  // authority on digestibility, and a consumer asking "may this event type
-  // reach a digest" should not have to scan a list of descriptors to find out.
-  digestibleActivityTypes: manifest.activityTriggers
-    .filter((trigger) => trigger.digestible)
-    .map((trigger) => trigger.eventType),
 }));
 
 export type Region = z.infer<typeof RegionSchema>;

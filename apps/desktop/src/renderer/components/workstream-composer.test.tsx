@@ -959,7 +959,7 @@ describe('WorkstreamComposer draft caching', () => {
 describe('WorkstreamComposer model control', () => {
   it('shows no model control unless developer mode is on', async () => {
     renderComposer(undefined, false, undefined, workstream, [creator], {
-      kind: 'settled', model: 'deepseek/deepseek-v4-pro', pinned: true,
+      model: 'deepseek/deepseek-v4-pro', pinned: true,
     });
 
     await screen.findByLabelText('Message Rally');
@@ -972,7 +972,7 @@ describe('WorkstreamComposer model control', () => {
     // next run would not honour.
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderComposer(undefined, false, undefined, workstream, [creator], {
-      kind: 'settled', model: 'deepseek/deepseek-v4-pro', pinned: true,
+      model: 'deepseek/deepseek-v4-pro', pinned: true,
     });
 
     const trigger = await screen.findByRole('button', { name: /^Model:/u });
@@ -993,7 +993,7 @@ describe('WorkstreamComposer model control', () => {
     // what the latest run happened to get.
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderComposer(undefined, false, undefined, workstream, [creator], {
-      kind: 'settled', model: 'x-ai/grok-4.3', pinned: false,
+      model: 'x-ai/grok-4.3', pinned: false,
     });
 
     expect(await screen.findByRole('button', { name: /^Model:/u })).toHaveAccessibleName(

@@ -790,14 +790,14 @@ describe("Durable Objects in the Workers runtime", () => {
     try {
       const delivered = nextMessage(socket);
       await expect(stub.notifyProductFeatureFlagChanged(
-        "suggested-work-enabled",
+        "multiple-workspaces-enabled",
         WORKSPACE_ID,
         "wnam",
       )).resolves.toBe(1);
       expect(JSON.parse(String((await delivered).data))).toMatchObject({
         type: "workspace_feature_flags",
-        changedFlag: "suggested-work-enabled",
-        flags: { suggestedWorkEnabled: false },
+        changedFlag: "multiple-workspaces-enabled",
+        flags: { multipleWorkspacesEnabled: false },
       });
     } finally {
       socket.close(1000, "test complete");

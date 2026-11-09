@@ -1487,10 +1487,11 @@ window, `SIDEKICK_REVIEW_SAMPLE_LIMITS`). Every count and every sampled run is
 under the accepted revision, since the window can reach back past a revision
 and an earlier revision's runs followed a procedure the person already
 changed. It carries no run content: the wizard reads a run with
-`sidekick_runs_read`. It still carries `announceTo` (the Sidekick's own shared
-conversation, whose id is the Sidekick's, for every Sidekick), but the
-rendered notice no longer names it: the review runs in that conversation, so
-the wizard's report is the announcement. It is admitted through
+`sidekick_runs_read`. It still carries `announceTo`, which nothing reads: the
+review runs in the Sidekick's own shared conversation, so the wizard's report
+is the announcement. The schema now accepts its absence; the host stops
+writing it a deploy later, so a Worker from before the schema change can
+still parse every notice, and the field leaves once those have drained. It is admitted through
 `admitSystemActivation`
 (`AgentLoopDO.admitSidekickReview`, only on a Sidekick's substream `0`) as
 a queued `system` row whose text (`sidekickReviewText`) is the one sentence a

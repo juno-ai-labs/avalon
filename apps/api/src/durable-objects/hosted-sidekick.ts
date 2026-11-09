@@ -2242,7 +2242,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       definitionRevision: revision,
       since: iso(row.reviewed_at),
       until: new Date(now).toISOString(),
-      // Its own shared conversation, where everyone it is shared with reads.
+      // Nothing reads it, but a Worker from before the schema made it
+      // optional still requires it; the write stops a deploy later.
       announceTo: conversationIdOf({ parentId: this.sidekickId, substreamId: "0" }),
       finished: {
         completed: counts?.completed ?? 0, failed: counts?.failed ?? 0,
