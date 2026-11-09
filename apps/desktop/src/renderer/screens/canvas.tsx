@@ -218,6 +218,12 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     if (unreachable) {
       if (access.data) return <CanvasAccessRequestPane access={access.data} canvasId={id} />;
       if (!access.error || alreadyOpen) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
+      // A guest cannot ask to be let in, and the refusal says nothing about
+      // whether the Canvas exists, so neither does the pane. Trying again
+      // would only be refused again.
+      if (access.error instanceof ApiError && access.error.code === 'canvas_access_request_not_member') {
+        return <PaneState description="It may have been removed, or it has not been shared with you. Ask whoever sent the link to share it." title="You can’t open this Canvas." />;
+      }
       if (!isNotFoundError(access.error)) {
         return <PaneState action={<Button onClick={() => void access.refetch()}>Try again</Button>} description={access.error.message} title="This Canvas could not be opened." />;
       }
