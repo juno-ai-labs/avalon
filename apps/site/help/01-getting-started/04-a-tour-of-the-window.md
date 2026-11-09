@@ -17,10 +17,10 @@ This page walks through each part. Each one has a chapter of its own later; here
 
 ## The rail
 
-Three buttons run down the top of the rail, each an icon with its name under it. Click one and the sidebar beside it changes. Switching sections changes only the list; whatever you have open stays open.
+Three buttons run down the top of the rail, each an icon with its name under it. Click one and the sidebar beside it changes.
 
-- **Canvases** lists the Canvases you can open. A red number on the button counts the ones with something new for you: a reply, a new version, or a mention.
-- **Sidekicks** lists the Sidekicks shared with you. Its red number counts the ones waiting for you: those under **Needs input**, and those with something new in their conversation.
+- **Canvases** opens the Canvas dashboard, even when you already have a Canvas open, and lists the Canvases you can open. A red number on the button counts the ones with something new for you: a reply, a new version, or a mention.
+- **Sidekicks** lists the Sidekicks shared with you, keeping whatever you have open in place. Its red number counts the ones waiting for you: those under **Needs input**, and those with something new in their conversation.
 - **Activity** lists what happened to you: mentions, replies, being added to a Canvas, Sidekick runs that need you or finished, and requests to open a Canvas. Its number counts the rows you have not seen yet.
 
 At the bottom of the rail sits your avatar, labelled **Settings**. It opens the account menu described [below](#the-account-menu). <kbd>⌘</kbd> <kbd>,</kbd> opens the Settings window from anywhere.
@@ -29,7 +29,7 @@ The Mac menu bar adds up the **Canvases** and **Sidekicks** numbers. The Dock ic
 
 ## The sidebar
 
-The top of the sidebar names the section, with a **+** for **New Canvas** or **New Sidekick**, and a magnifying glass for **Search organization** ([Search and links](../02-canvases/11-search-and-links.md)). In Activity, the **+** is replaced by **Mark all seen**.
+The top of the sidebar names the section, with a **+** for **New Canvas** or **New Sidekick**, and a magnifying glass for **Search organization** ([Search and links](../02-canvases/11-search-and-links.md)). In Canvases, the home icon to the left of **+** returns to the Canvas dashboard. In Activity, the **+** is replaced by **Mark all seen**.
 
 ### Canvases
 
