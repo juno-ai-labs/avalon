@@ -22,9 +22,9 @@ import { ConversationService } from "../src/services/conversation-service";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
-let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000cd000");
-const CREATOR = asUserId("00000000-0000-7000-8000-0000000cd001");
-const MEMBER = asUserId("00000000-0000-7000-8000-0000000cd002");
+let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000cd900");
+const CREATOR = asUserId("00000000-0000-7000-8000-0000000cd901");
+const MEMBER = asUserId("00000000-0000-7000-8000-0000000cd902");
 const TEST_ENV: Env = env;
 useHeldEffectQueue();
 

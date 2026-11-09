@@ -147,9 +147,12 @@ function packageName(specifier: string): string {
 }
 
 /** Why a component's imports cannot build, or null when every one is provided. */
-export function unsupportedImport(source: string): string | null {
+export function unsupportedImport(source: string, local?: { importer: string; paths: ReadonlySet<string> }): string | null {
   for (const specifier of importedModules(source)) {
-    if (specifier.startsWith(".") || specifier.startsWith("/")) continue;
+    if (specifier.startsWith(".") || specifier.startsWith("/")) {
+      if (local && !publishedFile(specifier, local.importer, local.paths)) return specifier;
+      continue;
+    }
     if (specifier === "@/lib/utils") continue;
     if (specifier.startsWith("@/components/ui/")) {
       if ((COMPONENT_UI_MODULES as readonly string[]).includes(specifier.slice("@/components/ui/".length))) continue;
@@ -159,6 +162,43 @@ export function unsupportedImport(source: string): string | null {
     if (!(COMPONENT_LIBRARIES as readonly string[]).includes(packageName(specifier))) return specifier;
   }
   return null;
+}
+
+/** What esbuild tries for a local import with no extension, in its own order. */
+const LOCAL_IMPORT_SUFFIXES = ["", ".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".css", ".json",
+  "/index.tsx", "/index.ts", "/index.jsx", "/index.js"];
+
+/**
+ * Whether a local import names one of the published files. The build bundles
+ * whatever a local path resolves to on the sandbox's disk, which also holds
+ * the Canvas's checkout and every participant's files, and the bundle is
+ * served publicly; so an absolute path, a path that climbs above the
+ * published root, or one that names nothing published is refused before any
+ * sandbox starts.
+ */
+function publishedFile(specifier: string, importer: string, paths: ReadonlySet<string>): boolean {
+  if (specifier.startsWith("/")) return false;
+  const segments = importer.split("/").slice(0, -1);
+  for (const segment of specifier.split(/[?#]/u)[0]!.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (segments.length === 0) return false;
+      segments.pop();
+    } else segments.push(segment);
+  }
+  const resolved = segments.join("/");
+  return LOCAL_IMPORT_SUFFIXES.some((suffix) => paths.has(`${resolved}${suffix}`));
+}
+
+/** The files a stylesheet asks esbuild to read: `@import` targets and `url()`s that are not data, a remote URL or a fragment. */
+function stylesheetReferences(source: string): string[] {
+  const references: string[] = [];
+  for (const match of source.matchAll(/@import\s+(?:url\(\s*)?["']?([^"')\s;]+)|url\(\s*["']?([^"')\s]+)/gu)) {
+    const reference = match[1] ?? match[2]!;
+    if (/^(?:data:|https?:|\/\/|#)/iu.test(reference)) continue;
+    references.push(reference);
+  }
+  return references;
 }
 
 /**
@@ -193,12 +233,24 @@ export function detectSiteSource(files: ReadonlyArray<{ path: string; text: stri
     && file.text !== null && /\bexport\s+default\b/u.test(file.text));
   if (components.length === 1) {
     const entry = components[0]!;
+    const paths = new Set(files.map((file) => file.path));
     for (const file of files) {
-      if (!/\.(?:jsx?|tsx?)$/u.test(file.path) || file.text === null) continue;
-      const unsupported = unsupportedImport(file.text);
+      if (file.text === null) continue;
+      if (/\.css$/u.test(file.path)) {
+        const outside = stylesheetReferences(file.text).find((reference) => !publishedFile(reference, file.path, paths));
+        if (outside) {
+          return { kind: "refused", code: `canvas_build_unsupported_import:${outside.replace(/[^A-Za-z0-9@/._-]/gu, "_")}`,
+            message: `${file.path} refers to ${outside}, which is not one of the published files. Refer to a file you publish with it by a path relative to the stylesheet.` };
+        }
+        continue;
+      }
+      if (!/\.(?:jsx?|tsx?)$/u.test(file.path)) continue;
+      const unsupported = unsupportedImport(file.text, { importer: file.path, paths });
       if (unsupported) {
         return { kind: "refused", code: `canvas_build_unsupported_import:${unsupported.replace(/[^A-Za-z0-9@/._-]/gu, "_")}`,
-          message: `${file.path} imports ${unsupported}, which a published component cannot use. It may use ${COMPONENT_LIBRARIES.join(", ")}, and shadcn/ui's ${COMPONENT_UI_MODULES.join(", ")}.` };
+          message: /^[./]/u.test(unsupported)
+            ? `${file.path} imports ${unsupported}, which is not one of the published files. Import a file you publish with it by a path relative to the importing file.`
+            : `${file.path} imports ${unsupported}, which a published component cannot use. It may use ${COMPONENT_LIBRARIES.join(", ")}, and shadcn/ui's ${COMPONENT_UI_MODULES.join(", ")}.` };
       }
     }
     return { kind: "component", entry: entry.path };

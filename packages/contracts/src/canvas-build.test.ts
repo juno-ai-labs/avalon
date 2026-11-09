@@ -37,6 +37,29 @@ import { helper } from "./helper";`);
       .toMatchObject({ kind: "refused", code: "canvas_build_unsupported_import:@/components/ui/select" });
   });
 
+  it("refuses a local import or stylesheet reference that names no published file, before the build can read the sandbox's disk", () => {
+    const refused = (files: Array<{ path: string; text: string | null }>) => detectSiteSource(files);
+    expect(refused([{ path: "App.jsx", text: component("", 'import pkg from "/workspace/package.json";') }]))
+      .toMatchObject({ kind: "refused", code: "canvas_build_unsupported_import:/workspace/package.json" });
+    expect(refused([{ path: "App.jsx", text: component("", 'import secrets from "../../workspace/.env";') }]))
+      .toMatchObject({ kind: "refused", code: "canvas_build_unsupported_import:../../workspace/.env" });
+    expect(refused([{ path: "App.jsx", text: component("", 'import { helper } from "./missing";') }]))
+      .toMatchObject({ kind: "refused", code: "canvas_build_unsupported_import:./missing" });
+    expect(refused([{ path: "App.jsx", text: component("", 'import "./theme.css";') },
+      { path: "theme.css", text: '@import "../../workspace/notes.css"; .a { background: url("logo.png"); }' }, { path: "logo.png", text: null }]))
+      .toMatchObject({ kind: "refused", code: "canvas_build_unsupported_import:../../workspace/notes.css" });
+    expect(refused([{ path: "App.jsx", text: component("", 'import "./theme.css";') },
+      { path: "theme.css", text: '.a { background: url(/etc/hostname); }' }]))
+      .toMatchObject({ kind: "refused", code: "canvas_build_unsupported_import:/etc/hostname" });
+    // What it does publish resolves as esbuild resolves it: with or without an extension, or a folder's index.
+    expect(refused([
+      { path: "App.jsx", text: component("", 'import { a } from "./lib/a";\nimport { b } from "./lib";\nimport "./styles/theme.css";') },
+      { path: "lib/a.ts", text: 'export const a = 1;' }, { path: "lib/index.js", text: 'export const b = 2;' },
+      { path: "styles/theme.css", text: '@import "./base.css"; .a { background: url("../logo.png"), url(data:image/png;base64,AA==); }' },
+      { path: "styles/base.css", text: "" }, { path: "logo.png", text: null },
+    ])).toEqual({ kind: "component", entry: "App.jsx" });
+  });
+
   it("names what it cannot decide between, and what is no page at all", () => {
     expect(detectSiteSource([{ path: "A.jsx", text: component("") }, { path: "B.jsx", text: component("") }]))
       .toMatchObject({ kind: "refused", code: "canvas_build_entry_ambiguous" });
