@@ -249,6 +249,11 @@ their Durable Object namespaces and the socket protocol.
 
 ## Failure modes and limits
 
+- Ace is laid out for a desktop operator's window. At phone width (390px) its
+  navigation strip and the Workspaces search results overflow sideways; this
+  is known and not fixed, since no operator runs Ace on a phone (the round-5
+  visual check, F13).
+
 - Missing or invalid Access configuration returns 403. The development bypass
   works only with `APP_ENV=development` and `ACE_DEV_AUTH=true`.
 - A cross-origin mutation returns 403 before parsing or contacting Flagship.
@@ -388,6 +393,9 @@ tab like any other. The credential keeps its stored names,
 `DEMO_OPERATORS_JSON` and role `demos`, because renaming them is a secret
 rotation in every region; the code calls them `requireAceOperator` and
 `ACE_OPERATOR_ROLE` ([`rally-rebrand-inventory.md`](rally-rebrand-inventory.md)).
+The round-5 visual check found the Workspaces page as documented, with no
+Demos, and Ace overflowing sideways at phone width; that is recorded under
+Failure modes and limits and not fixed, Ace being a desktop operator console.
 
 ### 2026-11-07 — The Thread-era, import and suggested-work model roles leave the catalog
 
