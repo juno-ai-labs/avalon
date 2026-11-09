@@ -141,12 +141,14 @@ describe('the Canvases and Sidekicks sections', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/canvases/00000000-0000-7000-8000-0000000000c2');
   });
 
-  it('keeps the phone sheet open for Sidekicks and closes it for the Canvas dashboard or a row', () => {
+  it('closes the phone sheet for either dashboard or a row', () => {
     renderSidebar();
     fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-    fireEvent.click(screen.getByRole('button', { name: /Sidekicks/ }));
-    expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Sidekicks/ }));
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/sidekicks$/);
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
 
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
     fireEvent.click(screen.getByRole('button', { name: /Canvases/ }));
     expect(screen.getByTestId('location')).toHaveTextContent(/^\/canvases$/);
     expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
@@ -180,14 +182,14 @@ describe('the Canvases and Sidekicks sections', () => {
     const width = window.innerWidth;
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
     try {
-      renderSidebar(workspace, '/sidekicks');
+      renderSidebar({ ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } }, '/canvases');
       fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-      fireEvent.click(screen.getByRole('button', { name: /Canvases/ }));
+      fireEvent.click(screen.getByRole('button', { name: /Sidekicks/ }));
 
       fireEvent.keyDown(window, { key: 'Escape' });
 
-      expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
-      expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
+      expect(useUiStore.getState().sidebarSection).toBe('canvases');
+      expect(screen.getByRole('heading', { name: 'Canvases' })).toBeInTheDocument();
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
     }
@@ -296,6 +298,28 @@ describe('the Canvases and Sidekicks sections', () => {
       expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks$/);
     },
   );
+
+  it.each(['home', 'rail'])('keeps one Back step to the open Sidekick after repeated %s clicks', (shortcut) => {
+    renderSidebar(workspace, '/sidekicks/triage');
+    const button = shortcut === 'home'
+      ? screen.getByRole('button', { name: 'Sidekicks home' })
+      : within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Sidekicks/ });
+    fireEvent.click(button);
+    expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks$/);
+    fireEvent.click(button);
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks\/triage$/);
+  });
+
+  it('keeps a guest on their open Canvas when selecting the Sidekicks list', () => {
+    renderSidebar({ ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } }, '/canvases/shared');
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Sidekicks/ }));
+    expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases\/shared$/);
+    expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
+    expect(screen.queryByRole('button', { name: 'Sidekicks home' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveAttribute('aria-expanded', 'true');
+  });
 
   it('offers a guest neither New action', () => {
     useUiStore.getState().setSidebarSection('canvases');

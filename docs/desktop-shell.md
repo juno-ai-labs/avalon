@@ -102,9 +102,11 @@ It holds two columns:
   the rail to its section (Activity excepted: once open, only a rail pick
   leaves it, whatever the pane opens and however, a row, a link inside the
   pane, a push or a deep link, and closing the phone sheet over it keeps it).
-  Clicking **Sidekicks** always opens `/sidekicks`, including when its list or
-  an individual Sidekick is already open. It also closes the phone sheet so
-  the dashboard is visible.
+  For members, clicking **Sidekicks** always opens `/sidekicks`, including when
+  its list or an individual Sidekick is already open. Repeated clicks at the
+  dashboard add no history entries, and the phone sheet closes to reveal the
+  dashboard. A guest only changes the list, keeping the shared pane open
+  because guests have no dashboard directory.
   The window's landing is its
   first route that belongs to a section, so a launch's redirect from `/` to
   `/canvases` is the landing and not a navigation; landing on a section home
@@ -163,7 +165,7 @@ It holds two columns:
   (`/sidekicks/new`), preceded by **Sidekicks home** (`/sidekicks`) to return
   to the dashboard from any Sidekick. Home also dismisses the phone sheet
   when its destination is already open, and gives a direct shortcut when the
-  rail is hidden on a phone. A guest gets neither New action.
+  rail is hidden on a phone. A guest gets neither New action nor Home.
   **Activity** lists the
   person's mentions, adds and Sidekick run notices newest first, each a kind
   glyph, who did what where, the preview, a time and an unseen dot, opening
@@ -426,13 +428,24 @@ It does not own:
 
 ### 2026-11-09 — The Sidekicks rail button opens the dashboard
 
-Clicking Sidekicks always navigates to `/sidekicks`, even when its section is
-already selected or a run is open, and dismisses the phone sheet. Merely
-selecting the list left the dashboard unreachable through the section button;
-the explicit navigation now makes the overview one click away. The new Home
-action beside New Sidekick is retained because the phone hides the rail until
-navigation opens. Both actions dismiss the sheet even on the dashboard itself.
-This change targets Sidekicks; the Canvas rail retains its existing behavior.
+**What changed:** For members, both the Sidekicks rail button and the new Home
+action open `/sidekicks` and dismiss the phone sheet, including when the home
+is already open. Repeated visits add no duplicate history entry. Guests keep
+their current pane when selecting Sidekicks and have no Home action, because
+they have no dashboard directory.
+
+**Why:** Merely selecting the list left the member dashboard unreachable
+through its section button. Explicit navigation makes the overview one click
+away while preserving a useful Back history and the guest's shared pane.
+
+**Considered and rejected:** Home alone would leave the section button unable
+to open the overview. Removing Home would lose the phone's direct shortcut
+while its rail is hidden. Changing Canvas rail navigation is outside this
+request and its existing behavior is retained.
+
+**Consequences:** Both member shortcuts must close the sheet even at the same
+URL, clear any run query, and preserve one Back step to the preceding pane.
+The guest's section picker must not lead to an unavailable dashboard.
 
 Shipped in [#1505](https://github.com/juno-ai-labs/avalon/pull/1505).
 
