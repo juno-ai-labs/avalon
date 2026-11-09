@@ -3497,7 +3497,8 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       // it in place and nothing accumulates. `judged_turn_sequence` is kept
       // beside the id so the newest-three expiry and the merge marker's
       // resolution compare integers rather than looking the turn up again.
-      // `docs/conversation-suggestions.md` owns the lifecycle.
+      // The retired lifecycle's record is in
+      // `docs/workstream-durable-object.md#retired-documents`.
       `CREATE TABLE conversation_suggestions (
         suggestion_id TEXT PRIMARY KEY,
         kind TEXT NOT NULL CHECK (kind IN ('merge_up', 'start_breakout')),

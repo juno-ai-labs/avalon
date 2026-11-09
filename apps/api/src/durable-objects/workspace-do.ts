@@ -3874,7 +3874,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 94,
   description: "make every private Space Organization-wide",
   // Every Space is Organization-wide. A Space grants no reader to its
-  // Channels, so no Channel changes; see docs/spaces.md#every-space-is-organization-wide.
+  // Channels, so no Channel changes; see docs/architecture.md#spaces-space-access-sources-and-projects.
   statements: SPACE_PUBLIC_ONLY_MIGRATION,
 }, {
   version: 95,
@@ -3893,7 +3893,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 98,
   description: "a Channel's unread waterline and each person's read position in it",
   // Breakout-identical columns, advanced only by placing a thread; see
-  // workspace-channel-read-storage.ts and docs/spaces.md#channel-read-state.
+  // workspace-channel-read-storage.ts and docs/architecture.md#spaces-space-access-sources-and-projects.
   statements: WORKSPACE_CHANNEL_READS_MIGRATION,
 }, {
   version: 99,
@@ -3914,7 +3914,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 102,
   description: "a Space may be individual: each member's Personal Channel",
   // A rebuild, because SQLite cannot widen a CHECK; see
-  // SPACE_INDIVIDUAL_SCOPE_MIGRATION and docs/spaces.md#the-personal-channel.
+  // SPACE_INDIVIDUAL_SCOPE_MIGRATION and docs/architecture.md#spaces-space-access-sources-and-projects.
   statements: SPACE_INDIVIDUAL_SCOPE_MIGRATION,
 }, {
   version: 103,
@@ -3932,7 +3932,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 104,
   description: "messages in a Channel itself, outside any thread",
   // Existing Generals get what General opens with from migration 103's pass; see
-  // SPACE_MESSAGES_MIGRATION and docs/spaces.md#channel-messages.
+  // SPACE_MESSAGES_MIGRATION and docs/architecture.md#spaces-space-access-sources-and-projects.
   statements: SPACE_MESSAGES_MIGRATION,
 }, {
   version: 105,
@@ -3976,7 +3976,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 109,
   description: "a Channel message can be a thread's merged result and Channel news",
-  // See SPACE_MESSAGE_MERGES_MIGRATION and docs/conversation-merge.md.
+  // See SPACE_MESSAGE_MERGES_MIGRATION and docs/architecture.md#retired-documents.
   statements: SPACE_MESSAGE_MERGES_MIGRATION,
 }, {
   version: 110,
@@ -4043,7 +4043,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 115,
   description: "every open thread listed for the suggestion backfill",
-  // See SUGGESTION_BACKFILL_MIGRATION and docs/conversation-suggestions.md.
+  // See SUGGESTION_BACKFILL_MIGRATION and docs/workstream-durable-object.md#retired-documents.
   statements: SUGGESTION_BACKFILL_MIGRATION,
 }, {
   version: 116,
@@ -4063,7 +4063,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 119,
   description: "a watch on every conversation import's reservation, archiving one whose thread has not opened an hour on",
-  // See IMPORT_RESERVATION_RECLAIM_MIGRATION and docs/session-import.md.
+  // See IMPORT_RESERVATION_RECLAIM_MIGRATION and docs/workstream-durable-object.md#retired-documents.
   statements: IMPORT_RESERVATION_RECLAIM_MIGRATION,
 }, {
   version: 120,

@@ -248,7 +248,7 @@ export async function applyWorkspaceRelationshipChange(env: Env, message: Worksp
   const { relationship, removed } = message;
   try {
     // The Organization object answers access checks (grants, invitations,
-    // Space writes, breakout creation) from its own copy of each relationship,
+    // Canvas and Sidekick access) from its own copy of each relationship,
     // and this event is what keeps that copy current. First, so that a
     // revocation hop that throws and retries, or dead-letters, has not left
     // the copy saying active: every new check refuses the person at once,

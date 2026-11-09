@@ -260,11 +260,11 @@ export class WorkstreamIdentityStorage {
    * over a stored icon is what makes the two safe together, and its cost is
    * that a second pass improves the name without improving the icon the first
    * pass chose from less. That is the trade recorded in
-   * `docs/workstream-naming.md`; telling a generated icon from a chosen one
+   * `docs/canvases.md#retired-documents`; telling a generated icon from a chosen one
    * would take provenance this column does not carry.
    *
    * `settled` on both sides with no title offers the icon alone; see
-   * `docs/workstream-naming.md#prepared-history`.
+   * `docs/canvases.md#retired-documents`.
    *
    * The written icon comes back so the caller can publish exactly what landed,
    * rather than re-deriving it from a row that could move again.
@@ -303,7 +303,7 @@ export class WorkstreamIdentityStorage {
         ? null
         : WorkstreamIconKeySchema.safeParse(input.icon).data ?? null;
       // An appearance this object cannot read is left exactly as it is, rather
-      // than replaced with a generated icon: `docs/workstream-appearance.md`
+      // than replaced with a generated icon: `docs/automation-lifecycle.md#retired-documents`
       // has malformed durable state fail visibly rather than silently become a
       // new shared identity, and a naming pass is the last writer that should
       // overrule that. `stored` is `undefined` only in that case.
