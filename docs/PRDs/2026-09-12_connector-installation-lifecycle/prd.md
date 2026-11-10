@@ -8,7 +8,7 @@
 > Standing contract: [Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Read alongside [connectors](../../connectors.md),
 > [regionalization](../../regionalization.md), [security](../../security.md),
-> [Ace](../../ace.md), and [data model](../../data-model.md).
+> Ace (retired app), and [data model](../../data-model.md).
 
 ## Summary
 

@@ -16,7 +16,6 @@ const runtimeSecrets = [
   { name: "WORKERS_OBSERVABILITY_API_TOKEN", tool: "query_worker_observability" },
 ].map((secret) => ({ ...secret, value: process.env[`ENGINEERING_MCP_${secret.name}`]?.trim() }));
 const mcpDomain = "mcp.internal.rallywith.ai";
-const aceDomain = "ace.internal.rallywith.ai";
 const generatedConfig = join(appDirectory, "wrangler.generated.json");
 const hostedClients = JSON.parse(
   await readFile(join(appDirectory, "hosted-clients.json"), "utf8"),
@@ -84,16 +83,16 @@ function policyShape(policy) {
 
 async function ensureAccessApplication() {
   const applications = await cloudflareList("/access/apps");
-  const ace = applications.find((application) => application.domain === aceDomain);
-  if (!ace) throw new Error(`The ${aceDomain} Access application is required as the MCP policy source`);
-  const acePolicies = await cloudflareList(
-    `/access/apps/${encodeURIComponent(ace.id)}/policies`,
+  const policySource = applications.find((application) => application.domain === mcpDomain);
+  if (!policySource) throw new Error(`Provision the ${mcpDomain} Access application and policy before deployment`);
+  const sourcePolicies = await cloudflareList(
+    `/access/apps/${encodeURIComponent(policySource.id)}/policies`,
   );
-  if (!Array.isArray(acePolicies) || acePolicies.length === 0) {
-    throw new Error("The Ace Access application has no policy to reuse");
+  if (!Array.isArray(sourcePolicies) || sourcePolicies.length === 0) {
+    throw new Error("The engineering MCP Access application has no policy to reuse");
   }
-  if (typeof ace.session_duration !== "string" || ace.session_duration.length === 0) {
-    throw new Error("The Ace Access application has no session duration to reuse");
+  if (typeof policySource.session_duration !== "string" || policySource.session_duration.length === 0) {
+    throw new Error("The engineering MCP Access application has no session duration to reuse");
   }
   const existing = applications.find((application) => application.domain === mcpDomain);
   const current = existing
@@ -108,10 +107,10 @@ async function ensureAccessApplication() {
     name: "Rally engineering MCP",
     type: "self_hosted",
     domain: mcpDomain,
-    session_duration: ace.session_duration,
+    session_duration: policySource.session_duration,
     app_launcher_visible: false,
-    auto_redirect_to_identity: ace.auto_redirect_to_identity ?? false,
-    ...(Array.isArray(ace.allowed_idps) ? { allowed_idps: ace.allowed_idps } : {}),
+    auto_redirect_to_identity: policySource.auto_redirect_to_identity ?? false,
+    ...(Array.isArray(policySource.allowed_idps) ? { allowed_idps: policySource.allowed_idps } : {}),
     oauth_configuration: {
       enabled: true,
       dynamic_client_registration: {
@@ -128,7 +127,7 @@ async function ensureAccessApplication() {
         ? { grant: current.oauth_configuration.grant }
         : {}),
     },
-    policies: acePolicies.map(policyShape),
+    policies: sourcePolicies.map(policyShape),
   };
   const result = existing
     ? await cloudflare(`/access/apps/${encodeURIComponent(existing.id)}`, {
