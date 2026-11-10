@@ -1,3 +1,4 @@
+import { passwordLoginErrorMessage } from '../../common/password-login';
 import type { PasswordLoginRequest } from '@rally/contracts/password-login';
 import { navigateAppRoute } from './app-navigation';
 import { LANDING_ROUTE } from './landing';
@@ -464,9 +465,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     } catch (error) {
       // Electron prefixes rejected IPC calls with transport and class names.
       // Keep the service's user-facing message, as the browser form does.
-      if (error instanceof Error) throw new Error(error.message.replace(
-        /^Error invoking remote method 'auth:password': (?:RallyApiResponseError|Error): /u, '',
-      ), { cause: error });
+      if (error instanceof Error) throw new Error(passwordLoginErrorMessage(error.message), { cause: error });
       throw error;
     }
   }, [applySession, bridge]);
