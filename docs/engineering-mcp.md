@@ -253,7 +253,9 @@ paused or in draft in a closed Organization is otherwise out of reach, and
 archiving only stops and hides it, where the other tools would be using the
 Organization. It passes `abandoned: "admit"`, so it works in an abandoned
 Organization as one of its still-active users, and `WorkspaceDO` permits
-`sidekickRemove` on a retired object, so it works after `retire_org` too. An
+`sidekickRemove` on a retired object, so it works after `retire_org` too. It
+also archives a Sidekick a retired Organization never imported
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). An
 Organization its last member abandoned has no active user left (leaving
 suspends them), so nobody can be named there and the tool still refuses with
 `user_not_active_organization_user`.
