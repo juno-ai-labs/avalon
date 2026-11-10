@@ -838,6 +838,32 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-11-10 — Artifact inventory verification retries transient Cloudflare failures
+
+**What changed:** After each private artifact upload, the publisher's
+exact-prefix inventory read retries an HTTP 429 or 5xx response up to seven
+attempts, waiting 500 ms and doubling between them. Every other status, and
+every check on the inventory body, still fails on the first response.
+
+**Why:** Release v1.714.0 built, signed and notarized, then aborted before
+distribution because one inventory read, for one renderer source map among
+hundreds of sequential uploads, returned HTTP 500. The object had uploaded with
+matching metadata. One transient provider error was enough to block a desktop
+release. The retry policy copies the read-after-write verification that
+`publish-r2-release.mjs`, `release-cache.mjs` and `promote-stable-release.mjs`
+already apply to R2, rather than introducing a new number.
+
+**Considered and rejected:** Retrying the PUT as well, because no PUT failure
+has been observed and its error path already names the provider's error codes.
+Treating any non-OK status as retryable, because a 403 from a revoked token
+would then cost a minute before it reached the operator. Retrying a request
+timeout, because each attempt may already have taken five minutes.
+
+**Consequences:** A persistent 5xx now fails after roughly 31 seconds of backoff
+instead of immediately, still naming the last HTTP status. Integrity checks are
+unchanged: a retried read must still be `DYNAMIC` and must match the uploaded
+key, size, ETag and timestamp.
+
 ### 2026-11-03 — A new account's signup flow merges into its person
 
 **What changed:** Account creation queues an `epoch_transition` profile job

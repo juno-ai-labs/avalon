@@ -58,6 +58,7 @@ function objectApi({
   inventoryCacheStatus = 'DYNAMIC',
   inventoryInvalidJson = false,
   inventoryStatus = 200,
+  inventoryStatuses = [],
   inventoryTimestamp = '2026-08-13T19:09:29.001Z',
   putErrors = [],
   putInvalidJson = false,
@@ -68,6 +69,7 @@ function objectApi({
   const objects = new Map();
   const calls = [];
   let errorBodyCancelled = false;
+  const scriptedInventoryStatuses = [...inventoryStatuses];
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(input);
     const objectMatch = /\/r2\/buckets\/([^/]+)\/objects\/(.+)/u.exec(url.pathname);
@@ -118,7 +120,8 @@ function objectApi({
       }, { status: putStatus });
     }
     assert.ok(inventoryMatch, 'GET must use the authoritative object inventory');
-    if (inventoryStatus < 200 || inventoryStatus >= 300) {
+    const status = scriptedInventoryStatuses.shift() ?? inventoryStatus;
+    if (status < 200 || status >= 300) {
       const body = new ReadableStream({
         start(controller) {
           controller.enqueue(Buffer.from('provider error'));
@@ -127,7 +130,7 @@ function objectApi({
           errorBodyCancelled = true;
         },
       });
-      return new Response(body, { status: inventoryStatus });
+      return new Response(body, { status });
     }
     const object = objects.get(target);
     assert.ok(object, `expected uploaded object ${target}`);
@@ -332,9 +335,10 @@ test('rejects Cloudflare upload failures without exposing provider response bodi
 });
 
 test('validates authoritative inventory responses without trusting cached object reads', async (t) => {
-  await t.test('failed inventory response', async () => {
+  await t.test('persistently failing inventory response', async () => {
     const { root, desktopDirectory } = await fixture();
     const api = objectApi({ inventoryStatus: 503 });
+    const sleeps = [];
     try {
       await assert.rejects(
         publishTelemetryArtifacts({
@@ -342,11 +346,58 @@ test('validates authoritative inventory responses without trusting cached object
           environment: runtimeEnvironment,
           fetchImpl: api.fetchImpl,
           runCommand: commandRunner().runCommand,
+          sleepImpl: async (milliseconds) => { sleeps.push(milliseconds); },
           temporaryRoot: root,
         }),
         /Could not verify .* HTTP 503/u,
       );
+      assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 7);
+      assert.deepEqual(sleeps, [500, 1_000, 2_000, 4_000, 8_000, 16_000]);
       assert.equal(api.errorBodyCancelled, true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('transient inventory failure recovers on retry', async () => {
+    const { root, desktopDirectory } = await fixture();
+    const api = objectApi({ inventoryStatuses: [500, 429] });
+    const sleeps = [];
+    try {
+      await publishTelemetryArtifacts({
+        desktopDirectory,
+        environment: runtimeEnvironment,
+        fetchImpl: api.fetchImpl,
+        runCommand: commandRunner().runCommand,
+        sleepImpl: async (milliseconds) => { sleeps.push(milliseconds); },
+        temporaryRoot: root,
+      });
+      assert.equal(api.objects.size, 5);
+      assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 7);
+      assert.deepEqual(sleeps, [500, 1_000]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('non-transient inventory refusal is not retried', async () => {
+    const { root, desktopDirectory } = await fixture();
+    const api = objectApi({ inventoryStatus: 403 });
+    const sleeps = [];
+    try {
+      await assert.rejects(
+        publishTelemetryArtifacts({
+          desktopDirectory,
+          environment: runtimeEnvironment,
+          fetchImpl: api.fetchImpl,
+          runCommand: commandRunner().runCommand,
+          sleepImpl: async (milliseconds) => { sleeps.push(milliseconds); },
+          temporaryRoot: root,
+        }),
+        /Could not verify .* HTTP 403/u,
+      );
+      assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 1);
+      assert.deepEqual(sleeps, []);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

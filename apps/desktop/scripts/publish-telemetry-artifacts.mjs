@@ -23,6 +23,12 @@ const repositoryDirectory = resolve(desktopDirectory, '../..');
 const SAFE_PART = /^[0-9A-Za-z][0-9A-Za-z._-]{0,159}$/u;
 const REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INVENTORY_TIMESTAMP_TOLERANCE_MS = 1_000;
+// The same read-after-write verification policy publish-r2-release.mjs,
+// release-cache.mjs and promote-stable-release.mjs already apply to R2: seven
+// attempts, 500 ms doubling. One transient Cloudflare 5xx on the inventory read
+// of one of hundreds of objects otherwise aborts a signed, notarized release.
+const INVENTORY_ATTEMPTS = 7;
+const INVENTORY_RETRY_BASE_MS = 500;
 // These must not exceed the matching limits enforced by the regional API
 // consumers in javascript-symbolication.ts and crash-processing.ts.
 const MAX_SOURCE_MAP_BYTES = 16 * 1024 * 1024;
@@ -99,12 +105,20 @@ export function nativeArtifactKey({ release, buildId, platform, architecture }) 
   ].join('/');
 }
 
+function sleep(milliseconds) {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
+}
+
+function isTransientStatus(status) {
+  return status === 429 || status >= 500;
+}
+
 async function uploadAndVerify(
   bucket,
   key,
   source,
   maximumBytes,
-  { environment, fetchImpl },
+  { environment, fetchImpl, sleepImpl },
 ) {
   const accountId = required('CLOUDFLARE_ACCOUNT_ID', environment);
   const token = required('CLOUDFLARE_API_TOKEN', environment);
@@ -165,14 +179,20 @@ async function uploadAndVerify(
   );
   inventoryUrl.searchParams.set('prefix', key);
   inventoryUrl.searchParams.set('per_page', '2');
-  const inventory = await fetchImpl(inventoryUrl, {
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    headers: {
-      Authorization: authorization,
-      'Cache-Control': 'no-cache',
-      ...jurisdictionHeaders,
-    },
-  });
+  let inventory;
+  for (let attempt = 0; attempt < INVENTORY_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) await sleepImpl(INVENTORY_RETRY_BASE_MS * 2 ** (attempt - 1));
+    inventory = await fetchImpl(inventoryUrl, {
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: {
+        Authorization: authorization,
+        'Cache-Control': 'no-cache',
+        ...jurisdictionHeaders,
+      },
+    });
+    if (!isTransientStatus(inventory.status)) break;
+    if (attempt < INVENTORY_ATTEMPTS - 1) await inventory.body?.cancel();
+  }
   if (!inventory.ok) {
     await inventory.body?.cancel();
     throw new Error(`Could not verify r2://${target}: Cloudflare returned HTTP ${inventory.status}`);
@@ -268,6 +288,7 @@ export async function publishTelemetryArtifacts(options = {}) {
   const sourceDesktopDirectory = options.desktopDirectory ?? desktopDirectory;
   const environment = options.environment ?? process.env;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const sleepImpl = options.sleepImpl ?? sleep;
   const runCommand = options.runCommand ?? run;
   const temporaryRoot = options.temporaryRoot ?? tmpdir();
   const packageJson = JSON.parse(await readFile(join(sourceDesktopDirectory, 'package.json'), 'utf8'));
@@ -319,7 +340,7 @@ export async function publishTelemetryArtifacts(options = {}) {
           artifact.key,
           artifact.source,
           artifact.maximumBytes,
-          { environment, fetchImpl },
+          { environment, fetchImpl, sleepImpl },
         );
       }
     }
