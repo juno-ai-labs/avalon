@@ -185,6 +185,8 @@ payload shared with Canvas rows.
 settles both views, including failed writes; a pin-then-order operation can
 partially succeed and leave the new pin appended. Sidekick ordering is unchanged.
 
+PR [#1532](https://github.com/juno-ai-labs/avalon/pull/1532).
+
 ### 2026-11-09 — A Canvas and a Sidekick are what a person pins; Thread, Channel, Breakout and artifact pins are removed
 
 **What changed:** WorkspaceDO migration 137 admits `canvas` and `sidekick` in
