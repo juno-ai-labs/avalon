@@ -77,7 +77,8 @@ writes the requester's `access_granted` intent and Activity row naming the
 decider, linking to the Canvas. A denial writes the requester's
 `access_denied` intent and Activity row instead ("<decider> declined your
 request to open a Canvas"), linking to the Canvas, whose pane then reads the
-denied request; a new request after a denial is a new row.
+denied request. The Canvas's recency date stays with its content. A new
+request after a denial is a new row.
 
 The denial's notice and row never carry the Canvas's title: the notice
 (`ParentNotice` `access_denied`) has no title field, its row's `parentTitle`

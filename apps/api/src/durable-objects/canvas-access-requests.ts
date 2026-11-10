@@ -237,8 +237,8 @@ export async function settleCanvasAccessRequest(host: CanvasAccessHost, subject:
         subject.canvasId, input.requesterUserId, input.deciderUserId, now,
       );
       // A Canvas open to its creator alone becomes one open to its participants, as a claimed share makes it.
-      host.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'participants', updated_at = MAX(updated_at, ?)
-        WHERE canvas_id = ? AND visibility = 'creator'`, now, subject.canvasId);
+      host.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'participants'
+        WHERE canvas_id = ? AND visibility = 'creator'`, subject.canvasId);
       host.noteCanvasDirectoryChanged(subject.canvasId);
     }
     return [{
