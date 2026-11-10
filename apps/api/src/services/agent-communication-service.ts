@@ -382,9 +382,13 @@ export class AgentCommunicationService {
       ...(canvasId ? { attachedToCanvasId: canvasId } : {}) };
   }
 
-  /** The Canvas this loop is the Chat of, or null for any other loop. */
+  /**
+   * The Canvas this loop is the Chat of, or null for any other loop: a
+   * background agent works for a conversation and is not its Chat.
+   */
   private canvasChatId(): string | null {
-    return this.input.parentKind === "canvas" && (this.input.substreamId ?? "0") === "0" ? this.input.parentId : null;
+    return this.input.parentKind === "canvas" && (this.input.substreamId ?? "0") === "0" && this.input.backgroundAgent !== true
+      ? this.input.parentId : null;
   }
 
   /** The Sidekicks this Canvas's Chat made, as `sidekicks_list` names them. */
