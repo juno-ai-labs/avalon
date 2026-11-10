@@ -1,8 +1,11 @@
 import type { EngineeringInspectionRpcBinding } from "@rally/contracts/engineering-inspection";
 
 import type { AccessEnvironment } from "./access";
+import type { EngineeringTaskDO } from "./task-do";
 
 export interface Env extends AccessEnvironment {
+  CF_VERSION_METADATA?: WorkerVersionMetadata;
+  ENGINEERING_TASKS: DurableObjectNamespace<EngineeringTaskDO>;
   GLOBAL_INSPECTION: EngineeringInspectionRpcBinding;
   [binding: `${string}_INSPECTION`]: EngineeringInspectionRpcBinding;
   /** The account the Global lakehouse buckets and Workers Observability live in. */

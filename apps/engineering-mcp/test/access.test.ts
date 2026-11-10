@@ -1,7 +1,7 @@
 
 import { SignJWT, generateKeyPair, type JWTVerifyGetKey } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
-import { readAccessConfiguration, verifyAccessRequest } from "../src/access";
+import { hasStableAccessSubject, readAccessConfiguration, verifyAccessRequest } from "../src/access";
 
 const TEAM_DOMAIN = "rally.cloudflareaccess.com";
 const AUDIENCE = "test-audience";
@@ -24,6 +24,7 @@ beforeAll(async () => {
 });
 
 async function assertion(claims: {
+  subject?: string | null;
   email?: string;
   issuer?: string;
   audience?: string;
@@ -32,8 +33,8 @@ async function assertion(claims: {
     .setProtectedHeader({ alg: "RS256" })
     .setIssuedAt()
     .setExpirationTime("1h")
-    .setSubject("access-subject")
     .setIssuer(claims.issuer ?? `https://${TEAM_DOMAIN}`);
+  if (claims.subject !== null) token = token.setSubject(claims.subject ?? "access-subject");
   token = token.setAudience(claims.audience ?? AUDIENCE);
   return token.sign(signingKey);
 }
@@ -177,5 +178,13 @@ describe("verifyAccessRequest", () => {
       ok: true,
       principal: { email: null, subject: "access-subject", audience: AUDIENCE },
     });
+  });
+
+  it("admits subjectless assertions for synchronous tools without assigning a stored-result owner", async () => {
+    for (const subject of [null, "", "access-subject"]) {
+      const result = await verifyAccessRequest(request({ "cf-access-jwt-assertion": await assertion({ subject }) }), CONFIGURATION, { keySet });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(hasStableAccessSubject(result.principal)).toBe(subject === "access-subject");
+    }
   });
 });
