@@ -92,14 +92,17 @@ beforeEach(async () => {
 describe("a Sidekick a Canvas's Chat made", () => {
   it("is attached to that Canvas as it is made, and the Canvas names it to everyone in it", async () => {
     const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(PARTICIPANT) });
-    expect(detail.sidekicks).toEqual([{ id: MADE_HERE, name: "New Sidekick", status: "draft", madeHere: true }]);
+    // The participant sees it and cannot open it; its creator can.
+    expect(detail.sidekicks).toEqual([{ id: MADE_HERE, name: "New Sidekick", status: "draft", madeHere: true, canOpen: false }]);
+    expect((await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) })).sidekicks)
+      .toEqual([{ id: MADE_HERE, name: "New Sidekick", status: "draft", madeHere: true, canOpen: true }]);
     // The other Canvas made nothing and holds nothing.
     expect((await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: OTHER_CANVAS_ID, actor: member(CREATOR) })).sidekicks)
       .toEqual([]);
     // The Canvas list carries them too, for the home card's Sidekick facepile.
     const listed = await workspace().canvasListFor({ workspaceId: WORKSPACE_ID, userId: PARTICIPANT, accessClass: "member" });
     expect(listed.map((row) => [row.title, row.sidekicks]))
-      .toEqual([["Inbox", [{ id: MADE_HERE, name: "New Sidekick", status: "draft", madeHere: true }]]]);
+      .toEqual([["Inbox", [{ id: MADE_HERE, name: "New Sidekick", status: "draft", madeHere: true, canOpen: false }]]]);
     expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: MADE_HERE,
       actor: { ...member(CREATOR), participantOfOwningWorkstream: false } })).toMatchObject({ madeInCanvasId: CANVAS_ID });
     // And the Sidekick's own row names the Canvas, for its dashboard card's link.
@@ -178,6 +181,20 @@ describe("where a Sidekick's run may publish", () => {
     // Someone never in the Canvas, and its creator, are decided the same way.
     expect(await publishInto(MADE_HERE, CANVAS_ID, OUTSIDER)).toBe("canvas_access_denied");
     expect(await publishInto(MADE_HERE, CANVAS_ID, CREATOR)).toBeNull();
+  });
+
+  it("moves both lists when a Sidekick is attached to a Canvas, since each card names the other", async () => {
+    const waterlines = () => runInDurableObject(workspace(), (_instance, state) => Object.fromEntries(state.storage.sql.exec<{ list: string; waterline: number }>(
+      "SELECT list, waterline FROM workspace_sidebar_list_state WHERE list IN ('automations', 'canvases')").toArray().map((row) => [row.list, row.waterline])));
+    const before = await waterlines();
+    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: MADE_ELSEWHERE,
+      userId: CREATOR, reference: OTHER_CANVAS_ID });
+    const after = await waterlines();
+    expect([after.automations! > before.automations!, after.canvases! > before.canvases!]).toEqual([true, true]);
+    // A repeat attaches nothing and moves neither.
+    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: MADE_ELSEWHERE,
+      userId: CREATOR, reference: OTHER_CANVAS_ID });
+    expect(await waterlines()).toEqual(after);
   });
 
   it("includes the Canvas an earlier run of it made", async () => {

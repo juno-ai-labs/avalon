@@ -27,8 +27,9 @@ export function madeSidekicksArchiveCopy(sidekicks: readonly CanvasSidekick[]): 
 /**
  * The Canvas menu's Sidekicks section: one row per attached Sidekick, with its
  * hexagon, name and state. A row opens the Sidekick's page only for someone
- * whose own Sidekicks list holds it (`openableIds`); the page answers nobody
- * else, so for them the row stays focusable and says how to change it instead.
+ * the Sidekick is shared with (`canOpen`, or for an older server the viewer's
+ * own Sidekicks list, `openableIds`); the page answers nobody else, so for
+ * them the row stays focusable and says how to change it instead.
  * The menu archives none of them: a Sidekick this Canvas made is archived by
  * asking the Canvas's Chat, or with the Canvas. Draws nothing for a Canvas
  * with no Sidekicks.
@@ -45,7 +46,9 @@ export function CanvasSidekicksSection({ onOpen, openableIds, sidekicks }: {
     <DropdownMenu.Group aria-labelledby={labelId} className="canvas-sidekicks">
       <DropdownMenu.Label className="menu-label workspace-menu-section" id={labelId}>Sidekicks</DropdownMenu.Label>
       {sidekicks.map((sidekick) => {
-        const openable = openableIds.has(sidekick.id);
+        // The server's answer where it gave one; an older Worker sends none,
+        // and then the viewer's own Sidekicks list is the best that is known.
+        const openable = sidekick.canOpen ?? openableIds.has(sidekick.id);
         return <div className="canvas-sidekick-row" key={sidekick.id}>
           <MenuActionItem
             className="menu-item title-menu-item title-menu-action canvas-sidekick-open"
