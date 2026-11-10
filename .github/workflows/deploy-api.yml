@@ -15,8 +15,9 @@ on:
       # touches only docs, the desktop app, or the site does not redeploy.
       - "apps/api/**"
       - "apps/engineering-mcp/**"
-      # The engineering MCP compiles Ace's flag-administration contract.
-      - "apps/ace/src/protocol.ts"
+      - "apps/mcp/**"
+      # The Rally MCP server bundles the plugin's skills (apps/mcp/src/skills.ts).
+      - "plugins/rally/skills/**"
       - "packages/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -100,6 +101,7 @@ jobs:
               pnpm --filter @rally/api build:pricing &&
               pnpm --filter @rally/api build:artifacts &&
               pnpm --filter @rally/engineering-mcp build &&
+              pnpm --filter @rally/mcp build &&
               pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-n
             command: pnpm --filter @rally/desktop exec vitest run --shard=1/2
@@ -428,7 +430,7 @@ jobs:
             0097_email_routes_use_full_address.sql 0106_configurable_regions.sql \
             0113_drop_legacy_observability_tables.sql \
             0115_drop_workspace_product_authority_ledger.sql \
-            0125_drop_demo_tables.sql <<< "$pending")"
+            0125_drop_demo_tables.sql 0128_drop_inbound_email.sql <<< "$pending")"
           echo "$classification" >> "$GITHUB_OUTPUT"
 
       - name: List the pending platform migrations
@@ -545,6 +547,7 @@ jobs:
         if: env.DEPLOY_GLOBAL == 'true'
         env:
           ENGINEERING_MCP_BASIN_SQL_API_TOKEN: ${{ secrets.ENGINEERING_MCP_BASIN_SQL_API_TOKEN }}
+          ENGINEERING_MCP_QUEUES_API_TOKEN: ${{ secrets.ENGINEERING_MCP_QUEUES_API_TOKEN }}
           ENGINEERING_MCP_WORKERS_OBSERVABILITY_API_TOKEN: ${{ secrets.ENGINEERING_MCP_WORKERS_OBSERVABILITY_API_TOKEN }}
         run: pnpm --filter @rally/engineering-mcp run deploy
 
@@ -552,7 +555,7 @@ jobs:
         if: env.DEPLOY_GLOBAL == 'true'
         run: |
           set -euo pipefail
-          # Reuse the existing Access propagation window from deploy-ace.yml;
+          # Allow the Access configuration to propagate before probing;
           # this is the same custom-domain and Access control-plane operation.
           for attempt in 1 2 3 4 5 6; do
             headers="${RUNNER_TEMP}/engineering-mcp-headers-${attempt}.txt"
@@ -567,6 +570,12 @@ jobs:
           done
           echo "Engineering MCP did not expose the expected OAuth challenge" >&2
           exit 1
+
+      # Rally's user MCP server forwards its token endpoint to the Global API,
+      # so it deploys after it. docs/rally-mcp.md.
+      - name: Deploy the Rally MCP server after the Global API
+        if: env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @rally/mcp run deploy
 
       - name: Preserve exact deployment startup evidence
         if: ${{ always() }}

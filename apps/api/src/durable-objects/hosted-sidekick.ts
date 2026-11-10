@@ -1,3 +1,4 @@
+import type { ConversationToolResolveRequest, ConversationToolResolveResult } from "./workspace-conversation-tool-protocol";
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
 import { sidekickRowRunState } from "./sidekick-directory-sql";
@@ -17,7 +18,7 @@ import {
   SidekickReviewNoticeV1Schema, type SidekickReviewNoticeV1,
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
-import { sidekickAdmits } from "../services/authorization-policy";
+import { canvasReaderAllows, sidekickManages, sidekickReaderAllows, sidekickSharedWith } from "./canvas-sidekick-admission";
 import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "./sidekick-source-registrations";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
@@ -42,7 +43,6 @@ import {
   WorkstreamAppearancePatchSchema,
   automationAcceptanceSelections,
   sidekickLoadable,
-  sidekickReceivesEmail,
   automationDraftAcceptanceBlocker,
   asAutomationId,
   asSubstreamId,
@@ -84,7 +84,7 @@ import {
   automationMemoryTableResult, prepareAutomationMemoryTables, type PreparedAutomationMemoryTable,
 } from "../services/memory-table-service";
 import { createWorkspaceMemoryTable, ensureWorkspaceMemoryScope } from "./workspace-memory-storage";
-import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
+
 import {
   AutomationActorRequestSchema,
   AutomationRunListRequestSchema,
@@ -93,7 +93,6 @@ import {
   type AutomationRunReadRequest,
   AutomationCreateRequestSchema,
   AutomationExternalEventAdmissionSchema,
-  AutomationInboundEmailAdmissionSchema,
   AutomationRunDefinitionRequestSchema,
   AutomationRunNowRequestSchema,
   SidekickConversationMessageRequestSchema,
@@ -118,7 +117,6 @@ import {
   type AutomationCreateRequest,
   type AutomationExternalEventAdmission,
   type AutomationExternalEventPlan,
-  type AutomationInboundEmailAdmission,
   type AutomationRunDefinitionRequest,
   type AutomationRunNowRequest,
   type AutomationRunRequest,
@@ -133,7 +131,7 @@ import {
 import { RECEIVE_CHILD_EFFECTS_MAX_ENVELOPES, type DirectoryCommonEffect } from "./conversation-parent-object";
 import { sidekickAudienceAllows } from "./sidekick-audience";
 import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
-import { conversationIdOf } from "./workspace-sidekick-conversation-storage";
+import { attachSidekickConversation, conversationIdOf } from "./workspace-sidekick-conversation-storage";
 
 /**
  * A Sidekick's parent, hosted in its Organization's `WorkspaceDO`.
@@ -261,7 +259,6 @@ export interface HostedSidekickRow extends Record<string, SqlStorageValue> {
   activity_source_plugin_ids_json: string;
   evaluator_projection_json: string;
   model_override: string | null;
-  email_address: string | null;
   effective_after_event_sequence: number | null;
   loadable: number;
   appearance_json: string | null;
@@ -368,6 +365,7 @@ export interface SidekickReviewDelivery {
 
 /** What `WorkspaceDO` lends a hosted Sidekick. */
 export interface HostedSidekickHost {
+  resolveConversationToolTarget(input: ConversationToolResolveRequest): Promise<ConversationToolResolveResult>;
   env: Env;
   storage: DurableObjectStorage;
   /**
@@ -402,6 +400,15 @@ export interface HostedSidekickHost {
    * differs from the last it saw, so a run's own touches cost no list push.
    */
   noteWriterReaders(sidekickId: string, readers: string): void;
+  /**
+   * Inside the transaction that touched the directory row of a Sidekick
+   * attached to a Canvas, with what such a Canvas shows of it (name, state,
+   * appearance). The host marks the Canvas list moved when that differs from
+   * the last it saw.
+   */
+  noteAttachedSidekickFace(sidekickId: string, face: string): void;
+  /** Inside the transaction that attached a Sidekick to the Canvas it was made in: that Canvas's detail and context moved. */
+  noteMadeInCanvasChanged(canvasId: string): void;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** See `HostedConversationHost.noteActivityChanged`. */
   noteActivityChanged(userId: string): void;
@@ -456,47 +463,6 @@ function scheduleDueAfter(kind: "calendar" | "interval", definitionJson: string,
   )?.getTime() ?? null;
 }
 
-/**
- * The library's and the management API's read rule, over a directory row
- * alone, so a Sidekick whose import has not run is decided the same way:
- * `sidekickAdmits` over its scope, its author and executor, and its `people`
- * list. A guest has no `actorRole`, so Organization scope never admits one.
- */
-export function sidekickReaderAllows(
-  row: {
-    automation_id: string;
-    scope: string; author_user_id: string; run_as_user_id: string | null; lifecycle: string;
-  },
-  actor: { userId: string; actorRole: "owner" | "admin" | "member" | null },
-  sql: SqlStorage,
-): boolean {
-  if (row.lifecycle === "deleted") return false;
-  return sidekickAdmits({
-    scope: row.scope,
-    author: row.author_user_id === actor.userId,
-    executor: row.run_as_user_id === actor.userId,
-    shared: sidekickSharedWith(sql, row.automation_id, actor.userId),
-  }, actor.actorRole != null);
-}
-
-/**
- * Who manages a Sidekick: its author, the person it runs as, and for an
- * Organization one its owners and administrators. Also who manages the
- * audience of a Canvas the Sidekick writes.
- */
-export function sidekickManagerAllows(
-  row: { scope: string; author_user_id: string; run_as_user_id: string | null },
-  actor: { userId: string; actorRole?: "owner" | "admin" | "member" | null | undefined },
-): boolean {
-  return row.author_user_id === actor.userId || row.run_as_user_id === actor.userId
-    || (row.scope === "workspace" && (actor.actorRole === "owner" || actor.actorRole === "admin"));
-}
-
-/** Whether this person is on a Sidekick's `people` list. */
-export function sidekickSharedWith(sql: SqlStorage, sidekickId: string, userId: string): boolean {
-  return sql.exec(`SELECT 1 FROM sidekick_audience WHERE sidekick_id = ? AND user_id = ? LIMIT 1`, sidekickId, userId)
-    .toArray().length > 0;
-}
 
 
 /** What a skill read says about its audience: the request without the Sidekick it names. */
@@ -572,18 +538,43 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   async create(input: AutomationCreateRequest): Promise<{ created: boolean }> {
     const request = parseRpcInput(AutomationCreateRequestSchema, input, "create");
     if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
-    if (this.row()) {
+    const creatorRelationship = await this.host.readRelationship(request.workspaceId, request.authorUserId);
+    const active = creatorRelationship?.status === "active";
+    const author = {
+      userId: request.authorUserId,
+      actorRole: active && creatorRelationship.accessClass === "member" ? creatorRelationship.role ?? "member" as const : null,
+    };
+    const existing = this.row();
+    if (existing) {
       this.assertSidekick(request.workspaceId, request.automationId);
+      if (request.madeInCanvasId !== undefined) {
+        if (!active) throw this.delegationError("sidekick_delegation_membership_unavailable");
+        // A replay is its author's, of the same create: a caller-minted id
+        // that names somebody else's Sidekick, or one this Canvas did not
+        // make, is not answered as though this request had made it.
+        if (existing.author_user_id !== request.authorUserId || !this.madeIn(request.madeInCanvasId)) {
+          throw new ApiError(409, "sidekick_id_unavailable", "This Sidekick id is already in use");
+        }
+      }
       return { created: false };
     }
-    const creatorRelationship = await this.host.readRelationship(request.workspaceId, request.authorUserId);
-    if (creatorRelationship?.status !== "active") {
-      throw this.delegationError("sidekick_delegation_membership_unavailable");
-    }
+    if (!active) throw this.delegationError("sidekick_delegation_membership_unavailable");
     const now = Date.now();
+    const madeInCanvasId = request.madeInCanvasId ?? null;
     // The insert is the existence check: a repeat finds the row and returns
     // nothing, and is answered from the row it found.
     return this.storage.transactionSync(() => {
+      // A Sidekick made in a Canvas's Chat: the person asking must be in that
+      // Canvas now, since the Sidekick's runs will write there for them.
+      if (madeInCanvasId !== null) this.assertMadeInCanvas(request.workspaceId, madeInCanvasId, author);
+      // A Canvas and a Sidekick are both conversation parents named by one
+      // id space, and a Sidekick's row is asked for first: an id that names a
+      // Canvas would take that Canvas's conversation over. Asked where the
+      // caller chose the id, which is only the request made for a Canvas.
+      if (madeInCanvasId !== null
+        && this.sql.exec(`SELECT 1 FROM canvas_directory WHERE canvas_id = ? LIMIT 1`, request.automationId).toArray().length > 0) {
+        throw new ApiError(409, "sidekick_id_unavailable", "This Sidekick id is already in use");
+      }
       const created = this.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, region, author_user_id, run_as_user_id, source_version, payload_hash,
@@ -591,10 +582,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
             title, description, next_run_at, projected_at, loadable, appearance_json,
             current_definition_revision, accepted_definition_revision, connector_bindings_json,
             default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
-            model_override, email_address, effective_after_event_sequence, authority_generation,
+            model_override, effective_after_event_sequence, authority_generation,
             stop_generation, chat_appearance_json, delegation_migrated, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, 1, 'hosted', 'draft', NULL, ?, NULL, '0', NULL, '', '', NULL, ?, 0, NULL,
-                 0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, NULL, ?, 0, NULL, 1, ?, ?)
+                 0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, ?, 0, NULL, 1, ?, ?)
          ON CONFLICT(automation_id) DO NOTHING
          RETURNING automation_id`,
         request.automationId,
@@ -612,6 +603,13 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         this.assertSidekick(request.workspaceId, request.automationId);
         return { created: false };
       }
+      // The same transaction attaches it, so a Sidekick a Canvas made always
+      // reaches that Canvas: there is no made-but-unattached state to repair.
+      if (madeInCanvasId !== null) {
+        attachSidekickConversation(this.sql, { automationId: this.sidekickId, madeHere: true,
+          address: { parentKind: "canvas", parentId: madeInCanvasId, substreamId: "0" }, userId: request.authorUserId, now });
+        this.host.noteMadeInCanvasChanged(madeInCanvasId);
+      }
       this.registerChild("0", "main", request.authorUserId, now);
       if (!this.delegations().read(this.sidekickId, request.authorUserId)) {
         this.delegations().mutate({
@@ -623,6 +621,40 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       this.host.noteDirectoryChanged(this.sidekickId, false, now);
       return { created: true };
     });
+  }
+
+  /** Whether this Canvas's Chat, or a request for this Canvas, made the Sidekick. */
+  private madeIn(canvasId: string): boolean {
+    return this.sql.exec(
+      `SELECT 1 FROM sidekick_conversation_attachments
+        WHERE automation_id = ? AND parent_kind = 'canvas' AND parent_id = ? AND substream_id = '0' AND made_here = 1`,
+      this.sidekickId, canvasId,
+    ).toArray().length > 0;
+  }
+
+  /** The Canvas a Sidekick is being made in: this Organization's, not archived, and open to the person asking. */
+  private assertMadeInCanvas(workspaceId: string, canvasId: string, actor: { userId: string; actorRole: "owner" | "admin" | "member" | null }): void {
+    const canvas = first(this.sql.exec<{
+      canvas_id: string; created_by_user_id: string; writer_sidekick_id: string | null; visibility: string; archived_at: number | null;
+    }>(
+      `SELECT canvas_id, created_by_user_id, writer_sidekick_id, visibility, archived_at
+         FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, canvasId, workspaceId,
+    ));
+    if (canvas && canvas.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
+    if (!canvas || !canvasReaderAllows(canvas, actor, this.sql)) throw new ApiError(404, "canvas_not_found", "This Canvas does not exist");
+  }
+
+  /**
+   * Archive a Sidekick with the Canvas whose Chat made it, inside that
+   * archive's transaction. No manager is asked: whoever archived the Canvas
+   * manages what it made.
+   * The caller owes `afterRegistrations` once the transaction commits.
+   */
+  archiveWithCanvas(now: number): boolean {
+    const row = this.row();
+    if (!row || row.lifecycle === "deleted") return false;
+    this.archive(now);
+    return true;
   }
 
   private delegations(): SidekickDelegationStorage {
@@ -997,18 +1029,24 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     if (!revision || revision.ready !== 1) {
       throw new ApiError(422, "sidekick_definition_not_ready", "The Sidekick's definition is not ready to apply");
     }
+    const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
+    if (definition.failureNotificationConversationId) {
+      const destination = await this.host.resolveConversationToolTarget({
+        workspaceId: asWorkspaceId(row.workspace_id), userId: asUserId(row.run_as_user_id),
+        scope: { kind: "sidekick", automationId: row.automation_id },
+        reference: definition.failureNotificationConversationId,
+      });
+      if (!destination.ok || destination.conversation.conversationId !== definition.failureNotificationConversationId) {
+        throw new ApiError(422, "sidekick_failure_notification_destination_unavailable",
+          "failureNotificationConversationId must name an accessible conversation in this Sidekick's scope. Attach the intended Canvas before saving this Sidekick.");
+      }
+    }
     if (row.lifecycle === "active" && row.accepted_definition_revision === revision.definition_revision) {
       return this.detail();
     }
-    const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
     const prepared = definition.triggers.length === 0
       ? { selections: { defaultPluginIds: [], activitySourcePluginIds: {} }, connectorBindings: {}, evaluators: [], schedules: [] }
       : await this.prepareApplication(row, revision, definition, request.actor.userId);
-    const emailRoute = sidekickReceivesEmail(definition) ? await new WorkstreamEmailRoutingService(this.env).reserveAutomation({
-      region: row.region,
-      workspaceId: row.workspace_id,
-      automationSubscriptionId: row.automation_id,
-    }) : { emailAddress: row.email_address };
     const memory = await this.prepareMemoryTables(row, revision.definition_revision, definition);
     const now = Date.now();
     this.storage.transactionSync(() => {
@@ -1034,14 +1072,13 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
             SET lifecycle = CASE WHEN lifecycle = 'paused' THEN 'paused' ELSE 'active' END,
                 accepted_definition_revision = ?, connector_bindings_json = ?, default_plugin_ids_json = ?,
                 activity_source_plugin_ids_json = ?, evaluator_projection_json = ?,
-                email_address = ?, loadable = ?, updated_at = ?, runs_since_review = 0
+                loadable = ?, updated_at = ?, runs_since_review = 0
           WHERE automation_id = ?`,
         revision.definition_revision,
         JSON.stringify(prepared.connectorBindings),
         JSON.stringify(prepared.selections.defaultPluginIds),
         JSON.stringify(prepared.selections.activitySourcePluginIds),
         JSON.stringify(prepared.evaluators),
-        emailRoute.emailAddress,
         sidekickLoadable(definition) ? 1 : 0,
         now,
         this.sidekickId,
@@ -1061,7 +1098,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     await this.assertManager(row, request.actor);
     const revision = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
     const definition = revision ? AutomationDraftSchema.parse(JSON.parse(revision.definition_json)) : null;
-    // Legacy email is effective trigger configuration even when absent in JSON.
     const loadable = definition !== null && sidekickLoadable(definition);
     this.storage.transactionSync(() => {
       this.sql.exec(`UPDATE automation_directory SET loadable = ? WHERE automation_id = ?`, loadable ? 1 : 0, this.sidekickId);
@@ -1179,7 +1215,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
     if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
     const definition = row.accepted_definition_json ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)) : null;
-    if (!definition || (definition.triggers.length === 0 && !sidekickReceivesEmail(definition))) {
+    if (!definition || (definition.triggers.length === 0)) {
       throw new ApiError(409, "sidekick_not_runnable", "Use this Sidekick in a conversation");
     }
     const admitted = this.admitOccurrence(
@@ -1230,7 +1266,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
     if (row.lifecycle !== "active") return { route: "refused", code: "sidekick_not_active" };
     const definition = row.accepted_definition_json ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)) : null;
-    if (!definition || (definition.triggers.length === 0 && !sidekickReceivesEmail(definition))) {
+    if (!definition || (definition.triggers.length === 0)) {
       return { route: "refused", code: "sidekick_not_runnable" };
     }
     // Someone who is not a delegate, a guest among them, gets a run under
@@ -1380,93 +1416,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     };
   }
 
-  /**
-   * Admit one inbound email, once: the receipt is keyed by the provider's
-   * message id, so a webhook retry answers from it. The run acts as the
-   * sender alone, by the rule a message in the shared conversation follows.
-   */
-  async admitInboundEmail(input: AutomationInboundEmailAdmission): Promise<{
-    admitted: boolean; duplicate: boolean; outcomeCode: string; runId: string | null;
-  }> {
-    const request = parseRpcInput(AutomationInboundEmailAdmissionSchema, input, "admit_inbound_email");
-    const readReceipt = () => first(this.sql.exec<{ run_id: string | null; outcome_code: string }>(
-      `SELECT run_id, outcome_code FROM sidekick_email_receipts WHERE sidekick_id = ? AND resend_email_id = ?`,
-      this.sidekickId, request.resendEmailId,
-    ));
-    const replay = (receipt: { run_id: string | null; outcome_code: string }) => ({
-      admitted: receipt.run_id !== null, duplicate: true, outcomeCode: receipt.outcome_code, runId: receipt.run_id,
-    });
-    // The sender's standing, read once: a guest is admitted only from a
-    // Sidekick's `people` list, on every scope, as a reader is.
-    const relationship = request.senderUserId === null ? null
-      : await this.host.readRelationship(request.workspaceId, request.senderUserId);
-    const senderRole = relationship?.status === "active" && relationship.accessClass === "member"
-      ? relationship.role ?? "member" : null;
-    const refusalFor = (row: HostedSidekickRow & { accepted_definition_json: string | null }) => {
-      const emailEnabled = row.accepted_definition_json !== null
-        && sidekickReceivesEmail(AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)));
-      return row.lifecycle !== "active"
-        ? "sidekick_not_active"
-        : !emailEnabled || row.email_address === null || row.email_address.toLowerCase() !== request.emailAddress.toLowerCase()
-          ? "sidekick_email_route_mismatch"
-          // The run acts as the sender, so the From header must be more than a claim.
-          : !request.senderAuthenticated
-            ? "email_sender_unauthenticated"
-            : request.senderUserId === null || relationship?.status !== "active"
-              || !sidekickReaderAllows(row, { userId: request.senderUserId, actorRole: senderRole }, this.sql)
-              ? "email_sender_not_authorized"
-              : null;
-    };
-    const refuse = (code: string) => {
-      this.sql.exec(
-        `INSERT OR IGNORE INTO sidekick_email_receipts
-           (sidekick_id, resend_email_id, run_id, outcome_code, payload_ref, resource_id, received_at)
-         VALUES (?, ?, NULL, ?, ?, ?, ?)`,
-        this.sidekickId, request.resendEmailId, code, request.payloadRef, request.resourceId, request.receivedAt,
-      );
-      return { admitted: false, duplicate: false, outcomeCode: code, runId: null };
-    };
-    const initial = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
-    const existing = readReceipt();
-    if (existing) return replay(existing);
-    const initialRefusal = refusalFor(initial);
-    if (initialRefusal) return refuse(initialRefusal);
-    // The run acts as its sender alone, as a message in the shared
-    // conversation does (`admitConversationMessage`): as a delegate when they
-    // are an eligible one, and otherwise under their own access as its
-    // requester. Mail from someone on the list must not borrow another
-    // delegate's access. `refusalFor` has already required a sender.
-    const sender = request.senderUserId!;
-    const coordinator = await this.coordinator(sender, [sender], false);
-    const requester = coordinator === null && await this.requesterActive(initial.workspace_id, sender) ? sender : null;
-    if (coordinator === null && requester === null) return refuse("run_no_eligible_delegate");
-    return this.storage.transactionSync(() => {
-      // Definition publication and another copy of this email can interleave
-      // while delegate authority is read. Commit only against current state.
-      const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
-      const existing = readReceipt();
-      if (existing) return replay(existing);
-      const refusal = refusalFor(row);
-      if (refusal) return refuse(refusal);
-      const now = Date.now();
-      const run = this.admitOccurrence(
-        row.accepted_definition_revision,
-        `inbound_email:${request.resendEmailId}`,
-        { kind: "inbound_email", receiptId: uuidV7(now), occurredAt: request.receivedAt },
-        { textContent: request.textContent, structuredContent: request.structuredContent, resourceId: request.resourceId },
-        coordinator ?? requester,
-        requester,
-      );
-      this.sql.exec(
-        `INSERT OR IGNORE INTO sidekick_email_receipts
-           (sidekick_id, resend_email_id, run_id, outcome_code, payload_ref, resource_id, received_at)
-         VALUES (?, ?, ?, 'admitted', ?, ?, ?)`,
-        this.sidekickId, request.resendEmailId, run.runId, request.payloadRef, request.resourceId, request.receivedAt,
-      );
-      return { admitted: true, duplicate: run.reused, outcomeCode: "admitted", runId: run.runId };
-    });
-  }
-
   /** Minimal rail metadata for an already admitted receiving conversation. */
   readSkillSummary(input: SidekickSkillReadRequest): SidekickAttachment | null {
     const request = SidekickSkillReadRequestSchema.parse(input);
@@ -1509,6 +1458,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         instructions: definition.instructions,
         requiredCapabilities: definition.requiredCapabilities,
         expectedOutputs: definition.expectedOutputs,
+        ...(definition.failureNotificationConversationId === undefined ? {}
+          : { failureNotificationConversationId: definition.failureNotificationConversationId }),
         defaultBehavior: definition.defaultBehavior,
         recommendedPlugins: definition.recommendedPlugins,
         memoryTables: definition.memoryTables,
@@ -2242,7 +2193,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       definitionRevision: revision,
       since: iso(row.reviewed_at),
       until: new Date(now).toISOString(),
-      // Its own shared conversation, where everyone it is shared with reads.
+      // Nothing reads it, but a Worker from before the schema made it
+      // optional still requires it; the write stops a deploy later.
       announceTo: conversationIdOf({ parentId: this.sidekickId, substreamId: "0" }),
       finished: {
         completed: counts?.completed ?? 0, failed: counts?.failed ?? 0,
@@ -3084,13 +3036,17 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     ))?.state ?? null;
   }
 
-  /** Who may change a Sidekick (`sidekickManager`). */
+  /**
+   * Who may change a Sidekick (`sidekickManages`): its author, the person it
+   * runs as, an Organization one's owners and administrators, and everyone
+   * the Canvas whose Chat made it admits.
+   */
   private async assertManager(row: HostedSidekickRow, actor: AutomationActor): Promise<void> {
     if (!await this.managerAllows(row, actor)) throw forbidden();
   }
 
   private async managerAllows(row: HostedSidekickRow, actor: AutomationActor): Promise<boolean> {
-    return sidekickManagerAllows(row, actor);
+    return sidekickManages(row, actor, this.sql);
   }
 
   /** The management API's read check (`sidekickReader`). */
@@ -3135,7 +3091,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       name: row.title || "New Sidekick",
       loadable: row.loadable === 1,
       description: row.description,
-      emailAddress: acceptedDefinition !== null && sidekickReceivesEmail(acceptedDefinition) ? row.email_address : null,
       scope: row.scope,
       status: row.lifecycle,
       nextRunAt: iso(row.lifecycle === "active" ? row.next_run_at : null),
@@ -3144,6 +3099,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       lifecycle: row.lifecycle,
       authorUserId: row.author_user_id,
       runAsUserId: row.run_as_user_id,
+      madeInCanvasId: first(this.sql.exec<{ parent_id: string }>(
+        `SELECT parent_id FROM sidekick_conversation_attachments
+          WHERE automation_id = ? AND parent_kind = 'canvas' AND substream_id = '0' AND made_here = 1`, this.sidekickId,
+      ))?.parent_id ?? null,
       delegationAttention: row.delegation_attention_code === null ? null : {
         code: SidekickDelegationAttentionCodeSchema.parse(row.delegation_attention_code),
         message: SIDEKICK_DELEGATION_ATTENTION_MESSAGES[SidekickDelegationAttentionCodeSchema.parse(row.delegation_attention_code)],
@@ -3152,7 +3111,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       currentDefinitionRevision: row.current_definition_revision,
       acceptedDefinitionRevision: row.accepted_definition_revision,
       runnable: acceptedDefinition !== null
-        && (acceptedDefinition.triggers.length > 0 || sidekickReceivesEmail(acceptedDefinition)),
+        && (acceptedDefinition.triggers.length > 0),
       connectorBindings: JSON.parse(row.connector_bindings_json),
       recentRuns: this.runSummaries(20),
       audience: sharedWithUserIds.length > 0 ? "people" : row.scope === "workspace" ? "workspace" : "personal",
@@ -3225,6 +3184,19 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       this.sidekickId,
     ));
     if (readers) this.host.noteWriterReaders(this.sidekickId, readers.readers);
+    // A Canvas it is attached to shows its name, state and mark, on its card
+    // and in its menu. Read here for the reason above; the host pushes the
+    // Canvas list only when these differ from what it last saw, so a run's
+    // own touches cost nothing.
+    const face = first(this.sql.exec<{ face: string }>(
+      `SELECT directory.title || '|' || directory.lifecycle || '|' || COALESCE(directory.appearance_json, '') AS face
+         FROM automation_directory directory
+        WHERE directory.automation_id = ?1
+          AND EXISTS (SELECT 1 FROM sidekick_conversation_attachments
+                       WHERE automation_id = ?1 AND parent_kind = 'canvas' AND substream_id = '0')`,
+      this.sidekickId,
+    ));
+    if (face) this.host.noteAttachedSidekickFace(this.sidekickId, face.face);
   }
 }
 

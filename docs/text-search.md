@@ -175,7 +175,13 @@ WorkspaceDO migration 76 widens that trigger to the inputs of a resource's
 resource is an email) and adds triggers on `authorization_locations`, so an
 inventory that attaches or detaches a resource rewrites its rows. The inventory
 writer changes only the location rows that differ, so an unchanged inventory
-rewrites nothing.
+rewrites nothing. Migration 142 requeues existing generated resources because
+publisher authorship no longer grants Canvas-owned artifacts a separate user
+audience; their rows must be rewritten with conversation audiences even when no
+content changed. Standalone artifacts retain uploader ownership.
+`resourceCanvasState` supplies the same ownership and archive facts to canonical
+reads and the resource projection. Archiving queues the owned resources, and the
+projection withdraws their rows rather than indexing retained archived content.
 Duplicate description keys use the final occurrence, matching `JSON.parse`.
 Content hashes conservatively invalidate same-reference body replacements,
 including the one-time hash backfill during extraction.
@@ -443,7 +449,7 @@ migration 47 a workspace's resources when that object does, so a conversation
 nobody opens and no alarm reaches keeps rows with no display, which search omits
 with no error and no dead letter. The patch job cannot repair those rows either,
 because its filter requires the `substream_id` they lack. The forcing function
-is the migration tracker's **Force a migration** for both classes, under
+is the forced migration CLI for both active classes, under
 Operations below; until it has run in a region, "not yet rewritten" and "never
 rewritten" look the same from search. Edited or deleted text stays findable by admitted readers until its
 rewrite or watermark lands, typically seconds. The team accepted this window,
@@ -523,6 +529,11 @@ scroll and its pagination footer.
 The cursor follows [Turbopuffer attribute pagination](https://turbopuffer.com/docs/query#pagination).
 
 ## Testing
+
+`test-workers/search-audience.test.ts` proves a Canvas-owned artifact has only its
+conversation audience, archive advances its search revision, and preparation
+withdraws all search documents. `test/search-audience.test.ts` distinguishes
+Canvas ownership from attaching a standalone artifact.
 
 `apps/api/test-workers/resource-update-cost.test.ts` exercises the populated v42
 upgrade, each search input, duplicate description keys against canonical extraction,
@@ -637,21 +648,17 @@ failures and follow its configured retries and dead-letter handling. Once a job
 reaches the DLQ its original dispatch intent has already been cleared. Recovery
 requires redriving the dead-letter reference; a routine wake does not recreate a
 completed migration's backfill INSERT. New source edits produce new intents. Do
-not discard DLQ messages or assume a migration report repairs their contents.
+not discard DLQ messages or assume a successful migration receipt repairs their contents.
 
 Deploy both API Workers with their `BROWSER` binding and production Turbopuffer
 secret before running backfill. The 512/128-token policy ships with the code.
 `pnpm env:sync` forwards the development key from `.env.local`; it never copies the production key into
-development Workers. Use the existing migration tracker's **Force a
-migration** action for WorkspaceDO and AgentLoopDO in each region to wake
-stored objects; an untouched object does not migrate just because code deployed.
-See [Durable Object migration tracking](durable-object-migration-tracking.md).
-Verify migration reports, regional activity Queue drain and dead letters, then
-perform member searches and revocation checks. A current schema report proves
-schema application, not successful indexing. For this change the forced wake is
-what turns the display rewrite from lazy into complete: a AgentLoopDO that
-never wakes never requeues its turns, and its conversation stays out of search.
-These deployment and fleet-backfill steps have not been run for this change.
+development Workers. Use the [forced migration CLI](forced-migrations.md#operations) after deploying:
+run separate `--class=WorkspaceDO` and `--class=AgentLoopDO` passes in each region.
+Inspect `migration_command_applied` receipts for schema-version shortfalls,
+`migration_command_failed` logs, command queue drain, and command dead letters.
+Then verify the regional activity queue and its dead letters. Queue drain alone
+cannot prove every object completed its backfill.
 
 Browser Run captures Markdown asynchronously from links present in a canonical
 participant turn, including completed web fetch records. Link text and URL are
@@ -705,7 +712,23 @@ the same URL is mentioned again. Missing extraction/capture work remains observa
 through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
+## Fleet migration
+
+For a rollout requiring dormant organizations to apply a migration, deploy the
+API first, then use the [forced migration CLI](forced-migrations.md#operations)
+with `--class=WorkspaceDO`. Constructors still apply migrations on ordinary
+wakeups; the CLI provides the eager fleet pass without the retired tracker.
+
 ## Changelog
+
+### 2026-11-09 — Withdraw archived Canvas artifacts from resource search
+
+Canvas-owned artifacts have no publisher group independent of their Canvas.
+Canonical reads and the resource projection share `resourceCanvasState`, so a
+retained archive cannot stay searchable through a publisher or another attachment.
+Archive advances the owned resources' search revisions and queues withdrawal;
+migration 142 refreshes older audiences. Standalone generated artifacts keep their
+uploader group, since attaching one elsewhere does not transfer its ownership.
 
 ### 2026-11-09 — Search groups follow a Canvas's and a Sidekick's own audiences
 

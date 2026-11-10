@@ -19,12 +19,12 @@ and the map points at it rather than absorbing it.
 apps/
   desktop/                 Electron main, preload, React renderer, packaging
   api/                     Hono Worker, routes, services, DOs, Workflows, Queue
-  ace/                     Access-protected internal administration Worker
 packages/
   ui/                      Shared collaboration components, display helpers, styles and appearance
   contracts/               Zod API, WebSocket, agent, connector contracts
   db/                      D1 migrations, repositories, region-aware queries
   agent-harness/           Bind/OpenRouter adapter, prompts, skills, classifiers, tools
+  bind/                    Portable agent loop, model routing, and tool and skill primitives
   connectors/              Core adapters and credential-plugin descriptors
 docs/                      Product, architecture, security, setup, runbooks
 ```
@@ -43,8 +43,6 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/workflows`, `apps/api/src/queues` | Generic orchestration and idempotent regional consumers. |
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
 | `apps/api/src/lib/rpc-contracts.ts` | The parsers every RPC bridge argument passes through. |
-| `apps/migration-tracker` | The private operator Worker behind `migrations.internal.rallywith.ai`: the Durable Object migration inventory, its hourly account sweep, the forced-migration fan-out onto each region's command queue, and the Cloudflare Access boundary in front of all of it. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
-| `apps/ace` | The private Hono operator Worker behind `ace.internal.rallywith.ai`: D1-assisted Flagship product targeting, the shared-to-regional Queue fan-out, and the component library future internal pages extend. See [`ace.md`](ace.md). |
 | `packages/ui` | Shared collaboration presentation and browser-safe display/theme helpers, consumed by desktop and prepared for the browser host in #825. Owned by [`shared-ui.md`](shared-ui.md) and [`theming.md`](theming.md). |
 | `packages/contracts` | Every runtime contract both ends share. A type that only exists at build time is not one of them. |
 | `packages/db` | Migrations and region-aware repositories. The migrations are authoritative for the schema. |
@@ -98,10 +96,9 @@ docs/                      Product, architecture, security, setup, runbooks
 3. **Shared packages** contain runtime-validated contracts, database schema and
    repositories, connector adapters, agent-loop code, UI primitives, and test
    fixtures. Business rules live here or in services, never in route handlers.
-4. **Internal operator Workers** sit behind Cloudflare Access and verify the
-   signed Access assertion again in application code. Ace manages product flags;
-   the migration tracker manages Durable Object schema state. Neither is a
-   privileged route inside the customer API.
+4. **The engineering MCP** sits behind Cloudflare Access and verifies its
+   assertions before exposing production tools. Usage-plan changes and
+   retirement call audited regional methods; fleet migrations use the CLI.
 
 ### Request and event flow
 
@@ -315,8 +312,8 @@ connector authority, and resource metadata. The provider supplies isolation and 
 filesystem/lifecycle primitives, not Rally's receipts or authorization. See
 [`terminal-workspaces.md`](terminal-workspaces.md).
 
-The production entry point adapts `@juno-ai/bind` 15.0.0 to Rally's OpenRouter
-transport and durable ports. Bind owns transcript healing, plugin and skill
+The production entry point adapts the local `packages/bind` workspace package
+to Rally's OpenRouter transport and durable ports. Bind owns transcript healing, plugin and skill
 activation, turn/tool iteration, completion-defect recovery, epoch-aware
 streaming, and classified route traversal. Rally owns authorization, regional
 persistence, admission, accounting, and terminal state.
@@ -399,7 +396,7 @@ parent hosted in `WorkspaceDO` beside the Canvases: its substream `0` is the
 shared conversation where everyone it is shared with asks it for runs and a
 manager edits it through the wizard, and every run is a child substream under
 it with a row in `0`. Its rows hold the definition revisions, the
-lifecycle, the schedules, the runs, and the inbound-email receipts; a run reads
+lifecycle, the schedules, the runs; a run reads
 its definition from the parent by revision and reports its state through the
 same effect pipeline every conversation uses.
 [`automation-lifecycle.md`](automation-lifecycle.md) owns all of it;
@@ -701,11 +698,10 @@ Organization's Threads (the stored `channels`). The pivot removed both; the
 server half (`space-service.ts`, `space-bootstrap-service.ts`,
 `workspace-space-storage.ts`, `workspace-space-protocol.ts`,
 `system-channels.ts`, `channel-rails.ts` and the WorkspaceDO Space, rail and
-directory RPCs) is deleted, so onboarding seats a new member nowhere. What
-survives: the `spaces`, `space_viewers`, `channels`, `channel_viewers` and
-`parent_*` tables, kept by WorkspaceDO migration 139 until `retire_threads` has
-run in every Organization ([`workspace-retirement.md`](workspace-retirement.md));
-the shipped migration statements, moved byte for byte to
+directory RPCs) is deleted, so onboarding seats a new member nowhere, and
+WorkspaceDO migration 141 dropped the `spaces`, `channels` and `parent_*`
+tables only they used ([`workspace-retirement.md`](workspace-retirement.md)).
+What survives: the shipped migration statements, moved byte for byte to
 `retired-workspace-schema.ts`; the `space_default`, `space_bootstrap` and
 `space_intent_resume` Queue tombstones in `activity-consumer.ts`; and the
 Sidekick list SQL, moved unchanged to `sidekick-directory-sql.ts`. Its
@@ -758,9 +754,9 @@ lifecycle events, historical Iceberg snapshots, 30 days of Durable Object
 point-in-time recovery), so it is not a completed physical erasure. What
 survives: `meeting-notes-retirement.ts` and `applyMeetingRetirementMigrations`,
 which every WorkspaceDO cold start runs; `retired_meeting_resources`, whose
-content-free ids still fence stale writers out of search and publication; and
-four internal RPCs (`retiredMeetingInventory`, `purgeMeetingSearchAuthorization`,
-`purgeMeetingNoteObjects`, `finalizeMeetingRetirement`) that nothing calls.
+content-free ids still fence stale writers out of search and publication. The
+four operator RPCs that drove the cleanup were deleted once every object had
+reached 58.
 Migration 58 drops the feature tables only once its guard finds R2 and search
 cleanup complete, and is committed apart from 57 because the guard's rollback
 would otherwise undo the retirement. The telemetry, analytics and inference
@@ -793,8 +789,8 @@ the loose schemas that read them ignore; the **can impersonate** storage and
 RPCs, now with no producer ([`impersonation.md`](impersonation.md)); and Ace's
 operator credential under its stored names `DEMO_OPERATORS_JSON` and role
 `demos` ([`rally-rebrand-inventory.md`](rally-rebrand-inventory.md)). A demo
-Organization is retired like any other; the deploy order is
-[`workspace-retirement.md`](workspace-retirement.md#the-deploy-order)'s. The
+Organization is retired like any other; how the demo Organizations were is
+in [`workspace-retirement.md`](workspace-retirement.md#operations). The
 demo document's changelog records why seeded history went through the
 production paths rather than rows made to look like it.
 
@@ -818,9 +814,36 @@ kept as documents; changelog entries that cite one name it as text.
 - `private-access-security-audit-2026-09-09.md`: the early-access security
   audit of PR #637 and its verdict to hold the public launch until admission
   limits and bot protection existed. Cited by
-  [`private-access.md`](private-access.md).
+  `private-access.md` (private-access management was removed).
 
 ## Changelog
+
+### 2026-11-10 — Retire internal administration apps
+
+Removed ACE and the migration tracker at the product owner's request.
+The engineering MCP keeps its own Access verifier and policy; eager migration
+passes use the operator CLI for WorkspaceDO and AgentLoopDO.
+
+### 2026-11-09 — The meeting-cleanup RPCs are deleted
+
+**What changed:** `retiredMeetingInventory`, `purgeMeetingSearchAuthorization`,
+`purgeMeetingNoteObjects` and `finalizeMeetingRetirement`, with their
+retirement-gate permits and `purgeRetiredMeetingObjects`, were deleted. The
+migration-57 shim and the migration-58 guard stay, and their workers proof now
+drives them through cold starts.
+
+**Why:** the production checkpoint recorded every WorkspaceDO at 58 or later,
+so the operator cleanup they drove is finished and nothing calls them.
+
+**Considered and rejected:** deleting the 57 shim and 58 guard too; they run on
+every cold start and an object restored from before 58 still needs them.
+
+**Consequences:** the 57 hold is terminal. An object found there again has no
+operator path to clean up and misses every later migration, so WorkspaceDO
+logs `workspace_meeting_retirement_held` on each of its wakes; clearing it
+needs the RPCs back from history.
+
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-11-09 — The product is Canvases and Sidekicks; Threads, Channels, Breakouts, the iOS client and demos are deleted
 

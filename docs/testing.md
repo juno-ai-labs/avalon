@@ -30,6 +30,7 @@ once and passes on a rerun.
 | `apps/api/test/**/*.test.ts` | `pnpm --filter @rally/api exec vitest run` | Node. Services and route handlers with bindings supplied by the typed builders, and real SQL through `node:sqlite`. `cloudflare:workers` is aliased to `test/helpers/cloudflare-workers.ts`, which stands in for the `DurableObject` base class and the `tracing` custom-span API — the stand-in keeps their contracts but nests no spans and exports nothing, so anything depending on either belongs a rung up. |
 | `apps/desktop/src/{renderer,main,common}/**/*.test.{ts,tsx}` | `pnpm --filter @rally/desktop test` | Two projects. `renderer` runs on jsdom; `main` and `common` run on node, because a main-process module that reaches for `document` should fail rather than find a window Electron's main process does not have. A main or common test that genuinely needs a DOM opts back in with a `// @vitest-environment jsdom` docblock. Asserts on the DOM, which is not the same as looking at the screen — see [verifying visible changes](../AGENTS.md#verifying-visible-changes). Console output is buffered and printed only for failing tests (`silent: 'passed-only'`), because the renderer's [performance traces](performance-tracing.md) print on every create, open, and send; a test that asserts on a log line spies on `console` itself and is unaffected. |
 | `packages/*/src/**/*.test.ts` | `pnpm --filter @rally/<pkg> test` | Node. Pure contract, harness, and connector logic. |
+| `packages/bind/src/**/__tests__/*.test.ts` | `pnpm --filter @juno-ai/bind test` | Node. Bind's loop, routing, checkpoint, and tool mechanics against in-process fixtures. |
 | `packages/db/test/**/*.test.ts` | `pnpm --filter @rally/db test` | Node. The [local baseline](d1-baseline-migrations.md), the development seed, and the repository queries over a migrated database. There is no per-migration suite: every migration is at or below the baseline boundary and immutable, and the manifest digest fails if one is edited or inserted. A *new* migration is tested through the baseline equivalence check and by whatever service test covers the behaviour it enables. |
 | `apps/site/test/**/*.test.ts`, `apps/release-retention/test/**/*.test.ts` | `pnpm --filter @rally/site test`, `pnpm --filter @rally/release-retention test` | Node. The public site Worker and the release-retention Worker, each with its own R2 builder. |
 | `scripts/*.test.mjs` | `pnpm test:scripts` | `node --test`. The repository's own tooling and the ESLint boundary rules. |
@@ -149,7 +150,7 @@ declares fails here. Assert by reading rows back, not by trusting the write.
 ### 3. Node with a capability double
 
 For the one collaborator that genuinely cannot run: a binding with no local
-implementation (`AI`, `FLAGS` — see
+implementation (`AI` — see
 [what cannot be verified in a sandbox](dev-environment.md#what-cannot-be-verified-in-a-sandbox)),
 a provider's HTTP API, a clock, a source of randomness. Double that collaborator
 and nothing else, and type it per
@@ -214,20 +215,6 @@ scripts that plan, sign, notarize and publish a build. Test that logic as code,
 through its own functions, never by asserting where a workflow calls it.
 
 ## Timeouts and waiting
-
-**Every new or edited `vi.waitFor(…)` and `expect.poll(…)` passes an explicit
-`timeout`.** The number is the author's to choose, but it has to be chosen: both
-default to one second with a 50ms interval, which is sized for nothing in
-particular. Most existing `vi.waitFor` sites still ride that default — the rule
-is binding for the code you touch, and the backlog converts as files are
-edited, not in one sweep.
-`packages/agent-harness`, `packages/connectors`, `apps/ace` and `apps/site` raise
-the `expect.poll` default in their configs; `apps/api`, `apps/desktop` and
-`packages/db` do not. No config raises `vi.waitFor` anywhere, because Vitest
-exposes `expect.poll.{timeout,interval}` and no knob at all for `vi.waitFor` —
-the call site is the only place its budget can live. The desktop renderer's
-`configure({ asyncUtilTimeout: 5_000 })` reaches @testing-library's `waitFor`
-only, and only in the `renderer` project.
 
 **The poll's budget sits comfortably below the enclosing test's.** That ordering
 is the whole reason to write a poll: it fails with `expected 1 to be +0` and a
@@ -492,31 +479,6 @@ triggers on `pull_request` alone, so a
 branch with no pull request open runs nothing; since a pull request here is
 opened ready for review rather than as a draft, that is most of a change's life.
 
-- **Documentation-only changes: run the documentation gates, not the suites.** No
-  suite covers prose, but two things do. `pnpm docs:check` scans every file under
-  `docs/` for a heading a rebase truncated and for a lakehouse table reference
-  that does not match its manifest in `config/`, and only the second of those
-  runs in CI — through `pnpm test:scripts` — so a documentation change that
-  skips `docs:check` is one whose headings nothing checked.
-  And one document is an executable contract, read off disk and checked against
-  what the code produces: `docs/workstream-email-addresses.md` by
-  `apps/api/test/workstream-email-address.test.ts`. Editing it runs
-  its test too. For a document not on
-  that list,
-  `grep -rn 'docs/<file>.md' --include='*.test.*' .` finds the tests that name
-  it; most hits only cite a document in a comment, and those need nothing.
-  A change inside a source file is not a documentation change even when it
-  touches only comments: `// @vitest-environment jsdom` and its neighbours are
-  directives, and they decide how the file runs.
-- **Ordinary changes: run the tests that cover what you touched.** One file, one
-  test name, or the one package's suite. Add a second package only when the
-  change crosses into it. Fixing a flake is the exception:
-  [the flaky-test rule](../AGENTS.md#flaky-tests) wants the full run, because
-  cross-file interference is what makes a flake.
-- **Large changes: run `pnpm test` once** before calling it done — every package,
-  not the whole suite of the one package you were in, which the bullet above
-  already allows. It catches a suite you had no reason to think about.
-
   The trigger is roughly 20 files, and files in `docs/` do not count toward it.
   The number is the team's and it is approximate, because a file count is a weak
   proxy for what it stands in for: three files in `packages/contracts` or the
@@ -562,7 +524,6 @@ tool built for that shape:
 | Which rule wins the cascade for an element: a state that hides a control, a phone rule that one later in the file overrides | A renderer test that mounts the real stylesheet with `mountAppStylesheet({ width, height })` from `apps/desktop/src/renderer/test/app-stylesheet.ts`, renders the component, and reads `getComputedStyle`. jsdom runs specificity and source order, and the helper resolves each media block for that window size. It still lays nothing out and computes no container query or pseudo-element, so position, size and legibility stay a real-window check. `workspace-settings.test.tsx`'s one-close-on-a-phone test is the pattern. |
 | A config or deploy setting: a route list, a header file, a workflow step | Not testable, and not to be tested; the deploy is the test. See [Do not test CI or deployment configuration](#do-not-test-ci-or-deployment-configuration). |
 | A flag list or constant must match across packages | Import the constant from the package that owns it and assert against it, or derive the second list from the first so there is nothing to match. Never scan a source file for the spelling. |
-| A doc table must match the code | Allowed only when the test executes the code side. `apps/api/test/workstream-email-address.test.ts` reads the document's frozen vocabulary and compares it to the lists `workstream-email-address.ts` exports; a test that reads the document and a source file and compares two strings is the scrape above with a second file. A page scan is allowed on the same terms: `apps/site/test/site.test.ts` checks the landing page's tracked link ids against `SITE_ACTION_LINKS` and `siteActionForLink`, which the code resolves at runtime. |
 | A mock was called | Assert the state the call produced, or the argument it was called with. `toHaveBeenCalled()` alone, or `mockResolvedValue(row)` followed by `expect(result).toEqual(row)`, asserts that Vitest works. |
 | A constant has its value | Nothing. `expect(LIMIT).toBe(50)` is the constant written twice. A test covers what the code _does_ with the constant. |
 
@@ -797,14 +758,18 @@ arrive when it says so.
 ## Letting a run reach the model
 
 **Decide deliberately whether your test lets a run get as far as inference, and
-say which you chose.** The workers suite has no provider double and
-`wrangler.test.jsonc` carries a placeholder `OPENROUTER_API_KEY`, so a run that
-reaches the model makes a real outbound request. That request cannot succeed
-here — and it does not fail quickly either. The harness spends an establishment
-timeout, then a transport retry, then each configured fallback model before it
-gives up, which is far longer than a test's budget. The run stays `executing`,
-and the test waiting on it times out on an assertion that has nothing to do with
-what broke.
+say which you chose.** `wrangler.test.jsonc` explicitly disables primary,
+smarter, and faster model groups with empty strings. A run without an explicit
+route fails with `agent_model_disabled:<variable>` before provider I/O. Tests
+that reach inference select a synthetic route and install the scripted provider
+double; the placeholder `OPENROUTER_API_KEY` alone must not arm real requests.
+Without that guard, an accidental call can spend establishment timeouts,
+transport retries, and fallback attempts before giving up, leaving an unrelated
+assertion waiting on an `executing` run.
+
+Successful Sidekick activation scripts can use `withSuccessfulSidekickOutcome`
+from `test-workers/helpers/openrouter-double.ts`; outcome-specific tests script
+the declaration themselves.
 
 That failure is worse than it sounds, because the passing case is not
 necessarily better. A notification suite, since deleted in plan step C-2, used to start an opening
@@ -844,10 +809,12 @@ create-effects case can invoke the real product `initialize` mutation
 without the endpoint's later execution-receipt activation. An elicitation-answer
 case can use a settled parent-run row when run execution is not the subject. If
 the run really has to complete, install the double, and give the run a model to
-route to: `wrangler.test.jsonc` deliberately leaves `OPENROUTER_PRIMARY_MODEL`
-unset so a run nobody meant to reach inference cannot, and a file that installs
+route to. A file that installs
 the double calls `useSelectedModel()` from `./helpers/selected-model` at file
-scope so its runs do not die on an empty route plan before they reach it.
+scope. It selects one synthetic model for both primary and smarter model groups, with
+an explicitly empty fallback list, and restores the variables after each test. Deployment defaults
+now supply a route even when model variables are unset; the explicit override
+keeps a scripted failure from falling through to a successful second reply.
 
 ```ts
 import { useOpenRouterDouble } from "./helpers/openrouter-double";

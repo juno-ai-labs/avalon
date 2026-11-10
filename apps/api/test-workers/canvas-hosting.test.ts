@@ -19,6 +19,7 @@ import { uuidToBase58 } from "@rally/contracts/uuid-base58";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { ScopeInvitationStorage } from "../src/durable-objects/scope-invitation-storage";
+import { canvasAppearanceReporter, canvasSidebarRows } from "../src/durable-objects/hosted-canvas";
 import { decryptString } from "../src/lib/crypto";
 import { claimScopeInvitations } from "../src/services/scope-invitation-claims";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
@@ -82,6 +83,40 @@ beforeEach(async () => {
 });
 
 describe("who can open a Canvas", () => {
+  it("archives for everyone, removes the active row and retains the Canvas on an idempotent retry", async () => {
+    await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) });
+    expect(await opens(member(CREATOR))).toBe(false);
+    expect(await opens({ userId: ADMIN, actorRole: "admin" })).toBe(false);
+    expect(await workspace().authority({ workspaceId: WORKSPACE_ID, parentId: CANVAS_ID }))
+      .toEqual({ exists: true, authorityGeneration: 1, archived: true });
+    expect(await workspace().hostedConversationAuthorizationFacts({ workspaceId: WORKSPACE_ID, parentId: CANVAS_ID,
+      userId: CREATOR, substreamIds: [] })).toMatchObject({ kind: "canvas", exists: false });
+    const stored = await runInDurableObject(workspace(), (_instance, state) => ({
+      retained: state.storage.sql.exec<{ title: string; archived_at: number }>(
+        "SELECT title, archived_at FROM canvas_directory WHERE canvas_id = ?", CANVAS_ID).toArray()[0]!,
+      listed: canvasSidebarRows(state.storage.sql, { userId: CREATOR, member: true }, new Map(), 10, canvasAppearanceReporter(env)).map((row) => row.id),
+    }));
+    expect(stored.retained.title).toBe("Launch plan");
+    expect(stored.retained.archived_at).toBeGreaterThan(0);
+    expect(stored.listed).toEqual([]);
+    await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) });
+    const retried = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ archived_at: number }>(
+      "SELECT archived_at FROM canvas_directory WHERE canvas_id = ?", CANVAS_ID).toArray()[0]!.archived_at);
+    expect(retried).toBe(stored.retained.archived_at);
+    expect(await workspace().canvasNoteArtifact({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, resourceId: crypto.randomUUID(),
+      editor: { kind: "rally", id: null } })).toEqual({ noted: false });
+  });
+
+  it("refuses archive for a participant who cannot manage the Canvas", async () => {
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
+      update: { visibility: "participants", userIds: [MEMBER] } });
+    await expect(runInDurableObject(workspace(), (instance: WorkspaceDO) => instance.canvasArchive({
+      workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(MEMBER),
+    }))).rejects.toMatchObject({ code: "canvas_archive_forbidden" });
+    expect(await opens(member(CREATOR))).toBe(true);
+    expect(await opens(member(MEMBER))).toBe(true);
+  });
+
   it("opens a new Canvas to its creator alone, with no artifacts", async () => {
     const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) });
     expect(detail).toMatchObject({ id: CANVAS_ID, title: "Launch plan", visibility: "creator", participantUserIds: [],

@@ -278,6 +278,45 @@ Questions from agent exchanges use replies instead of participant forms. This
 guidance is present in every Sidekick authoring execution, so requests arriving
 at a later Bind boundary during a participant-started run follow the same rule.
 
+### In a Canvas's Chat
+
+A Canvas's Chat (`parentKind: canvas`, substream `"0"`, a user principal) gets
+the plugin with `canvasChat` set, which changes three tools and adds one. The
+Canvas every one of them acts on is the loop's own (`canvasChatId`); none has a
+Canvas argument, so a Chat makes and archives Sidekicks for its own Canvas and
+for no other.
+
+| Tool | In a Canvas's Chat |
+| --- | --- |
+| `create_sidekick({ scope })` | Makes the Sidekick attached to this Canvas (`createAutomation` with `madeInCanvasId`) and returns `{ sidekickId, agentId, attachedToCanvasId }`. Always attached; there is no unattached create here. |
+| `sidekicks_list({})` | Returns the Sidekicks this Canvas made: `{ sidekickId, name, status, canEdit, agentId }`, read from `canvasContext`. A Sidekick only attached here is in `CANVAS CONTEXT` and not in this list. |
+| `archive_sidekick({ sidekick })` | Only here. `sidekick` is a `sidekickId` from `sidekicks_list` or an exact name, matched among the Sidekicks this Canvas made. Returns `{ sidekickId, name, archived: true }`. `write`. |
+| `send_message` to a wizard | Unchanged in shape. Whoever is talking may message the wizard of a Sidekick this Canvas made, because everyone in the Canvas manages it. |
+
+The plugin's message gains `CANVAS_SIDEKICK_GUIDANCE` there: a Sidekick made
+here is attached to this Canvas, what its runs may do, and that recurring
+updates write rows with `write_artifact_data` rather than republishing, since
+runs overlap. It names the sequence: build the artifact as a site that stores
+data, `create_sidekick`, then tell the wizard the artifact's `resourceId`, its
+tables and what each run writes.
+
+Refusals `archive_sidekick` adds, each with the names this Canvas made in
+`details.available`:
+
+| `code` | Sentence |
+| --- | --- |
+| `sidekick_archive_not_made_here` | No Sidekick this Canvas made has that id or exact name. Use sidekicks_list to see the ones it made; a Sidekick made elsewhere is archived from its own page. |
+| `sidekick_archive_ambiguous` | Several Sidekicks this Canvas made have that name. Pass the sidekickId from sidekicks_list instead. |
+
+**Who may message a wizard is who manages the Sidekick**
+(`authorizeWizardContact`, `personManagesSidekick`). Such a person is not asked to
+also be someone the Sidekick is shared with: everyone in a Canvas manages a
+Sidekick that Canvas made without being able to open it
+([`automation-lifecycle.md`](automation-lifecycle.md#a-sidekick-made-in-a-canvas)).
+A non-manager is refused `sidekick_contact_forbidden` when they cannot open it
+and `sidekick_edit_requires_manager` when they can, as before.
+`sidekick_attach_resource` still requires opening it.
+
 ### A run asking its wizard for a change
 
 A Sidekick run child (`automationRun` set) also gets `request_sidekick_change`
@@ -409,6 +448,33 @@ owned Sidekick contact, the refusal of an inaccessible personal Sidekick, and a
 guest's grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-11-10 — A Canvas's Chat makes and archives its own Sidekicks, and contact is decided by managing
+
+**What changed:** In a Canvas's Chat `create_sidekick` attaches what it makes
+to that Canvas, `sidekicks_list` returns the Sidekicks the Canvas made, and
+`archive_sidekick` is offered. Messaging a wizard requires managing the
+Sidekick, and no longer also being able to open it.
+
+**Why:** So a Canvas can set up the Sidekick that keeps it current, and anyone
+in the Canvas can change or stop it. The contact rule had two checks, open and
+manage; a participant of the Canvas manages a Canvas-made Sidekick without
+being someone it is shared with, so the open check refused the people the
+feature is for. The design is
+[`automation-lifecycle.md`](automation-lifecycle.md#2026-11-10--a-sidekicks-canvas-attachment-is-the-publish-grant-and-a-canvas-makes-sidekicks-it-steers)'s.
+
+**Considered and rejected:** A Canvas argument on any of these tools, which
+would let a Chat reach another Canvas. Attach and detach tools, deferred by the
+owner. Listing every attached Sidekick in `sidekicks_list`, which would offer
+the model wizards the person may not manage.
+
+**Consequences:** Every other manager already opens their Sidekick, so the
+contact rule is unchanged for them. A wizard turn a Canvas participant starts
+runs with that participant as its principal, and saves under their management
+authority. A new tool in this plugin that acts on a Canvas takes it from
+`canvasChatId`, never from the model.
+
+Design: `docs/PRDs/2026-11-10_sidekicks-attached-to-canvases/prd.md`.
 
 ### 2026-11-02 — A Sidekick run asks its own wizard for a change
 

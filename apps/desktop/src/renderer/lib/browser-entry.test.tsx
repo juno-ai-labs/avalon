@@ -869,3 +869,56 @@ it('says a retired Breakout link names something gone, and says nothing of the k
     expect(screen.queryByText(retired)).not.toBeInTheDocument();
   } finally { view.unmount(); }
 });
+
+
+it('adopts a password cookie session and shows a failed password without losing the email', async () => {
+  let attempts = 0;
+  const submitted: unknown[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const path = input.split('/browser')[1];
+    if (path === '/password') {
+      submitted.push(JSON.parse(String(init?.body)));
+      if (++attempts === 1) return Response.json({ error: { message: 'The email or password is incorrect.' } }, { status: 401 });
+      return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    }
+    if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
+    return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+  }));
+  render(<BrowserEntry />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign in with password' }));
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'Guest@Example.test' } });
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'incorrect' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+  await screen.findByText('The email or password is incorrect.');
+  fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+  expect(screen.getByLabelText('Email')).toHaveValue('Guest@Example.test');
+  expect(screen.getByLabelText('Password')).toHaveValue('');
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct password ' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+  await screen.findByText('Shared team');
+  expect(submitted).toEqual([
+    { email: 'Guest@Example.test', password: 'incorrect' },
+    { email: 'Guest@Example.test', password: 'correct password ' },
+  ]);
+  expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+});
+
+
+it('shows organization discovery failure after password login unmounts the form', async () => {
+  let finishDiscovery!: (response: Response) => void;
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1];
+    if (path === '/password') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    if (path === '/workspaces') return new Promise<Response>((resolve) => { finishDiscovery = resolve; });
+    return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+  }));
+  render(<BrowserEntry />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign in with password' }));
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'guest@example.test' } });
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct password' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+  await screen.findByText('Loading your organizations…');
+  expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+  await act(async () => { finishDiscovery(Response.json({ error: { message: 'Organization discovery unavailable' } }, { status: 503 })); });
+  expect(await screen.findByText('Organization discovery unavailable')).toBeVisible();
+});

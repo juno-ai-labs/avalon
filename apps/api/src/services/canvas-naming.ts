@@ -20,7 +20,7 @@ const titleJsonSchema = {
 
 /**
  * A Canvas's title from the message that opened its Chat, on the
- * `workstream_naming` role with reasoning off, the way a Thread was named
+ * `resource_naming` role with reasoning off, the way a Thread was named
  * from its opening message. `null` when there is no model or it answers
  * nothing usable: the Canvas then keeps the title it has. Never throws.
  */
@@ -36,7 +36,7 @@ export async function canvasTitleFromOpening(env: Env, input: {
   const messages = renderCanvasTitleMessages(input.opening);
   try {
     const { result } = await runStructuredInference(env, {
-      role: "workstream_naming",
+      role: "resource_naming",
       activity: "channel_naming",
       context: { workspaceId: input.workspaceId, workstreamId: input.canvasId, ...(input.userId ? { userId: input.userId } : {}) },
       messages,

@@ -789,8 +789,7 @@ clarity; an omitted attachment must not block an authorized read.
 
 # Choose triggers and test the method
 Use an empty triggers array for reusable knowledge; do not add manual or scheduled
-triggers to make it valid. Use inbound_email only when the person wants email to
-start work. For work after an external change, load polling-for-events and follow
+triggers to make it valid. For work after an external change, load polling-for-events and follow
 its event-first setup and resource-registration procedure.
 
 For new or changed executable work, test the workflow with available reads or
@@ -829,6 +828,12 @@ A run that has nothing to report ends with one short line;
 never instruct a run to end with no text.
 Name every other result destination and the action that delivers it: a run must be
 told to send to an inbox, a Slack conversation, a DM or a document.
+When an additional failure notice in Rally is required, attach its Canvas with
+conversation_attach (the Sidekick's own conversation and its written Canvases are already in scope),
+then save its canonical conversation_list id in failureNotificationConversationId.
+Use null when the run's reply on its shared Sidekick conversation is sufficient.
+Refer to that configured destination instead of embedding a separate hard-coded "home" id.
+A destination named in prose is not authorization; inaccessible configured destinations are refused.
 
 The wizard, runs and background agents share one Terminal sandbox; other Sidekicks
 and the conversation that asked for this one have separate sandboxes. Eligible delegates can use

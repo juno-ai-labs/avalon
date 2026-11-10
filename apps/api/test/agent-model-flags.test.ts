@@ -1,85 +1,29 @@
 import "../../../tests/isolated-region";
 import type { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import type { AgentModelRouting } from "../src/services/agent-model-flags";
-import {
-  AGENT_MODEL_FLAG_KEYS,
-  AGENT_MODEL_ROLES,
-  agentModelOverride,
-  conversationModelRole,
-  defaultAgentModelRouting,
-  resolveAgentModelRouting,
-  resolveNewWorkstreamModelRouting,
-  conversationModelContext,
-  resolveWorkstreamModelRouting,
-  scheduledWorkstreamModel,
+import { agentModelOverride, conversationModelRole, defaultAgentModelRouting, resolveAgentModelRouting,
+  resolveNewWorkstreamModelRouting, conversationModelContext, resolveWorkstreamModelRouting, scheduledWorkstreamModel,
 } from "../src/services/agent-model-flags";
-import type * as FlagTargetingModule from "../src/services/flag-targeting-attributes";
-import type { FlagTargetingAttributes } from "../src/services/flag-targeting-attributes";
-import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
-import {
-  seedWorkstreamObjectRoot,
-  testSubstreamAgentsBinding,
-  testWorkstreamObjectStore,
-} from "./helpers/durable-authority";
+import { createTestEnv } from "./helpers/cloudflare-test";
+import { seedWorkstreamObjectRoot, testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 
-/**
- * Lets one case serve attributes the real loader would never produce — a key
- * that collides with the run's identity — while every other case keeps the
- * loader that reads the seeded database.
- */
-const servedAttributes = vi.hoisted(() => ({
-  value: null as FlagTargetingAttributes | null,
-  subjects: [] as Array<Record<string, string | undefined>>,
-}));
-vi.mock("../src/services/flag-targeting-attributes", async (importOriginal) => {
-  const actual = await importOriginal<typeof FlagTargetingModule>();
-  return {
-    ...actual,
-    loadFlagTargetingAttributes: async (env: Env, subject: Parameters<typeof actual.loadFlagTargetingAttributes>[1]) => {
-      servedAttributes.subjects.push({ ...subject });
-      return servedAttributes.value ?? actual.loadFlagTargetingAttributes(env, subject);
-    },
-  };
-});
-
-// APP_ENV production so the unreachable-binding path warns rather than staying
-// quiet the way it does in development.
-const baseEnv = createTestEnv({
-  AVALON_REGION: "global",
-  APP_ENV: "production",
-  LOG_LEVEL: "error",
+const baseEnv = createTestEnv({ APP_ENV: "production", AVALON_REGION: "global", LOG_LEVEL: "error",
   OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
-  OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash, anthropic/claude-sonnet-4.5",
-  OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
-  OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
+  OPENROUTER_FALLBACK_MODEL: "google/gemini-3.6-flash, anthropic/claude-sonnet-4.5",
+  OPENROUTER_FASTER_MODEL: "google/gemini-2.5-flash-lite",
 });
-
-type DetailsStub = (
-  flagKey: string,
-  defaultValue: AgentModelRouting,
-  context?: FlagshipEvaluationContext,
-) => Promise<Partial<FlagshipEvaluationDetails<unknown>>>;
-
-/** Binds a `getObjectDetails` stub, the only Flagship method the resolver calls. */
-function envWithFlags(getObjectDetails: DetailsStub): Env {
-  return { ...baseEnv, FLAGS: createCloudflareTestBinding<Flagship>({ getObjectDetails }) };
-}
-
-/** A stub that serves `value` the way a provisioned, matching flag would. */
-function serving(value: unknown, variant = "current"): DetailsStub {
-  return async (flagKey) => ({ flagKey, value, variant, reason: "STATIC" });
+function envWithRouting(routing: AgentModelRouting): Env {
+  return { ...baseEnv, AGENT_MODEL_ROUTING_JSON: JSON.stringify({ canvas: routing, sidekick_wizard: routing, sidekick_run: routing }) };
 }
 
 const SEEDED_WORKSPACE_ID = "00000000-0000-4000-8000-000000000051";
 const SEEDED_WORKSTREAM_ID = "00000000-0000-4000-8000-000000000052";
 
 /**
- * A workspace, its owner, and one work stream — enough for every attribute the
- * resolver adds to the evaluation context to have a fact behind it.
+ * A workspace, its owner, and one work stream for authoritative pin reads.
  */
 const openDatabases: DatabaseSync[] = [];
 
@@ -108,10 +52,7 @@ function seededEnv(env: Env, modelOverride: string | null = null): Env {
        VALUES (?1, ?2, 'owner', 'active', ?3)`,
     )
     .run(SEEDED_WORKSPACE_ID, "00000000-0000-4000-8000-000000000011", at);
-  // The work stream is its object's, not the region's: a targeting attribute
-  // about it is read through its typed object authority. Seeded regionally,
-  // the read finds nothing and the resolver reports a suppressed subject
-  // rather than the facts this file is about.
+  // Pins live in the conversation's authoritative object store.
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, {
@@ -148,293 +89,95 @@ async function envWithOverride(env: Env, modelOverride: string | null): Promise<
   return seededEnv(env, modelOverride);
 }
 
-describe("agent model flags", () => {
-  beforeEach(() => {
-    clearFlagTargetingAttributeCache();
-    servedAttributes.value = null;
-    servedAttributes.subjects = [];
+describe("local agent model configuration", () => {
+  afterEach(() => { while (openDatabases.length) openDatabases.pop()?.close(); vi.restoreAllMocks(); });
+
+  it.each([
+    ["canvas", "openai/gpt-6.1-terra"], ["memory_sweep", "openai/gpt-6.1-sol"],
+    ["sidekick_wizard", "openai/gpt-6.1-sol"], ["sidekick_run", "openai/gpt-6.1-terra"], ["resource_naming", "openai/gpt-6.1-terra"],
+  ] as const)("uses the checked-in default for %s without environment setup", async (role, model) => {
+    await expect(resolveAgentModelRouting(createTestEnv({}), role)).resolves.toEqual({ model, fallbackModels: ["google/gemini-3.8-flash"] });
   });
 
-  afterEach(() => {
-    while (openDatabases.length > 0) openDatabases.pop()?.close();
+  it("supports the shared model environment variables and ordered fallbacks", () => {
+    expect(defaultAgentModelRouting(baseEnv, "canvas")).toEqual({ model: "x-ai/grok-4.3", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] });
+    expect(defaultAgentModelRouting({ ...baseEnv, OPENROUTER_FALLBACK_MODEL: "" }, "resource_naming")).toEqual({ model: "google/gemini-2.5-flash-lite", fallbackModels: [] });
   });
 
-  it("gives every agent its own flag key", () => {
-    const keys = AGENT_MODEL_ROLES.map((role) => AGENT_MODEL_FLAG_KEYS[role]);
-    expect(new Set(keys).size).toBe(AGENT_MODEL_ROLES.length);
-    expect(keys.every((key) => /^agent-model-[a-z-]+$/.test(key))).toBe(true);
+  it("overrides primary and smarter models independently", async () => {
+    const env = createTestEnv({ OPENROUTER_PRIMARY_MODEL: "custom/primary", OPENROUTER_SMARTER_MODEL: "custom/smarter", OPENROUTER_FALLBACK_MODEL: "" });
+    await expect(resolveAgentModelRouting(env, "canvas")).resolves.toEqual({ model: "custom/primary", fallbackModels: [] });
+    await expect(resolveAgentModelRouting(env, "sidekick_run")).resolves.toEqual({ model: "custom/primary", fallbackModels: [] });
+    await expect(resolveAgentModelRouting(env, "sidekick_wizard")).resolves.toEqual({ model: "custom/smarter", fallbackModels: [] });
   });
 
-  it("defaults each agent to the OpenRouter models its Worker variables select", () => {
-    expect(defaultAgentModelRouting(baseEnv, "workstream")).toEqual({
-      model: "x-ai/grok-4.3",
-      fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"],
-    });
-    expect(defaultAgentModelRouting(baseEnv, "inline_child").model).toBe("x-ai/grok-4.3");
-    expect(defaultAgentModelRouting(baseEnv, "workstream").model).toBe("x-ai/grok-4.3");
-    expect(defaultAgentModelRouting(baseEnv, "workstream_naming").model).toBe("google/gemini-2.5-flash-lite");
+  it("accepts a native routing object even when its shared group is disabled", async () => {
+    await expect(resolveAgentModelRouting(createTestEnv({ OPENROUTER_PRIMARY_MODEL: "", AGENT_MODEL_ROUTING_JSON: {
+      canvas: { model: "custom/native", fallbackModels: [] },
+    } }), "canvas")).resolves.toEqual({ model: "custom/native", fallbackModels: [] });
   });
 
-  it("falls back to the Worker variables when no binding is attached", async () => {
-    await expect(resolveAgentModelRouting(baseEnv, "workstream")).resolves.toEqual(
-      defaultAgentModelRouting(baseEnv, "workstream"),
-    );
+  it("fails before inference when a model group is explicitly disabled", async () => {
+    await expect(resolveAgentModelRouting(createTestEnv({ OPENROUTER_PRIMARY_MODEL: "" }), "canvas"))
+      .rejects.toMatchObject({ code: "agent_model_disabled:OPENROUTER_PRIMARY_MODEL" });
   });
 
-  it("evaluates each agent's own flag with the default as the evaluation fallback", async () => {
-    const getObjectDetails = vi.fn<DetailsStub>(async (flagKey, defaultValue) => ({
-      flagKey,
-      value: defaultValue,
-      reason: "DEFAULT",
-    }));
-    const env = envWithFlags(getObjectDetails);
-
-    await resolveAgentModelRouting(env, "workstream_naming", {
-      workspaceId: SEEDED_WORKSPACE_ID,
-      workstreamId: SEEDED_WORKSTREAM_ID,
-      userId: "usr-1",
-    });
-
-    expect(getObjectDetails).toHaveBeenCalledWith(
-      "agent-model-workstream-naming",
-      { model: "google/gemini-2.5-flash-lite", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] },
-      {
-        agent: "workstream_naming",
-        region: "global",
-        appEnv: "production",
-        workspaceId: SEEDED_WORKSPACE_ID,
-        workstreamId: SEEDED_WORKSTREAM_ID,
-        userId: "usr-1",
-      },
-    );
+  it("defaults safely for invalid typed model and routing overrides", async () => {
+    await expect(resolveAgentModelRouting(createTestEnv({ OPENROUTER_PRIMARY_MODEL: false,
+      OPENROUTER_FALLBACK_MODEL: [], AGENT_MODEL_ROUTING_JSON: true }), "canvas"))
+      .resolves.toEqual({ model: "openai/gpt-6.1-terra", fallbackModels: ["google/gemini-3.8-flash"] });
   });
 
-  // Identifiers alone target nothing a human can reason about: a rule has to be
-  // able to say "the dogfooding workspace", "teams", "work streams a person
-  // started" without anybody pasting a uuid into Flagship.
-  it("describes the workspace, the person, and the work stream to targeting rules", async () => {
-    const getObjectDetails = vi.fn<DetailsStub>(async (flagKey, defaultValue) => ({
-      flagKey,
-      value: defaultValue,
-      reason: "DEFAULT",
-    }));
-    const env = seededEnv(envWithFlags(getObjectDetails));
-
-    await resolveAgentModelRouting(env, "workstream", {
-      workspaceId: SEEDED_WORKSPACE_ID,
-      workstreamId: SEEDED_WORKSTREAM_ID,
-      userId: "00000000-0000-4000-8000-000000000011",
-    });
-
-    expect(getObjectDetails.mock.calls[0]?.[2]).toEqual({
-      agent: "workstream",
-      region: "global",
-      appEnv: "production",
-      workspaceId: SEEDED_WORKSPACE_ID,
-      workstreamId: SEEDED_WORKSTREAM_ID,
-      userId: "00000000-0000-4000-8000-000000000011",
-      workspaceSlug: "dogfood",
-      workspaceMemberCount: 1,
-      workspaceAgeDays: 0,
-      workspaceOwnerEmailDomain: "dogfood.example",
-      userEmailDomain: "dogfood.example",
-      userRole: "owner",
-      workstreamOrigin: "ad_hoc",
-      workstreamScope: "workspace",
-      workstreamFromOpportunity: false,
-      workstreamIsSystem: false,
-      workstreamCreatedByUserId: "00000000-0000-4000-8000-000000000011",
-      workstreamCreatorEmailDomain: "dogfood.example",
-    });
-  });
-
-  it("keeps a new work-stream id for bucketing without reading its preparing object", async () => {
-    const getObjectDetails = vi.fn<DetailsStub>(async (flagKey, defaultValue) => ({
-      flagKey,
-      value: defaultValue,
-      reason: "DEFAULT",
-    }));
-    const env = seededEnv(envWithFlags(getObjectDetails));
-
-    await resolveNewWorkstreamModelRouting(env, {
-      workspaceId: SEEDED_WORKSPACE_ID,
-      workstreamId: "wst-preparing",
-    });
-
-    expect(servedAttributes.subjects).toEqual([{ workspaceId: SEEDED_WORKSPACE_ID }]);
-    expect(getObjectDetails.mock.calls[0]?.[2]).toEqual({
-      agent: "workstream",
-      region: "global",
-      appEnv: "production",
-      workspaceId: SEEDED_WORKSPACE_ID,
-      workstreamId: "wst-preparing",
-      workspaceSlug: "dogfood",
-      workspaceMemberCount: 1,
-      workspaceAgeDays: 0,
-      workspaceOwnerEmailDomain: "dogfood.example",
-    });
-  });
-
-  // An attribute is a fact about the subject, never a redefinition of it: the
-  // ids and the region are what bucketing and per-region staging depend on.
-  // Served deliberately colliding keys, because no attribute the real loader
-  // emits is named like an identity field — without a collision this asserts
-  // nothing about the spread order it exists to pin down.
-  it("keeps an attribute from shadowing the identity the evaluation buckets on", async () => {
-    const getObjectDetails = vi.fn<DetailsStub>(async (flagKey, defaultValue) => ({
-      flagKey,
-      value: defaultValue,
-      reason: "DEFAULT",
-    }));
-    servedAttributes.value = {
-      workspaceId: "spoofed-workspace",
-      workstreamId: "spoofed-workstream",
-      userId: "spoofed-user",
-      region: "enterprise",
-      appEnv: "development",
-      agent: "spoofed-agent",
-    };
-
-    await resolveAgentModelRouting(envWithFlags(getObjectDetails), "workstream", {
-      workspaceId: SEEDED_WORKSPACE_ID,
-      workstreamId: SEEDED_WORKSTREAM_ID,
-      userId: "usr-1",
-    });
-
-    expect(getObjectDetails.mock.calls[0]?.[2]).toEqual({
-      agent: "workstream",
-      region: "global",
-      appEnv: "production",
-      workspaceId: SEEDED_WORKSPACE_ID,
-      workstreamId: SEEDED_WORKSTREAM_ID,
-      userId: "usr-1",
-    });
-  });
-
-  // The field answers "which facts did this evaluation actually have?", so the
-  // identity keys — present on every evaluation — would only bury the answer.
-  it("logs the loaded attributes it resolved on, not the identity every run sends", async () => {
-    const debugged: string[] = [];
-    const debug = vi.spyOn(console, "debug").mockImplementation((entry: unknown) => {
-      debugged.push(JSON.stringify(entry));
-    });
-    const env = seededEnv(createTestEnv({
-      ...envWithFlags(serving({ model: "anthropic/claude-opus-4.6", fallbackModels: [] })),
-      LOG_LEVEL: "debug",
-    }));
-
-    await resolveAgentModelRouting(env, "workstream", { workspaceId: SEEDED_WORKSPACE_ID });
-
-    const resolved = debugged.find((entry) => entry.includes("agent_model_flag_resolved"));
-    const attributes = (JSON.parse(resolved ?? "{}") as { attributes?: string }).attributes ?? "";
-    expect(attributes.split(",")).toEqual([
-      "workspaceAgeDays",
-      "workspaceMemberCount",
-      "workspaceOwnerEmailDomain",
-      "workspaceSlug",
-    ]);
-    debug.mockRestore();
-  });
-
-  it("uses the flag's OpenRouter model ids when the flag is served", async () => {
-    const env = envWithFlags(serving({
-      model: "anthropic/claude-opus-4.6",
-      fallbackModels: ["x-ai/grok-4.3"],
-    }));
-
-    await expect(resolveAgentModelRouting(env, "workstream", { workspaceId: SEEDED_WORKSPACE_ID })).resolves.toEqual({
-      model: "anthropic/claude-opus-4.6",
-      fallbackModels: ["x-ai/grok-4.3"],
-    });
-  });
-
-  // Deliberately a role whose default fallbacks are non-empty: this would pass
-  // even if the default's fallbacks were merged over the served
-  // value, which is the half-applied plan the whole design exists to prevent.
-  it("treats an omitted fallback list as no fallbacks rather than the variable's list", async () => {
-    const env = envWithFlags(serving({ model: "anthropic/claude-opus-4.6" }));
-
-    await expect(resolveAgentModelRouting(env, "workstream")).resolves.toEqual({
-      model: "anthropic/claude-opus-4.6",
-      fallbackModels: [],
-    });
-    expect(defaultAgentModelRouting(env, "workstream").fallbackModels).not.toHaveLength(0);
-  });
-
-  it("keeps the flag's fallbacks for every role", async () => {
-    const env = envWithFlags(serving({
-      model: "anthropic/claude-opus-4.6",
-      fallbackModels: ["x-ai/grok-4.3"],
-    }));
-
-    for (const role of AGENT_MODEL_ROLES) {
-      await expect(resolveAgentModelRouting(env, role)).resolves.toEqual({
-        model: "anthropic/claude-opus-4.6",
-        fallbackModels: ["x-ai/grok-4.3"],
-      });
+  it.each(["resource_naming", "memory_sweep"] as const)("rejects Azure-only primary and fallback JSON routes atomically for %s", async (role) => {
+    for (const routing of [
+      { model: "openai/gpt-5.6-sol", fallbackModels: ["custom/fallback"], reasoningEffort: "high" },
+      { model: "custom/primary", fallbackModels: ["openai/gpt-5.6-sol"], reasoningEffort: "high" },
+    ]) {
+      await expect(resolveAgentModelRouting(createTestEnv({ AGENT_MODEL_ROUTING_JSON: { [role]: routing } }), role))
+        .resolves.toEqual({ model: role === "memory_sweep" ? "openai/gpt-6.1-sol" : "openai/gpt-6.1-terra", fallbackModels: ["google/gemini-3.8-flash"] });
     }
   });
 
-  // A missing or mistyped key resolves the default rather than throwing, so
-  // without reading `errorCode` a typo in AGENT_MODEL_FLAG_KEYS is
-  // indistinguishable from a correctly provisioned flag.
-  it("falls back and reports an error code rather than resolving a missing flag silently", async () => {
-    const warnings: string[] = [];
-    const warn = vi.spyOn(console, "warn").mockImplementation((entry: unknown) => {
-      warnings.push(JSON.stringify(entry));
-    });
-    // The shared fixture pins LOG_LEVEL to error to keep other cases silent.
-    const env = createTestEnv({ ...envWithFlags(async (flagKey, defaultValue) => ({
-      flagKey,
-      value: defaultValue,
-      reason: "ERROR",
-      errorCode: "FLAG_NOT_FOUND",
-      errorMessage: `flag ${flagKey} does not exist`,
-    })), LOG_LEVEL: "warn" });
-
-    await expect(resolveAgentModelRouting(env, "workstream", { workspaceId: SEEDED_WORKSPACE_ID })).resolves.toEqual(
-      defaultAgentModelRouting(baseEnv, "workstream"),
-    );
-    expect(warnings.join()).toContain("agent_model_flag_unresolved");
-    expect(warnings.join()).toContain("FLAG_NOT_FOUND");
-    warn.mockRestore();
+  it("rejects shared overrides as a whole when they violate the gateway policy", async () => {
+    for (const overrides of [
+      { OPENROUTER_FASTER_MODEL: "openai/gpt-5.6-sol", OPENROUTER_FALLBACK_MODEL: "custom/fallback" },
+      { OPENROUTER_FASTER_MODEL: "custom/primary", OPENROUTER_FALLBACK_MODEL: "openai/gpt-5.6-sol" },
+    ]) {
+      await expect(resolveAgentModelRouting(createTestEnv(overrides), "resource_naming"))
+        .resolves.toEqual({ model: "openai/gpt-6.1-terra", fallbackModels: ["google/gemini-3.8-flash"] });
+    }
   });
 
-  it("preserves reasoning effort from a model flag", async () => {
-    const env = envWithFlags(serving({ model: "openai/gpt-6.1-sol", fallbackModels: [], reasoningEffort: "medium" }));
-    await expect(resolveAgentModelRouting(env, "sidekick_authoring")).resolves.toEqual({
-      model: "openai/gpt-6.1-sol", fallbackModels: [], reasoningEffort: "medium",
-    });
+  it("keeps Azure-only models available to harness roles", async () => {
+    await expect(resolveAgentModelRouting(createTestEnv({ AGENT_MODEL_ROUTING_JSON: {
+      canvas: { model: "openai/gpt-5.6-sol", fallbackModels: [] },
+    } }), "canvas")).resolves.toEqual({ model: "openai/gpt-5.6-sol", fallbackModels: [] });
   });
 
-  it("rejects a malformed flag value whole instead of applying half of it", async () => {
-    const env = envWithFlags(serving({ model: "", fallbackModels: ["x-ai/grok-4.3"] }));
-
-    await expect(resolveAgentModelRouting(env, "workstream")).resolves.toEqual(
-      defaultAgentModelRouting(baseEnv, "workstream"),
-    );
+  it("selects the Sidekick run role before a scheduled conversation exists", async () => {
+    const env = createTestEnv({ AGENT_MODEL_ROUTING_JSON: JSON.stringify({
+      canvas: { model: "custom/canvas", fallbackModels: [] },
+      sidekick_run: { model: "custom/sidekick", fallbackModels: [] },
+    }) });
+    await expect(scheduledWorkstreamModel(env, { workspaceId: "org", workstreamId: "sidekick" }, "sidekick_run"))
+      .resolves.toBe("custom/sidekick");
   });
 
-  it("keeps the agent running on its Worker variables when evaluation throws", async () => {
-    const env = envWithFlags(async () => {
-      throw new Error("Binding FLAGS needs to be run remotely");
-    });
-
-    await expect(resolveAgentModelRouting(env, "workstream")).resolves.toEqual(
-      defaultAgentModelRouting(baseEnv, "workstream"),
-    );
+  it("applies a role's complete route including reasoning, without affecting other roles", async () => {
+    const env = { ...baseEnv, AGENT_MODEL_ROUTING_JSON: JSON.stringify({ canvas: { model: "custom/model", reasoningEffort: "high" } }) };
+    await expect(resolveAgentModelRouting(env, "canvas")).resolves.toEqual({ model: "custom/model", fallbackModels: [], reasoningEffort: "high" });
+    await expect(resolveAgentModelRouting(env, "sidekick_run")).resolves.toEqual({ model: "x-ai/grok-4.3", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] });
   });
 
-  it("records a scheduled new work stream's model without reading its uncommitted facts", async () => {
-    const env = envWithFlags(serving({ model: "anthropic/claude-opus-4.6", fallbackModels: [] }));
+  it.each(['{', '[]', 'null', '{"canvas":{"model":"custom/model","fallbackModels":"bad"}}'])("rejects malformed overrides atomically: %s", async (value) => {
+    await expect(resolveAgentModelRouting({ ...baseEnv, AGENT_MODEL_ROUTING_JSON: value }, "canvas")).resolves.toEqual({ model: "x-ai/grok-4.3", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] });
+  });
 
-    await expect(scheduledWorkstreamModel(env, {
-      workspaceId: SEEDED_WORKSPACE_ID,
-      workstreamId: "wst-scheduled",
-    })).resolves.toBe(
-      "anthropic/claude-opus-4.6",
-    );
-    expect(servedAttributes.subjects).toEqual([{ workspaceId: SEEDED_WORKSPACE_ID }]);
+  it("resolves a new or scheduled thread without reading an uncommitted object", async () => {
+    const env = envWithRouting({ model: "custom/model", fallbackModels: [] });
+    const context = { workspaceId: "org", workstreamId: "thread" };
+    await expect(resolveNewWorkstreamModelRouting(env, context)).resolves.toEqual({ model: "custom/model", fallbackModels: [] });
+    await expect(scheduledWorkstreamModel(env, context)).resolves.toBe("custom/model");
   });
 
   it("admits only the model ids a creator may choose from", () => {
@@ -446,16 +189,16 @@ describe("agent model flags", () => {
     expect(agentModelOverride("anthropic/claude-opus-4.6")).toBeNull();
   });
 
-  // A rollout reaching the workspace must not take a pinned work stream with it.
-  it("runs a pinned work stream on its own model rather than the flag's", async () => {
-    const flagged = envWithFlags(serving({
+  // A deployment configuration change must preserve conversation pins.
+  it("runs a pinned work stream on its own model rather than the environment override", async () => {
+    const flagged = envWithRouting({
       model: "x-ai/grok-4.5",
       fallbackModels: ["google/gemini-3.6-flash"],
-    }));
+    });
     const env = await envWithOverride(flagged, "deepseek/deepseek-v4-pro");
 
     // Routed by the caller, as production routes it: `resolveWorkstreamModelRouting`
-    // reads `env.DB`, and the pin lives in the work stream's own object.
+    // reads the pin from the work stream's own object.
     await expect(resolveWorkstreamModelRouting(
       env,
       { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID },
@@ -463,15 +206,15 @@ describe("agent model flags", () => {
       .resolves.toEqual({ model: "deepseek/deepseek-v4-pro", fallbackModels: [] });
   });
 
-  it("leaves an unpinned work stream to the flag", async () => {
-    const flagged = envWithFlags(serving({
+  it("leaves an unpinned work stream to configuration", async () => {
+    const flagged = envWithRouting({
       model: "x-ai/grok-4.5",
       fallbackModels: ["google/gemini-3.6-flash"],
-    }));
+    });
     const env = await envWithOverride(flagged, null);
 
     // Routed by the caller, as production routes it: `resolveWorkstreamModelRouting`
-    // reads `env.DB`, and the pin lives in the work stream's own object.
+    // reads the pin from the work stream's own object.
     await expect(resolveWorkstreamModelRouting(
       env,
       { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID },
@@ -479,26 +222,25 @@ describe("agent model flags", () => {
       .resolves.toEqual({ model: "x-ai/grok-4.5", fallbackModels: ["google/gemini-3.6-flash"] });
   });
 
-  it("gives the Sidekick wizard and the agents it starts the authoring role", () => {
-    expect(conversationModelRole({ parentKind: "automation" })).toBe("sidekick_authoring");
-    expect(conversationModelRole({ parentKind: "automation", substreamId: "0" })).toBe("sidekick_authoring");
-    expect(conversationModelRole({ parentKind: "automation", substreamId: "agent", backgroundAgent: true })).toBe("sidekick_authoring");
-    expect(conversationModelRole({ parentKind: "automation", substreamId: "activation" })).toBe("workstream");
+  it("separates wizard, Sidekick run, and Canvas roles", () => {
+    expect(conversationModelRole({ parentKind: "automation" })).toBe("sidekick_wizard");
+    expect(conversationModelRole({ parentKind: "automation", substreamId: "0" })).toBe("sidekick_wizard");
+    expect(conversationModelRole({ parentKind: "automation", substreamId: "agent", backgroundAgent: true })).toBe("sidekick_wizard");
+    expect(conversationModelRole({ parentKind: "automation", substreamId: "activation" })).toBe("sidekick_run");
     expect(conversationModelRole({ parentKind: "automation", substreamId: "worker", backgroundAgent: true,
-      automationDelegation: { runId: "00000000-0000-7000-8000-000000000001", stopGeneration: 0 } })).toBe("workstream");
-    expect(conversationModelRole({ parentKind: "canvas", substreamId: "0" })).toBe("workstream");
+      automationDelegation: { runId: "00000000-0000-7000-8000-000000000001", stopGeneration: 0 } })).toBe("sidekick_run");
+    expect(conversationModelRole({ parentKind: "canvas", substreamId: "0" })).toBe("canvas");
   });
 
-  it("routes an unpinned wizard to Sol independently of the live thread flag", async () => {
-    const env = await envWithOverride(envWithFlags(async (flagKey, defaultValue) => ({
-      flagKey,
-      value: flagKey === "agent-model-workstream"
-        ? { model: "openai/gpt-5.6-terra", fallbackModels: [] }
-        : defaultValue,
-      reason: "STATIC",
-    })), null);
-    env.OPENROUTER_PRIMARY_MODEL = "openai/gpt-6.1-sol";
-    env.OPENROUTER_FALLBACK_MODELS = "google/gemini-3.8-flash";
+  it("routes the wizard and runs independently of the Canvas override", async () => {
+    const env = await envWithOverride(createTestEnv({ ...baseEnv,
+      AGENT_MODEL_ROUTING_JSON: JSON.stringify({
+        canvas: { model: "x-ai/grok-4.5", fallbackModels: [] },
+        sidekick_run: { model: "openai/gpt-5.6-terra", fallbackModels: [] },
+      }),
+    }), null);
+    env.OPENROUTER_SMARTER_MODEL = "openai/gpt-6.1-sol";
+    env.OPENROUTER_FALLBACK_MODEL = "google/gemini-3.8-flash";
     const context = { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID };
 
     await expect(resolveWorkstreamModelRouting(env, {
@@ -516,14 +258,14 @@ describe("agent model flags", () => {
       ...context, parentKind: "automation", substreamId: "activation",
     })).resolves.toEqual({ model: "openai/gpt-5.6-terra", fallbackModels: [] });
     await expect(resolveWorkstreamModelRouting(env, context)).resolves.toEqual({
-      model: "openai/gpt-5.6-terra", fallbackModels: [],
+      model: "x-ai/grok-4.5", fallbackModels: [],
     });
   });
 
-  it("preserves an explicitly pinned wizard model over the authoring flag", async () => {
-    const env = await envWithOverride(envWithFlags(serving({
+  it("preserves an explicitly pinned wizard model over the wizard override", async () => {
+    const env = await envWithOverride(envWithRouting({
       model: "openai/gpt-6.1-sol", fallbackModels: ["google/gemini-3.8-flash"],
-    })), "openai/gpt-5.6-terra");
+    }), "openai/gpt-5.6-terra");
 
     await expect(resolveWorkstreamModelRouting(env, {
       workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID,
@@ -533,12 +275,12 @@ describe("agent model flags", () => {
 
   // Retiring a model from the list is a code change, not a migration, so the
   // rows still naming it have to resolve somewhere sensible.
-  it("returns a work stream pinned to a model that has left the list to the flag", async () => {
-    const flagged = envWithFlags(serving({ model: "x-ai/grok-4.5", fallbackModels: [] }));
+  it("returns a work stream pinned to a model that has left the list to configuration", async () => {
+    const flagged = envWithRouting({ model: "x-ai/grok-4.5", fallbackModels: [] });
     const env = await envWithOverride(flagged, "anthropic/claude-opus-4.6");
 
     // Routed by the caller, as production routes it: `resolveWorkstreamModelRouting`
-    // reads `env.DB`, and the pin lives in the work stream's own object.
+    // reads the pin from the work stream's own object.
     await expect(resolveWorkstreamModelRouting(
       env,
       { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID },

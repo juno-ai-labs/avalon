@@ -22,7 +22,7 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 
-import { asWorkspaceId } from "@rally/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 import {
@@ -718,6 +718,38 @@ describe("the fact store on workerd", () => {
       expect(markedConversations(sql)).toEqual([]);
       sql.exec("UPDATE workspace_member_status SET relationship_json = ? WHERE user_id = ?", relationship("guest", 3), MEMBER);
       expect(markedConversations(sql)).toEqual([`canvas:${THREAD_OPEN}`, `canvas:${THREAD_PRIVATE}`].sort());
+    });
+  });
+
+  it("withdraws an archived Canvas's organization facts and invalidates every held digest", async () => {
+    await fresh();
+    const now = Date.now();
+    await workspace().applyMemorySweep({
+      workspaceId: WORKSPACE_ID, conversation: openThread, fromSeq: 0, toSeq: 3,
+      operations: [add("organization", "Launch day is Thursday")], model: "test/model",
+      inputTokens: null, outputTokens: null, factIds: ["archived-launch-day"], speakerIds: [], candidateFactIds: [], now,
+    });
+    const other = { parentKind: "canvas" as const, parentId: THREAD_PRICING, substreamId: "0" };
+    const read = async (conversation: typeof openThread) => WorkspaceMemoryDigestResultSchema.parse(await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "conversation" }, conversation, now, limit: 10,
+    }));
+    expect((await read(other)).facts.map((fact) => fact.text)).toEqual(["Launch day is Thursday"]);
+    await read(openThread);
+    const before = await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM memory_digest_sync");
+      return state.storage.sql.exec<{ revision: number }>("SELECT revision FROM memory_revision").one().revision;
+    });
+    await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId: THREAD_OPEN,
+      actor: { userId: asUserId(OWNER), actorRole: "owner" } });
+    expect((await read(other)).facts).toEqual([]);
+    expect((await read(openThread)).facts).toEqual([]);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      expect(sql.exec<{ revision: number }>("SELECT revision FROM memory_revision").one().revision).toBeGreaterThan(before);
+      const marked = sql.exec<{ conversation: string; revision: number }>(
+        "SELECT conversation, revision FROM memory_digest_sync WHERE conversation = ?", `canvas:${THREAD_OPEN}`).one();
+      expect(memoryDigestSyncWork(sql, marked)).toBeNull();
+      expect(sql.exec("SELECT 1 FROM memory_digest_holders WHERE conversation = ?", `canvas:${THREAD_OPEN}`).toArray()).toEqual([]);
     });
   });
 

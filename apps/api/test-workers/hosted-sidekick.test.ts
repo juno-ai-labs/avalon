@@ -2,12 +2,12 @@
 
 /**
  * A hosted Sidekick: the Sidekick itself, its definition revisions, schedules,
- * runs, inbound email, and the run child it provisions, all held by its
+ * runs, and the run child it provisions, all held by its
  * Organization's `WorkspaceDO` (`HostedSidekick`).
  *
  * Everything here is driven through the Organization object's `sidekick*` RPC
  * surface and the alarm entries it arms, against the real WorkspaceDO, the
- * real regional D1 it reads members and email routes from, and a real run
+ * real regional D1 it reads members from, and a real run
  * child (an `AgentLoopDO`) whose loop reads its definition back from this
  * object by revision. The one thing replaced is the model: the OpenRouter
  * double answers every turn, so the run reaches inference and ends, and what
@@ -20,7 +20,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -41,11 +41,9 @@ import {
 
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import {
-  HostedSidekick,
   SIDEKICK_MEMORY_TABLES_ALARM_KIND,
   SIDEKICK_REVIEW_INTERVAL_MS,
   SIDEKICK_REVIEW_RUN_FLOOR,
-  type HostedSidekickHost,
 } from "../src/durable-objects/hosted-sidekick";
 import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import {
@@ -82,8 +80,6 @@ const OUTSIDER_ID = asUserId("00000000-0000-7000-8000-00000000ad02");
 const SESSION_ID = "00000000-0000-7000-8000-00000000ad03";
 const SLACK_CONNECTION_ID = "00000000-0000-7000-8000-00000000ad04";
 const RESOURCE_ID = "00000000-0000-7000-8000-00000000ad05";
-const EMAIL_LOCAL_PART = "amber-cobalt-jade-brook";
-const EMAIL_ADDRESS = `${EMAIL_LOCAL_PART}@automation.rallywith.ai`;
 const NOW = "2026-08-29T10:00:00.000Z";
 const TEST_ENV: Env = env;
 const RUN_SETTLE_TIMEOUT_MS = 15_000;
@@ -144,6 +140,7 @@ const DEFINITION: AutomationDraft = {
 let loadSkillOnNextTurn = false;
 let sidekickToolScript: { name: string; arguments: unknown }[] = [];
 let submitDraftOnNextTurn = false;
+let taskOutcome: "succeeded" | "blocked" | "failed" | null = "succeeded";
 const provider = useOpenRouterDouble((call) => {
   const scripted = sidekickToolScript.shift();
   if (scripted) return { callTool: scripted };
@@ -155,6 +152,12 @@ const provider = useOpenRouterDouble((call) => {
   if (loadSkillOnNextTurn) {
     loadSkillOnNextTurn = false;
     return { callTool: { name: "load_skill", arguments: { name: "skill-manual-helper-2" } } };
+  }
+  if (taskOutcome && call.toolNames.includes("sidekick_report_outcome")
+    && !JSON.stringify(call.body.input).includes('"name":"sidekick_report_outcome"')) {
+    return { callTool: { name: "sidekick_report_outcome", arguments: {
+      outcome: taskOutcome, summary: taskOutcome === "succeeded" ? "Requested work completed." : "Dashboard publication is unavailable.",
+    } } };
   }
   return { say: "Done." };
 });
@@ -211,15 +214,6 @@ async function seedRegionalDatabase(): Promise<void> {
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL
     )`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    )`),
-    env.DB.prepare(`INSERT OR REPLACE INTO workstream_email_routes
-        (local_part, region, workspace_id, workstream_id, automation_subscription_id, created_at, updated_at)
-      VALUES (?, 'global', ?, NULL, ?, ?, ?)`)
-      .bind(EMAIL_LOCAL_PART, WORKSPACE_ID, AUTOMATION_ID, NOW, NOW),
   ]);
 }
 
@@ -375,14 +369,13 @@ interface AutomationRow extends Record<string, SqlStorageValue> {
   accepted_definition_revision: number | null;
   effective_after_event_sequence: number | null;
   connector_bindings_json: string | null;
-  email_address: string | null;
 }
 
 async function automationRow(): Promise<AutomationRow> {
   return runInDurableObject(workspaceStub(), (_instance, state) =>
     state.storage.sql.exec<AutomationRow>(
       `SELECT lifecycle, paused_by, accepted_definition_revision, effective_after_event_sequence,
-              connector_bindings_json, email_address
+              connector_bindings_json
          FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID,
     ).one());
 }
@@ -453,6 +446,7 @@ async function settledChildRun(runId: string): Promise<{ status: string; error_j
 }
 
 beforeEach(async () => {
+  taskOutcome = "succeeded";
   sidekickToolScript = [];
   loadSkillOnNextTurn = false;
   submitDraftOnNextTurn = false;
@@ -464,6 +458,44 @@ beforeEach(async () => {
 });
 
 describe("a hosted Sidekick", () => {
+  it("preserves successful task completion after an exploratory tool fails", async () => {
+    await activeAutomation();
+    sidekickToolScript.push({ name: "conversation_read", arguments: { conversation: OUTSIDER_ID } });
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "recovered-discovery-run" });
+    expect(await settledChildRun(started.runId)).toMatchObject({ status: "completed" });
+    const failed = await runInDurableObject(childStub(started.runId), (_instance, state) =>
+      state.storage.sql.exec<{ status: string }>(
+        "SELECT status FROM tool_effects WHERE json_extract(execution_plan_json, '$.capability') = 'rally.conversation.read'",
+      ).toArray());
+    expect(failed).toEqual([{ status: "failed" }]);
+  });
+
+  it.each(["succeeded", "blocked", "failed", null] as const)("settles task outcome %s independently of a completed model response", async (reported) => {
+    taskOutcome = reported;
+    await activeAutomation();
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "task-outcome-run" });
+    const settled = await settledChildRun(started.runId);
+    expect(settled.status).toBe(reported === "succeeded" ? "completed" : "failed");
+    if (reported !== "succeeded") {
+      expect(JSON.parse(settled.error_json!)).toMatchObject({
+        code: reported === null ? "sidekick_task_outcome_missing" : `sidekick_task_${reported}`,
+      });
+    }
+    await deliverChildEffects(TEST_ENV, childStub(started.runId));
+    expect(await runRows()).toEqual([expect.objectContaining({ run_id: started.runId,
+      state: reported === "succeeded" ? "completed" : "failed" })]);
+    if (reported) {
+      await evictDurableObject(childStub(started.runId));
+      const receipts = await runInDurableObject(childStub(started.runId), (_instance, state) =>
+        state.storage.sql.exec<{ status: string; input_json: string }>(
+          "SELECT status, input_json FROM tool_effects WHERE json_extract(execution_plan_json, '$.capability') = 'rally.sidekick.report_outcome'",
+        ).toArray());
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]!.status).toBe("completed");
+      expect(JSON.parse(receipts[0]!.input_json)).toMatchObject({ outcome: reported });
+    }
+  });
+
   it("publishes through the authoring conversation and completes with a durable final reply", async () => {
     await createDraft();
     const root = childStub("0");
@@ -501,7 +533,6 @@ describe("a hosted Sidekick", () => {
     await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft, evaluatorRules: null, submittedByRunId: null, actor: actor() });
     const detail = await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickReadDetail({ ...addressed(), actor: actor() }));
     expect(detail.loadable).toBe(true);
-    expect(detail.emailAddress).toBeNull();
     expect(detail.acceptedDefinitionRevision).toBe(1);
     expect(await workspaceStub().sidekickAdmitExternalEvent({ ...addressed(), registrationId: "00000000-0000-7000-8000-00000000ad51", payloadHash: `sha256:${"a".repeat(64)}`, event: {
       id: "00000000-0000-7000-8000-00000000ad52", eventSequence: 42, eventType: "slack.message.posted", title: "Stale trigger", summary: "An earlier registration delivered late", textSnippet: "hello", metadata: {}, occurredAt: Date.parse(NOW), audienceUserIds: [], audienceKind: "workspace",
@@ -565,16 +596,6 @@ describe("a hosted Sidekick", () => {
     await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...draft, name: "Edited" }, evaluatorRules: null, submittedByRunId: null,
       appearance: { icon: "workflow", color: "blue" }, actor: actor() });
     expect(JSON.parse((await storedAppearance())!)).toEqual({ icon: "workflow", color: "blue" });
-  });
-
-  it("hides disabled email while retaining its permanent address", async () => {
-    await createDraft();
-    await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: DEFINITION, evaluatorRules: null, submittedByRunId: null, actor: actor() });
-    const before = await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickReadDetail({ ...addressed(), actor: actor() }));
-    expect(before.emailAddress).toBeTruthy();
-    await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...DEFINITION, definitionVersion: 2, triggers: [] }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
-    expect((await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickReadDetail({ ...addressed(), actor: actor() }))).emailAddress).toBeNull();
-    expect(await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ email_address: string }>(`SELECT email_address FROM automation_directory WHERE automation_id = '${AUTOMATION_ID}'`).one().email_address)).toBe(before.emailAddress);
   });
 
   it("reads stored loadability independently of trigger count and contains personal instructions", async () => {
@@ -740,7 +761,6 @@ describe("a hosted Sidekick", () => {
       status: "active",
       acceptedDefinitionRevision: 1,
       currentDefinitionRevision: 1,
-      emailAddress: EMAIL_ADDRESS,
       connectorBindings: { plugin_slack: SLACK_CONNECTION_ID },
     });
     const row = await automationRow();
@@ -1632,14 +1652,13 @@ describe("a hosted Sidekick", () => {
 
   it("lists what wakes a Sidekick in the run trigger vocabulary, each kind once, in the order its definition names them", async () => {
     await createDraft();
-    await submit({ ...DEFINITION, ready: false, triggers: [
-      { type: "inbound_email" }, { type: "manual" },
+    await submit({ ...DEFINITION, ready: false, triggers: [ { type: "manual" },
       { type: "interval", intervalSeconds: 3_600, summary: "Every hour" },
       WEBHOOK_DEFINITION.triggers[0]!, { type: "manual" },
     ] });
     const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
       .items.find((candidate) => candidate.id === AUTOMATION_ID);
-    expect(item?.triggerKinds).toEqual(["inbound_email", "manual", "schedule", "external_event"]);
+    expect(item?.triggerKinds).toEqual(["manual", "schedule", "external_event"]);
   });
 
   it("tells only the requester when a run finishes, and nobody when a scheduled run does", async () => {
@@ -1941,7 +1960,6 @@ describe("a hosted Sidekick", () => {
     const parsed = JSON.parse(opening ?? "null") as {
       textContent: string;
       structuredContent: Record<string, unknown>;
-      resourceId: string | null;
     } | null;
     expect(parsed?.textContent).toContain("New message");
     expect(parsed?.textContent).toContain("\"channel\": \"C123\"");
@@ -1951,7 +1969,6 @@ describe("a hosted Sidekick", () => {
       workspaceEventId: event.id,
       metadata: { channel: "C123" },
     });
-    expect(parsed?.resourceId).toBeNull();
   });
 
   it("admits two deliveries for one occurrence once, when the connector names it", async () => {
@@ -2035,6 +2052,39 @@ describe("a hosted Sidekick", () => {
     expect(message).toContain("draft.triggers");
   });
 
+  it("reads and projects historical email runs after receiving is retired", async () => {
+    await activeAutomation();
+    const runId = "00000000-0000-7000-8000-00000000ad91";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO sidekick_runs
+        (sidekick_id,run_id,occurrence_key,trigger_json,definition_revision,harness_run_id,state,opening_json,
+         run_as_user_id,coordinator_user_id,created_at,updated_at)
+        VALUES (?,?,'historical-email',?,1,?,'completed',?,?,?,1,2)`, AUTOMATION_ID, runId,
+        JSON.stringify({ kind: "inbound_email", receiptId: "00000000-0000-7000-8000-00000000ad92", occurredAt: 1 }),
+        "00000000-0000-7000-8000-00000000ad93",
+        JSON.stringify({ textContent: "Historical evidence", structuredContent: { kind: "inbound_email", untrusted: true } }),
+        AUTHOR_ID, AUTHOR_ID);
+    });
+    const detail = AutomationDetailSchema.parse(await workspaceStub().sidekickReadDetail({ ...addressed(), actor: actor() }));
+    expect(detail.recentRuns).toMatchObject([{ id: runId, triggerType: "inbound_email", status: "completed" }]);
+    expect((await workspaceStub().sidekickListRuns({ ...addressed(), actor: actor() })).items)
+      .toMatchObject([{ id: runId, triggerType: "inbound_email" }]);
+    expect(await workspaceStub().sidekickReadRunDefinition({ ...addressed(), runId })).toMatchObject({
+      trigger: { kind: "inbound_email", receiptId: "00000000-0000-7000-8000-00000000ad92", occurredAt: 1 },
+      opening: { textContent: "Historical evidence", structuredContent: { kind: "inbound_email", untrusted: true } },
+    });
+    await workspaceStub().sidekickReplayRunRows({ ...addressed(), actor: actor() });
+    const shared = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID));
+    await expect.poll(() => runInDurableObject(shared, (_instance, state) => {
+      const row = state.storage.sql.exec<{ structured_content_json: string }>(
+        `SELECT structured_content_json FROM canonical_conversation_turn_details WHERE client_message_id = ?`, `sidekick-run:${runId}`,
+      ).toArray()[0];
+      return row ? JSON.parse(row.structured_content_json) as unknown : null;
+    }), { timeout: RUN_SETTLE_TIMEOUT_MS }).toMatchObject({
+      automationId: AUTOMATION_ID, runId, trigger: { kind: "inbound_email" },
+    });
+  });
+
   it("refuses a run whose stored trigger does not parse by the field it got wrong", async () => {
     await activeAutomation();
     const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "stored-trigger" });
@@ -2057,111 +2107,6 @@ describe("a hosted Sidekick", () => {
     const scope = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ scope: string }>(
       `SELECT scope FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID).one().scope);
     expect(scope).toBe("personal");
-  });
-
-  it("rechecks the email trigger after delegate authorization yields", async () => {
-    await activeAutomation();
-    await submit({ ...DEFINITION, definitionVersion: 2, triggers: [{ type: "manual" }] });
-    const result = await runInDurableObject(workspaceStub(), async (instance) => {
-      const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
-      const readRelationship = host.readRelationship;
-      host.readRelationship = async (...args) => {
-        // Publishing can remove the trigger while admission reads authority.
-        await new HostedSidekick({ ...host, readRelationship }, AUTOMATION_ID).apply({ ...addressed(), actor: actor() });
-        return readRelationship(...args);
-      };
-      return new HostedSidekick(host, AUTOMATION_ID).admitInboundEmail({
-        ...addressed(), emailAddress: EMAIL_ADDRESS, resendEmailId: "removed-email-trigger",
-        senderUserId: AUTHOR_ID, senderAuthenticated: true, receivedAt: Date.parse(NOW), payloadRef: "emails/removed-trigger",
-        resourceId: RESOURCE_ID, textContent: "Please summarize this.", structuredContent: { subject: "Summary" },
-      });
-    });
-    expect(result).toEqual({ admitted: false, duplicate: false, outcomeCode: "sidekick_email_route_mismatch", runId: null });
-    expect(await runRows()).toEqual([]);
-  });
-
-  it("admits an inbound email once, answers a resend retry from its receipt, and refuses a stranger", async () => {
-    await activeAutomation();
-    const email = {
-      ...addressed(),
-      emailAddress: EMAIL_ADDRESS,
-      resendEmailId: "resend-email-0001",
-      senderUserId: AUTHOR_ID,
-      senderAuthenticated: true,
-      receivedAt: Date.parse(NOW),
-      payloadRef: "emails/resend-email-0001",
-      resourceId: "00000000-0000-7000-8000-00000000ad60",
-      textContent: "Please summarize the attached thread.",
-      structuredContent: { subject: "Summary" },
-    };
-
-    const admitted = await workspaceStub().sidekickAdmitInboundEmail(email);
-    expect(admitted).toMatchObject({ admitted: true, duplicate: false, outcomeCode: "admitted" });
-    expect(await workspaceStub().sidekickAdmitInboundEmail(email))
-      .toEqual({ admitted: true, duplicate: true, outcomeCode: "admitted", runId: admitted.runId });
-    expect(await workspaceStub().sidekickAdmitInboundEmail({
-      ...email,
-      resendEmailId: "resend-email-0002",
-      senderUserId: OUTSIDER_ID,
-    })).toEqual({ admitted: false, duplicate: false, outcomeCode: "email_sender_not_authorized", runId: null });
-    expect(await workspaceStub().sidekickAdmitInboundEmail({
-      ...email,
-      resendEmailId: "resend-email-0003",
-      emailAddress: "somebody-else@mail.rallywithai.com",
-    })).toEqual({ admitted: false, duplicate: false, outcomeCode: "sidekick_email_route_mismatch", runId: null });
-    expect((await runRows()).map((run) => run.occurrence_key)).toEqual(["inbound_email:resend-email-0001"]);
-    const receipts = await runInDurableObject(workspaceStub(), (_instance, state) =>
-      state.storage.sql.exec<{ resend_email_id: string; outcome_code: string }>(
-        `SELECT resend_email_id, outcome_code FROM sidekick_email_receipts WHERE sidekick_id = ? ORDER BY resend_email_id`, AUTOMATION_ID,
-      ).toArray());
-    expect(receipts).toEqual([
-      { resend_email_id: "resend-email-0001", outcome_code: "admitted" },
-      { resend_email_id: "resend-email-0002", outcome_code: "email_sender_not_authorized" },
-      { resend_email_id: "resend-email-0003", outcome_code: "sidekick_email_route_mismatch" },
-    ]);
-    // Someone this personal Sidekick is shared with may email it, as they may read it.
-    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(
-      `INSERT INTO sidekick_audience (sidekick_id, user_id, added_at) VALUES (?, ?, ?)`, AUTOMATION_ID, OUTSIDER_ID, Date.parse(NOW)));
-    const shared = await workspaceStub().sidekickAdmitInboundEmail({ ...email, resendEmailId: "resend-email-0004", senderUserId: OUTSIDER_ID });
-    expect(shared).toMatchObject({ admitted: true, outcomeCode: "admitted" });
-    // Each run acts as its sender alone: the author as the delegate they are,
-    // the person it is shared with under their own access, never the author's.
-    const principals = await runInDurableObject(workspaceStub(), (_instance, state) =>
-      state.storage.sql.exec<{ run_id: string; coordinator_user_id: string | null; requester_user_id: string | null }>(
-        `SELECT run_id, coordinator_user_id, requester_user_id FROM sidekick_runs WHERE sidekick_id = ? ORDER BY occurrence_key`, AUTOMATION_ID,
-      ).toArray());
-    expect(principals).toEqual([
-      { run_id: admitted.runId, coordinator_user_id: AUTHOR_ID, requester_user_id: null },
-      { run_id: shared.runId, coordinator_user_id: OUTSIDER_ID, requester_user_id: OUTSIDER_ID },
-    ]);
-  });
-
-  it("acts on mail only when the From domain authenticated it, and admits a guest only from the Sidekick's list on every scope", async () => {
-    const guest = asUserId("00000000-0000-7000-8000-00000000ad0a");
-    await env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, access_class, last_seen_at)
-      VALUES (?, ?, 'active', NULL, 'guest', ?)`).bind(WORKSPACE_ID, guest, NOW).run();
-    await activeAutomation();
-    let ordinal = 0;
-    const mail = (senderUserId: string, senderAuthenticated = true) => workspaceStub().sidekickAdmitInboundEmail({
-      ...addressed(), emailAddress: EMAIL_ADDRESS, resendEmailId: `guest-email-${String(ordinal++).padStart(4, "0")}`,
-      senderUserId: asUserId(senderUserId), senderAuthenticated, receivedAt: Date.parse(NOW), payloadRef: "emails/guest",
-      resourceId: RESOURCE_ID, textContent: "Please summarize this.", structuredContent: { subject: "Summary" },
-    }).then((result) => result.outcomeCode);
-    // The author's own address, but the receiving server could not tie the
-    // message to it: the From header is only a claim, and the run would act as them.
-    expect(await mail(AUTHOR_ID, false)).toBe("email_sender_unauthenticated");
-    expect(await mail(guest)).toBe("email_sender_not_authorized");
-    const sql = (statement: string, ...bindings: SqlStorageValue[]) => runInDurableObject(workspaceStub(), (_instance, state) => {
-      state.storage.sql.exec(statement, ...bindings);
-    });
-    // On a personal Sidekick's list, the guest's mail runs, under their own access.
-    await sql(`INSERT INTO sidekick_audience (sidekick_id, user_id, added_at) VALUES (?, ?, ?)`, AUTOMATION_ID, guest, Date.parse(NOW));
-    expect(await mail(guest)).toBe("admitted");
-    // Shared with the Organization instead: every member, and no guest.
-    await sql(`DELETE FROM sidekick_audience WHERE sidekick_id = ?`, AUTOMATION_ID);
-    await sql(`UPDATE automation_directory SET scope = 'workspace' WHERE automation_id = ?`, AUTOMATION_ID);
-    expect(await mail(guest)).toBe("email_sender_not_authorized");
-    expect(await mail(OUTSIDER_ID)).toBe("admitted");
   });
 
   it("answers a run conversation's terminal deadline from its own projection, not a Channel's", async () => {

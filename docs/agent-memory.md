@@ -226,7 +226,7 @@ its own facts and the Organization's when it is Organization-wide. A person whos
 run (`PERSONAL_SYSTEM_PROMPT_REASONS`: a message, an answer, a retry, in Rally
 or from a linked Slack account) reads as themselves: the shared facts every
 participant may see, plus their own `person` facts whatever the room. Every
-other run (a wake-up, a connector trigger, an inbound email, a background
+other run (a wake-up, a connector trigger, a background
 agent, a workspace principal) reads as the conversation: what every participant
 may, and nobody's own facts, because nobody in particular asked. The copy's
 row key is the principal: `user:<id>`, `sidekick:<automationId>`, or
@@ -343,7 +343,7 @@ tool call passes).
 - `memory_remember(text, kind, validUntil?, about?)`: writes one fact under
   the acting person (`about: "me"`) or the conversation's own subject. The
   trust class is the input that started the run (`derivedFromOf`): a Slack or
-  email trigger writes `external`, an agent exchange or a Sidekick's
+  connector trigger writes `external`, an agent exchange or a Sidekick's
   scheduled self-review `agent`. A sentence that
   matches an active fact on the subject word for word, among the facts the
   reader may see from here, returns that fact with `deduplicated: true`; a
@@ -575,7 +575,15 @@ tool-side bounds (`text` at most 600 characters, `limit` at most 25, the recall
 query at `MEMORY_RECALL_QUERY_LIMIT`) are from the PRD's design and are not
 defensive numbers.
 
+Canvas archive removes both person and whole-conversation audiences, including
+Organization-wide source shortcuts. Migration 142 marks every digest holder and
+advances the memory revision when `archived_at` changes. Refresh drops an archived
+Canvas's holder and withdraws its source facts from copies in other conversations.
+
 ## Testing
+
+`test-workers/memory-facts.test.ts` covers archive withdrawal from Organization
+audiences, holder invalidation and removal of an archived destination holder.
 
 | Suite | Covers |
 | --- | --- |
@@ -629,6 +637,14 @@ when nothing it cites is in the window, and never defaults to `person`. The mode
 authority. `retracted_by` records who forgot a fact.
 
 ## Changelog
+
+### 2026-11-09 — Withdraw archived Canvas memory sources
+
+An archived Canvas admits nobody, so its source facts and previously rendered
+digest copies must disappear together. Checking only person admission left the
+Organization-wide shortcut open; checking only fresh reads left copies stale.
+Archive therefore changes the audience rule and triggers the existing revision
+and copy-sync mechanism in the same commit.
 
 ### 2026-11-09 — Memory is learned in Canvases and Sidekicks, and its visibility is derived from them alone
 

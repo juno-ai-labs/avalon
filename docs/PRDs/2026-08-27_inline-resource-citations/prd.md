@@ -377,7 +377,7 @@ lives in `DOCUMENT_GENERATION_POLICY`, which is gated on the run being able to
 publish. `CITATION_POLICY` teaches the link and footnote forms only.
 
 **Why:** Review found the first draft charged every automation, scheduled
-digest, inbound-email and Slack-origin run to announce documents they were
+digest and Slack-origin run to announce documents they were
 deliberately never told to make — and on the Slack path the delivery rewrite
 reduces such a line to a bare title with nothing to open, the exact outcome that
 gate exists to prevent. Agent behavior's stated reason for no carve-out ("would

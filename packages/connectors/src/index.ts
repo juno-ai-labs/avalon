@@ -113,7 +113,6 @@ import { createXConnector, type XConnectorConfig } from "./x";
 
 export {
   assertPrincipalAccess,
-  acknowledgeConnectorAgentActivation,
   authorizedConnection,
   connectorRetryAfterMs,
   connectorActivityScopes,

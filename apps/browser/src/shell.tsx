@@ -144,6 +144,7 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
       return departure;
     },
     createDevelopmentSession: macAppOnly,
+    signInWithPassword: macAppOnly,
     finishWorkspaceSetup: macAppOnly,
     refreshSession: async () => { onRevalidate(); return session; },
     getAccountOnboarding,

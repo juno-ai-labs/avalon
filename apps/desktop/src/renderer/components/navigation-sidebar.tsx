@@ -1,12 +1,13 @@
 import { ShapeOutline } from '@rally/ui/components/identity-tile';
-import { IconChecks, IconDeviceDesktopDown, IconHexagon, IconMenu2, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
+import { IconChecks, IconDeviceDesktopDown, IconHexagon, IconHome, IconMenu2, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { canvasNeedsAttention, sidekickNeedsAttention } from '../../common/sidebar-attention';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { useCreateCanvas } from '../lib/canvases';
+import { isRestoredRoute } from '../lib/landing';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace } from '../lib/types';
 import { useUiStore, type SidebarSection } from '../lib/ui-store';
@@ -15,6 +16,8 @@ import { useDockBadge } from '../lib/dock-badge';
 import type { ActivityList } from '../lib/sidebar-list-store';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { ActivitySection, activityRoute, useActivityList } from './activity-sidebar-section';
+import { CanvasPinDragProvider } from './canvas-pin-drag';
+import { CanvasPinRail } from './canvas-pin-rail';
 import { CanvasesSection } from './canvas-sidebar-section';
 import { ErrorNotice, IconButton } from './primitives';
 import { WorkspaceUpdateNotice } from './pushed-list-pending';
@@ -105,7 +108,9 @@ export function NavigationSidebar({
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
   const menuToggle = useRef<HTMLButtonElement>(null);
-  const { pathname, search } = useLocation();
+  const { pathname, search, state } = useLocation();
+  const address = `${pathname}${search}`;
+  const restoredActivity = pathname === '/activity' && isRestoredRoute(state);
   // The phone sheet. Escape closes it as it would any menu and hands focus
   // back to the button (the app shell then moves it on to a pane header's
   // menu mark, when that is what opened the sheet); widening past the phone
@@ -148,8 +153,8 @@ export function NavigationSidebar({
     if (owner) setSection(owner);
   }, [pathname, setSection, sidebarOpen]);
   // Opening anything closes the sheet, whoever navigated: a row, a search
-  // result, a new Canvas. Switching sections does not navigate, so the sheet
-  // stays open on the list just picked. A navigation that asked for the sheet
+  // result, a new Canvas. Dashboard shortcuts close the sheet even when
+  // already at their destination. A navigation that asked for the sheet
   // (`sheetAfterNavigation`) opens it here instead, once.
   useEffect(() => {
     const { sheetAfterNavigation, setSheetAfterNavigation } = useUiStore.getState();
@@ -159,15 +164,14 @@ export function NavigationSidebar({
   // Whatever opened it (a row, a deep link, a memory source, the account
   // menu), arriving at a Canvas or a Sidekick shows its section, so the list
   // beside it holds the row that is open. Only a navigation moves it:
-  // switching sections while one is open does not navigate.
+  // picking a section that only changes its list does not navigate.
   // Activity is a list of things to go to, so opening one of its rows keeps
   // it open, the next row a click away.
   // The landing is the window's first route that belongs to a section: a
   // launch starts at "/" and the landing redirects to `/canvases`, which is
-  // where it landed, not a navigation. A section home there names no row, so
-  // the section the person left open is kept; only a Canvas or a Sidekick the
-  // landing opens moves it. Read from the route rather than counted in the
-  // effect, which StrictMode runs twice.
+  // where it landed, not a navigation. A dashboard landing keeps the stored
+  // section. The Activity home selects its own list. Read from the route
+  // rather than counted in the effect, which StrictMode runs twice.
   const landedOn = useRef<string | null>(null);
   const navigated = useRef(false);
   // Whether the landing is somewhere Activity's top row may replace: only a
@@ -184,7 +188,7 @@ export function NavigationSidebar({
     const opened = sectionForPath(pathname);
     const current = useUiStore.getState().sidebarSection;
     if (!opened || opened === current || current === 'activity') return;
-    if (!navigated.current && !routeNamesItem(pathname)) return;
+    if (!navigated.current && !routeNamesItem(pathname) && opened !== 'activity') return;
     setSection(opened);
   }, [pathname, setSection]);
   const panel = useRef<HTMLElement>(null);
@@ -204,46 +208,71 @@ export function NavigationSidebar({
   const createCanvas = useCreateCanvas();
   const [createCanvasError, setCreateCanvasError] = useState<Error | null>(null);
   const navigate = useNavigate();
+  const openSidekicksHome = (): void => {
+    setSidebarOpen(false);
+    if (address !== '/sidekicks') void navigate('/sidekicks');
+  };
   const workspaceSocket = useOptionalWorkspaceSocket();
-  // Entering Activity opens its top row, the way a mail client opens the
-  // first message of the folder it opens: the rail's button pushes, so Back
-  // returns to what was open, and a launch with Activity stored replaces the
-  // landing, so Back does not return to the Canvases home. The first list
-  // frame after entering decides; an empty one opens nothing, and nothing
-  // after it (rows arriving, Mark all seen, a click) moves the pane until the
-  // section is left and entered again. A launch waits for the landing,
-  // replaces only a section home (a restored or linked Canvas or Sidekick is
-  // kept), and gives way to any navigation since the landing; entering from
-  // the rail gives way to a navigation made before the list arrived.
-  const openTopRow = useRef<'push' | 'replace' | null>(section === 'activity' ? 'replace' : null);
+  const openActivityDestination = useCallback((list: ActivityList, replace: boolean): void => {
+    const top = list.items[0];
+    const target = top ? activityRoute(top) : '/activity';
+    if (target === address) {
+      // A rail pick can reveal the empty page without a route change.
+      if (!top && !replace) setSidebarOpen(false);
+      return;
+    }
+    const { sidebarOpen: sheetOpen, setSheetAfterNavigation } = useUiStore.getState();
+    if (sheetOpen && top && target.split('?')[0] !== pathname) setSheetAfterNavigation(true);
+    void navigate(target, { replace });
+  }, [address, navigate, pathname, setSidebarOpen]);
+  // A rail click opens the top row or the empty page, with one Back step.
+  // A launch may replace a dashboard or the Activity home restored from
+  // storage. Opening /activity directly or through history selects the list.
+  const activityEntry = useRef<{ mode: 'replace' } | { mode: 'push'; from: string } | null>(
+    section === 'activity' ? { mode: 'replace' } : null,
+  );
   const enteredFrom = useRef(section);
-  // The route the pane had when Activity was entered: a navigation before the
-  // first list arrives is the person's, and the top row gives way to it.
-  const enteredAt = useRef(`${pathname}${search}`);
   if (enteredFrom.current !== section) {
-    openTopRow.current = section === 'activity' ? 'push' : null;
     enteredFrom.current = section;
-    enteredAt.current = `${pathname}${search}`;
+    if (section === 'activity' && restoredActivity && !navigated.current) {
+      activityEntry.current = { mode: 'replace' };
+    } else {
+      activityEntry.current = section === 'activity' && pathname !== '/activity' ? { mode: 'push', from: address } : null;
+    }
   }
   useEffect(() => {
-    const mode = openTopRow.current;
-    if (mode === null || section !== 'activity' || activity === undefined) return;
-    if (mode === 'replace' && landedOn.current === null) return;
-    openTopRow.current = null;
-    const top = activity.items[0];
-    if (!top) return;
-    if (mode === 'replace' && (navigated.current || !landedOnDefault.current)) return;
-    if (mode === 'push' && enteredAt.current !== `${pathname}${search}`) return;
-    const target = activityRoute(top);
-    if (target === `${pathname}${search}`) return;
-    // In the phone sheet the list is what was asked for: it stays open over
-    // the row it opened. Only a new pathname closes the sheet, so only one
-    // asks for it back.
-    const { sidebarOpen: sheetOpen, setSheetAfterNavigation } = useUiStore.getState();
-    if (sheetOpen && target.split('?')[0] !== pathname) setSheetAfterNavigation(true);
-    void navigate(target, { replace: mode === 'replace' });
-  }, [activity, navigate, pathname, search, section]);
-  return <ResizableSidebar
+    const entry = activityEntry.current;
+    if (!entry || section !== 'activity' || activity === undefined) return;
+    if (entry.mode === 'replace' && landedOn.current === null) return;
+    activityEntry.current = null;
+    if (entry.mode === 'replace') {
+      if (navigated.current || !landedOnDefault.current || (pathname === '/activity' && !restoredActivity)) return;
+    } else if (entry.from !== address) return;
+    openActivityDestination(activity, entry.mode === 'replace');
+  }, [activity, address, openActivityDestination, pathname, restoredActivity, section]);
+  const openCanvasDashboard = (): void => {
+    setSection('canvases');
+    setSidebarOpen(false);
+    void navigate('/canvases', { replace: pathname === '/canvases' });
+  };
+  const pickSection = (next: SidebarSection): void => {
+    if (next === 'canvases') {
+      openCanvasDashboard();
+      return;
+    }
+    if (next === 'activity') {
+      // Record the explicit pick here so the section change does not schedule
+      // a second open. A pick made before the feed arrives uses the same target.
+      enteredFrom.current = next;
+      activityEntry.current = activity === undefined ? { mode: 'push', from: address } : null;
+      setSection(next);
+      if (activity !== undefined) openActivityDestination(activity, false);
+      return;
+    }
+    setSection(next);
+    if (next === 'sidekicks' && !guest) openSidekicksHome();
+  };
+  return <CanvasPinDragProvider><ResizableSidebar
     aria-label="Rally navigation"
     className={clsx('sidebar single-sidebar navigation-sidebar', sidebarOpen && 'is-mobile-open')}
     id={NAVIGATION_SHEET_ID}
@@ -254,20 +283,22 @@ export function NavigationSidebar({
   >
     <div className="navigation-body">
       <nav aria-label="Sections" className="navigation-rail">
-        {host === 'desktop' && <div className="navigation-rail-top window-drag" />}
-        {SECTIONS.map((candidate) => <RailItem
-          active={candidate.id === section}
-          aria-current={candidate.id === section ? 'page' : undefined}
-          // Named section first, then its count: "Canvases, 10 unread".
-          aria-label={badges[candidate.id] > 0 ? `${candidate.label}, ${badgeLabel(candidate.id, badges[candidate.id])}` : candidate.label}
-          badge={<RailBadge count={badges[candidate.id]} />}
-          icon={candidate.icon}
-          key={candidate.id}
-          label={candidate.label}
-          onClick={() => setSection(candidate.id)}
-        />)}
-        <div className="navigation-rail-spacer" />
-        {accountMenu}
+        <div className="navigation-rail-sections">
+          {host === 'desktop' && <div className="navigation-rail-top window-drag" />}
+          {SECTIONS.map((candidate) => <RailItem
+            active={candidate.id === section}
+            aria-current={candidate.id === section ? 'page' : undefined}
+            // Named section first, then its count: "Canvases, 10 unread".
+            aria-label={badges[candidate.id] > 0 ? `${candidate.label}, ${badgeLabel(candidate.id, badges[candidate.id])}` : candidate.label}
+            badge={<RailBadge count={badges[candidate.id]} />}
+            icon={candidate.icon}
+            key={candidate.id}
+            label={candidate.label}
+            onClick={() => pickSection(candidate.id)}
+          />)}
+        </div>
+        <CanvasPinRail />
+        <div className="navigation-rail-account">{accountMenu}</div>
       </nav>
       <div className="navigation-panel">
         <header className="navigation-panel-header window-drag">
@@ -289,8 +320,14 @@ export function NavigationSidebar({
             {downloadedUpdate !== null && <IconButton className="navigation-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
               <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
             </IconButton>}
+            {barSection === 'canvases' && <IconButton label="Canvas dashboard" onClick={openCanvasDashboard}>
+              <IconHome aria-hidden="true" size={18} stroke={1.8} />
+            </IconButton>}
             {barSection === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => { setCreateCanvasError(null); void createCanvas().catch((cause: unknown) => setCreateCanvasError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))); }}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
+            </IconButton>}
+            {barSection === 'sidekicks' && !guest && <IconButton label="Sidekicks home" onClick={openSidekicksHome}>
+              <IconHome aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
             {barSection === 'sidekicks' && !guest && <IconButton label="New Sidekick" onClick={() => void navigate('/sidekicks/new')}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
@@ -313,11 +350,12 @@ export function NavigationSidebar({
         {footerItems && <SidebarFooterItems>{footerItems}</SidebarFooterItems>}
       </div>
     </div>
-  </ResizableSidebar>;
+  </ResizableSidebar></CanvasPinDragProvider>;
 }
 
 /** The section a route belongs to, or null for one that belongs to neither. */
 export function sectionForPath(pathname: string): SidebarSection | null {
+  if (pathname === '/activity') return 'activity';
   if (/^\/canvases(\/|$)/.test(pathname)) return 'canvases';
   if (/^\/(sidekicks|automations)(\/|$)/.test(pathname)) return 'sidekicks';
   return null;

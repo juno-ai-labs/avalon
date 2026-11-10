@@ -10,15 +10,24 @@ import {
   CanvasAccessSchema,
   CanvasAudienceUpdateSchema,
   CanvasDetailSchema,
+  AddCanvasSidekickRequestSchema,
+  AddedCanvasSidekickSchema,
+  CanvasListSchema,
+  CanvasPublishRequestSchema,
+  CanvasPublishedArtifactSchema,
   CanvasUpdateRequestSchema,
   CreateCanvasRequestSchema,
   CreatedCanvasSchema,
   SidebarPinRequestSchema,
+  SidebarPinOrderRequestSchema,
 } from "@rally/contracts/canvases";
 
 import type { HonoAppEnv } from "../env";
-import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
+import { getRequestMembership, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
+import { ApiError } from "../lib/api-error";
+import { ResourceService } from "../services/resource-service";
 import { namedZValidator, zValidator } from "../middleware/validation";
+import { CanvasPublicationService } from "../services/canvas-publication-service";
 import { CanvasService } from "../services/canvas-service";
 
 const idParam = z.object({ id: IdSchema });
@@ -37,8 +46,19 @@ const requesterParam = namedZValidator("canvas_access_requester", "This is not a
  */
 export const canvasRoutes = new Hono<HonoAppEnv>();
 canvasRoutes.use("*", requireWorkspaceAuth);
+// The reader's Canvas list, for a client that holds no workspace socket.
+canvasRoutes.get("/", zValidator("query", z.object({ query: z.string().trim().min(1).optional() })), async (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json(CanvasListSchema.parse({ items: await new CanvasService(c.env, getWorkspaceAuth(c)).list(c.req.valid("query").query) }));
+});
 canvasRoutes.post("/", zValidator("json", CreateCanvasRequestSchema), async (c) =>
   c.json(CreatedCanvasSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).create(c.req.valid("json"))), 201));
+// Guests can arrange the same personal pins they can create.
+canvasRoutes.put("/pinned-order", namedZValidator("canvas_pin_order", "Canvas pin order must contain Canvas ids")(
+  "json", SidebarPinOrderRequestSchema.pick({ itemIds: true })), async (c) => {
+  await new CanvasService(c.env, getWorkspaceAuth(c)).reorderPins("canvas", c.req.valid("json").itemIds);
+  return c.body(null, 204);
+});
 canvasRoutes.get("/:id", canvasIdParam, async (c) => {
   c.header("Cache-Control", "no-store");
   return c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).detail(c.req.valid("param").id)));
@@ -54,10 +74,53 @@ canvasRoutes.patch("/:id", canvasIdParam, namedZValidator("canvas_rename",
 canvasRoutes.post("/:id/audience", canvasIdParam, zValidator("json", CanvasAudienceUpdateSchema), async (c) =>
   c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c))
     .setAudience(c.req.valid("param").id, c.req.valid("json")))));
+// Publish something made elsewhere as one of this Canvas's artifacts, as the
+// person; the same name again is a new version. `docs/rally-mcp.md#publishing`.
+canvasRoutes.post("/:id/artifacts", canvasIdParam, namedZValidator("canvas_publish",
+  "A publish names a file or a static site, with a relative name and its content")("json", CanvasPublishRequestSchema), async (c) => {
+  const published = await new CanvasPublicationService(c.env, getWorkspaceAuth(c))
+    .publish(c.req.valid("param").id, c.req.valid("json"), c.req.raw.signal);
+  return c.json(CanvasPublishedArtifactSchema.parse(published), published.outcome === "created" ? 201 : 200);
+});
+/**
+ * One version of one of this Canvas's artifacts, as `GET /resources/:id/versions/:version/content`
+ * (or `model-content`) answers it, for a reader who may open the Canvas. An
+ * MCP client reads artifacts here rather than through `/resources`, so its
+ * token reaches only what a Canvas holds (`docs/rally-mcp.md`).
+ */
+canvasRoutes.get("/:id/artifacts/:resourceId/versions/:version/:representation", namedZValidator("canvas_artifact", "This is not a Canvas artifact version")("param",
+  z.object({ id: IdSchema, resourceId: IdSchema, version: z.coerce.number().int().positive(), representation: z.enum(["content", "model-content"]) })), async (c) => {
+  const param = c.req.valid("param");
+  const auth = getWorkspaceAuth(c);
+  const canvas = await new CanvasService(c.env, auth).detail(param.id);
+  const artifact = canvas.artifacts.find((candidate) => candidate.resourceId === param.resourceId);
+  if (!artifact) throw new ApiError(404, "canvas_artifact_not_found", "That is not one of this Canvas's artifacts");
+  const resources = new ResourceService(c.env, auth, undefined, getRequestMembership(c));
+  if (param.representation === "content") return resources.versionContent(param.resourceId, param.version, "original");
+  try {
+    return await resources.versionContent(param.resourceId, param.version, "model");
+  } catch (error) {
+    // A published file's text is extracted when someone first reads it, not
+    // when it lands, so the current version's first read prepares it here
+    // (the app's preview does the same). An older version keeps its answer.
+    if (!(error instanceof ApiError) || error.code !== "resource_version_content_unavailable" || param.version !== artifact.version) throw error;
+    return resources.preview(param.resourceId, c.req.raw.signal);
+  }
+});
+// A Sidekick for this Canvas, made by a client that is not the Canvas's Chat.
+canvasRoutes.post("/:id/sidekicks", canvasIdParam, namedZValidator("canvas_sidekick",
+  "A Sidekick for a Canvas needs instructions with text and a clientMessageId")("json", AddCanvasSidekickRequestSchema), async (c) =>
+  c.json(AddedCanvasSidekickSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c))
+    .addSidekick(c.req.valid("param").id, c.req.valid("json"))), 201));
 canvasRoutes.post("/:id/pin", canvasIdParam, zValidator("json", SidebarPinRequestSchema), async (c) => {
   await new CanvasService(c.env, getWorkspaceAuth(c)).pin("canvas", c.req.valid("param").id, c.req.valid("json").pinned);
   return c.body(null, 204);
 });
+canvasRoutes.post("/:id/archive", canvasIdParam, async (c) => {
+  await new CanvasService(c.env, getWorkspaceAuth(c)).archive(c.req.valid("param").id);
+  return c.body(null, 204);
+});
+
 // A member who cannot open a Canvas: whether they may ask, asking, and a
 // decider's answer. `docs/canvas-access-requests.md`.
 canvasRoutes.get("/:id/access", canvasIdParam, async (c) => {

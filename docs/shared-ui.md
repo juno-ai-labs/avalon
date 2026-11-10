@@ -106,7 +106,10 @@ error copy without those markers.
 focusable; it sets `aria-disabled`, blocks activation and shows `Tip` only for
 that explanation. `MenuActionItem` in `components/menu-action-item.tsx` owns the
 equivalent dropdown behavior, keeping explained items in the arrow-key path and
-preventing disabled selections from closing the menu. The account menu's
+preventing disabled selections from closing the menu. `ActionTile` accepts the
+same `disabledReason` and composes that item, so a disabled tile explains itself
+on hover or keyboard focus too. Enabled selection handlers receive the menu
+event, preserving in-place level navigation. The account menu's
 member and Sidekick actions use this same primitive. Ordinary disabled controls still
 use native disabling, and enabled text controls add no redundant tooltip.
 
@@ -234,6 +237,15 @@ surfaces in Electron, and in Chrome for the browser host; no second component
 test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-11-09 — Explain unavailable title-menu tiles through the shared menu item
+
+`ActionTile.disabledReason` uses `MenuActionItem` for the same focusable,
+inert action and tooltip as menu rows. The item forwards enabled selection
+events so tiles that navigate to another menu level can still keep it open.
+Canvas's Open artifact tile needs to explain both an already-open panel and
+an empty Canvas; a tile-specific tooltip wrapper would duplicate the disabled
+selection policy. Future tile explanations should use this shared path.
 
 ### 2026-10-23 — Show Sidekick delegates with immediate creation
 

@@ -553,15 +553,6 @@ is above; do only what the new input needs." Without it, the re-rendered
 Sidekick instructions ("DM the founders") read as a fresh task, and a model can
 send the requests again, each send writing a new binding.
 
-**How bound-thread text is framed.** A message that arrives through a binding
-is external, untrusted text. It is admitted as an external attributed message
-and rendered as labelled evidence from that person, the way inbound mail is,
-never as a member request above the Sidekick's instructions. When the run
-forwards it with `conversation_post`, the post carries the same external
-source in its structured content, so a later run reading the home through
-`conversation_read` sees it marked as external. The prompt-injection test for
-inbound mail is extended to cover both.
-
 ## Mucker weekly call prep
 
 The Sidekick's home is the Breakout in the investors Space where it was set up.

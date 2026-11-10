@@ -16,50 +16,6 @@ const PERSONAL_IDENTITY_LINKS: Partial<Record<AutomationDeliveryTargetType, stri
      WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
 };
 
-/**
- * The provider identity a saved connector target is frozen against. The columns
- * behind these are still named `slack_team_id` and `slack_user_id`; they hold
- * the provider's tenant and user for whichever connector the target belongs to.
- */
-export interface FrozenDeliveryIdentity {
-  connectionId: string;
-  providerTenantId: string;
-  providerUserId: string;
-}
-
-/**
- * Per target type: turn an offered connection into the identity to freeze. A
- * target type is saveable only if it appears here, so a connector that declares
- * a surface Avalon cannot yet address is rejected rather than half-stored.
- */
-const FROZEN_IDENTITY_RESOLVERS: Partial<Record<
-  AutomationDeliveryTargetType,
-  (env: Env, input: DeliveryIdentityInput) => Promise<FrozenDeliveryIdentity | null>
->> = {
-  slack_agent_dm: async (env, input) => {
-    const row = await env.DB.prepare(
-      `SELECT cc.id, cc.provider_account_id, l.slack_user_id
-       FROM connector_connections cc
-       JOIN slack_user_links l ON l.connection_id = cc.id
-         AND l.workspace_id = cc.workspace_id AND l.user_id = ? AND l.status = 'active'
-       WHERE cc.id = ? AND cc.workspace_id = ?`,
-    ).bind(input.userId, input.connectionId, input.workspaceId).first<{
-      id: string;
-      provider_account_id: string;
-      slack_user_id: string;
-    }>();
-    return row
-      ? { connectionId: row.id, providerTenantId: row.provider_account_id, providerUserId: row.slack_user_id }
-      : null;
-  },
-};
-
-interface DeliveryIdentityInput {
-  workspaceId: string;
-  userId: string;
-  connectionId: string;
-}
-
 export type UserDeliveryByConnectionId = Map<string, Connection["userDelivery"]>;
 
 /** The delivery surface a connector declares, or null when it declares none. */
@@ -68,30 +24,6 @@ export function declaredUserDeliveryTargetType(
   connectorType: string,
 ): AutomationDeliveryTargetType | null {
   return declaredUserDelivery(env, connectorType)?.targetType ?? null;
-}
-
-/**
- * Resolves a destination the creator chose into the identity to store, using
- * exactly the eligibility the create screen was offered — same declaration,
- * same health, same identity link. Read and write cannot disagree about which
- * connections are personal destinations, because they answer it here together.
- */
-export async function resolveFrozenDeliveryIdentity(
-  env: Env,
-  input: DeliveryIdentityInput & { targetType: AutomationDeliveryTargetType },
-): Promise<FrozenDeliveryIdentity | null> {
-  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
-  const connection = await env.DB.prepare(
-    "SELECT id, connector_type, status FROM connector_connections WHERE id = ? AND workspace_id = ?",
-  ).bind(input.connectionId, input.workspaceId).first<{
-    id: string;
-    connector_type: string;
-    status: string;
-  }>();
-  if (!connection) return null;
-  const offered = await resolveUserDelivery(env, input, [connection]);
-  if (offered.get(connection.id)?.targetType !== input.targetType) return null;
-  return await FROZEN_IDENTITY_RESOLVERS[input.targetType]?.(env, input) ?? null;
 }
 
 function declaredUserDelivery(env: Env, connectorType: string): ConnectorUserDelivery | null {

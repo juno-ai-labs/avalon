@@ -72,13 +72,16 @@ search box to find a Canvas by name, and the filter chips to narrow the list:
 
 | Chip | Shows |
 | --- | --- |
-| **Everyone** | Every Canvas you can open |
+| **All** | Every Canvas you can open |
+| **Data** | Canvases containing an artifact with its own database |
 | **Made by me** | Canvases you started |
 | **Shared with me** | Canvases someone else started and shared with you |
 | **From Sidekicks** | Canvases a Sidekick made |
 
-**Live now** lists Canvases that somebody has open at this moment, with their
-faces. **Recent** lists everything else, newest first.
+**Recent** lists matching Canvases by their latest activity. A card's top-left
+faces show other people who have it open now. The **Data** badge at the top
+right identifies an artifact with its own database, whether anyone is there
+or not. Use the **Data** chip to find those Canvases.
 
 ## Naming a Canvas
 

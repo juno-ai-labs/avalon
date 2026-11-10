@@ -1,13 +1,13 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from 'cloudflare:workers';
 import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { deliverInferenceLakehousePointer, retiredMeetingInferenceKey } from '../src/queues/inference-lakehouse-consumer';
 import { sha256 } from '../src/lib/crypto';
 import type { InferenceLakehouseRecord } from '../src/services/inference-lakehouse';
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from '../src/durable-objects/workspace-do';
 import { applyDurableObjectSqliteMigrations } from '../src/durable-objects/sqlite-migrations';
-import { purgeRetiredMeetingObjects, applyMeetingRetirementMigrations } from '../src/durable-objects/meeting-notes-retirement';
+import { applyMeetingRetirementMigrations } from '../src/durable-objects/meeting-notes-retirement';
 
 /**
  * The ledger's head, read rather than written down.
@@ -26,16 +26,12 @@ const noteId = '00000000-0000-7000-8000-000000000cb0';
 const ownerId = '00000000-0000-7000-8000-000000000ca1';
 const prefix = `global/${workspaceId}/resources/${resourceId}/`;
 const current = `${prefix}versions/current/note.md`;
-const historical = `${prefix}versions/old/note-model.md`;
 const at = '2033-01-01T00:00:00.000Z';
 
 describe('meeting notes retirement', () => {
-  it('purges populated notes and every file version, preserves unrelated resources, and refuses recreation', async () => {
+  it('purges populated notes, preserves unrelated resources, refuses recreation, and holds 58 until cleanup is complete', async () => {
     const stub = env.MIGRATION_PROBE_DO!.getByName('meeting-notes-retirement');
     await stub.ping();
-    await env.PAYLOADS.put(current, 'current meeting');
-    await env.PAYLOADS.put(historical, 'historical meeting');
-    await env.PAYLOADS.put('unrelated-dictation-fixture', 'keep');
     await runInDurableObject(stub, async (_instance, state) => {
       const migrate = (migrations: typeof WORKSPACE_DO_SCHEMA_MIGRATIONS) => applyDurableObjectSqliteMigrations({
         storage: state.storage, component: 'workspace_do', migrations,
@@ -69,28 +65,9 @@ describe('meeting notes retirement', () => {
       expect(() => insertResource(resourceId, 'avalon_note')).toThrow('meeting_notes_retired');
       expect(() => migrate(WORKSPACE_DO_SCHEMA_MIGRATIONS)).toThrow('CHECK constraint failed');
       expect(count('notes')).toBe(0);
-      // Inject the external transport failure; reads and the retry still use real R2.
-      const interruptedBucket = new Proxy(env.PAYLOADS, {
-        get(target, key) {
-          if (key === 'delete') return async () => { throw new Error('interrupted_r2_delete'); };
-          const value = Reflect.get(target, key);
-          return typeof value === 'function' ? value.bind(target) : value;
-        },
-      });
-      await expect(purgeRetiredMeetingObjects(state.storage, interruptedBucket, 'global', workspaceId))
-        .rejects.toThrow('interrupted_r2_delete');
-      expect(sql.exec('SELECT objects_deleted FROM retired_meeting_resources').one()).toEqual({ objects_deleted: 0 });
-      const result = await purgeRetiredMeetingObjects(state.storage, env.PAYLOADS, 'global', workspaceId);
-      expect(result.remaining).toBe(0);
-      expect((await env.PAYLOADS.list({ prefix })).objects).toEqual([]);
-      expect(await env.PAYLOADS.get('unrelated-dictation-fixture')).not.toBeNull();
-      expect(await purgeRetiredMeetingObjects(state.storage, env.PAYLOADS, 'global', workspaceId))
-        .toEqual({ remaining: 0, deletedObjects: 0 });
-      // A delayed old process may finish an R2 write after a completed pass.
-      // Explicit resource verification must discover and remove it on rerun.
-      await env.PAYLOADS.put(historical, 'delayed old writer');
-      await purgeRetiredMeetingObjects(state.storage, env.PAYLOADS, 'global', workspaceId, resourceId);
-      expect(await env.PAYLOADS.get(historical)).toBeNull();
+      // The R2 cleanup ran in every production object before its RPCs were
+      // deleted; mark it complete the way that pass did, and 58 may advance.
+      sql.exec('UPDATE retired_meeting_resources SET objects_deleted = 1');
       migrate(WORKSPACE_DO_SCHEMA_MIGRATIONS);
       expect(sql.exec("SELECT name FROM sqlite_schema WHERE name IN ('notes', 'note_transcript_segments')").toArray()).toEqual([]);
     });
@@ -179,8 +156,6 @@ it('initializes a fresh workspace without retired feature tables', async () => {
       workerVersionId: 'fresh', migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS });
     expect(state.storage.sql.exec('SELECT * FROM retired_meeting_resources').toArray()).toEqual([]);
     expect(state.storage.sql.exec("SELECT name FROM sqlite_schema WHERE name = 'notes'").toArray()).toEqual([]);
-    expect(await purgeRetiredMeetingObjects(state.storage, env.PAYLOADS, 'global', workspaceId))
-      .toEqual({ remaining: 0, deletedObjects: 0 });
   });
 });
 
@@ -200,31 +175,14 @@ it('upgrades adopted workspaces that already retired the Sidekick resource join 
   });
 });
 
-it('reports feature table and remaining-reference inventory through the real workspace RPC', async () => {
-  const stub = env.WORKSPACE_DOS.getByName('meeting-retirement-inventory');
-  await stub.retiredMeetingInventory();
-  await runInDurableObject(stub, async (_instance, state) => { await state.storage.put('unrelated-fixture', 'keep'); });
-  const inventory = await stub.retiredMeetingInventory();
-  expect(inventory.schemaVersion).toBe(LATEST_WORKSPACE_DO_VERSION);
-  expect(inventory.references).toEqual([]);
-  expect(inventory.resources).toEqual([]);
-  expect(inventory.featureTables).toEqual([]);
-});
-
-it('purges attributable search decisions and fences stale registrations while preserving unrelated keys', async () => {
+it('fences a stale search registration for a retired meeting resource while preserving unrelated keys', async () => {
   const stub = env.WORKSPACE_DOS.getByName('meeting-search-retirement');
   await stub.initializeWorkspace(workspaceId, 'wnam');
   await runInDurableObject(stub, async (_instance, state) => {
     state.storage.sql.exec('INSERT INTO retired_meeting_resources(resource_id, objects_deleted) VALUES (?, 1)', resourceId);
-    state.storage.sql.exec(`INSERT INTO search_authorization_keys(cache_key, generation, resource_id) VALUES ('retired-test-key', 1, ?), ('unrelated-test-key', 1, NULL)`, resourceId);
-    state.storage.sql.exec(`INSERT INTO authorization_snapshots VALUES ('retired-test-key', '{}', 0), ('unrelated-test-key', '{}', 0)`);
+    state.storage.sql.exec(`INSERT INTO search_authorization_keys(cache_key, generation, resource_id) VALUES ('unrelated-test-key', 1, NULL)`);
+    state.storage.sql.exec(`INSERT INTO authorization_snapshots VALUES ('unrelated-test-key', '{}', 0)`);
   });
-  await env.AUTHORIZATION_CACHE!.put('retired-test-key', 'retired');
-  await env.AUTHORIZATION_CACHE!.put('unrelated-test-key', 'keep');
-  expect(await stub.purgeMeetingSearchAuthorization()).toEqual({ deletedKeys: 1 });
-  expect(await env.AUTHORIZATION_CACHE!.get('retired-test-key')).toBeNull();
-  expect(await env.AUTHORIZATION_CACHE!.get('unrelated-test-key')).toBe('keep');
-  expect(await stub.purgeMeetingSearchAuthorization()).toEqual({ deletedKeys: 0 });
   await runInDurableObject(stub, async (instance) => {
     await expect(instance.registerSearchAuthorization({
       subject: { workspaceId, userId: ownerId, delegation: null },
@@ -238,9 +196,9 @@ it('purges attributable search decisions and fences stale registrations while pr
 });
 
 
-it('keeps populated pre-retirement workspaces reachable across cold starts and finalizes through operator RPC', async () => {
+it('keeps populated pre-retirement workspaces reachable at 57 across cold starts and advances once cleanup is complete', async () => {
   const stub = env.WORKSPACE_DOS.getByName('meeting-retirement-cold-upgrade');
-  await stub.retiredMeetingInventory();
+  await stub.initializeWorkspace(workspaceId, 'wnam');
   await runInDurableObject(stub, async (_instance, state) => {
     await state.storage.deleteAll();
     applyDurableObjectSqliteMigrations({ storage: state.storage, component: 'workspace_do', workerVersionId: 'old',
@@ -253,30 +211,31 @@ it('keeps populated pre-retirement workspaces reachable across cold starts and f
       VALUES ('cold-retired-key', 1, ?)`, resourceId);
     state.storage.sql.exec(`INSERT INTO authorization_snapshots VALUES ('cold-retired-key', '{}', 0)`);
   });
-  await env.PAYLOADS.put(current, 'old meeting');
-  await env.AUTHORIZATION_CACHE!.put('cold-retired-key', 'old decision');
+  const version = () => runInDurableObject(stub, (_instance, state) => state.storage.sql
+    .exec<{ version: number }>('SELECT MAX(version) AS version FROM _sql_schema_migrations').one().version);
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   await evictDurableObject(stub);
-  let inventory = await stub.retiredMeetingInventory();
-  expect(inventory.schemaVersion).toBe(57);
-  expect(inventory.resources).toEqual([{ resource_id: resourceId, note_id: null, objects_deleted: 0 }]);
-  await runInDurableObject(stub, async (instance) => {
-    await expect(instance.finalizeMeetingRetirement()).rejects.toThrow('CHECK constraint failed');
+  await stub.initializeWorkspace(workspaceId, 'wnam');
+  expect(await version()).toBe(57);
+  // The hold is terminal now, so a held object says so on every wake.
+  expect(errors.mock.calls.map(([entry]) => entry)).toContainEqual(
+    expect.objectContaining({ event: 'workspace_meeting_retirement_held' }));
+  errors.mockRestore();
+  expect(await runInDurableObject(stub, (_instance, state) => state.storage.sql
+    .exec('SELECT resource_id, note_id, objects_deleted FROM retired_meeting_resources').toArray()))
+    .toEqual([{ resource_id: resourceId, note_id: null, objects_deleted: 0 }]);
+  await evictDurableObject(stub);
+  await stub.initializeWorkspace(workspaceId, 'wnam');
+  expect(await version()).toBe(57);
+  await runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec('UPDATE retired_meeting_resources SET objects_deleted = 1');
+    state.storage.sql.exec("DELETE FROM search_authorization_keys WHERE cache_key = 'cold-retired-key'");
   });
   await evictDurableObject(stub);
-  expect((await stub.retiredMeetingInventory()).schemaVersion).toBe(57);
-  expect(await stub.purgeMeetingNoteObjects()).toEqual({ remaining: 0, deletedObjects: 1 });
-  await runInDurableObject(stub, async (instance) => {
-    await expect(instance.finalizeMeetingRetirement()).rejects.toThrow('CHECK constraint failed');
-  });
-  expect(await stub.purgeMeetingSearchAuthorization()).toEqual({ deletedKeys: 1 });
-  expect(await env.PAYLOADS.head(current)).toBeNull();
-  expect(await env.AUTHORIZATION_CACHE!.get('cold-retired-key')).toBeNull();
-  expect(await stub.finalizeMeetingRetirement()).toEqual({ schemaVersion: 58 });
-  expect(await stub.finalizeMeetingRetirement()).toEqual({ schemaVersion: 58 });
-  await evictDurableObject(stub);
-  inventory = await stub.retiredMeetingInventory();
-  expect(inventory.schemaVersion).toBe(LATEST_WORKSPACE_DO_VERSION);
-  expect(inventory.featureTables).toEqual([]);
+  await stub.initializeWorkspace(workspaceId, 'wnam');
+  expect(await version()).toBe(LATEST_WORKSPACE_DO_VERSION);
+  expect(await runInDurableObject(stub, (_instance, state) => state.storage.sql
+    .exec("SELECT name FROM sqlite_schema WHERE name IN ('notes', 'note_transcript_segments')").toArray())).toEqual([]);
 });
 
 it('removes the adopted-schema shim before running later migrations', async () => {

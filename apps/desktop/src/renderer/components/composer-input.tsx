@@ -14,16 +14,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import {
-  AGENT_MODEL_GROUPS,
-  UNPINNED_AGENT_MODEL,
-  UNPINNED_AGENT_MODEL_LABEL,
-  agentModelInUseLabel,
-  agentModelInUseTriggerLabel,
-  agentModelLabel,
-  agentModelTriggerLabel,
-  type AgentModelOverride,
-} from '../lib/agent-models';
+import { agentModelInUseLabel, agentModelInUseTriggerLabel } from '../lib/agent-models';
 import { isComposingKeyEvent } from '../lib/ime';
 import {
   continueListAtCaret,
@@ -44,55 +35,33 @@ import { type AttachmentPreview, PendingAttachmentTile } from './attachments';
 import { IconButton, ErrorNotice, Tip } from './primitives';
 
 /**
- * The model control a composer offers, in whichever of its two shapes fits
- * where that composer stands.
- *
- * Named and exported rather than inlined on the props: the substream launcher
- * hands its shape through `WorkstreamComposer` on the way here, and two
- * declarations of the same union are two things to keep in step.
- *
- * `choice` offers the model this composer's work will run on, pinning it ahead
- * of the `agent-model-workstream` flag. `value` is `null` until something is
- * chosen, which is what keeps an untouched composer on the flag rather than
- * silently pinning every conversation a developer starts. That state is shown
- * as **Default** rather than as a model name: which model it resolves to is the
- * flag's answer, and this process cannot see the served variation.
- *
- * `settled` is the same control with its trigger disabled: it shows the model
- * already in force and does not open. The pin is written once, when the
- * conversation is created, and nothing afterwards edits it — so there is no
+ * The model control a composer shows: the model already in force, read-only.
+ * The pin is written once, when the conversation is created, and nothing afterwards edits it — so there is no
  * decision left to offer, and offering one would promise a change the next run
  * would not honour. The control stays anyway because the question it answers
  * survives the decision: a developer reading a transcript wants to know which
  * model wrote it, and until this existed the only way to find out was the
  * database.
  */
-export type ComposerModelControl =
-  | {
-    kind: 'choice';
-    value: AgentModelOverride | null;
-    onChange: (model: AgentModelOverride | null) => void;
-  }
-  | {
-    kind: 'settled';
-    /**
-     * The model this conversation is on: what its latest run recorded, or its
-     * pin where that run recorded nothing. Any OpenRouter id, not only one the
-     * pin list admits — an unpinned conversation runs on whatever the flag
-     * served. Null where neither is known, which is only a conversation with no
-     * run and no pin, and reads as **Default** for the same reason a fresh
-     * composer does.
-     */
-    model: string | null;
-    /**
-     * Whether the conversation carries a pin. It changes what the control may
-     * honestly claim, not what it shows: a pinned conversation runs on `model`
-     * every time, while an unpinned one re-resolved the flag to get there and
-     * may resolve differently next launch. Both are equally unchangeable
-     * *here* — that is the disable — but only one of them is fixed.
-     */
-    pinned: boolean;
-  };
+export interface ComposerModelControl {
+  /**
+   * The model this conversation is on: what its latest run recorded, or its
+   * pin where that run recorded nothing. Any OpenRouter id, not only one the
+   * pin list admits — an unpinned conversation runs on whatever the flag
+   * served. Null where neither is known, which is only a conversation with no
+   * run and no pin, and reads as **Default** for the same reason a fresh
+   * composer does.
+   */
+  model: string | null;
+  /**
+   * Whether the conversation carries a pin. It changes what the control may
+   * honestly claim, not what it shows: a pinned conversation runs on `model`
+   * every time, while an unpinned one re-resolved the flag to get there and
+   * may resolve differently next launch. Both are equally unchangeable
+   * *here* — that is the disable — but only one of them is fixed.
+   */
+  pinned: boolean;
+}
 
 /**
  * A host's own entry in the message capsule's "+" menu, listed after Attach
@@ -168,11 +137,6 @@ interface ComposerInputProps {
    * that do still only show it while Application → Developer → **Debug enabled**
    * is on, because which model the work runs on is a developer's question rather
    * than part of describing work.
-   *
-   * Two shapes, because a composer stands either before the conversation it
-   * writes into exists or after, and only the first still has a decision to
-   * make. Both creation composers — a work stream's and a substream's — take
-   * `choice`; the conversation composer inside either one takes `settled`.
    */
   model?: ComposerModelControl;
   /** Absent where the message cannot carry files: no attach control, drop or paste. */
@@ -336,17 +300,6 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   }, [onAttach, submitting]);
   const debugEnabled = useDebugEnabled();
   const drop = useFileDrop((files) => attachFiles(files), submitting || !onAttach);
-  // Turning Debug enabled off takes the control away; it has to take the choice
-  // with it. A pin left behind in the parent's state would keep pinning every
-  // work stream started from this screen with nothing on screen saying so, and
-  // no way to clear it. A settled pill holds no choice to release.
-  const releaseModelOverride = model?.kind === 'choice' ? model.onChange : undefined;
-  const modelOverrideValue = model?.kind === 'choice' ? model.value : null;
-  // What the pill is naming, whichever shape it is in — only `null` is quiet.
-  const selectedModel = model?.kind === 'settled' ? model.model : modelOverrideValue;
-  useEffect(() => {
-    if (!debugEnabled && modelOverrideValue !== null) releaseModelOverride?.(null);
-  }, [debugEnabled, modelOverrideValue, releaseModelOverride]);
   const paste = useFilePaste(attachFiles, submitting || !onAttach, attachments.length < MAX_ATTACHMENTS);
   // An IME's in-flight text never reaches `value`, so the highlight layer steps
   // aside and lets the textarea paint itself until the composition commits.
@@ -863,75 +816,19 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
               </div>
             )}
             {model && debugEnabled && (
-              /* One control, in one place, in both shapes and both layouts. A
-                 settled conversation gets the same dropdown — same trigger,
-                 same pill, same chevron — with the trigger `disabled`, which is
-                 what stops it opening; its menu is left unrendered because a
-                 disabled trigger can never reach it. The tooltip carrying the
-                 full model id survives the disable and was checked in a real
-                 window, so the id is reachable by hover and not only as the
-                 accessible name — Tab skips a disabled button, which is the one
-                 route it does lose.
-
-                 The capsule layout used to keep the choice as a radio group
-                 inside the composer-actions menu instead. That gave the same
-                 control two homes: the menu while a choice was open, and this
-                 pill once there was nothing left to choose — so the answer to
-                 "which model is this?" moved as soon as it stopped being a
-                 question. It is the pill in both. */
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <IconButton
-                    className={clsx(
-                      'model-selector-trigger',
-                      model.kind === 'settled' && 'is-settled',
-                      !selectedModel && 'is-unpinned',
-                    )}
-                    disabled={model.kind === 'settled' || submitting}
-                    label={model.kind === 'settled'
-                      ? agentModelInUseTriggerLabel(model.model, model.pinned)
-                      : agentModelTriggerLabel(model.value)}
-                  >
-                    <span>{model.kind === 'settled' ? agentModelInUseLabel(model.model) : agentModelLabel(model.value)}</span>
-                    <ChevronDown aria-hidden="true" size={13} />
-                  </IconButton>
-                </DropdownMenu.Trigger>
-                {model.kind === 'choice' && (
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content align="start" className="menu-content model-selector-menu" sideOffset={8}>
-                      <DropdownMenu.Label className="menu-label">Model</DropdownMenu.Label>
-                      {/* Unpinned is its own value rather than the first model:
-                          the flag decides which model it resolves to, and naming
-                          one here would be a claim the renderer cannot make. */}
-                      <DropdownMenu.RadioGroup
-                        onValueChange={(chosen) =>
-                          model.onChange(chosen === UNPINNED_AGENT_MODEL ? null : chosen as AgentModelOverride)}
-                        value={model.value ?? UNPINNED_AGENT_MODEL}
-                      >
-                        <DropdownMenu.RadioItem className="menu-item model-selector-item" value={UNPINNED_AGENT_MODEL}>
-                          <span>{UNPINNED_AGENT_MODEL_LABEL}</span>
-                          <DropdownMenu.ItemIndicator asChild>
-                            <Check aria-hidden="true" size={15} />
-                          </DropdownMenu.ItemIndicator>
-                        </DropdownMenu.RadioItem>
-                        {AGENT_MODEL_GROUPS.map((group) => (
-                          <Fragment key={group.provider}>
-                            <DropdownMenu.Label className="menu-label model-selector-provider">{group.provider}</DropdownMenu.Label>
-                            {group.models.map((choice) => (
-                              <DropdownMenu.RadioItem className="menu-item model-selector-item" key={choice.id} value={choice.id}>
-                                <span>{choice.label}</span>
-                                <DropdownMenu.ItemIndicator asChild>
-                                  <Check aria-hidden="true" size={15} />
-                                </DropdownMenu.ItemIndicator>
-                              </DropdownMenu.RadioItem>
-                            ))}
-                          </Fragment>
-                        ))}
-                      </DropdownMenu.RadioGroup>
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                )}
-              </DropdownMenu.Root>
+              /* One control, in one place, in both layouts: a disabled pill.
+                 The tooltip carrying the full model id survives the disable,
+                 so the id is reachable by hover and not only as the accessible
+                 name; Tab skips a disabled button, which is the one route it
+                 loses. */
+              <IconButton
+                className={clsx('model-selector-trigger', 'is-settled', !model.model && 'is-unpinned')}
+                disabled
+                label={agentModelInUseTriggerLabel(model.model, model.pinned)}
+              >
+                <span>{agentModelInUseLabel(model.model)}</span>
+                <ChevronDown aria-hidden="true" size={13} />
+              </IconButton>
             )}
             {toolsAccessory}
           </div>

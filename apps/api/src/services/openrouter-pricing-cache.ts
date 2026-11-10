@@ -1,38 +1,14 @@
+import { OPENROUTER_PRICING_MODEL_IDS, OPENROUTER_IMAGE_MODEL_IDS } from "@rally/contracts/runtime-config";
 import {
   type AzureModelPricing,
   type RunHarnessInput,
 } from "@rally/agent-harness";
-import { AGENT_MODEL_OVERRIDES } from "@rally/contracts";
 import { z } from "zod";
 import type { Env } from "../env";
 
-/**
- * The Monad production Azure deployments that also have OpenRouter chat-model
- * identities. Realtime transcription is absent because OpenRouter does not
- * assign that deployment a model id.
- */
-export const AZURE_DEPLOYED_OPENROUTER_MODEL_IDS = [
-  "x-ai/grok-4.3",
-  "x-ai/grok-4.6",
-  "openai/gpt-5.6-sol",
-  "openai/gpt-5.6-terra",
-  "deepseek/deepseek-v4-pro",
-  "deepseek/deepseek-v4-flash-0731",
-  "openai/text-embedding-3-large",
-  "openai/gpt-image-2",
-  "black-forest-labs/flux.2-flex",
-] as const;
-
-/** Every developer-selectable model plus every Azure deployment OpenRouter carries. */
-export const OPENROUTER_PRICING_MODEL_IDS = Array.from(new Set([
-  ...AGENT_MODEL_OVERRIDES,
-  ...AZURE_DEPLOYED_OPENROUTER_MODEL_IDS,
-]));
+export { AZURE_DEPLOYED_OPENROUTER_MODEL_IDS, OPENROUTER_PRICING_MODEL_IDS } from "@rally/contracts/runtime-config";
 const OPENROUTER_PRICING_MODEL_ID_SET = new Set<string>(OPENROUTER_PRICING_MODEL_IDS);
-const OPENROUTER_IMAGE_MODEL_ID_SET = new Set<string>([
-  "openai/gpt-image-2",
-  "black-forest-labs/flux.2-flex",
-]);
+const OPENROUTER_IMAGE_MODEL_ID_SET = new Set<string>(OPENROUTER_IMAGE_MODEL_IDS);
 
 const OPENROUTER_ENDPOINTS_BASE_URL = "https://openrouter.ai/api/v1/models";
 

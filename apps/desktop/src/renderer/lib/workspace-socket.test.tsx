@@ -648,14 +648,14 @@ describe('WorkspaceSocketProvider', () => {
     act(() => socket.message({
       type: 'workspace_feature_flags',
       occurredAt: '2026-08-17T20:01:00.000Z',
-      changedFlag: 'suggested-work-enabled',
+      changedFlag: 'multiple-workspaces-enabled',
       flags: {
         developerSettings: false,
-        suggestedWorkEnabled: true,
+        multipleWorkspacesEnabled: true,
         controlTowerRefreshSeconds: 60,
       },
     }));
-    expect(queryClient.getQueryData(['feature-flags'])).toMatchObject({ suggestedWorkEnabled: true });
+    expect(queryClient.getQueryData(['feature-flags'])).toMatchObject({ multipleWorkspacesEnabled: true });
   });
 
   it('reports how deep an organization reconnect had to go, and stops reporting at teardown', async () => {
@@ -1211,7 +1211,7 @@ describe('WorkspaceSocketProvider', () => {
       reason: 'initial',
       featureFlags: {
         developerSettings: false,
-        suggestedWorkEnabled: false,
+        multipleWorkspacesEnabled: false,
         controlTowerRefreshSeconds: 60,
       },
       sidebar: {
@@ -1219,7 +1219,6 @@ describe('WorkspaceSocketProvider', () => {
         id: '00000000-0000-7000-8000-000000000005',
         name: 'Monday brief',
         description: 'Every Monday',
-        emailAddress: null,
         scope: 'workspace',
         status: 'active',
         nextRunAt: null,
@@ -1233,7 +1232,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(queryClient.getQueryData(['automations']))
       .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000005', scope: 'workspace' })]);
     expect(queryClient.getQueryData(['feature-flags']))
-      .toMatchObject({ suggestedWorkEnabled: false });
+      .toMatchObject({ multipleWorkspacesEnabled: false });
     const handshakePhases = reportTelemetryProductIntent.mock.calls
       .map(([intent]) => intent as { kind: string; phase?: string })
       .filter((intent) => intent.kind === 'workspace_socket_handshake')
@@ -1270,7 +1269,7 @@ describe('WorkspaceSocketProvider', () => {
     const automationId = '00000000-0000-7000-8000-000000000005';
     const untouchedId = '00000000-0000-7000-8000-000000000006';
     const untouched = {
-      id: untouchedId, name: 'Incident triage', description: '', emailAddress: null, scope: 'workspace' as const,
+      id: untouchedId, name: 'Incident triage', description: '', scope: 'workspace' as const,
       status: 'active' as const, nextRunAt: null, lastRunAt: null, updatedAt: '2026-08-17T18:00:00.000Z',
     };
     queryClient.setQueryData(SIDEBAR_LIST_QUERY_KEYS.automations, [mapAutomationSummary(AutomationSummarySchema.parse(untouched))]);
@@ -1313,7 +1312,6 @@ describe('WorkspaceSocketProvider', () => {
         id: automationId,
         name: 'Weekly changelog',
         description: 'Every Monday',
-        emailAddress: null,
         scope: 'workspace',
         status: 'draft',
         nextRunAt: null,
@@ -1361,7 +1359,6 @@ describe('WorkspaceSocketProvider', () => {
         id: '00000000-0000-7000-8000-000000000005',
         name,
         description: 'Every Monday',
-        emailAddress: null,
         scope: 'workspace',
         status: 'active',
         nextRunAt: null,
@@ -1420,7 +1417,7 @@ describe('WorkspaceSocketProvider', () => {
     );
     await flushPromises();
     const sidekick = (name: string) => ({
-      id: automationId, name, description: 'Every Monday', emailAddress: null, scope: 'workspace',
+      id: automationId, name, description: 'Every Monday', scope: 'workspace',
       status: 'active', nextRunAt: null, lastRunAt: null, updatedAt: '2026-08-17T19:00:00.000Z',
     });
     const answer = (waterline: number, listWaterline: number, name: string, reason: string, topics: string[] = []) => ({
@@ -1762,7 +1759,7 @@ describe('the organization-sync relay between windows', () => {
       sidebar: {
         automations: { waterline: 1, items: [] },
       },
-      featureFlags: { suggestedWorkEnabled: false },
+      featureFlags: { multipleWorkspacesEnabled: false },
     }));
     act(() => socket.message({
       type: 'workspace_sync',
@@ -1775,8 +1772,8 @@ describe('the organization-sync relay between windows', () => {
     act(() => socket.message({
       type: 'workspace_feature_flags',
       occurredAt: '2026-08-17T20:00:02.000Z',
-      changedFlag: 'suggested-work-enabled',
-      flags: ClientFeatureFlagsSchema.parse({ suggestedWorkEnabled: true }),
+      changedFlag: 'multiple-workspaces-enabled',
+      flags: ClientFeatureFlagsSchema.parse({ multipleWorkspacesEnabled: true }),
     }));
     act(() => socket.message({
       type: 'workspace_sidebar_list',
@@ -1784,7 +1781,7 @@ describe('the organization-sync relay between windows', () => {
       list: 'automations',
       waterline: 2,
       // A row that moved: a push that changes no row relays nothing.
-      items: [{ id: '00000000-0000-7000-8000-000000000005', name: 'Weekly changelog', description: '', emailAddress: null,
+      items: [{ id: '00000000-0000-7000-8000-000000000005', name: 'Weekly changelog', description: '',
         scope: 'workspace', status: 'active', nextRunAt: null, lastRunAt: null, updatedAt: '2026-08-17T19:00:00.000Z' }],
     }));
     act(() => socket.message({

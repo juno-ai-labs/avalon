@@ -2,13 +2,9 @@
  * A scripted stand-in for OpenRouter, for workerd tests that let a run reach
  * the model.
  *
- * The workers suite has no provider double and a placeholder API key, so a run
- * that reaches inference makes a real outbound request. That request cannot
- * succeed here, but it does not fail quickly either: the harness allows an
- * establishment timeout, a transport retry, and each configured fallback model
- * before it gives up, which is far longer than a test's budget. The run stays
- * `executing`, and the test that was waiting on it times out somewhere
- * unrelated to what it was asserting.
+ * The test configuration explicitly disables model groups until a test selects
+ * a route. This double serves the provider boundary for tests that opt in;
+ * a placeholder API key alone must never arm a real inference request.
  *
  * `vi.stubGlobal` is what installs this rather than `fetchMock` from
  * `cloudflare:test`: that export does not exist in this generation of
@@ -44,7 +40,7 @@ export interface ProviderCall {
    * turn's Responses `input` is read back into messages by
    * `providerRequestView`; the raw items stay on `body.input`.
    */
-  readonly messages: readonly { role: string; content: unknown }[];
+  readonly messages: readonly { role: string; content: unknown; tool_call_id?: string }[];
   /** Names of the tools offered on this turn, in the order they were sent. */
   readonly toolNames: readonly string[];
   /** The raw request payload, for anything the fields above do not model. */
@@ -69,7 +65,8 @@ export function memberInputs(call: Pick<ProviderCall, "messages">): ProviderCall
 /** Whether one provider message is a person's or a peer's input, not the host's appended context. */
 export function isMemberInput(message: { role?: unknown; content?: unknown }): boolean {
   return message.role === "user"
-    && !(typeof message.content === "string" && message.content.startsWith("CANVAS CONTEXT (host-provided):"));
+    && !(typeof message.content === "string" && (message.content.startsWith("CANVAS CONTEXT (host-provided):")
+      || message.content.startsWith("ATTACHED CANVASES (host-provided):")));
 }
 
 /**
@@ -86,6 +83,25 @@ export type ProviderReply =
   | { readonly raw: Response };
 
 export type ProviderHandler = (call: ProviderCall) => ProviderReply | Promise<ProviderReply>;
+
+/** Successful Sidekick scripts must explicitly report their task outcome before a final reply. */
+export function withSuccessfulSidekickOutcome(handler: ProviderHandler): ProviderHandler {
+  const pending = new Map<string, ProviderReply>();
+  let nextReport = 0;
+  return async (call) => {
+    // Return the same scripted final after its report, without consuming the
+    // next scripted turn (which may belong to a later continuation).
+    for (const message of call.messages) {
+      const reply = message.tool_call_id ? pending.get(message.tool_call_id) : undefined;
+      if (reply) { pending.delete(message.tool_call_id!); return reply; }
+    }
+    const reply = await handler(call);
+    if (!("say" in reply) || !reply.say || !call.toolNames.includes("sidekick_report_outcome")) return reply;
+    const id = `sidekick-outcome-${++nextReport}`;
+    pending.set(id, reply);
+    return { callTool: { id, name: "sidekick_report_outcome", arguments: { outcome: "succeeded", summary: reply.say } } };
+  };
+}
 
 export interface OpenRouterDouble {
   /** Every inference request the run made, in order. */

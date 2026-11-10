@@ -17,12 +17,8 @@
  * gives: a key would make a future rebuild of either cascade here. A pin whose
  * item is gone is dropped where it is read.
  *
- * **Indexes.** The Threads tab lists the threads and breakouts one person takes
- * part in, which is the first read of either viewer table to start from the
- * person rather than the conversation, so each gets its `(user_id,
- * is_participant)` index now. The Channel feed lists a Channel's threads newest
- * placement first, which the membership table's existing
- * `(space_id, state, workstream_id)` index cannot order.
+ * **Indexes.** The retired Threads tab and Channel feed each added an index
+ * here, on tables later dropped with Threads and Channels.
  *
  * **Activity.** `workspace_activity_seen` is how far each person has read the
  * Activity tab; see `workspace-activity-feed.ts`.
@@ -127,10 +123,14 @@ export function artifactUpdateSql(version: string, pin: string): string {
  */
 export function artifactNewsSql(version: string, userId: string, since: string): string {
   return `${version}.version > 1
-    AND ${version}.cause IN ('published', 'replaced')
+    AND ${artifactNewsCauseSql(version)}
     AND (${version}.author_user_id IS NULL OR ${version}.author_user_id <> ${userId})
     AND (${version}.on_behalf_of_user_id IS NULL OR ${version}.on_behalf_of_user_id <> ${userId})
     AND CAST(unixepoch(${version}.captured_at, 'subsec') * 1000 AS INTEGER) > ${since}`;
+}
+
+export function artifactNewsCauseSql(version: string): string {
+  return `${version}.cause IN ('published', 'replaced')`;
 }
 
 /** Whether a drained version's cause can be news to a pinner, as {@link artifactUpdateSql} decides. */

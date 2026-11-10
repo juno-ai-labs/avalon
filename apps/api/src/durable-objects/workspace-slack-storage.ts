@@ -415,8 +415,7 @@ export function sweepWorkspaceSlackIngress(
  * awaiting `try again`. A binding that resolves suspended (the thread, or its
  * room) is reported as such so ingress can log it and drop the reply.
  *
- * The binding is the routing authority; `slack_agent_sessions` is delivery
- * state and is no longer consulted here.
+ * The binding is the routing authority.
  */
 export function workspaceSlackThreadRoutable(
   storage: DurableObjectStorage,

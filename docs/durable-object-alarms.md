@@ -43,12 +43,17 @@ selection and the event cutoffs that unchanged rows preserve.
 | --- | --- |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | How a gated entry is reported, whichever object holds it: the attempt that warns, the one that logs an error, the one that notifies an operator, and what of a thrown error may leave. |
 | `apps/api/src/durable-objects/scheduled-alarms.ts` | The whole capability: the `_internal_durable_alarms` schema statements, `ScheduledAlarmStore`, and the `ScheduledDurableObject` base every scheduling object extends. |
-| `apps/api/src/durable-objects/migratable-durable-object.ts` | The base `ScheduledDurableObject` itself extends. It owns the schema half — the migration pass, its report, and `migrationsReady()`, which every method here awaits before touching `_internal_durable_alarms`. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | `apps/api/src/durable-objects/workspace-do.ts` | Adopts it for a workspace: due schedules, resource watches, maintenance passes, Terminal deadlines, the opportunity/ranking product pass, and the three Space phases. Owns `refreshSchedule`. |
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
 | `apps/api/src/durable-objects/agent-loop-do.ts` | Adopts it for a conversation's agent: `agent_timer` entries index `workstream_wakeups`; one `terminal_observation` entry indexes its Terminal sandbox's `next_observe_at`; the retired `merge_suggestion` kind is named only so a leftover entry can be recognised. Execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | A hosted Sidekick's entries in `WorkspaceDO`'s store, each keyed `<sidekickId>:<key>`: `automation_schedule`, `automation_run`, `sidekick_review` (one per Sidekick, armed by run finishes; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), `sidekick_run_row` (`<sidekickId>:<runId>`, armed by migration 136's triggers on `sidekick_runs`, handled by `projectRunRow`), `sidekick_memory_tables`, and the delegation kinds. |
+
+Canvas archive uses stored entries too: `canvas_archive_conversation`, keyed by
+Canvas and child, saves the recipients whose Chat sockets must close and stops
+the child's execution; `canvas_archive_artifact`, keyed by artifact, withdraws
+viewer sessions. They commit with the archive tombstone, and a failed delivery
+throws into the existing retry gate. [Canvases](canvases.md#archiving) owns them.
 
 ### Two kinds of wake reason
 
@@ -619,10 +624,10 @@ link. The ordinary alarm retry handles transport failures. See
 
 ### Scope grant discovery delivery
 
-A Channel's grant write adds a `scope_grant_directory` row to `parent_outbox` in
-the grant transaction; there is no separate alarm kind. `WorkspaceDO` applies the
-row to its own grant directory right after the write, and the outbox lane of the
-alarm retries a failed apply. See [scope grant directory](scope-grant-directory.md).
+A Channel's grant write added a `scope_grant_directory` row to `parent_outbox` in
+the grant transaction, and the outbox lane of the alarm retried a failed apply;
+WorkspaceDO migration 141 dropped `parent_outbox` with the Channel host. A
+Canvas's claimed share applies its grant in the claim's own transaction. See [scope grant directory](scope-grant-directory.md).
 
 ## Changelog
 

@@ -13,13 +13,14 @@ export const LANDING_ROUTE = '/canvases';
 
 /**
  * Whether a route saved as `last-route` may be reopened at launch: a Canvas or
- * a Sidekick by its id, or either home. Anything else opens the landing
+ * a Sidekick by its id, or a section home. Anything else opens the landing
  * instead: a Channel or Thread route saved before the 2026-11 cutover, and
  * `/sidekicks/new`, whose screen creates a Sidekick as it mounts, so reopening
  * it would make one on every launch.
  */
 export function restorableRoute(saved: string | null): string | null {
   if (!saved) return null;
+  if (saved === '/activity') return saved;
   return /^\/(canvases|sidekicks)(\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/i.test(saved) ? saved : null;
 }
 
@@ -30,7 +31,7 @@ export function restorableRoute(saved: string | null): string | null {
  */
 export const RESTORED_ROUTE = { restoredRoute: true } as const;
 
-function isRestoredRoute(state: unknown): boolean {
+export function isRestoredRoute(state: unknown): boolean {
   return typeof state === 'object' && state !== null && 'restoredRoute' in state && state.restoredRoute === true;
 }
 

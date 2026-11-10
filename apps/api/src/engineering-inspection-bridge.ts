@@ -1,6 +1,17 @@
+import { readOrganizationUsage, setWorkspacePlan, publishOrganizationUsage } from "./services/usage-metering";
+import { provisionUserPassword, revokeUserPassword } from "./services/password-login-service";
 import { RegionSchema } from "@rally/contracts/regions";
 import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
+  InspectEngineeringUsageInputSchema,
+  ChangeEngineeringPlanInputSchema,
+  EngineeringUsageResultSchema,
+  type EngineeringUsageResult,
+  EngineeringPasswordUserInputSchema,
+  EngineeringProvisionPasswordResultSchema,
+  EngineeringRevokePasswordResultSchema,
+  type EngineeringProvisionPasswordResult,
+  type EngineeringRevokePasswordResult,
   ArtifactInspectionInputSchema,
   ArtifactSqlInspectionInputSchema,
   D1SqlInspectionInputSchema,
@@ -12,15 +23,6 @@ import {
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
   type SetEngineeringSidekickPausedResult,
-  ThreadRetirementOperationInputSchema,
-  type ThreadRetirementOperationInput,
-  DumpThreadTranscriptsResultSchema,
-  type DumpThreadTranscriptsResult,
-  RetireThreadsResultSchema,
-  type RetireThreadsResult,
-  ConvertThreadsToCanvasesInputSchema,
-  ConvertThreadsToCanvasesResultSchema,
-  type ConvertThreadsToCanvasesResult,
   RetireEngineeringOrgInputSchema,
   RetireEngineeringOrgResultSchema,
   type RetireEngineeringOrgResult,
@@ -86,14 +88,12 @@ import {
   workspacePlacementAffinity,
 } from "./lib/durable-object-namespace";
 import { parseRpcInput } from "./lib/rpc-contracts";
-import { ApiError, asApiError } from "./lib/api-error";
+import { asApiError } from "./lib/api-error";
 import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-authority";
 import { createEngineeringOrg } from "./services/engineering-creation";
 import { sendEngineeringMessage, readEngineeringConversation } from "./services/engineering-messages";
 import { auditedEngineeringWrite } from "./services/engineering-audit";
 import { setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
-import { dumpThreadTranscripts, retireThreads } from "./services/thread-retirement-service";
-import { convertThreadsToCanvases } from "./services/thread-conversion-service";
 import { retireWorkspaceForOperator } from "./services/workspace-retirement-service";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
@@ -173,16 +173,15 @@ async function resolveInspectionConversationRoute(
 
 /**
  * Every conversation a parent hosted by the Organization object has heard
- * from: a Canvas's in the shared parent tables, a Sidekick's in its own.
+ * from. A Canvas and a Sidekick both keep theirs in the hosted conversation
+ * tables, keyed by the parent's id.
  */
 async function inspectionSubstreamIds(env: Env, route: InspectionWorkstreamRoute): Promise<string[]> {
   const workspace = await workspaceStub(env, route.workspace_id);
   const hosted = await workspace.runInspectionSql({
-    sql: `SELECT substream_id FROM parent_child_projections WHERE parent_id = ?
-          UNION SELECT substream_id FROM parent_children WHERE parent_id = ?
-          UNION SELECT substream_id FROM sidekick_child_projections WHERE sidekick_id = ?
+    sql: `SELECT substream_id FROM sidekick_child_projections WHERE sidekick_id = ?
           UNION SELECT substream_id FROM sidekick_children WHERE sidekick_id = ?`,
-    bindings: [route.workstream_id, route.workstream_id, route.workstream_id, route.workstream_id],
+    bindings: [route.workstream_id, route.workstream_id],
   });
   return hosted.rows.map((row) => String(row.substream_id));
 }
@@ -265,85 +264,33 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
-  /**
-   * B-7a: every Thread, Breakout and Channel conversation of one Organization
-   * written to R2 as text, before any is retired. Resumable: a rerun writes
-   * only what the last pass did not.
-   */
-  async dumpThreadTranscripts(input: unknown, operator: unknown): Promise<DumpThreadTranscriptsResult> {
-    return this.productOperation("dumpThreadTranscripts", async () => {
-      const request = await this.confirmedThreadRetirement(input);
-      const trusted = EngineeringOperatorSchema.parse(operator);
-      const operationId = crypto.randomUUID();
-      return auditedEngineeringWrite(this.env, trusted, {
-        action: "dump_thread_transcripts", orgId: request.orgId, operationId,
-      }, async () => DumpThreadTranscriptsResultSchema.parse(await dumpThreadTranscripts(this.env, {
-        workspaceId: request.orgId, operationId, operatorSubject: trusted.subject,
-      })), (result) => ({ conversations: result.conversations, dumped: result.dumped, skipped: result.skipped,
-        failed: result.failed.length }));
+  async inspectOrganizationUsage(input: unknown): Promise<EngineeringUsageResult> {
+    return this.productOperation("inspectOrganizationUsage", async () => {
+      const { orgId } = InspectEngineeringUsageInputSchema.parse(input);
+      const target = await this.resolveWorkspace({ workspaceId: orgId });
+      if (!target.found) throw new Error("engineering_organization_not_found");
+      const usage = await readOrganizationUsage(this.env, orgId, Date.now());
+      if (!usage) throw new Error("engineering_organization_not_found");
+      return EngineeringUsageResultSchema.parse({ region: this.env.AVALON_REGION, orgId, usage });
     });
   }
 
-  /**
-   * B-7: every Thread, Breakout and Channel of one Organization retired,
-   * refused until the dump covers each of their conversations. Canvases,
-   * Sidekicks and resources stay. Resumable, and a no-op once done.
-   */
-  async retireThreads(input: unknown, operator: unknown): Promise<RetireThreadsResult> {
-    return this.productOperation("retireThreads", async () => {
-      const request = await this.confirmedThreadRetirement(input);
+  async changeOrganizationPlan(input: unknown, operator: unknown): Promise<EngineeringUsageResult> {
+    return this.productOperation("changeOrganizationPlan", async () => {
+      const request = ChangeEngineeringPlanInputSchema.parse(input);
       const trusted = EngineeringOperatorSchema.parse(operator);
-      const operationId = crypto.randomUUID();
+      const target = await this.resolveWorkspace({ workspaceId: request.orgId });
+      if (!target.found) throw new Error("engineering_organization_not_found");
       return auditedEngineeringWrite(this.env, trusted, {
-        action: "retire_threads", orgId: request.orgId, operationId,
-      }, async () => RetireThreadsResultSchema.parse(await retireThreads(this.env, {
-        workspaceId: request.orgId, operationId, operatorSubject: trusted.subject,
-      })), (result) => ({ parents: result.parents, retiredParents: result.retiredParents,
-        retiredConversations: result.retiredConversations, failed: result.failed.length }));
+        action: "change_usage_plan", orgId: request.orgId, operationId: crypto.randomUUID(),
+      }, async () => {
+        if (!await setWorkspacePlan(this.env, request.orgId, request.plan, Date.now())) throw new Error("engineering_organization_not_found");
+        this.ctx.waitUntil(publishOrganizationUsage(this.env, request.orgId));
+        const usage = await readOrganizationUsage(this.env, request.orgId, Date.now());
+        if (!usage) throw new Error("engineering_organization_not_found");
+        return EngineeringUsageResultSchema.parse({ region: this.env.AVALON_REGION, orgId: request.orgId, usage });
+      }, () => ({ plan: request.plan }));
     });
-  }
-
-  /**
-   * Every Thread of one Organization that has an artifact, made a Canvas in
-   * place with the same id; refused, as the retirement is, until the dump
-   * covers each of their conversations. A dry run (the default) lists them
-   * and changes nothing, so it needs no confirmation and writes no audit row.
-   */
-  async convertThreadsToCanvases(input: unknown, operator: unknown): Promise<ConvertThreadsToCanvasesResult> {
-    return this.productOperation("convertThreadsToCanvases", async () => {
-      const parsed = ConvertThreadsToCanvasesInputSchema.parse(input);
-      const trusted = EngineeringOperatorSchema.parse(operator);
-      const operationId = crypto.randomUUID();
-      const run = () => convertThreadsToCanvases(this.env, {
-        workspaceId: parsed.orgId, dryRun: parsed.dryRun, operationId, operatorSubject: trusted.subject,
-      }).then((result) => ConvertThreadsToCanvasesResultSchema.parse(result));
-      if (parsed.dryRun) {
-        await this.confirmedThreadRetirement({ orgId: parsed.orgId, confirm: parsed.orgId });
-        return run();
-      }
-      const request = await this.confirmedThreadRetirement({ orgId: parsed.orgId, confirm: parsed.confirm ?? "" });
-      return auditedEngineeringWrite(this.env, trusted, {
-        action: "convert_threads_to_canvases", orgId: request.orgId, operationId,
-      }, run, (result) => ({ candidates: result.candidates.length, converted: result.converted,
-        alreadyConverted: result.alreadyConverted, failed: result.failed.length,
-        artifactsWithoutThread: result.artifactsWithoutThread }));
-    });
-  }
-
-  /**
-   * The confirmation the operator typed must name the Organization, and the
-   * Organization must be this region's: an id another region owns would read
-   * as an Organization with no Threads, and a pass over it would report done.
-   */
-  private async confirmedThreadRetirement(input: unknown): Promise<ThreadRetirementOperationInput> {
-    const request = ThreadRetirementOperationInputSchema.parse(input);
-    if (request.confirm !== request.orgId) {
-      throw new ApiError(409, "thread_retirement_unconfirmed", "The confirmation does not name this Organization");
-    }
-    if (!await resolveInspectionWorkspaceRoute(this.env, request.orgId)) {
-      throw new ApiError(404, "workspace_not_found", "No Organization with this id in this region");
-    }
-    return request;
   }
 
   async retireOrg(input: unknown, operator: unknown): Promise<RetireEngineeringOrgResult> {
@@ -382,6 +329,26 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
       if (api) throw new Error(`engineering_operation_failed:${api.code}`, { cause: error });
       throw error;
     }
+  }
+
+  async provisionUserPassword(input: unknown, operator: unknown): Promise<EngineeringProvisionPasswordResult> {
+    return this.productOperation("provisionUserPassword", async () => {
+      const request = EngineeringPasswordUserInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "provision_user_password", representedUserId: request.userId, operationId: crypto.randomUUID(),
+      }, async () => EngineeringProvisionPasswordResultSchema.parse(await provisionUserPassword(this.env, request.userId)),
+      () => ({ passwordEnabled: true }));
+    });
+  }
+
+  async revokeUserPassword(input: unknown, operator: unknown): Promise<EngineeringRevokePasswordResult> {
+    return this.productOperation("revokeUserPassword", async () => {
+      const request = EngineeringPasswordUserInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "revoke_user_password", representedUserId: request.userId, operationId: crypto.randomUUID(),
+      }, async () => EngineeringRevokePasswordResultSchema.parse(await revokeUserPassword(this.env, request.userId)),
+      () => ({ passwordEnabled: false }));
+    });
   }
 
   async createOrg(input: unknown, operator: unknown): Promise<CreateEngineeringOrgResult> {

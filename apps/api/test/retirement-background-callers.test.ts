@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { RetirementRefusedError } from "../src/durable-objects/object-retirement";
 import { consumeAccessRevocationQueue } from "../src/queues/access-revocation-consumer";
-import { consumeProductFeatureFlagQueue } from "../src/queues/product-feature-flag-consumer";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -87,21 +86,6 @@ function batch(queue: string, messages: Message<unknown>[]): MessageBatch<unknow
 }
 
 describe("background callers meeting a retired object", () => {
-
-  it("acknowledges a feature-flag fan-out message the retired workspace refuses", async () => {
-    const outcomes = { acked: [] as string[], retried: [] as string[] };
-    const env = createTestEnv({
-      DB: sqliteD1(seeded()),
-      AVALON_REGION: "global",
-      WORKSPACE_DOS: refusing({
-        notifyProductFeatureFlagChanged: () => { throw new RetirementRefusedError("notifyProductFeatureFlagChanged"); },
-      }),
-    });
-    await consumeProductFeatureFlagQueue(batch("avalon-global-product-feature-flags", [
-      queued("flag", { kind: "product_feature_flag_changed", flagKey: "suggested-work-enabled", workspaceId: OPEN_WORKSPACE }, outcomes),
-    ]), env);
-    expect(outcomes).toEqual({ acked: ["flag"], retried: [] });
-  });
 
   it("acknowledges a revocation hop whose enumeration the retired object refuses", async () => {
     // The automation hop asks the Organization object, which hosts the

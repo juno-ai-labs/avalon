@@ -4,7 +4,7 @@ import { rewriteCitationsAsPlainText } from "@rally/contracts/citations";
 import { markdownLineKinds } from "@rally/contracts/markdown-code";
 import { normalizeModelMarkdown, normalizeModelText } from "@rally/contracts/model-markdown";
 
-import { escapeHtml } from "./resend";
+import { escapeHtml } from "./email";
 
 /**
  * The Markdown a model wrote, rendered into the HTML a mail client will

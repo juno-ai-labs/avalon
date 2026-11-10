@@ -61,6 +61,8 @@ export type SidekickAudienceUpdate = z.infer<typeof SidekickAudienceUpdateSchema
 export const AutomationLifecycleStateSchema = z.enum(["draft", "active", "paused", "deleted"]);
 export type AutomationLifecycleState = z.infer<typeof AutomationLifecycleStateSchema>;
 
+/** Provenance for already admitted runs, including retired kinds in stored history.
+ * Active trigger configuration is defined separately by TriggerDefinitionSchema. */
 export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("manual"), requestedByUserId: UserIdSchema }),
   z.strictObject({
@@ -76,6 +78,7 @@ export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
     occurredAt: z.number().int().nonnegative(),
     payloadHash: z.string().min(1),
   }),
+  // Read compatibility only: no admission path creates this kind anymore.
   z.strictObject({
     kind: z.literal("inbound_email"),
     receiptId: IdSchema,
@@ -176,12 +179,13 @@ export const SidekickReviewNoticeV1Schema = z.strictObject({
   since: z.string().datetime({ offset: true }).nullable(),
   until: z.string().datetime({ offset: true }),
   /**
-   * The Sidekick's own shared conversation (`"0"`, whose id is the
-   * Sidekick's), written on every notice. Write-only: the rendered notice no
-   * longer names it, because the review runs in that conversation and its
-   * report is the announcement. Kept so notices already in flight still parse.
+   * The Sidekick's own shared conversation. Nothing reads it: the review runs
+   * in that conversation and its report is the announcement. Optional first,
+   * while the host still writes it, so a Worker from before this change can
+   * still parse what a newer one writes; the write stops a deploy later, and
+   * the field leaves once notices carrying it have drained.
    */
-  announceTo: z.string().min(1).nullable(),
+  announceTo: z.string().min(1).nullable().optional(),
   /** Runs that finished in the window, by the state they finished in; `needsInput` is runs waiting, not finishes. */
   finished: z.strictObject({
     completed: z.number().int().nonnegative(),

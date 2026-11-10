@@ -13,7 +13,7 @@ participants or become a new canonical owner of memberships.
 | `durable-objects/search-authorization-universe.ts` | The subjects and resources a push target reached; unused since phase 3, deleted in phase 4 |
 | `services/authorization-service.ts` | Member policy, batch-local owner observations, authorized resource metadata and HTTP disclosure adapter |
 | `services/resource-read-projection.ts` | Shared resource presentation projection for admitted and predicate-filtered reads |
-| `services/resource-read-rules.ts` | The draft and attachment rules for a resource, shared by the canonical check and the search audience its rows carry |
+| `services/resource-read-rules.ts` | Draft and attachment rules plus Canvas ownership/archive facts, shared by canonical reads and search audiences |
 | `durable-objects/authorization-storage.ts` | Exact attachment locations, inventory revision ordering and shipped migration tables |
 | `durable-objects/search-authorization-projection.ts` | The old store's mutation triggers and push outbox; the outbox is no longer flushed, and phase 4 drops both |
 | `durable-objects/authorization-projection.ts` | Transactional child outbox and reference-only Queue contract |
@@ -29,8 +29,8 @@ participants or become a new canonical owner of memberships.
 `packages/contracts/src/scope-grants.ts` defines member/guest workspace access
 classes and exact conversation grant addresses; `services/scope-grant-policy.ts`
 evaluates those facts. Guests never receive the implicit workspace-public
-member rule. Suspension overrides every grant, while archive preserves reading
-and disables mutation.
+member rule. Suspension overrides every grant; Canvas archive withdraws both reading
+and mutation.
 
 Who may read a conversation is its parent's audience: `canvasAdmits` for a
 Canvas, `sidekickAdmits` for a Sidekick (below). A grant is the receipt of a
@@ -115,7 +115,9 @@ read from `workspace_members.access_class`. Guests cannot use a legacy conversat
 Sidekick authoring fallback. For a non-owned resource, a guest always needs a
 canonical attachment in an authorized migrated conversation, including resources
 whose provider ordinarily makes them workspace-wide for members. Their own upload
-drafts retain the existing ownership rule. Connector execution capability checks
+drafts retain the existing ownership rule. An artifact owned by a Canvas checks that Canvas's archive state before
+any uploader shortcut; archive conceals it even from its publisher. Standalone
+generated artifacts and independent uploads keep their ownership rule. Connector execution capability checks
 remain separate from this resource metadata/content disclosure decision.
 
 Guests can upload and delete their own unsent drafts through the ordinary resource
@@ -185,7 +187,7 @@ A Space (the product's Channel until the Canvases and Sidekicks pivot) once
 lent its audience to a guest taking part in it, disclosed its mark to a
 Channel's readers, and shared a merged artifact with its members through
 `workspace_workstream_resource_links` rows. Spaces, Channels, merge and the
-link table are gone (WorkspaceDO migration 139), so no reader is derived from
+link table are gone (WorkspaceDO migrations 139 and 141), so no reader is derived from
 a Space and `sharedThrough` names nothing; a resource is read through the
 Canvas or the Sidekick conversation that holds it.
 
@@ -257,18 +259,16 @@ new intent preserves Queue failure backoff. Parent discovery prunes retired
 children; even delayed child jobs check the current parent registry.
 
 Parent discovery for a Channel hosted in WorkspaceDO ran where it was
-enqueued: `enqueueAuthorizationDiscovery` answers a parent job in place only
-when `parent_metadata.parent_kind = 'workstream'`, registering the
-`parent_children` rows in the caller's transaction. That path is retired with
-the Channel host; no new parent of that kind is created. A Sidekick parent job
-still rides the Queue: an `authorization_delivery` row, the Worker's
+enqueued, registering its `parent_children` rows in the caller's transaction.
+That path went with `parent_metadata` in WorkspaceDO migration 141. A
+Sidekick parent job rides the Queue: an `authorization_delivery` row, the Worker's
 `projectAuthorization`, and `listAuthorizationChildren` back on WorkspaceDO.
 Per-conversation jobs ride the Queue too and read an `AgentLoopDO`.
 
 **Known gap: Canvases are not backfilled.** `beginAuthorizationBackfill`
-enumerates `channels UNION automation_directory`, with no `canvas_directory`,
-so `backfill` queues no parent discovery for a Canvas and `status` reports
-none.
+enumerates `automation_directory` alone (its `channels` half went with
+migration 141), with no `canvas_directory`, so `backfill` queues no parent
+discovery for a Canvas and `status` reports none.
 
 Deployment enables the core member read path for every workspace. There is no
 legacy/shadow mode, activation flag or comparison gate. `backfill` queues parent
@@ -497,6 +497,17 @@ changelog is the record of why a guest is never admitted by Organization-wide
 scope.
 
 ## Changelog
+
+### 2026-11-09 — Canvas archive precedes artifact ownership
+
+Canonical resource facts check the owning Canvas's tombstone before returning
+metadata or applying uploader ownership, including for publications whose
+attachment inventory has not arrived yet. Standalone generated artifacts retain
+their existing ownership rule: requiring every generated resource to have an
+attachment would break independent site imports and immediate publisher reads.
+Search uses the same Canvas-ownership facts and gives Canvas-owned artifacts no
+independent publisher group. Archive requeues their rows for withdrawal, and
+migration 142 refreshes older generated-resource audiences too.
 
 ### 2026-11-09 — A conversation's read is answered by its Canvas or Sidekick alone, through one audience rule
 

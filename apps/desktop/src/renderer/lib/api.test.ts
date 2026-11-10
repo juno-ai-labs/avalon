@@ -44,7 +44,6 @@ const detail = {
   title: 'Investigate ENG-142',
   titleStatus: 'settled' as const,
   objective: 'Find the cause.',
-  emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
   createdByUserId: userId,
   harnessStatus: 'idle' as const,
   lastActivityAt: timestamp,
@@ -143,7 +142,6 @@ const wireAutomationDetail = {
   id: automationId,
   name: 'Blog monitor',
   description: 'Check a blog for new posts.',
-  emailAddress: null,
   scope: 'personal' as const,
   owningWorkstreamId: null,
   status: 'draft' as const,
@@ -377,6 +375,15 @@ describe('Rally API wire adapter', () => {
     })]);
   });
 
+  it('keeps the Canvas that made a Sidekick through the detail mapping, and leaves it off when none did', async () => {
+    const canvasId = '00000000-0000-7000-8000-0000000000c1';
+    vi.stubGlobal('fetch', vi.fn(async () => json({ ...wireAutomationDetail, madeInCanvasId: canvasId })));
+    const api = new RallyApi('https://api.rally.test', session);
+    expect((await api.getAutomation(automationId)).madeInCanvasId).toBe('00000000-0000-7000-8000-0000000000c1');
+    vi.stubGlobal('fetch', vi.fn(async () => json({ ...wireAutomationDetail, madeInCanvasId: null })));
+    expect(await api.getAutomation(automationId)).not.toHaveProperty('madeInCanvasId');
+  });
+
   it('maps an automation detail: scope, lifecycle, revisions, trigger lines and runs', async () => {
     // The header reads the two revisions to decide whether Create may be
     // pressed, so both have to survive the mapping exactly as the wire says
@@ -491,7 +498,6 @@ describe('Rally API wire adapter', () => {
   it('maps representative channel and resource wire records into renderer models', () => {
     expect(mapWorkstreamDetail(detail)).toMatchObject({
       id: workstreamId,
-      emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
       harnessStatus: 'completed',
       participants: [{ id: userId, role: 'creator' }],
       viewers: [{ id: userId, viewing: true }],

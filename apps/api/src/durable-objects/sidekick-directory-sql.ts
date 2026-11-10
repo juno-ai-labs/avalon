@@ -47,8 +47,8 @@ function storedAppearance(row: AutomationDirectoryRow, report: InvalidAppearance
 export function automationSummary(
   row: AutomationDirectoryRow & {
     last_run_at?: number | null;
-    /** Rows on the `people` list (`AUTOMATION_AUDIENCE_SQL`); absent from a read that did not ask. */
-    shared_count?: number;
+    /** JSON array of recipients (`AUTOMATION_AUDIENCE_SQL`); absent from a read that did not ask. */
+    shared_with_user_ids?: string;
     /** The viewer's read state of the shared conversation (`AUTOMATION_VIEWER_SQL`); sidebar reads only. */
     unread?: number;
     needs_input?: number;
@@ -65,20 +65,23 @@ export function automationSummary(
   report: InvalidAppearanceReport,
 ): AutomationSummary {
   const appearance = storedAppearance(row, report);
+  const sharedWithUserIds = row.shared_with_user_ids === undefined
+    ? undefined
+    : JSON.parse(row.shared_with_user_ids) as string[];
   return {
     id: row.automation_id,
     loadable: row.loadable === 1,
     ...(appearance ? { appearance } : {}),
     name: row.title || "New Sidekick",
     description: row.description,
-    emailAddress: null,
     scope: row.scope,
     status: row.lifecycle,
     nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
     lastRunAt: row.last_run_at == null ? null : new Date(row.last_run_at).toISOString(),
     updatedAt: new Date(row.projected_at).toISOString(),
-    ...(row.shared_count === undefined ? {} : {
-      audience: row.shared_count > 0 ? "people" as const : row.scope === "workspace" ? "workspace" as const : "personal" as const,
+    ...(sharedWithUserIds === undefined ? {} : {
+      audience: sharedWithUserIds.length > 0 ? "people" as const : row.scope === "workspace" ? "workspace" as const : "personal" as const,
+      ...(sharedWithUserIds.length > 0 ? { sharedWithUserIds } : {}),
     }),
     ...(row.unread === undefined ? {} : { unread: row.unread === 1 }),
     ...(row.needs_input === undefined ? {} : { needsInput: row.needs_input === 1 }),
@@ -90,9 +93,9 @@ export function automationSummary(
   };
 }
 
-/** `shared_count` for `automationSummary`, over an `automation_directory` aliased `directory`. */
-export const AUTOMATION_AUDIENCE_SQL = `(SELECT COUNT(*) FROM sidekick_audience shared
-   WHERE shared.sidekick_id = directory.automation_id) AS shared_count`;
+/** The named recipients in the same order as the Sidekick detail. */
+export const AUTOMATION_AUDIENCE_SQL = `(SELECT json_group_array(shared.user_id ORDER BY shared.added_at, shared.user_id)
+   FROM sidekick_audience shared WHERE shared.sidekick_id = directory.automation_id) AS shared_with_user_ids`;
 
 /**
  * `unread` and `needs_input` for `automationSummary`, for the viewer bound to
@@ -179,13 +182,12 @@ export const AUTOMATION_RUN_STATE_JOINS = `LEFT JOIN sidekick_runs latest_run
  * `schedule`; a connector, semantic, resource-watch or webhook trigger is
  * `external_event`, the run kind each of them starts. Read from the accepted
  * definition, or for a draft the newest one submitted, so the Sidekicks home
- * can say "On alert", "On email" or "On request" where a schedule would say
+ * can say "On alert" or "On request" where a schedule would say
  * when. A trigger type this server does not map is left out.
  */
 export const AUTOMATION_TRIGGER_KINDS_SQL = `(SELECT json_group_array(kind ORDER BY first_named) FROM (
      SELECT CASE json_extract(named.value, '$.type')
               WHEN 'manual' THEN 'manual'
-              WHEN 'inbound_email' THEN 'inbound_email'
               WHEN 'calendar' THEN 'schedule' WHEN 'interval' THEN 'schedule'
               WHEN 'connector_activity' THEN 'external_event' WHEN 'semantic_activity' THEN 'external_event'
               WHEN 'resource_watch' THEN 'external_event' WHEN 'webhook' THEN 'external_event'

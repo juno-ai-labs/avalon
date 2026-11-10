@@ -2,6 +2,8 @@
 const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const shortTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+const messageTime = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' });
+const messageDate = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
 
 /**
  * Whole units elapsed, counted down as `formatSidebarActivityTime` counts
@@ -27,6 +29,16 @@ export function formatRelative(value: string, now = new Date()): string {
 export function formatTime(value: string): string {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? shortTime.format(date) : 'Unknown time';
+}
+
+/** A message's local time, with calendar context once it is over twelve hours old. */
+export function formatMessageTime(value: string, now = new Date()): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return 'Unknown time';
+  const time = messageTime.format(date).replace(/\s/gu, '');
+  if (now.getTime() - date.getTime() <= 12 * 3_600_000) return time;
+  const year = date.getFullYear() < now.getFullYear() ? ` ${date.getFullYear()}` : '';
+  return `${messageDate.format(date)}${year} · ${time}`;
 }
 
 export function formatDateTime(value: string): string {

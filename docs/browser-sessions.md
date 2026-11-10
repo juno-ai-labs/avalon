@@ -43,6 +43,12 @@ loser's session. There is no mutable active-workspace field. Selecting workspace
 A leaves a tab using B unchanged. Child expiry cannot exceed the identity
 session's expiry.
 
+`GET /browser/oauth/authorization`, `POST /browser/oauth/approve` and
+`POST /browser/oauth/deny` are the consent half of the MCP authorization
+server: the cookie names the person who approves an MCP client, and approval
+answers a redirect URL carrying a single-use code, never a session
+credential. [`rally-mcp.md`](rally-mcp.md#consent) owns them.
+
 `POST /browser/workspace/create` creates an organization; see
 [browser client](browser-client.md#creating-an-organization).
 
@@ -69,6 +75,11 @@ authentication/token issuance, internal operations, onboarding routes and the
 retired Thread, Channel and Space families are excluded. Existing product authorization still decides
 which scopes the caller may read or mutate. Message-issue submissions use this
 same adapter; [message issues](message-issues.md) owns their access and storage.
+
+`POST /browser/password` verifies an operator-provisioned credential through the
+same Global service as desktop, then registers the ordinary identity session and
+sets this adapter's cookie. JSON still contains metadata only, and the existing
+Origin and no-store policies apply. See [password sign-in](password-login.md).
 
 ## Invariants
 

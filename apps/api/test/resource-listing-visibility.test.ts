@@ -335,7 +335,7 @@ describe("the member's artifacts rail", () => {
   });
 });
 
-describe("a Breakout's resource links", () => {
+describe("a non-main conversation's resource links", () => {
   const BREAKOUT = "00000000-0000-7000-8000-0000000000c1";
 
   /** A conversation object holding one link each to `links`, as an attach writes them. */

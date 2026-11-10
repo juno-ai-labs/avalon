@@ -40,7 +40,7 @@ import { createAutomation } from "../src/services/automation-service";
 import { ConversationService } from "../src/services/conversation-service";
 import { deliverChildEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { useOpenRouterDouble, type ProviderReply } from "./helpers/openrouter-double";
+import { useOpenRouterDouble, withSuccessfulSidekickOutcome, type ProviderReply } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { runSidekickAlarms, sidekickWorkspace } from "./helpers/sidekick";
@@ -91,7 +91,7 @@ const DEFINITION: AutomationDraft = {
 };
 
 let script: ProviderReply[] = [];
-const provider = useOpenRouterDouble(() => script.shift() ?? { say: "Done." });
+const provider = useOpenRouterDouble(withSuccessfulSidekickOutcome(() => script.shift() ?? { say: "Done." }));
 useSelectedModel();
 useHeldEffectQueue();
 
@@ -150,11 +150,6 @@ async function seedRegionalDatabase(): Promise<void> {
       source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL
-    )`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )`),
   ]);
 }
@@ -508,7 +503,7 @@ describe("a Sidekick's shared conversation", () => {
 
   it("writes a run's row into the shared conversation and carries its reply when the run finishes", async () => {
     await activeSidekick();
-    // One tool call, so the row's step count has something to count.
+    // Discovery and the outcome report both count as steps.
     script = [{ callTool: { name: "conversation_list", arguments: {} } }, { say: "Version 4.2 shipped the new importer." }];
     const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "row-run-0001" });
     expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([started.runId]);
@@ -523,7 +518,7 @@ describe("a Sidekick's shared conversation", () => {
       turns: 1,
       runId: started.runId,
       text: "Version 4.2 shipped the new importer.",
-      run: { state: "completed", stepCount: 1, reply: "Version 4.2 shipped the new importer." },
+      run: { state: "completed", stepCount: 2, reply: "Version 4.2 shipped the new importer." },
       // Who asked, and which run it is, stay on the row once the run finishes.
       sidekickRun: { requesterUserId: AUTHOR_ID, runNumber: 1 },
     });
@@ -563,7 +558,7 @@ describe("a Sidekick's shared conversation", () => {
       runId: z.string().uuid(),
       deliveryId: z.string().min(1).max(200),
       trigger: z.strictObject({
-        kind: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
+        kind: z.enum(["manual", "schedule", "external_event"]),
       }).strict().optional(),
       occurredAt: z.number().int().nonnegative(),
       externalSource: z.strictObject({
@@ -705,6 +700,12 @@ describe("a Sidekick's shared conversation", () => {
     const shared = await setAudience({ audience: "people", userIds: [MEMBER_ID] });
     expect({ audience: shared.audience, sharedWithUserIds: shared.sharedWithUserIds })
       .toEqual({ audience: "people", sharedWithUserIds: [MEMBER_ID] });
+    const workspace = workspaceStub();
+    const listing = { workspaceId: WORKSPACE_ID, userId: MEMBER_ID };
+    expect((await workspace.listAutomationDirectory(listing)).items.find((item) => item.id === AUTOMATION_ID))
+      .toMatchObject({ audience: "people", sharedWithUserIds: [MEMBER_ID] });
+    expect((await workspace.listSidekickDirectoryForAuthorizedMember(listing)).items.find((item) => item.id === AUTOMATION_ID))
+      .toMatchObject({ audience: "people", sharedWithUserIds: [MEMBER_ID] });
     expect(await opens(MEMBER_ID)).toBe(true);
     // An admin who is not on the list does not read a personal Sidekick.
     expect(await opens(ADMIN_ID)).toBe(false);

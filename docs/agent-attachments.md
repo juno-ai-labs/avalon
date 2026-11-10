@@ -31,7 +31,7 @@ reconciliation, is retired; see [the session import retirement record](workstrea
 | `apps/api/src/services/attachment-summary-service.ts` | Runs one isolated bounded reader over server-identified source ranges and reports honest complete or sampled coverage. |
 | `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
 | `apps/api/src/durable-objects/workspace-resources-protocol.ts` | The typed request/result contracts for every resource-domain WorkspaceDO method, with refusals as outcomes rather than throws. |
-| `apps/api/src/durable-objects/workspace-resources-storage.ts` | The resource domain's SQL against the object's own storage: upload commit, draft delete, connector resolve, hydration swaps, watches, version reads, cleanup claims, alias claims, inbound-email receipts, webhook resource upserts, and the maintenance bounds beside them. |
+| `apps/api/src/durable-objects/workspace-resources-storage.ts` | The resource domain's SQL against the object's own storage: upload commit, draft delete, connector resolve, hydration swaps, watches, version reads, cleanup claims, alias claims, webhook resource upserts, and the maintenance bounds beside them. |
 | `apps/api/src/services/resource-listing.ts` | The listing flag that separates a resource being *reachable* from its being *advertised*, the SQL predicate every enumerating statement applies, and the metadata helper its one producer writes. |
 | `apps/api/src/services/workstream-resource-visibility.ts` | Defines the shared principal-visibility SQL and provides full sidebar, bounded point lookup, keyset page, and aggregate inventory queries, all over `ConversationResourceLinks`: a conversation's own links. |
 | `apps/api/src/runtime/resource-port.ts` | `createConversationResourceLinks`, the one way a reader builds those links from a conversation's address. |
@@ -724,7 +724,7 @@ resource bytes.
 The alias allocator derives its key the same way and for the same reason: a
 fixed `resource-slug:` prefix over the shared session secret, hashed once per
 call rather than per candidate. The separation is what keeps a resource's alias
-independent of the conversation email address the same generator would mint from
+independent of the artifact hostname the shared generator would mint from
 the same coordinates — neither reveals the other. It is not secrecy for the
 alias itself, which is shown to participants and handed to the model by design;
 an alias is a label, and nothing resolves a resource by one.
@@ -759,6 +759,12 @@ different editing guidance; truncated content requires `read_resource` first.
 Crops and screenshots use ordinary owned draft admission and count toward the
 existing ten-file cap. Target read/version authorization is independent from
 attachment reservation, since a pin usually names an already-sent resource.
+
+Resource aliases, artifact hostnames and generated Git branches share
+`apps/api/src/lib/friendly-identifier.ts`. Its v1 HMAC input and ordered vocabulary
+are frozen: three distinct adjectives and one noun. Each caller uses its own
+key namespace and reserves candidates in its own authority. Keep those inputs
+stable so a cleanup cannot rename existing URLs or branches.
 
 ## Changelog
 
@@ -1142,22 +1148,6 @@ Sparse dates are calendar buckets, not `formatRelative`'s "3 hours ago".
 
 ### 2026-08-29 — Resource statements become typed WorkspaceDO methods
 
-**What changed:** Every statement that named only resource-owned tables —
-`resources`, `resource_versions`, `resource_watches`,
-`pending_attachment_reservations`, `resource_object_deletion_outbox`,
-`workstream_email_receipts` — moved out of the workspace runtime facade and
-into typed methods on `WorkspaceDO`, declared in
-`workspace-resources-protocol.ts` and implemented in
-`workspace-resources-storage.ts`. The upload commit adopts its staged cleanup
-row in the same transaction and answers a duplicate draft id as an outcome; the
-connector resolve is one critical section instead of read, insert-or-ignore and
-re-read; both hydration writes return a fence witness via `RETURNING`; the
-reaper's reference check and staging retirement are one transaction; the alias
-claim answers exactly why it refused; and the expired-draft reap is a single
-statement. The draft TTL and the maintenance batch bound moved beside the
-statements that enforce them. `putStagedResourceObject` and
-`releaseStagedResourceObject` stay on the facade, deliberately — see below.
-
 **Why:** The facade classifies SQL by the table names in it and sends anything
 it does not recognise to the regional database, which is how a missing entry
 turned into `no such table` in production (#401) — and, from the other
@@ -1180,23 +1170,6 @@ does not own, so they follow when those domains convert. Also rejected:
 splitting the statements that join `resources` to `connector_connections`,
 `notes` or `workspace_connector_events` — a join across two of this stack's
 domains stays on the facade until its other side has an owner to talk to.
-
-**Consequences:** The listing and visibility joins (`ResourceService.list`,
-`loadResource`, the work-stream object's attach/inventory joins) still ride
-the facade, so the six table names stay on `WORKSPACE_LOCAL_TABLES`; do not
-remove them when those joins convert — an accidental generic statement must
-reach the object's refusal rather than D1's misleading `no such table`. The
-inbound-email resource upsert writes only when something changed: the old
-unconditional refresh re-assigned versioned columns — which fires the
-semantic-version trigger even when their values are unchanged — so a first
-ingestion recorded a phantom second version, and a lease-takeover replay,
-whose values re-derive byte-identical from the same retrieved message,
-recorded another. A fresh insert skips the refresh and an identical replay
-writes nothing at all. Node
-suites reach these tables through `createTestWorkspaceDO` — a real object over
-its real schema — rather than hand-written fixture tables, and
-`test-workers/workspace-resources-inventory.test.ts` proves the object's
-decisions on workerd.
 
 ### 2026-08-28 — Publication staging closes the R2 cleanup race
 

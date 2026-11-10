@@ -1,14 +1,11 @@
 /**
- * Give every run in a file a selected model, so a loop can reach the provider
- * double instead of dying on an empty route plan.
- *
- * `wrangler.test.jsonc` deliberately leaves `OPENROUTER_PRIMARY_MODEL` unset so
- * a test that never meant to reach inference cannot. A file that installs
- * `useOpenRouterDouble` does mean to, and needs a model name for the harness to
- * route on; the double answers whatever name it is given. The Worker's `env`
- * is one object for the whole isolate and every Durable Object reads it
- * through a proxy, so setting the variable here is what a constructed object
- * sees. Cleared after each test so the next file starts as configured.
+ * Select one model with no fallbacks for a scripted provider. Each scripted
+ * reply represents one inference attempt, including a deliberate failure;
+ * deployment defaults must not add an attempt that consumes the next reply.
+ * The test Worker disables model groups with empty strings until a double opts in.
+ * Every Durable Object reads the isolate's environment through a proxy, so
+ * these overrides apply to constructed objects too. Restore the model and fallback variables
+ * after each test so other files retain their own configuration.
  */
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach } from "vitest";
@@ -16,11 +13,24 @@ import { afterEach, beforeEach } from "vitest";
 export const SELECTED_TEST_MODEL = "double/primary";
 
 export function useSelectedModel(model = SELECTED_TEST_MODEL): void {
-  const mutable = env as { OPENROUTER_PRIMARY_MODEL?: string };
+  const mutable = env as { OPENROUTER_PRIMARY_MODEL?: string; OPENROUTER_SMARTER_MODEL?: string; OPENROUTER_FALLBACK_MODEL?: string };
+  let previousModel: string | undefined;
+  let previousSmarterModel: string | undefined;
+  let previousFallbacks: string | undefined;
   beforeEach(() => {
+    previousModel = mutable.OPENROUTER_PRIMARY_MODEL;
+    previousSmarterModel = mutable.OPENROUTER_SMARTER_MODEL;
+    previousFallbacks = mutable.OPENROUTER_FALLBACK_MODEL;
     mutable.OPENROUTER_PRIMARY_MODEL = model;
+    mutable.OPENROUTER_SMARTER_MODEL = model;
+    mutable.OPENROUTER_FALLBACK_MODEL = "";
   });
   afterEach(() => {
-    delete mutable.OPENROUTER_PRIMARY_MODEL;
+    if (previousModel === undefined) delete mutable.OPENROUTER_PRIMARY_MODEL;
+    else mutable.OPENROUTER_PRIMARY_MODEL = previousModel;
+    if (previousSmarterModel === undefined) delete mutable.OPENROUTER_SMARTER_MODEL;
+    else mutable.OPENROUTER_SMARTER_MODEL = previousSmarterModel;
+    if (previousFallbacks === undefined) delete mutable.OPENROUTER_FALLBACK_MODEL;
+    else mutable.OPENROUTER_FALLBACK_MODEL = previousFallbacks;
   });
 }

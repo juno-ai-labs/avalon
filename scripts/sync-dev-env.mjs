@@ -21,10 +21,14 @@ const workerKeys = [
   "OPENROUTER_API_KEY",
   "TYPESAFE_API_KEY",
   "TURBO_PUFFER_DEV_API_KEY",
+  "FEATURE_FLAG_DEVELOPER_SETTINGS",
+  "FEATURE_FLAG_MULTIPLE_WORKSPACES_ENABLED",
+  "FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED",
+  "AGENT_MODEL_ROUTING_JSON",
   "OPENROUTER_PRIMARY_MODEL",
-  "OPENROUTER_FALLBACK_MODELS",
-  "OPENROUTER_CLASSIFIER_MODEL",
-  "OPENROUTER_STRUCTURED_MODEL",
+  "OPENROUTER_SMARTER_MODEL",
+  "OPENROUTER_FALLBACK_MODEL",
+  "OPENROUTER_FASTER_MODEL",
   "AZURE_OPENAI_ENDPOINT",
   "AZURE_OPENAI_API_KEY",
   "AZURE_OPENAI_REALTIME_DEPLOYMENT",
@@ -37,17 +41,10 @@ const workerKeys = [
   "DAYTONA_TARGET",
   "DAYTONA_TERMINAL_SNAPSHOT",
   "TERMINAL_EMERGENCY_DISABLED",
-  "RESEND_API_KEY",
-  "RESEND_FROM_EMAIL",
+  "EMAIL_FROM",
   "EMAIL_LOGIN_POLICY_JSON",
   "BROWSER_APP_ORIGIN",
-  "RESEND_NOTIFICATION_FROM_EMAIL",
-  "RESEND_RECEIVING_API_KEY",
-  "RESEND_WEBHOOK_SIGNING_SECRET",
-  // Legacy deployment compatibility. New environments use the explicit name above.
-  "RESEND_WEBHOOK_SECRET",
-  "WORKSTREAM_EMAIL_DOMAIN",
-  "WORKSTREAM_EMAIL_ADDRESS_KEY",
+  "EMAIL_NOTIFICATION_FROM",
   "GOOGLE_OAUTH_CLIENT_ID",
   "GOOGLE_OAUTH_CLIENT_SECRET",
   "GOOGLE_CONNECTOR_OAUTH_CLIENT_ID",
@@ -91,7 +88,6 @@ const workerKeys = [
   "MAX_ATTACHMENT_BYTES",
   "WEBHOOK_REPLAY_WINDOW_SECONDS",
   "PROVIDER_WEBHOOK_MAX_BYTES",
-  "INBOUND_EMAIL_MAX_BYTES",
   "LOG_LEVEL"
 ];
 
@@ -112,12 +108,10 @@ const regionalizableKeys = [
   "DAYTONA_TARGET",
   "DAYTONA_TERMINAL_SNAPSHOT",
   "TERMINAL_EMERGENCY_DISABLED",
-  "RESEND_API_KEY",
-  "RESEND_FROM_EMAIL",
+  "EMAIL_FROM",
   "EMAIL_LOGIN_POLICY_JSON",
   "BROWSER_APP_ORIGIN",
-  "RESEND_NOTIFICATION_FROM_EMAIL",
-  "RESEND_RECEIVING_API_KEY",
+  "EMAIL_NOTIFICATION_FROM",
   "GOOGLE_OAUTH_CLIENT_ID",
   "GOOGLE_OAUTH_CLIENT_SECRET",
   "GOOGLE_CONNECTOR_OAUTH_CLIENT_ID",
@@ -150,9 +144,6 @@ const regionalizableKeys = [
 const globalOnlyKeys = new Set([
   "GOOGLE_OAUTH_CLIENT_ID",
   "GOOGLE_OAUTH_CLIENT_SECRET",
-  "RESEND_WEBHOOK_SIGNING_SECRET",
-  "RESEND_WEBHOOK_SECRET",
-  "WORKSTREAM_EMAIL_ADDRESS_KEY",
   "TELEMETRY_CAPABILITY_SIGNING_KEY"
 ]);
 
@@ -169,13 +160,8 @@ const safeDefaults = {
   DESKTOP_DEEP_LINK_URI: "rallywithai://auth/complete",
   TERMINAL_REGION_CAPABILITY: "unsupported",
   TERMINAL_EMERGENCY_DISABLED: "false",
-  OPENROUTER_PRIMARY_MODEL: "openai/gpt-6.1-sol",
-  OPENROUTER_FALLBACK_MODELS: "google/gemini-3.8-flash",
-  OPENROUTER_CLASSIFIER_MODEL: "openai/gpt-5.6-terra",
-  OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
-  RESEND_FROM_EMAIL: "Rally <invites@rallywith.ai>",
-  RESEND_NOTIFICATION_FROM_EMAIL: "Rally <notifications@rallywith.ai>",
-  WORKSTREAM_EMAIL_DOMAIN: "automation.rallywith.ai",
+  EMAIL_FROM: "Rally <invites@rallywith.ai>",
+  EMAIL_NOTIFICATION_FROM: "Rally <notifications@rallywith.ai>",
   LINEAR_NATIVE_AGENT_ENABLED: "false",
   FIREFLIES_CONNECTOR_ENABLED: "true",
   CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
@@ -185,7 +171,6 @@ const safeDefaults = {
   MAX_ATTACHMENT_BYTES: "25000000",
   WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
   PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
-  INBOUND_EMAIL_MAX_BYTES: "5000000",
   LOG_LEVEL: "info"
 };
 
@@ -273,9 +258,15 @@ for (const region of configuredRegions) {
     ...local,
     AVALON_REGION: region,
     PUBLIC_API_BASE_URL: local[`PUBLIC_API_BASE_URL_${regions[region].bindingPrefix}`]
-      || regions[region].localApiUrl,
-    OPENROUTER_FALLBACK_MODELS: safeDefaults.OPENROUTER_FALLBACK_MODELS
+      || regions[region].localApiUrl
   };
+  // Generated files must not pin an old default after the code changes.
+  for (const key of workerKeys.filter((key) => key.startsWith("FEATURE_FLAG_")
+    || key === "AGENT_MODEL_ROUTING_JSON"
+    || /^OPENROUTER_(PRIMARY_MODEL|SMARTER_MODEL|FALLBACK_MODEL|FASTER_MODEL)$/.test(key))) {
+    delete regional[key];
+    if (typeof local[key] === "string") regional[key] = local[key];
+  }
   for (const key of regionalizableKeys) {
     const regionalKey = `${key}_${regions[region].bindingPrefix}`;
     if (!key.startsWith("GITHUB_") && !key.startsWith("LINEAR_") && typeof local[regionalKey] === "string") {
@@ -305,7 +296,7 @@ for (const region of configuredRegions) {
   const serialized = workerKeys
     .filter((key) => (region === "global" || !globalOnlyKeys.has(key))
       && typeof regional[key] === "string"
-      && regional[key].length > 0)
+      && (regional[key].length > 0 || /^OPENROUTER_(PRIMARY|SMARTER|FALLBACK|FASTER)_MODEL$/.test(key)))
     .map((key) => `${key}=${workerEnvValue(key, regional[key])}`)
     .join("\n");
   await writeFile(regionalTargetPaths[region], `${serialized}\n`, { mode: 0o600 });

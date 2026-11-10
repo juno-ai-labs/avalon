@@ -23,11 +23,9 @@ are in
 | `apps/api/src/durable-objects/workspace-do.ts` (`publishUsage`) | Sends the meter after a plan change to every subscribed member socket as `workspace_usage` (`WorkspaceUsageEventSchema`), never a guest's, and drops a meter read before the last one sent. |
 | `apps/api/src/queues/usage-consumer.ts` | The `avalon-<region>-usage` consumer: validates, rejects misrouted messages, applies the batch to D1, then sends it to the usage lakehouse, logs `usage_batch_applied`. `usageLakehouseRecord` shapes the R2 row. |
 | `apps/api/src/routes/workspace.ts` | `GET /workspace/usage`, for every member role, and `PUT /workspace/plan`, for administrators (`WorkspaceService.setPlan`). |
-| `apps/api/src/routes/workspace-operations.ts` | `POST /internal/workspaces/:id/plan`, the operator route Ace calls. |
 | `packages/db/migrations/0118_usage_quota_metering.sql` | `workspaces.plan`, in the regional `DB`. |
 | `packages/db/usage-migrations/` | `usage_events`, `usage_rollups` and `usage_plan_changes`, in `USAGE_DB` (`avalon-<region>-usage`). Applied by `pnpm --filter @rally/api db:usage:migrate` (local, part of `db:migrate`) and `db:usage:migrate:remote` (deploy). |
 | `config/usage-lakehouse.json`, `config/usage-lakehouse-stream-schema.json` | The usage lakehouse: the `USAGE_LAKEHOUSE` Pipeline into the Iceberg table `avalon.usage_events` in R2, provisioned by `scripts/ensure-cloudflare-inference-lakehouse.mjs` like the other lakehouses. |
-| `apps/ace/src/client/workspaces.tsx` | The plan control on Ace's workspaces tab. |
 | `apps/desktop/src/renderer/lib/organization-usage.ts` | The desktop's read: `useOrganizationUsage`, `useSetOrganizationPlan`, `applyPushedOrganizationUsage`, the `usage` local-cache slice, and the formatters. `lib/workspace-socket.tsx` applies the push, marks the meter stale on every subscribe answer, and relays both to the Settings window as `usage`. |
 | `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Usage with its plan picker, and the account menu's meter (a full row right under Settings). |
 | `packages/ui/src/components/primitives.tsx` (`Meter`) | The shared meter primitive and its `cmp.meter.*` tokens. |
@@ -124,7 +122,7 @@ fill in the text colour and turn the warning colour below 20% left
 decisions, set in `packages/contracts/src/usage.ts`.
 
 Every workspace starts on Starter. An administrator changes the plan from the
-picker at the top of Settings → Organization → Usage, and an operator from Ace;
+picker at the top of Settings → Organization → Usage, and an operator through the engineering MCP;
 both reach `setWorkspacePlan`. There is no checkout behind either yet, so a
 change moves the quota and nothing is charged. `setWorkspacePlan` records the change in `usage_plan_changes` (with the plan it
 replaced) and rewrites `quota_microusd` on the current week's rollups, in one
@@ -134,7 +132,7 @@ the error and choosing again finishes it. The Settings route answers with the
 meter under the new plan, which the picker writes straight into the read and
 the cache.
 
-After the response, both routes call `publishOrganizationUsage`. It reads
+After the response, both paths call `publishOrganizationUsage`. It reads
 the meter, stamped with when the read started, and WorkspaceDO sends it to
 every member socket (not a guest's) as `workspace_usage`, dropping a meter
 read before the last one it sent. The desktop writes it into its read and its
@@ -183,7 +181,7 @@ therefore keep the plan they had, even for an event that arrives late.
   rows received before the 90-day window…").
 - **A plan change reaches every connected member without a request, and no
   guest.** Guard:
-  `test/usage-metering.test.ts` and `test/workspace-operations.test.ts`
+  `test/usage-metering.test.ts` and `test-workers/engineering-usage.test.ts`
   (each route publishes the re-priced meter),
   `test-workers/durable-object-runtime.test.ts` ("sends the meter after a plan
   change to every member socket…") and the desktop's
@@ -195,7 +193,7 @@ therefore keep the plan they had, even for an event that arrives late.
   never from the batch's earlier read of `DB`.** D1 runs one transaction at a
   time, so a plan change either commits first and the insert reads it, or
   commits after and rewrites the row. Guard: `test/usage-metering.test.ts`
-  ("rollup quota") and `test/workspace-operations.test.ts`.
+  ("rollup quota") and `test-workers/engineering-usage.test.ts`.
 - **The ledger stays out of `DB`.** D1's 10 GB limit is per database, so a full
   ledger in `DB` would stop every regional write, sign-in included. Guard: none
   automated; the tables exist only in `packages/db/usage-migrations/`.
@@ -204,8 +202,7 @@ therefore keep the plan they had, even for an event that arrives late.
 
 This module owns the ledger, the meter's arithmetic, and the plan column. It
 exposes `emitInferenceUsage` to call sites, `GET /workspace/usage` and
-`PUT /workspace/plan` to the desktop, `POST /internal/workspaces/:id/plan`
-to Ace, and the `workspace_usage` socket event to every member after a plan
+`PUT /workspace/plan` to the desktop, typed usage-plan methods to the engineering MCP, and the `workspace_usage` socket event to every member after a plan
 change. The socket itself is [`realtime-sockets.md`](realtime-sockets.md)'s.
 
 It does not stop, slow or gate any work when the quota is spent: the product
@@ -265,8 +262,6 @@ desktop meter is owned by the settings screens and
   where `changes()` inside a `batch()` is the runtime's to honour.
 - `apps/api/test-workers/queue-dispatch.test.ts`: the usage queue is
   dispatched ahead of the maintenance fence.
-- `apps/api/test/workspace-operations.test.ts`: the plan route, its
-  credential, its refusals, the current week's re-pricing, and the push.
 - `apps/api/test-workers/durable-object-runtime.test.ts`: WorkspaceDO sends
   `workspace_usage` to every member socket, skips a guest's, and drops a
   stale meter.
@@ -277,8 +272,8 @@ desktop meter is owned by the settings screens and
   `test/structured-inference-deferral.test.ts`: what the emitters send.
 - `packages/agent-harness/src/embedding-cost.test.ts`: the bring-your-own-key
   embedding cost.
-- Ace: `workspaces.test.ts` (the plan relay), `workspaces-client.test.tsx`
-  (the control) and `directory.test.ts` (a region without the column yet).
+- `apps/api/test-workers/engineering-usage.test.ts`: regional plan changes,
+  current snapshots and audit attribution during concurrent changes.
 
 A test that seeds a workspace must set `created_at`, since every week and
 period is computed from it.
@@ -297,15 +292,24 @@ output or tool argument. Only server call sites produce events. The read route
 sits behind member-only workspace auth, and every role may read it, since
 usage is shared by design. `PUT /workspace/plan` is for owners and
 administrators, like every other Organization-wide setting; a member gets
-`workspace_admin_required`. The operator plan route sits behind the regional
-operator credential in the `demos` role, the same one Ace uses to retire a
-workspace.
+`workspace_admin_required`. The engineering MCP uses Cloudflare Access admission and records each operator
+plan change as an independent audit attempt and result with the authenticated actor.
 
 ## Operations
 
 - `usage_batch_applied` (one per batch) carries applied, duplicate,
   unknown-workspace, invalid and misrouted counts and a per-activity count.
 - `usage_unpriced` and `usage_emit_failed` name what was not metered.
+
+## Operator plan changes
+
+The engineering MCP offers `inspect_usage_plan` and `change_usage_plan` with
+`orgId` and, for writes, `plan` (`starter` or `growth`). The MCP resolves exactly
+one owning region and the bridge calls the metering service directly. Changes
+carry the Access operator in independent audit attempt/result records, update the
+current week's allowance, preserve past weeks, and publish the current meter.
+An uncertain write may have committed: inspect before retrying.
+
 
 ## Changelog
 

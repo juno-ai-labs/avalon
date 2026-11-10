@@ -11,7 +11,7 @@
  * write hook that drains the ledger runs as it does in production.
  */
 import { env } from "cloudflare:workers";
-import { reset } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -185,6 +185,13 @@ beforeEach(async () => {
 
 describe("workspace_resource_versions", () => {
   it("tells everyone who can open the Canvas that a resource has a new version, with its new head", async () => {
+    const initialDate = "2026-10-18T00:00:00.000Z";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE canvas_directory SET updated_at = ? WHERE canvas_id = ?", Date.parse(initialDate), OPEN_CANVAS);
+    });
+    const detail = () => workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: OPEN_CANVAS,
+      actor: { userId: MEMBER, actorRole: "member" } });
+    expect((await detail()).updatedAt).toBe(initialDate);
     const owner = await connect(OWNER);
     const member = await connect(MEMBER);
 
@@ -203,6 +210,7 @@ describe("workspace_resource_versions", () => {
       expect(owner.heads).toEqual([[head]]);
       expect(member.heads).toEqual([[head]]);
     });
+    expect((await detail()).updatedAt > initialDate).toBe(true);
   });
 
   it("names an artifact of a creator-only Canvas only to the people who may open it", async () => {
@@ -220,7 +228,13 @@ describe("workspace_resource_versions", () => {
     });
   });
 
-  it("announces a version of any cause, a rename included, and stays quiet for a resource's first version", async () => {
+  it("refreshes artifact previews on a rename or refetch and preserves the Canvas date", async () => {
+    const date = "2026-10-18T00:00:00.000Z";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE canvas_directory SET updated_at = ? WHERE canvas_id = ?", Date.parse(date), OPEN_CANVAS);
+    });
+    const detail = () => workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: OPEN_CANVAS,
+      actor: { userId: MEMBER, actorRole: "member" } });
     const member = await connect(MEMBER);
 
     // An artifact can be recorded before its row arrives, so the first version
@@ -239,6 +253,11 @@ describe("workspace_resource_versions", () => {
     expect(member.heads).toEqual([[expect.objectContaining({
       resourceId: REPORT, version: 2, title: "Launch report, final",
     })]]);
+    expect((await detail()).updatedAt).toBe(date);
+
+    await republish(REPORT, "v3", 42, "2026-10-18T03:00:00.000Z", "refetched");
+    await vi.waitFor(() => expect(member.heads.at(-1)).toMatchObject([{ resourceId: REPORT, version: 3 }]));
+    expect((await detail()).updatedAt).toBe(date);
   });
 
   it("leaves out an unlisted resource, which no conversation advertises", async () => {

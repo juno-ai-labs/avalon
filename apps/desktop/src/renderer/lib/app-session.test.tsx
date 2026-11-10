@@ -65,6 +65,7 @@ const bridge = vi.hoisted(() => ({
   acceptInvitation: vi.fn(),
   activateWorkspace: vi.fn(),
   createDevelopmentSession: vi.fn(),
+  signInWithPassword: vi.fn(),
   createWorkspace: vi.fn(),
   declineInvitation: vi.fn(),
   exchangeDesktopTicket: vi.fn(),

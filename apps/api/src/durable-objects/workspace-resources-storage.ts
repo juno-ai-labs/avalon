@@ -3,7 +3,6 @@ import { boundParameterChunks } from "./bound-parameters";
 import {
   WorkspaceConnectorResourceResolveResultSchema,
   WorkspaceExpiredDraftReapResultSchema,
-  WorkspaceInboundEmailResourceResultSchema,
   WorkspaceReapableResourceObjectListSchema,
   WorkspaceResourceDescriptorListSchema,
   WorkspaceResourceExistsResultSchema,
@@ -20,8 +19,6 @@ import {
   type WorkspaceConnectorResourceResolveResult,
   type WorkspaceDiscoveredResourcesRequest,
   type WorkspaceExpiredDraftReapResult,
-  type WorkspaceInboundEmailResourceRequest,
-  type WorkspaceInboundEmailResourceResult,
   type WorkspaceReapableResourceObjectList,
   type WorkspaceResourceDescriptorList,
   type WorkspaceResourceDescriptorsRequest,
@@ -630,79 +627,6 @@ export function listWorkspaceResourcesAwaitingSlug(
     MAXIMUM_RESOURCE_CLEANUP_BATCH,
   ).toArray().map((row) => row.id);
   return WorkspaceResourceSlugBacklogSchema.parse({ items });
-}
-
-/**
- * The resource for one inbound email, created or refreshed — one critical
- * section instead of insert-or-ignore, re-read, and unconditional update.
- *
- * A write that changes nothing is skipped outright, not narrowed: SQLite's
- * `AFTER UPDATE OF` triggers fire on a column appearing in the SET list, not
- * on its value changing, so the old unconditional refresh recorded a phantom
- * second version of every email — on first ingestion (after its own insert)
- * and again on every lease-takeover replay, whose title, payload pointer and
- * metadata all re-derive byte-identical from the same retrieved message. Even
- * refreshing `last_hydrated_at` alone would fire the trigger, so an identical
- * replay writes nothing at all.
- */
-export function upsertWorkspaceInboundEmailResource(
-  storage: DurableObjectStorage,
-  request: WorkspaceInboundEmailResourceRequest,
-): WorkspaceInboundEmailResourceResult {
-  return storage.transactionSync(() => {
-    const existing = storage.sql.exec<{
-      id: string;
-      title: string;
-      content_ref: string | null;
-      metadata_json: string;
-    }>(
-      `SELECT id, title, content_ref, metadata_json FROM resources
-        WHERE workspace_id = ? AND provider = 'resend' AND provider_resource_id = ?`,
-      request.workspaceId,
-      request.resendEmailId,
-    ).toArray()[0];
-    if (!existing) {
-      storage.sql.exec(
-        `INSERT INTO resources
-           (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
-            title, mime_type, content_ref, canonical_url, metadata_json, last_hydrated_at,
-            created_at, updated_at)
-         VALUES (?, ?, NULL, 'email', 'resend', ?, ?, 'application/json', ?, NULL, ?, ?, ?, ?)`,
-        request.candidateResourceId,
-        request.workspaceId,
-        request.resendEmailId,
-        request.title,
-        request.contentRef,
-        request.metadataJson,
-        request.at,
-        request.at,
-        request.at,
-      );
-      return WorkspaceInboundEmailResourceResultSchema.parse({
-        resourceId: request.candidateResourceId,
-      });
-    }
-    if (
-      existing.title === request.title
-      && existing.content_ref === request.contentRef
-      && existing.metadata_json === request.metadataJson
-    ) {
-      return WorkspaceInboundEmailResourceResultSchema.parse({ resourceId: existing.id });
-    }
-    storage.sql.exec(
-      `UPDATE resources SET title = ?, mime_type = 'application/json', content_ref = ?,
-         metadata_json = ?, last_hydrated_at = ?, updated_at = ?
-       WHERE id = ? AND workspace_id = ?`,
-      request.title,
-      request.contentRef,
-      request.metadataJson,
-      request.at,
-      request.at,
-      existing.id,
-      request.workspaceId,
-    );
-    return WorkspaceInboundEmailResourceResultSchema.parse({ resourceId: existing.id });
-  });
 }
 
 /**

@@ -1,3 +1,4 @@
+import { agentModelTraceFeature } from "@rally/contracts/runtime-config";
 import { emitCompletionRepromptTelemetry, type CompletionRepromptObservation } from "../telemetry/completion-verification";
 import { connectorAuthorizationStatus } from "@rally/contracts";
 import { readConnectorResourceAttachment } from "./connector-resource-attachments";
@@ -14,6 +15,7 @@ import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { AgentCommunicationService } from "./agent-communication-service";
+import { isCanvasChat } from "../lib/canvas-chat";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
@@ -117,7 +119,6 @@ import {
   type ConnectorPollWorkflowInput,
   type ExecutionPrincipal,
   type Message,
-  type NormalizedActivity,
   type ServerSocketEvent,
   type ToolInvocation,
   type ToolDefinition,
@@ -204,14 +205,12 @@ import {
 } from "./agent-inference-logging";
 import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 import {
-  AGENT_MODEL_FLAG_KEYS,
   conversationModelContext,
   conversationModelRole,
   resolveAgentModelRouting,
   resolveWorkstreamModelRouting,
 } from "./agent-model-flags";
 import { agentProfileFor, type AgentProfile } from "./agent-profiles";
-import { localWorkstreamAuthority } from "../runtime/local-authorities";
 import { createAzureModelPricingResolver } from "./openrouter-pricing-cache";
 import { createAvalonMultimodalGenerationPlugin } from "./multimodal-generation/plugin";
 import {
@@ -274,6 +273,8 @@ import {
 import type { ToolReceiptRecord, ToolReceiptStatus } from "../durable-objects/workstream-tool-receipt-storage";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { createSidekickRunTools, readsSidekickRuns, SIDEKICK_RUN_READING_GUIDANCE } from "./sidekick-run-tools";
+import { createSidekickTaskOutcomePlugin, reportsSidekickTaskOutcome, sidekickTaskOutcomeFromReceipts,
+  SIDEKICK_TASK_OUTCOME_CAPABILITY, type SidekickTaskOutcome } from "./sidekick-task-outcome";
 import { withToolPagination } from "./tool-pagination";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
@@ -284,7 +285,7 @@ import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { createWorkstreamArtifactDataTools } from "./workstream-artifact-data-tools";
-import { artifactDataReader, createArtifactDataToolContext } from "./workstream-artifact-data-wiring";
+import { artifactDataReader, artifactDataWriteAccess, createArtifactDataToolContext } from "./workstream-artifact-data-wiring";
 import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { transcriptLister } from "../runtime/message-projection";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
@@ -456,6 +457,7 @@ function workstreamHarnessTerminalResult(input: {
   finalTurnId: string | null;
   ambiguousToolOutcome: boolean;
   stoppedByUser: boolean;
+  sidekickTaskOutcome?: SidekickTaskOutcome | null;
 }): WorkstreamHarnessResult {
   const { outcome, streamedText, finalTurnId, ambiguousToolOutcome, stoppedByUser } = input;
   const durableTurn = streamedText && finalTurnId ? { finalTurnId } : {};
@@ -474,6 +476,14 @@ function workstreamHarnessTerminalResult(input: {
     };
   }
   if (stoppedByUser) return { status: "stopped", ...durableTurn };
+  if (outcome.status === "completed" && input.sidekickTaskOutcome !== undefined
+    && input.sidekickTaskOutcome?.outcome !== "succeeded") {
+    return { status: "failed", ...durableTurn, error: {
+      code: input.sidekickTaskOutcome === null ? "sidekick_task_outcome_missing"
+        : `sidekick_task_${input.sidekickTaskOutcome.outcome}`,
+      message: input.sidekickTaskOutcome?.summary ?? "The Sidekick finished without confirming its task outcome.",
+    } };
+  }
   if (outcome.status === "completed" && streamedText && finalTurnId) return { status: "completed", finalTurnId };
   // Preserve the harness's tool-ended outcome here. The conversation
   // terminalizer separately requires a durable final turn; Sidekick submission
@@ -1145,7 +1155,7 @@ async function loadWorkstreamContextCompaction(
  * The boundary is normally the trigger, and for every run started *by* a
  * message the two are the same thing. They are separable because the trigger
  * has a second job: `projectModelProtocolTranscript` admits a suggested-work
- * brief and an inbound email only when they are the trigger, so the id also
+ * brief only when they are the trigger, so the id also
  * carries identity. A `retry` needs to keep that identity — the failed run's
  * trigger — while seeing everything the work stream has accumulated since,
  * including a correction a teammate posted that started no run of its own.
@@ -1425,16 +1435,14 @@ async function projectModelProtocolTranscript(
       continue;
     }
 
-    // Provider-controlled mail remains visible in the human transcript, but is
-    // not implicit model history. Only the selected trigger email is admitted
-    // as explicitly labelled, untrusted user data.
+    // Historical received-message openings remain readable on retry, as
+    // labelled user evidence only when selected as the trigger. No receiver
+    // writes new messages of this kind.
     if (message.structuredContent?.kind === "inbound_email") {
       if (message.id === input.triggerMessageId) {
         projected.push(modelDerivative(
           { role: "user", content: `INBOUND EMAIL:\n${modelMessageContent(message)}` },
-          "participant_turn",
-          message.id,
-          message.sequenceNumber,
+          "participant_turn", message.id, message.sequenceNumber,
         ));
       }
       continue;
@@ -2129,9 +2137,7 @@ function createAvalonAutomationsPlugin(
             appearance: detail.appearance ?? null,
             currentDefinitionRevision: detail.currentDefinitionRevision,
             acceptedDefinitionRevision: detail.acceptedDefinitionRevision,
-            currentDefinition: currentDefinition && currentDefinition.definitionVersion !== 2
-              ? { ...currentDefinition, definitionVersion: 2, triggers: [...currentDefinition.triggers, { type: "inbound_email" }] }
-              : currentDefinition,
+            currentDefinition,
           };
         });
         return { sidekicks };
@@ -3008,8 +3014,7 @@ export async function runWorkstreamHarness(
     : loadRunPromptContext(env, input, workstream, runDefinitionPreparation));
   const principalSystemSection = profile ? "" : principalSystemSectionFor(input, runtime?.persistentLoop);
   const toolsPreparation = new Preparation(() => profile
-    ? Promise.resolve(profileHarnessTools(profile.plugins(input,
-      localWorkstreamAuthority(env, input.workspaceId, input.parentId, "desktopAction"))))
+    ? Promise.resolve(profileHarnessTools(profile.plugins(input)))
     : loadHarnessTools(
       env, input, runAuthoritySnapshot, runtime?.runtimeResourceAttacher,
       runDefinitionPreparation, inventoryPreparation, attemptLease,
@@ -3279,7 +3284,6 @@ export async function runWorkstreamHarness(
     ),
     triggerPolicy: {
       reason: input.reason,
-      inboundEmail: input.reason === "inbound_email",
       automationId: input.automationRun?.automationId ?? null,
       triggerMessageId: input.triggerMessageId ?? null,
       activityId: input.activityId ?? null,
@@ -3932,7 +3936,7 @@ export async function runWorkstreamHarness(
       executionPrincipal: input.executionPrincipal,
       traceContext: {
         source: "workstream",
-        feature: AGENT_MODEL_FLAG_KEYS[modelRole],
+        feature: agentModelTraceFeature(modelRole),
         workspaceId: input.workspaceId,
         workstreamId: input.parentId,
         substreamId: input.substreamId ?? "0",
@@ -5035,12 +5039,21 @@ export async function runWorkstreamHarness(
     ? finalTurnId
     : null;
   const acceptedFinalText = acceptedFinalTurnId ? streamedText : "";
+  const taskOutcome = reportsSidekickTaskOutcome(input) && outcome.status === "completed"
+    ? sidekickTaskOutcomeFromReceipts(await createToolReceiptObjectPort(
+      env, input.workspaceId, input.parentId, undefined, conversationSubstreamId,
+    ).receiptsForRun({ runId: input.harnessRunId, capabilities: [SIDEKICK_TASK_OUTCOME_CAPABILITY] }))
+    : undefined;
   const terminalResult = workstreamHarnessTerminalResult({
     outcome,
     streamedText: acceptedFinalText,
     finalTurnId: acceptedFinalTurnId,
     ambiguousToolOutcome,
     stoppedByUser,
+    // A conversational follow-up is not a fresh activation. Its own explicit
+    // report still applies, but an ordinary reply owes no new task declaration.
+    ...(taskOutcome === undefined || (input.automationContinuation && taskOutcome === null)
+      ? {} : { sidekickTaskOutcome: taskOutcome }),
   });
   await persistHarnessHostOutcome(
     runs,
@@ -5147,7 +5160,7 @@ function principalSystemSectionFor(
  *
  * Each channel is filtered by the predicate its own sender uses, not by one
  * convenient guess. Email delivers only from `active`, and only in production —
- * `sendResendEmail` refuses to send transactional mail from a developer's
+ * `sendEmail` refuses to send transactional mail from a developer's
  * machine — while Slack deliberately delivers from `needs_input` too, its
  * comment in `slack-agent-service.ts` says why, and skips a member who turned
  * that notification off. A third predicate that disagreed with any of those
@@ -5180,14 +5193,61 @@ async function canvasRunContextMessage(env: Env, input: WorkstreamWorkflowInput)
     content: `CANVAS CONTEXT (host-provided):\n${JSON.stringify({
       canvasId: canvas.canvasId,
       title: canvas.title,
-      artifacts: canvas.artifacts.map((artifact) => ({
-        resourceId: artifact.resourceId, title: artifact.title, kind: artifact.kind, version: artifact.version,
+      artifacts: canvas.artifacts.map(agentCanvasArtifact),
+      sidekicks: canvas.sidekicks.map((sidekick) => ({
+        sidekickId: sidekick.id, name: sidekick.name, status: sidekick.status, madeHere: sidekick.madeHere,
       })),
       publishing: "This conversation is a Canvas's Chat, open to everyone in the Canvas. The artifacts above are the Canvas. "
         + "To change one, read it (read_resource, view_resource, or import_resource into the Terminal), then publish_resource the same filePath: "
-        + "that is a new version of it, attributed to you. Publishing a different filePath adds another artifact to this Canvas.",
+        + "that is a new version of it, attributed to you. Publishing a different filePath adds another artifact to this Canvas. "
+        + "The sidekicks above are attached to this Canvas and may update its artifacts on their own schedule or events.",
     })}`,
   }, "canvas_context", input.triggerMessageId ?? input.harnessRunId);
+}
+
+/** How a run changes an attached Canvas: the tools are the run's own. */
+const RUN_CANVAS_UPDATING = "This Sidekick is attached to the Canvases above, so this run may change their artifacts. "
+  + "For an artifact with storesData true, change its rows with write_artifact_data (describe_artifact_data shows its tables): "
+  + "a row write is safe when runs overlap and makes no new version. "
+  + "To change an artifact's files, import_resource it to its filePath, edit, and publish_resource that filePath with canvas set to the canvasId: "
+  + "that is a new version, attributed to this Sidekick. Runs can overlap, so a run that republishes rebuilds the whole artifact from its sources rather than patching the last version. "
+  + "conversation_post with the canvasId tells the people in that Canvas what changed.";
+/** What the wizard saves for the runs: it configures, and does not write the Canvas itself. */
+const WIZARD_CANVAS_UPDATING = "This Sidekick is attached to the Canvases above, so its runs may change their artifacts; you configure it and do not change them yourself. "
+  + "Save instructions that name the canvasId and each artifact's resourceId. For an artifact with storesData true, have each run change rows with write_artifact_data, "
+  + "naming the tables and columns (describe_artifact_data shows them): a row write is safe when runs overlap and makes no new version. "
+  + "Only for a change to an artifact's files, have a run import it to its filePath and publish_resource that filePath with canvas set to the canvasId, rebuilding it from its sources.";
+
+/** One of a Canvas's artifacts as an agent is told of it; see `HostedCanvas.agentArtifacts`. */
+function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind: string; version: number; filePath: string | null; storesData: boolean }) {
+  return { resourceId: artifact.resourceId, title: artifact.title, kind: artifact.kind, version: artifact.version,
+    filePath: artifact.filePath, storesData: artifact.storesData };
+}
+
+/**
+ * What a Sidekick's wizard or run is told about the Canvases the Sidekick was
+ * attached to: each one's artifacts, and the two ways to change one. A
+ * derived user message for the reason `canvasRunContextMessage` is one: the
+ * list moves with every publish. Nothing is sent for a Sidekick attached to
+ * no Canvas, which is most of them, so their runs read no extra message.
+ * `docs/automation-lifecycle.md#attached-conversations`.
+ */
+async function sidekickCanvasContextMessage(env: Env, input: WorkstreamWorkflowInput): Promise<ModelMessage | null> {
+  if (input.executionPrincipal.type !== "user") return null;
+  const canvases = await (await hostedParentStub(env, input.workspaceId)).sidekickCanvasContext({
+    workspaceId: input.workspaceId, sidekickId: input.parentId, userId: input.executionPrincipal.userId,
+  });
+  if (canvases.length === 0) return null;
+  return modelDerivative({
+    role: "user",
+    content: `ATTACHED CANVASES (host-provided):
+${JSON.stringify({
+      canvases: canvases.map((canvas) => ({
+        canvasId: canvas.canvasId, title: canvas.title, artifacts: canvas.artifacts.map(agentCanvasArtifact),
+      })),
+      updating: input.automationRun ? RUN_CANVAS_UPDATING : WIZARD_CANVAS_UPDATING,
+    })}`,
+  }, "sidekick_canvas_context", input.triggerMessageId ?? input.automationRun?.runId ?? input.harnessRunId);
 }
 
 async function loadRunPromptContext(
@@ -5212,6 +5272,7 @@ async function loadRunPromptContext(
         instructions: string;
         expectedOutputs: string[];
         homeConversationId: string | null;
+        failureNotificationConversationId: string | null;
         defaultBehavior: Record<string, unknown>;
         overrides: Record<string, unknown>;
         durableTables: MaterializedMemoryTable[];
@@ -5233,6 +5294,7 @@ async function loadRunPromptContext(
       instructions: definition.definition.instructions,
       expectedOutputs: definition.definition.expectedOutputs,
       homeConversationId,
+      failureNotificationConversationId: definition.definition.failureNotificationConversationId ?? null,
       defaultBehavior: definition.definition.defaultBehavior,
       overrides: {},
       // What lives in the automation's memory scope: the tables its
@@ -5318,6 +5380,14 @@ async function loadRunPromptContext(
     const canvas = await canvasRunContextMessage(env, input);
     if (canvas) additionalMessages.push(canvas);
   }
+  // A run itself, or a wizard turn: the two that can act on it. A worker one
+  // of them started has neither the publish target nor the data write, so
+  // it is told nothing it could not do.
+  if (input.parentKind === "automation" && input.backgroundAgent !== true && !input.automationDelegation
+    && (input.automationRun || (input.substreamId ?? "0") === "0")) {
+    const attached = await sidekickCanvasContextMessage(env, input);
+    if (attached) additionalMessages.push(attached);
+  }
   if (input.automationRun && input.automationContinuation) {
     // After the input that continued the run, which is already in the
     // transcript above. Keyed on that input, so a recovered execution reuses
@@ -5346,13 +5416,8 @@ async function loadRunPromptContext(
       // be told its final message goes to Slack when nothing sends it there,
       // nor read a different system prefix than the one it started with.
       outputSurface: input.automationRun
-        ? input.automationRun.trigger.kind === "inbound_email"
-          ? "external_delivery"
-          : automationSendsOutward ? "self_delivery" : "workstream"
-        : input.reason === "inbound_email"
-          || Boolean(input.slackOrigin)
-          ? "external_delivery"
-          : "workstream",
+        ? automationSendsOutward ? "self_delivery" : "workstream"
+        : input.slackOrigin ? "external_delivery" : "workstream",
       ...(input.slackOrigin && !input.automationRun ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { sidekick: automationContext } : {}),
     }) + (input.backgroundAgent || input.parentKind === "automation"
@@ -5859,8 +5924,10 @@ async function loadHarnessTools(
   // built-in and credential-scoped plugins.
   const tools: HarnessTool[] = [...coreTools];
   const builtinPlugins = [
+    createSidekickTaskOutcomePlugin(input),
     createAgentCommunicationPlugin(new AgentCommunicationService(env, input), agentCoordinationRoleGuidance(input),
-      { sidekickRun: input.automationRun !== undefined }),
+      { sidekickRun: input.automationRun !== undefined,
+        canvasChat: isCanvasChat(input) && input.executionPrincipal.type === "user" }),
     workstreamPlugin,
     webPlugin,
     terminalPlugin,
@@ -7136,7 +7203,7 @@ async function readRunAuthority(
     recordOptionalTiming(onTiming, "conversation", startedAt);
     if (!access.authorized) throw new ConnectorError("unauthorized", "Shared conversation access has ended");
     if (access.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
-  } else if (input.substreamId && input.substreamId !== "0" && !input.automationRun) {
+  } else if (!input.automationRun && (input.parentKind === "canvas" || (input.substreamId && input.substreamId !== "0"))) {
     startedAt = Date.now();
     const parent = await conversationParentStub(env, input);
     const authority = await parent.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
@@ -8496,7 +8563,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       },
     } satisfies HarnessTool] : []),
     ...createWorkstreamAttachmentTools(env, input),
-    // Reading a live artifact's stored data is a work-stream capability, not a
+    // Reading (and, for a Canvas's Chat or a Sidekick run, writing) a live
+    // artifact's stored data is a work-stream capability, not a
     // Terminal one: answering "who hasn't voted?" must not require a sandbox,
     // and the run that answers it is usually not the run that built the page.
     ...createWorkstreamArtifactDataTools(createArtifactDataToolContext(env, {
@@ -8504,6 +8572,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       workstreamId: input.parentId,
       principal: input.executionPrincipal,
       reader: artifactDataReader(input),
+      // Only a Canvas's Chat and a Sidekick run get `write_artifact_data`.
+      write: artifactDataWriteAccess(input),
     })),
     {
       definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,
@@ -9144,14 +9214,8 @@ export async function pollConnectorConnection(
   ));
   const activityIds = new Set<string>();
   for (const activity of result.activities) {
-    if (env.WORKSPACE_DOS) {
-      const persisted = await persistNormalizedActivity(env, activity, String(row.connector_type));
-      activityIds.add(persisted.activityId);
-    } else {
-      for (const activityId of await persistPolledActivity(env.DB, activity)) {
-        activityIds.add(activityId);
-      }
-    }
+    const persisted = await persistNormalizedActivity(env, activity, String(row.connector_type));
+    activityIds.add(persisted.activityId);
   }
   return {
     activityIds: [...activityIds],
@@ -9217,74 +9281,6 @@ export async function hydrateConnectorActivitySource(
   ));
 }
 
-
-async function persistPolledActivity(
-  database: D1Database,
-  activity: Omit<NormalizedActivity, "id">,
-): Promise<string[]> {
-  const id = newId();
-  const inserted = await database.prepare(
-    `INSERT INTO activities
-     (id, workspace_id, connection_id, connection_scope, connection_owner_user_id,
-      provider, provider_event_id, event_type, resource_type, provider_resource_id,
-      actor_json, subject_json, occurred_at, received_at, title, summary, text_snippet,
-      payload_ref, visibility_json, entity_keys_json, dedupe_key, raw_content_hash,
-      target_user_ids_json, external_people_json,
-      processing_status, metadata_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-     ON CONFLICT DO NOTHING RETURNING id, processing_status`,
-  ).bind(
-    id,
-    activity.workspaceId,
-    activity.connectionId,
-    activity.connectionScope,
-    activity.connectionOwnerUserId,
-    activity.provider,
-    activity.providerEventId,
-    activity.eventType,
-    activity.resourceType,
-    activity.providerResourceId,
-    JSON.stringify(activity.actor),
-    JSON.stringify(activity.subject),
-    activity.occurredAt,
-    activity.receivedAt,
-    activity.title,
-    activity.summary,
-    activity.textSnippet,
-    activity.payloadRef,
-    JSON.stringify(activity.visibility),
-    JSON.stringify(activity.entityKeys),
-    activity.dedupeKey,
-    activity.rawContentHash,
-    JSON.stringify(activity.targetUserIds),
-    JSON.stringify(activity.externalPeople ?? []),
-    JSON.stringify(activity.metadata),
-  ).first<{ id: string; processing_status: string }>();
-  if (inserted) return [inserted.id];
-
-  // A workflow step can be retried after D1 accepted the insert but before the
-  // step result was checkpointed. Recover every canonical row that could have
-  // won either unique constraint so pending/failed work is enqueued before the
-  // provider cursor advances. Already-processed rows intentionally stay quiet.
-  const canonical = await database.prepare(
-    `SELECT id, processing_status
-       FROM activities
-      WHERE workspace_id = ?1
-        AND connection_id = ?2
-        AND (
-          (provider_event_id = ?3 AND event_type = ?4)
-          OR dedupe_key = ?5
-        )
-        AND processing_status IN ('pending', 'failed')`,
-  ).bind(
-    activity.workspaceId,
-    activity.connectionId,
-    activity.providerEventId,
-    activity.eventType,
-    activity.dedupeKey,
-  ).all<{ id: string; processing_status: string }>();
-  return [...new Set(canonical.results.map((row) => row.id))];
-}
 
 // Only polling owns these diagnoses; other operational errors must survive its writes.
 const recoverableConnectorPollErrorSql =
@@ -9646,7 +9642,6 @@ export const __integrationTesting = {
   persistSuccessfulToolResult,
   settleRootHarnessToolCompletion,
   settleRootHarnessToolFailure,
-  persistPolledActivity,
   withAuthorizedConnection,
   pluginAuthorizationFromHealth,
   builtinPluginAuthorization,

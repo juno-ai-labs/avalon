@@ -1,4 +1,4 @@
-import { asSubstreamId, asWorkspaceId } from '@rally/contracts';
+import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
 import { env } from 'cloudflare:workers';
 import { reset, runInDurableObject } from 'cloudflare:test';
 import { beforeEach, expect, it } from 'vitest';
@@ -83,5 +83,24 @@ it('gives each kind of resource the groups the canonical resource check admits',
     // A connector's resource: its connection's readers only.
     sql.exec("UPDATE resources SET connection_id = 'connection-1' WHERE id = ?", resourceId);
     expect(await audience()).toEqual(['connection:connection-1']);
+  });
+});
+
+it('withdraws an archived Canvas artifact from search and refreshes its indexed audience', async () => {
+  await runInDurableObject(workspace(), async (instance, state) => {
+    const sql = state.storage.sql;
+    seed(sql, 'avalon_generated');
+    sql.exec(`INSERT INTO canvas_directory (canvas_id, workspace_id, title, created_by_user_id,
+      created_at, updated_at, visibility, authority_generation) VALUES (?, ?, 'Plan', ?, 1, 1, 'creator', 1)`,
+      parentId, workspaceId, uploaderId);
+    sql.exec('UPDATE resources SET publication_parent_id = ? WHERE id = ?', parentId, resourceId);
+    new AuthorizationStorage(state.storage).replaceLocations({ ...inventory(1, [resourceId]), parentKind: 'canvas' });
+    const batch = await prepareResourceSearch(sql, env, workspaceId, resourceId);
+    expect(batch.documents.find((document) => document.text !== null)?.audience).toEqual([`conversation:${parentId}/0`]);
+    sql.exec('UPDATE resource_search_versions SET revision = 10, pending = 0 WHERE resource_id = ?', resourceId);
+    await instance.canvasArchive({ workspaceId, canvasId: parentId, actor: { userId: asUserId(uploaderId), actorRole: 'owner' } });
+    expect(revision(sql)).toBe(11);
+    expect((await prepareResourceSearch(sql, env, workspaceId, resourceId)).documents.map((document) => document.text))
+      .toEqual([null, null, null]);
   });
 });

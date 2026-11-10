@@ -1,3 +1,4 @@
+import { COMPLETION_VERIFICATION_MODEL } from "@rally/contracts/runtime-config";
 import { COMPLETION_STOP_CONFIDENCE, type judgeCompletionStop } from "@rally/agent-harness";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { TelemetryEventProperties } from "@rally/contracts/telemetry";
@@ -38,7 +39,7 @@ export function emitCompletionRepromptTelemetry(
       choice: observation.decision.answer?.choice ?? null,
       confidence: observation.decision.answer?.confidence ?? null,
       stopConfidenceThreshold: COMPLETION_STOP_CONFIDENCE,
-      judgeModel: "jev-1.14.0",
+      judgeModel: COMPLETION_VERIFICATION_MODEL,
     };
     logStructuredEvent(env, "info", "agent_completion_reprompted", {
       workspace_id: input.workspaceId, ...properties,

@@ -37,7 +37,6 @@ import {
   prepareTranscriptFact,
 } from "../src/durable-objects/workstream-transcript-storage";
 import type { Env } from "../src/env";
-import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import {
   admitFixturePendingInput,
   seedParticipantMessage,
@@ -66,12 +65,10 @@ const USER_ID = asUserId("00000000-0000-7000-8000-000000000104");
 const SESSION_ID = "runtime-test-session";
 
 beforeEach(async () => {
-  clearFlagTargetingAttributeCache();
   await reset();
 });
 
 afterEach(() => {
-  clearFlagTargetingAttributeCache();
   vi.restoreAllMocks();
 });
 
@@ -353,8 +350,6 @@ async function provisionBootstrappedWorkstream(
       createdByUserId: userId,
       participantUserIds: [userId],
       harnessStatus: "idle",
-      emailAddress: null,
-      emailRouteStatus: null,
       systemKind: null,
       modelOverride: null,
       now: Date.now(),
@@ -440,16 +435,10 @@ describe("Durable Objects in the Workers runtime", () => {
           "workspace_connector_event_ingress_receipts",
           "workspace_connector_events",
           "workspace_identity",
-          "channels",
-          "workspace_workstream_effect_receipts",
           "pending_attachment_reservations",
-          "channel_viewers",
-          // Every Channel's and Space's parent state, keyed by parent id.
-          "parent_metadata",
+          // A Canvas's share and the child registry its grant writes join,
+          // kept by migration 141.
           "parent_children",
-          "parent_child_projections",
-          "parent_outbox",
-          "parent_state_changes",
           "parent_grants",
           "workspace_sync_events",
           "workspace_socket_ticket_receipts",
@@ -460,7 +449,11 @@ describe("Durable Objects in the Workers runtime", () => {
         // fresh object proves the drop only by not having them at the end.
         absentTables: ["external_delivery_attempts", "slack_agent_channel_allowlist", "notes", "note_transcript_segments", "note_privacy_change_outbox", "note_resource_deletion_outbox", "workspace_batch_dispatch_note_targets",
           // Dropped by migration 139 (docs/workspace-retirement.md).
-          "workspace_activity_event_targets", "workspace_activity_events", "work_opportunity_provenance_roots", "work_opportunity_snapshots", "work_opportunity_user_links", "work_opportunity_user_states", "work_opportunities", "opportunity_batch_events", "opportunity_batch_windows", "opportunity_provenance_edges", "opportunity_provenance_nodes", "suggested_work_ranking_rounds", "suggested_work_sets", "workspace_workstream_pins", "workspace_batch_dispatch_targets", "workspace_batch_dispatches"],
+          "workspace_activity_event_targets", "workspace_activity_events", "work_opportunity_provenance_roots", "work_opportunity_snapshots", "work_opportunity_user_links", "work_opportunity_user_states", "work_opportunities", "opportunity_batch_events", "opportunity_batch_windows", "opportunity_provenance_edges", "opportunity_provenance_nodes", "suggested_work_ranking_rounds", "suggested_work_sets", "workspace_workstream_pins", "workspace_batch_dispatch_targets", "workspace_batch_dispatches",
+          // Dropped by migration 141, once the Threads were retired.
+          "channels", "channel_viewers", "spaces", "breakouts", "parent_metadata", "parent_child_projections",
+          "parent_outbox", "parent_state_changes", "slack_agent_sessions",
+          "workspace_workstream_effect_receipts", "workspace_workstream_resource_links"],
       },
     ] as const;
 
@@ -492,29 +485,10 @@ describe("Durable Objects in the Workers runtime", () => {
         ));
         expect(nonStrict).toEqual([]);
         if (instance instanceof WorkspaceDO) {
-          const stateColumns = state.storage.sql.exec<{ name: string }>(
-            `PRAGMA table_info(parent_state_changes)`,
-          ).toArray().map((column) => column.name);
-          expect(stateColumns).toEqual(expect.arrayContaining([
-            "parent_id",
-            "sequence",
-            "state_key",
-            "waterline",
-            "event_id",
-            "state_json",
-          ]));
           const syncColumns = state.storage.sql.exec<{ name: string }>(
             `PRAGMA table_info(workspace_sync_events)`,
           ).toArray().map((column) => column.name);
           expect(syncColumns).toEqual(["waterline", "event_id", "topics_json", "occurred_at", "audience_json"]);
-          const directoryColumns = state.storage.sql.exec<{ name: string }>(
-            `PRAGMA table_info(channels)`,
-          ).toArray().map((column) => column.name);
-          expect(directoryColumns).toEqual(expect.arrayContaining([
-            "authority_generation",
-            "waterline",
-            "source_event_id",
-          ]));
           // Global records only that an address is claimed, so there is no
           // route lifecycle for this object to mirror. A fresh chain must not
           // recreate the column the drop migration removed.
@@ -798,30 +772,6 @@ describe("Durable Objects in the Workers runtime", () => {
     } finally {
       first.close();
       second.close();
-    }
-  });
-
-  it("re-evaluates a changed product flag privately for subscribed users", async () => {
-    await seedOpenAuthority();
-    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
-      workspaceDOName("global", WORKSPACE_ID),
-    ));
-    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
-    const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060b");
-    try {
-      const delivered = nextMessage(socket);
-      await expect(stub.notifyProductFeatureFlagChanged(
-        "suggested-work-enabled",
-        WORKSPACE_ID,
-        "wnam",
-      )).resolves.toBe(1);
-      expect(JSON.parse(String((await delivered).data))).toMatchObject({
-        type: "workspace_feature_flags",
-        changedFlag: "suggested-work-enabled",
-        flags: { suggestedWorkEnabled: false },
-      });
-    } finally {
-      socket.close(1000, "test complete");
     }
   });
 

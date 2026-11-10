@@ -5,13 +5,14 @@ import { ArrowDownUp } from 'lucide-react';
 import { useMemo, useRef, useState, type RefObject } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 
-import { canvasNaming, canvasRoute, canvasRowDetail, othersPresent, RENAME_CANVAS_STATE, SHARE_CANVAS_STATE, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import { canvasNaming, canvasRoute, canvasRowDetail, othersPresent, RENAME_CANVAS_STATE, SHARE_CANVAS_STATE, useCanvasNameSources } from '../lib/canvases';
 import { copyLink } from '../lib/copy-link';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
+import { useCanvasPinDrag } from './canvas-pin-drag';
 import { CanvasMark } from './canvas-mark';
 import { DropdownSelect, ErrorNotice, TitleSkeleton } from './primitives';
-import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, splitPinned, usePinWrite, useRowPinDrop, useSectionMotion } from './navigation-rows';
+import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, usePinWrite, useSectionMotion } from './navigation-rows';
 import { SidebarListDown, usePushedListsDown } from './pushed-list-pending';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
@@ -31,14 +32,11 @@ const CANVAS_ORDERS = [{ value: 'recent', label: 'Recent' }, { value: 'name', la
 export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
   const { api, session } = useCollaborationSession();
   const currentUserId = session?.user.id;
-  const rows = useCanvasList();
+  const { rows, pinned, rest, over, dragging, sourceProps, targetProps } = useCanvasPinDrag();
   // A socket that cannot open would leave the placeholders up for ever.
   const down = usePushedListsDown() && rows === undefined;
   const { membersById, sidekicksById } = useCanvasNameSources(api);
-  const { pinned, rest } = useMemo(() => splitPinned(rows ?? []), [rows]);
-  const pinnedIds = useMemo(() => new Set(pinned.map((row) => row.id)), [pinned]);
   const { error: pinError, setPinned } = usePinWrite(api ? (id, next) => api.setCanvasPinned(id, next) : undefined, 'Canvas');
-  const { drop, sourceProps, targetProps } = useRowPinDrop(pinnedIds, (id) => setPinned(id, true));
   useSectionMotion(scroll, undefined);
   const [order, setOrder] = useState<CanvasOrder>('recent');
   const sorted = useMemo(() => order === 'name' ? [...rest].sort((a, b) => a.title.localeCompare(b.title)) : rest, [order, rest]);
@@ -51,9 +49,9 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
     const live = othersPresent(canvas, currentUserId).length > 0;
     return <PinnableRow
       active={canvas.id === open}
-      className="navigation-canvas-row"
+      className={`navigation-canvas-row${over === canvas.id ? ' navigation-pin-drop-before' : ''}`}
       detail={<>{live && <span aria-label="People are here" className="navigation-row-live-dot" role="img" />}{canvasRowDetail(canvas, membersById, sidekicksById, currentUserId)}</>}
-      drag={position === undefined ? sourceProps(canvas.id) : {}}
+      drag={{ ...sourceProps(canvas.id), ...(position !== undefined ? targetProps(canvas.id) : {}) }}
       key={canvas.id}
       motionKey={`canvas:${canvas.id}`}
       onPin={(next) => { void setPinned(canvas.id, next).catch(() => undefined); }}
@@ -88,12 +86,12 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
     {linkError && <ErrorNotice occurrence={linkError}>The link couldn’t be copied.</ErrorNotice>}
     <PinnedSection
       count={pinned.length}
-      drop={drop}
+      drop={dragging ? { index: null } : null}
       label="Pinned Canvases"
       loading={rows === undefined && !down}
       noun="Canvas"
-      reorderable={false}
-      target={targetProps}
+      reorderable={pinned.length > 1}
+      target={{ ...targetProps(), className: `navigation-section${over === 'end' ? ' navigation-pin-drop-end' : ''}` }}
     >
       {pinned.map((canvas, index) => row(canvas, pinnedPosition(index, pinned.length)))}
     </PinnedSection>

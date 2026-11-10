@@ -2,8 +2,8 @@ import { StrictMode } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
-import { Link, MemoryRouter, Navigate, Route, Routes, useLocation, useNavigationType, type InitialEntry } from 'react-router-dom';
+import { act, createEvent, fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
+import { Link, MemoryRouter, Navigate, Route, Routes, useLocation, useNavigate, useNavigationType, type InitialEntry } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CollaborationSessionProvider } from '../lib/collaboration-session';
@@ -11,6 +11,7 @@ import { applyVersionedSidebarList, type ActivityList } from '../lib/sidebar-lis
 import type { AutomationSummary, Workspace } from '../lib/types';
 import { RESTORED_ROUTE } from '../lib/landing';
 import { useUiStore } from '../lib/ui-store';
+import { ActivityHomeScreen } from '../screens/activity-home';
 import { NavigationSidebar } from './navigation-sidebar';
 
 /*
@@ -21,7 +22,8 @@ import { NavigationSidebar } from './navigation-sidebar';
 const api = vi.hoisted(() => ({
   getWorkspaceMembers: vi.fn(async () => []),
   createCanvas: vi.fn(),
-  setCanvasPinned: vi.fn(),
+  setCanvasPinned: vi.fn(async () => undefined),
+  reorderCanvasPins: vi.fn(async () => undefined),
   setSidekickPinned: vi.fn(),
   decideCanvasAccess: vi.fn(),
 }));
@@ -51,10 +53,12 @@ function sidekick(id: string, name: string, overrides: Partial<AutomationSummary
 /** The pane: where the route is, how it got there, and a link inside it, as a Canvas's own links are. */
 function Location(): React.JSX.Element {
   const { pathname, search } = useLocation();
+  const navigate = useNavigate();
   return <div>
     <div data-navigation={useNavigationType()} data-testid="location">{pathname}</div>
     <div data-testid="address">{`${pathname}${search}`}</div>
     <Link to="/sidekicks/triage">Open a Sidekick from the pane</Link>
+    <button onClick={() => void navigate(-1)} type="button">Back</button>
   </div>;
 }
 
@@ -82,6 +86,7 @@ function renderSidebar(person: Workspace = workspace, route: InitialEntry = '/',
         <Routes>
           {/* The app's landing: a launch starts at "/" and is sent to the Canvases home. */}
           {landing && <Route element={<Navigate replace to="/canvases" />} path="/" />}
+          <Route element={<><ActivityHomeScreen /><Location /></>} path="/activity" />
           <Route element={<Location />} path="*" />
         </Routes>
       </MemoryRouter>
@@ -94,6 +99,8 @@ function renderSidebar(person: Workspace = workspace, route: InitialEntry = '/',
 
 beforeEach(() => {
   vi.clearAllMocks();
+  api.setCanvasPinned.mockReset().mockResolvedValue(undefined);
+  api.reorderCanvasPins.mockReset().mockResolvedValue(undefined);
   socket.state = 'connected';
   localStorage.clear();
   useUiStore.getState().setSidebarSection('canvases');
@@ -104,9 +111,9 @@ beforeEach(() => {
 
 describe('the Canvases and Sidekicks sections', () => {
   it('draws a rail of Canvases and Sidekicks, each with its count, and switches between them', () => {
-    renderSidebar();
+    renderSidebar(workspace, '/canvases/00000000-0000-7000-8000-0000000000c1');
     const rail = screen.getByRole('navigation', { name: 'Sections' });
-    expect([...rail.querySelectorAll('.navigation-rail-label')].map((label) => label.textContent))
+    expect([...rail.querySelectorAll('.navigation-rail-sections .navigation-rail-label')].map((label) => label.textContent))
       .toEqual(['Canvases', 'Sidekicks', 'Activity']);
     const canvases = within(rail).getByRole('button', { name: /Canvases/ });
     expect(canvases).toHaveAttribute('aria-current', 'page');
@@ -117,14 +124,45 @@ describe('the Canvases and Sidekicks sections', () => {
     fireEvent.click(within(rail).getByRole('button', { name: /Sidekicks/ }));
     expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
     expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
+
+    fireEvent.click(canvases);
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/canvases$/);
+    expect(useUiStore.getState().sidebarSection).toBe('canvases');
+
+    // Picking an already-selected Canvases rail entry still returns home.
+    fireEvent.click(screen.getByRole('link', { name: /Launch plan/ }));
+    fireEvent.click(canvases);
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/canvases$/);
+
+    fireEvent.click(screen.getByRole('link', { name: /Launch plan/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Canvas dashboard' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/canvases$/);
+
+    // Repeated dashboard shortcuts must not add extra Back steps.
+    fireEvent.click(canvases);
+    fireEvent.click(canvases);
+    fireEvent.click(screen.getByRole('button', { name: 'Canvas dashboard' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/canvases/00000000-0000-7000-8000-0000000000c2');
   });
 
-  it('closes the phone sheet when a row is opened from it, and keeps it open across sections', () => {
+  it('closes the phone sheet for either dashboard or a row', () => {
     renderSidebar();
     fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-    fireEvent.click(screen.getByRole('button', { name: /Sidekicks/ }));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Sidekicks/ }));
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/sidekicks$/);
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
     fireEvent.click(screen.getByRole('button', { name: /Canvases/ }));
-    expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/canvases$/);
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Canvas dashboard' }));
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
 
     fireEvent.click(screen.getByRole('link', { name: /Launch plan/ }));
 
@@ -149,7 +187,7 @@ describe('the Canvases and Sidekicks sections', () => {
     const width = window.innerWidth;
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
     try {
-      renderSidebar(workspace, '/canvases');
+      renderSidebar({ ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } }, '/canvases');
       fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
       fireEvent.click(screen.getByRole('button', { name: /Sidekicks/ }));
 
@@ -238,9 +276,54 @@ describe('the Canvases and Sidekicks sections', () => {
     expect(within(screen.getByRole('region', { name: 'All Sidekicks' })).getByRole('link', { name: /Weekly changelog/ })).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Pinned Sidekicks' })).getByRole('link', { name: /Revenue analyst/ })).toBeInTheDocument();
     expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-label')))
-      .toEqual(['Needs input', 'Pinned Sidekicks', 'All Sidekicks']);
+      .toEqual(['Pinned Canvas shortcuts', 'Needs input', 'Pinned Sidekicks', 'All Sidekicks']);
     fireEvent.click(screen.getByRole('button', { name: 'New Sidekick' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/sidekicks/new');
+  });
+
+  it.each(['/sidekicks/triage', '/sidekicks/new', '/sidekicks'])('opens the Sidekicks dashboard from %s', (route) => {
+    useUiStore.getState().setSidebarSection('sidekicks');
+    renderSidebar(workspace, route);
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sidekicks home' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/sidekicks$/);
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it.each(['/canvases', '/sidekicks/triage', '/sidekicks/new', '/sidekicks/triage?run=run-1', '/sidekicks'])(
+    'always opens the dashboard from the Sidekicks rail button (%s)', (route) => {
+      renderSidebar(workspace, route);
+      const button = within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Sidekicks/ });
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+      fireEvent.click(button);
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks$/);
+      expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+      expect(button).toHaveAttribute('aria-current', 'page');
+      fireEvent.click(button);
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks$/);
+    },
+  );
+
+  it.each(['home', 'rail'])('keeps one Back step to the open Sidekick after repeated %s clicks', (shortcut) => {
+    renderSidebar(workspace, '/sidekicks/triage');
+    const button = shortcut === 'home'
+      ? screen.getByRole('button', { name: 'Sidekicks home' })
+      : within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Sidekicks/ });
+    fireEvent.click(button);
+    expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks$/);
+    fireEvent.click(button);
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks\/triage$/);
+  });
+
+  it('keeps a guest on their open Canvas when selecting the Sidekicks list', () => {
+    renderSidebar({ ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } }, '/canvases/shared');
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Sidekicks/ }));
+    expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases\/shared$/);
+    expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
+    expect(screen.queryByRole('button', { name: 'Sidekicks home' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('offers a guest neither New action', () => {
@@ -444,14 +527,50 @@ describe('the Activity section', () => {
       expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks\/triage$/u);
     });
 
-    it('opens nothing for an empty feed, nor for the first row to arrive after it', async () => {
-      const client = renderSidebar(workspace, '/canvases', { unseenCount: 0, items: [] });
+    it('replaces the pane with the empty Activity page and keeps the previous artifact in history', async () => {
+      const canvasWithArtifact = `/canvases/${CANVAS}?artifact=00000000-0000-7000-8000-0000000000ab`;
+      const client = renderSidebar(workspace, canvasWithArtifact, { unseenCount: 0, items: [] });
       pick(/Activity/);
-      expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/activity$/u);
+      expect(screen.getByText('No activity yet')).toBeInTheDocument();
       await act(async () => { applyVersionedSidebarList(client, 'activity', 2, page); });
-      await waitFor(() => expect(rows()).toHaveLength(3));
-      await act(async () => {});
-      expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
+      expect(await screen.findByText('Select an activity item')).toBeInTheDocument();
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/activity$/u);
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      expect(screen.getByTestId('address')).toHaveTextContent(canvasWithArtifact);
+    });
+
+    it('opens the Activity page when the first list on a default landing is empty', async () => {
+      useUiStore.getState().setSidebarSection('activity');
+      const client = renderSidebar(workspace, '/', undefined, true, true);
+      await act(async () => { applyVersionedSidebarList(client, 'activity', 1, { unseenCount: 0, items: [] }); });
+      expect(await screen.findByText('No activity yet')).toBeInTheDocument();
+      expect(screen.getByTestId('location')).toHaveAttribute('data-navigation', 'REPLACE');
+    });
+
+    it('keeps an explicit Activity home open even when the feed has rows', () => {
+      renderSidebar(workspace, '/activity', page);
+      expect(screen.getByText('Select an activity item')).toBeInTheDocument();
+      expect(rows()).toHaveLength(3);
+      pick(/Activity/);
+      expect(screen.getByTestId('address')).toHaveTextContent(TOP);
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      expect(screen.getByText('Select an activity item')).toBeInTheDocument();
+    });
+
+    it('opens the top row on launch when the restored Activity page has items', () => {
+      useUiStore.getState().setSidebarSection('activity');
+      renderSidebar(workspace, { pathname: '/activity', state: RESTORED_ROUTE }, page);
+      expect(screen.getByTestId('address')).toHaveTextContent(TOP);
+      expect(screen.getByTestId('location')).toHaveAttribute('data-navigation', 'REPLACE');
+    });
+
+    it('opens the top row when a guest re-enters Activity from the Sidekicks list', () => {
+      renderSidebar({ ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } }, '/activity', page);
+      pick(/Sidekicks/);
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/activity$/u);
+      pick(/Activity/);
+      expect(screen.getByTestId('address')).toHaveTextContent(TOP);
     });
 
     it('does not move the pane for a row arriving on top while Activity stays open', async () => {
@@ -473,7 +592,7 @@ describe('the Activity section', () => {
       pick(/Activity/);
       fireEvent.click(rows()[1]!);
       pick(/Canvases/);
-      expect(screen.getByTestId('address')).toHaveTextContent(MENTION);
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/);
       pick(/Activity/);
       expect(screen.getByTestId('address')).toHaveTextContent(TOP);
     });
@@ -497,16 +616,19 @@ describe('the Activity section', () => {
       expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
     });
 
-    it('at phone width, when its sheet is closed without opening anything', () => {
+    it.each(['/canvases', '/activity'])('at phone width, closes the sheet to reveal empty Activity from %s', (route) => {
       const width = window.innerWidth;
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
       try {
-        renderSidebar(workspace, '/canvases', { unseenCount: 0, items: [] });
-        fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-        fireEvent.click(within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Activity/ }));
+        const guest = { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' as const } };
+        renderSidebar(guest, route, { unseenCount: 0, items: [] });
+        fireEvent.click(within(screen.getByRole('complementary', { name: 'Rally navigation' })).getByRole('button', { name: 'Open navigation' }));
+        const rail = within(screen.getByRole('navigation', { name: 'Sections' }));
+        fireEvent.click(rail.getByRole('button', { name: /Sidekicks/ }));
+        fireEvent.click(rail.getByRole('button', { name: /Activity/ }));
 
-        fireEvent.keyDown(window, { key: 'Escape' });
-
+        expect(screen.getByText('No activity yet')).toBeInTheDocument();
+        expect(useUiStore.getState().sidebarOpen).toBe(false);
         expect(useUiStore.getState().sidebarSection).toBe('activity');
       } finally {
         Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
@@ -692,10 +814,10 @@ describe('the Activity section', () => {
     });
   });
 
-  it('says how it fills when there is nothing yet, and offers Mark all seen only with something unseen', () => {
+  it('shows a short empty-list message and disables Mark all seen without unseen items', () => {
     useUiStore.getState().setSidebarSection('activity');
     renderSidebar(workspace, '/', { unseenCount: 0, items: [] });
-    expect(screen.getByText('Nothing yet. Mentions, new messages, Canvases you are added to, Sidekick runs that need you or finish, updates to Canvases you pinned, requests to open a Canvas and answers to yours show up here.')).toBeInTheDocument();
+    expect(screen.getByText('Nothing yet')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Mark all seen' })).toBeDisabled();
   });
 
@@ -704,5 +826,140 @@ describe('the Activity section', () => {
     renderSidebar(workspace, '/', page);
     fireEvent.click(screen.getByRole('button', { name: 'Mark all seen' }));
     expect(socket.markAllActivitySeen).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Canvas shortcuts in the rail', () => {
+  const q4 = '00000000-0000-7000-8000-0000000000c1';
+  const launch = '00000000-0000-7000-8000-0000000000c2';
+  function transfer() {
+    const payload = new Map<string, string>();
+    return { types: ['application/x-rally-canvas'], effectAllowed: '', dropEffect: '',
+      setData: (type: string, value: string) => payload.set(type, value), getData: (type: string) => payload.get(type) ?? '' };
+  }
+  it('mirrors pushed pin order in both surfaces and opens a shortcut from Activity', async () => {
+    const client = renderSidebar();
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    expect(within(rail).getAllByRole('button').map((item) => item.textContent)).toEqual(['Launch plan']);
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [
+      canvas(q4, 'Q4 revenue review', { pinnedPosition: 0 }), canvas(launch, 'Launch plan', { pinnedPosition: 1 }),
+    ]));
+    await waitFor(() => expect(within(rail).getAllByRole('button').map((item) => item.textContent)).toEqual(['Q4 revenue review', 'Launch plan']));
+    expect(within(screen.getByRole('region', { name: 'Pinned Canvases' })).getAllByRole('link').map((item) => item.getAttribute('href')))
+      .toEqual([`/canvases/${q4}`, `/canvases/${launch}`]);
+    fireEvent.click(screen.getByRole('button', { name: 'Activity' }));
+    fireEvent.click(within(rail).getByRole('button', { name: 'Launch plan' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(`/canvases/${launch}`);
+    expect(screen.getByRole('region', { name: 'Pinned Canvases' })).toBeInTheDocument();
+  });
+
+  it('pins by dropping from the Canvas list into the rail, then reorders by drag or keyboard', async () => {
+    const client = renderSidebar();
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    const dataTransfer = transfer();
+    fireEvent.dragStart(screen.getByRole('link', { name: /Q4 revenue review/ }), { dataTransfer });
+    fireEvent.dragOver(rail, { dataTransfer });
+    fireEvent.drop(rail, { dataTransfer });
+    await waitFor(() => expect(api.setCanvasPinned).toHaveBeenCalledWith(q4, true));
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [
+      canvas(q4, 'Q4 revenue review', { pinnedPosition: 1 }), canvas(launch, 'Launch plan', { pinnedPosition: 0 }),
+    ]));
+    const source = await within(rail).findByRole('button', { name: 'Q4 revenue review' });
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragOver(within(rail).getByRole('button', { name: 'Launch plan' }), { dataTransfer });
+    const target = within(rail).getByRole('button', { name: 'Launch plan' });
+    const drop = createEvent.drop(target, { dataTransfer });
+    // jsdom has no DragEvent constructor, so its Event fallback drops coordinates.
+    Object.defineProperty(drop, 'clientY', { value: 0 });
+    fireEvent(target, drop);
+    await waitFor(() => expect(api.reorderCanvasPins).toHaveBeenCalledWith([q4, launch]));
+    act(() => applyVersionedSidebarList(client, 'canvases', 3, [
+      canvas(q4, 'Q4 revenue review', { pinnedPosition: 0 }), canvas(launch, 'Launch plan', { pinnedPosition: 1 }),
+    ]));
+    await waitFor(() => expect(within(rail).getAllByRole('button')[0]).toHaveAccessibleName('Q4 revenue review'));
+    fireEvent.keyDown(source, { altKey: true, key: 'ArrowDown' });
+    await waitFor(() => expect(api.reorderCanvasPins).toHaveBeenLastCalledWith([launch, q4]));
+  });
+
+  it('announces unread shortcuts', async () => {
+    const client = renderSidebar();
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [canvas(q4, 'Q4 revenue review', { pinnedPosition: 0, unread: true })]));
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    expect(await within(rail).findByRole('button', { name: 'Q4 revenue review, unread' })).toBeInTheDocument();
+  });
+
+  it('shows an unpin failure after a reorder failure has been acknowledged', async () => {
+    const client = renderSidebar();
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [
+      canvas(q4, 'Q4 revenue review', { pinnedPosition: 0 }), canvas(launch, 'Launch plan', { pinnedPosition: 1 }),
+    ]));
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    const source = await within(rail).findByRole('button', { name: 'Launch plan' });
+    api.reorderCanvasPins.mockRejectedValueOnce(new Error('reorder failed'));
+    fireEvent.keyDown(source, { altKey: true, key: 'ArrowUp' });
+    expect(await screen.findByText('Canvas pins could not be updated. Try again.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    api.setCanvasPinned.mockRejectedValueOnce(new Error('unpin failed'));
+    fireEvent.contextMenu(source);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
+    expect(await screen.findByText('The Canvas could not be unpinned. Try again.')).toBeInTheDocument();
+    expect(api.setCanvasPinned).toHaveBeenCalledWith(launch, false);
+  });
+
+  it('holds both surfaces until the write and pushed order have settled', async () => {
+    const client = renderSidebar();
+    const third = '00000000-0000-7000-8000-0000000000c3';
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [
+      canvas(q4, 'Q4 revenue review', { pinnedPosition: 0 }), canvas(launch, 'Launch plan', { pinnedPosition: 1 }),
+      canvas(third, 'Third', { pinnedPosition: 2 }),
+    ]));
+    let complete!: () => void;
+    const request = new Promise<undefined>((resolve) => { complete = () => resolve(undefined); });
+    api.reorderCanvasPins.mockReturnValueOnce(request);
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    fireEvent.keyDown(await within(rail).findByRole('button', { name: 'Launch plan' }), { altKey: true, key: 'ArrowUp' });
+    await waitFor(() => expect(api.reorderCanvasPins).toHaveBeenCalledWith([launch, q4, third]));
+    const list = screen.getByRole('region', { name: 'Pinned Canvases' });
+    fireEvent.keyDown(within(list).getByRole('link', { name: /Launch plan/ }), { altKey: true, key: 'ArrowDown' });
+    expect(api.reorderCanvasPins).toHaveBeenCalledTimes(1);
+    await act(async () => { complete(); await request; });
+    // The HTTP response is not the updated list: the other surface must still wait.
+    fireEvent.keyDown(within(list).getByRole('link', { name: /Launch plan/ }), { altKey: true, key: 'ArrowDown' });
+    expect(api.reorderCanvasPins).toHaveBeenCalledTimes(1);
+    act(() => applyVersionedSidebarList(client, 'canvases', 3, [
+      canvas(launch, 'Launch plan', { pinnedPosition: 0 }), canvas(q4, 'Q4 revenue review', { pinnedPosition: 1 }),
+      canvas(third, 'Third', { pinnedPosition: 2 }),
+    ]));
+    await waitFor(() => expect(within(rail).getAllByRole('button')[0]).toHaveAccessibleName('Launch plan'));
+    fireEvent.keyDown(within(list).getByRole('link', { name: /Launch plan/ }), { altKey: true, key: 'ArrowDown' });
+    await waitFor(() => expect(api.reorderCanvasPins).toHaveBeenLastCalledWith([q4, launch, third]));
+  });
+
+  it('arms both empty pin destinations for the whole Canvas drag', async () => {
+    const client = renderSidebar();
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [canvas(q4, 'Q4 revenue review')]));
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    const hint = await within(rail).findByRole('img', { name: 'Drag a Canvas here to pin it' });
+    const row = screen.getByRole('link', { name: /Q4 revenue review/ });
+    fireEvent.dragStart(row, { dataTransfer: transfer() });
+    expect(hint).toHaveClass('is-armed');
+    expect(screen.getByText('Move a Canvas here to pin it').parentElement).toHaveClass('is-armed');
+    fireEvent.dragEnd(row);
+    expect(hint).not.toHaveClass('is-armed');
+    expect(screen.getByText('Move a Canvas here to pin it').parentElement).not.toHaveClass('is-armed');
+  });
+
+  it('keeps the server order and reports a refused reorder', async () => {
+    const client = renderSidebar();
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [
+      canvas(q4, 'Q4 revenue review', { pinnedPosition: 0 }), canvas(launch, 'Launch plan', { pinnedPosition: 1 }),
+    ]));
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    const source = await within(rail).findByRole('button', { name: 'Launch plan' });
+    api.reorderCanvasPins.mockRejectedValueOnce(new Error('offline'));
+    fireEvent.keyDown(source, { altKey: true, key: 'ArrowUp' });
+    expect(await screen.findByText('Canvas pins could not be updated. Try again.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(within(rail).getAllByRole('button').map((item) => item.textContent)).toEqual(['Q4 revenue review', 'Launch plan']);
   });
 });

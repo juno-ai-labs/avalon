@@ -1231,7 +1231,7 @@ describe("an agent's own wake-ups", () => {
     expect(await runDurableObjectAlarm(agent)).toBe(false);
   });
 
-  it("fires a Breakout's wake-up from the Breakout's own object, not Main's", async () => {
+  it("fires a non-main conversation's wake-up from its own object, not Main's", async () => {
     await seedOpenAuthority();
     const breakoutId = asSubstreamId("00000000-0000-7000-8000-0000000000b1");
     // Main exists and holds no wake-ups, as in production: a read that reached

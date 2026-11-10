@@ -1,12 +1,11 @@
 {
   "name": "avalon-do-runtime-tests",
-  "main": "src/index.ts",
-  "ratelimits": [{ "name": "ACCESS_EDGE_RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 2, "period": 60 } }],
+  "main": "test-workers/fixtures/engineering-task-worker.ts",
   "compatibility_date": "2026-08-17",
   "compatibility_flags": ["nodejs_compat"],
   // A `.py` import is the file's text (`src/types/text-modules.d.ts`); the
   // Terminal runtime carries a vendored Python applier into the sandbox that way.
-  "rules": [{ "type": "Text", "globs": ["**/*.py"], "fallthrough": true }],
+  "rules": [{ "type": "Text", "globs": ["**/*.py", "**/*.sandbox.mjs"], "fallthrough": true }],
   "vars": {
     "APP_ENV": "test",
     "APP_VERSION": "workerd-test",
@@ -14,6 +13,7 @@
     "PUBLIC_API_BASE_URL": "https://api.test",
     "PUBLIC_WEB_BASE_URL": "https://app.test",
     "BROWSER_APP_ORIGIN": "https://app.test",
+    "MCP_RESOURCE": "https://mcp.test/mcp",
     // Test-only keys for the real invitation receipt and encrypted outbox paths.
     "SESSION_SIGNING_KEY": "test-session-signing-key-not-a-credential",
     "OAUTH_STATE_ENCRYPTION_KEY": "test-invitation-encryption-key-not-a-credential",
@@ -25,6 +25,10 @@
     // a run that dies in plumbing and a run refused by the provider stay
     // distinguishable. The fetch fails either way.
     "OPENROUTER_API_KEY": "test-not-a-real-key",
+    // Explicitly disable inference until a test opts into a provider double.
+    "OPENROUTER_PRIMARY_MODEL": "",
+    "OPENROUTER_SMARTER_MODEL": "",
+    "OPENROUTER_FASTER_MODEL": "",
     // Not credentials either: they register the Google connector, so a test
     // can seed a Google connection and a run that loads it does not fail on an
     // unconfigured connector type. No live Google request is made;
@@ -71,7 +75,8 @@
       { "name": "SUBSTREAM_AGENTS", "class_name": "AgentLoopDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "ARTIFACT_HOSTS", "class_name": "ArtifactHostDO" },
-      { "name": "MIGRATION_PROBE_DO", "class_name": "MigrationProbeDO" }
+      { "name": "MIGRATION_PROBE_DO", "class_name": "MigrationProbeDO" },
+      { "name": "ENGINEERING_TASKS", "class_name": "EngineeringTaskTestDO" }
     ]
   },
   "migrations": [
@@ -81,7 +86,8 @@
         "AgentLoopDO",
         "WorkspaceDO",
         "ArtifactHostDO",
-        "MigrationProbeDO"
+        "MigrationProbeDO",
+        "EngineeringTaskTestDO"
       ]
     }
   ],
@@ -101,7 +107,6 @@
   // receipt; without this binding every completed tool call dies in the
   // suite's one place production would have persisted it.
   "r2_buckets": [
-    { "binding": "DESKTOP_RELEASES", "bucket_name": "private-access-test-releases" },
     { "binding": "PAYLOADS", "bucket_name": "avalon-do-runtime-test-payloads" }
   ],
   "kv_namespaces": [

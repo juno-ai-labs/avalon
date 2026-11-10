@@ -48,7 +48,7 @@ import { SlackAgentService } from "../src/services/slack-agent-service";
 
 import { deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { memberInputs, useOpenRouterDouble } from "./helpers/openrouter-double";
+import { memberInputs, useOpenRouterDouble, withSuccessfulSidekickOutcome } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { runSidekickAlarms } from "./helpers/sidekick";
@@ -104,7 +104,7 @@ const DEFINITION: AutomationDraft = {
  * pointed at (later run).
  */
 let opening: "send" | { read: string } = "send";
-const provider = useOpenRouterDouble((call) => {
+const provider = useOpenRouterDouble(withSuccessfulSidekickOutcome((call) => {
   if (call.messages.at(-1)?.role === "tool") return { say: "Done." };
   const lastUser = text(memberInputs(call).at(-1)?.content);
   if (lastUser.startsWith("This run is continuing because")) {
@@ -114,7 +114,7 @@ const provider = useOpenRouterDouble((call) => {
   const send = call.toolNames.find((name) => /^slack.*send_message$/u.test(name));
   if (!send) return { say: `no Slack send tool among ${call.toolNames.join(",")}` };
   return { callTool: { name: send, arguments: { channel_id: DM_CHANNEL, text: ASK_TEXT } } };
-});
+}));
 useSelectedModel();
 useHeldEffectQueue();
 
@@ -241,11 +241,6 @@ async function seedRegionalDatabase(): Promise<void> {
       source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL
-    )`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )`),
     // The regional route Slack ingress finds an installation's Organization by.
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS slack_installation_routes (
@@ -501,11 +496,9 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
     expect(await runInDurableObject(workspace(), (_instance, state) => ({
       bindings: state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM external_conversation_bindings`).one().count,
-      sessions: state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM slack_agent_sessions`).one().count,
       claims: state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM slack_agent_thread_claims`).one().count,
-    }))).toEqual({ bindings: 1, sessions: 0, claims: 0 });
+    }))).toEqual({ bindings: 1, claims: 0 });
     expect((await homeState()).posts).toHaveLength(1);
 
     // 5. A later run reads its home and finds the forwarded answer, with where

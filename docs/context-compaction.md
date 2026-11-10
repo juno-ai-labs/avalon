@@ -192,7 +192,7 @@ two compactions remain two checkpoint identities and two completed edges.
   content to `# Facts` with its source named. Without that, a line in a nearby
   Slack message or a fetched page is transcribed as something a person here asked
   for, and the next run replays it as the prefix of its own conversation. Note that
-  the Slack, inbound-email, external-event, Sidekick-result and trigger-activity
+  the Slack, external-event, Sidekick-result and trigger-activity
   renderers no longer apply a marking, so the summary-prompt rule about preserving
   a marking now only bites on the renderers that still emit one
   (`UNTRUSTED RECENT TRANSCRIPT`, `UNTRUSTED PROVIDER ACTIVITY`, and attachment

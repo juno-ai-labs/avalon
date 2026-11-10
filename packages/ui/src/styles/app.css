@@ -763,7 +763,8 @@ pre {
 
 /* One token per state, all from the same group, because these are eight
    answers to one question — `sys.color.workstream` in the token registry, and
-   `docs/workstream-markers.md` for which of them wins when several are true.
+   the retired `workstream-markers.md` for which of them wins when several are
+   true (record: `docs/automation-lifecycle.md#retired-documents`).
    `app.css` names tokens and never a colour: `docs/theming.md`. */
 .status-needs_input .status-dot { background: var(--av-sys-color-workstream-needs-input); }
 .status-failed .status-dot { background: var(--av-sys-color-workstream-failed); }
@@ -948,11 +949,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 /* macOS draws the traffic lights over the web contents, centered by the main
    process over the 76px section switcher. At their widest (macOS 26: 14px
    buttons on a 23px pitch from x: 8) they end at 68px, and this clears them by
-   14. `.meeting-titlebar` reserves the
-   same band and reaches it a different way — a flat 82px on every platform,
-   because that window renders no `.workspace-shell` and so has no class to be
-   told the platform by. Neither reads the other; the numbers agree because they
-   are the same measurement, and this comment is the only thing saying so. */
+   14. */
 .workspace-shell.has-overlay-window-controls { --window-controls-inset: 82px; }
 
 .main-pane {
@@ -1636,22 +1633,6 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 }
 .title-skeleton.title-skeleton-header { width: 22ch; }
 
-.account-trigger {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  color: var(--av-sys-color-text-default);
-  display: flex;
-  gap: 8px;
-  margin: 2px 12px 12px;
-  min-height: 40px;
-  padding: 6px 8px;
-  text-align: left;
-  width: calc(100% - 24px);
-}
-
-.account-trigger:hover { background-image: var(--hover-layer); }
 /* A support session: the staff member acting, beside the person acted as. */
 .account-impersonator { display: flex; flex-shrink: 0; }
 .account-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
@@ -2328,6 +2309,11 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .support-access-controls { align-items: center; display: flex; flex-shrink: 0; gap: 12px; }
 .support-access-remaining { color: var(--av-sys-color-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .settings-row-value strong { font-size: 11.5px; }
+/* Connected apps (docs/rally-mcp.md): a row per MCP app, its self-chosen
+   name marked as such. */
+.connected-app-name-note { color: var(--av-sys-color-text-muted); font-size: 11px; margin-left: 8px; }
+.connected-apps-empty { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 0; padding: 12px 14px; }
+.connected-apps .center-state { height: auto; padding: 12px 14px; }
 .workspace-settings-screen .settings-profile-card strong,
 .workspace-settings-screen .settings-member-row strong,
 .workspace-settings-screen .settings-row-value strong { font-size: 13px; font-weight: 400; }
@@ -2725,9 +2711,9 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .settings-theme-status { color: var(--av-sys-color-text-muted); font-size: 12px; grid-column: 1 / -1; margin: 0; }
 
 .settings-app-icon-card {
-  background: var(--av-sys-color-surface-subtle);
-  border: 1px solid var(--av-ref-color-line-2);
+  background: var(--av-ref-color-neutral-3);
   border-radius: var(--av-sys-size-radius-xl);
+  margin-top: 12px;
   overflow: hidden;
   padding: 16px;
 }
@@ -2754,7 +2740,6 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .settings-app-icon-shelf {
   align-items: end;
   background: var(--av-sys-color-surface-raised-hover);
-  border: 1px solid var(--av-ref-color-line-4);
   border-radius: calc(var(--av-sys-size-radius-xl) + 4px);
   display: flex;
   gap: 8px;
@@ -3176,7 +3161,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
    three loud rows among five quiet ones, and the amber needs-input label was
    the least legible text in the list. Colouring the other five instead would be
    five more decisions to keep in step with the tokens. See
-   `docs/workstream-markers.md`.
+   `docs/automation-lifecycle.md#retired-documents`.
 
    The first column is a fixed track so every title starts on the same edge
    whatever marker precedes it, which is what a per-row `auto` column cannot do:
@@ -4653,8 +4638,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .microphone-menu-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .microphone-menu-item > svg { color: var(--av-sys-color-accent-base); flex: 0 0 auto; }
 /* A named pill rather than a 30px square: the control's whole job is to say
-   which model the work will run on, so the name has to be readable without
-   opening the menu. */
+   which model the work runs on, so the name has to be readable. */
 .model-selector-trigger { font-size: 10.5px; gap: 3px; letter-spacing: .01em; padding: 0 7px; white-space: nowrap; width: auto; }
 .model-selector-trigger > svg { color: var(--av-sys-color-text-muted); flex: 0 0 auto; }
 /* Nothing pinned is the quiet state: it reads as a control nobody has used
@@ -4665,18 +4649,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    legible — and being legible is the whole reason this pill is shown on a
    screen where nothing can be chosen. Lifted only far enough to read: it still
    sits below every live control in the toolbar, and the not-allowed cursor and
-   the chevron that never opens keep saying it is not one. Scoped to this state
-   rather than to `:disabled`, so the launch composer still dims normally while
-   a work stream is being created. */
+   the chevron that never opens keep saying it is not one. */
 .model-selector-trigger.is-settled:disabled { opacity: .74; }
-.model-selector-menu { max-width: min(300px, calc(100vw - 24px)); min-width: 220px; }
-.model-selector-menu .menu-label { color: var(--av-sys-color-text-muted); font-size: 11px; }
-/* Scoped to the menu so it outweighs the rule above rather than tying with it:
-   a provider is a sub-heading under "Model" and has to read smaller than it. */
-.model-selector-menu .model-selector-provider { font-size: 9.5px; letter-spacing: .06em; padding-top: 6px; text-transform: uppercase; }
-.model-selector-item { justify-content: space-between; min-height: 30px; }
-.model-selector-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.model-selector-item > svg { color: var(--av-sys-color-accent-base); flex: 0 0 auto; }
 /* Keep the slot mounted so a running-state reversal reverses both transitions.
    The negative margin cancels the submit row's gap while the slot is closed. */
 .composer-stop-slot {
@@ -5449,12 +5423,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   line-height: 1.62;
 }
 
-/* This is the declaration that decides which side a turn lands on. The
-   reader's own turn sits on the right in its bubble; a colleague's, like
-   Rally's, sits on the left as plain text under its avatar (design.html §2,
-   which replaced "every person on the right": a reader could not tell their own
-   turn from a colleague's by place). The same transcript therefore reads from
-   each person's own side, as a messaging app's does. */
+/* Every human turn sits on the right in its bubble. */
 .human-message {
   /* The bubble's corner, named once and read three times: the bubble draws it,
      and the identity line above and the action row below both stop where it
@@ -5666,14 +5635,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .human-message .message-actions .message-start-substream {
   padding-inline-end: 0;
 }
-
-/* A colleague's turn: leading edge, no fill (design.html §2). */
-.human-message.coworker-message { margin-left: 0; }
-.human-message.coworker-message > header { justify-content: flex-start; padding-inline-end: 0; }
-.human-message.coworker-message .human-message-content { align-items: flex-start; }
-.human-message.coworker-message .message-actions { padding-inline-end: 0; }
-.human-message.coworker-message .message-attachments { justify-content: start; margin-left: 0; }
-.workstream-screen .coworker-message .human-message-bubble { background: transparent; color: var(--av-sys-color-text-default); padding: 0; }
 
 .human-message .message-author-dot {
   background: var(--person-dot, var(--person-accent));
@@ -6774,7 +6735,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 /* While composing, the dock spans the body and dock rows and centres in them;
    launching drops it back into the dock row. Not animated, and the padding is
    the settled dock's so the inherited padding transition has nothing to move —
-   see docs/workstream-creation.md "What moves". */
+   see "What moves" in the retired workstream-creation.md (record:
+   docs/hosted-conversation-parents.md#retired-documents). */
 .new-chat-screen:not(.is-launching) > .launch-dock {
   align-self: center;
   grid-row: 2 / 4;
@@ -6918,65 +6880,12 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-results-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
 .sidekick-results-heading h2 { font-size: 18px; font-weight: 500; margin: 0; }
 .sidekick-results-heading > span { font-size: 13px; color: var(--av-sys-color-text-muted); }
-.sidekicks-library-list { list-style: none; padding: 0; margin: 0 -12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 24px; }
-/* The row is a card whose link is its title, stretched over the card by
-   `::after`. That leaves room for a second control in the row, the owning
-   Thread's button, which sits above the stretched area instead of inside an
-   anchor. */
-.sidekicks-library-list li { position: relative; display: flex; align-items: center; gap: 16px; height: 100%; padding: 20px 12px; border-radius: 16px; }
-/* The home's one-column rows are separated by hairlines, as design §3 draws them. */
-.sidekicks-library-rows { gap: 0; }
-.sidekicks-library-rows li { border-bottom: 1px solid var(--av-sys-color-border-subtle); border-radius: 0; padding: 16px 12px; }
-.sidekicks-library-rows .sidekick-list-copy p { margin-bottom: 0; }
-.sidekicks-library-list li:hover { background-image: var(--hover-layer); }
-.sidekicks-library-list li:has(.sidekick-list-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
-.sidekick-list-link { color: inherit; text-decoration: none; }
-.sidekick-list-link:focus-visible { outline: none; }
-.sidekick-list-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
-.sidekick-list-glyph { width: 56px; height: 56px; flex-shrink: 0; }
-.sidekick-list-copy { flex: 1; min-width: 0; }
-.sidekick-list-copy h3 { font-size: 16px; font-weight: 500; margin: 0 0 5px; overflow-wrap: anywhere; }
-.sidekick-list-copy p { font-size: 14px; color: var(--av-sys-color-text-muted); line-height: 1.5; margin: 0 0 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.sidekick-list-copy small { display: flex; align-items: center; gap: 4px; min-width: 0; color: var(--av-sys-color-text-muted); font-size: 12px; white-space: nowrap; }
-.sidekick-list-chevron { color: var(--av-sys-color-text-muted); flex-shrink: 0; }
-.sidekicks-library-rows { grid-template-columns: minmax(0, 1fr); }
-.sidekick-list-facts { display: grid; flex-shrink: 0; gap: 24px; grid-template-columns: 110px 130px 110px; margin: 0; }
-.sidekick-list-facts div { display: grid; gap: 2px; }
-.sidekick-list-facts dt { color: var(--av-sys-color-text-muted); font-size: 12px; }
-.sidekick-list-facts dd { font-size: 13px; margin: 0; white-space: nowrap; }
-/* The facts give way on the pane's width, not the window's: the sidebar takes
-   416px of any window, so a viewport rule let them squeeze the name to nothing
-   between the desktop's 860px minimum and about 1150px. The query reads the
-   page's content box, which is the row's inner width (the list's -12px margin
-   gives back the row's 12px padding). Beside the 56px glyph, the 18px chevron
-   and their three 16px gaps, the three facts (398px) leave the name 240px at
-   760px; Status and Next alone (244px) leave it 240px at 606px. Narrower, the
-   pill and Next sit under the description and keep their labels for a screen
-   reader only. The Canvases home is this page too, and carries both names
-   at a higher specificity, so neither query hangs on source order. */
-.sidekicks-library { container: sidekicks-library / inline-size; }
-.sidekicks-library.canvases-home { container-name: canvases-home sidekicks-library; }
-@container sidekicks-library (width < 760px) {
-  .sidekick-list-facts { grid-template-columns: 110px 110px; }
-  .sidekick-list-facts .sidekick-list-shared { display: none; }
-}
-@container sidekicks-library (width < 606px) {
-  .sidekicks-library-rows li { column-gap: 16px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 8px; }
-  .sidekicks-library-rows .sidekick-list-glyph { grid-row: 1 / span 2; }
-  .sidekicks-library-rows .sidekick-list-chevron { grid-column: 3; grid-row: 1 / span 2; }
-  .sidekicks-library-rows .sidekick-list-facts { align-items: center; display: flex; gap: 12px; grid-column: 2; grid-row: 2; }
-  .sidekicks-library-rows .sidekick-list-facts dd { color: var(--av-sys-color-text-muted); }
-  .sidekicks-library-rows .sidekick-list-facts dt { clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
-}
-/* design.html §3's status pills: green Active and Working (with its dot), amber
-   Paused, a dashed Draft; and the red Needs input badge beside the name. */
+.dashboard-card-link { color: inherit; text-decoration: none; }
+.dashboard-card-link:focus-visible { outline: none; }
+.dashboard-card-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
 .sidekick-status-pill { align-items: center; border-radius: var(--av-sys-size-radius-pill); display: inline-flex; font-size: 13px; gap: 6px; padding: 3px 10px; }
-/* success-strong on the wash: success-base read 3.96:1 there in light. */
-.sidekick-status-pill.is-active, .sidekick-status-pill.is-working { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-strong); }
 .sidekick-status-pill.is-paused { background: var(--av-sys-color-warning-wash); color: var(--av-sys-color-warning-soft); }
-.sidekick-status-pill.is-draft { border: 1px dashed var(--av-sys-color-border-default); color: var(--av-sys-color-text-muted); }
 .sidekick-working-dot { background: var(--av-sys-color-success-base); border-radius: 999px; display: inline-block; flex: none; height: 8px; margin-right: 5px; width: 8px; }
-.sidekick-status-pill .sidekick-working-dot { margin-right: 0; }
 .sidekick-row-paused { color: var(--av-sys-color-warning-soft); }
 .sidekick-needs-input-badge { background: var(--av-sys-color-badge-base); border-radius: 6px; color: var(--av-sys-color-badge-on); display: inline-block; font-size: 12px; font-weight: 600; margin-left: 10px; padding: 2px 7px; vertical-align: 2px; }
 /* Canvases home (screens/canvases-home.tsx): the Sidekicks library's layout, with Canvas marks and who is in each. */
@@ -6985,44 +6894,57 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    New Canvas and Search, so the page does not draw them a second time. */
 /* Every section home, the Canvases and the Sidekicks homes alike. */
 @media (max-width: 640px) { .sidekicks-library > .sidekicks-library-heading { display: none; } }
-/* design.html §1's card: a 150px shot of the Canvas over its title and who and
-   when. The shot is the paper the design draws, holding the Canvas's mark: the
-   row carries no picture of its artifact. Three columns where the pane is wide
-   enough for 240px cards, fewer below. */
+/* A 150px preview filled with the Canvas's tint and its centered glyph, above
+   its title and who and when. */
 /* Three columns, as design.html §1 draws them in its 1024px main pane, once the
    pane is that wide: the query reads the page's content box, so 900px is that
    pane less the page's two 48px margins and its stable scrollbar gutter
-   (919px at 1440). Two below it; one at phone width. */
-.canvases-home-grid { display: grid; gap: 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
-@container canvases-home (min-width: 900px) { .canvases-home-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 640px) { .canvases-home-grid { grid-template-columns: minmax(0, 1fr); } }
-.canvas-card { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 14px; overflow: hidden; position: relative; }
-.canvas-card:hover { background-image: var(--hover-layer); }
-.canvas-card:has(.sidekick-list-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
-.canvas-card-shot { background: var(--av-sys-color-surface-sunken); border-bottom: 1px solid var(--av-sys-color-border-default); box-sizing: border-box; height: 150px; overflow: hidden; padding: 14px 18px 0; position: relative; }
-/* The paper is the design's thumbnail tone: near white on the light sunken
-   shot, #111 on the dark one (surface-subtle). Its sketch is drawn in the
-   design's own strokes: lines, a frame, a board's columns. */
-.canvas-card-paper { background: var(--av-sys-color-surface-subtle); border-radius: 8px 8px 0 0; box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); box-sizing: border-box; height: 100%; padding: 12px; }
-.canvas-card-paper.is-mark { display: grid; place-items: center; }
-.canvas-card-paper i { background: var(--av-sys-color-border-default); border-radius: 3px; display: block; height: 6px; margin-bottom: 7px; }
-.canvas-card-paper i.is-heading { background: var(--av-sys-color-text-muted); height: 10px; margin-bottom: 10px; opacity: .75; width: 55%; }
-.canvas-card-paper i.is-short { width: 80%; }
-.canvas-card-paper i.is-shorter { width: 60%; }
-.canvas-card-paper.is-site i.is-bar { border-radius: 4px; height: 12px; margin-bottom: 10px; }
-.canvas-card-paper.is-site i.is-hero { background: var(--av-sys-color-surface-sunken); border-radius: 6px; height: 56px; }
-.canvas-card-paper.is-board { display: flex; gap: 8px; }
-.canvas-card-paper.is-board > span { background: var(--av-sys-color-surface-sunken); border-radius: 6px; flex: 1; padding: 6px; }
-.canvas-card-paper.is-board > span i { background: var(--av-sys-color-surface-raised); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); height: 18px; margin-bottom: 5px; }
-.canvas-card-live { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 6px; padding: 3px 8px 3px 4px; position: absolute; right: 26px; top: 22px; }
+   (919px at 1440). Two below it; one in panes narrower than 480px or at phone width. */
+.dashboard-home { container: dashboard-home / inline-size; }
+.dashboard-grid { display: grid; gap: 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
+@container dashboard-home (min-width: 900px) { .dashboard-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container dashboard-home (width < 480px) { .dashboard-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) { .dashboard-grid { grid-template-columns: minmax(0, 1fr); } }
+.dashboard-card { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 14px; overflow: hidden; position: relative; }
+.dashboard-card:hover { background-image: var(--hover-layer); }
+.dashboard-card:has(.dashboard-card-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
+.dashboard-card-preview { border-bottom: 1px solid var(--av-sys-color-border-default); box-sizing: border-box; display: grid; height: 150px; overflow: hidden; place-items: center; position: relative; }
+.canvas-card-presence { left: 12px; pointer-events: none; position: absolute; top: 12px; }
+.canvas-card-data { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 4px; padding: 4px 8px; position: absolute; right: 12px; top: 12px; }
+/* The Sidekick facepile: top right, moved under the Data badge when the card has one. */
+.canvas-card-sidekicks { pointer-events: none; position: absolute; right: 12px; top: 12px; }
+.canvas-card-sidekicks.is-below-data { top: 44px; }
+.sidekick-stack { align-items: center; display: inline-flex; }
+.sidekick-stack-item { display: inline-flex; height: 26px; width: 26px; }
+.sidekick-stack-item + .sidekick-stack-item, .sidekick-stack .sidekick-stack-overflow { margin-left: -6px; }
+.sidekick-stack-item > svg, .sidekick-stack-item > * { height: 100%; width: 100%; }
 .canvas-card-body { padding: 12px 14px 14px; }
-/* The title beside its mark, as design.html §1's .ttl lays it out. */
-.canvas-card-body h3 { align-items: center; display: flex; font-size: 15px; font-weight: 600; gap: 8px; margin: 0; min-width: 0; }
+.canvas-card-body h3 { display: flex; font-size: 15px; font-weight: 600; margin: 0; min-width: 0; }
 .canvas-card-body h3 > a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-card-body small { color: var(--av-sys-color-text-muted); display: flex; font-size: 12.5px; gap: 8px; justify-content: space-between; margin-top: 4px; min-width: 0; white-space: nowrap; }
 .canvas-card-body small > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .canvas-card-run { color: inherit; position: relative; text-decoration: none; z-index: 1; }
 .canvas-card-run:hover { color: var(--av-sys-color-text-default); text-decoration: underline; }
+/* Sidekicks use the Canvas card shell, carrying their own identity and facts. */
+.sidekick-card-glyph { height: 72px; width: 72px; }
+.sidekick-card-status { position: absolute; right: 12px; top: 12px; }
+/* The Canvases a Sidekick works on: pills down the preview's right edge, under the Paused pill when the card has one. */
+.sidekick-card-canvases { align-items: flex-end; top: 12px; display: flex; flex-direction: column; gap: 6px; max-width: calc(100% - 24px); position: absolute; right: 12px; }
+.sidekick-card-canvases.is-below-status { top: 46px; }
+.sidekick-card-canvas { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); color: var(--av-sys-color-text-default); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 4px; max-width: 100%; padding: 4px 8px; position: relative; text-decoration: none; z-index: 1; }
+.sidekick-card-canvas > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidekick-card-canvas > svg { flex: none; }
+.sidekick-card-canvas:hover { box-shadow: 0 0 0 1px var(--av-sys-color-border-default); }
+.sidekick-card-canvas:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
+.dashboard-card-preview .sidekick-needs-input-badge { left: 12px; margin: 0; position: absolute; top: 12px; }
+.sidekick-card-body { padding: 14px; }
+.sidekick-card-body h3 { font-size: 15px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
+.sidekick-card-body p { color: var(--av-sys-color-text-muted); display: -webkit-box; font-size: 13px; line-height: 1.5; margin: 6px 0 16px; min-height: 3em; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.sidekick-card-facts { border-top: 1px solid var(--av-sys-color-border-subtle); display: flex; flex-wrap: wrap; gap: 10px 20px; justify-content: space-between; margin: 0; padding-top: 12px; }
+.sidekick-card-facts div { min-width: 0; }
+.sidekick-card-facts dt { color: var(--av-sys-color-text-muted); font-size: 11.5px; margin-bottom: 3px; }
+.sidekick-card-facts dd { align-items: center; display: flex; font-size: 12.5px; margin: 0; min-height: 24px; overflow-wrap: anywhere; }
+.sidekick-card-facts .avatar-stack { position: relative; z-index: 1; }
 .canvas-prompt-card { border: 1px solid var(--av-sys-color-border-default); border-radius: 16px; max-width: 560px; padding: 20px; }
 .canvas-prompt-card h2 { align-items: center; display: flex; font-size: 16px; font-weight: 500; gap: 8px; margin: 0 0 6px; }
 .canvas-prompt-card p { color: var(--av-sys-color-text-muted); font-size: 14px; margin: 0 0 14px; }
@@ -7030,18 +6952,29 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-prompt-card textarea { background: var(--av-sys-color-surface-raised-hover); border: 0; border-radius: 12px; box-sizing: border-box; color: inherit; font: inherit; padding: 12px 14px; resize: vertical; width: 100%; }
 .canvas-header-trailing { align-items: center; display: inline-flex; gap: 10px; }
 .canvas-share-button { border-radius: var(--av-sys-size-radius-pill); }
-/* The pill's chevron opens the same menu, so a phone, short of room, keeps that one. */
-.canvas-header-more { display: inline-flex; }
-@media (max-width: 640px) { .canvas-header-more { display: none; } }
+/* The Canvas menu's Sidekicks: a row is the hexagon, the name and the state. */
+.canvas-sidekicks { display: flex; flex-direction: column; gap: 2px; }
+/* Centred on the 18px icon column the rows above use, so the names line up. */
+.canvas-sidekick-mark { display: inline-flex; flex: none; height: 22px; margin: 0 -2px; width: 22px; }
+/* A row that opens nothing still names the Sidekick, so it keeps its ink. */
+.title-pill-menu .canvas-sidekick-open[data-disabled] { cursor: default; opacity: 1; }
 .canvas-share { display: grid; gap: 16px; }
-.canvas-share-options { border: 0; display: grid; gap: 8px; margin: 0; padding: 0; }
-.canvas-share-option { align-items: flex-start; border-radius: 12px; cursor: pointer; display: flex; gap: 10px; padding: 8px 10px; }
-.canvas-share-option:hover { background-image: var(--hover-layer); }
-.canvas-share-option span, .canvas-share-visibility { display: grid; gap: 2px; }
-.canvas-share-option small, .canvas-share-note { color: var(--av-sys-color-text-muted); font-size: 13px; }
-.canvas-share-visibility { margin: 0; }
+.canvas-share-audience { border: 0; margin: 0; min-inline-size: 0; padding: 0; }
+.canvas-share-options { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.canvas-share-option { border: 1px solid transparent; line-height: 1.2; overflow-wrap: anywhere; position: relative; text-wrap: balance; }
+.canvas-share-option:hover:not(:has(:checked)) { background: var(--action-tile-highlight-background); color: var(--av-sys-color-text-default); }
+.canvas-share-option:has(:checked) {
+  background: var(--av-cmp-row-background-selected);
+  border-color: currentColor;
+  color: var(--av-sys-color-text-default);
+}
+.canvas-share-option:has(:focus-visible) { box-shadow: var(--av-sys-focus-ring-default); }
+.canvas-share-audience-description, .canvas-share-note { color: var(--av-sys-color-text-muted); font-size: 13px; }
+.canvas-share-audience-description { margin: 8px 0 0; }
+.canvas-share-visibility { display: grid; gap: 2px; margin: 0; }
 .canvas-share-people { display: grid; gap: 8px; }
 .canvas-share-people .member-action-list { max-height: 240px; overflow: auto; }
+.canvas-share-people .member-action-row:has(input:disabled) { background-image: none; }
 .canvas-share-people .member-action-row input[type=checkbox] { margin-left: auto; }
 .canvas-share-actions { display: flex; gap: 8px; justify-content: flex-end; }
 /* Requests to open it, for its deciders: who, their message and when, with the
@@ -7136,6 +7069,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-canvas-links { display: grid; gap: 6px; list-style: none; margin: 0; padding: 0; }
 .sidekick-canvas-links a { align-items: center; color: inherit; display: inline-flex; font-size: 14px; gap: 8px; text-decoration: none; }
 .sidekick-canvas-links a:hover { text-decoration: underline; }
+.sidekick-canvas-links li { display: grid; gap: 2px; justify-items: start; }
+/* Under the title, past the 24px mark and its gap. */
+.sidekick-canvas-made { color: var(--av-sys-color-text-muted); font-size: 12px; padding-left: 32px; }
 /* A run's row in a Sidekick's shared conversation (components/sidekick-run-row.tsx). */
 .sidekick-run-row { border: 1px solid var(--av-sys-color-border-default); border-radius: 12px; margin: 4px 0 14px; padding: 8px 12px; }
 .sidekick-run-row summary { align-items: center; cursor: pointer; display: flex; gap: 8px; list-style: none; }
@@ -7169,8 +7105,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 @media (max-width: 760px) {
   .sidekicks-library { padding: 56px 24px 24px; }
   .sidekicks-library-heading { flex-wrap: wrap; gap: 16px; margin-bottom: 28px; }
-  .sidekicks-library-list { grid-template-columns: minmax(0, 1fr); }
-  }
+}
 /* On a phone the tab's close button sits where Settings puts its own: the top
    right corner, not beside New Sidekick. */
 @media (max-width: 640px) {
@@ -7201,18 +7136,12 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-section-list > li { align-items: center; display: flex; }
 
 .sidebar-footer { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 56px; gap: 4px; margin-top: auto; padding: 8px 12px; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.app-shell .sidebar .sidebar-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .resizable-sidebar.is-compact .sidebar-footer { gap: 0; }
 .resizable-sidebar.is-compact .sidebar-footer.has-leading-content { padding: 8px; }
 /* A toggle-only footer is the same layout in every hierarchy rail. Derived
    padding carries its 30px control to the centre through the width animation;
    changing `justify-content` at the endpoint would make it jump. */
 .resizable-sidebar.is-compact .sidebar-footer.is-toggle-only { padding: 8px calc((100% - 30px) / 2) 8px 8px; }
-/* The avatar is centred by its padding rather than `justify-content`, which
-   would jump it at the start of the travel. The floor travels, not a fixed
-   height: the row's content is shorter than either floor, so the floor is
-   the height, and a taller copy would grow it rather than be clipped. */
-.app-shell .sidebar.is-compact .sidebar-footer .account-trigger { gap: 0; min-height: 38px; padding: 6px 6px 6px 10.5px; }
 .sidebar-footer > .icon-button,
 .sidebar-footer > .sidebar-collapse-footer-toggle { flex-shrink: 0; }
 .sidebar-collapse-footer-toggle { display: flex; }
@@ -7828,11 +7757,11 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-pill-crumb-separator { color: var(--av-sys-color-text-disabled); flex: none; }
 .title-pill-crumb { animation: title-menu-enter 240ms cubic-bezier(.2, .8, .2, 1) both; flex: none; }
 
-/* The root's most used actions, as tiles. */
+/* Icon-and-label tiles for title menus and audience choices. */
 .title-menu-tiles { display: grid; gap: 8px; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; margin: 6px 0 8px; }
-.title-menu-tile {
+.action-tile {
+  --action-tile-highlight-background: color-mix(in srgb, var(--av-sys-color-surface-sunken) 88%, var(--av-sys-color-text-disabled));
   align-items: center;
-  white-space: nowrap;
   background: var(--av-sys-color-surface-sunken);
   border-radius: 12px;
   color: var(--av-sys-color-text-subtle);
@@ -7850,8 +7779,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   transition: background-color 120ms ease;
   user-select: none;
 }
-.title-menu-tile > svg { color: var(--av-sys-color-text-default); }
-.title-menu-tile[data-highlighted] { background: color-mix(in srgb, var(--av-sys-color-surface-sunken) 88%, var(--av-sys-color-text-disabled)); color: var(--av-sys-color-text-default); }
+.action-tile > svg { color: var(--av-sys-color-text-default); }
+.title-menu-tile { white-space: nowrap; }
+.title-menu-tile[data-highlighted] { background: var(--action-tile-highlight-background); color: var(--av-sys-color-text-default); }
 .title-menu-tile[data-disabled] { opacity: .42; }
 /* Too narrow for five labels on one line each: let a label take two. */
 @media (max-width: 480px) {
@@ -8013,18 +7943,17 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-rail {
   align-items: center;
   border-right: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
-  display: flex;
+  display: grid;
   flex: none;
-  flex-direction: column;
-  gap: 14px;
-  padding-bottom: 16px;
+  grid-template-rows: minmax(max-content, 1fr) minmax(0, max-content) minmax(max-content, 1fr);
+  min-height: 0;
   width: var(--navigation-rail-width);
 }
 .navigation-rail-top { flex: none; height: 32px; margin-bottom: -10px; width: 100%; }
 /* A host with no window controls (the browser) draws no spacer; the rail keeps
    the same clearance above its first tile and its badge (32px less the 10px
    the spacer gives back). */
-.navigation-rail:not(:has(> .navigation-rail-top)) { padding-top: 22px; }
+.navigation-rail-sections:not(:has(> .navigation-rail-top)) { padding-top: 22px; }
 .navigation-rail-button {
   align-items: center;
   background: transparent;
@@ -8091,7 +8020,31 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-more-item > svg:first-child { flex: none; height: 18px; width: 18px; }
 .navigation-more-label { flex: 1; }
 .navigation-more-check { color: var(--av-sys-color-accent-base); display: inline-flex; }
-.navigation-rail-spacer { flex: 1; }
+/* Equal outer tracks center the pins in the whole rail; long pin lists scroll. */
+.navigation-rail-sections { align-self: start; display: flex; flex-direction: column; gap: 14px; width: 100%; }
+.navigation-rail-account { align-self: end; padding-bottom: 16px; width: 100%; }
+.navigation-rail-pins { align-self: stretch; min-height: 48px; overflow-y: auto; overscroll-behavior: contain; padding: 8px 0; width: 100%; }
+.navigation-rail-pins-list { display: flex; flex-direction: column; gap: 12px; }
+.navigation-rail-pin { display: block; flex: none; position: relative; }
+/* Canvas shortcuts keep their solid hue; selection is a quiet, separated ring. */
+.navigation-rail-pin .navigation-rail-button .navigation-rail-icon { background: transparent; border-radius: 50%; }
+.navigation-rail-pin .navigation-rail-icon::after {
+  border: 1.5px solid var(--av-sys-color-text-default);
+  border-radius: 50%;
+  content: "";
+  inset: -4px;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+}
+.navigation-rail-pin .navigation-rail-button:hover .navigation-rail-icon::after { opacity: .2; }
+.navigation-rail-pin .navigation-rail-button.is-active .navigation-rail-icon::after { opacity: .65; }
+.navigation-rail-pin .navigation-rail-label { max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.navigation-rail-pin .navigation-row-unread-dot { position: absolute; right: -2px; top: -2px; }
+.navigation-rail-pin-empty { align-items: center; border: 1px dashed var(--av-sys-color-border-strong); border-radius: 50%; color: var(--av-sys-color-text-muted); display: flex; height: 34px; justify-content: center; margin: 0 auto; width: 34px; }
+.navigation-rail-pin-empty.is-armed { background: var(--av-sys-color-accent-wash); border-color: var(--av-sys-color-accent-base); color: var(--av-sys-color-accent-base); }
+.navigation-pin-drop-before { box-shadow: inset 0 2px var(--av-sys-color-text-default); }
+.navigation-pin-drop-end { box-shadow: inset 0 -2px var(--av-sys-color-text-default); }
 /* The account's avatar fills the design's 28px circle. */
 .navigation-rail-icon > .avatar { font-size: 12px; height: 28px; width: 28px; }
 /* A support session: the staff member acting, over the corner of the person acted as. */
@@ -8414,14 +8367,18 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   .app-shell .navigation-sidebar .navigation-rail {
     border-bottom: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
     border-right: 0;
+    display: flex;
     flex-direction: row;
     justify-content: space-around;
     order: -1;
     padding: 6px 8px;
     width: auto;
   }
-  .app-shell .navigation-sidebar .navigation-rail-top,
-  .app-shell .navigation-sidebar .navigation-rail-spacer { display: none; }
+  .app-shell .navigation-sidebar .navigation-rail-top { display: none; }
+  .app-shell .navigation-sidebar .navigation-rail-sections { display: contents; }
+  .app-shell .navigation-sidebar .navigation-rail-account { padding: 0; width: 100%; }
+  /* The phone sheet already exposes the full pinned list below the section tabs. */
+  .app-shell .navigation-sidebar .navigation-rail-pins { display: none; }
 }
 
 /* What Rally remembers (docs/agent-memory.md): one scope's facts, drawn by

@@ -4,9 +4,12 @@ import { diagnosticErrorCode } from "../observability/logger";
 
 /** Same independent audit authority as impersonation: an attempt precedes effects. */
 export async function auditedEngineeringWrite<T>(env: Env, operator: EngineeringOperator, entry: {
-  action: "create_org" | "send_message" | "pause_sidekick" | "resume_sidekick"
-    | "dump_thread_transcripts" | "retire_threads" | "convert_threads_to_canvases" | "retire_org";
-  orgId: string;
+  // Written as `engineering.<action>.<phase>` text in `audit_events.action`,
+  // which nothing parses back into this union: rows from operations since
+  // removed (`dump_thread_transcripts`, `convert_threads_to_canvases`,
+  // `retire_threads`) stay readable as stored.
+  action: "create_org" | "send_message" | "pause_sidekick" | "resume_sidekick" | "retire_org" | "change_usage_plan" | "provision_user_password" | "revoke_user_password";
+  orgId?: string;
   /** The user an action is taken as; an Organization-wide operator operation has none and targets the Organization. */
   representedUserId?: string;
   operationId: string;
@@ -21,7 +24,7 @@ export async function auditedEngineeringWrite<T>(env: Env, operator: Engineering
          (id, workspace_id, actor_type, actor_user_id, workstream_id, action,
           target_type, target_id, metadata_json, request_id, created_at)
        VALUES (?, ?, 'system', NULL, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(`engineering:${attemptId}:${phase}`, entry.orgId, entry.conversationId ?? null,
+    ).bind(`engineering:${attemptId}:${phase}`, entry.orgId ?? `identity:${env.AVALON_REGION}`, entry.conversationId ?? null,
       `engineering.${entry.action}.${phase}`,
       entry.representedUserId === undefined ? "workspace" : "represented_user",
       entry.representedUserId ?? entry.orgId,

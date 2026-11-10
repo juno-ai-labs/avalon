@@ -71,7 +71,8 @@ describe("the WorkspaceDO Canvases and Sidekicks migrations on workerd", () => {
     await runInDurableObject(stub, (_instance, state) => {
       applyDurableObjectSqliteMigrations({
         storage: state.storage,
-        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+        // Through 140, the five under test; 141 has its own upgrade test.
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((m) => m.version <= 140),
         component: COMPONENT,
         workerVersionId: "worker-canvases-and-sidekicks",
         now: 2_000,

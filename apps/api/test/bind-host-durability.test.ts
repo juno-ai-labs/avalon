@@ -1078,6 +1078,23 @@ describe("Bind host durability boundaries", () => {
     ]);
   });
 
+  it.each([
+    [{ outcome: "blocked", summary: "Publication is unavailable." }, "sidekick_task_blocked"],
+    [{ outcome: "failed", summary: "The dashboard could not be generated." }, "sidekick_task_failed"],
+    [null, "sidekick_task_outcome_missing"],
+  ] as const)("preserves unsuccessful task outcome %j after the model completes", (sidekickTaskOutcome, code) => {
+    expect(__integrationTesting.workstreamHarnessTerminalResult({ outcome: { status: "completed" },
+      streamedText: "The run is finished.", finalTurnId: "final-turn", ambiguousToolOutcome: false,
+      stoppedByUser: false, sidekickTaskOutcome })).toMatchObject({ status: "failed", finalTurnId: "final-turn", error: { code } });
+  });
+
+  it("settles an explicitly successful task as completed", () => {
+    expect(__integrationTesting.workstreamHarnessTerminalResult({ outcome: { status: "completed" },
+      streamedText: "Dashboard published after recovery.", finalTurnId: "final-turn", ambiguousToolOutcome: false,
+      stoppedByUser: false, sidekickTaskOutcome: { outcome: "succeeded", summary: "Published." } }))
+      .toEqual({ status: "completed", finalTurnId: "final-turn" });
+  });
+
   it("omits a final message id for an empty elicitation needs-input run", () => {
     const messageId = "00000000-0000-4000-8000-000000000003";
     const result = __integrationTesting.workstreamHarnessTerminalResult({
