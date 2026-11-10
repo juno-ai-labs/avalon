@@ -1,3 +1,5 @@
+import { PasswordLoginRequestSchema } from '@rally/contracts/password-login';
+import { passwordLogin } from '../services/password-login-service';
 import { UuidV7Schema } from '@rally/contracts/telemetry';
 import { observeSignup, observeSignupProgress } from '../telemetry/signup';
 import { requireIdentityAuth, getIdentityAuth, refuseSupportSession } from "../middleware/auth";
@@ -46,6 +48,10 @@ const developmentSessionBody = z.object({ workspaceName: z.string().trim().min(2
 const IdentityStartResponseSchema = z.object({ url: z.string().min(1) });
 
 export const authRoutes = new Hono<HonoAppEnv>();
+authRoutes.post('/password', authBodyLimit, zValidator('json', PasswordLoginRequestSchema), async (c) => {
+  c.header('Cache-Control', 'no-store');
+  return c.json(SessionSchema.parse(await passwordLogin(c.env, c.req.valid('json'))));
+});
 authRoutes.post('/signup/view', authBodyLimit, zValidator('json', z.strictObject({ flowId: UuidV7Schema })), (c) => {
   observeSignup(c.env, { flowId: c.req.valid('json').flowId, clientPlatform: 'desktop' }, 'signup_viewed', 'unknown');
   return c.body(null, 204);

@@ -66,6 +66,12 @@ Passwordless challenge storage is defined by migration 0111 and documented in
 [email sign-in](email-login.md). Challenge redemption records an identity-only
 session receipt; workspace relationships and grants remain separate authorities.
 
+D1 migration `0129_password_login.sql` adds `user_password_credentials`, one
+SHA-256 digest and random credential generation per existing user, and
+`password_login_attempts`, one expiring counter per normalized-address digest.
+Only Global uses these tables. Neither table grants membership or verifies an
+email; [password sign-in](password-login.md) owns their lifecycle.
+
 ## Message issue reports
 
 [Message issues](message-issues.md) owns the separate `MESSAGE_ISSUES_DB` schema
