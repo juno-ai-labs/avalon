@@ -1,3 +1,7 @@
+# Previously emailed private links now lead to the public installer. Drop the fragment.
+/download  https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg#download  302
+/download/*  https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg#download  302
+
 # Legal documents now live together under one Trust Center hierarchy. Preserve
 # public links that predate the consolidation, including their trailing-slash
 # variants, while publishing only the canonical /trust/ URLs.

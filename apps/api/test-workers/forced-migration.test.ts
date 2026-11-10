@@ -21,7 +21,7 @@ import type {
 import { workspaceDOName } from "../src/durable-objects/names";
 import {
   latestMigrationVersion,
-} from "../src/durable-objects/migration-runtime";
+} from "../src/durable-objects/migratable-durable-object";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import {
   applyMigrationCommand,

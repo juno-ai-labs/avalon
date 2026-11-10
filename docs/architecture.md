@@ -19,7 +19,6 @@ and the map points at it rather than absorbing it.
 apps/
   desktop/                 Electron main, preload, React renderer, packaging
   api/                     Hono Worker, routes, services, DOs, Workflows, Queue
-  ace/                     Access-protected internal administration Worker
 packages/
   ui/                      Shared collaboration components, display helpers, styles and appearance
   contracts/               Zod API, WebSocket, agent, connector contracts
@@ -44,8 +43,6 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/workflows`, `apps/api/src/queues` | Generic orchestration and idempotent regional consumers. |
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
 | `apps/api/src/lib/rpc-contracts.ts` | The parsers every RPC bridge argument passes through. |
-| `apps/migration-tracker` | The private operator Worker behind `migrations.internal.rallywith.ai`: the Durable Object migration inventory, its hourly account sweep, the forced-migration fan-out onto each region's command queue, and the Cloudflare Access boundary in front of all of it. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
-| `apps/ace` | The private Hono operator Worker behind `ace.internal.rallywith.ai`: Access request review, workspace administration, read-only dead-letter Queue inspection, and the component library future internal pages extend. See [`ace.md`](ace.md). |
 | `packages/ui` | Shared collaboration presentation and browser-safe display/theme helpers, consumed by desktop and prepared for the browser host in #825. Owned by [`shared-ui.md`](shared-ui.md) and [`theming.md`](theming.md). |
 | `packages/contracts` | Every runtime contract both ends share. A type that only exists at build time is not one of them. |
 | `packages/db` | Migrations and region-aware repositories. The migrations are authoritative for the schema. |
@@ -99,9 +96,9 @@ docs/                      Product, architecture, security, setup, runbooks
 3. **Shared packages** contain runtime-validated contracts, database schema and
    repositories, connector adapters, agent-loop code, UI primitives, and test
    fixtures. Business rules live here or in services, never in route handlers.
-4. **Internal operator Workers** sit behind Cloudflare Access and verify the
-   the migration tracker manages Durable Object schema state. Neither is a
-   privileged route inside the customer API.
+4. **The engineering MCP** sits behind Cloudflare Access and verifies its
+   assertions before exposing production tools. Usage-plan changes and
+   retirement call audited regional methods; fleet migrations use the CLI.
 
 ### Request and event flow
 

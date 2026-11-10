@@ -446,7 +446,7 @@ Access identity is never silently mapped to a product user.
 | `inspect_queues` | Lists account queue backlog metrics and active dead-letter relationships; `deadLettersOnly` restricts the result. |
 | `inspect_dead_letters` | Non-consuming peek of a queue ID returned by the queue list, after revalidating that a live consumer names it as a dead-letter queue. No acknowledge, pull, replay, or delete operation is exposed. |
 | `inspect_usage_plan` | Resolves an Organization to exactly one region and reads its authoritative plan, quota remaining, reset, and overage. |
-| `change_usage_plan` | Uses the same regional metering service as the operator API, updates this week's quota and plan history, and publishes the new meter to connected clients. |
+| `change_usage_plan` | Uses the regional metering service, updates this week's quota and plan history, and publishes the new meter to connected clients. |
 | `inspect_migration_progress` | Queries regional Worker logs for forced-migration outcomes, failures, invalid/deleted/misrouted commands, with optional run and object filters and provider pagination. |
 
 Queue inspection uses `apps/engineering-mcp/src/queues.ts`. Set the deployment
@@ -457,11 +457,13 @@ Queues Edit for the peek endpoint). Deployment installs it as the runtime secret
 queue tools refuse with `queues_token_unconfigured`; other tools remain available.
 Queue messages can contain customer payloads and are visible only behind the
 existing engineering Access boundary. Neither payloads nor token values enter
-MCP audit metadata.
+MCP audit metadata. Queue metrics are fetched independently; a failed queue
+returns `metrics: null` and a named `metricsError` while other queues remain visible.
 
 Usage methods are part of `EngineeringInspectionBridge` and its shared contracts.
 Plan changes record an independent audit attempt and result with the authenticated
-Access actor. The service updates the usage ledger and regional workspace record;
+Access actor. The receipt records the requested plan even if another change
+lands before the current-state snapshot is read. The service updates the usage ledger and regional workspace record;
 a cross-authority failure can follow a committed change, so inspect the plan
 before retrying an uncertain response. Publication is post-commit and best effort.
 
@@ -470,11 +472,6 @@ It returns logged outcomes and schema-versus-expected-version fields, not a flee
 inventory or proof that every dormant object is current. Logs expire after seven
 days. Pair a run-filtered query with command backlog and dead-letter inspection;
 use the [CLI](forced-migrations.md) to execute a migration pass.
-
-Private-access request intake, acknowledgements, download-grant issuance and
-redemption, and the corresponding recovery API have been removed. Organization
-invitations and normal sign-in remain independent. Historical database migrations
-remain unchanged; no live tool reads or writes the legacy private-access tables.
 
 ## Testing
 
@@ -620,7 +617,10 @@ the Worker. It does not create an Access app or import another app's policy.
 Added queue/dead-letter inspection, typed usage-plan operations with regional
 audit records, and migration-log inspection to retain useful operator actions
 without another site. Removed private-access management completely at the
-product owner's request, including invitation grant links.
+product owner's request, including invitation grant links. Removed the unused
+workspace HTTP write routes so retirement and operator plan changes use the
+audited MCP surface. Queue inspection preserves partial results and named
+failures; plan receipts retain the caller's requested plan under concurrency.
 
 The engineering MCP retains the Access verifier and its authentication tests
 after the tracker was deleted. Deployment preserves its own Access application

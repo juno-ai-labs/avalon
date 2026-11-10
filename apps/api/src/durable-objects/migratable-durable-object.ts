@@ -14,12 +14,6 @@ import {
 
 import type { Env } from "../env";
 import { inDurableObjectPhase } from "../observability/tracing";
-import {
-  latestMigrationVersion,
-  forcedMigrationOutcome,
-  applyMigrationPlan,
-  type ForcedMigrationOutcome,
-} from "./migration-runtime";
 import type { DurableObjectSqliteMigration } from "./sqlite-migrations";
 
 /**
@@ -36,6 +30,21 @@ export interface DurableObjectMigrationPlan {
   className: string;
   /** The full migration list the running build ships for this component. */
   migrations: readonly DurableObjectSqliteMigration[];
+}
+
+export interface ForcedMigrationOutcome {
+  objectId: string;
+  objectName: string | null;
+  component: string;
+  className: string;
+  /** The version the object is on now that its constructor's pass has finished. */
+  schemaVersion: number;
+  /** The highest version the running build ships, so a shortfall is visible. */
+  latestVersion: number;
+}
+
+export function latestMigrationVersion(migrations: readonly { version: number }[]): number {
+  return migrations.at(-1)?.version ?? 0;
 }
 
 export abstract class MigratableDurableObject<TEnv extends Env = Env>
@@ -123,21 +132,18 @@ export abstract class MigratableDurableObject<TEnv extends Env = Env>
   /**
    * Apply this object's schema inside its traced constructor phase.
    *
-   * The one call every constructor makes, in place of its own
-   * `applyMigrationPlan`. `apply` stays synchronous and stays the first thing
+   * The one call every constructor makes. `apply` stays synchronous and is the first thing
    * that runs, so a broken schema still fails construction rather than being
    * observed half-applied, and its value is returned untouched for the call
    * site that builds something out of it.
    */
   protected applyMigrations<T>(apply: () => T): Promise<T> {
     const plan = this.migrationPlan();
-    return applyMigrationPlan({
-      state: this.ctx,
-      env: this.env,
+    return inDurableObjectPhase(this.env, "schema_migrate", {
       component: plan.component,
       className: plan.className,
       latestVersion: latestMigrationVersion(plan.migrations),
-    }, apply);
+    }, async () => apply());
   }
 
   /**
@@ -170,12 +176,13 @@ export abstract class MigratableDurableObject<TEnv extends Env = Env>
       throw new Error(`durable_object_migration_command_object_mismatch:${command.objectId}`);
     }
     await this.migrationsReady();
-    return forcedMigrationOutcome({
-      state: this.ctx,
-      env: this.env,
-      component: plan.component,
-      className: plan.className,
-      latestVersion: latestMigrationVersion(plan.migrations),
-    }, command.objectName);
+    const row = this.ctx.storage.sql.exec<{ version: number | null }>(
+      "SELECT MAX(version) AS version FROM _sql_schema_migrations",
+    ).toArray()[0];
+    return {
+      objectId, objectName: command.objectName,
+      component: plan.component, className: plan.className,
+      schemaVersion: row?.version ?? 0, latestVersion: latestMigrationVersion(plan.migrations),
+    };
   }
 }

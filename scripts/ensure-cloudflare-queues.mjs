@@ -100,6 +100,7 @@ export async function configuredQueues() {
     createdOnDeploy.push(...declared.createdOnDeploy);
   }
   for (const region of configuredRegions) {
+    // This producer must change if the operator CLI stops sending through the Queue API.
     required.push({ surface: 'force-migrations-cli', role: 'producer', name: `avalon-${region}-migration-commands` });
   }
   return { required, createdOnDeploy };

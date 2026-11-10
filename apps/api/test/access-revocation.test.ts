@@ -830,7 +830,7 @@ describe("recognizing this protocol's queue", () => {
       "avalon-global-access-revocations-dead-letter",
       "avalon-enterprise-access-revocations-dead-letter",
       "avalon-global-activities",
-      "avalon-migration-reports",
+      "avalon-global-migration-commands",
     ].some(isAccessRevocationQueue)).toBe(false);
   });
 });

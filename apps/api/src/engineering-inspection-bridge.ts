@@ -277,8 +277,10 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
       }, async () => {
         if (!await setWorkspacePlan(this.env, request.orgId, request.plan, Date.now())) throw new Error("engineering_organization_not_found");
         this.ctx.waitUntil(publishOrganizationUsage(this.env, request.orgId));
-        return this.inspectOrganizationUsage({ orgId: request.orgId });
-      }, (result) => ({ plan: result.usage.plan }));
+        const usage = await readOrganizationUsage(this.env, request.orgId, Date.now());
+        if (!usage) throw new Error("engineering_organization_not_found");
+        return EngineeringUsageResultSchema.parse({ region: this.env.AVALON_REGION, orgId: request.orgId, usage });
+      }, () => ({ plan: request.plan }));
     });
   }
 

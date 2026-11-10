@@ -39,7 +39,7 @@ async function assertion(claims: {
 }
 
 function request(headers: Record<string, string> = {}): Request {
-  return new Request("https://migrations.internal.rallywith.ai/", { headers });
+  return new Request("https://mcp.internal.rallywith.ai/", { headers });
 }
 
 describe("readAccessConfiguration", () => {
