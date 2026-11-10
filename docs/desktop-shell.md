@@ -303,9 +303,8 @@ levels; reduced motion turns that off.
   Sidekick's row is its hexagon, name and state (Draft, Active, Paused). It
   opens the Sidekick's page only for someone whose own Sidekicks list holds
   it; for anyone else it stays focusable, opens nothing, and its tooltip says
-  to ask in the Canvas's chat. A Sidekick the Canvas made has **Archive
-  Sidekick** beside its row, a second menu item rather than a button inside
-  the first, which confirms with the Sidekick page's own dialog.
+  to ask in the Canvas's chat. The menu archives no Sidekick: one the
+  Canvas made is archived by asking its chat, or with the Canvas.
   [`canvases.md`](canvases.md#in-the-client) owns the rest of that menu.
 - **Artifact menu** (`InspectorRail`, shared by the side panel, expanded panel,
   and detached artifact windows): the root offers Download for available files,
