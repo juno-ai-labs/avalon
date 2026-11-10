@@ -35,6 +35,9 @@ presentation flags do not grant access to data or disable API authorization.
 
 Desktop and browser clients keep their existing HTTP and workspace subscription
 contracts. A reconnect or subsequent HTTP read picks up deployed configuration.
+The client schema also defaults organization switching on, so startup or a failed
+flag read does not hide the selector. An explicit server answer of `false` still
+disables it. Developer settings and push controls wait for server enablement.
 The old per-user targeting and key-only Queue fan-out are retired. The legacy
 `workspace_feature_flags` event remains parseable by clients during rolling
 deployments, but the new server does not publish it. Remove that event schema
@@ -176,6 +179,8 @@ and add a behavioral test for its gate. A new agent role must be mapped in
 **What changed:** `multipleWorkspacesEnabled` defaults to `true`, restoring the
 account menu's Organizations, invitations and creation controls on desktop and
 web, together with background organization attention.
+The client schema uses the same on default before the server answers or when the
+read fails; an explicit off answer still wins.
 
 **Why:** Replacing Flagship with local configuration carried forward the original
 rollout's off default, hiding the existing organization selector unless a
