@@ -101,7 +101,9 @@ It holds two columns:
   trigger included, is one `RailItem`: section and account entries use a 34px
   tile around a 22px shape, with a shared hover and active tint. Canvas
   shortcuts fill the tile with a circle in the Canvas colour and distinguish
-  the open Canvas with a separated ring and heavier label. The choice is a device preference
+  the open Canvas with a separated ring and heavier label. Its tooltip is
+  title-only; its accessible name also announces unread state. An empty rail
+  shows a pin drop hint, highlighted throughout a Canvas drag. The choice is a device preference
   (`rally.sidebar-section`, default `canvases`); a value stored before the
   cutover (`channels`, `threads`, `pinned`, `artifacts`) reads as the default,
   and `activity` opens Activity again. Arriving at a Canvas or a Sidekick moves

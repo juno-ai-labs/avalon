@@ -51,8 +51,7 @@ canvasRoutes.get("/", zValidator("query", z.object({ query: z.string().trim().mi
 });
 canvasRoutes.post("/", zValidator("json", CreateCanvasRequestSchema), async (c) =>
   c.json(CreatedCanvasSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).create(c.req.valid("json"))), 201));
-// Guests can arrange the same personal pins they can create. The legacy
-// workspace route stays for clients that already use it.
+// Guests can arrange the same personal pins they can create.
 canvasRoutes.put("/pinned-order", namedZValidator("canvas_pin_order", "Canvas pin order must contain Canvas ids")(
   "json", SidebarPinOrderRequestSchema.pick({ itemIds: true })), async (c) => {
   await new CanvasService(c.env, getWorkspaceAuth(c)).reorderPins("canvas", c.req.valid("json").itemIds);

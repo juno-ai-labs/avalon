@@ -32,12 +32,10 @@ import {
   SupportAccessSchema,
 } from "@rally/contracts";
 import { z } from "zod";
-import { SidebarPinOrderRequestSchema } from "@rally/contracts/canvases";
 import type { HonoAppEnv } from "../env";
 import { requireCurrentClientContract } from "../lib/client-contract";
 import { requestDeferral } from "../lib/defer";
 import { getAuth, getWorkspaceAuth } from "../middleware/auth";
-import { CanvasService } from "../services/canvas-service";
 import { readUserTimezone, reportDeviceTimezone, WorkspaceService } from "../services/workspace-service";
 import { SupportAccessService } from "../services/support-access";
 import { workspaceAttention } from "../services/workspace-attention-service";
@@ -214,16 +212,6 @@ workspaceRoutes.delete("/memory/:factId", zValidator("param", memoryFactParam), 
   c.json(MemoryForgetResponseSchema.parse(
     await new WorkspaceService(c.env, getAuth(c)).forgetOrganizationMemory(c.req.valid("param").factId))),
 );
-/**
- * One person's order for the Pinned group of their Canvases or Sidekicks
- * list. The list itself arrives on the workspace socket, which this write
- * republishes to every session this person has open.
- */
-workspaceRoutes.put("/pinned-order", zValidator("json", SidebarPinOrderRequestSchema), async (c) => {
-  const body = c.req.valid("json");
-  await new CanvasService(c.env, getWorkspaceAuth(c)).reorderPins(body.kind, body.itemIds);
-  return c.body(null, 204);
-});
 workspaceRoutes.get("/terminal", async (c) =>
   c.json(TerminalWorkspaceSettingsSchema.parse(await withTerminalSettingsService(c, (service) => service.get()))),
 );
