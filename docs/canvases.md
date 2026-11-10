@@ -818,6 +818,8 @@ recency on the publish note alone would miss updates by other artifact producers
 Authorization evidence tracks audience facts independently of the recency date.
 The change applies as updates arrive and has no historical backfill.
 
+Pull request [#1519](https://github.com/juno-ai-labs/avalon/pull/1519).
+
 ### 2026-11-09 — Put Canvas commands and manager-only archival in the title menu
 
 The Chat header centres its title pill and keeps Share and presence at the right.
