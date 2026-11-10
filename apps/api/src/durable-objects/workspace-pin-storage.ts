@@ -123,10 +123,14 @@ export function artifactUpdateSql(version: string, pin: string): string {
  */
 export function artifactNewsSql(version: string, userId: string, since: string): string {
   return `${version}.version > 1
-    AND ${version}.cause IN ('published', 'replaced')
+    AND ${artifactNewsCauseSql(version)}
     AND (${version}.author_user_id IS NULL OR ${version}.author_user_id <> ${userId})
     AND (${version}.on_behalf_of_user_id IS NULL OR ${version}.on_behalf_of_user_id <> ${userId})
     AND CAST(unixepoch(${version}.captured_at, 'subsec') * 1000 AS INTEGER) > ${since}`;
+}
+
+export function artifactNewsCauseSql(version: string): string {
+  return `${version}.cause IN ('published', 'replaced')`;
 }
 
 /** Whether a drained version's cause can be news to a pinner, as {@link artifactUpdateSql} decides. */

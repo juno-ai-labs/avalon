@@ -60,7 +60,7 @@ const PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA = [
 ] as const;
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 86;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 87;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3864,6 +3864,14 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `UPDATE workstream_resource_links SET relationship_type = 'attachment',
          resource_json = json_set(resource_json, '$.relationshipType', 'attachment')
        WHERE relationship_type = 'inbound_email'`,
+    ],
+  },
+  {
+    version: 87,
+    description: "read Canvas message recency in timestamp order",
+    statements: [
+      `CREATE INDEX participant_transcript_message_recency_idx ON participant_transcript_turns(created_at DESC)
+         WHERE entry_kind = 'conversation' AND message_type <> 'tool'`,
     ],
   },
 ];

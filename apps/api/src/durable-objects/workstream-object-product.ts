@@ -2865,6 +2865,16 @@ export class WorkstreamObjectProductService {
     // Sidekick's conversation (the Sidekick copies the preview onto the run's
     // summary). Read only in a run: no other conversation's parent reads them.
     const identity = this.objectStore.identity();
+    const lastMessageAt = identity?.parentKind === "canvas"
+      ? this.storage.sql.exec<{ created_at: number }>(
+        `SELECT turn.created_at FROM participant_transcript_turns turn
+          WHERE turn.entry_kind = 'conversation' AND turn.message_type <> 'tool'
+            AND (turn.actor <> 'assistant' OR EXISTS (
+              SELECT 1 FROM participant_transcript_blocks block WHERE block.turn_id = turn.turn_id AND block.block_kind = 'text'
+            ))
+          ORDER BY turn.created_at DESC LIMIT 1`,
+      ).toArray()[0]?.created_at ?? null
+      : undefined;
     const sidekickRun = identity?.parentKind === "automation" && this.externalSubstreamId() !== "0" && background === undefined;
     const stepCount = sidekickRun
       ? Number(this.storage.sql.exec<{ steps: number }>(
@@ -2909,6 +2919,7 @@ export class WorkstreamObjectProductService {
       state: root.exact_state,
       systemKind: root.system_kind,
       lastActivityAt: iso(root.last_people_activity_at)!,
+      ...(lastMessageAt === undefined ? {} : { lastMessageAt: iso(lastMessageAt) }),
       completedAt: iso(root.completed_at),
       archivedAt: iso(root.archived_at),
       archiveGeneration: root.archive_generation,
@@ -3009,6 +3020,14 @@ export class WorkstreamObjectProductService {
         : row.author_user_id ? names.get(row.author_user_id) ?? null : null,
       message: row.content ?? "",
     }));
+  }
+
+  /** Publish a Canvas's saved assistant text in the transaction that wrote it. */
+  enqueueCanvasAssistantTextInTransaction(): undefined {
+    if (this.objectStore.identity()?.parentKind !== "canvas") return;
+    this.objectStore.enqueueEffectsInCurrentTransaction([
+      { partitionKey: "common", effect: this.commonEffect(this.root()) },
+    ]);
   }
 
   /**
@@ -5216,10 +5235,11 @@ export class WorkstreamObjectProductService {
    * Run one Workflow runtime transaction against the normalized local tables.
    * Directory projection generation stays in the same SQLite commit whenever
    * the transaction can change transcript or root lifecycle state.
+   * Use `"viewers"` for a mutation that only needs to publish viewer state.
    */
   async commitRuntimeMutation<T>(
     mutate: (sql: SqlStorage) => T,
-    affectsDirectory: boolean,
+    affectsDirectory: boolean | "viewers",
     /**
      * People whose read state the mutation moved who need not be active
      * participants (a viewer of a Sidekick's shared conversation), so their
@@ -5237,7 +5257,7 @@ export class WorkstreamObjectProductService {
    */
   async commitRuntimeMutationWithEffects<T>(
     mutate: (sql: SqlStorage) => T,
-    affectsDirectory: boolean,
+    affectsDirectory: boolean | "viewers",
     alsoReporting: readonly string[] = [],
   ): Promise<{ result: T; envelopes: ConversationEffectEnvelope[] }> {
     const committed = await this.objectStore.commitWithRegionalEffects(
@@ -5247,7 +5267,7 @@ export class WorkstreamObjectProductService {
         const root = this.root();
         const participantIds = [...new Set([...this.activeParticipantIds(), ...alsoReporting])];
         return [
-          { partitionKey: "common", effect: this.commonEffect(root) },
+          ...(affectsDirectory === true ? [{ partitionKey: "common", effect: this.commonEffect(root) }] : []),
           ...participantIds.map((userId) => ({
             partitionKey: `user:${userId}`,
             effect: this.userEffect(root, userId),

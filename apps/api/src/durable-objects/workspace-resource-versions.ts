@@ -3,6 +3,7 @@ import { ResourceVersionCauseSchema, type ResourceHead, type ResourceVersionCaus
 import { truncateUtf16Safe } from "@rally/contracts/text";
 
 import { listedResourceVisibilitySql } from "../services/resource-listing";
+import { isArtifactNewsCause } from "./workspace-pin-storage";
 
 /**
  * Migration 114: one ledger of new resource versions, filled by a trigger on
@@ -76,6 +77,28 @@ export function drainResourceVersionChanges(sql: SqlStorage): ResourceVersionCha
       return { resourceId: row.resource_id, version: Number(row.version), cause: cause.success ? cause.data : null };
     })
     .sort((a, b) => a.resourceId.localeCompare(b.resourceId) || a.version - b.version);
+}
+
+/** Advance active Canvases that list a published or replaced artifact to its version date. */
+export function advanceCanvasArtifactRecency(sql: SqlStorage, changes: readonly ResourceVersionChange[]): boolean {
+  const published = changes.filter((change) => isArtifactNewsCause(change.cause));
+  if (published.length === 0) return false;
+  return sql.exec(
+    `UPDATE canvas_directory AS canvas SET updated_at = activity.at
+       FROM (
+         SELECT artifact.canvas_id, MAX(CAST(ROUND(unixepoch(version.captured_at, 'subsec') * 1000) AS INTEGER)) AS at
+           FROM json_each(?) changed
+           JOIN resource_versions version ON version.resource_id = json_extract(changed.value, '$[0]')
+             AND version.version = json_extract(changed.value, '$[1]')
+           JOIN canvas_artifacts artifact ON artifact.resource_id = version.resource_id
+           JOIN resources resource ON resource.id = version.resource_id
+          WHERE ${listedResourceVisibilitySql("resource")}
+          GROUP BY artifact.canvas_id
+       ) activity
+      WHERE canvas.canvas_id = activity.canvas_id AND canvas.archived_at IS NULL AND canvas.updated_at < activity.at
+      RETURNING canvas_id`,
+    JSON.stringify(published.map((change) => [change.resourceId, change.version])),
+  ).toArray().length > 0;
 }
 
 /**
