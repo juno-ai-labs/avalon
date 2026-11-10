@@ -4,8 +4,8 @@ The public site at `rallywith.ai` (the home page, `/start-fast/`, the product
 pages `/canvases/` and `/sidekicks/`, the blog, the `/compare/` pages and the
 Trust Center) is one visual system in one stylesheet, `apps/site/src/landing.css`.
 This document owns that system: the brand decisions behind it, the tokens, the
-page architecture, the Canvas demo in the hero, and the rules a change to any
-marketing page must keep. It was set in the redesign that followed the
+page architecture, the hero carousel and the figures, and the rules a change
+to any marketing page must keep. It was set in the redesign that followed the
 [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
 
 The help center (`/help/`) has its own light and dark theme and is not part of
@@ -14,56 +14,25 @@ this system; see [`help-center.md`](help-center.md). The download, Slack and
 [`landing-page-tracking.md`](landing-page-tracking.md)'s; the three.js figure
 in the Technology section is [`landing-technology-schematic.md`](landing-technology-schematic.md)'s.
 
-## The brief
+## Decisions
 
-The redesign was run as an agency would run it, from the brand outwards, and
-started from a blank page rather than from any earlier look.
+The decisions a future editor must keep. The story of how they were reached
+is in the pull request that introduced this document (#1535); the words on
+the page live in the pages and in `access-copy.ts`, not here.
 
-1. **Audit.** The old site set everything in uppercase Barlow Semi Condensed
-   on near-black, and its home page still told the Channel and Thread story in
-   places. Dark, neon-accented, all-caps pages are also what most AI products
-   look like in 2026, so the old look did not set Rally apart.
-2. **Concept: the shared page.** Rally is where a team and AI work on the same
-   page, so the site is designed as one: warm paper, ink, column guides, ruled
-   index lines, figures with captions. The multiplayer idea is shown in the
-   material itself: people's selections and name flags sit on the words, the
-   way they do in a shared editor.
-3. **Three voices, three faces.** A serif (Instrument Serif) for the human
-   voice and every headline; a precise grotesk (Geist) for the product and
-   body text; a mono (Geist Mono) for labels, numbers and anything a machine
-   would say.
-4. **One accent, owned by Rally.** Signal ultramarine marks Rally and the one
-   thing to act on. People never wear it: Maya, Theo and Priya each have
-   their own colour for cursors, bubbles and selections.
-5. **Positioning: live first, multiplayer second.** The lead idea is the
-   live artifact (a Canvas in the product): a document, spreadsheet,
-   dashboard or site that changes as work happens in connected tools,
-   because a Sidekick watching those tools publishes a new version. The
-   second idea is that a team works from that page together. The hero says
-   "Docs that update as work happens.", its kicker says "Live artifacts,
-   shared with your team", and the page closes on "Keep it live. Bring
-   everyone."
-6. **Story order.** The opening statement (documents go stale), then
-   **Live artifacts** (`#live`: something happens, a Sidekick reads it, the
-   Canvas updates, with four worked examples), then **Then, multiplayer**
-   (`#scale`: 1, 3 and 30+ people), then the two parts of the product,
-   Canvases, Sidekicks, and the proof (pricing, technology, team,
-   comparisons). The product pages follow the same order: `/canvases/`
-   leads with "Made once. Kept current." and `/sidekicks/` with "The AI that
-   keeps work current."
-7. **Show, don't claim.** Figure 1, in the hero, is a carousel of seven live
-   artifacts, one for each audience Rally sells to: solopreneurs,
-   engineering teams, parents, product managers, developers on a team,
-   founders and agency recruiters. Each slide plays three tool events, each
-   publishing a version, then a person acting on the page, and builds to a
-   **payoff** for that audience (engineering: the release page flips itself
-   to "Blocked by ENG-311"; parents: "2 parents, one list").
-8. **Let the reader drive.** Below the hero the page explains the mechanism
-   the way an explorable essay does: short passages between figures the
-   reader can scrub. Figure 2 is the loop (events travel into a Sidekick,
-   which publishes the next version) on a time slider; Figure 3 is the
-   launch tracker with the team in it; Figure 4 adds people to one Canvas
-   with a slider and counts what stays the same (one page, no seats).
+1. **The shared page.** The site is set as a printed page a team works on:
+   warm paper and ink, column guides, ruled section heads, captioned figures.
+   It is deliberately not the dark, neon look most AI products use.
+2. **Three faces, three voices.** Instrument Serif for headlines (the human
+   voice), Geist for text and interface (the product), Geist Mono for labels
+   and captions (what a machine would say).
+3. **The accent is Rally's.** Ultramarine marks Rally, links and the one
+   thing to act on. People are drawn only in their own colours.
+4. **Live first, multiplayer second.** Every page leads with artifacts that
+   update from activity in connected tools, and follows with the team
+   working from them. The product owner set this order.
+5. **Show, don't claim.** The mechanism is shown working (the hero carousel,
+   then figures the reader can scrub), never only asserted.
 
 ## Where the code lives
 
@@ -72,9 +41,10 @@ started from a blank page rather than from any earlier look.
 | `apps/site/src/landing.css` | The whole system: tokens, type roles, buttons, header, footer, bands, the demo, bento, timeline, pricing, product-page rows, and the blog, compare and Trust Center layouts |
 | `apps/site/src/trust.css` | Trust Center layout on top of `landing.css`'s tokens |
 | `apps/site/index.html` | The home page hero; everything below it comes from `landing-sections.html` |
-| `apps/site/start-fast/index.html` | The home page with its own hero copy and button order |
+| `apps/site/start-fast/index.html` | The home page with the web app as the first button and its own note under the buttons; the same headline from `access-copy.ts` |
 | `apps/site/src/landing-sections.html` | The home page below the hero, shared with `/start-fast/` |
-| `apps/site/src/canvas-demo.html` | The animated Canvas, shared by the home hero, `/start-fast/` and `/canvases/` |
+| `apps/site/src/canvas-demo.html` | The launch-tracker Canvas: Fig. 03 on the home page and the figure on `/canvases/` |
+| `apps/site/src/steps.ts` | `applyStep`, the step primitive the Canvas demo and the carousel share, and `whenVisible` |
 | `apps/site/canvases/index.html`, `apps/site/sidekicks/index.html` | The two product pages |
 | `apps/site/src/site-motion.ts` | The demo's timeline and the scroll reveals |
 | `apps/site/src/live-examples.ts` | The hero carousel's seven examples as data, and `renderLiveCarousel`, which writes the carousel at build time (Node only) |
@@ -142,16 +112,21 @@ Shared markup is never copied between pages. A page holds a marker such as
 `<!-- rally:canvas-demo -->` and `renderSiteChrome` in `site-chrome.ts`
 replaces it at build time and in the dev server.
 
-### The Canvas demo
+### Steps: the demo and the carousel
 
-`canvas-demo.html` is plain HTML. `site-motion.ts` steps it through six
-states (Linear, Slack and Granola events, each publishing a version; Maya
-asks; Rally answers while Theo comments). The tool events sit in a rail
-(`.signals`) beside the window on a wide screen, above it on a narrow one,
-and only the newest shows on a phone: each step adds `s<n>` to the figure, so CSS places the cursors and
-swaps the artifact's version per step, and turns on every `[data-at]`
-element whose step has arrived. The loop runs only while the figure is on
-screen. The timings live in `STEP_HOLD`.
+Both the launch-tracker demo and each carousel slide are drawn at build time
+at their last step, so they read without a script. `applyStep` (`steps.ts`)
+puts one at any step n: `s1` to `s<n>` on the root for CSS that places things
+per step, `is-on` on every `[data-at]` at or below n, `is-done` on every
+`[data-done]` at or below n, `is-current` on the `[data-status]` equal to n,
+and `is-new` on what changed at n when the step is played rather than set.
+Each caller owns its timing (`STEP_HOLD`) and runs only while on screen
+(`whenVisible`).
+
+The demo (`site-motion.ts`) plays three tool events, each publishing a
+version, then Maya asking and Rally answering while Theo comments. Its tool
+events sit in a rail (`.signals`) beside the window on a wide screen, above it
+on a narrow one, and only the newest shows on a phone.
 
 ### The hero carousel
 
@@ -159,7 +134,7 @@ An example is data: its audience, artifact, Sidekick, three events, rows,
 a status line per step and a payoff (`LiveExample` in `live-examples.ts`).
 `renderLiveCarousel` turns all seven into tabs and slides, each slide in its
 finished state, so the page reads without a script. `live-carousel.ts` then
-plays one slide at a time: step 0 is the page before, steps 1 to 3 are tool
+plays one slide at a time with `applyStep`: step 0 is the page before, steps 1 to 3 are tool
 events (rows arrive with `at`, are ticked with `done`, the version and byline
 move on, a dot flies from the event to the row), and step 4 is a person
 ticking what they own, with the payoff card. A row with `approve` is ticked
@@ -179,8 +154,11 @@ as the schedule.
 Figures 2 and 4 draw any state from scratch from one input, a time `t` or a
 head count, so playing, scrubbing and reduced motion are the same code.
 Their SVG is rendered at build time from `explorable-figures.ts`, which owns
-every coordinate; the client only moves a pulse along a path, sets
-transforms and opacity, and toggles classes. Figure 2 plays while on screen
+every coordinate and every word, including the Sidekick's status lines
+(`data-arriving`, `data-reading` on each tool) and the version labels; the
+client reads those, moves a pulse along a path, sets transforms and opacity,
+and toggles classes. Figure 4 counts only what is true at any size (people,
+copies of the page, seats); it does not pretend to pick a share setting. Figure 2 plays while on screen
 until the reader touches it. On a phone a figure keeps a minimum width and
 scrolls sideways rather than shrinking its labels. Figure numbers are a CSS
 counter, so moving or reusing a figure never leaves a stale number.
@@ -255,26 +233,18 @@ in light and dark, before a change ships, as the repository's rule on visible ch
 
 ### 2026-11-09 — The site becomes "the shared page" and leads with live artifacts
 
-**What changed:** The marketing site was redesigned from a blank page. One
-stylesheet now sets a new system: warm paper and ink in light and dark
-themes, Instrument Serif, Geist and Geist Mono, a single ultramarine accent
-for Rally and a colour for each person. The home page leads with an animated
-carousel of seven live artifacts, one per audience, each building to a
-payoff, explains the mechanism with scrubbable figures, leads with live
-artifacts (Canvases a Sidekick updates from activity in connected tools) and
-follows with multiplayer;
-`/canvases/` and `/sidekicks/` were added; the blog, comparison and Trust
-Center pages took on the same system.
+**What changed:** The marketing site was redesigned from a blank page: one
+stylesheet with light and dark tokens, three typefaces, a single accent for
+Rally and a colour per person. The home page leads with a carousel of live
+artifacts, one per audience, explains the mechanism with scrubbable figures,
+and follows with multiplayer. `/canvases/` and `/sidekicks/` were added, and
+the blog, comparison and Trust Center pages took on the same system.
 
-**Why:** The product owner set the order: live artifacts first, multiplayer
-second. The pivot to Canvases and Sidekicks also left the home page telling an
-older story, and the dark, uppercase look matched most other AI products
-rather than setting Rally apart. A first pass on this branch borrowed the
-launch films' dark and volt style; it was set aside for a system designed
-for the site on its own terms, so the films may follow the site rather than
-the other way round.
+**Why:** The product owner set the order, live artifacts first and
+multiplayer second, and the pivot to Canvases and Sidekicks had left the home
+page telling an older story. A first pass borrowed the launch films' dark,
+volt style; it was set aside for a system designed for the site, so the films
+can follow the site.
 
-**Respect:** Keep every colour in a token and check both themes, keep the CSP
-rules (no inline style or script), the tracked link ids, and product truth in
-the demo. A new marketing page starts from `landing.css` and the band pattern
-rather than a stylesheet of its own.
+**Respect:** Every colour in a token, checked in both themes; no inline style
+or script; the tracked link ids; product truth in every figure.

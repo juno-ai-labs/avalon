@@ -1,20 +1,18 @@
 /**
  * Drives the explorable figures that `explorable-figures.ts` renders.
  *
- * The loop figure draws any instant `t` from scratch (`drawLoop(t)`), so
+ * The loop figure draws any instant `t` from scratch (`draw(t)`), so
  * playing, scrubbing and reduced motion are the same code: playback only
  * moves `t`. It plays while on screen until the reader touches the slider or
  * the button. The people figure shows as many people as its slider says.
  */
-const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+import { reducedMotion as reduced, whenVisible } from './steps';
 
 /** How long each phase of one event takes, in seconds. */
 const TRAVEL_IN = 1.2;
 const READ = 1;
 const TRAVEL_OUT = 0.8;
 const ENTER = 0.5;
-const STATUS = ['Event from Linear', 'Event from Slack', 'Event from Granola'] as const;
-const READING = ['Reading PRI-142', 'Reading #launch', 'Reading the notes'] as const;
 
 const clamp = (value: number): number => Math.min(1, Math.max(0, value));
 const ease = (value: number): number => 1 - (1 - clamp(value)) ** 3;
@@ -36,6 +34,10 @@ function loop(figure: HTMLElement): void {
   const versions = Array.from(svg.querySelectorAll<SVGGElement>('.loop-version'));
   const hex = svg.querySelector<SVGGElement>('.loop-hex')!;
   const axis = svg.querySelector<SVGLineElement>('.loop-axis')!;
+  // The status lines and version labels are rendered into the SVG; read them rather than restate them.
+  const arriving = tools.map((tool) => tool.dataset.arriving ?? '');
+  const reading = tools.map((tool) => tool.dataset.reading ?? '');
+  const label = versions.map((version) => version.querySelector('.loop-card-v')?.textContent ?? '');
   const x0 = Number(axis.getAttribute('x1'));
   const x1 = Number(axis.getAttribute('x2'));
 
@@ -48,7 +50,7 @@ function loop(figure: HTMLElement): void {
   function draw(t: number): void {
     let pulseOn = false;
     let text = 'Waiting for events';
-    let reading = false;
+    let busy = false;
     let published = 0;
     events.forEach((start, i) => {
       const local = t - start;
@@ -56,13 +58,13 @@ function loop(figure: HTMLElement): void {
       tools[i]?.classList.toggle('is-active', local >= 0 && local < TRAVEL_IN);
       ticks[i]?.classList.toggle('is-past', local >= 0);
       if (local < 0) return;
-      if (local < TRAVEL_IN) { pulseOn = true; place(wiresIn[i]!, local / TRAVEL_IN); text = STATUS[i]!; }
-      else if (local < TRAVEL_IN + READ) { reading = true; text = READING[i]!; }
-      else if (local < publishAt) { pulseOn = true; place(wireOut, (local - TRAVEL_IN - READ) / TRAVEL_OUT); text = `Publishing v${4 + i}`; }
-      else { published = i + 1; text = `v${4 + i} published · waiting`; }
+      if (local < TRAVEL_IN) { pulseOn = true; place(wiresIn[i]!, local / TRAVEL_IN); text = arriving[i]!; }
+      else if (local < TRAVEL_IN + READ) { busy = true; text = reading[i]!; }
+      else if (local < publishAt) { pulseOn = true; place(wireOut, (local - TRAVEL_IN - READ) / TRAVEL_OUT); text = `Publishing ${label[i + 1]}`; }
+      else { published = i + 1; text = `${label[i + 1]} published · waiting`; }
     });
     pulse.classList.toggle('is-on', pulseOn);
-    hex.classList.toggle('is-reading', reading);
+    hex.classList.toggle('is-reading', busy);
     status.textContent = text;
 
     // The newest version is in front; each older one steps back and fades.
@@ -113,29 +115,23 @@ function loop(figure: HTMLElement): void {
     setPlaying(!playing);
   });
   if (!reduced) {
-    new IntersectionObserver(([entry]) => {
+    whenVisible(figure, (visible) => {
       if (touched) return;
-      if (entry?.isIntersecting && !playing) { t = 0; setPlaying(true); }
-      else if (!entry?.isIntersecting && playing) setPlaying(false);
-    }, { threshold: 0.4 }).observe(figure);
+      if (visible && !playing) { t = 0; setPlaying(true); }
+      else if (!visible && playing) setPlaying(false);
+    }, 0.4);
   }
   draw(t);
 }
 
-/** What the Canvas's Share menu would say for this many people. */
-const shareLabel = (count: number): string =>
-  count === 1 ? 'Only you' : count <= 20 ? 'Specific people' : 'Everyone in the Organization';
-
 function people(figure: HTMLElement): void {
   const range = figure.querySelector<HTMLInputElement>('[data-people-range]')!;
   const count = figure.querySelector<HTMLElement>('[data-people-count]')!;
-  const label = figure.querySelector<HTMLElement>('[data-people-label]')!;
   const seats = Array.from(figure.querySelectorAll<SVGGElement>('[data-person]'));
   const draw = (): void => {
     const n = Number(range.value);
     seats.forEach((seat, i) => seat.classList.toggle('is-on', i < n));
     count.textContent = String(n);
-    label.textContent = shareLabel(n);
   };
   range.addEventListener('input', draw);
   draw();
@@ -143,5 +139,3 @@ function people(figure: HTMLElement): void {
 
 document.querySelectorAll<HTMLElement>('[data-loop]').forEach(loop);
 document.querySelectorAll<HTMLElement>('[data-people]').forEach(people);
-
-export {};
