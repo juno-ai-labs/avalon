@@ -360,7 +360,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       open={confirmingArchive}
       title="Archive Canvas"
     >
-      <p className="modal-copy"><strong>{title}</strong> will be removed from everyone’s Canvases. Its conversation and artifacts will remain stored but will no longer be viewable in Rally. Rally does not offer a way to unarchive Canvases yet.</p>
+      <p className="modal-copy"><strong>{title}</strong> will be removed from everyone’s Canvases. Its conversation and artifacts will remain stored but will no longer be viewable in Rally.</p>
       {archiveError && <ErrorNotice occurrence={archiveError}>The Canvas could not be archived. Try again.</ErrorNotice>}
     </Modal>
   </>;
