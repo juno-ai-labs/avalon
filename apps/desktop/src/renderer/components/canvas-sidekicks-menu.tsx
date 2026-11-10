@@ -2,10 +2,8 @@ import type { CanvasSidekick } from '@rally/contracts';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { MenuActionItem } from '@rally/ui/components/menu-action-item';
 import { TitleMenuSeparator } from '@rally/ui/components/title-pill';
-import { IconArchive } from '@tabler/icons-react';
 import { useId } from 'react';
 
-import { Tip } from './primitives';
 import { AutomationGlyph } from './workstream-glyph';
 
 const STATE_LABEL: Record<CanvasSidekick['status'], string> = { draft: 'Draft', active: 'Active', paused: 'Paused' };
@@ -31,11 +29,11 @@ export function madeSidekicksArchiveCopy(sidekicks: readonly CanvasSidekick[]): 
  * hexagon, name and state. A row opens the Sidekick's page only for someone
  * whose own Sidekicks list holds it (`openableIds`); the page answers nobody
  * else, so for them the row stays focusable and says how to change it instead.
- * A Sidekick this Canvas made carries Archive beside its row, which everyone in
- * the Canvas may do. Draws nothing for a Canvas with no Sidekicks.
+ * The menu archives none of them: a Sidekick this Canvas made is archived by
+ * asking the Canvas's Chat, or with the Canvas. Draws nothing for a Canvas
+ * with no Sidekicks.
  */
-export function CanvasSidekicksSection({ onArchive, onOpen, openableIds, sidekicks }: {
-  onArchive: (sidekick: CanvasSidekick) => void;
+export function CanvasSidekicksSection({ onOpen, openableIds, sidekicks }: {
   onOpen: (sidekick: CanvasSidekick) => void;
   openableIds: ReadonlySet<string>;
   sidekicks: readonly CanvasSidekick[];
@@ -60,15 +58,6 @@ export function CanvasSidekicksSection({ onArchive, onOpen, openableIds, sidekic
             <span className="title-menu-item-copy">{sidekick.name}</span>
             <span className="title-menu-level-meta">{STATE_LABEL[sidekick.status]}</span>
           </MenuActionItem>
-          {sidekick.madeHere && <Tip label="Archive Sidekick" side="right">
-            <DropdownMenu.Item
-              aria-label={`Archive Sidekick: ${sidekick.name}`}
-              className="menu-item menu-item-danger canvas-sidekick-archive"
-              onSelect={() => onArchive(sidekick)}
-            >
-              <IconArchive aria-hidden="true" size={16} stroke={1.8} />
-            </DropdownMenu.Item>
-          </Tip>}
         </div>;
       })}
     </DropdownMenu.Group>

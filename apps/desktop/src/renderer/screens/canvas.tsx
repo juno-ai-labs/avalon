@@ -1,4 +1,4 @@
-import type { CanvasDetail, CanvasSidekick, WorkstreamAppearancePatch } from '@rally/contracts';
+import type { CanvasDetail, WorkstreamAppearancePatch } from '@rally/contracts';
 import { AppearancePicker } from '@rally/ui/components/appearance-picker';
 import { ActionTile, ActionTiles, TitleMenuItem, TitleMenuSeparator, TitlePillHeader, TitlePillTitleInput, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { IconArchive, IconLayoutSidebarRight, IconLink, IconPalette, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
@@ -7,7 +7,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { useActivityList } from '../components/activity-sidebar-section';
-import { ArchiveAutomationDialog } from '../components/archive-automation-dialog';
 import { CanvasAccessRequestPane } from '../components/canvas-access-request';
 import { CanvasMark, canvasHue } from '../components/canvas-mark';
 import { PaneState } from '../components/pane-state';
@@ -130,13 +129,6 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   // exactly who has it in their own list.
   const ownSidekicks = useSidekickList();
   const openableSidekickIds = useMemo(() => new Set(ownSidekicks?.map((sidekick) => sidekick.id)), [ownSidekicks]);
-  const [archivingSidekick, setArchivingSidekick] = useState<CanvasSidekick | null>(null);
-  const archiveSidekick = async (sidekickId: string): Promise<void> => {
-    if (!api) throw new Error('Not connected');
-    await api.archiveAutomation(sidekickId);
-    // The detail is what lists it, so the row leaves with the answer.
-    await queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(id) });
-  };
   const [choosingAppearance, setChoosingAppearance] = useState(false);
   const [pinError, setPinError] = useState<Error | null>(null);
   const [linkError, setLinkError] = useState<Error | null>(null);
@@ -307,7 +299,6 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       Change appearance
     </TitleMenuItem>
     <CanvasSidekicksSection
-      onArchive={setArchivingSidekick}
       onOpen={(sidekick) => void navigate(`/sidekicks/${encodeURIComponent(sidekick.id)}`)}
       openableIds={openableSidekickIds}
       sidekicks={sidekicks}
@@ -374,11 +365,6 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       setSharing(open);
       if (!open) void queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(id) });
     }} open={sharing} />}
-    <ArchiveAutomationDialog
-      onClose={() => setArchivingSidekick(null)}
-      onConfirm={() => archiveSidekick(archivingSidekick!.id)}
-      target={archivingSidekick}
-    />
     <Modal
       footer={<>
         <Button disabled={archiving} onClick={() => setConfirmingArchive(false)}>Cancel</Button>
