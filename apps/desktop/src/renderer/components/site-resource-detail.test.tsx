@@ -217,7 +217,12 @@ describe('showing a live artifact in the rail', () => {
       .mockImplementation(()=>new Promise(()=>{}));
     setup({surface:surface({pick})});
     const button=await screen.findByRole('button',{name:'Comment mode'});
-    await waitFor(()=>expect(button).not.toBeDisabled());
+    // The preview can be shown before comment readiness reaches the header.
+    // During that transition the tooltip explains an aria-disabled control.
+    await waitFor(() => {
+      expect(button).not.toBeDisabled();
+      expect(button).not.toHaveAttribute('aria-disabled', 'true');
+    });
     fireEvent.click(button);
     const editor=await screen.findByRole('textbox',{name:'Comment on site selection'});
     fireEvent.change(editor,{target:{value:'Unfinished native comment'}});
