@@ -6,7 +6,7 @@ import { createTestEnv } from "./helpers/cloudflare-test";
 const subject = { userId: asUserId("00000000-0000-4000-8000-000000000001") };
 const auth = { ...subject, sessionId: "session", workspaceId: null, region: "global" as const, role: "member" as const };
 const defaults: ClientFeatureFlags = {
-  developerSettings: false, multipleWorkspacesEnabled: false,
+  developerSettings: false, multipleWorkspacesEnabled: true,
   pushNotificationsEnabled: true,
 };
 
@@ -20,10 +20,10 @@ describe("local client feature flags", () => {
   it("applies each environment override in HTTP and socket resolution", async () => {
     const env = createTestEnv({
       FEATURE_FLAG_DEVELOPER_SETTINGS: "true",
-      FEATURE_FLAG_MULTIPLE_WORKSPACES_ENABLED: " TRUE ",
+      FEATURE_FLAG_MULTIPLE_WORKSPACES_ENABLED: " FALSE ",
       FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED: "false",
     });
-    const expected = { developerSettings: true, multipleWorkspacesEnabled: true, pushNotificationsEnabled: false };
+    const expected = { developerSettings: true, multipleWorkspacesEnabled: false, pushNotificationsEnabled: false };
     await expect(resolveClientFeatureFlags(env, auth)).resolves.toEqual(expected);
     await expect(resolveClientFeatureFlagsForSubject(env, { userId: "someone-else", workspaceId: "another-org" })).resolves.toEqual(expected);
     await expect(resolvePushNotificationsEnabled(env, subject)).resolves.toBe(false);
