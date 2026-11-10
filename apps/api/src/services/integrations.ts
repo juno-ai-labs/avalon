@@ -279,6 +279,7 @@ import { withToolPagination } from "./tool-pagination";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { sidekickDelegationTools, sidekickDelegationGuidance } from "./sidekick-delegation-tools";
+import { sidekickSourceGuidance, sidekickSourceTools } from "./sidekick-source-tools";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
@@ -2205,7 +2206,7 @@ function createAvalonAutomationsPlugin(
   });
   return {
     ...plugin,
-    systemMessage: `${plugin.systemMessage} This conversation configures Sidekick ${authoredAutomationId}. Read its current definition before revising it. ${delegationUser ? sidekickDelegationGuidance() : ""}`,
+    systemMessage: `${plugin.systemMessage} This conversation configures Sidekick ${authoredAutomationId}. Read its current definition before revising it. ${delegationUser ? `${sidekickDelegationGuidance()} ${sidekickSourceGuidance()}` : ""}`,
     // An automation's own conversation exists to draft and edit it, so the
     // tools are in hand from the first turn there. In a room they stay
     // discoverable behind `list_plugins`, where most turns never need them.
@@ -2226,7 +2227,7 @@ function createAvalonAutomationsPlugin(
       },
     })), ...createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
       .flatMap((tool) => expandPages(tool, "sidekick", null)),
-      ...(delegationUser ? sidekickDelegationTools(env, input, delegationUser, false) : [])],
+      ...(delegationUser ? [...sidekickDelegationTools(env, input, delegationUser, false), ...sidekickSourceTools(env, input, delegationUser, false)] : [])],
     onActivate: async () => prepare(),
   };
 }
@@ -5913,13 +5914,14 @@ async function loadHarnessTools(
     : input.executionPrincipal.type === "user" ? {
       canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
       displayName: readsRuns ? "Sidekick runs and delegation" : "Sidekick delegation",
-      description: readsRuns ? "Read this Sidekick's runs for its wizard; inspect and manage Sidekick delegation."
-        : "Inspect and manage Sidekick delegation for Organization users.",
+      description: readsRuns ? "Read this Sidekick's runs for its wizard; inspect and manage Sidekick delegation, and whose events start a Sidekick."
+        : "Inspect and manage Sidekick delegation for Organization users, and ask people to let their events start a Sidekick.",
       preload: readsRuns, explicit: false,
-      systemMessage: readsRuns ? `${SIDEKICK_RUN_READING_GUIDANCE} ${sidekickDelegationGuidance()}` : sidekickDelegationGuidance(),
+      systemMessage: `${readsRuns ? `${SIDEKICK_RUN_READING_GUIDANCE} ` : ""}${sidekickDelegationGuidance()} ${sidekickSourceGuidance()}`,
       tools: [...(readsRuns ? createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
         .flatMap((tool) => expandPages(tool, "sidekick", null)) : []),
-      ...sidekickDelegationTools(env, input, input.executionPrincipal.userId, false)],
+      ...sidekickDelegationTools(env, input, input.executionPrincipal.userId, false),
+      ...sidekickSourceTools(env, input, input.executionPrincipal.userId, false)],
     } : null;
   // List, read and post to Rally conversations, scoped by the loop: a
   // Breakout loop reaches its own conversation and its Channel's Main; a
@@ -7904,7 +7906,7 @@ export async function reenterInterruptedWriteForRecovery(
       // rebuilt (`rally_skill_recommendations`) went with Threads.
       plugin = { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks",
         shortWireName: "sidekick", description: "Sidekick delegation recovery", preload: false,
-        tools: sidekickDelegationTools(env, input, userId, false) };
+        tools: [...sidekickDelegationTools(env, input, userId, false), ...sidekickSourceTools(env, input, userId, false)] };
     }
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "plugin_unavailable") };

@@ -744,6 +744,7 @@ import { ArtifactDataWriteFactsRequestSchema, artifactDataWriteFacts, type Artif
 
 import { SIDEKICK_DELEGATION_SCHEMA_STATEMENTS, SidekickDelegationStorage } from "./sidekick-delegation-storage";
 import { SIDEKICK_SOURCE_SCHEMA_STATEMENTS } from "./sidekick-source-storage";
+import { SIDEKICK_SOURCE_NOTICE_SCHEMA_STATEMENTS } from "./sidekick-source-notices";
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "sidekick_delegations", "sidekick_delegation_receipts", "sidekick_delegation_preparations", "sidekick_claim_access",
@@ -4433,8 +4434,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 145,
   description: "record who lets events into a Sidekick apart from who it may act as, and the requests that ask",
-  // See SIDEKICK_SOURCE_SCHEMA_STATEMENTS and docs/sidekick-sources.md.
-  statements: SIDEKICK_SOURCE_SCHEMA_STATEMENTS,
+  // See SIDEKICK_SOURCE_SCHEMA_STATEMENTS and docs/sidekick-sources.md. The
+  // second list admits a request's three notice kinds on the intents and
+  // Activity (SIDEKICK_SOURCE_NOTICE_SCHEMA_STATEMENTS).
+  statements: [...SIDEKICK_SOURCE_SCHEMA_STATEMENTS, ...SIDEKICK_SOURCE_NOTICE_SCHEMA_STATEMENTS],
 }];
 
 function conversationToolEntry(conversation: {
@@ -6246,6 +6249,36 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async sidekickWithdrawSource(input: Parameters<HostedSidekick["withdrawSource"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.withdrawSource(input));
+  }
+
+  /**
+   * A person's own most recent events of one type, from their own
+   * connections of one connector: what a draft source filter is tried on
+   * before anybody is asked. Only the person's own, so trying a filter reads
+   * nothing they could not already.
+   */
+  async sidekickSourceSampleEvents(rawInput: { workspaceId: string; userId: string; connectorType: string; eventType: string; limit: number }) {
+    await this.initialized;
+    const input = parseRpcInput(z.strictObject({
+      workspaceId: WorkspaceIdSchema, userId: UserIdSchema, connectorType: z.string().min(1), eventType: z.string().min(1),
+      limit: z.number().int().positive(),
+    }), rawInput, "sidekick_source_sample_events");
+    if (!this.workspaceId()) return { events: [] };
+    this.assertWorkspace(input.workspaceId);
+    // Newest first by the object's own sequence. The filter on the person's
+    // connections comes first in the plan: a person holds one or two.
+    const events = this.state.storage.sql.exec<{ title: string; summary: string; text_snippet: string | null; occurred_at: number }>(
+      `SELECT event.title, event.summary, event.text_snippet, event.occurred_at
+         FROM workspace_connector_events event
+        WHERE event.connection_id IN (
+                SELECT id FROM connector_connections
+                 WHERE workspace_id = ?1 AND owner_user_id = ?2 AND scope = 'personal' AND connector_type = ?3)
+          AND event.event_type = ?4
+        ORDER BY event.event_sequence DESC LIMIT ?5`,
+      input.workspaceId, input.userId, input.connectorType, input.eventType, input.limit,
+    ).toArray();
+    return { events: events.map((event) => ({ title: event.title, summary: event.summary,
+      textSnippet: event.text_snippet ?? "", occurredAt: event.occurred_at })) };
   }
 
   /**

@@ -110,6 +110,12 @@ export const SidekickSourceRequestInputSchema = z.strictObject({
   eventTypes: EventTypesSchema,
   condition: SourceConditionSchema.optional(),
   place: SidekickSourceRequestPlaceSchema.nullable().optional(),
+  /**
+   * The asking operation's own stable id (an agent tool call's receipt). An
+   * ask repeated under the same id answers with the requests it already made,
+   * so a retried call never asks a person again who has since answered.
+   */
+  operationId: IdSchema.optional(),
 });
 export type SidekickSourceRequestInput = z.infer<typeof SidekickSourceRequestInputSchema>;
 
