@@ -10,8 +10,17 @@ import {
 
 export const INFERENCE_LAKEHOUSE_QUEUE_NAMES = new Set(configuredRegions.map((region) => `avalon-${region}-inference-lakehouse`));
 
-/** Published Cloudflare Pipelines ingestion-request limit, checked 2026-08-24. */
-export const PIPELINE_INGEST_REQUEST_BYTES = 5_000_000;
+/**
+ * The size above which one Pipeline record is refused.
+ *
+ * The published limit is 5 MB per ingestion request, but the binding refuses
+ * any single record above 1 MB with `CF_PIPELINE_MESSAGE_TOO_LARGE:
+ * Individual message must not exceed 1 MB`. Every row is sent alone, so the
+ * per-record limit is the one that applies. The decimal reading is the
+ * conservative one: should the platform mean 1 MiB, a record in between takes
+ * the lossless pointer path rather than the dead-letter queue.
+ */
+export const PIPELINE_MESSAGE_BYTES = 1_000_000;
 
 export function isInferenceLakehouseQueue(queue: string): boolean {
   return INFERENCE_LAKEHOUSE_QUEUE_NAMES.has(queue);
@@ -32,8 +41,8 @@ function overflowRecord(
     metadata: {
       ...record.metadata,
       overflow: {
-        reason: "pipeline_ingest_request_limit",
-        maximumBytes: PIPELINE_INGEST_REQUEST_BYTES,
+        reason: "pipeline_message_limit",
+        maximumBytes: PIPELINE_MESSAGE_BYTES,
         fullRecordAvailableInRegionalR2: true,
       },
     },
@@ -81,10 +90,10 @@ export async function deliverInferenceLakehousePointer(
     throw new RetiredMeetingInference();
   }
 
-  // The array brackets added by `send` count toward the platform's 5 MB
-  // ingestion-request ceiling. The fallback row keeps queryable metadata in
-  // Iceberg and the exact oversized record in Global R2 under its hash.
-  const overflow = pointer.payloadBytes + 2 > PIPELINE_INGEST_REQUEST_BYTES;
+  // A record over the per-record limit fails identically on every retry and
+  // dead-letters. The fallback row keeps queryable metadata in Iceberg and the
+  // exact oversized record in Global R2 under its hash.
+  const overflow = pointer.payloadBytes > PIPELINE_MESSAGE_BYTES;
   const delivered = overflow ? overflowRecord(record, pointer) : record;
   await env.INFERENCE_LAKEHOUSE.send([delivered]);
   return { overflow, record: delivered };
