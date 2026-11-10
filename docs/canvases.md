@@ -69,16 +69,21 @@ already had — `sidekick_children`, `sidekick_child_projections`,
 `sidekick_child_receipts` and `sidekick_viewer_reads` — keyed by the parent id
 in their `sidekick_id` column, which keeps its released name. `HostedSidekick`
 adds a Sidekick's definition, triggers and runs; `HostedCanvas` adds the
-Canvas's row and audience. A new message in the Chat moves the Canvas's
-`updated_at`, so it rises in the recency list.
+Canvas's row and audience. The Canvas takes the date of the latest saved
+Chat message from `lastMessageAt` in the common projection. This includes
+human and Sidekick posts and saved Rally text, including a reply before a
+tool call. The unread cursor is projected separately.
 
 The Chat is an `AgentLoopDO` like every other conversation; its root row says
 `parent_kind = 'canvas'` (conversation migration 83 widened the CHECK). Opening
 it is the conversation route's ordinary admission: `resolveHostedParent`
 answers `canvas` and the Canvas's viewer decision in one call, the admitted
 reader is seated in the conversation (`admitParticipant`, which a hosted
-parent's conversation accepts), and the socket ticket's
-`pk` is `canvas`. The Chat's effects reach `HostedCanvas.receiveChildEffects`
+parent's conversation accepts), and the socket ticket's `pk` is `canvas`.
+Canvas admission publishes viewer read state. It leaves the common Chat
+projection and the Canvas's `updated_at` alone, even if the converted
+directory has an earlier date than the Chat. The Chat's effects reach
+`HostedCanvas.receiveChildEffects`
 through the same Queue every conversation's do.
 
 ### Who can open a Canvas
@@ -302,7 +307,8 @@ Terminal's resource bridge tells the Canvas (`canvasArtifactNoter`,
 `WorkspaceDO.canvasNoteArtifact`), from a publish that returned and from one
 `reconcilePublishedResource` recovers as `landed` (the attempt that wrote it
 may have died before its note), which records the resource in
-`canvas_artifacts`, moves the Canvas's `updated_at`, and names its last editor:
+`canvas_artifacts`, advances the Canvas's `updated_at` to the version's date,
+and names its last editor:
 Rally for the Chat, the Sidekick for a run. A run's note also names the run
 (its substream id, which is the run id), stored as
 `canvas_directory.last_writer_run_id` (migration 137); any note that is not a
@@ -316,6 +322,11 @@ records only which resources the Canvas holds. A version somebody else made
 since a viewer last read the Chat makes the Canvas's row unread to them, by
 the rule a pinned artifact's news uses (a republish or replacement, not their
 own or one made on their behalf).
+
+The workspace's resource-version ledger also advances recency when an
+already linked artifact is published or replaced. Renames and connector
+refetches refresh artifact previews and leave the Canvas date intact. The date
+comes from the saved version, so a retried note preserves it.
 
 By the same rule, a new version tells everyone who **pinned** the Canvas:
 the note reads the resource's newest version and, when it is news, records
@@ -417,7 +428,11 @@ run wrote last. The list holds every Canvas the viewer may open as its creator, 
 participant, a member of an Organization-wide one or someone its writer
 Sidekick is shared with, most recently active first, at most 250, the bound
 the Sidekick list already has; an owner's or administrator's list does not add
-every private Canvas they could open.
+every private Canvas they could open. **Recent** sorts by the Canvas's
+`updatedAt` and displays that same date. It starts at creation (or the old
+Thread's last activity on conversion). New Chat messages, artifact publishes,
+and artifact replacements advance it. Opening, reading, renaming, sharing,
+and changing the Canvas's appearance leave its date intact.
 
 The Pinned group mechanism, shared with Sidekicks, is
 [`pinning.md`](pinning.md)'s. What is particular to a Canvas: it is pinned with
@@ -779,6 +794,28 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-09 — Date Canvases by saved messages and artifact versions
+
+**What changed** — Opening publishes viewer read state. The recency date
+comes from saved Chat messages and artifact publishes or replacements.
+Canvas metadata mutations leave that date intact.
+
+**Why** — Opening a converted Canvas sent its first projection to the
+Organization. Its historical attention ordinal looked new to the directory,
+which stamped the Canvas with the receipt time and moved it above recent work.
+Using the unread ordinal also missed saved Rally text without a mention or
+final response.
+
+**Considered and rejected** — Using the Chat's activity time alone still let
+admission move a converted Canvas with an earlier directory date. Keeping
+recency on the publish note alone would miss updates by other artifact producers.
+
+**Consequences** — Recency can advance on delayed delivery of newer content.
+Authorization evidence tracks audience facts independently of the recency date.
+The change applies as updates arrive and has no historical backfill.
+
+Pull request [#1519](https://github.com/juno-ai-labs/avalon/pull/1519).
 
 ### 2026-11-09 — Put Canvas commands and manager-only archival in the title menu
 

@@ -43,6 +43,7 @@ import { encryptString } from "../src/lib/crypto";
 import { attachWorkstreamRuntimeResource } from "../src/services/workstream-object-client";
 
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { consumeEffectBodies, pendingChildEffects } from "./helpers/conversation-effects";
 import { hostedParentStub } from "./helpers/hosted-parent";
 import { memberInputs, useOpenRouterDouble, withSuccessfulSidekickOutcome, type ProviderCall, type ProviderReply } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
@@ -1150,15 +1151,23 @@ describe("a room Sidekick's run and the room's agents", () => {
     // The model reads a Sidekick's id as `sidekick/…`; storage keeps `automation/…`.
     expect(JSON.stringify(asked!.messages)).toContain(`Message from agent sidekick/${AUTOMATION_ID}/0.`);
     expect(JSON.stringify(asked!.messages)).toContain(messageId);
-    await runInDurableObject(roomConversation(), (_instance, state) => {
-      expect(state.storage.sql.exec<{ n: number }>(
-        "SELECT COUNT(*) AS n FROM canonical_conversation_turn_details WHERE client_message_id = ?", request.clientMessageId,
-      ).one().n).toBe(1);
+    const postedAt = await runInDurableObject(roomConversation(), (_instance, state) => {
+      const post = state.storage.sql.exec<{ created_at: number }>(
+        "SELECT created_at FROM canonical_conversation_turn_details WHERE client_message_id = ?", request.clientMessageId,
+      ).one();
       const context = state.storage.sql.exec<{ execution_context_json: string }>(
         "SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id,
       ).one();
       expect(JSON.parse(context.execution_context_json).agentExchange).toEqual(request.agentExchange);
+      return new Date(post.created_at).toISOString();
     });
+    const projection = (await pendingChildEffects(roomConversation())).find(({ effect }) =>
+      effect.kind === "directory_common" && effect.lastMessageAt === postedAt);
+    expect(projection).toBeDefined();
+    expect(await consumeEffectBodies(TEST_ENV, [projection])).toEqual({ acked: 1, retried: 0 });
+    const canvas = await workspaceStub().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: ROOM_ID,
+      actor: { userId: AUTHOR_ID, actorRole: "member" } });
+    expect(canvas.updatedAt).toBe(postedAt);
   });
 
   it("keeps the receiver's inherited principal when another principal sends a continuation", async () => {

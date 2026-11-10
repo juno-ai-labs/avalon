@@ -35,10 +35,10 @@ import { CANVAS_NAMING_ALARM_KIND } from "../src/durable-objects/canvas-schema";
 import { __integrationTesting } from "../src/services/integrations";
 import { ConversationService } from "../src/services/conversation-service";
 import { verifySocketTicket } from "../src/services/socket-service";
-import { deliverChildEffects } from "./helpers/conversation-effects";
+import { consumeEffectBodies, deliverChildEffects, pendingChildEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { memberInputs, useOpenRouterDouble } from "./helpers/openrouter-double";
-import { responsesEvents } from "@rally/agent-harness/test-support/responses-stream";
+import { responsesEvents, responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { startWaitBudget, waitBudget } from "./helpers/wait-budget";
@@ -73,6 +73,8 @@ async function withNamingModel<T>(run: () => Promise<T>): Promise<T> {
  * the stand-in for a long reply a person stops halfway through.
  */
 const LONG_REPLY_PROMPT = "Tell me a long story.";
+const INTERIM_REPLY_PROMPT = "Help me choose an option.";
+const INTERIM_REPLY = "I can help narrow it down.";
 /**
  * Plain flags rather than promises: the reply's stream is read inside the
  * conversation object, and a promise settled across the test and the object
@@ -124,6 +126,12 @@ function heldReply(signal: AbortSignal | undefined): Response {
 const provider = useOpenRouterDouble((call) => namingCall(call)
   ? { say: JSON.stringify({ title: "December pricing launch" }) }
   : call.stream && JSON.stringify(memberInputs(call)).includes(LONG_REPLY_PROMPT) ? { raw: heldReply(call.signal) }
+    : call.stream && JSON.stringify(memberInputs(call)).includes(INTERIM_REPLY_PROMPT) ? { raw: responsesStreamResponse([
+      { choices: [{ delta: { content: INTERIM_REPLY }, finish_reason: null }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: "recent-question", type: "function", function: {
+        name: "request_elicitation", arguments: JSON.stringify({ prompt: "Which option?", responseType: "text" }),
+      } }] }, finish_reason: "tool_calls" }] },
+    ]) }
     : { say: "Here is the plan." });
 useSelectedModel();
 
@@ -134,6 +142,26 @@ function auth(userId: string): AuthContext {
 
 function workspace(): DurableObjectStub<WorkspaceDO> {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName(env.AVALON_REGION, WORKSPACE_ID)));
+}
+
+/** The development seed writes canonical turns with a supplied timestamp. */
+async function seedChatMessage(transcript: ReturnType<typeof createTranscriptObjectPort>, expectedTranscriptSequence: number,
+  actor: "human" | "assistant", text: string, createdAtUtc: string): Promise<void> {
+  const mutable = env as { APP_ENV?: string };
+  const appEnv = mutable.APP_ENV;
+  mutable.APP_ENV = "development";
+  try {
+    await transcript.seedDevelopmentConversationTurn({
+      turnId: crypto.randomUUID(), clientMessageId: actor === "human" ? crypto.randomUUID() : null, actor,
+      authorUserId: actor === "human" ? CREATOR : null,
+      authorSnapshot: actor === "human" ? { displayName: "Creator", avatarUrl: null } : null,
+      externalActorJson: null, messageType: "text", text, structuredContentJson: null, producedByRunId: null,
+      expectedTranscriptSequence, createdAtUtc,
+    });
+  } finally {
+    if (appEnv === undefined) delete mutable.APP_ENV;
+    else mutable.APP_ENV = appEnv;
+  }
 }
 
 async function opens(userId: string, canvasId: string): Promise<boolean> {
@@ -364,6 +392,61 @@ function clientCanvasRows(frames: Array<Record<string, unknown>>): Row[] {
 }
 
 describe("the Canvas list", () => {
+  it("uses a saved Rally message for recency when it has no unread ordinal", async () => {
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    const { canvasId } = await service.create({ title: "Decision", prompt: { text: INTERIM_REPLY_PROMPT, clientMessageId: "canvas-recent-rally" } });
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    const savedMessages = () => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ created_at: number }>(
+      `SELECT created_at FROM canonical_conversation_turn_details
+        WHERE (author_type = 'member' AND content = ?) OR (author_type = 'agent' AND content = ?)
+        ORDER BY sequence_number`, INTERIM_REPLY_PROMPT, INTERIM_REPLY).toArray());
+    await expect.poll(savedMessages, { timeout: waitBudget() }).toHaveLength(2);
+    const projections = await pendingChildEffects(chat);
+    // Deliver the person's message and the saved reply before the structured question that follows them.
+    for (const message of await savedMessages()) {
+      const messageAt = new Date(message.created_at).toISOString();
+      const projection = projections.find(({ effect }) =>
+        effect.kind === "directory_common" && effect.latestAttentionOrdinal === 1 && effect.lastMessageAt === messageAt);
+      expect(projection).toBeDefined();
+      expect(await consumeEffectBodies(TEST_ENV, [projection])).toEqual({ acked: 1, retried: 0 });
+      expect((await service.detail(canvasId)).updatedAt).toBe(messageAt);
+    }
+  });
+
+  it("keeps the date and order when opening a converted Canvas with historical Chat activity", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Older Canvas" });
+    const { canvasId: newerId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Newer Canvas" });
+    for (const id of [canvasId, newerId]) {
+      await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: id,
+        actor: { userId: CREATOR, actorRole: "member" }, update: { visibility: "workspace", userIds: [] } });
+    }
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    const routed = await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, canvasId, "canvas");
+    await seedChatMessage(createTranscriptObjectPort(routed, WORKSPACE_ID, canvasId), 1, "human", "A saved message from before conversion.",
+      "2026-10-18T18:39:04.461Z");
+    await deliverChildEffects(TEST_ENV, chat);
+    // The converted directory can lag the Chat. Opening must not catch up the date or reorder the list.
+    const olderActivity = "2026-10-17T18:00:00.000Z";
+    const newerActivity = "2026-10-18T18:00:00.000Z";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (const [id, activity] of [[canvasId, olderActivity], [newerId, newerActivity]] as const) {
+        state.storage.sql.exec("UPDATE canvas_directory SET created_at = ?, updated_at = ? WHERE canvas_id = ?",
+          Date.parse(activity), Date.parse(activity), id);
+      }
+      state.storage.sql.exec("DELETE FROM sidekick_child_projections WHERE sidekick_id = ?", canvasId);
+    });
+    const { frames } = await connect(MEMBER);
+    const newer = { id: newerId, updatedAt: newerActivity };
+    const older = { id: canvasId, updatedAt: olderActivity };
+    expect(clientCanvasRows(frames)).toMatchObject([newer, { ...older, unread: true }]);
+
+    await new ConversationService(TEST_ENV, auth(MEMBER)).socketTicket(canvasId);
+    await deliverChildEffects(TEST_ENV, chat);
+
+    const after = await connect(MEMBER);
+    expect(clientCanvasRows(after.frames)).toMatchObject([newer, { ...older, unread: false }]);
+  });
+
   it("pushes an archived Canvas off every reader's active list", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
     await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId,
@@ -472,13 +555,17 @@ describe("the Canvas list", () => {
 describe("a Canvas's title and pin order", () => {
   it("retitles a Canvas for anyone it admits, on every open list, and tells anyone else it does not exist", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE canvas_directory SET updated_at = ? WHERE canvas_id = ?", Date.parse(NOW), canvasId);
+    });
     await expect(new CanvasService(TEST_ENV, auth(MEMBER)).update(canvasId, { title: "Taken over" }))
       .rejects.toMatchObject({ code: "canvas_not_found" });
-    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
+    const shared = await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
       update: { visibility: "participants", userIds: [MEMBER] } });
+    expect(shared.updatedAt).toBe(NOW);
     const creator = await connect(CREATOR);
     const renamed = await new CanvasService(TEST_ENV, auth(MEMBER)).update(canvasId, { title: "  Launch plan, v2 " });
-    expect(renamed.title).toBe("Launch plan, v2");
+    expect(renamed).toMatchObject({ title: "Launch plan, v2", updatedAt: NOW });
     expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).title).toBe("Launch plan, v2");
     await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.title, { timeout: waitBudget() }).toBe("Launch plan, v2");
     creator.socket.close(1000, "done");
@@ -637,23 +724,7 @@ describe("a Canvas's title and pin order", () => {
     const say = async (actor: "human" | "assistant", text: string) => {
       const sequence = await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ next: number }>(
         `SELECT next_transcript_sequence AS next FROM transcript_counters WHERE id = 1`).one().next);
-      // The seed operation is the one way to write a turn exactly as stored
-      // (an empty text, a reply with no run) and answers only in development.
-      const mutable = env as { APP_ENV?: string };
-      const appEnv = mutable.APP_ENV;
-      mutable.APP_ENV = "development";
-      try {
-        await transcript.seedDevelopmentConversationTurn({
-          turnId: crypto.randomUUID(), clientMessageId: actor === "human" ? crypto.randomUUID() : null, actor,
-          authorUserId: actor === "human" ? CREATOR : null,
-          authorSnapshot: actor === "human" ? { displayName: "Creator", avatarUrl: null } : null,
-          externalActorJson: null, messageType: "text", text, structuredContentJson: null, producedByRunId: null,
-          expectedTranscriptSequence: sequence, createdAtUtc: new Date().toISOString(),
-        });
-      } finally {
-        if (appEnv === undefined) delete mutable.APP_ENV;
-        else mutable.APP_ENV = appEnv;
-      }
+      await seedChatMessage(transcript, sequence, actor, text, new Date().toISOString());
     };
     /** Run the naming entry, as the Chat's next message would arm it, and wait for it to be done. */
     const name = async () => {
