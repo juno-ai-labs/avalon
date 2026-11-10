@@ -168,9 +168,10 @@ const AUTH: AuthContext = {
 const TEST_ENV: Env = env;
 
 // These cases deliberately reach inference. Refuse at a deterministic provider
-// boundary unless a case installs its own per-object streaming script.
+// boundary unless a case installs its own per-object streaming script. A request
+// refusal leaves the shared endpoint healthy; a 401 opens its circuit across tests.
 useSelectedModel();
-const boundaryProvider = useOpenRouterDouble(() => ({ httpError: { status: 401 } }));
+const boundaryProvider = useOpenRouterDouble(() => ({ httpError: { status: 400 } }));
 
 beforeEach(async () => {
   // Evict the shared agent before wiping storage: every test drives the same
@@ -708,7 +709,7 @@ describe("a member's message travels the whole pipeline", () => {
     // returns a terminal refusal without reaching a live service.
     const message = (JSON.parse(String(run.error_json)) as { message?: string }).message ?? "";
     expect(message).toMatch(/Retrying is unlikely to help|try again|support/iu);
-    expect(boundaryProvider.calls.some((call) => call.model === "double/primary")).toBe(true);
+    expect([...new Set(boundaryProvider.calls.map((call) => call.model))]).toContain("double/primary");
 
     // The member sees the truth, not a spinner: the work stream reflects the
     // failure and the singleton loop releases its active execution.
