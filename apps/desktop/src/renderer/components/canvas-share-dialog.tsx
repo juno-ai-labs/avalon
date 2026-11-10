@@ -170,11 +170,14 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
         {candidates.map((member) => {
           const organizationMember = visibility === 'workspace' && isMember(member);
           const checked = organizationMember ? member.status === undefined || member.status === 'active' : chosen.has(member.id);
+          const status = organizationMember && !checked ? (member.status === 'invited' ? 'Invitation pending' : 'Suspended') : undefined;
+          const statusId = status ? `${visibilityDescriptionId}-${member.id}-status` : undefined;
           return <label className="member-action-row" key={member.id}>
             <Avatar member={member} size="medium" />
             <span><strong>{member.name}</strong><small>{member.email}</small></span>
             {member.accessClass === 'guest' && <Badge className="role-badge">Guest</Badge>}
-            <input aria-label={member.name} checked={checked} className="choice-control" disabled={organizationMember} onChange={(event) => {
+            {status && <Badge className="role-badge" id={statusId}>{status}</Badge>}
+            <input aria-describedby={statusId} aria-label={member.name} checked={checked} className="choice-control" disabled={organizationMember} onChange={(event) => {
               const next = new Set(chosen);
               if (event.target.checked) next.add(member.id);
               else next.delete(member.id);
