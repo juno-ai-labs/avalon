@@ -857,8 +857,9 @@ shows its saved quote and image. The script and trust boundaries are owned by
 **What changed:** A fourth data tool, `write_artifact_data`, runs one INSERT,
 UPDATE, DELETE or REPLACE against a stateful site's database
 (`ArtifactHostDO.writeData`, the facet host's `rallyWrite`). It is offered to
-a Canvas's Chat, for sites linked to that Canvas, and to a Sidekick run, for
-sites whose Canvas is attached to that Sidekick
+a Canvas's Chat, for sites its own Canvas holds, and to a Sidekick run, for
+sites whose Canvas is attached to that Sidekick and still admits the person
+the run acts as
 (`sidekick_conversation_attachments`, answered by WorkspaceDO's
 `artifactDataWriteFacts`). The site's own code already writes its database
 from viewer traffic; that path is unchanged.
