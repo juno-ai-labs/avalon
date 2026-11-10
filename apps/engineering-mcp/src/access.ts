@@ -2,6 +2,8 @@
  * provenance: signature, issuer, audience, and required principal claims. */
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from "jose";
 
+const UNKNOWN_ACCESS_SUBJECT = "unknown";
+
 export interface AccessPrincipal {
   /**
    * Informational identity for audit logs; never used to authorize tools.
@@ -11,6 +13,11 @@ export interface AccessPrincipal {
   subject: string;
   /** The Access application the assertion was minted for. */
   audience: string;
+}
+
+/** Stored results need an owner; audit-only principals may lack a subject. */
+export function hasStableAccessSubject(principal: AccessPrincipal): boolean {
+  return principal.subject.length > 0 && principal.subject !== UNKNOWN_ACCESS_SUBJECT;
 }
 
 export interface AccessConfiguration {
@@ -103,7 +110,7 @@ export async function verifyAccessRequest(
     ok: true,
     principal: {
       email: email.length > 0 ? email : null,
-      subject: typeof payload.sub === "string" ? payload.sub : "unknown",
+      subject: typeof payload.sub === "string" ? payload.sub : UNKNOWN_ACCESS_SUBJECT,
       audience: configuration.applicationAudience,
     },
   };

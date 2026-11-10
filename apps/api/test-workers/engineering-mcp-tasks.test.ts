@@ -11,6 +11,7 @@ import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridg
 import { workspaceDOName } from "../src/durable-objects/names";
 import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
+import type { EngineeringTaskTestDO } from "./fixtures/engineering-task-worker";
 
 const OPERATOR = { subject: "task-engineer", email: "engineer@example.com", audience: "engineering-mcp" };
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-00000000ef70");
@@ -18,18 +19,20 @@ const USER = asUserId("00000000-0000-7000-8000-00000000ef71");
 const query = { name: "query_data_lake", arguments: { lakehouse: "llm_inference", sql: "SELECT 42 AS answer FROM default.llm_inference" } };
 
 async function rpc(method: string, params: Record<string, unknown> = {}, options: {
-  principal?: typeof OPERATOR; tasks?: boolean; origin?: string;
+  principal?: typeof OPERATOR; tasks?: boolean; origin?: string; encodedName?: boolean; nameHeader?: string;
 } = {}) {
   const handler = createEngineeringMcpHandler({
     ENGINEERING_TASKS: env.ENGINEERING_TASKS!,
     GLOBAL_INSPECTION: new EngineeringInspectionBridge(createExecutionContext(), env),
     CLOUDFLARE_ACCOUNT_ID: "task-test-account", BASIN_SQL_API_TOKEN: "test-not-a-credential",
   }, options.principal ?? OPERATOR);
+  const name = typeof params.name === "string" ? params.name : typeof params.taskId === "string" ? params.taskId : undefined;
+  const nameHeader = options.nameHeader ?? (name === undefined ? undefined : options.encodedName ? `=?base64?${btoa(name)}?=` : name);
   const response = await handler.fetch(new Request("https://mcp.internal.rallywith.ai/mcp", {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json, text/event-stream",
       "mcp-protocol-version": "2026-07-28", "Mcp-Method": method,
-      ...(typeof params.name === "string" ? { "Mcp-Name": params.name } : typeof params.taskId === "string" ? { "Mcp-Name": params.taskId } : {}), ...(options.origin ? { origin: options.origin } : {}) },
+      ...(nameHeader === undefined ? {} : { "Mcp-Name": nameHeader }), ...(options.origin ? { origin: options.origin } : {}) },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: {
       ...params,
       _meta: {
@@ -43,7 +46,8 @@ async function rpc(method: string, params: Record<string, unknown> = {}, options
 }
 
 function stub(taskId: string) {
-  return env.ENGINEERING_TASKS!.get(env.ENGINEERING_TASKS!.idFromName(taskId));
+  // This file's worker uses the production subclass with alarm-delivery hooks.
+  return env.ENGINEERING_TASKS!.get(env.ENGINEERING_TASKS!.idFromName(taskId)) as DurableObjectStub<EngineeringTaskTestDO>;
 }
 
 async function start(input = query) {
@@ -98,7 +102,8 @@ describe("engineering MCP task execution", () => {
   });
 
   it("persists a deferred query and its entire result across eviction and fresh HTTP handlers", async () => {
-    const value = { rows: [[42, "日本語🙂".repeat(40_000)]] };
+    // More than 128 chunks, including multi-byte characters and chunk 10+.
+    const value = { rows: [[42, "日本語🙂".repeat(40_000) + "x".repeat(4_000_000)]] };
     const provider = vi.spyOn(globalThis, "fetch").mockImplementation(async () => basinResponse(value));
     const task = await start();
     await evictDurableObject(stub(task.taskId));
@@ -113,7 +118,8 @@ describe("engineering MCP task execution", () => {
     expect(Date.parse(completed.createdAt) + completed.ttlMs! - Date.parse(completed.lastUpdatedAt)).toBe(604_800_000);
     expect(provider).toHaveBeenCalledTimes(1);
     await runInDurableObject(stub(task.taskId), async (_instance, state) => {
-      expect(await state.storage.get("input:count")).toBeUndefined();
+      expect(state.storage.sql.exec("SELECT kind FROM engineering_task_payloads WHERE kind = 'input'").toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT version FROM _sql_schema_migrations").toArray()).toEqual([{ version: 1 }]);
     });
   });
 
@@ -145,12 +151,77 @@ describe("engineering MCP task execution", () => {
     expect(result).not.toHaveProperty("result");
   });
 
+  it("returns a task handle and serves task methods for encoded Mcp-Name headers", async () => {
+    const created = await rpc("tools/call", query, { encodedName: true });
+    expect(created.body.result).toMatchObject({ resultType: "task", status: "working" });
+    expect(created.body.result?._meta).not.toHaveProperty("ai.rally/engineering-task");
+    const task = TaskSnapshotSchema.parse(created.body.result);
+    expect((await rpc("tasks/get", { taskId: task.taskId }, { encodedName: true })).body.result?.status).toBe("working");
+    expect((await rpc("tasks/update", { taskId: task.taskId, inputResponses: {} }, { encodedName: true })).body.error).toBeUndefined();
+    for (const nameHeader of ["=?base64?not-base64?=", `=?base64?${btoa(crypto.randomUUID())}?=`]) {
+      expect((await rpc("tasks/cancel", { taskId: task.taskId }, { nameHeader })).body.error).toBeDefined();
+    }
+    expect((await rpc("tasks/get", { taskId: task.taskId })).body.result?.status).toBe("working");
+    expect((await rpc("tasks/cancel", { taskId: task.taskId }, { encodedName: true })).body.error).toBeUndefined();
+    expect((await rpc("tasks/get", { taskId: task.taskId }, { encodedName: true })).body.result?.status).toBe("cancelled");
+  });
+
+  it("terminates damaged stored inputs with named errors and erases them before retention expiry", async () => {
+    for (const [damage, code] of [
+      ["missing-count", "engineering_task_missing_input"],
+      ["missing-chunk", "engineering_task_missing_input_chunk"],
+      ["invalid-json", "engineering_task_input_invalid_json"],
+      ["invalid-schema", "engineering_task_input_invalid:arguments.lakehouse:invalid_value"],
+    ]) {
+      const task = await start();
+      await runInDurableObject(stub(task.taskId), async (_instance, state) => {
+        if (damage === "missing-count") state.storage.sql.exec("DELETE FROM engineering_task_payloads WHERE kind = 'input'");
+        else if (damage === "missing-chunk") state.storage.sql.exec("DELETE FROM engineering_task_chunks WHERE kind = 'input' AND position = 0");
+        else state.storage.sql.exec("UPDATE engineering_task_chunks SET content = ? WHERE kind = 'input' AND position = 0",
+          damage === "invalid-json" ? "{invalid" : JSON.stringify({ ...query, arguments: { ...query.arguments, lakehouse: "unknown" } }));
+      });
+      await runDurableObjectAlarm(stub(task.taskId));
+      const result = (await rpc("tasks/get", { taskId: task.taskId })).body.result;
+      expect(result).toMatchObject({ status: "completed", ttlMs: 604_800_000, result: { isError: true, content: [{ type: "text", text: code }] } });
+      await runInDurableObject(stub(task.taskId), async (_instance, state) => {
+        expect(state.storage.sql.exec("SELECT kind FROM engineering_task_payloads WHERE kind = 'input'").toArray()).toEqual([]);
+        expect(state.storage.sql.exec("SELECT kind FROM engineering_task_chunks WHERE kind = 'input'").toArray()).toEqual([]);
+        expect(await state.storage.getAlarm()).toBe(Date.now() + 604_800_000);
+      });
+      vi.setSystemTime(Date.now() + 604_800_000);
+      await runDurableObjectAlarm(stub(task.taskId));
+      expect((await rpc("tasks/get", { taskId: task.taskId })).body.error?.code).toBe(-32602);
+    }
+  });
+
   it("returns provider failures as completed tool errors", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ success: false, errors: [{ code: 40004, message: "Invalid query" }] }, { status: 400 }));
     const task = await start();
     await runDurableObjectAlarm(stub(task.taskId));
     expect((await rpc("tasks/get", { taskId: task.taskId })).body.result).toMatchObject({
       status: "completed", result: { isError: true, content: [{ type: "text", text: expect.stringContaining("40004") }] },
+    });
+  });
+
+  it("terminates a catchable storage failure on the final alarm retry", async () => {
+    const task = await start();
+    await runInDurableObject(stub(task.taskId), (_instance, state) => {
+      // Reject the running-state write in real SQLite, but permit terminal
+      // writes. This exercises the outer alarm catch, outside tool execution.
+      state.storage.sql.exec("CREATE TABLE rejected_running_write (value INTEGER CHECK (value = 1)) STRICT");
+      state.storage.sql.exec(`CREATE TRIGGER reject_running_write BEFORE INSERT ON engineering_task
+        WHEN NEW.status_message LIKE 'Running %'
+        BEGIN INSERT INTO rejected_running_write VALUES (0); END`);
+    });
+    expect(await stub(task.taskId).deliverAlarmRetry(5)).toContain("CHECK constraint failed");
+    expect((await rpc("tasks/get", { taskId: task.taskId })).body.result?.status).toBe("working");
+    expect(await stub(task.taskId).deliverAlarmRetry(6)).toBeNull();
+    expect((await rpc("tasks/get", { taskId: task.taskId })).body.result).toMatchObject({
+      status: "completed", result: { isError: true, content: [{ type: "text", text: "tool_failed:sqlite_check_constraint" }] },
+    });
+    await runInDurableObject(stub(task.taskId), async (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT kind FROM engineering_task_chunks WHERE kind = 'input'").toArray()).toEqual([]);
+      expect(await state.storage.getAlarm()).toBe(Date.now() + 604_800_000);
     });
   });
 
@@ -169,7 +240,9 @@ describe("engineering MCP task execution", () => {
     expect((await rpc("tasks/get", { taskId: task.taskId })).body.error?.code).toBe(-32602);
     await runDurableObjectAlarm(stub(task.taskId));
     await runInDurableObject(stub(task.taskId), async (_instance, state) => {
-      expect((await state.storage.list()).size).toBe(0);
+      expect(state.storage.sql.exec("SELECT task_id FROM engineering_task").toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT kind FROM engineering_task_payloads").toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT kind FROM engineering_task_chunks").toArray()).toEqual([]);
     });
   });
 
@@ -189,12 +262,30 @@ describe("engineering MCP task execution", () => {
         BEFORE UPDATE OF retired_at ON workspace_retirement_graph
         BEGIN SELECT RAISE(IGNORE); END`);
     });
-    const response = await rpc("tools/call", { name: "retire_org", arguments: { orgId: WORKSPACE } });
+    const response = await rpc("tools/call", { name: "retire_org", arguments: { orgId: WORKSPACE } }, { encodedName: true });
+    expect(response.body.result).toMatchObject({ resultType: "task", status: "working" });
     const task = TaskSnapshotSchema.parse(response.body.result);
     await rpc("tasks/cancel", { taskId: task.taskId });
     await expect(runDurableObjectAlarm(stub(task.taskId))).rejects.toThrow("engineering_retirement_incomplete");
     expect((await rpc("tasks/get", { taskId: task.taskId })).body.result).toMatchObject({
       status: "working", statusMessage: "Retirement incomplete: 1 remaining; retrying",
+    });
+    // A separate task exhausts the actual platform retry budget while this
+    // failed journal write persists. The production handler returns its partial
+    // receipt, erases inputs and schedules expiry, then a new call can resume.
+    const exhaustedResponse = await rpc("tools/call", { name: "retire_org", arguments: { orgId: WORKSPACE } });
+    const exhausted = TaskSnapshotSchema.parse(exhaustedResponse.body.result);
+    expect(await stub(exhausted.taskId).deliverAlarmRetry(5)).toBe("engineering_retirement_incomplete");
+    expect((await rpc("tasks/get", { taskId: exhausted.taskId })).body.result?.status).toBe("working");
+    expect(await stub(exhausted.taskId).deliverAlarmRetry(6)).toBeNull();
+    const partial = TaskSnapshotSchema.parse((await rpc("tasks/get", { taskId: exhausted.taskId })).body.result);
+    expect(partial.status).toBe("completed");
+    expect(partial.result?.isError).toBe(true);
+    expect(JSON.parse(partial.result!.content[0]!.text)).toMatchObject({ complete: false, remaining: 1 });
+    await runInDurableObject(stub(exhausted.taskId), async (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT kind FROM engineering_task_payloads WHERE kind = 'input'").toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT kind FROM engineering_task_chunks WHERE kind = 'input'").toArray()).toEqual([]);
+      expect(await state.storage.getAlarm()).toBe(Date.now() + 604_800_000);
     });
     await runInDurableObject(workspace, (_instance, state) => {
       state.storage.sql.exec("DROP TRIGGER hold_retirement_receipt");

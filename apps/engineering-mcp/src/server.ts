@@ -36,7 +36,7 @@ import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
 import { isCodeShaped, isDiagnosticCode, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import type { AccessPrincipal } from "./access";
+import { hasStableAccessSubject, type AccessPrincipal } from "./access";
 import type { Env } from "./env";
 import { CloudflareQueryError } from "./cloudflare-api";
 import { LAKEHOUSE_TABLES, LAKEHOUSES, queryLakehouse } from "./lakehouse";
@@ -69,7 +69,7 @@ class InspectionRefusal extends Error {
  * engineer who ran the tool and stays off the log, since a SQL error can quote
  * what the statement touched.
  */
-function toolErrorCode(error: unknown, tool: string): string {
+export function toolErrorCode(error: unknown, tool: string): string {
   if (error instanceof InspectionRefusal || error instanceof CloudflareQueryError) return error.code;
   const schema = zodDiagnosticCode(error, tool);
   if (schema) return schema;
@@ -192,10 +192,15 @@ const sqlInputSchema = {
   ),
 };
 
-export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal): McpServer {
+export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal, onTaskCreated?: () => void): McpServer {
   // Access also admits service assertions without a subject. They may execute
   // tools synchronously, but cannot share an "unknown" owner for stored data.
-  const hasTaskOwner = principal.subject.length > 0 && principal.subject !== "unknown";
+  const hasTaskOwner = hasStableAccessSubject(principal);
+  async function createTask(input: EngineeringTaskInput) {
+    const carrier = await createTaskCarrier(env, principal, input);
+    onTaskCreated?.();
+    return carrier;
+  }
   const server = new McpServer({
     name: "Rally engineering",
     version: "1.0.0",
@@ -248,12 +253,12 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }
 
   server.registerTool("retire_org", {
-    description: "Retire an Organization permanently, through the same door as Ace's Retire button: nobody can sign in to it, every Canvas, Sidekick and socket in it stops, and nothing reopens. There is no undo. Members simply lose it. The result reports complete: false while parts are still open; call again with the same orgId to resume the walk.",
+    description: "Retire an Organization permanently through the regional retirement service: nobody can sign in to it, every Canvas, Sidekick and socket in it stops, and nothing reopens. There is no undo. Task-capable clients receive a durable handle to poll while failed passes are retried. Synchronous results report complete: false while parts are still open; call again with the same orgId to resume the walk.",
     inputSchema: RetireEngineeringOrgInputSchema.unwrap().shape,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, async (request, ctx) => {
     const input = { name: "retire_org" as const, arguments: request };
-    return hasTaskOwner && acceptsTasks(ctx) ? createTaskCarrier(env, principal, input) : (await executeEngineeringTask(env, principal, input)).result;
+    return hasTaskOwner && acceptsTasks(ctx) ? createTask(input) : (await executeEngineeringTask(env, principal, input)).result;
   });
 
   const conversationReadSchema = ReadEngineeringConversationInputSchema.unwrap().omit({ kind: true, conversationId: true });
@@ -462,7 +467,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async (request, ctx) => {
     const input = { name: "query_data_lake" as const, arguments: request };
-    return hasTaskOwner && acceptsTasks(ctx) ? createTaskCarrier(env, principal, input) : (await executeEngineeringTask(env, principal, input)).result;
+    return hasTaskOwner && acceptsTasks(ctx) ? createTask(input) : (await executeEngineeringTask(env, principal, input)).result;
   });
 
   server.registerTool("query_worker_observability", {
