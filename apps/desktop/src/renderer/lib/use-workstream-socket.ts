@@ -1795,7 +1795,9 @@ export function useWorkstreamSocket(
             ...current,
             resources: exists
               ? current.resources.map((candidate) => candidate.id === resource.id ? resource : candidate)
-              : [...current.resources, resource],
+              // Match the snapshot's newest-attachment-first order, including
+              // several live frames batched into one renderer update.
+              : [resource, ...current.resources],
           };
         });
       }

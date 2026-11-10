@@ -353,6 +353,10 @@ the width and its resize edge. `ConversationSurface` scopes the panel to the
 conversation that opened it (`railScope`, the parent id), and a surface only
 closes, fades or restores a panel it owns.
 
+`RailSurface` focuses an explicitly opened panel and returns focus on removal.
+Automatic artifact reveals pass `focusOnOpen: false` through `InspectorRail`,
+so neither arrival nor removal takes focus from the composer or another control.
+
 A pane header's trailing buttons are one `IconGroup`
 (`packages/ui/src/components/icon-group.tsx`), which spaces them. Its `actions`
 fold into a "⋯" dropdown at phone width (640px and under), and whenever
@@ -432,6 +436,9 @@ It does not own:
   (the stored section), `lib/browser-rail-links.test.ts`. Run with
   `pnpm --filter @rally/desktop exec vitest run <path>`.
 - **A guest in the shell:** `lib/browser-collaboration.test.tsx`.
+- **Panel focus:** `components/rail-surface.test.tsx` verifies explicit opens
+  take and restore focus, while automatic reveals leave it alone on arrival
+  and removal.
 - **Which phone rule wins:** `screens/workspace-settings.test.tsx` mounts the
   real stylesheet at 390px with `test/app-stylesheet.ts` and reads the
   computed `display` of Settings' sections toggle, which the shell's
