@@ -1,3 +1,4 @@
+// Keep this import type-only: index.ts imports the model-pin values from this module.
 import type { AgentModelRole, ClientFeatureFlags } from "./index";
 
 /** Deployment-wide defaults. Environment overrides are optional. */
@@ -14,7 +15,7 @@ export const FEATURE_FLAG_ENV_KEYS = {
 } as const satisfies Record<keyof ClientFeatureFlags, string>;
 
 export type FeatureFlagEnvironment = Partial<Record<
-  (typeof FEATURE_FLAG_ENV_KEYS)[keyof ClientFeatureFlags], string
+  (typeof FEATURE_FLAG_ENV_KEYS)[keyof ClientFeatureFlags], unknown
 >>;
 
 /** Canonical model identities shared by runtime selection, routing and presentation. */
@@ -31,7 +32,6 @@ export const MODEL_IDS = {
   GEMINI_3_6_FLASH: "google/gemini-3.6-flash",
   GEMINI_3_5_FLASH: "google/gemini-3.5-flash",
   GEMINI_3_FLASH_PREVIEW: "google/gemini-3-flash-preview",
-  GEMINI_2_5_FLASH_LITE: "google/gemini-2.5-flash-lite",
   DEEPSEEK_V4_PRO: "deepseek/deepseek-v4-pro",
   DEEPSEEK_V4_FLASH: "deepseek/deepseek-v4-flash-0731",
   DEEPSEEK_V4_1_FLASH: "deepseek/deepseek-v4.1-flash",
@@ -76,6 +76,13 @@ export const AGENT_MODEL_ENV_KEYS = {
   resource_naming: "OPENROUTER_FASTER_MODEL",
 } as const satisfies Record<AgentModelRole, keyof typeof AGENT_MODEL_DEFAULTS>;
 
+/** Provider restrictions apply to primary and fallback models on every inference path. */
+export const AZURE_ONLY_MODEL_IDS: readonly string[] = [MODEL_IDS.GPT_5_6_SOL];
+
+export function agentModelTraceFeature(role: AgentModelRole): string {
+  return `agent-model-${role.replaceAll("_", "-")}`;
+}
+
 /** Model choices for inference paths with their own persistence or provider contracts. */
 // The model participates in the search namespace identity; changing it requires reindexing.
 export const MEMORY_EMBEDDING_MODEL = MODEL_IDS.QWEN3_EMBEDDING_8B;
@@ -90,7 +97,6 @@ export const MULTIMODAL_GENERATION_MODEL = "gpt-image-2";
 export const MULTIMODAL_GENERATION_PRICING_MODEL_ID = MODEL_IDS.GPT_IMAGE_2;
 export const MULTIMODAL_AUDIO_MODEL = "gpt-4o-mini-tts";
 export const MULTIMODAL_AUDIO_PRICING_MODEL_ID = MODEL_IDS.GPT_4O_MINI_TTS;
-export const REALTIME_TRANSCRIPTION_MODEL_ENV_KEY = "AZURE_OPENAI_REALTIME_DEPLOYMENT";
 
 export const AZURE_MODEL_DEPLOYMENTS = {
   [MODEL_IDS.GPT_5_6_SOL]: "gpt-5.6-sol",

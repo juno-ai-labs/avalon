@@ -1,4 +1,4 @@
-import { MEMORY_EMBEDDING_MODEL } from "@rally/contracts/runtime-config";
+import { MEMORY_EMBEDDING_MODEL, agentModelTraceFeature } from "@rally/contracts/runtime-config";
 import {
   OpenRouterClient,
   type EmbeddingDiagnostic,
@@ -13,6 +13,7 @@ import { runtimeDeferral, type WorkDeferral } from "../lib/defer";
 import { logStructuredEvent } from "../observability/logger";
 import {
   resolveAgentModelRouting,
+  isOpenRouterRouting,
   type AgentModelFlagContext,
   type AgentModelRole,
 } from "./agent-model-flags";
@@ -39,12 +40,6 @@ type StructuredInferenceRole = Extract<
   | "resource_naming"
   | "memory_sweep"
 >;
-
-type StructuredInferenceSource = StructuredInferenceRole;
-
-function structuredInferenceFeature(source: StructuredInferenceSource): string {
-  return `agent-model-${source.replaceAll("_", "-")}`;
-}
 
 export async function runEmbeddingInference(
   env: Env,
@@ -198,8 +193,13 @@ export async function runStructuredInference<T>(
 }> {
   const routing = input.routing
     ? AgentModelRoutingSchema.parse(input.routing)
-    : await resolveAgentModelRouting(env, input.role, input.context);
-  const feature = structuredInferenceFeature(input.role);
+    : await resolveAgentModelRouting(env, input.role, input.context, true);
+  if (!isOpenRouterRouting(routing)) {
+    // A persisted route must not silently change models or bypass provider policy.
+    const code = "agent_model_routing:routing:azure_only_model";
+    throw Object.assign(new Error(code), { code });
+  }
+  const feature = agentModelTraceFeature(input.role);
   const substreamId = input.context.workstreamId
     ? input.context.substreamId ?? "0"
     : undefined;

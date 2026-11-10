@@ -2,6 +2,7 @@
  * Select one model with no fallbacks for a scripted provider. Each scripted
  * reply represents one inference attempt, including a deliberate failure;
  * deployment defaults must not add an attempt that consumes the next reply.
+ * The test Worker disables model groups with empty strings until a double opts in.
  * Every Durable Object reads the isolate's environment through a proxy, so
  * these overrides apply to constructed objects too. Restore the model and fallback variables
  * after each test so other files retain their own configuration.

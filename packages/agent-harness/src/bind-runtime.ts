@@ -1,4 +1,4 @@
-import { MODEL_IDS, AZURE_MODEL_DEPLOYMENTS } from "@rally/contracts/runtime-config";
+import { MODEL_IDS, AZURE_MODEL_DEPLOYMENTS, AZURE_ONLY_MODEL_IDS, agentModelTraceFeature } from "@rally/contracts/runtime-config";
 import { createLoopCheckpoint, parseLoopCheckpoint, advanceLoopCheckpoint } from "@juno-ai/bind/session";
 import { INFERENCE_TTFT_TIMEOUT_MS } from "./inference-delay";
 import {
@@ -157,9 +157,7 @@ const MODEL_ROUTE_REGISTRY = parseModelRouteRegistry({
   version: "provider-router-v1",
   unboundDefault: { mode: "only", provider: "openrouter" },
   boundDefault: { mode: "ordered", providers: ["azure", "openrouter"] },
-  models: {
-    [MODEL_IDS.GPT_5_6_SOL]: { mode: "only", provider: "azure" },
-  },
+  models: Object.fromEntries(AZURE_ONLY_MODEL_IDS.map((model) => [model, { mode: "only", provider: "azure" }])),
 });
 const OPENROUTER_CAPABILITIES: ReadonlySet<InferenceCapability> = new Set(
   INFERENCE_CAPABILITIES,
@@ -2310,7 +2308,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             ? buildOpenRouterTracePayload(
                 args.input.traceContext ?? {
                   source: "agent_harness",
-                  feature: "agent-model-canvas",
+                  feature: agentModelTraceFeature("canvas"),
                   workspaceId: args.input.workspaceId,
                   workstreamId: args.input.workstreamId,
                   harnessRunId: args.input.harnessRunId,

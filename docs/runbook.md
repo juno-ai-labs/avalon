@@ -103,7 +103,7 @@ credentials, query parameters, or a fragment; invalid values fail Worker
 startup. The key remains a Worker secret. Rally's checked-in bindings currently map canonical `x-ai/grok-4.3`,
 `x-ai/grok-4.6`, and `openai/gpt-5.6-sol` to their Monad production deployment
 names. Grok tries Azure before OpenRouter for the same model; Sol is Azure-only
-and never traverses to OpenRouter. Model Flagship values stay canonical and must
+and never traverses to OpenRouter. Model configuration values stay canonical and must
 never contain an Azure deployment name.
 
 The live Monad production endpoint is
@@ -382,11 +382,6 @@ Use a custom token restricted to the Rally Cloudflare account and the `rallywith
 - Account: Queues Write/Edit — to attach a consumer on deploy and for the
   preflight to create a declared queue. A token that can only list queues fails
   the create with `Authentication error [code: 10000]`.
-- Account: Flagship Write/Edit — the permission is still in open beta and is
-  absent from the published permissions reference; find it by searching
-  `Flagship` in the dashboard's API-token editor. Read access alone lists apps
-  but fails `wrangler flagship apps create` with `Authentication error [code:
-  10000]`, and automatic provisioning on deploy fails the same way.
 - Account: Access Apps and Policies Write/Edit — Ace's deployment creates or
   updates its Access application and copies the migration site's current policy
   and identity-provider settings on every merge.
@@ -611,29 +606,29 @@ copy/delete count that does not match the plan.
 
 ### Ace internal administration
 
-`deploy-ace.yml` is the complete Ace release. A matching merge to `main`
-validates the workspace, creates every declared Queue, clones the migration
-site's current Cloudflare Access policy into an Ace-specific application,
-ensures the two Enabled-named product flags exist off by default, deploys the
-Hono Worker and Vite assets at `ace.internal.rallywith.ai`, installs the
-Flagship-only credential as an encrypted secret, and verifies that an
-unauthenticated request enters Access. No dashboard or laptop step follows the
-merge.
+`deploy-ace.yml` validates the workspace, creates declared Queues, copies the
+migration site's Access policy, deploys Ace, installs its Queue and regional
+operator secrets, and checks the unauthenticated Access redirect. It does not
+provision or read Flagship. API and desktop deployments run independently;
+configuration changes arrive in API deployments and clients' next snapshot.
 
-The API and desktop sides deploy from their existing workflows on the same
-merge: `packages/contracts/**` triggers both, `apps/api/**` triggers both
-regional Workers, and `apps/desktop/**` triggers the signed macOS release. The
-three workflows intentionally do not wait on one another. Queues retain an Ace
-change until a regional consumer is deployed, and both product flags remain off
-until every layer receives an explicit true.
+Set `ACE_QUEUES_API_TOKEN` to a dedicated Queues Edit token. The legacy token
+name remains a migration alias; deployment deletes the old Worker secret after
+installing the Queue binding. Rotate and revoke the old token to remove its
+Flagship permissions; merely renaming the binding does not do so. See
+[`ace.md`](ace.md#operations) for the alias removal condition.
 
-An Ace deployment that fails before Worker upload leaves the previous Ace
-version in place. If it created one of the flags first, that flag is still off
-and has no rules. If upload succeeds but the final Access probe fails, inspect
-the Ace Access application and `avalon-ace` Worker before retrying the workflow;
-the deploy script is idempotent. [`ace.md`](ace.md) owns the runtime recovery
-sequence and the rule that managed product flags are not edited directly in the
-Flagship dashboard.
+After all old Ace and API versions have stopped producing or consuming flag
+changes, inspect the retired `avalon-global-product-feature-flags` Queue, its
+regional flag-delivery Queues, and their dead-letter Queues. Drain or explicitly
+discard obsolete flag-key messages, then delete those hosted resources and the
+unused Flagship app through an authorized infrastructure cleanup. Removing their
+Wrangler declarations does not delete provisioned Cloudflare resources. This PR
+does not perform that cleanup.
+
+If upload succeeds but the Access probe fails, inspect the Ace Access application
+and Worker before retrying the idempotent release. Configuration recovery is a
+code or environment-variable change followed by an API deployment.
 
 ### The Durable Object migration tracker
 

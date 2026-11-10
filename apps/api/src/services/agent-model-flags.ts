@@ -10,7 +10,7 @@ import {
 } from "@rally/contracts";
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
-import { AGENT_MODEL_DEFAULTS, AGENT_MODEL_ENV_KEYS } from "@rally/contracts/runtime-config";
+import { AGENT_MODEL_DEFAULTS, AGENT_MODEL_ENV_KEYS, AZURE_ONLY_MODEL_IDS } from "@rally/contracts/runtime-config";
 import { z } from "zod";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
@@ -24,13 +24,52 @@ export interface AgentModelFlagContext {
   userId?: string | undefined;
 }
 
-export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentModelRouting {
+/** Structured gateways cannot use the harness's Azure-only routes. */
+export function isOpenRouterRouting(routing: AgentModelRouting): boolean {
+  return ![routing.model, ...routing.fallbackModels].some((model) => AZURE_ONLY_MODEL_IDS.includes(model));
+}
+
+function usesOpenRouterOnly(role: AgentModelRole): boolean {
+  return role === "resource_naming" || role === "memory_sweep";
+}
+
+function modelEnvironmentValue(env: Env, variable: keyof typeof AGENT_MODEL_DEFAULTS): string | undefined {
+  const value = env[variable];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string") return value;
+  logStructuredEvent(env, "warn", "agent_model_override_invalid", {
+    variable,
+    error_code: "agent_model_routing:invalid_type",
+  });
+  return undefined;
+}
+
+export function defaultAgentModelRouting(
+  env: Env,
+  role: AgentModelRole,
+  openRouterOnly = usesOpenRouterOnly(role),
+): AgentModelRouting {
   const variable = AGENT_MODEL_ENV_KEYS[role];
-  const model = env[variable]?.trim() || AGENT_MODEL_DEFAULTS[variable];
-  // An explicitly empty list disables fallbacks; an unset variable uses the constant.
-  const fallbackModels = (env.OPENROUTER_FALLBACK_MODEL ?? AGENT_MODEL_DEFAULTS.OPENROUTER_FALLBACK_MODEL)
+  // Unset uses the checked-in model; explicitly empty disables this model group.
+  const model = modelEnvironmentValue(env, variable)?.trim() ?? AGENT_MODEL_DEFAULTS[variable];
+  if (!model) {
+    const code = `agent_model_disabled:${variable}`;
+    throw Object.assign(new Error(code), { code });
+  }
+  const fallbackModels = (modelEnvironmentValue(env, "OPENROUTER_FALLBACK_MODEL") ?? AGENT_MODEL_DEFAULTS.OPENROUTER_FALLBACK_MODEL)
     .split(",").map((value) => value.trim()).filter(Boolean);
-  return { model, fallbackModels };
+  const routing = { model, fallbackModels };
+  if (!openRouterOnly || isOpenRouterRouting(routing)) return routing;
+  logStructuredEvent(env, "warn", "agent_model_override_invalid", {
+    agent: role,
+    variable,
+    error_code: "agent_model_routing:azure_only_model",
+  });
+  // Reject the entire shared override, including its fallback list.
+  return {
+    model: AGENT_MODEL_DEFAULTS[variable],
+    fallbackModels: [AGENT_MODEL_DEFAULTS.OPENROUTER_FALLBACK_MODEL],
+  };
 }
 
 /** A per-role JSON override replaces the entire route, including reasoning effort. */
@@ -38,21 +77,23 @@ export async function resolveAgentModelRouting(
   env: Env,
   role: AgentModelRole,
   context: AgentModelFlagContext = {},
+  openRouterOnly = usesOpenRouterOnly(role),
 ): Promise<AgentModelRouting> {
   void context; // Identity is retained in the caller contract; configuration is deployment-wide.
-  const fallback = defaultAgentModelRouting(env, role);
-  if (!env.AGENT_MODEL_ROUTING_JSON?.trim()) return fallback;
+  const fallback = () => defaultAgentModelRouting(env, role, openRouterOnly);
+  const raw = env.AGENT_MODEL_ROUTING_JSON;
+  if (raw === undefined || raw === null || (typeof raw === "string" && !raw.trim())) return fallback();
   let overrides: Record<string, unknown>;
   try {
-    overrides = z.record(z.string(), z.unknown()).parse(JSON.parse(env.AGENT_MODEL_ROUTING_JSON));
+    overrides = z.record(z.string(), z.unknown()).parse(typeof raw === "string" ? JSON.parse(raw) : raw);
   } catch (error) {
     logStructuredEvent(env, "warn", "agent_model_override_invalid", {
       variable: "AGENT_MODEL_ROUTING_JSON",
       error_code: zodDiagnosticCode(error, "agent_model_routing") ?? "agent_model_routing:invalid_json",
     });
-    return fallback;
+    return fallback();
   }
-  if (overrides[role] === undefined) return fallback;
+  if (overrides[role] === undefined) return fallback();
   const parsed = AgentModelRoutingSchema.safeParse(overrides[role]);
   if (!parsed.success) {
     logStructuredEvent(env, "warn", "agent_model_override_invalid", {
@@ -61,7 +102,15 @@ export async function resolveAgentModelRouting(
       error_code: zodDiagnosticCode(parsed.error, "agent_model_routing"),
       validation_issues: describeZodIssues(parsed.error),
     });
-    return fallback;
+    return fallback();
+  }
+  if (openRouterOnly && !isOpenRouterRouting(parsed.data)) {
+    logStructuredEvent(env, "warn", "agent_model_override_invalid", {
+      agent: role,
+      variable: "AGENT_MODEL_ROUTING_JSON",
+      error_code: "agent_model_routing:azure_only_model",
+    });
+    return fallback();
   }
   return parsed.data;
 }
