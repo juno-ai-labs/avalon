@@ -13,9 +13,7 @@ import { RegionalOnboardingService } from "./platform-onboarding-service";
  * Access authorizes the operator; product services still verify the named member or guest.
  *
  * `abandoned: "admit"` lets the call into an abandoned Organization, still as
- * one of its active users. Only archiving a Sidekick asks for it: that is
- * cleanup of what the Organization left behind, where a send, a read, a pause
- * or a resume would be using an Organization that has been closed.
+ * one of its active users. `docs/engineering-mcp.md` says which tool may ask.
  */
 export async function engineeringUserAuth(
   env: Env, orgId: WorkspaceId, userId: UserId,
