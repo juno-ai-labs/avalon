@@ -380,7 +380,8 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
 /**
  * Open the Canvas's newest artifact once its detail says it has one, unless
  * this conversation already restores a panel or the navigation asked for an
- * artifact. Once per opening: closing the panel afterwards keeps it closed.
+ * artifact. Once per opening; later live attachments are handled separately
+ * by ConversationSurface's useOpenAttachedArtifact.
  */
 function useOpenNewestArtifact(
   canvasId: string,

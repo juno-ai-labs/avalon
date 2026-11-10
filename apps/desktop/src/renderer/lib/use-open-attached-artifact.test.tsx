@@ -11,13 +11,15 @@ const upload = { id: 'upload', direction: 'source' as const };
 
 // Panel behavior is client-owned: render the hook with changing socket slices
 // and a real dismissible panel, without a server or provider double.
-function Conversation({ resources, conversation = 'canvas:0', visible = true }: {
+function Conversation({ resources, conversation = 'canvas:0', visible = true, generation = 1, restoredPanel = null }: {
   resources: Resources;
   conversation?: string;
   visible?: boolean;
+  generation?: number;
+  restoredPanel?: string | null;
 }): React.JSX.Element {
-  const [panel, open] = useState<string | null>(null);
-  useOpenAttachedArtifact(conversation, resources, visible, open);
+  const [panel, open] = useState<string | null>(restoredPanel);
+  useOpenAttachedArtifact(conversation, resources, visible, open, generation);
   return <>{panel && <aside aria-label="Artifact">{panel}<button onClick={() => open(null)}>Close</button></aside>}</>;
 }
 
@@ -69,5 +71,22 @@ describe('newly attached artifacts', () => {
     expect(screen.queryByRole('complementary')).toBeNull();
     rerender(<Conversation resources={[second, first]} />);
     expect(screen.getByRole('complementary')).toHaveTextContent('second');
+  });
+
+  it.each(['saved artifact', 'explicit artifact link'])('preserves a %s when retained data is replaced by a fresh snapshot', (restoredPanel) => {
+    // A revisit renders the previous socket snapshot from the query cache.
+    const { rerender } = render(<Conversation resources={[first]} generation={7} restoredPanel={restoredPanel} />);
+    rerender(<Conversation resources={[second, first]} generation={8} />);
+    expect(screen.getByRole('complementary')).toHaveTextContent(restoredPanel);
+    // A subsequent live attachment still opens, without requiring another snapshot.
+    rerender(<Conversation resources={[{ id: 'third', direction: 'artifact' }, second, first]} generation={8} />);
+    expect(screen.getByRole('complementary')).toHaveTextContent('third');
+  });
+
+  it('does not treat a reconnect snapshot as a new attachment', () => {
+    const { rerender } = render(<Conversation resources={[first]} />);
+    rerender(<Conversation resources={undefined} />);
+    rerender(<Conversation resources={[second, first]} generation={2} />);
+    expect(screen.queryByRole('complementary')).toBeNull();
   });
 });
