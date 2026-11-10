@@ -626,11 +626,11 @@ the time carry one size and one pair of greys whoever is speaking. Human turns
 sit on the trailing edge in bubbles. A colleague's byline carries a 16px avatar
 holding their initial. Rally's turns sit on the leading edge with an "R" avatar.
 The line reads outward from the edge the turn is aligned to, with the name first
-on the leading edge and last on the trailing edge. The markup follows that order, so a screen reader
-announces what a sighted reader sees. The username ends at the bubble-radius
-inset, and the person dot travels inside it. The time is `RelativeTime`, which
-stays current as now moves and names the exact local time on hover;
-[`relative-time.md`](relative-time.md) owns it and the clock behind it.
+on the leading edge and last on the trailing edge. The markup follows that
+order, so a screen reader announces what a sighted reader sees. The username
+ends at the bubble-radius inset. `RelativeTime` stays current and shows the
+exact local time on hover. See [Relative time](relative-time.md) for the clock
+it uses.
 
 The assistant turn is the leading-edge case: the author name (`Rally`, or
 `Automation` on an automation turn), an optional context label, the time, an
@@ -871,11 +871,19 @@ edge and uses the sender's bubble colors when their profile is available.
 
 **Why**
 In a shared Canvas, colleagues' replies used the same left-aligned plain text
-layout as Rally's replies. The bubble now identifies a human turn at a glance.
+layout as Rally's replies. The person who reported the layout asked for every
+human message to use a right-aligned bubble.
+
+**Considered and rejected**
+Section 2 of the [original Canvas design](PRDs/2026-11-06_canvases-and-sidekicks/design.html)
+put colleagues on the left so readers could recognize their own messages by
+position. Giving every human turn a bubble makes it easier to distinguish a
+person's message from Rally's by shape.
 
 **Consequences**
-The byline identifies the sender. Alignment follows the kind of turn across
-Canvas Chats and Sidekick conversations, regardless of who is viewing it.
+In Canvas Chats and Sidekick conversations, readers use the name in the byline
+and the teammate's avatar to tell human senders apart. The original mockup
+records the earlier layout.
 
 PR [#1516](https://github.com/juno-ai-labs/avalon/pull/1516).
 
