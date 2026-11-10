@@ -952,3 +952,30 @@ export function canvasesWrittenBy(
       ORDER BY canvas.updated_at DESC, canvas.canvas_id`, sidekickId,
   ).toArray().filter((row) => canvasReaderAllows(row, actor, sql)).map((row) => canvasSummary(row, report));
 }
+
+/**
+ * For each Sidekick, the Canvases somebody attached it to that this viewer
+ * may open, in the order they were attached: the dashboard card's links. A
+ * Canvas one of the Sidekick's own runs made is its output, listed on its
+ * detail, and is left out here, where it would add one link per run.
+ */
+export function canvasesAttachedTo(
+  sql: SqlStorage,
+  actor: { userId: string; actorRole: CanvasActor["actorRole"] },
+): Map<string, { id: string; title: string }[]> {
+  const attached = new Map<string, { id: string; title: string }[]>();
+  for (const row of sql.exec<CanvasRow & { automation_id: string }>(
+    `SELECT canvas.*, attachment.automation_id
+       FROM sidekick_conversation_attachments attachment
+       JOIN canvas_directory canvas ON canvas.canvas_id = attachment.parent_id
+      WHERE attachment.parent_kind = 'canvas' AND attachment.substream_id = '0' AND canvas.archived_at IS NULL
+        AND (canvas.writer_sidekick_id IS NULL OR canvas.writer_sidekick_id <> attachment.automation_id)
+      ORDER BY attachment.attached_at, attachment.parent_id`,
+  ).toArray()) {
+    if (!canvasReaderAllows(row, actor, sql)) continue;
+    const held = attached.get(row.automation_id) ?? [];
+    held.push({ id: row.canvas_id, title: row.title });
+    attached.set(row.automation_id, held);
+  }
+  return attached;
+}

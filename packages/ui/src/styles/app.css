@@ -6941,6 +6941,14 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 /* Sidekicks use the Canvas card shell, carrying their own identity and facts. */
 .sidekick-card-glyph { height: 72px; width: 72px; }
 .sidekick-card-status { position: absolute; right: 12px; top: 12px; }
+/* The Canvases a Sidekick works on: pills down the preview's right edge, under the Paused pill when the card has one. */
+.sidekick-card-canvases { align-items: flex-end; top: 12px; display: flex; flex-direction: column; gap: 6px; max-width: calc(100% - 24px); position: absolute; right: 12px; }
+.sidekick-card-canvases.is-below-status { top: 46px; }
+.sidekick-card-canvas { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); color: var(--av-sys-color-text-default); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 4px; max-width: 100%; padding: 4px 8px; position: relative; text-decoration: none; z-index: 1; }
+.sidekick-card-canvas > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidekick-card-canvas > svg { flex: none; }
+.sidekick-card-canvas:hover { box-shadow: 0 0 0 1px var(--av-sys-color-border-default); }
+.sidekick-card-canvas:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .dashboard-card-preview .sidekick-needs-input-badge { left: 12px; margin: 0; position: absolute; top: 12px; }
 .sidekick-card-body { padding: 14px; }
 .sidekick-card-body h3 { font-size: 15px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }

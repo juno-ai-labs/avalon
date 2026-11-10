@@ -711,7 +711,7 @@ import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
 import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
 import { CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_STATEMENTS, CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
 import { sidekickAttachedToCanvas } from "./canvas-sidekick-admission";
-import { canvasAppearanceReporter, canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
+import { canvasAppearanceReporter, canvasesAttachedTo, canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS, SIDEKICK_RUN_SEED_DROP_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
@@ -5354,6 +5354,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.homeSidekicksArchived = [];
       canvas.archive(input);
       this.broadcastPresence();
+      // A Sidekick attached to it names it on its dashboard card.
+      if (this.state.storage.sql.exec(
+        `SELECT 1 FROM sidekick_conversation_attachments WHERE parent_kind = 'canvas' AND parent_id = ? LIMIT 1`, input.canvasId,
+      ).toArray().length > 0) {
+        this.state.storage.sql.exec(`UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`);
+        this.sidekickDirectoryMoved = true;
+      }
       // What `HostedSidekick.remove` owes after its own archive commits: the
       // Sidekicks this archive took with it stop matching connector events.
       const archived = this.homeSidekicksArchived;
@@ -7856,7 +7863,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     const report = this.invalidAppearanceReporter(request.workspaceId);
-    return { items: admitted.map((row) => automationSummary(row, report)) };
+    const canvases = canvasesAttachedTo(this.state.storage.sql, { userId: request.userId, actorRole: actorRole ?? null });
+    return { items: admitted.map((row) => ({ ...automationSummary(row, report), attachedCanvases: canvases.get(row.automation_id) ?? [] })) };
   }
 
   /**
@@ -11331,6 +11339,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
+    // Only a member is sent this list. Their role is not read: an owner's
+    // reach into every Canvas is for managing one, not for listing it here.
+    const canvases = canvasesAttachedTo(this.state.storage.sql, { userId, actorRole: "member" });
     // The viewer's own Sidekicks, the Organization's, and those shared with
     // them, each with what they have not read in its shared conversation.
     return this.state.storage.sql.exec<AutomationDirectoryRow & { shared_with_user_ids: string; unread: number; needs_input: number;
@@ -11357,7 +11368,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId,
       limit,
     ).toArray().map((row) => ({ ...automationSummary(row, this.invalidAppearanceReporter(workspaceId)),
-      pinnedPosition: row.pinned_position }));
+      pinnedPosition: row.pinned_position, attachedCanvases: canvases.get(row.automation_id) ?? [] }));
   }
 
   /**
