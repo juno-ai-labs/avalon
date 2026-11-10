@@ -17,6 +17,8 @@ import { createMessageObjectPort } from "../runtime/message-port";
 import { automationModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
 import { activateWorkstreamLoop } from "./integrations";
 import { refreshMemoryDigestCopy } from "./memory-digest-service";
+import { openingWithEventContent, readSidekickEventContent } from "./sidekick-event-content";
+import { logInfo } from "../observability/logger";
 
 import { bootstrapConversationChildRuntime, provisionWorkstreamObject } from "./workstream-runtime-database";
 
@@ -71,6 +73,22 @@ export async function provisionSidekickRun(env: Env, message: SidekickRunProvisi
   );
   let triggerMessageId: string | null = null;
   if (definition.opening) {
+    // What the event is about, read with the connection it came from, so the
+    // run says what a message said without holding that account's tools. The
+    // append below lands once on the run's key, so a redelivery that reads
+    // again changes nothing.
+    const content = run.eventContent
+      // No deadline of its own: the read is one provider call inside a Queue
+      // delivery, bounded by what bounds every other call that delivery makes.
+      ? await readSidekickEventContent(env, { workspaceId: run.workspaceId, request: run.eventContent }, new AbortController().signal)
+      : { outcome: "none" as const };
+    if (content.outcome !== "none") {
+      logInfo(env, "sidekick_run_event_content", {
+        workspace_id: run.workspaceId, automation_id: run.automationId, run_id: run.runId,
+        connector_type: run.eventContent?.connectorType, outcome: content.outcome,
+        ...(content.outcome === "unavailable" ? { code: content.code } : { truncated: content.truncated }),
+      });
+    }
     const appended = await createMessageObjectPort(env, run.workspaceId, run.automationId, undefined, run.runId)
       .appendMessage({
         messageId: uuidV7(Date.now()),
@@ -79,7 +97,7 @@ export async function provisionSidekickRun(env: Env, message: SidekickRunProvisi
         authorUserId: null,
         externalActorJson: null,
         messageType: "system",
-        text: definition.opening.textContent,
+        text: openingWithEventContent(definition.opening.textContent, content),
         structuredContentJson: JSON.stringify(definition.opening.structuredContent),
         producedByRunId: null,
         now: Date.now(),

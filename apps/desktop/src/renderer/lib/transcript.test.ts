@@ -1845,6 +1845,27 @@ describe('grouping tool calls by plugin', () => {
     ]).map((message) => message.messageType)).toEqual(['plugin_activity']);
   });
 
+  it('keeps a completed ask for a Sidekick source on its own row, with the requests its card reads', () => {
+    // The Sidekicks plugin's other calls fold into its row; the ask is the
+    // one people answer, so it has to reach the feed with its output.
+    const output = { sidekickId: 'sidekick-1', requests: [{ requestId: 'request-1' }, { requestId: 'request-2' }] };
+    const asked = toolRow('ask', 'rally:sidekicks', 'Sidekicks', { name: 'sidekick_request_source', wireName: 'sidekick_request_source', output });
+    const grouped = groupPluginToolMessages([
+      toolRow('read', 'rally:sidekicks', 'Sidekicks'),
+      asked,
+      toolRow('read-again', 'rally:sidekicks', 'Sidekicks'),
+    ]);
+
+    expect(grouped.map((message) => message.messageType)).toEqual(['plugin_activity', 'tool_event', 'plugin_activity']);
+    expect(grouped[1]!.toolEvent?.output).toEqual({ sidekickId: 'sidekick-1', requests: [{ requestId: 'request-1' }, { requestId: 'request-2' }] });
+    // Still running, or refused: ordinary Sidekicks work, with no card to draw.
+    expect(groupPluginToolMessages([
+      toolRow('read', 'rally:sidekicks', 'Sidekicks'),
+      toolRow('asking', 'rally:sidekicks', 'Sidekicks', { name: 'sidekick_request_source', status: 'started' }),
+      toolRow('refused', 'rally:sidekicks', 'Sidekicks', { name: 'sidekick_request_source', status: 'failed', output: 'Only managers can ask.' }),
+    ]).map((message) => message.messageType)).toEqual(['plugin_activity']);
+  });
+
   it('carries every contribution\'s spans onto the group it built', () => {
     // The row was spread from the first call, so its own span stands for a
     // fraction of what the row now says. A stretch unioning these has to see

@@ -790,7 +790,10 @@ clarity; an omitted attachment must not block an authorized read.
 # Choose triggers and test the method
 Use an empty triggers array for reusable knowledge; do not add manual or scheduled
 triggers to make it valid. For work after an external change, load polling-for-events and follow
-its event-first setup and resource-registration procedure.
+its event-first setup and resource-registration procedure. When another person's account should
+start the work, or only events about a topic should get through, load setting-up-a-filtered-trigger:
+each person approves their own filter, and enrolling them as a delegate is not how their events are
+let in.
 
 For new or changed executable work, test the workflow with available reads or
 non-destructive trials. Inspecting tool schemas is discovery, not a workflow test.

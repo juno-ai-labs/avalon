@@ -21,6 +21,7 @@ import { useDocumentTitle } from '../lib/document-title';
 import { useRestoredRouteFallback } from '../lib/landing';
 import { ConversationSurface } from './conversation-surface';
 import { SidekickDelegation, useSidekickDelegates } from '../components/sidekick-delegation';
+import { SidekickSources } from '../components/sidekick-sources';
 import { sidekickRunLabel, useSidekickRunNumber } from '../components/sidekick-run-row';
 
 /**
@@ -230,6 +231,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
       automation={detail}
       delegateNames={new Map([...(delegates.data?.delegates ?? []), ...(delegates.data?.creator ? [delegates.data.creator] : [])].map((person) => [person.userId, person.displayName]))}
       delegation={<SidekickDelegation id={id} />}
+      sources={<SidekickSources id={id} />}
       error={act.error?.message}
       onAppearanceChange={setAppearance}
       onArchive={() => act.mutateAsync('archive').then(() => undefined)}
