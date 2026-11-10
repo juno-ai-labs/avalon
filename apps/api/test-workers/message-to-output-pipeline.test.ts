@@ -8,9 +8,9 @@
  * real alarm execute the run. Nothing is seeded into the object by hand; every
  * row the pipeline needs is created by the pipeline.
  *
- * The test worker has no model credentials, so no run can produce a model
- * reply. That is the point of the oracle here: a healthy pipeline must carry
- * the run all the way to the provider boundary and fail *there*, visibly.
+ * A provider double returns a terminal refusal by default; cases exercising
+ * replies install their own per-object streaming scripts. A healthy pipeline
+ * must carry the run all the way to the provider boundary and fail there visibly.
  * Failing anywhere earlier — admission, claim, environment assembly — is a
  * pipeline defect this suite exists to catch, and failing *silently* anywhere
  * is the outage we just had. So each case asserts three things: the run
@@ -73,7 +73,8 @@ import { launchWorkstreamHarness } from "../src/services/workstream-service";
 import { BOUND_PARAMETER_ID_CHUNK } from "../src/durable-objects/bound-parameters";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { createCanvas } from "../src/services/canvas-service";
-import { isMemberInput } from "./helpers/openrouter-double";
+import { isMemberInput, useOpenRouterDouble } from "./helpers/openrouter-double";
+import { useSelectedModel } from "./helpers/selected-model";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 import {
   seedCanonicalMessageRecord,
@@ -165,6 +166,11 @@ const AUTH: AuthContext = {
   role: "member" as const,
 };
 const TEST_ENV: Env = env;
+
+// These cases deliberately reach inference. Refuse at a deterministic provider
+// boundary unless a case installs its own per-object streaming script.
+useSelectedModel();
+const boundaryProvider = useOpenRouterDouble(() => ({ httpError: { status: 401 } }));
 
 beforeEach(async () => {
   // Evict the shared agent before wiping storage: every test drives the same
@@ -468,8 +474,8 @@ async function waitForLoopRelease(stub: DurableObjectStub): Promise<void> {
 /**
  * Give one real AgentLoopDO isolate a deterministic OpenRouter boundary.
  *
- * The Worker test deliberately omits a selected model so unrelated pipeline
- * cases cannot reach the network. This test needs the stronger oracle: the
+ * The suite selects a synthetic model and a default refusing double. Cases
+ * with a per-object provider install need the stronger oracle: the
  * exact body handed to the provider. The proxy changes only this live object,
  * and the fetch replacement records the wire body before returning a terminal
  * provider response. Neither bypasses the production harness or its RPC/storage
@@ -681,8 +687,8 @@ describe("a member's message travels the whole pipeline", () => {
 
     const run = await settledRun(stub, runId);
 
-    // Terminal, and honestly so: with no provider credentials the run must
-    // fail — but *at* the provider, past admission, claim, transcript
+    // Terminal, and honestly so: the provider double refuses the run, but
+    // only after admission, claim, transcript
     // projection, and prompt assembly. The recorded inference attempt is the
     // proof the pipeline reached the model: a run that died in plumbing never
     // writes one, whatever error code the wreck happens to carry. Both halves
@@ -698,11 +704,11 @@ describe("a member's message travels the whole pipeline", () => {
     // outcomes carry the "retrying/support" family. Both halves of this
     // incident — the misrouted transcript read and the unselectable resources
     // view — carried the same failure *code*, which is why the code alone is
-    // not the oracle. (The test worker has no flag service, so the engine
-    // stops at endpoint selection; that is as far as any credential-less
-    // environment can prove.)
+    // not the oracle. The provider double records the actual request and
+    // returns a terminal refusal without reaching a live service.
     const message = (JSON.parse(String(run.error_json)) as { message?: string }).message ?? "";
     expect(message).toMatch(/Retrying is unlikely to help|try again|support/iu);
+    expect(boundaryProvider.calls.some((call) => call.model === "double/primary")).toBe(true);
 
     // The member sees the truth, not a spinner: the work stream reflects the
     // failure and the singleton loop releases its active execution.
@@ -1420,6 +1426,11 @@ describe("a member's message travels the whole pipeline", () => {
     });
     const firstMessageId = "00000000-0000-7000-8000-0000000005f1";
     const finalMessageId = "00000000-0000-7000-8000-0000000005f2";
+    // Assert admission while the final answer is pending, before its alarm
+    // promotes it. A fast provider refusal must not race this storage read.
+    await runInDurableObject(stub, (_instance, state) => {
+      holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+    });
     const first = await externalAdmission(
       stub,
       "answerExternalElicitation",
