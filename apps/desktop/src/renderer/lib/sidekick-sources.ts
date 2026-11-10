@@ -1,0 +1,194 @@
+import {
+  SIDEKICK_SOURCE_ERRORS,
+  SidekickSourceRequestViewSchema,
+  type ActivityItem,
+  type SidekickSourceErrorCode,
+  type SidekickSourceRequestView,
+  type SidekickSourcesResult,
+} from '@rally/contracts';
+import type { SourceAsk, SourceWords } from '@rally/ui/components/sidekick-sources';
+import type { QueryClient } from '@tanstack/react-query';
+import { z } from 'zod';
+
+import { ApiError } from './api';
+import { connectorPresentation } from './connector-presentation';
+
+/**
+ * The client's side of Sidekick sources (`docs/sidekick-sources.md`): the
+ * cache keys its three surfaces read under, what moves them, the words a
+ * connector and its events are called, and the card a tool call draws.
+ */
+
+/**
+ * `GET /sidekicks/:id/sources`. Under the Sidekick's own key, so everything
+ * that already invalidates a Sidekick (its list row moving, the `automations`
+ * topic) re-reads its sources too.
+ */
+export function sidekickSourcesQueryKey(sidekickId: string): readonly unknown[] {
+  return ['automation', sidekickId, 'sources'];
+}
+
+/** One card's requests, under the Sidekick's sources so one invalidation moves the panel and every card. */
+export function sidekickSourceRequestsQueryKey(sidekickId: string, requestIds: readonly string[]): readonly unknown[] {
+  return [...sidekickSourcesQueryKey(sidekickId), 'requests', ...requestIds];
+}
+
+/**
+ * The person's own answer, as the server acknowledged it, written into every
+ * read that holds the request: the panel's list and each card. Nothing here
+ * is optimistic; the invalidation then re-reads for what the answer changed
+ * beside the request (an approval's new sources).
+ */
+export function applyDecidedSourceRequest(queryClient: QueryClient, decided: SidekickSourceRequestView): void {
+  const root = sidekickSourcesQueryKey(decided.sidekickId);
+  const replace = (requests: readonly SidekickSourceRequestView[]): SidekickSourceRequestView[] =>
+    requests.map((request) => request.requestId === decided.requestId ? decided : request);
+  queryClient.setQueryData<SidekickSourcesResult>(root, (current) => current && { ...current, requests: replace(current.requests) });
+  queryClient.setQueriesData<SidekickSourceRequestView[]>({ queryKey: [...root, 'requests'] }, (current) => current && replace(current));
+  void queryClient.invalidateQueries({ queryKey: root });
+}
+
+/**
+ * The Sidekicks whose source requests moved between two Activity pages: a
+ * request's row arrived, left, or changed where it stands. The Activity push
+ * is what tells the person asked and the person who asked that a request was
+ * answered or replaced, so it is what their open panel and cards re-read on.
+ */
+export function sidekicksWithMovedSourceRequests(
+  before: readonly ActivityItem[],
+  after: readonly ActivityItem[],
+): string[] {
+  const standing = (items: readonly ActivityItem[]): Map<string, { sidekickId: string; state: string }> => new Map(items
+    .filter((item) => item.sourceRequest)
+    .map((item) => [item.id, { sidekickId: item.parentId, state: `${item.sourceRequest!.requestId}:${item.sourceRequest!.state}` }]));
+  const was = standing(before);
+  const moved = new Set<string>();
+  for (const [id, row] of standing(after)) {
+    if (was.get(id)?.state !== row.state) moved.add(row.sidekickId);
+    was.delete(id);
+  }
+  for (const row of was.values()) moved.add(row.sidekickId);
+  return [...moved];
+}
+
+/** Re-read the sources of every Sidekick whose requests an Activity push moved. */
+export function invalidateMovedSourceRequests(
+  queryClient: QueryClient,
+  before: readonly ActivityItem[] | undefined,
+  after: readonly ActivityItem[],
+): void {
+  // The first page this window hears has nothing to compare against, and
+  // whatever is mounted read its state just now.
+  if (before === undefined) return;
+  for (const sidekickId of sidekicksWithMovedSourceRequests(before, after)) {
+    void queryClient.invalidateQueries({ queryKey: sidekickSourcesQueryKey(sidekickId) });
+  }
+}
+
+/**
+ * An event type in words. The contract carries the connector's own type
+ * (`email.received`) and no label, and the label a connector's manifest
+ * declares stays on the server, so this follows that manifest's default
+ * (`humanizeActivityEventType` in `packages/connectors/src/types.ts`: the
+ * family dropped past two segments, underscores to spaces, a capital) and
+ * words the few a person meets most the way the product says them.
+ */
+const EVENT_WORDS: Readonly<Record<string, string>> = {
+  'email.received': 'New email',
+};
+
+export function sourceEventWords(eventType: string): string {
+  const known = EVENT_WORDS[eventType];
+  if (known) return known;
+  const parts = eventType.split('.');
+  if (parts.length > 2) parts.shift();
+  const text = parts.join(' ').replaceAll('_', ' ').trim();
+  return text ? `${text[0]!.toUpperCase()}${text.slice(1)}` : eventType;
+}
+
+/**
+ * Google is one connector type and several products, and a source names
+ * events rather than a product: mail events are Gmail's, calendar events
+ * Google Calendar's, file events Google Drive's. A mix, or a family this does
+ * not know, is Google.
+ */
+function googleProduct(eventTypes: readonly string[]): string {
+  const families = new Set(eventTypes.map((eventType) => eventType.split('.')[0]));
+  const only = (...names: string[]): boolean => [...families].every((family) => family !== undefined && names.includes(family));
+  if (families.size === 0) return 'Google';
+  if (only('email')) return 'Gmail';
+  if (only('calendar')) return 'Google Calendar';
+  if (only('drive', 'docs', 'sheets')) return 'Google Drive';
+  return 'Google';
+}
+
+/**
+ * What a source's connector and events are called. Every other connector is
+ * named by `connectorPresentation`, the name its mention and its Settings
+ * card already wear.
+ */
+export const sourceWords: SourceWords = ({ connectorType, eventTypes }: SourceAsk) => ({
+  connector: connectorType === 'google' ? googleProduct(eventTypes) : connectorPresentation(connectorType).name,
+  events: eventTypes.map(sourceEventWords).join(', '),
+});
+
+/**
+ * Why an answer or a withdrawal was refused, in the product's words: the
+ * contract's own sentence for each refusal it names, and for an approval with
+ * nothing connected, which account to connect first. Anything else is the
+ * server's own message.
+ */
+export function sourceRefusal(error: Error, ask?: SourceAsk): string {
+  const code = error instanceof ApiError ? error.code : undefined;
+  if (code === 'sidekick_source_connection_missing' && ask) {
+    return `Connect your ${sourceWords(ask).connector} account in Settings first. There is nothing to allow until it is connected.`;
+  }
+  if (code !== undefined && code in SIDEKICK_SOURCE_ERRORS) return SIDEKICK_SOURCE_ERRORS[code as SidekickSourceErrorCode];
+  return error.message;
+}
+
+/** The agent tool that asks people for a source (plugin `rally_sidekicks`, `request_source`). */
+export const SIDEKICK_SOURCE_REQUEST_WIRE_NAME = 'sidekick_request_source';
+
+/**
+ * A card needs only which requests to read; where each stands is read live.
+ * The tool's output is otherwise the asker's view at the moment it asked
+ * (`yours` is the asker's, and every state is already old), so nothing else
+ * of it is required to draw a card.
+ */
+const sourceRequestCardEnvelopeSchema = z.object({
+  sidekickId: z.string().min(1),
+  requests: z.array(z.object({ requestId: z.string().min(1) })).min(1),
+});
+
+export interface SidekickSourceRequestCardInput {
+  sidekickId: string;
+  requestIds: string[];
+  /**
+   * The requests as the tool answered them, when its output is whole: what
+   * the card paints until its own read lands. Never authority for a state.
+   */
+  asked: SidekickSourceRequestView[] | null;
+}
+
+/**
+ * The card a completed `sidekick_request_source` call draws, from the output
+ * its transcript block keeps. A call still running, one that failed, and one
+ * whose output did not survive stay ordinary tool activity.
+ */
+export function sidekickSourceRequestCardFromToolEvent(event: {
+  name: string;
+  wireName?: string | undefined;
+  status?: string | undefined;
+  output?: unknown;
+} | undefined): SidekickSourceRequestCardInput | null {
+  if (!event || (event.wireName ?? event.name) !== SIDEKICK_SOURCE_REQUEST_WIRE_NAME || event.status !== 'completed') return null;
+  const parsed = sourceRequestCardEnvelopeSchema.safeParse(event.output);
+  if (!parsed.success) return null;
+  const asked = z.object({ requests: z.array(SidekickSourceRequestViewSchema) }).safeParse(event.output);
+  return {
+    sidekickId: parsed.data.sidekickId,
+    requestIds: parsed.data.requests.map((request) => request.requestId),
+    asked: asked.success ? asked.data.requests : null,
+  };
+}

@@ -66,11 +66,16 @@ export function conversationResourceLinksFrom(
   const userId = access?.principal.type === "user" ? access.principal.userId : null;
   return conversationResourceLinks(
     resourcePort(workspaceId, workstreamId, substreamId),
-    access && userId ? async (context) => {
+    access ? async (context) => {
+      // A run reaches its Sidekick's conversations as the Sidekick itself,
+      // which the Organization decides from the run's row; the wizard reaches
+      // what its person can open, and with no person reaches nothing.
+      const runId = context.substreamId !== "0" ? context.substreamId : undefined;
+      if (userId === null && runId === undefined) return [];
       const workspace = await durableObjectStubForWorkspace(access.env, access.env.WORKSPACE_DOS,
         asWorkspaceId(workspaceId), workspaceDOName(access.env.AVALON_REGION, asWorkspaceId(workspaceId)));
       const { conversations } = await workspace.conversationToolScope({
-        workspaceId, userId,
+        workspaceId, userId, ...(runId ? { runId } : {}),
         scope: { kind: "sidekick", automationId: context.sidekickId },
       });
       const sources = conversations.map((conversation) => ({

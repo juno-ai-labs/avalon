@@ -1,6 +1,7 @@
 import { AGENT_MODEL_OVERRIDES } from "./runtime-config";
 export * from './artifact-picker';
 export * from "./sidekick-delegation";
+export * from "./sidekick-sources";
 import { AnnotationsSchema, validateAnnotationAttachments } from './artifact-annotations';
 export * from './artifact-annotations';
 import { ExternalPeopleSchema } from "./external-people";
@@ -2801,7 +2802,11 @@ export const ToolExecutionAccountSchema = z.strictObject({
   sidekickId: IdSchema,
   connectionId: IdSchema,
   principal: ExecutionPrincipalSchema,
-  delegatedUserId: UserIdSchema,
+  /**
+   * Whose delegation served the operation. Null when nobody's did: an
+   * Organization connection used by a run that acts as the Sidekick itself.
+   */
+  delegatedUserId: UserIdSchema.nullable(),
   grantGeneration: z.number().int().nonnegative(),
 }).refine((account) => account.principal.type !== "user" || account.principal.userId === account.delegatedUserId, {
   path: ["delegatedUserId"], message: "A personal operation's delegate must match its serving principal",

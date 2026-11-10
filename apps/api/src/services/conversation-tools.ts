@@ -88,8 +88,10 @@ export type { ConversationPostRequest, ConversationToolScope };
 export interface ConversationToolAccess {
   scope: ConversationToolScope;
   tools: readonly ConversationToolName[];
-  /** Who reads and posts: the person working in the loop, or a run's run-as user. */
-  actingUserId: string;
+  /** The person working in the loop; null for a run that acts as the Sidekick itself. */
+  actingUserId: string | null;
+  /** The run, whose reach the Organization decides from its own row. Absent for the wizard. */
+  runId?: string;
 }
 
 /**
@@ -103,18 +105,20 @@ export interface ConversationToolAccess {
  *   attach, so a run cannot widen its own reach.
  *
  * A Canvas's Chat gets none: its own transcript and Canvas are its context.
- * A loop acting under workspace authority has no person to admit, and a run
- * child woken without its run has no Sidekick context; neither gets a scope.
+ * A run reaches its Sidekick's conversations whoever it acts as, a person or
+ * the Sidekick itself. A run child woken without its run has no Sidekick
+ * context, and a wizard turn with no person has nobody to admit; neither gets
+ * a scope.
  */
 export function conversationToolAccess(input: WorkstreamWorkflowInput): ConversationToolAccess | null {
-  if (input.executionPrincipal.type !== "user") return null;
-  const actingUserId = input.executionPrincipal.userId;
+  const actingUserId = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
   const substreamId = input.substreamId ?? "0";
   if (input.parentKind !== "automation") return null;
   if (input.automationRun) {
     return { scope: { kind: "sidekick", automationId: input.automationRun.automationId },
-      tools: ["list", "read", "search", "post"], actingUserId };
+      tools: ["list", "read", "search", "post"], actingUserId, runId: input.automationRun.runId };
   }
+  if (actingUserId === null) return null;
   if (substreamId !== "0") return null;
   // Attach widens what every later run reaches, and post speaks as the
   // Sidekick, so only a turn the claim marked as the wizard's, which it does
@@ -514,11 +518,12 @@ export function createConversationsPlugin(
   if (!access) return null;
   const { scope, actingUserId } = access;
   const workspaceId = asWorkspaceId(input.workspaceId);
+  const reaching = { workspaceId, userId: actingUserId, ...(access.runId ? { runId: access.runId } : {}) };
   const postArguments = ConversationPostArgumentsSchema;
 
   async function resolve(reference: string) {
     const resolved = await (await ports.workspace()).resolveConversationToolTarget({
-      workspaceId, userId: actingUserId, scope, reference,
+      ...reaching, scope, reference,
     });
     if (!resolved.ok) throw conversationRefusalError(resolved, reference);
     return resolved;
@@ -539,7 +544,7 @@ export function createConversationsPlugin(
       const state = args.cursor !== undefined ? parseCursor(ListCursorSchema, args.cursor) : null;
       const limit = state?.limit ?? args.limit ?? CONVERSATION_DEFAULT_PAGE_SIZE;
       const offset = state?.offset ?? 0;
-      const scoped = await (await ports.workspace()).conversationToolScope({ workspaceId, userId: actingUserId, scope });
+      const scoped = await (await ports.workspace()).conversationToolScope({ ...reaching, scope });
       const page = scoped.conversations.slice(offset, offset + limit);
       const next = offset + page.length;
       return {
@@ -615,7 +620,7 @@ export function createConversationsPlugin(
       // Every target is admitted now: a named one by resolve, the rest by the list's own re-admission.
       const targets = args.conversation !== undefined
         ? [(await resolve(args.conversation)).conversation]
-        : (await (await ports.workspace()).conversationToolScope({ workspaceId, userId: actingUserId, scope })).conversations;
+        : (await (await ports.workspace()).conversationToolScope({ ...reaching, scope })).conversations;
       const byAddress = new Map(targets.map((target) => [`${target.parentId}/${target.substreamId}`, target]));
       const hits = targets.length === 0 ? [] : await ports.searchMessages({ query: args.query, conversations: targets, limit });
       const found = hits.flatMap((hit) => {
@@ -723,6 +728,8 @@ export function createConversationsPlugin(
         throw conversationRefusalError({ ok: false, code: "conversation_not_found", available: [], resourceId: null },
           args.conversation);
       }
+      // Attach is the wizard's alone, and a wizard turn always has its person.
+      if (actingUserId === null) throw new Error("conversation_attach_requires_person");
       const attached = await (await ports.workspace()).attachSidekickConversation({
         workspaceId, userId: actingUserId, automationId: scope.automationId, reference,
       });

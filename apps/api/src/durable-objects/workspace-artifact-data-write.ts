@@ -22,8 +22,14 @@ export const ArtifactDataWriteFactsRequestSchema = z.strictObject({
   resourceId: IdSchema,
   /** The Sidekick whose run is writing, or null for a Canvas's Chat. */
   sidekickId: IdSchema.nullable(),
-  /** The person the write is made as, who must be able to open the artifact's Canvas now. */
-  userId: UserIdSchema,
+  /**
+   * The person the write is made as: a Canvas's Chat's, who must be able to
+   * open the artifact's Canvas now. Null for a run that acts as the Sidekick
+   * itself.
+   */
+  userId: UserIdSchema.nullable(),
+  /** The Sidekick's run, whose reach the object reads from its row. Absent for a Canvas's Chat. */
+  runId: IdSchema.optional(),
 });
 export type ArtifactDataWriteFactsRequest = z.input<typeof ArtifactDataWriteFactsRequestSchema>;
 

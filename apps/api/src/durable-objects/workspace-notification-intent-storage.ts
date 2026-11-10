@@ -137,7 +137,8 @@ export interface ParentNoticeRecord {
   /** The Canvas or Sidekick: the intent's `workstream_id`, which delivery checks the person may still open. */
   parentId: string;
   generation: number;
-  kind: "new_message" | "artifact_updated" | "access_request" | "access_granted" | "access_denied";
+  kind: "new_message" | "artifact_updated" | "access_request" | "access_granted" | "access_denied"
+    | "source_request" | "source_approved" | "source_declined";
   recipientUserId: string;
   intentId: string;
   /** With the recipient and the kind, what makes a repeat one intent. */
@@ -157,7 +158,8 @@ export interface ParentNoticeRecord {
 
 /**
  * Record a hosted parent's own notice for one person: a reply, a pinned
- * Canvas's new version, an access request or its grant. Like a run notice it
+ * Canvas's new version, an access request or its grant, a Sidekick source
+ * request or its answer. Like a run notice it
  * is written `delivered` (the queue messages, one per chosen sink, are its
  * delivery, so there is no lease), unless `skipCode` says why it is not
  * pushed. The caller holds the transaction. The Activity row is written only
@@ -283,7 +285,8 @@ type NotificationIntentRow = Record<string, SqlStorageValue> & {
   source_generation: number;
   required_directory_version: number;
   notification_kind: "mention" | "participant_added" | "needs_input" | "run_finished"
-    | "new_message" | "artifact_updated" | "access_request" | "access_granted" | "access_denied";
+    | "new_message" | "artifact_updated" | "access_request" | "access_granted" | "access_denied"
+    | "source_request" | "source_approved" | "source_declined";
   payload_json: string | null;
   state: "pending" | "processing" | "delivered" | "skipped" | "failed";
 };
