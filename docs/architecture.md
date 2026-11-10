@@ -100,7 +100,6 @@ docs/                      Product, architecture, security, setup, runbooks
    repositories, connector adapters, agent-loop code, UI primitives, and test
    fixtures. Business rules live here or in services, never in route handlers.
 4. **Internal operator Workers** sit behind Cloudflare Access and verify the
-   signed Access assertion again in application code. Ace manages product flags;
    the migration tracker manages Durable Object schema state. Neither is a
    privileged route inside the customer API.
 
@@ -821,6 +820,12 @@ kept as documents; changelog entries that cite one name it as text.
   [`private-access.md`](private-access.md).
 
 ## Changelog
+
+### 2026-11-10 — Retire internal administration apps
+
+Removed ACE and the migration tracker at the product owner's request.
+The engineering MCP keeps its own Access verifier and policy; eager migration
+passes use the operator CLI for WorkspaceDO and AgentLoopDO.
 
 ### 2026-11-09 — The meeting-cleanup RPCs are deleted
 
