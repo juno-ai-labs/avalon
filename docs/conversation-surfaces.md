@@ -217,10 +217,10 @@ copy (`feedFromLocalCache`) may predate the artifact, and closing on it shut a
 Canvas's newly opened artifact on a first visit.
 
 Human message dots, avatars and bubble backgrounds resolve the sender's current account
-color from the live member-presentation context. The reader's own bubble is the
+color from the live member-presentation context. The sender's bubble uses the
 color's pastel pair (`markColors`: `project-tint-<key>` under
-`project-ink-<key>`), themed per appearance, as design.html §2 and §5 draw it; the
-saturated hue under white ink read 3.58:1 on rose (v3-G3). The same resolution applies
+`project-ink-<key>`), themed per appearance. The saturated hue under white ink
+read 3.58:1 on rose (v3-G3). The same resolution applies
 to answered elicitations and optimistic answers attributed to the current user.
 Profile changes repaint already-loaded turns without rewriting transcript data.
 The dot and avatar fill come straight from the palette — `sys.color.project.<key>`, resolved
@@ -622,12 +622,11 @@ surface has to be added to both lists, or a send made of that attachment alone
 goes out with no in-flight cue. Every
 turn's identity line is `MessageByline`, one component for the assistant's turn,
 a colleague's, the reader's own and a settled elicitation answer, so the name and
-the time carry one size and one pair of greys whoever is speaking. Only the
-reader's own turn sits on the trailing edge, in its bubble; a colleague's sits on
-the leading edge as plain text under a 16px avatar holding their initial, and
-Rally's carries an "R" avatar (design.html §2). The line reads outward from the edge the
-turn is aligned to — name first on the leading edge, name last on the trailing
-one — laid out in markup rather than by CSS ordering, so a screen reader
+the time carry one size and one pair of greys whoever is speaking. Human turns
+sit on the trailing edge in bubbles. A colleague's byline carries a 16px avatar
+holding their initial. Rally's turns sit on the leading edge with an "R" avatar.
+The line reads outward from the edge the turn is aligned to, with the name first
+on the leading edge and last on the trailing edge. The markup follows that order, so a screen reader
 announces what a sighted reader sees. The username ends at the bubble-radius
 inset, and the person dot travels inside it. The time is `RelativeTime`, which
 stays current as now moves and names the exact local time on hover;
@@ -863,6 +862,20 @@ captured pin IDs. [Artifact annotations](artifact-annotations.md) owns the
 selection and message protocol.
 
 ## Changelog
+
+### 2026-11-09 — Every human message uses the right-side bubble
+
+**What changed**
+The shared feed aligns human messages and answered questions on the trailing
+edge and uses the sender's bubble colors when their profile is available.
+
+**Why**
+In a shared Canvas, colleagues' replies used the same left-aligned plain text
+layout as Rally's replies. The bubble now identifies a human turn at a glance.
+
+**Consequences**
+The byline identifies the sender. Alignment follows the kind of turn across
+Canvas Chats and Sidekick conversations, regardless of who is viewing it.
 
 ### 2026-11-09 — The surface's two hosts are a Canvas's Chat and a Sidekick's conversation; Breakouts, merge-back and suggestions leave it
 
