@@ -48,9 +48,9 @@ current clients already refresh through HTTP and subscription snapshots.
 
 | Roles | Default model | Shared override |
 | --- | --- | --- |
-| `canvas`, `sidekick_run` | `openai/gpt-5.6-terra` | `OPENROUTER_PRIMARY_MODEL` |
+| `canvas`, `sidekick_run` | `openai/gpt-6.1-terra` | `OPENROUTER_PRIMARY_MODEL` |
 | `sidekick_wizard`, `memory_sweep` | `openai/gpt-6.1-sol` | `OPENROUTER_SMARTER_MODEL` |
-| `resource_naming` | `openai/gpt-5.6-terra` | `OPENROUTER_FASTER_MODEL` |
+| `resource_naming` | `openai/gpt-6.1-terra` | `OPENROUTER_FASTER_MODEL` |
 
 `OPENROUTER_FALLBACK_MODEL` overrides the default `google/gemini-3.8-flash`
 fallback. It is a comma-separated ordered list; an explicitly empty string
@@ -65,7 +65,7 @@ role's value replaces its complete route, including ordered fallbacks and
 optional `reasoningEffort` (`low`, `medium`, or `high`):
 
 ```dotenv
-AGENT_MODEL_ROUTING_JSON='{"canvas":{"model":"openai/gpt-5.6-terra","fallbackModels":[],"reasoningEffort":"low"}}'
+AGENT_MODEL_ROUTING_JSON='{"canvas":{"model":"openai/gpt-6.1-terra","fallbackModels":[],"reasoningEffort":"low"}}'
 ```
 
 Omitting `fallbackModels` in a role override means no fallbacks. Roles omitted
@@ -173,6 +173,12 @@ and add a behavioral test for its gate. A new agent role must be mapped in
 
 Entries below the 2026-11-09 local-configuration change describe the retired
 Flagship design, including the earlier entries from that same date.
+
+### 2026-11-09 — Advance primary and naming defaults to GPT-6.1 Terra
+
+The requested primary and faster defaults now use `openai/gpt-6.1-terra` from
+the central catalog. Canvas and Sidekick runs, plus resource naming, inherit
+that choice. Explicit environment routes and conversation pins retain precedence.
 
 ### 2026-11-09 — Resolve flags locally from constants and environment overrides
 
