@@ -55,7 +55,8 @@
     "migrate:substream-agents": "node scripts/force-substream-agent-migrations.mjs",
     "migrate:substream-agents:probe": "pnpm --filter @rally/api exec wrangler dev --remote --config ../../scripts/substream-agent-jurisdiction-probe/wrangler.jsonc --port 8790",
     "deploy:global": "dotenv -e .env.local -- pnpm --filter @rally/api run deploy:global",
-    "dev:browser": "pnpm --filter @rally/browser dev"
+    "dev:browser": "pnpm --filter @rally/browser dev",
+    "preview:canvas-guide": "pnpm --filter @rally/api exec -- wrangler dev --local --config ../../canvas-seeds/getting-started-with-canvases/preview/wrangler.jsonc --port 8795 --persist-to ../../canvas-seeds/getting-started-with-canvases/preview/.wrangler/state"
   },
   "devDependencies": {
     "@eslint/js": "latest",
