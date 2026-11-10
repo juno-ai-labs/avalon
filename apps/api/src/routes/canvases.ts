@@ -17,6 +17,7 @@ import {
   CreateCanvasRequestSchema,
   CreatedCanvasSchema,
   SidebarPinRequestSchema,
+  SidebarPinOrderRequestSchema,
 } from "@rally/contracts/canvases";
 
 import type { HonoAppEnv } from "../env";
@@ -50,6 +51,13 @@ canvasRoutes.get("/", zValidator("query", z.object({ query: z.string().trim().mi
 });
 canvasRoutes.post("/", zValidator("json", CreateCanvasRequestSchema), async (c) =>
   c.json(CreatedCanvasSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).create(c.req.valid("json"))), 201));
+// Guests can arrange the same personal pins they can create. The legacy
+// workspace route stays for clients that already use it.
+canvasRoutes.put("/pinned-order", namedZValidator("canvas_pin_order", "Canvas pin order must contain Canvas ids")(
+  "json", SidebarPinOrderRequestSchema.pick({ itemIds: true })), async (c) => {
+  await new CanvasService(c.env, getWorkspaceAuth(c)).reorderPins("canvas", c.req.valid("json").itemIds);
+  return c.body(null, 204);
+});
 canvasRoutes.get("/:id", canvasIdParam, async (c) => {
   c.header("Cache-Control", "no-store");
   return c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).detail(c.req.valid("param").id)));

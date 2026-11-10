@@ -87,6 +87,22 @@ describe('the Canvas routes', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it('lets a member or guest reorder their Canvas pins and names malformed ids', async () => {
+    const reorder = vi.spyOn(CanvasService.prototype, 'reorderPins').mockResolvedValue(undefined);
+    for (const role of ['member', null] as const) {
+      const response = await routedApp(role).request('/canvases/pinned-order',
+        { ...json({ itemIds: [CANVAS_ID] }), method: 'PUT' }, env());
+      expect(response.status).toBe(204);
+      expect(reorder).toHaveBeenLastCalledWith('canvas', [CANVAS_ID]);
+    }
+    reorder.mockClear();
+    const response = await routedApp(null).request('/canvases/pinned-order',
+      { ...json({ itemIds: ['bad-id'] }), method: 'PUT' }, env());
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: 'canvas_pin_order_invalid:itemIds.0:invalid_format' } });
+    expect(reorder).not.toHaveBeenCalled();
+  });
+
   it('pins and unpins through the service, and refuses an id that is not one', async () => {
     const pin = vi.spyOn(CanvasService.prototype, 'pin').mockResolvedValue(undefined);
     expect((await routedApp().request(`/canvases/${CANVAS_ID}/pin`, json({ pinned: true }), env())).status).toBe(204);

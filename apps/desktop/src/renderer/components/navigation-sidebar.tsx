@@ -16,6 +16,7 @@ import { useDockBadge } from '../lib/dock-badge';
 import type { ActivityList } from '../lib/sidebar-list-store';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { ActivitySection, activityRoute, useActivityList } from './activity-sidebar-section';
+import { CanvasPinRail } from './canvas-pin-rail';
 import { CanvasesSection } from './canvas-sidebar-section';
 import { ErrorNotice, IconButton } from './primitives';
 import { WorkspaceUpdateNotice } from './pushed-list-pending';
@@ -281,20 +282,22 @@ export function NavigationSidebar({
   >
     <div className="navigation-body">
       <nav aria-label="Sections" className="navigation-rail">
-        {host === 'desktop' && <div className="navigation-rail-top window-drag" />}
-        {SECTIONS.map((candidate) => <RailItem
-          active={candidate.id === section}
-          aria-current={candidate.id === section ? 'page' : undefined}
-          // Named section first, then its count: "Canvases, 10 unread".
-          aria-label={badges[candidate.id] > 0 ? `${candidate.label}, ${badgeLabel(candidate.id, badges[candidate.id])}` : candidate.label}
-          badge={<RailBadge count={badges[candidate.id]} />}
-          icon={candidate.icon}
-          key={candidate.id}
-          label={candidate.label}
-          onClick={() => pickSection(candidate.id)}
-        />)}
-        <div className="navigation-rail-spacer" />
-        {accountMenu}
+        <div className="navigation-rail-sections">
+          {host === 'desktop' && <div className="navigation-rail-top window-drag" />}
+          {SECTIONS.map((candidate) => <RailItem
+            active={candidate.id === section}
+            aria-current={candidate.id === section ? 'page' : undefined}
+            // Named section first, then its count: "Canvases, 10 unread".
+            aria-label={badges[candidate.id] > 0 ? `${candidate.label}, ${badgeLabel(candidate.id, badges[candidate.id])}` : candidate.label}
+            badge={<RailBadge count={badges[candidate.id]} />}
+            icon={candidate.icon}
+            key={candidate.id}
+            label={candidate.label}
+            onClick={() => pickSection(candidate.id)}
+          />)}
+        </div>
+        <CanvasPinRail />
+        <div className="navigation-rail-account">{accountMenu}</div>
       </nav>
       <div className="navigation-panel">
         <header className="navigation-panel-header window-drag">
