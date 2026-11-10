@@ -43,6 +43,7 @@ import { LAKEHOUSE_TABLES, LAKEHOUSES, queryLakehouse } from "./lakehouse";
 import { observabilityQueryInputSchema, queryObservability } from "./observability";
 import { organizationPage, organizationPageInputSchema } from "./organizations";
 import { userPage, userPageInputSchema } from "./users";
+import { acceptsTasks, createTaskCarrier, registerTaskMethods, type EngineeringTaskInput } from "./tasks";
 
 type ToolResult = {
   content: [{ type: "text"; text: string }];
@@ -110,6 +111,26 @@ function inspectionBindings(env: Env) {
     return binding;
   });
 }
+
+async function organizationBinding(env: Env, orgId: string) {
+  const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveWorkspace({ workspaceId: WorkspaceIdSchema.parse(orgId) })));
+  return oneRegionalTarget(env, results.map((result) => EngineeringWorkspaceTargetLookupSchema.parse(result)), `Organization ${orgId}`).binding;
+}
+
+export async function executeEngineeringTask(env: Env, principal: AccessPrincipal, input: EngineeringTaskInput) {
+  if (input.name === "query_data_lake") {
+    return { result: await tool(principal, input.name, { lakehouse: input.arguments.lakehouse }, () =>
+      queryLakehouse({ accountId: env.CLOUDFLARE_ACCOUNT_ID, token: env.BASIN_SQL_API_TOKEN }, input.arguments.lakehouse, input.arguments.sql)) };
+  }
+  let incomplete: z.infer<typeof RetireEngineeringOrgResultSchema> | undefined;
+  const result = await tool(principal, input.name, { workspace_id: input.arguments.orgId }, async () => {
+    const receipt = RetireEngineeringOrgResultSchema.parse(
+      await (await organizationBinding(env, input.arguments.orgId)).retireOrg(input.arguments, principal));
+    if (!receipt.complete) incomplete = receipt;
+    return receipt;
+  });
+  return { result, incomplete };
+}
 function oneRegionalTarget<T>(
   env: Env,
   results: Lookup<T>[],
@@ -172,6 +193,9 @@ const sqlInputSchema = {
 };
 
 export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal): McpServer {
+  // Access also admits service assertions without a subject. They may execute
+  // tools synchronously, but cannot share an "unknown" owner for stored data.
+  const hasTaskOwner = principal.subject.length > 0 && principal.subject !== "unknown";
   const server = new McpServer({
     name: "Rally engineering",
     version: "1.0.0",
@@ -200,11 +224,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     return CreateEngineeringOrgResultSchema.parse(await binding.createOrg(request, principal));
   }));
 
-  async function organizationBinding(orgId: string) {
-    const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveWorkspace({ workspaceId: WorkspaceIdSchema.parse(orgId) })));
-    return oneRegionalTarget(env, results.map((result) => EngineeringWorkspaceTargetLookupSchema.parse(result)), `Organization ${orgId}`).binding;
-  }
-
   server.registerTool("send_message", {
     description: "Send a message as userId to a Canvas's Chat or a Sidekick's shared conversation (conversationId is the Canvas or Sidekick ID), through the same composer admission as the app. The message is attributed to userId, as though that user sent it. Enforces that user's access, uses normal addressing, queue/steer behavior, notifications and agent execution; recordOnly posts it for readers without starting a run. Reuse operationId and the same arguments to retry an uncertain send.",
     inputSchema: SendEngineeringMessageInputSchema.unwrap().shape,
@@ -212,7 +231,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }, (request) => tool(principal, "send_message", {
     workspace_id: request.orgId, workstream_id: request.conversationId,
     user_id: request.userId, operation_id: request.operationId,
-  }, async () => SendEngineeringMessageResultSchema.parse(await (await organizationBinding(request.orgId)).sendMessage(request, principal))));
+  }, async () => SendEngineeringMessageResultSchema.parse(await (await organizationBinding(env, request.orgId)).sendMessage(request, principal))));
 
   const sidekickPauseSchema = SetEngineeringSidekickPausedInputSchema.unwrap().omit({ paused: true });
   for (const [name, paused] of [["pause_sidekick", true], ["resume_sidekick", false]] as const) {
@@ -225,16 +244,17 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     }, (request) => tool(principal, name, {
       workspace_id: request.orgId, sidekick_id: request.sidekickId, user_id: request.userId,
     }, async () => SetEngineeringSidekickPausedResultSchema.parse(
-      await (await organizationBinding(request.orgId)).setSidekickPaused({ ...request, paused }, principal))));
+      await (await organizationBinding(env, request.orgId)).setSidekickPaused({ ...request, paused }, principal))));
   }
 
   server.registerTool("retire_org", {
     description: "Retire an Organization permanently, through the same door as Ace's Retire button: nobody can sign in to it, every Canvas, Sidekick and socket in it stops, and nothing reopens. There is no undo. Members simply lose it. The result reports complete: false while parts are still open; call again with the same orgId to resume the walk.",
     inputSchema: RetireEngineeringOrgInputSchema.unwrap().shape,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "retire_org", { workspace_id: request.orgId },
-    async () => RetireEngineeringOrgResultSchema.parse(
-      await (await organizationBinding(request.orgId)).retireOrg(request, principal))));
+  }, async (request, ctx) => {
+    const input = { name: "retire_org" as const, arguments: request };
+    return hasTaskOwner && acceptsTasks(ctx) ? createTaskCarrier(env, principal, input) : (await executeEngineeringTask(env, principal, input)).result;
+  });
 
   const conversationReadSchema = ReadEngineeringConversationInputSchema.unwrap().omit({ kind: true, conversationId: true });
   for (const [name, kind, label] of [["read_canvas_chat", "canvas", "Canvas"], ["read_sidekick_conversation", "sidekick", "Sidekick"]] as const) {
@@ -251,7 +271,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
       delete rest[idKey];
       return tool(principal, name, {
         workspace_id: request.orgId, workstream_id: conversationId, user_id: request.userId,
-      }, async () => EngineeringTextResultSchema.parse(await (await organizationBinding(request.orgId))
+      }, async () => EngineeringTextResultSchema.parse(await (await organizationBinding(env, request.orgId))
         .readConversation(ReadEngineeringConversationInputSchema.parse({ ...rest, kind, conversationId }))).text);
     });
   }
@@ -440,8 +460,10 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
       sql: z.string().min(1).describe("Basin SQL SELECT statement naming the table as <namespace>.<table>."),
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ lakehouse, sql }) => tool(principal, "query_data_lake", { lakehouse }, () =>
-    queryLakehouse({ accountId: env.CLOUDFLARE_ACCOUNT_ID, token: env.BASIN_SQL_API_TOKEN }, lakehouse, sql)));
+  }, async (request, ctx) => {
+    const input = { name: "query_data_lake" as const, arguments: request };
+    return hasTaskOwner && acceptsTasks(ctx) ? createTaskCarrier(env, principal, input) : (await executeEngineeringTask(env, principal, input)).result;
+  });
 
   server.registerTool("query_worker_observability", {
     title: "Query Worker Logs and Traces",
@@ -468,14 +490,14 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     inputSchema: InspectEngineeringUsageInputSchema.shape,
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (request) => tool(principal, "inspect_usage_plan", { workspace_id: request.orgId }, async () =>
-    EngineeringUsageResultSchema.parse(await (await organizationBinding(request.orgId)).inspectOrganizationUsage(request))));
+    EngineeringUsageResultSchema.parse(await (await organizationBinding(env, request.orgId)).inspectOrganizationUsage(request))));
 
   server.registerTool("change_usage_plan", {
     description: "Change an Organization's plan. Applies its new quota to the current week, records the plan change, and notifies connected members. Past weekly quotas remain unchanged. Resolve an uncertain outcome with inspect_usage_plan before retrying.",
     inputSchema: ChangeEngineeringPlanInputSchema.shape,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, (request) => tool(principal, "change_usage_plan", { workspace_id: request.orgId, plan: request.plan }, async () =>
-    EngineeringUsageResultSchema.parse(await (await organizationBinding(request.orgId)).changeOrganizationPlan(request, principal))));
+    EngineeringUsageResultSchema.parse(await (await organizationBinding(env, request.orgId)).changeOrganizationPlan(request, principal))));
 
   server.registerTool("inspect_migration_progress", {
     description: "Inspect forced-migration outcomes, failures, invalid or misrouted commands and schema version shortfalls in a region's Worker logs. Filters by run or object when supplied. Seven-day log retention applies; missing logs do not prove a fleet or object is current. Use inspect_queues for command backlog and dead letters. Ordinary constructor migrations are not a fleet registry.",
@@ -497,5 +519,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
       ], filterCombination: "and",
     })));
 
+  registerTaskMethods(server, env, principal);
   return server;
 }

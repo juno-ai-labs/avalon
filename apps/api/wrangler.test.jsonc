@@ -1,6 +1,6 @@
 {
   "name": "avalon-do-runtime-tests",
-  "main": "src/index.ts",
+  "main": "test-workers/fixtures/engineering-task-worker.ts",
   "compatibility_date": "2026-08-17",
   "compatibility_flags": ["nodejs_compat"],
   // A `.py` import is the file's text (`src/types/text-modules.d.ts`); the
@@ -75,7 +75,8 @@
       { "name": "SUBSTREAM_AGENTS", "class_name": "AgentLoopDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "ARTIFACT_HOSTS", "class_name": "ArtifactHostDO" },
-      { "name": "MIGRATION_PROBE_DO", "class_name": "MigrationProbeDO" }
+      { "name": "MIGRATION_PROBE_DO", "class_name": "MigrationProbeDO" },
+      { "name": "ENGINEERING_TASKS", "class_name": "EngineeringTaskTestDO" }
     ]
   },
   "migrations": [
@@ -85,7 +86,8 @@
         "AgentLoopDO",
         "WorkspaceDO",
         "ArtifactHostDO",
-        "MigrationProbeDO"
+        "MigrationProbeDO",
+        "EngineeringTaskTestDO"
       ]
     }
   ],
