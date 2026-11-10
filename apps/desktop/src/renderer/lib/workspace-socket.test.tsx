@@ -209,38 +209,38 @@ describe('WorkspaceSocketProvider', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances.at(-1)!;
     act(() => socket.open());
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
     act(() => socket.message({ ...initialSidebarFrame(), sidebar: {
       automations: { waterline: 0, items: [] }, canvases: { waterline: 1, items: [row(2, 1)] },
     } }));
     await flushPromises();
-    expect(screen.getByRole('status')).toHaveAccessibleName('2 background agents running · 1 Sidekick running');
+    expect(screen.getByRole('status')).toHaveTextContent('2 background agents running · 1 Sidekick running');
     act(() => socket.message({ type: 'workspace_canvas_list', occurredAt: '2026-11-10T12:01:00.000Z',
       waterline: 3, items: [row(1, 0)] }));
     await flushPromises();
-    await waitFor(() => expect(screen.getByRole('status')).toHaveAccessibleName('1 background agent running'));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1 background agent running'));
     // A late frame cannot resurrect the Sidekick or a finished worker.
     act(() => socket.message({ type: 'workspace_canvas_list', occurredAt: '2026-11-10T12:00:00.000Z',
       waterline: 2, items: [row(2, 1)] }));
     await flushPromises();
-    await waitFor(() => expect(screen.getByRole('status')).toHaveAccessibleName('1 background agent running'));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1 background agent running'));
     act(() => window.dispatchEvent(new Event('offline')));
     await flushPromises();
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
     act(() => window.dispatchEvent(new Event('online')));
     await flushPromises();
     const resumed = FakeWebSocket.instances.at(-1)!;
     act(() => resumed.open());
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
     act(() => resumed.message({ ...initialSidebarFrame(), sidebar: {
       automations: { waterline: 0, items: [] }, canvases: { waterline: 4, items: [row(0, 2)] },
     } }));
     await flushPromises();
-    await waitFor(() => expect(screen.getByRole('status')).toHaveAccessibleName('2 Sidekicks running'));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('2 Sidekicks running'));
     act(() => resumed.message({ type: 'workspace_canvas_list', occurredAt: '2026-11-10T12:02:00.000Z',
       waterline: 5, items: [row(0, 0)] }));
     await flushPromises();
-    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+    await waitFor(() => expect(screen.getByRole('status')).toBeEmptyDOMElement());
     rendered.unmount();
     queryClient.clear();
   });

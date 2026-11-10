@@ -147,7 +147,7 @@ interface WorkspaceSocketContextValue {
   /** The last sidebar the server sent unasked, or null before the first one. */
   sidebarConnect: SidebarConnect | null;
   /** The current transport has delivered its sidebar snapshot, not a previous connection's. */
-  sidebarReady?: boolean;
+  sidebarReady: boolean;
   /**
    * Mark all seen: every Activity item recorded until now. Answered by the
    * Activity push; sent only on a subscribed socket this window holds, and a

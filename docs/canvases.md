@@ -52,23 +52,21 @@ and run activity still counts as one Sidekick, and it stays counted until neithe
 is working. Idle, completed, failed, cancelled, archived and input-waiting
 conversations do not count. A live lifecycle alone is not execution.
 
-Child execution transitions advance the Canvas list waterline. Sidekick
-transitions also move the lists of their attached Canvases. The existing
-workspace socket sends these viewer-authorized rows, with no polling or extra
-execution registry. A Canvas outside the sidebar page refreshes its open detail
-on list changes. Desktop and web share `ComposerAgentActivity`, rendered by
-`ConversationSurface` above the input. Each count reuses the directional rolling
-number animation and shimmer, with reduced-motion and forced-colors fallbacks.
-The status announces the current counts, never the outgoing animated digits.
-Zero or unknown counts take no space;
-the current socket must have delivered its sidebar before a count is shown,
-so disk cache and reconnect gaps cannot masquerade as live work.
+Child execution transitions advance the Canvas list waterline through a separate
+execution hook, without changing the Sidekick library. WorkspaceDO migration
+145 adds a partial index containing only live child projections; completed history
+is retained but not scanned for counts. Each publish shares computed counts across
+viewers of the same Canvas, within that synchronous publish only.
 
-The workerd `canvas-agent-activity.test.ts` exercises real socket pushes,
-settlement, stale deliveries, scope isolation, concurrent-run deduplication and
-reconnect. The renderer workspace-socket test covers the pushed rows reaching
-the visible labels and the disconnect/reconnect gate. Layout is verified in a
-real window, not by a DOM assertion.
+The workspace socket sends viewer-authorized rows. An open Canvas outside the
+sidebar page refreshes its detail on list changes, cancelling older reads first;
+inactive and failed detail queries are left alone. Its last counts remain visible
+during a background refresh. A reconnect clears them until a new read completes.
+Desktop and web share the rolling-number animation, shimmer and reduced-motion
+fallback. A continuously mounted, visually hidden status region announces the
+current label; animated outgoing digits are hidden from assistive technology.
+Zero or unknown counts occupy no layout space, and the current connection must
+have delivered its sidebar before counts are shown.
 
 ### Identity
 
@@ -909,7 +907,9 @@ from the hosted children's existing projections and travel on the Canvas list;
 a second subscription or polling loop would duplicate state the Organization
 already owns. Keep authoring distinct from lifecycle: an unsaved Sidekick can
 be working, and an active one can be idle. Counts remain scoped to the Canvas,
-version-fenced and hidden until the current connection has fresh state.
+version-fenced and hidden until the current connection has fresh state. A partial
+index over live projections avoids scanning retained history, and counts are
+shared only within each publish rather than maintained in another activity table.
 
 ### 2026-11-10 — Open an artifact as it joins the conversation
 

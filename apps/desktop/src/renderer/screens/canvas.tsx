@@ -356,7 +356,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       parentId={id}
       parentKind="canvas"
       composerActivity={<ComposerAgentActivity activity={workspaceSocket?.state === 'connected' && workspaceSocket.sidebarReady
-        ? (row?.runningActivity ?? (!canvas.isFetching && !canvas.isError ? canvas.data?.runningActivity : undefined)) : undefined} />}
+        ? (row?.runningActivity ?? (!canvas.isError ? canvas.data?.runningActivity : undefined)) : undefined} />}
       renderHeader={(context) => header(context.presentUserIds, context.panelOpen)}
       // Offline, the Canvas is still named in the list: the pane keeps its
       // pill and Share over the state rather than a bare Back and Forward.

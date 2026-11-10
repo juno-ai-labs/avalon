@@ -387,6 +387,8 @@ export interface HostedSidekickHost {
   afterRegistrations(automationId: string, revision: number | null, evaluators: readonly unknown[]): Promise<void>;
   /** Inside the transaction that changed a directory row: the sidebar's waterline and a deleted Sidekick's bindings. */
   noteDirectoryChanged(automationId: string, deleted: boolean, now: number): void;
+  /** Child execution changed, without changing the Sidekick library row. */
+  noteExecutionChanged(sidekickId: string): void;
   /**
    * Inside the transaction that changed one person's read of a shared
    * conversation: their sidebar's waterline, with the Sidekick list sent only
@@ -1730,7 +1732,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   protected onChildProjection(substreamId: string, effect: DirectoryCommonEffect,
     prior: PriorChildProjection | null, now: number): void {
     if (projectionIsRunning(prior) !== projectionIsRunning(effect)) {
-      this.host.noteDirectoryChanged(this.sidekickId, false, now);
+      this.host.noteExecutionChanged(this.sidekickId);
     }
     if (substreamId === "0") {
       const unreadMoved = (prior?.latestAttentionOrdinal ?? null) !== (effect.latestAttentionOrdinal ?? null) && this.hasReaders();
@@ -1791,6 +1793,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     if (moved && (sidekickRowRunState(before?.state) !== sidekickRowRunState(next)
       || (next === "needs_input" && before?.summary !== summary))) {
       this.host.noteDirectoryChanged(this.sidekickId, false, now);
+    }
+    if (moved && before && TERMINAL_RUN_STATES.has(before.state) !== TERMINAL_RUN_STATES.has(next)) {
+      this.host.noteExecutionChanged(this.sidekickId);
     }
     if (moved && before?.state === "needs_input") for (const userId of waiting) this.host.noteActivityChanged(userId);
     if (!live && moved?.completed_at === now) {

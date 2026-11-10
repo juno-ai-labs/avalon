@@ -12,8 +12,9 @@ export function projectionIsRunning(projection: { state: string; archivedAt: str
  * Canvases. An attached Sidekick is one helper, including its authoring and
  * delegated work, however many conversations it currently runs.
  */
-export function canvasRunningActivity(sql: SqlStorage, canvasIds: readonly string[]): Map<string, CanvasRunningActivity> {
-  const result = new Map<string, CanvasRunningActivity>();
+export function canvasRunningActivity(sql: SqlStorage, canvasIds: readonly string[], result = new Map<string, CanvasRunningActivity>()): Map<string, CanvasRunningActivity> {
+  const missing = canvasIds.filter((id) => !result.has(id));
+  if (missing.length === 0) return result;
   for (const row of sql.exec<{ canvas_id: string; background_agents: number; sidekicks: number }>(
     `WITH requested(canvas_id) AS (SELECT value FROM json_each(?1)),
       running AS (
@@ -25,7 +26,7 @@ export function canvasRunningActivity(sql: SqlStorage, canvasIds: readonly strin
           SELECT automation_id FROM sidekick_conversation_attachments
           WHERE parent_kind = 'canvas' AND substream_id = '0' AND parent_id IN (SELECT canvas_id FROM requested))
           AND json_extract(effect_json, '$.archivedAt') IS NULL
-          AND json_extract(effect_json, '$.state') IN (SELECT value FROM json_each(?2))
+          AND json_extract(effect_json, '$.state') IN ('scheduled', 'running', 'preparing_context', 'waiting_capacity', 'interrupting')
       )
       SELECT canvas_id,
         (SELECT COUNT(*) FROM running WHERE sidekick_id = requested.canvas_id
@@ -45,7 +46,7 @@ export function canvasRunningActivity(sql: SqlStorage, canvasIds: readonly strin
                   AND run.state IN ('pending', 'running', 'needs_input')
               )))) AS sidekicks
         FROM requested`,
-    JSON.stringify(canvasIds), JSON.stringify(RUNNING_STATES),
+    JSON.stringify(missing),
   ).toArray()) result.set(row.canvas_id, { backgroundAgents: row.background_agents, sidekicks: row.sidekicks });
   return result;
 }

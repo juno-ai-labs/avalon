@@ -84,14 +84,9 @@ topic, which is all a window that reads the detail surfaces and never the list
 needs. No additional broadcast
 channel or polling is involved.
 
-Canvas rows carry `runningActivity`: counts of running background agents and
-distinct attached Sidekicks, including authoring. Hosted child execution
-transitions advance the existing Canvas list waterline; the workspace socket
-pushes the viewer-authorized list and its subscribe answer restores it after
-reconnect. The composer shows counts only after that connection has delivered
-its sidebar. An open Canvas outside the sidebar page refreshes its detail when
-the list moves. No retired `sidekick_activity` command is restored.
-[`canvases.md`](canvases.md#running-helpers-above-the-composer) owns the count rules.
+Canvas helper counts travel on the existing Canvas list snapshot and pushes;
+[`canvases.md`](canvases.md#running-helpers-above-the-composer) owns their
+aggregation, execution notifications and reconnect behavior.
 
 ### The topology
 

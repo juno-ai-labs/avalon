@@ -16,6 +16,7 @@ export interface StylesheetViewport {
  */
 const PREFERENCES: Readonly<Record<string, string>> = {
   hover: 'hover',
+  'forced-colors': 'none',
   pointer: 'fine',
   'prefers-color-scheme': 'light',
   'prefers-contrast': 'no-preference',
