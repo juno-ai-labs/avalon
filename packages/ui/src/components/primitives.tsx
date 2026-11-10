@@ -454,6 +454,7 @@ export function AvatarStack({
   members,
   limit = 4,
   extraCount,
+  role,
   presentUserIds = [],
   currentUserId = null,
   nameTooltip = true,
@@ -466,6 +467,8 @@ export function AvatarStack({
    * Omit to derive it from `members.length`.
    */
   extraCount?: number;
+  /** Expose the stack as one named image when it conveys a list of people. */
+  role?: 'img';
   /**
    * Ids of members currently viewing this work stream. Members in this set who
    * are not `currentUserId` get a presence ring and an "is viewing" tooltip.
@@ -502,6 +505,7 @@ export function AvatarStack({
       aria-label={named.join('; ')}
       className="avatar-stack"
       data-visible-count={visible.length}
+      role={role}
     >
       {visible.map((member) => {
         const showingPresence = present.has(member.id) && member.id !== currentUserId;

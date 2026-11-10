@@ -117,6 +117,8 @@ export interface AutomationSummary {
   pinnedPosition?: number | null;
   /** Who it is shared with; absent from a server that predates it. */
   audience?: SidekickAudience;
+  /** The named recipients, excluding the author. Absent from reads that do not include the list. */
+  sharedWithUserIds?: string[];
   /** Its newest run's live state, when one is live; absent from a server that predates it. */
   runState?: 'working' | 'needs_input' | null;
   /** Any of its runs is working now, whichever is newest; absent from a server that predates it. */
@@ -790,8 +792,6 @@ export interface AutomationDetail extends AutomationSummary {
   /** One line per trigger of the current definition, or empty before one exists. */
   triggerSummaries: string[];
   recentRuns: AutomationRun[];
-  /** The people a `people` Sidekick is shared with besides its author; empty otherwise. */
-  sharedWithUserIds?: string[];
   /** The Canvases it writes that this reader may open, most recently active first. */
   canvases?: CanvasSummary[];
 }
