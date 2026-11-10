@@ -189,7 +189,7 @@ not come; and the provisioning projection of an empty Chat (no ordinal before,
 0 now) is not activity, so it does not move the Canvas up the recency list.
 The entry's handler,
 `HostedCanvas.nameFromOpening`, reads the oldest text message a person sent
-in the Chat through the message port (`saidMessages`, `peopleOnly`), asks `canvasTitleFromOpening` (the `workstream_naming` role,
+in the Chat through the message port (`saidMessages`, `peopleOnly`), asks `canvasTitleFromOpening` (the `resource_naming` role,
 reasoning off, metered as `channel_naming`) and writes the title in one
 statement guarded by `title_status = 'naming'`, which also settles it, so the
 list and the detail move as a retitle moves them. A retitle settles the row
@@ -761,7 +761,7 @@ naming forward.
 was created with a placeholder title and named a moment later by a model pass
 over its opening and transcript, with an icon chosen beside the name.
 `workstream-naming-service.ts` and the harness's `prompts/workstream-name.ts`
-are deleted. What survives: the `workstream_naming` model role, which titles a
+are deleted. What survives: the `resource_naming` model role, which titles a
 Canvas from its opening message ([Making a Canvas](#making-a-canvas)) and titles pasted text
 (`pasted-text-service.ts`), and the `title_status` column. Its changelog is the
 record of the grace window, the provisional title and the injection boundary.

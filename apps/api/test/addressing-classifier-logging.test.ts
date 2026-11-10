@@ -18,9 +18,6 @@ function fixture(options: {
     await options.beforePayloadPut?.();
     objects.set(key, value);
   });
-  const getObjectDetails = vi.fn(async () => {
-    throw new Error("addressing_flag_should_not_be_evaluated");
-  });
   const env = createTestEnv({
     APP_ENV: "production",
     AVALON_REGION: "global",
@@ -28,9 +25,8 @@ function fixture(options: {
     OPENROUTER_API_KEY: "openrouter-secret",
     TYPESAFE_API_KEY: "typesafe-secret",
     OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
-    OPENROUTER_FALLBACK_MODELS: "",
-    OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
-    FLAGS: createCloudflareTestBinding<Flagship>({ getObjectDetails }),
+    OPENROUTER_FALLBACK_MODEL: "",
+    OPENROUTER_FASTER_MODEL: "google/gemini-2.5-flash-lite",
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({
       put: payloadPut,
       async delete(key: string) {
@@ -46,7 +42,6 @@ function fixture(options: {
   });
   return {
     env,
-    getObjectDetails,
     objects,
     payloadPut,
     defer(promise: Promise<unknown>) {
@@ -111,7 +106,7 @@ describe("addressing classifier logging", () => {
   });
 
   it("logs an accepted JEV outcome and archives the exact inference response", async () => {
-    const { env, getObjectDetails, objects, defer, settleDeferred } = fixture();
+    const { env, objects, defer, settleDeferred } = fixture();
     const response = {
       model: "jev-1.13.0",
       answers: {
@@ -132,7 +127,6 @@ describe("addressing classifier logging", () => {
       confidence: 0.91,
     });
     await settleDeferred();
-    expect(getObjectDetails).not.toHaveBeenCalled();
 
     const entries = logged.mock.calls.map(([entry]) => entry as Record<string, unknown>);
     expect(entries).toEqual(expect.arrayContaining([

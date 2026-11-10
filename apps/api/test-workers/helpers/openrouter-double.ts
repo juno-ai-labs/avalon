@@ -2,13 +2,9 @@
  * A scripted stand-in for OpenRouter, for workerd tests that let a run reach
  * the model.
  *
- * The workers suite has no provider double and a placeholder API key, so a run
- * that reaches inference makes a real outbound request. That request cannot
- * succeed here, but it does not fail quickly either: the harness allows an
- * establishment timeout, a transport retry, and each configured fallback model
- * before it gives up, which is far longer than a test's budget. The run stays
- * `executing`, and the test that was waiting on it times out somewhere
- * unrelated to what it was asserting.
+ * The test configuration explicitly disables model groups until a test selects
+ * a route. This double serves the provider boundary for tests that opt in;
+ * a placeholder API key alone must never arm a real inference request.
  *
  * `vi.stubGlobal` is what installs this rather than `fetchMock` from
  * `cloudflare:test`: that export does not exist in this generation of

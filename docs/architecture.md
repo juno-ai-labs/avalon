@@ -45,7 +45,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
 | `apps/api/src/lib/rpc-contracts.ts` | The parsers every RPC bridge argument passes through. |
 | `apps/migration-tracker` | The private operator Worker behind `migrations.internal.rallywith.ai`: the Durable Object migration inventory, its hourly account sweep, the forced-migration fan-out onto each region's command queue, and the Cloudflare Access boundary in front of all of it. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
-| `apps/ace` | The private Hono operator Worker behind `ace.internal.rallywith.ai`: D1-assisted Flagship product targeting, the shared-to-regional Queue fan-out, and the component library future internal pages extend. See [`ace.md`](ace.md). |
+| `apps/ace` | The private Hono operator Worker behind `ace.internal.rallywith.ai`: Access request review, workspace administration, read-only dead-letter Queue inspection, and the component library future internal pages extend. See [`ace.md`](ace.md). |
 | `packages/ui` | Shared collaboration presentation and browser-safe display/theme helpers, consumed by desktop and prepared for the browser host in #825. Owned by [`shared-ui.md`](shared-ui.md) and [`theming.md`](theming.md). |
 | `packages/contracts` | Every runtime contract both ends share. A type that only exists at build time is not one of them. |
 | `packages/db` | Migrations and region-aware repositories. The migrations are authoritative for the schema. |

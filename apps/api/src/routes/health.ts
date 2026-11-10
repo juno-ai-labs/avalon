@@ -131,18 +131,9 @@ healthRoutes.get("/", async (c) => {
       ? "bindings available"
       : "binding unavailable",
   };
-  // Flagship bindings are always remote, so this is unavailable under
-  // `wrangler dev --local` by design and is only required in production, where
-  // an unbound app would silently drop every agent onto the model variables.
-  checks.featureFlags = {
-    ok: typeof c.env.FLAGS?.getObjectValue === "function",
-    message: typeof c.env.FLAGS?.getObjectValue === "function"
-      ? "binding available"
-      : "binding unavailable; agents use the OPENROUTER_* variables",
-  };
   checks.openRouter = {
-    ok: Boolean(c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL),
-    message: c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL ? "configured" : "not configured",
+    ok: Boolean(c.env.OPENROUTER_API_KEY),
+    message: c.env.OPENROUTER_API_KEY ? "configured" : "not configured",
   };
   checks.typeSafe = {
     ok: Boolean(c.env.TYPESAFE_API_KEY),
@@ -228,7 +219,6 @@ healthRoutes.get("/", async (c) => {
   ];
   if (c.env.APP_ENV === "production") {
     required.push(
-      checks.featureFlags,
       checks.inferenceLakehouse,
       checks.analyticsLakehouse,
     );

@@ -150,7 +150,7 @@ declares fails here. Assert by reading rows back, not by trusting the write.
 ### 3. Node with a capability double
 
 For the one collaborator that genuinely cannot run: a binding with no local
-implementation (`AI`, `FLAGS` — see
+implementation (`AI` — see
 [what cannot be verified in a sandbox](dev-environment.md#what-cannot-be-verified-in-a-sandbox)),
 a provider's HTTP API, a clock, a source of randomness. Double that collaborator
 and nothing else, and type it per
@@ -772,14 +772,14 @@ arrive when it says so.
 ## Letting a run reach the model
 
 **Decide deliberately whether your test lets a run get as far as inference, and
-say which you chose.** The workers suite has no provider double and
-`wrangler.test.jsonc` carries a placeholder `OPENROUTER_API_KEY`, so a run that
-reaches the model makes a real outbound request. That request cannot succeed
-here — and it does not fail quickly either. The harness spends an establishment
-timeout, then a transport retry, then each configured fallback model before it
-gives up, which is far longer than a test's budget. The run stays `executing`,
-and the test waiting on it times out on an assertion that has nothing to do with
-what broke.
+say which you chose.** `wrangler.test.jsonc` explicitly disables primary,
+smarter, and faster model groups with empty strings. A run without an explicit
+route fails with `agent_model_disabled:<variable>` before provider I/O. Tests
+that reach inference select a synthetic route and install the scripted provider
+double; the placeholder `OPENROUTER_API_KEY` alone must not arm real requests.
+Without that guard, an accidental call can spend establishment timeouts,
+transport retries, and fallback attempts before giving up, leaving an unrelated
+assertion waiting on an `executing` run.
 
 Successful Sidekick activation scripts can use `withSuccessfulSidekickOutcome`
 from `test-workers/helpers/openrouter-double.ts`; outcome-specific tests script
@@ -823,10 +823,12 @@ create-effects case can invoke the real product `initialize` mutation
 without the endpoint's later execution-receipt activation. An elicitation-answer
 case can use a settled parent-run row when run execution is not the subject. If
 the run really has to complete, install the double, and give the run a model to
-route to: `wrangler.test.jsonc` deliberately leaves `OPENROUTER_PRIMARY_MODEL`
-unset so a run nobody meant to reach inference cannot, and a file that installs
+route to. A file that installs
 the double calls `useSelectedModel()` from `./helpers/selected-model` at file
-scope so its runs do not die on an empty route plan before they reach it.
+scope. It selects one synthetic model for both primary and smarter model groups, with
+an explicitly empty fallback list, and restores the variables after each test. Deployment defaults
+now supply a route even when model variables are unset; the explicit override
+keeps a scripted failure from falling through to a successful second reply.
 
 ```ts
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
