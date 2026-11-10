@@ -45,6 +45,9 @@ vi.mock('../lib/collaboration-session', () => ({
   useShellCapabilities: () => ({ host: 'desktop', guest: false }),
 }));
 
+const socketStatus = vi.hoisted(() => ({ state: 'connected', sidebarReady: true }));
+vi.mock('../lib/workspace-socket', () => ({ useOptionalWorkspaceSocket: () => socketStatus }));
+
 const copyText = vi.hoisted(() => vi.fn());
 vi.mock('../lib/platform', async (importOriginal) => ({
   ...await importOriginal<typeof Platform>(),
@@ -61,6 +64,7 @@ vi.mock('./conversation-surface', () => ({
     const [panelOpen, setPanelOpen] = useState(false);
     surfaces.push({ props, requested: openResourceRequest(location.state)?.resourceId ?? null, expanded: expandRequest(location) !== null });
     return <div>
+      {props.composerActivity}
       {props.renderHeader?.({ presentUserIds: [ME, MAYA], panelOpen } as never)}
       <button onClick={() => setPanelOpen((open) => !open)} type="button">{panelOpen ? 'Close test panel' : 'Open test panel'}</button>
     </div>;
@@ -129,6 +133,8 @@ const lastSurface = () => surfaces.at(-1)!;
 
 beforeEach(() => {
   surfaces.length = 0;
+  socketStatus.state = 'connected';
+  socketStatus.sidebarReady = true;
   copyText.mockReset().mockResolvedValue(undefined);
   window.localStorage.clear();
   getCanvas.mockReset().mockResolvedValue(detail());
@@ -925,4 +931,30 @@ describe('CanvasScreen', () => {
     expect(within(dialog).queryByRole('button', { name: 'Save' })).toBeNull();
     expect(await within(dialog).findByText(/Only Maya Lin and the Organization’s administrators/)).toBeInTheDocument();
   });
+});
+
+it('hands the current Canvas live counts to the composer and follows its pushes', async () => {
+  const client = renderCanvas();
+  await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+  act(() => { applyVersionedSidebarList(client, 'canvases', 1, [listRow('Q4 revenue review', {
+    runningActivity: { backgroundAgents: 2, sidekicks: 1 },
+  })]); });
+  await screen.findByRole('status', { name: '2 background agents running · 1 Sidekick running' });
+  act(() => { applyVersionedSidebarList(client, 'canvases', 2, [listRow('Q4 revenue review', {
+    runningActivity: { backgroundAgents: 0, sidekicks: 0 },
+  })]); });
+  await waitFor(() => expect(screen.queryByRole('status', { name: /background agents running/u })).toBeNull());
+});
+
+it('refreshes counts for an open Canvas outside the sidebar page', async () => {
+  getCanvas.mockResolvedValue(detail({ runningActivity: { backgroundAgents: 1, sidekicks: 0 } }));
+  const client = renderCanvas();
+  await screen.findByRole('status', { name: '1 background agent running' });
+  let resolveRefresh!: (value: ReturnType<typeof detail>) => void;
+  getCanvas.mockReturnValue(new Promise((resolve) => { resolveRefresh = resolve; }));
+  act(() => { applyVersionedSidebarList(client, 'canvases', 1, []); });
+  await waitFor(() => expect(screen.queryByRole('status', { name: /running/u })).toBeNull());
+  await act(async () => { resolveRefresh(detail({ runningActivity: { backgroundAgents: 0, sidekicks: 1 } })); });
+  await screen.findByRole('status', { name: '1 Sidekick running' });
+  expect(screen.queryByRole('status', { name: '1 background agent running' })).toBeNull();
 });

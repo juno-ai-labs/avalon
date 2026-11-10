@@ -7057,6 +7057,43 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-editing-badge { align-items: center; background: var(--av-sys-color-surface-raised-hover); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-default); display: inline-flex; font-size: 12px; font-weight: 500; gap: var(--av-ref-space-unit); padding: var(--av-ref-space-unit) var(--av-ref-space-unit) var(--av-ref-space-unit) calc(var(--av-ref-space-unit) * 2.5); }
 .sidekick-editing-close { align-items: center; background: none; border: 0; border-radius: 999px; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-flex; padding: calc(var(--av-ref-space-unit) / 2); }
 .sidekick-editing-close:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
+/* Live helpers share the original directional number wheel on desktop and web. */
+.composer-agent-activity { color: var(--av-sys-color-text-muted); font-size: 12px; line-height: 18px; padding-inline: 16px; }
+.background-agent-shimmer {
+  animation: background-agent-shimmer 2.8s linear infinite;
+  background: linear-gradient(105deg, var(--av-sys-color-text-muted) 35%, var(--av-sys-color-text-default) 50%, var(--av-sys-color-text-muted) 65%) 100% 0 / 250% 100%;
+  background-clip: text;
+  color: transparent;
+}
+.background-agent-wheel {
+  --wheel-travel: 100%;
+  display: inline-grid;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  perspective: 80px;
+  vertical-align: bottom;
+}
+.background-agent-wheel[data-direction="down"] { --wheel-travel: -100%; }
+.background-agent-digit { grid-area: 1 / 1; text-align: center; }
+.background-agent-digit-in { animation: background-agent-digit-in 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
+.background-agent-digit-out { animation: background-agent-digit-out 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
+@keyframes background-agent-shimmer { to { background-position: -100% 0; } }
+@keyframes background-agent-digit-in {
+  from { opacity: 0; transform: translateY(var(--wheel-travel)) rotateX(-55deg); }
+  to { opacity: 1; transform: translateY(0) rotateX(0); }
+}
+@keyframes background-agent-digit-out {
+  from { opacity: 1; transform: translateY(0) rotateX(0); }
+  to { opacity: 0; transform: translateY(calc(-1 * var(--wheel-travel))) rotateX(55deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .background-agent-shimmer, .background-agent-digit { animation: none; }
+  .background-agent-digit-out { display: none; }
+}
+@media (forced-colors: active) {
+  .background-agent-shimmer { background: none; color: CanvasText; }
+}
+
 /* A composer mode's line, just over the composer it applies to. */
 /* Two space units each way: inset to clear the capsule's rounded end, and apart from it. */
 .composer-mode-notice { display: flex; margin-bottom: calc(var(--av-ref-space-unit) * 2); padding: 0 calc(var(--av-ref-space-unit) * 2); }

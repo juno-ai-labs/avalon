@@ -110,6 +110,13 @@ export function applyVersionedSidebarList<K extends SidebarList>(
     (current = {}) => ({ ...current, [list]: waterline }),
   );
   queryClient.setQueryData<SidebarListItems[K]>(SIDEBAR_LIST_QUERY_KEYS[list], items);
+  if (list === 'canvases') {
+    // An opened Canvas may be beyond the sidebar page, or opened by an admin
+    // who is not on its list. Listed Canvases use the pushed row directly.
+    const ids = new Set<string>(queryClient.getQueryData<CanvasSidebarRow[]>(SIDEBAR_LIST_QUERY_KEYS.canvases)?.map((row) => row.id));
+    void queryClient.invalidateQueries({ queryKey: ['canvas'], predicate: (query) =>
+      query.queryKey.length === 2 && !ids.has(String(query.queryKey[1])) });
+  }
   return applied !== waterline;
 }
 
