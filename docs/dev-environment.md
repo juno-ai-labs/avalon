@@ -174,7 +174,7 @@ fixture resource as Launch plan's artifact (its body, the fixture's `payloads`
 entry, stored in R2 where the resource's `content_ref` points, so the
 artifact renders), and publishes two Sidekicks through `createAutomation`
 and their definitions: **Weekly changelog**, and **Launch tracker**, which is
-made in Launch plan (`homeCanvasId`) and so is attached to that Canvas the way
+made in Launch plan (`madeInCanvasId`) and so is attached to that Canvas the way
 one its Chat made is. Canvases are seeded first, because a Sidekick cannot be
 made in a Canvas that does not exist yet. `seed.sql`
 anchors no conversation: the creation paths anchor and route what they make,

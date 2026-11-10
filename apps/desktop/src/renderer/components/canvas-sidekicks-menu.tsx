@@ -4,7 +4,6 @@ import { MenuActionItem } from '@rally/ui/components/menu-action-item';
 import { TitleMenuSeparator } from '@rally/ui/components/title-pill';
 import { useId } from 'react';
 
-import { useSidekickList } from './sidekick-sidebar-section';
 import { AutomationGlyph } from './workstream-glyph';
 
 const STATE_LABEL: Record<CanvasSidekick['status'], string> = { draft: 'Draft', active: 'Active', paused: 'Paused' };
@@ -30,8 +29,7 @@ export function madeSidekicksArchiveCopy(sidekicks: readonly CanvasSidekick[]): 
 /**
  * The Canvas menu's Sidekicks section: one row per attached Sidekick, with its
  * hexagon, name and state. A row opens the Sidekick's page only for someone
- * the Sidekick is shared with (`canOpen`, or for an older server the viewer's
- * own Sidekicks list, `openableIds`); the page answers nobody else, so for
+ * the Sidekick is shared with (`canOpen`); the page answers nobody else, so for
  * them the row stays focusable and says how to change it instead.
  * The menu archives none of them: a Sidekick this Canvas made is archived by
  * asking the Canvas's Chat, or with the Canvas. Draws nothing for a Canvas
@@ -42,19 +40,13 @@ export function CanvasSidekicksSection({ onOpen, sidekicks }: {
   sidekicks: readonly CanvasSidekick[];
 }): React.JSX.Element | null {
   const labelId = useId();
-  // Read here, where the menu is open, so the Canvas screen does not redraw on
-  // every Sidekick list frame.
-  const own = useSidekickList();
-  const openableIds = new Set(own?.map((sidekick) => sidekick.id));
   if (sidekicks.length === 0) return null;
   return <>
     <TitleMenuSeparator />
     <DropdownMenu.Group aria-labelledby={labelId} className="canvas-sidekicks">
       <DropdownMenu.Label className="menu-label workspace-menu-section" id={labelId}>Sidekicks</DropdownMenu.Label>
       {sidekicks.map((sidekick) => {
-        // The server's answer where it gave one; an older Worker sends none,
-        // and then the viewer's own Sidekicks list is the best that is known.
-        const openable = sidekick.canOpen ?? openableIds.has(sidekick.id);
+        const openable = sidekick.canOpen === true;
         return <MenuActionItem
             key={sidekick.id}
             className="menu-item title-menu-item title-menu-action canvas-sidekick-open"
