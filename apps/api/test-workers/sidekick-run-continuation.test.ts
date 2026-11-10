@@ -441,7 +441,8 @@ describe("Sidekick run continuation", () => {
       const { runId, status } = await startedRun();
       expect(status).toBe("completed");
       expect((await receipts(runId))[0]?.model).toBe("double/run");
-      expect(provider.calls.map((call) => call.model)).toEqual(["double/run"]);
+      // Reporting the outcome can take another turn; every turn must use the run route.
+      expect([...new Set(provider.calls.map((call) => call.model))]).toEqual(["double/run"]);
     } finally {
       if (previous === undefined) delete TEST_ENV.AGENT_MODEL_ROUTING_JSON;
       else TEST_ENV.AGENT_MODEL_ROUTING_JSON = previous;
