@@ -321,9 +321,12 @@ later work back into a row printed above the sentence would put the feed out of
 order with its own narration.
 
 A row that asks the person to act also ends it and stays a row of its own: a
-connection card, and a plugin call refused with an Allow editing request on its
+connection card, a plugin call refused with an Allow editing request on its
 tool event (`connectorResourceAuthorizationRequestFromToolEvent` from
-`@rally/contracts`, the same reader the card renders from). Grouping drops a
+`@rally/contracts`, the same reader the card renders from), and a completed
+ask for a Sidekick source (`sidekickSourceRequestCardFromToolEvent`, likewise
+the reader its card renders from;
+[`conversation-surfaces.md`](conversation-surfaces.md) owns the card). Grouping drops a
 row's tool event, so a card folded into a plugin's row cannot draw. The plugin's
 work either side of it becomes two rows.
 

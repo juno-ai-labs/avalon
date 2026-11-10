@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { artifactDataReader, artifactDataWriteAccess } from "../src/services/workstream-artifact-data-wiring";
 
-const run = { automationId: "a" };
+const run = { automationId: "a", runId: "r" };
 const member = { type: "user", userId: "member" };
 const coordinator = { type: "user", userId: "coordinator" };
 
@@ -42,7 +42,12 @@ describe("which runs are offered write_artifact_data", () => {
   it("offers it to a Sidekick run, naming the Sidekick from the run and not from the parent", () => {
     expect(artifactDataWriteAccess({
       executionPrincipal: coordinator, parentKind: "automation", substreamId: "run-child", automationRun: run,
-    })).toEqual({ kind: "sidekick_run", sidekickId: "a" });
+    })).toEqual({ kind: "sidekick_run", sidekickId: "a", runId: "r" });
+  });
+
+  it("offers it to a run that acts as the Sidekick itself, with no person behind it", () => {
+    expect(artifactDataWriteAccess({ executionPrincipal: { type: "workspace" }, parentKind: "automation", automationRun: run }))
+      .toEqual({ kind: "sidekick_run", sidekickId: "a", runId: "r" });
   });
 
   it("offers it to nobody else", () => {
@@ -59,10 +64,8 @@ describe("which runs are offered write_artifact_data", () => {
     expect(artifactDataWriteAccess({
       executionPrincipal: coordinator, parentKind: "automation", substreamId: "worker", automationRun: run, backgroundAgent: true,
     })).toBeNull();
-    // Organization authority has no person to admit.
+    // A Chat under Organization authority has no person to write as.
     expect(artifactDataWriteAccess({ executionPrincipal: { type: "workspace" }, parentKind: "canvas" })).toBeNull();
-    expect(artifactDataWriteAccess({ executionPrincipal: { type: "workspace" }, parentKind: "automation", automationRun: run }))
-      .toBeNull();
     // Any other conversation under a Canvas, and any other parent kind.
     expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas", substreamId: "side" })).toBeNull();
     expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "workstream" })).toBeNull();

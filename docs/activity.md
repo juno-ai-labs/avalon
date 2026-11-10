@@ -249,7 +249,22 @@ decided takes the buttons' place on a line as tall as they were, so the list
 does not move: "You approved" or "You denied" to the decider themselves
 (`accessRequest.decidedByUserId` against the session user), "Maya approved"
 or "Maya denied" to the others, or the name alone from a server older than the
-id. The message stays the preview, and the row is seen. With nothing listed,
+id. The message stays the preview, and the row is seen. A request for a
+Sidekick source (`source_request`, [`sidekick-sources.md`](sidekick-sources.md))
+is the same group for the person asked: "<requester> asked to start <Sidekick>
+from your <connector>" behind a bolt, and under it Approve and Decline, the
+pair the conversation's card and the Sidekick panel draw
+([`shared-ui.md`](shared-ui.md#sidekick-sources)), sending
+`POST /sidekicks/:id/source-requests/:requestId/decision` for the row's
+Sidekick (`parentId`) and `sourceRequest.requestId`. Their acknowledged choice
+is drawn filled and held until the Activity push settles the row, which then
+reads "You approved", "You declined" or "Replaced by a newer request" in the
+buttons' place. Only the person asked has the row, so the answer is always
+theirs. The requester's `source_approved` and `source_declined` rows are plain
+rows: "<person> approved starting <Sidekick> from their <connector>", or
+"declined", the person named by the directory or else by
+`sourceRequest.personName`. The connector is worded as the card words it
+("Gmail"); the preview is the server's. With nothing listed,
 the section names every kind it carries. A seen row recedes through one text
 colour for both lines (`text-muted`, 5.12:1 in light and 7.49:1 in dark) and a
 lighter title weight, never through opacity, so every line of it clears 4.5:1. The rows the route has open (the same conversation, and the
@@ -264,7 +279,11 @@ an add, an access request and a grant open the Canvas, a declined request
 (`access_denied`) opens the Canvas's id onto its requestable pane, which then
 says "Request declined" and offers Request access again (opening it reads no
 conversation, so the row stays unseen until the requester asks again or Mark
-all seen), and a pinned Canvas's
+all seen), a source row opens its Sidekick, whose Sources section shows the
+request, but only while the viewer's Sidekick list holds that Sidekick: the
+person asked usually cannot open it until they approve, so until then their
+row opens the Activity home (`/activity`) and is never drawn open
+(`activityRoute`'s `sidekickListed`), and a pinned Canvas's
 new version (`artifact_updated`) opens it onto that artifact
 (`?artifact=<resourceId>`). A row about a
 Sidekick opens its conversation, where a run's row is, and a reply there opens
@@ -419,7 +438,7 @@ creator's socket and the administrator's page, settled and seen for both by
 one approval, and the requester's grant row.
 
 The renderer's `workspace-socket.test.tsx` covers the page and the push, and
-`navigation-sidebar.test.tsx` the rows, their links, the badge, the empty state and Mark all seen, and `rail-dock-badge.test.tsx` that the dock badge is Activity's unseen count, sent only once the list has arrived.
+`navigation-sidebar.test.tsx` the rows, their links, the badge, the empty state and Mark all seen (a source request's pair, its settled line and where it opens included), and `rail-dock-badge.test.tsx` that the dock badge is Activity's unseen count, sent only once the list has arrived.
 
 ## Data model
 
@@ -431,6 +450,32 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 | `workspace_sidebar_list_state` | `list` | Row `activity`: the list's waterline. |
 
 ## Changelog
+
+### 2026-11-10 — A source request's row opens nothing while its Sidekick cannot be opened
+
+**What changed:** The client draws the three Sidekick source kinds. The asked
+person's `source_request` row is its Approve and Decline while pending and
+reads as settled afterwards. A source row links to its Sidekick only while
+the viewer's Sidekick list holds it; otherwise it links to the Activity home.
+An Activity push that moves a source row re-reads that Sidekick's sources, so
+an open card or Sources section follows it.
+
+**Why:** A source request names a Sidekick to a person who usually cannot
+open it: approving is what makes them a reader. Every other Sidekick row
+opens the Sidekick, and here that route answers "Sidekick could not be
+opened" with an error popup, for the one person the row exists to ask.
+
+**Considered and rejected:** Opening the conversation the request was asked
+from, where its card is. The row does not carry the request's `place`, and
+that conversation may be a Canvas the person is not in either. A row that is
+not a link at all: every row in the list is one, and the phone sheet, the
+keyboard path and entering the section all assume it.
+
+**Consequences:** `activityRoute` takes whether the Sidekick is listed, and
+both of its callers must pass it: the section, and the rail's "open the top
+row". A row whose route is `/activity` is never drawn open. If the item later
+carries the request's place, opening the card there is the better
+destination. [`shared-ui.md`](shared-ui.md#sidekick-sources) owns the pair.
 
 ### 2026-11-09 — Remove archived Canvas Activity atomically
 

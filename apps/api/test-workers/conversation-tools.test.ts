@@ -524,7 +524,7 @@ export class SiteData extends DurableObject {
     const site = await statefulSite("inbox", ROOM_ID);
     const write = writeTool({
       workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal: { type: "user", userId: AUTHOR_ID }, reader: null,
-      write: { kind: "sidekick_run", sidekickId: AUTOMATION_ID },
+      write: { kind: "sidekick_run", sidekickId: AUTOMATION_ID, runId: crypto.randomUUID() },
     });
     // The run-as person can read the site, and that is not enough to write it.
     await expect(write(site.resourceId, "m1")).rejects.toMatchObject({ code: "artifact_canvas_not_attached" });

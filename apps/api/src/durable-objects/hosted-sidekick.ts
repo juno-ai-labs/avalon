@@ -1097,13 +1097,34 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     }
   }
 
-  /** A person's own connections of one connector: what approving a request lets in. */
-  private personalConnections(workspaceId: string, userId: string, connectorType: string): { id: string }[] {
+  /**
+   * The connections of one connector a person's source covers: their own,
+   * and the Organization's, where a source lets in the events limited to an
+   * audience they are in. What approving a request lets in.
+   */
+  private sourceConnections(workspaceId: string, userId: string, connectorType: string): { id: string }[] {
     return this.sql.exec<{ id: string }>(
       `SELECT id FROM connector_connections
-        WHERE workspace_id = ? AND owner_user_id = ? AND scope = 'personal' AND connector_type = ? AND status <> 'disabled'
+        WHERE workspace_id = ?1 AND connector_type = ?3 AND status <> 'disabled'
+          AND ((scope = 'personal' AND owner_user_id = ?2) OR scope = 'workspace')
         ORDER BY id`, workspaceId, userId, connectorType,
     ).toArray();
+  }
+
+  /** The event types a connector's connections in this Organization announce, a webhook's configured ones among them. */
+  private announcedEventTypes(workspaceId: string, connectorType: string): Set<string> {
+    const adapter = connectorRegistryForEnv(this.env).get(connectorType);
+    const announced = new Set(adapter.manifest.activityTriggers.map((trigger) => trigger.eventType));
+    for (const connection of this.sql.exec<{ scope: string; granted_scopes_json: string; config_json: string | null }>(
+      `SELECT scope, granted_scopes_json, config_json FROM connector_connections
+        WHERE workspace_id = ? AND connector_type = ? AND status <> 'disabled'`, workspaceId, connectorType,
+    )) {
+      for (const descriptor of connectorActivityTriggerDescriptors(adapter, connection.config_json,
+        storedConnectionScope(connection.scope), JSON.parse(connection.granted_scopes_json) as string[])) {
+        announced.add(descriptor.eventType);
+      }
+    }
+    return announced;
   }
 
   /** Let the person read the Sidekick their events now start. Not required for the source to keep letting them in. */
@@ -1127,9 +1148,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     if (initial.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
     if (!await this.managerAllows(initial, request.actor)) throw sidekickSourceError("sidekick_source_request_requires_manager");
     const registry = connectorRegistryForEnv(this.env);
-    const manifest = registry.list().find((candidate) => candidate.type === request.ask.connectorType);
-    if (!manifest) throw new ApiError(422, "sidekick_source_connector_unknown", "No connector has that type");
-    const declared = new Set(manifest.activityTriggers.map((trigger) => trigger.eventType));
+    if (!registry.list().some((candidate) => candidate.type === request.ask.connectorType)) {
+      throw new ApiError(422, "sidekick_source_connector_unknown", "No connector has that type");
+    }
+    const declared = this.announcedEventTypes(request.workspaceId, request.ask.connectorType);
     const unknown = request.ask.eventTypes.find((eventType) => !declared.has(eventType));
     if (unknown) throw new ApiError(422, "sidekick_source_event_unknown", `That connector has no event named ${unknown}`);
     const userIds = [...new Set(request.ask.userIds)];
@@ -1162,7 +1184,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
           continue;
         }
         const own = userId === request.actor.userId;
-        const connections = own ? this.personalConnections(row.workspace_id, userId, request.ask.connectorType) : [];
+        const connections = own ? this.sourceConnections(row.workspace_id, userId, request.ask.connectorType) : [];
         if (own && connections.length === 0) throw sidekickSourceError("sidekick_source_connection_missing");
         const { request: created, replaced } = this.sources().ask({
           requestId: requestIds[index]!, sidekickId: this.sidekickId, userId, connectorType: request.ask.connectorType,
@@ -1227,7 +1249,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       if (state === "approved") {
         if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
         if (relationship?.status !== "active") throw sidekickSourceError("sidekick_source_membership_unavailable");
-        const connections = this.personalConnections(row.workspace_id, current.userId, current.connectorType);
+        const connections = this.sourceConnections(row.workspace_id, current.userId, current.connectorType);
         if (connections.length === 0) throw sidekickSourceError("sidekick_source_connection_missing");
         for (const connection of connections) {
           this.sources().put({ sidekickId: this.sidekickId, userId: current.userId, connectionId: connection.id,
