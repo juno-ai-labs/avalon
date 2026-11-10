@@ -711,6 +711,7 @@ describe('CanvasScreen', () => {
       { id: MAYA, name: 'Maya Lin', email: 'maya@example.test', timezone: 'UTC', accessClass: 'member' },
       { id: THEO, name: 'Theo Park', email: 'theo@example.test', timezone: 'UTC', status: 'active' },
       { id: RAE, name: 'Rae Lee', email: 'rae@example.test', timezone: 'UTC', accessClass: 'member' },
+      { id: asUserId('00000000-0000-7000-8000-0000000000a6'), name: 'Isa Bell', email: 'isa@example.test', timezone: 'UTC', status: 'invited' },
       { id: GUEST, name: 'Gale Guest', email: 'gale@example.test', timezone: 'UTC', accessClass: 'guest' },
     ]);
     // Maya made it; Adam, an administrator, is managing it.
@@ -727,6 +728,10 @@ describe('CanvasScreen', () => {
     fireEvent.click(within(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
 
     expect(within(dialog).getByRole('checkbox', { name: 'Theo Park' })).toBeDisabled();
+    const invitee = within(dialog).getByRole('checkbox', { name: 'Isa Bell' });
+    expect(invitee).toBeDisabled();
+    expect(invitee).not.toBeChecked();
+    expect(invitee).toHaveAccessibleDescription('Invitation pending');
     const search = within(dialog).getByRole('searchbox', { name: 'Search people' });
     fireEvent.change(search, { target: { value: 'rae@example.test' } });
     const rae = within(dialog).getByRole('checkbox', { name: 'Rae Lee' });
