@@ -20,7 +20,7 @@ export function PasswordSignInForm({ onSubmit, onBack, disabled = false }: {
     setBusy(true);
     setError(null);
     try {
-      await onSubmit({ email: email.trim().toLowerCase(), password });
+      await onSubmit({ email, password });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Sign-in could not be completed. Try again.');
     } finally {

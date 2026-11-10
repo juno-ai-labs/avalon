@@ -32,6 +32,8 @@ import { encryptString } from "../src/lib/crypto";
 import { EMAIL_DELIVERY_TABLE } from "./helpers/email-delivery-tables";
 import { openEmailLoginSecret } from "../src/services/email-login-service";
 import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
+import { provisionUserPassword } from "../src/services/password-login-service";
+import passwordMigration from "../../../packages/db/migrations/0129_password_login.sql?raw";
 import { claimScopeInvitations } from "../src/services/scope-invitation-claims";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 
@@ -156,6 +158,36 @@ beforeEach(async () => {
 });
 
 describe("sharing a Canvas by email address", () => {
+  it("does not admit an unverified password account to a pending Canvas share", async () => {
+    expect(await share([NEWCOMER_EMAIL])).toMatchObject({ status: "pending", acceptedByUserId: null });
+    const apiEnv = await prepareBrowserSignIn();
+    await env.DB.batch(passwordMigration.split(';').filter((sql) => sql.trim()).map((sql) => env.DB.prepare(sql)));
+    const at = new Date().toISOString();
+    await env.DB.prepare("INSERT INTO users (id, email, name, created_at, updated_at) VALUES (?, ?, 'Reviewer', ?, ?)")
+      .bind(NEWCOMER, NEWCOMER_EMAIL, at, at).run();
+    const { password } = await provisionUserPassword(apiEnv, NEWCOMER);
+    const app = createApp();
+    const login = () => app.request("/browser/password", { method: "POST", headers: originHeaders,
+      body: JSON.stringify({ email: NEWCOMER_EMAIL, password }) }, apiEnv);
+    const refused = await login();
+    expect(refused.status, await refused.clone().text()).toBe(401);
+    await refused.arrayBuffer();
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM sessions").first()).toEqual({ n: 0 });
+    expect(await env.DB.prepare("SELECT user_id FROM workspace_members WHERE workspace_id = ? AND user_id = ?")
+      .bind(WORKSPACE_ID, NEWCOMER).first()).toBeNull();
+    expect(await routes(NEWCOMER_EMAIL)).toEqual([{ workspace_id: WORKSPACE_ID, parent_id: CANVAS_ID }]);
+    const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID,
+      actor: { userId: CREATOR, actorRole: "member" } });
+    expect(detail.participantUserIds).not.toContain(NEWCOMER);
+
+    // The mailbox proof must exist independently; password provisioning did not create it.
+    await env.DB.prepare("INSERT INTO user_verified_emails (email, user_id, verified_at) VALUES (?, ?, ?)")
+      .bind(NEWCOMER_EMAIL, NEWCOMER, at).run();
+    const admitted = await login();
+    expect(admitted.status, await admitted.clone().text()).toBe(200);
+    expect(await admitted.json()).toMatchObject({ user: { id: NEWCOMER } });
+  });
+
   it("parks an uncertain invitation delivery without acknowledging it or sending again", async () => {
     const send = vi.fn(async () => { throw new Error("provider acceptance unknown"); });
     const id = crypto.randomUUID();

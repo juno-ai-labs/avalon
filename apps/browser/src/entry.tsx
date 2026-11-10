@@ -527,7 +527,10 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         <p>{proof ? "Continue to what was shared with you." : challenge ? iosStandalone() ? `Enter the code sent to ${email}.` : `Enter the code sent to ${email}, or open the sign-in link in that email.` : linkKind === "canvas" ? "Sign in to open this Canvas." : linkKind === "sidekick" ? "Sign in to open this Sidekick." : destination ? "Sign in to open this Organization." : siteTarget ? "Sign in to open this site." : retiredLink ? RETIRED_LINK_MESSAGE : "Your team, your work, and Rally. All in one place."}</p>
         {!proof && !challenge && passwordChosen ? <PasswordSignInForm disabled={checking || busy}
           onSubmit={async (input) => {
-            await adopt(await browserRequest(IDENTITY_REGION, "/password", BrowserSessionSchema, input), IDENTITY_REGION);
+            const current = await browserRequest(IDENTITY_REGION, "/password", BrowserSessionSchema, input);
+            // Adoption can unmount this form before Organization discovery fails.
+            try { await adopt(current, IDENTITY_REGION); }
+            catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load your organizations."); }
           }} onBack={() => setPasswordChosen(false)} /> : !proof && !challenge && !emailChosen ? <>
           <Button className="button-primary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}><ConnectorMark mark="google" />Continue with Google</Button>
           <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => setEmailChosen(true)}><Mail aria-hidden="true" size={16} />Continue with email</Button>
