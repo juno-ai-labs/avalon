@@ -159,12 +159,7 @@ export interface HostedCanvasHost extends HostedConversationHost {
   noteRelationship(relationship: WorkspaceRelationship): void;
   /** Inside the transaction that changed a Canvas's row or its participants: the sidebar list's waterline. */
   noteCanvasDirectoryChanged(canvasId: string): void;
-  /**
-   * Inside the transaction that changed who a Canvas admits: a Sidekick made
-   * in it admits the same people, so their Sidekick lists moved too.
-   */
-  noteCanvasAudienceChanged(canvasId: string): void;
-  /** Inside the archive's transaction: archive every Sidekick made in this Canvas. */
+  /** Inside the archive's transaction: archive every Sidekick this Canvas's Chat made. */
   archiveHomeSidekicks(canvasId: string, now: number): void;
 }
 
@@ -546,9 +541,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
    */
   sidekicks(): CanvasSidekick[] {
     return this.sql.exec<{
-      automation_id: string; title: string; lifecycle: "draft" | "active" | "paused"; appearance_json: string | null; home_canvas_id: string | null;
+      automation_id: string; title: string; lifecycle: "draft" | "active" | "paused"; appearance_json: string | null; made_here: number;
     }>(
-      `SELECT directory.automation_id, directory.title, directory.lifecycle, directory.appearance_json, directory.home_canvas_id
+      `SELECT directory.automation_id, directory.title, directory.lifecycle, directory.appearance_json, attachment.made_here
          FROM sidekick_conversation_attachments attachment
          JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
         WHERE attachment.parent_kind = 'canvas' AND attachment.parent_id = ? AND attachment.substream_id = '0'
@@ -560,7 +555,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         logWarn(this.host.env, "automation_directory_appearance_invalid", { automation_id: row.automation_id, code }));
       return CanvasSidekickSchema.parse({
         id: row.automation_id, name: row.title || "New Sidekick", status: row.lifecycle,
-        ...(appearance ? { appearance } : {}), madeHere: row.home_canvas_id === this.canvasId,
+        ...(appearance ? { appearance } : {}), madeHere: row.made_here === 1,
       });
     });
   }
@@ -737,7 +732,6 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       this.sql.exec(`UPDATE canvas_directory SET visibility = ?, updated_at = ? WHERE canvas_id = ?`,
         request.update.visibility, now, this.canvasId);
       this.host.noteCanvasDirectoryChanged(this.canvasId);
-      this.host.noteCanvasAudienceChanged(this.canvasId);
     });
     // A request from someone this audience now admits is settled: whoever
     // changed the audience let them in. Only a member asks, and an
@@ -791,7 +785,6 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         this.canvasId, grant.userId);
     }
     this.host.noteCanvasDirectoryChanged(this.canvasId);
-    this.host.noteCanvasAudienceChanged(this.canvasId);
   }
 
   async createInvitations(input: z.input<typeof CreateScopeInvitationsSchema>): Promise<ScopeInvitationResult> {

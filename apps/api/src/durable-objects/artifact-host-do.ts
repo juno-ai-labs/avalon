@@ -300,7 +300,8 @@ export type ArtifactQueryResult =
  */
 export type ArtifactWriteResult =
   | { ok: true; rowsWritten: number; columns: string[]; rows: ArtifactRow[]; truncated: boolean }
-  | { ok: false; reason: "no_artifact_data" | "canvas_archived" }
+  | { ok: false; reason: "no_artifact_data" }
+  | { ok: false; reason: "canvas_archived" }
   | { ok: false; reason: "sql_refused" | "private_rows" | "sql_failed"; detail: string };
 
 export type ArtifactPageResult =

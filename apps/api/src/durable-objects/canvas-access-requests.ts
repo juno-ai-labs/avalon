@@ -51,8 +51,6 @@ export interface CanvasAccessHost {
   readRelationship(workspaceId: string, userId: string): Promise<unknown>;
   noteActivityChanged: NoteActivity;
   noteCanvasDirectoryChanged(canvasId: string): void;
-  /** See `HostedCanvasHost.noteCanvasAudienceChanged`. */
-  noteCanvasAudienceChanged(canvasId: string): void;
 }
 
 /** The Canvas a request is about, as its row says now. */
@@ -242,7 +240,6 @@ export async function settleCanvasAccessRequest(host: CanvasAccessHost, subject:
       host.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'participants', updated_at = MAX(updated_at, ?)
         WHERE canvas_id = ? AND visibility = 'creator'`, now, subject.canvasId);
       host.noteCanvasDirectoryChanged(subject.canvasId);
-      host.noteCanvasAudienceChanged(subject.canvasId);
     }
     return [{
       recipientUserId: input.requesterUserId,

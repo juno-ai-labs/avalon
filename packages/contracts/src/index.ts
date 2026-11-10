@@ -1677,10 +1677,10 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   runAsUserId: IdSchema,
   /**
    * The Canvas whose Chat made this Sidekick, or null for one made anywhere
-   * else. Everyone that Canvas admits reads and manages the Sidekick, and
+   * else. Everyone that Canvas admits may change or archive the Sidekick, and
    * archiving the Canvas archives it. Absent from a server that predates it.
    */
-  homeCanvasId: IdSchema.nullable().optional(),
+  madeInCanvasId: IdSchema.nullable().optional(),
   delegationAttention: z.strictObject({ code: SidekickDelegationAttentionCodeSchema, message: z.string() }).nullable().optional(),
   /** The latest submitted definition, or null before the chat has submitted one. */
   currentDefinition: AutomationDraftSchema.nullable(),

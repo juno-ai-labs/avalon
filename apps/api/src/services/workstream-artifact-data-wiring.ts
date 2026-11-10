@@ -12,7 +12,7 @@
  *
  * See `docs/live-web-artifacts.md`.
  */
-import { asArtifactId, asWorkspaceId, IdSchema, type ExecutionPrincipal, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { asArtifactId, asWorkspaceId, IdSchema, type ExecutionPrincipal } from "@rally/contracts";
 
 import { artifactHostDOName, workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
@@ -66,10 +66,14 @@ export type ArtifactDataWriteAccess =
   | { kind: "canvas_chat" }
   | { kind: "sidekick_run"; sidekickId: string };
 
-export function artifactDataWriteAccess(
-  input: Pick<WorkstreamWorkflowInput,
-    "executionPrincipal" | "parentKind" | "substreamId" | "automationRun" | "automationDelegation" | "backgroundAgent" | "sidekickWizard">,
-): ArtifactDataWriteAccess | null {
+export function artifactDataWriteAccess(input: {
+  executionPrincipal: { type: string };
+  parentKind: string;
+  substreamId?: string | undefined;
+  automationRun?: { automationId: string } | undefined;
+  automationDelegation?: unknown;
+  backgroundAgent?: boolean | undefined;
+}): ArtifactDataWriteAccess | null {
   if (input.executionPrincipal.type !== "user") return null;
   if (input.backgroundAgent === true || input.automationDelegation) return null;
   if (input.automationRun) {
@@ -77,7 +81,7 @@ export function artifactDataWriteAccess(
       ? { kind: "sidekick_run", sidekickId: input.automationRun.automationId }
       : null;
   }
-  if (input.parentKind !== "canvas" || input.sidekickWizard === true) return null;
+  if (input.parentKind !== "canvas") return null;
   return (input.substreamId ?? "0") === "0" ? { kind: "canvas_chat" } : null;
 }
 
@@ -127,7 +131,7 @@ export function createArtifactDataToolContext(
     return match && match.resource_type === "generated_site" ? match : null;
   }
   /** Whose rows this run touches on a site; the resource row records who the publishing run ran as. */
-  function scopeOn(site: { uploaded_by_user_id?: unknown }) {
+  function scopeOn(site: Record<string, unknown>) {
     const author = typeof site.uploaded_by_user_id === "string" ? site.uploaded_by_user_id : null;
     return artifactRowScope(input.reader, author);
   }
