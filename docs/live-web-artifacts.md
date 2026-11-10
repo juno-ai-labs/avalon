@@ -28,15 +28,16 @@ exists.
 | `apps/api/src/artifacts/index.ts` | The artifact serving Worker's entry point — a second Worker, its own origin, its own bindings. |
 | `apps/api/src/artifacts/serving-policy.ts` | The three fences: the page CSP, the fetch-metadata admission, and the prior-version mount rules. |
 | `apps/api/src/artifacts/annotation-script.ts` | Which responses carry Rally's annotation script (a viewer session, or the browser client's frame), the served file at `/__rally/picker-<hash>.js`, and its head-first injection. |
-| `apps/api/src/artifacts/read-only-sql.ts` | What a data query may run, how a dynamic table name is admitted, and which tables are private to a viewer (`viewerTables`, `artifactRowScope`). |
+| `apps/api/src/artifacts/read-only-sql.ts` | What a data query may run (`admitReadOnlyStatement`) and what a row write may run (`admitDataWriteStatement`), how a dynamic table name is admitted, and which tables are private to a viewer (`viewerTables`, `artifactRowScope`). |
 | `apps/api/src/artifacts/hostname-routes.ts` | The stub-to-artifact lookup, shared by the serving Worker and the API. |
 | `apps/api/src/services/artifact-site-resolution.ts` | The hostname-to-organization lookup behind `/browser/sites/resolve`, for signing in from a site's link. |
 | `apps/api/src/artifacts/facet-host.ts` | The Rally-authored module source loaded into a stateful artifact's facet beside the model's own. |
 | `apps/api/src/artifacts/asset-loopback.ts` | `ArtifactAssetLoopback`: the `ASSETS` binding, as an exported entrypoint. The one thing that crosses into an artifact's isolate. |
 | `apps/api/src/artifacts/asset-shim.ts` | The two module sources that run inside the isolate: the wrapper that makes `fetch(string)` true, and the entry Rally puts in front of a stateless active site's own module. |
 | `apps/api/src/artifacts/pages.ts` | The neutral page, the plain error page, and the fragment-to-cookie bootstrap. |
-| `apps/api/src/services/workstream-artifact-data-tools.ts` | The three read-only data tools' contract: what a model sees, and which sites are unreachable. No `Env` — its wiring is next door. |
-| `apps/api/src/services/workstream-artifact-data-wiring.ts` | Resolving a reference through the standard visibility loader, and reaching the supervisor through the one supported resolver. |
+| `apps/api/src/services/workstream-artifact-data-tools.ts` | The data tools' contract, three reads and `write_artifact_data`: what a model sees, and which sites are unreachable. No `Env` — its wiring is next door. |
+| `apps/api/src/services/workstream-artifact-data-wiring.ts` | Resolving a reference through the standard visibility loader, reaching the supervisor through the one supported resolver, and the write gate: which runs are offered the write tool (`artifactDataWriteAccess`) and which sites each may write (`resolveWritableArtifact`). |
+| `apps/api/src/durable-objects/workspace-artifact-data-write.ts` | WorkspaceDO's one read for the write gate (`artifactDataWriteFacts`): the artifact a resource is, its Canvas, whether that Canvas is archived, and whether it is attached to the Sidekick named. |
 | `packages/agent-harness/src/prompts/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
 | `packages/agent-harness/src/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
 | `apps/api/src/services/artifact-open-service.ts` | The identity-bearing door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. Public reads bypass it and remain anonymous. |
@@ -314,8 +315,65 @@ Rally assembles the dynamic worker's `modules` map, so the facet never loads the
 model's class directly: a Rally-authored module imports `SiteData` and runs a host
 class that **instantiates it and holds it as a field**, passing the same `ctx`.
 Both objects address one database while living on separate prototype chains, so
-the host answers RPCs the model's code never defined — describe, query, page —
-over the same rows the page reads and writes.
+the host answers RPCs the model's code never defined — describe, query, page,
+and one write — over the same rows the page reads and writes.
+
+#### Writing rows from a run
+
+The site's own code writes its database from viewer traffic
+(`fetchThroughFacet`), and always has; nothing here changes that. Beside it,
+`write_artifact_data` lets a run change rows without republishing the site: a
+recurring Sidekick run inserts a row per new email, and the page shows it on
+its next read. The tool takes `{ resource, sql, params? }` like
+`query_artifact_data` and reaches `ArtifactHostDO.writeData`, which forwards to
+the facet host's `rallyWrite`.
+
+- **One data statement.** `admitDataWriteStatement` admits exactly one
+  statement opening with INSERT, UPDATE, DELETE or REPLACE (or a `WITH` whose
+  body does), over the scanner the read admission uses. Everything else is
+  refused: a SELECT is pointed at `query_artifact_data`, and CREATE, ALTER,
+  DROP, PRAGMA, ATTACH, VACUUM and transaction control are simply not on the
+  list. The site's own code owns its schema; a run changes it by revising
+  and publishing the site.
+- **Applied whole or not at all, with no version.** `rallyWrite` runs the
+  statement in one transaction and commits it. No artifact version is made,
+  the facet is not restarted, and nobody is notified.
+- **What comes back.** `{ rowsWritten }`, plus the rows of a `RETURNING`
+  clause, at most 200 with `truncated`. `rowsWritten` is the engine's
+  physical counter, which counts index entries
+  ([Mutation outcomes](durable-object-sqlite.md#mutation-outcomes-use-returned-witnesses)),
+  so the tool description tells the model to use `RETURNING` to learn which
+  rows changed. A refusal by the site's database (a missing table, a
+  constraint) is returned as `sql_error` in SQLite's own words, which name
+  only the site's schema; nothing was written.
+- **Not repeated blindly.** The tool is `mode: "write"`,
+  `idempotency: "record_before_execute"`: the site's database dedupes on no
+  key Rally supplies, so an interrupted call is never run again by the host.
+  The description asks for an idempotent statement (`ON CONFLICT DO NOTHING`
+  on a unique key). No person confirms a call.
+
+**Who may write** is decided by the host from the loop input, never from a
+model argument (`artifactDataWriteAccess`). A run that is not on this list is
+not offered the tool:
+
+1. **A Canvas's Chat** (parent kind `canvas`, conversation `"0"`, a person's
+   principal) may write a site linked to that Canvas: the resolution its
+   reads use, not widened.
+2. **A Sidekick run** (`automationRun` present) may write a site only when the
+   site's Canvas (`artifact_registry.workstream_id`) is attached to that
+   Sidekick: a `sidekick_conversation_attachments` row for the Sidekick with
+   `parent_kind = 'canvas'`, the Canvas's id and `substream_id = '0'`, and a
+   `canvas_directory` row that is not archived. That table is the only
+   Sidekick-to-Canvas edge the gate reads. The run-as person must also be
+   able to read the site, as for a read; being able to read it is not enough
+   to write it, and the refusal is `artifact_canvas_not_attached`.
+3. **Nobody else**: not a Sidekick's wizard conversation, a background agent,
+   a loop under Organization authority, or any other parent kind.
+
+The read resolution runs first, then one WorkspaceDO call,
+`artifactDataWriteFacts`, in place of the read path's registry lookup. A site
+whose Canvas is archived is refused (`canvas_archived`), by that call and
+again by the supervisor's own `archived_canvases` tombstone.
 
 #### Per-viewer rows
 
@@ -362,6 +420,12 @@ what the page shows is the page's job.
   without rewriting it, and a hand-written rewriter leaked each time review
   found a new SQLite spelling, so it was removed. The author, Sidekick runs and
   Organization-principal runs query freely.
+- **How a write is scoped.** `write_artifact_data` takes the same scope. The
+  site's author and an unattended Sidekick run write any row. A member who is
+  not the author, typing in a Canvas's Chat or into a Sidekick run, is a
+  scoped reader: on a site with any private table their write is refused
+  with `private_rows`, for the reason their free-form query is, and on a site
+  with none they write freely.
 
 Requests to a stateful artifact route *through* the supervisor rather than being
 served in the loader's own isolate. That is a platform constraint rather than a
@@ -533,8 +597,9 @@ is the only place that can forward into it.
   `@rally/contracts` is what the skills teach and what every read filters on;
   rename it in one place, or members' private rows become shared. Guard: the
   skills interpolate the constant.
-- **Every read path takes an `ArtifactRowScope`, and anything but `all`
-  narrows.** `describeData`, `queryData` and `pageData` require one, and read a
+- **Every read path, and the write path, takes an `ArtifactRowScope`, and
+  anything but `all` narrows.** `describeData`, `queryData`, `pageData` and
+  `writeData` require one, and read a
   scope they do not recognize as a viewer's (`viewerOf`). Guard: the
   required parameter, and `artifact-facet` and `conversation-tools` on workerd.
 - **A free-form query never runs for a viewer-scoped reader on a site with a
@@ -563,6 +628,20 @@ is the only place that can forward into it.
   transaction is not an authorization boundary: caller SQL can commit
   mid-statement. Exactly one statement, parsing as a `SELECT`, with a `WITH`
   clause's *body* checked rather than its opening keyword.
+- **A run's write changes rows, never the schema.** `writeData` admits one
+  INSERT, UPDATE, DELETE or REPLACE the same positive way, so a run cannot
+  create, alter or drop what the site's code expects to find. Guard:
+  `artifact-read-only-sql` and `artifact-facet`'s schema-statement case.
+- **`writeData` trusts its caller for who is writing.** The supervisor knows
+  the artifact, not the run, so a new caller must gate before it calls, as
+  `resolveWritableArtifact` does. The write tool is built only for a context
+  that carries that resolver, and `artifactDataWriteAccess` is the one place
+  that decides which loops get one. Guard: `conversation-tools` on workerd
+  (an unattached Sidekick run, a site not linked to the Canvas) and
+  `artifact-data-reader`.
+- **The Sidekick write gate reads `sidekick_conversation_attachments` only.**
+  A second edge read beside it (`canvas_directory.writer_sidekick_id`) would
+  let the two disagree about which Sidekick may write a Canvas's sites.
 - **A dynamic table name is matched against the live schema, never interpolated.**
   The names are the model's, so no code-owned allowlist can exist; the list is
   read from the facet's own `sqlite_master` at request time.
@@ -669,8 +748,8 @@ from a real Canvas archive to its published site.
 
 | Suite | What it proves |
 | --- | --- |
-| `pnpm --filter @rally/api exec vitest run test/artifact-read-only-sql.test.ts` | The SQL admission, adversarially: statement sequences that commit mid-payload, CTEs wrapping writes, semicolons inside literals, writes behind comment markers, and identifier injection. Also `viewerTables` (private tables, and hiding every search index on a site with one) and `artifactRowScope`. |
-| `pnpm --filter @rally/api exec vitest run test/artifact-data-reader.test.ts` | Who a run reads a site's data as: unattended Sidekick runs read all, a member typing into one reads as that member. |
+| `pnpm --filter @rally/api exec vitest run test/artifact-read-only-sql.test.ts` | The SQL admission, adversarially: statement sequences that commit mid-payload, CTEs wrapping writes, semicolons inside literals, writes behind comment markers, and identifier injection. Also `viewerTables` (private tables, and hiding every search index on a site with one) and `artifactRowScope`. And the write admission: row statements admitted, a read pointed at the read tool, every schema, connection and transaction statement refused. |
+| `pnpm --filter @rally/api exec vitest run test/artifact-data-reader.test.ts` | Who a run reads a site's data as: unattended Sidekick runs read all, a member typing into one reads as that member. And which loops are offered `write_artifact_data`: a Canvas's Chat and a Sidekick run, and nobody else. |
 | `pnpm --filter @rally/contracts exec vitest run src/artifacts.test.ts` | Return-path reduction against open-redirect spellings, and the site-opening path round trip. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-serving-policy.test.ts test/artifact-serving-hostname.test.ts` | The three fences: CSP directives, anonymous public reads, session identity only on eligible requests, anonymous submissions reaching the handler with no identity even when a sibling sends the viewer's cookie, version-mount parsing, and asset resolution. Also sign-in: the route, the page-load 401 redirect and when it is withheld (a signed-in viewer, a failed session check, no browser origin), and the redeem return path. |
 | `pnpm --filter @rally/api exec vitest run test/site-social-preview.test.ts test/artifact-social-preview.test.ts` | Publish-time metadata extraction, authored local artwork, fallback PNG generation, absolute crawler metadata, escaping, and canonical URL cleanup. |
@@ -679,13 +758,13 @@ from a real Canvas archive to its published site.
 | `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The detail: that the first access response drives the initial preview without a second mint, later surfaces get fresh single-use codes, it measures and hands over rather than embedding, its actions land in the host's header and each carries a tooltip, Copy link carries no code, the data toggle only exists for a site that keeps data and takes the composited view down with it, the pane never flashes its unavailable state, and dialogs, menus and overlapping tooltips hide the native view until they close (including tooltips positioned after mount). |
 | `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp (including CSS-pixel to window-point conversion at a non-1 zoom), the isolation contract, the activation gate (unattended navigation dropped, an activated link handed over and never followed in place, redirects and disallowed schemes refused either way, one press buying one departure and not a loop of them, a refused navigation leaving the press unspent, the press dropped when its document goes, a same-origin `_blank` shown in place, and the exact event set that does and does not arm it), the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
-| `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
+| `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. For the write tool: that it is not built without a write resolver, its mode and idempotency class, its output with and without `RETURNING`, and each refusal's code. |
 | `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-stateless-module.test.ts` | A **stateless active** site's isolate on real workerd: that the `ASSETS` stub crosses the loader's env at all, that it serves this artifact's files, that the relative-string read works, and that `fetch()` throws. Scope is the isolate contract, not admission — the fences in front of it are the policy suite's. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-social-preview-runtime.test.ts` | `HTMLRewriter` on real workerd: active HTML receives metadata without buffering, while protected errors and JSON remain exact. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-asset-uploads.test.ts` | Real-R2 asset upload overlap, the assets-before-manifest barrier, generated tail assets, and failure draining. |
-| `pnpm --filter @rally/api test:workers` (`test-workers/artifact-facet.test.ts`) | The facet on **real workerd**: a model class running with its own SQLite, viewer attribution and deduplication, rows surviving a republish, isolation between two artifacts and from the supervisor's own tables, egress throwing, and the rollback. Also scoped reads: a private table paged as one viewer's rows, search indexes however fed reading as empty, and free SQL refused on a site with a private table and allowed on one without. |
-| `pnpm --filter @rally/api test:workers` (`test-workers/conversation-tools.test.ts`) | Which scope the data tools resolve for the author, another member and an unattended run, and `/browser/sites/resolve`'s 200, 403 (outside the Organization, or a member outside the audience of the site's Canvas) and 404. |
+| `pnpm --filter @rally/api test:workers` (`test-workers/artifact-facet.test.ts`) | The facet on **real workerd**: a model class running with its own SQLite, viewer attribution and deduplication, rows surviving a republish, isolation between two artifacts and from the supervisor's own tables, egress throwing, and the rollback. Also scoped reads: a private table paged as one viewer's rows, search indexes however fed reading as empty, and free SQL refused on a site with a private table and allowed on one without. Also `writeData`: a committed write the site's own handler then reads with no new version, schema statements and reads refused, the database's own refusal returned with nothing written, a scoped writer refused on a site with private rows, and an archived Canvas's site taking no write. |
+| `pnpm --filter @rally/api test:workers` (`test-workers/conversation-tools.test.ts`) | Which scope the data tools resolve for the author, another member and an unattended run; the write gate through the real tool, WorkspaceDO and facet (a Sidekick run refused until its own Sidekick has the site's Canvas attached and again once the Canvas is archived, a Canvas's Chat writing a linked site and no other); and `/browser/sites/resolve`'s 200, 403 (outside the Organization, or a member outside the audience of the site's Canvas) and 404. |
 
 Two traps:
 
@@ -729,7 +808,8 @@ The trust surface is the point of this module, and
 [`security.md`](security.md) owns the boundaries it sits on. In short: artifact
 code is untrusted and capability-fenced (one injected binding, no network, no
 secrets, no Rally bindings); artifact *data* is untrusted content with a trusted
-container, since the rows were written by model code and page visitors while the
+container, since the rows were written by model code, page visitors and, through
+`write_artifact_data`, a Canvas's Chat or an attached Sidekick's run, while the
 host class that reads them is Rally's and cannot be shadowed; and the serving
 Worker's waistline is deliberately minimal. Artifact content is intentionally
 public unless its active handler requires the trusted viewer header; error logs,
@@ -771,6 +851,46 @@ shows its saved quote and image. The script and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-10 — A run can write a stateful site's rows
+
+**What changed:** A fourth data tool, `write_artifact_data`, runs one INSERT,
+UPDATE, DELETE or REPLACE against a stateful site's database
+(`ArtifactHostDO.writeData`, the facet host's `rallyWrite`). It is offered to
+a Canvas's Chat, for sites linked to that Canvas, and to a Sidekick run, for
+sites whose Canvas is attached to that Sidekick
+(`sidekick_conversation_attachments`, answered by WorkspaceDO's
+`artifactDataWriteFacts`). The site's own code already writes its database
+from viewer traffic; that path is unchanged.
+
+**Why:** A Sidekick that keeps a site current (a row per new email) could
+only import the site, edit it and publish it again. Recurring runs overlap
+and nothing coalesces them, so two runs importing the same version lost one
+another's update, and every event minted a site version and a notification to
+everyone who pinned the site. A row write is one atomic statement and makes
+no version.
+
+**Considered and rejected:** Republishing per event, for the lost updates and
+the version and notification per event above. Offering the tool to a
+Sidekick's wizard conversation or to any run that can read the site: reading
+is granted widely (a Sidekick reads any site its run-as person can), and
+writing someone's poll should take the Canvas being attached to the Sidekick.
+A write that can change the schema: the site's code is written against its
+own tables, and a run that altered them would break a page that no publish
+had touched.
+
+**Consequences:** `writeData` does not know who is calling, so any new caller
+must gate first, as `resolveWritableArtifact` does. The Sidekick gate reads
+only `sidekick_conversation_attachments`; a Canvas a Sidekick writes
+(`canvas_directory.writer_sidekick_id`) admits its runs only through a row in
+that table. A member who is not the site's author cannot write from a Chat
+on a site with private rows. The tool is `record_before_execute`, so an
+interrupted write is reported as ambiguous instead of being run again, and
+the description asks the model for idempotent statements. `rowsWritten` is a
+physical counter; a caller that needs to know which rows changed uses
+`RETURNING`. A SQL failure in `query_artifact_data` still throws untyped from
+the facet; only the write path returns it as `sql_error`. Rows a run wrote
+are as untrusted as rows a visitor wrote.
 
 ### 2026-11-09 — Retain Canvas archive authority at the serving boundary
 

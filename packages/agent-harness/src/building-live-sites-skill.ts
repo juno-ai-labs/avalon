@@ -35,13 +35,14 @@ run instructions:
 - **Publication path:** That directory relative to \`/workspace/.rally-output\`.
 - **Data format:** File names, record layout, and field names and types.
 
-A Sidekick run publishes into a Canvas the Sidekick writes. Save the
+A Sidekick run publishes into a Canvas attached to the Sidekick. Save the
 instruction to publish each refresh into the saved Canvas by naming it in
 \`publish_resource\`'s \`canvas\` argument; without it, a run's first publish
-makes a new Canvas. Only a Canvas this Sidekick already writes can be named,
-and importing files does not redirect publication. When the site is in a Canvas
-this Sidekick does not write, report that requirement instead of creating a
-replacement site.
+makes a new Canvas. Only a Canvas attached to this Sidekick can be named (one
+an earlier run made, the Canvas whose Chat made the Sidekick, or one its
+configuration conversation attached), and importing files does not redirect
+publication. When the site is in a Canvas this Sidekick is not attached to,
+report that requirement instead of creating a replacement site.
 
 Prefer attaching the site with the setup message using \`attachmentIds\` in
 \`send_message\` or \`reply_to_message\`, even if the Sidekick can already read

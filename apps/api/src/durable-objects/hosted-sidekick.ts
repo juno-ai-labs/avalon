@@ -18,7 +18,7 @@ import {
   SidekickReviewNoticeV1Schema, type SidekickReviewNoticeV1,
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
-import { sidekickAttachedToCanvas, canvasReaderAllows as homeCanvasReaderAllows, sidekickHomeAdmits, sidekickManages, sidekickReaderAllows, sidekickSharedWith } from "./canvas-sidekick-admission";
+import { canvasReaderAllows as homeCanvasReaderAllows, sidekickManages, sidekickReaderAllows, sidekickSharedWith } from "./canvas-sidekick-admission";
 import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "./sidekick-source-registrations";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
@@ -250,8 +250,6 @@ export interface HostedSidekickRow extends Record<string, SqlStorageValue> {
   lifecycle: Lifecycle;
   paused_by: "person" | "room_archive" | null;
   scope: AutomationScope;
-  /** The Canvas whose Chat made this Sidekick (migration 144); everyone that Canvas admits reads and manages it. */
-  home_canvas_id: string | null;
   title: string;
   description: string;
   current_definition_revision: number;
@@ -561,9 +559,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
             current_definition_revision, accepted_definition_revision, connector_bindings_json,
             default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
             model_override, effective_after_event_sequence, authority_generation,
-            stop_generation, chat_appearance_json, delegation_migrated, created_at, updated_at, home_canvas_id)
+            stop_generation, chat_appearance_json, delegation_migrated, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, 1, 'hosted', 'draft', NULL, ?, NULL, '0', NULL, '', '', NULL, ?, 0, NULL,
-                 0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, ?, 0, NULL, 1, ?, ?, ?)
+                 0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, ?, 0, NULL, 1, ?, ?)
          ON CONFLICT(automation_id) DO NOTHING
          RETURNING automation_id`,
         request.automationId,
@@ -576,16 +574,15 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         request.authorityGeneration,
         now,
         now,
-        homeCanvasId,
       ).toArray().length === 1;
       if (!created) {
         this.assertSidekick(request.workspaceId, request.automationId);
         return { created: false };
       }
-      // The same transaction attaches it, so a Sidekick with a home always
+      // The same transaction attaches it, so a Sidekick a Canvas made always
       // reaches that Canvas: there is no made-but-unattached state to repair.
       if (homeCanvasId !== null) {
-        attachSidekickConversation(this.sql, { automationId: this.sidekickId,
+        attachSidekickConversation(this.sql, { automationId: this.sidekickId, madeHere: true,
           address: { parentKind: "canvas", parentId: homeCanvasId, substreamId: "0" }, userId: request.authorUserId, now });
         this.host.noteHomeCanvasChanged(homeCanvasId);
       }
@@ -615,8 +612,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   }
 
   /**
-   * Archive a Sidekick with the Canvas it was made in, inside that archive's
-   * transaction. No manager is asked: whoever archived the Canvas manages it.
+   * Archive a Sidekick with the Canvas whose Chat made it, inside that
+   * archive's transaction. No manager is asked: whoever archived the Canvas
+   * manages what it made.
    * The caller owes `afterRegistrations` once the transaction commits.
    */
   archiveWithHome(now: number): boolean {
@@ -1645,25 +1643,15 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   // ---------------------------------------------------------------------------
 
   /** No participant admission and no projection-dependent permission decision. */
-  async readAuthorizationFacts(input: ConversationAuthorizationRequest) {
+  readAuthorizationFacts(input: ConversationAuthorizationRequest) {
     const request = parseRpcInput(ConversationAuthorizationRequestSchema, input, "read_authorization_facts");
-    const initial = this.row();
-    if (!initial || initial.lifecycle === "deleted") return { exists: false as const, validatedAt: Date.now() };
-    this.assertIdentity(initial, request.workspaceId, request.parentId);
-    // Only a Sidekick made in a Canvas reads a relationship: its home's
-    // Organization visibility admits a member and never a guest.
-    const named = sidekickSharedWith(this.sql, this.sidekickId, request.userId);
-    const relationship = named || initial.home_canvas_id === null ? null
-      : request.relationship ?? await this.host.readRelationship(initial.workspace_id, request.userId);
-    // Read again after the await: the row is what the facts describe.
-    const row = this.row() ?? initial;
-    if (row.lifecycle === "deleted") return { exists: false as const, validatedAt: Date.now() };
-    const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
+    const row = this.row();
+    if (!row || row.lifecycle === "deleted") return { exists: false as const, validatedAt: Date.now() };
+    this.assertIdentity(row, request.workspaceId, request.parentId);
     return {
       exists: true as const, scope: row.scope,
       author: row.author_user_id === request.userId,
-      shared: named || (relationship?.status === "active"
-        && sidekickHomeAdmits(this.sql, this.sidekickId, { userId: request.userId, actorRole })),
+      shared: sidekickSharedWith(this.sql, this.sidekickId, request.userId),
       executor: row.run_as_user_id === request.userId,
       children: this.childRegistry().map((child) => child.substreamId),
       revision: JSON.stringify([row.authority_generation, row.updated_at]), validatedAt: Date.now(),
@@ -3074,7 +3062,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       lifecycle: row.lifecycle,
       authorUserId: row.author_user_id,
       runAsUserId: row.run_as_user_id,
-      homeCanvasId: row.home_canvas_id,
+      madeInCanvasId: first(this.sql.exec<{ parent_id: string }>(
+        `SELECT parent_id FROM sidekick_conversation_attachments
+          WHERE automation_id = ? AND parent_kind = 'canvas' AND substream_id = '0' AND made_here = 1`, this.sidekickId,
+      ))?.parent_id ?? null,
       delegationAttention: row.delegation_attention_code === null ? null : {
         code: SidekickDelegationAttentionCodeSchema.parse(row.delegation_attention_code),
         message: SIDEKICK_DELEGATION_ATTENTION_MESSAGES[SidekickDelegationAttentionCodeSchema.parse(row.delegation_attention_code)],

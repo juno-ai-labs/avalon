@@ -5196,7 +5196,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async hostedConversationAuthorizationFacts(input: Parameters<HostedSidekick["readAuthorizationFacts"]>[0]) {
     const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
     if (hosted instanceof HostedCanvas) return { kind: "canvas" as const, ...await hosted.readAuthorizationFacts(input) };
-    if (hosted instanceof HostedSidekick) return { kind: "automation" as const, ...await hosted.readAuthorizationFacts(input) };
+    if (hosted instanceof HostedSidekick) return { kind: "automation" as const, ...hosted.readAuthorizationFacts(input) };
     return { kind: null, exists: false as const, validatedAt: Date.now() };
   }
 
@@ -5271,16 +5271,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.canvasReadersMoved.add(userId);
       },
       noteCanvasDirectoryChanged: () => this.noteCanvasDirectoryMoved(),
-      noteCanvasAudienceChanged: (canvasId) => {
-        // A Sidekick made in the Canvas admits whoever the Canvas does, so
-        // the Sidekick list moves with the Canvas's audience. One indexed
-        // probe, and nothing for a Canvas that made no Sidekick.
-        if (this.homeSidekickIds(canvasId).length === 0) return;
-        this.state.storage.sql.exec(
-          `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`,
-        );
-        this.sidekickDirectoryMoved = true;
-      },
       archiveHomeSidekicks: (canvasId, now) => {
         const host = this.hostedSidekickHost();
         for (const sidekickId of this.homeSidekickIds(canvasId)) {
@@ -5295,10 +5285,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Sidekicks a Canvas archive archived in its transaction, owed `afterSidekickRegistrations` once it commits. */
   private homeSidekicksArchived: string[] = [];
 
-  /** The Sidekicks made in a Canvas's Chat that are not archived (`automation_directory.home_canvas_id`). */
+  /** The Sidekicks a Canvas's Chat made that are not archived (the `made_here` attachments). */
   private homeSidekickIds(canvasId: string): string[] {
     return this.state.storage.sql.exec<{ automation_id: string }>(
-      `SELECT automation_id FROM automation_directory WHERE home_canvas_id = ? AND lifecycle <> 'deleted' ORDER BY automation_id`,
+      `SELECT attachment.automation_id FROM sidekick_conversation_attachments attachment
+         JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
+        WHERE attachment.parent_kind = 'canvas' AND attachment.parent_id = ? AND attachment.substream_id = '0'
+          AND attachment.made_here = 1 AND directory.lifecycle <> 'deleted'
+        ORDER BY attachment.automation_id`,
       canvasId,
     ).toArray().map((row) => row.automation_id);
   }
@@ -5334,7 +5328,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     try {
       return await run();
     } finally {
-      // A no-op unless the write moved a Sidekick made in the Canvas (its audience, or its archive).
+      // A no-op unless the write archived a Sidekick the Canvas made.
       this.publishSidekickList();
       this.publishCanvasList();
       this.publishActivityList();
@@ -5491,9 +5485,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Change who can open a Canvas; see `HostedCanvas.setAudience`. */
   async canvasSetAudience(input: Parameters<HostedCanvas["setAudience"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
-    // A Sidekick made in the Canvas admits whoever the Canvas does, so a
-    // narrowing reaches those conversations too.
-    return this.canvasWrite(() => this.closingNarrowedConversations(input.workspaceId, [input.canvasId, ...this.homeSidekickIds(input.canvasId)], async () => {
+    return this.canvasWrite(() => this.closingNarrowedConversations(input.workspaceId, [input.canvasId], async () => {
       const detail = await canvas.setAudience(input);
       // Someone the Canvas no longer admits stops being shown in it, and the
       // people still in it are told who is left, before the one Canvas list

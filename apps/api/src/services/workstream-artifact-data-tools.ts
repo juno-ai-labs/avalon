@@ -373,6 +373,7 @@ export function createWorkstreamArtifactDataTools(
         const host = await context.hostFor(artifact.artifactId);
         const result = await host.writeData(args.sql, args.params ?? [], MAXIMUM_QUERY_ROWS, artifact.scope);
         if (!result.ok) {
+          if (result.reason === "canvas_archived") throw canvasArchived();
           if (result.reason === "no_artifact_data") {
             throw new ArtifactDataToolError(
               "no_artifact_data",
@@ -380,7 +381,6 @@ export function createWorkstreamArtifactDataTools(
               { reason: "Import the site in the terminal workspace to read its source." },
             );
           }
-          if (result.reason === "canvas_archived") throw canvasArchived();
           // `sql_refused` is a statement this tool does not admit; `sql_failed`
           // is the site's own database refusing it, in SQLite's words, which
           // name the site's own schema. Either way nothing was written, and
