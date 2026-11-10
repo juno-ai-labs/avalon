@@ -205,6 +205,32 @@ export type WorkspaceCanvasListEvent = z.infer<typeof WorkspaceCanvasListEventSc
  * Chat as the creator's; `clientMessageId` makes a retry into the same Canvas
  * send it once.
  */
+/**
+ * `POST /canvases/:id/sidekicks`: make a Sidekick for a Canvas and tell its
+ * wizard what it is for. The Sidekick is attached to the Canvas as it is made,
+ * as one the Canvas's own Chat makes is, so its runs can update the Canvas and
+ * everyone in the Canvas may change or archive it. `instructions` is sent to
+ * the Sidekick's conversation as the person's message to the wizard, which
+ * chooses the trigger and saves the definition; making one is not a saved
+ * Sidekick. A caller-minted `sidekickId` makes a retry answer with the first
+ * attempt's Sidekick, and `clientMessageId` sends the instructions once.
+ */
+export const AddCanvasSidekickRequestSchema = z.strictObject({
+  sidekickId: IdSchema.optional(),
+  instructions: z.strictObject({
+    text: z.string().trim().min(1),
+    clientMessageId: z.string().min(1).max(120),
+  }),
+});
+export type AddCanvasSidekickRequest = z.infer<typeof AddCanvasSidekickRequestSchema>;
+
+export const AddedCanvasSidekickSchema = z.object({
+  sidekickId: IdSchema,
+  /** The instructions' turn in the Sidekick's conversation. */
+  turnId: z.string().nullable(),
+});
+export type AddedCanvasSidekick = z.infer<typeof AddedCanvasSidekickSchema>;
+
 export const CreateCanvasRequestSchema = z.strictObject({
   canvasId: CanvasIdSchema.optional(),
   title: z.string().trim().max(300).optional(),
@@ -212,6 +238,8 @@ export const CreateCanvasRequestSchema = z.strictObject({
     text: z.string().trim().min(1),
     clientMessageId: z.string().min(1).max(120),
   }).optional(),
+  /** A Sidekick to make for the new Canvas in the same request; see `AddCanvasSidekickRequestSchema`. */
+  sidekick: AddCanvasSidekickRequestSchema.optional(),
 });
 export type CreateCanvasRequest = z.infer<typeof CreateCanvasRequestSchema>;
 
@@ -219,6 +247,8 @@ export const CreatedCanvasSchema = z.object({
   canvasId: CanvasIdSchema,
   /** The prompt's turn in the Chat, when one was sent. */
   turnId: z.string().nullable(),
+  /** The Sidekick made with it, when one was asked for. Absent otherwise and from an older Worker. */
+  sidekick: AddedCanvasSidekickSchema.optional(),
 });
 export type CreatedCanvas = z.infer<typeof CreatedCanvasSchema>;
 

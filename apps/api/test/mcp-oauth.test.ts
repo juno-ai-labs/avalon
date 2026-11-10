@@ -144,6 +144,7 @@ it("lets an MCP token make exactly the calls the MCP server's tools make", () =>
   const allowed: Array<[string, string]> = [
     ["GET", "/canvases"], ["POST", "/canvases"], ["GET", `/canvases/${id}`], ["PATCH", `/canvases/${id}`],
     ["POST", `/canvases/${id}/audience`], ["POST", `/canvases/${id}/pin`], ["POST", `/canvases/${id}/artifacts`],
+    ["POST", `/canvases/${id}/sidekicks`],
     ["POST", `/canvases/${id}/access-requests/${id}/decision`],
     ["GET", `/canvases/${id}/artifacts/${id}/versions/3/content`], ["GET", `/canvases/${id}/artifacts/${id}/versions/3/model-content`],
     ["GET", `/conversations/${id}/text`], ["POST", `/conversations/${id}/substreams/0/messages`],
