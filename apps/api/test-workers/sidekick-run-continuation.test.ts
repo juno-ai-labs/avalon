@@ -331,6 +331,13 @@ async function authorLeavesRun(runId: string): Promise<void> {
   });
 }
 
+/** The author stops lending their accounts; as the Sidekick's only delegate, that leaves nobody behind its runs. */
+async function withdrawAuthorDelegation(): Promise<void> {
+  const request = { ...addressed(), userId: AUTHOR_ID, allowed: false, operationId: crypto.randomUUID() };
+  const prepared = await workspaceStub().sidekickPrepareMyDelegation(request);
+  await workspaceStub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+}
+
 /** The execution a turn started, once it has ended. */
 async function settledExecutionFor(runId: string, turnId: string): Promise<ReceiptRow> {
   let settled: ReceiptRow | null = null;
@@ -604,22 +611,28 @@ describe("Sidekick run continuation", () => {
     },
   );
 
-  it("reuses an active worker's eligibility snapshot until its next activation", async () => {
+  it("keeps an active worker's authority when its run's only delegate withdraws, and activates it next as the Sidekick itself", async () => {
     await activeSidekick();
     const worker = await delegatedRunWorker();
-    const request = { ...addressed(), userId: AUTHOR_ID, allowed: false, operationId: crypto.randomUUID() };
-    const prepared = await workspaceStub().sidekickPrepareMyDelegation(request);
-    await workspaceStub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+    await withdrawAuthorDelegation();
     await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, worker.input)).resolves.toBeDefined();
     await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, worker.input)).resolves.toBeDefined();
 
-    const marker = "Refresh worker eligibility before this new assignment.";
+    // Nobody is behind the run now, and that blocks nothing: the next
+    // assignment activates the worker with the Organization's authority and
+    // no person's accounts. The run's agent still counts as the author, who
+    // manages the Sidekick and so may continue what acts as the Sidekick.
+    const marker = "Take this new assignment with nobody's accounts.";
     const sent = await worker.owner.send({ agentId: worker.agentId, message: marker, attachmentIds: [] },
       { ...worker.context, effectIntentId: crypto.randomUUID() });
-    await expect.poll(() => refusals(worker.workerId), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([
-      { code: "run_no_eligible_delegate", turnId: sent.messageId },
-    ]);
-    expect(callThatSaw(marker)).toBeUndefined();
+    const execution = await settledExecutionFor(worker.workerId, sent.messageId);
+    expect(execution.status).toBe("completed");
+    expect(JSON.parse(execution.execution_context_json)).toMatchObject({
+      executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
+      automationDelegation: { runId: worker.runId },
+    });
+    expect(callThatSaw(marker)).toBeDefined();
+    expect(await refusals(worker.workerId)).toEqual([]);
   });
 
   it("keeps nested workers subject to the root Sidekick run's pause", async () => {
@@ -771,12 +784,6 @@ describe("Sidekick run continuation", () => {
         state.storage.sql.exec(`DELETE FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, AUTOMATION_ID, runId);
       });
     }],
-    // With no remaining eligible delegate, input cannot activate execution.
-    ["run_no_eligible_delegate", async () => {
-      const request = { ...addressed(), userId: AUTHOR_ID, allowed: false, operationId: crypto.randomUUID() };
-      const prepared = await workspaceStub().sidekickPrepareMyDelegation(request);
-      await workspaceStub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
-    }],
   ] as const)("refuses input with %s and leaves nothing queued", async (code, arrange) => {
     await activeSidekick();
     const runId = await completedRun();
@@ -789,6 +796,74 @@ describe("Sidekick run continuation", () => {
       interval: 100,
     }).toEqual({ pending: 0, refused: [{ code, turnId }] });
     expect(await receipts(runId)).toHaveLength(1);
+    expect(provider.calls.length).toBe(callsBefore);
+  });
+
+  it("refuses input with run_no_eligible_delegate once the person a run was asked for by has left, and leaves nothing queued", async () => {
+    await activeSidekick();
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE automation_directory SET scope='workspace' WHERE automation_id=?", AUTOMATION_ID);
+    });
+    // The claimant is no delegate, so the run they ask for acts under their own access, as its requester.
+    const routed = await workspaceStub().sidekickAdmitConversationMessage({ ...addressed(), actor: { userId: CLAIMANT_ID, actorRole: "member" },
+      messageId: crypto.randomUUID(), intent: null, authorName: "Claimant", text: "Summarize the updates for me." });
+    expect(routed).toMatchObject({ route: "run" });
+    const runId = (routed as { runId: string }).runId;
+    await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
+    await expect.poll(async () => (await receipts(runId))[0]?.terminalized_at != null,
+      { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe(true);
+    await deliverChildEffects(TEST_ENV, childStub(runId));
+    const callsBefore = provider.calls.length;
+    // The claimant leaves the Organization. Their run is the one kind that has
+    // nobody to act as then: the author's delegation was never lent to it, and
+    // it does not go on as the Sidekick itself.
+    await workspaceStub().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 1, removed: true, relationship: {
+      workspaceId: WORKSPACE_ID, userId: CLAIMANT_ID, status: "active", role: "member", accessClass: "member",
+      incarnation: "existing-member", revision: 1,
+    } });
+    await runInDurableObject(childStub(runId), (_instance, state) => {
+      state.storage.sql.exec("UPDATE participants SET status='removed', removed_at=? WHERE user_id=?", Date.now(), CLAIMANT_ID);
+    });
+    await new ConversationService(TEST_ENV, AUTH).authorizeViewer(AUTOMATION_ID, runId);
+    const turnId = await sendToRun(runId, "Finish what the claimant asked for.", "requester-left");
+    await expect.poll(async () => ({ pending: await pendingInputs(runId), refused: await refusals(runId) }), {
+      timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100,
+    }).toEqual({ pending: 0, refused: [{ code: "run_no_eligible_delegate", turnId }] });
+    expect(await receipts(runId)).toHaveLength(1);
+    expect(provider.calls.length).toBe(callsBefore);
+  });
+
+  it("continues a run nobody is behind as the Sidekick itself, from a person who manages it and from no other reader", async () => {
+    await activeSidekick();
+    const runId = await completedRun();
+    // Shared with every member: the claimant reads the run and is seated in
+    // its conversation, and does not manage the Sidekick.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE automation_directory SET scope='workspace' WHERE automation_id=?", AUTOMATION_ID);
+    });
+    await withdrawAuthorDelegation();
+
+    // With no delegate left the run is not blocked. Its author manages the
+    // Sidekick, so their input continues it, with the Organization's authority.
+    const marker = "Carry on without my accounts.";
+    const turnId = await sendToRun(runId, marker, "continue-as-the-sidekick");
+    const execution = await settledExecutionFor(runId, turnId);
+    expect(execution.status).toBe("completed");
+    expect(JSON.parse(execution.execution_context_json)).toMatchObject({
+      executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
+      automationRun: { runId },
+    });
+    expect(callThatSaw(marker)).toBeDefined();
+    expect(await refusals(runId)).toEqual([]);
+
+    // A reader who does not manage it may not steer what acts as the Sidekick.
+    await authorLeavesRun(runId);
+    const callsBefore = provider.calls.length;
+    const refused = await sendToRun(runId, "Do this for me instead.", "reader-not-manager", CLAIMANT_AUTH);
+    await expect.poll(async () => ({ pending: await pendingInputs(runId), refused: await refusals(runId) }), {
+      timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100,
+    }).toEqual({ pending: 0, refused: [{ code: "run_continuation_requires_manager", turnId: refused }] });
+    expect(await receipts(runId)).toHaveLength(2);
     expect(provider.calls.length).toBe(callsBefore);
   });
 
