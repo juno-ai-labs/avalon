@@ -1,5 +1,5 @@
 import { asUserId } from '@rally/contracts';
-import type { CanvasDetail, CanvasSidebarRow } from '@rally/contracts';
+import type { AutomationSummary, CanvasDetail, CanvasSidebarRow, CanvasSidekick } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -27,6 +27,7 @@ const CANVAS = '00000000-0000-7000-8000-0000000000c1';
 
 const getCanvas = vi.hoisted(() => vi.fn());
 const archiveCanvas = vi.hoisted(() => vi.fn());
+const archiveAutomation = vi.hoisted(() => vi.fn());
 const setCanvasPinned = vi.hoisted(() => vi.fn());
 const setCanvasAudience = vi.hoisted(() => vi.fn());
 const renameCanvas = vi.hoisted(() => vi.fn());
@@ -38,7 +39,7 @@ const requestCanvasAccess = vi.hoisted(() => vi.fn());
 const decideCanvasAccess = vi.hoisted(() => vi.fn());
 vi.mock('../lib/collaboration-session', () => ({
   useCollaborationSession: () => ({
-    api: { getCanvas, archiveCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, setCanvasAppearance, createScopeInvitations, getCanvasAccess, requestCanvasAccess, decideCanvasAccess },
+    api: { getCanvas, archiveCanvas, archiveAutomation, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, setCanvasAppearance, createScopeInvitations, getCanvasAccess, requestCanvasAccess, decideCanvasAccess },
     session: { user: { id: ME }, workspace: { id: WORKSPACE, region: 'global', role: 'member' } },
   }),
   useOptionalCollaborationSession: () => null,
@@ -87,10 +88,33 @@ function renderCanvas(entry: string | { pathname: string; state: unknown } = `/c
       <Routes>
         <Route element={<CanvasScreen />} path="/canvases/:id" />
         <Route element={<p>Canvases home</p>} path="/canvases" />
+        <Route element={<SidekickPage />} path="/sidekicks/:id" />
       </Routes>
     </MemoryRouter></Tooltip.Provider>
   </QueryClientProvider></ErrorNoticeProvider>);
   return client;
+}
+
+function SidekickPage(): React.JSX.Element {
+  return <p>Sidekick page {useLocation().pathname}</p>;
+}
+
+const TRACKER = '00000000-0000-7000-8000-0000000000d1';
+const DIGEST = '00000000-0000-7000-8000-0000000000d2';
+
+/** A Sidekick attached to the Canvas, as its detail lists it. */
+function attached(id: string, name: string, overrides: Partial<CanvasSidekick> = {}): CanvasSidekick {
+  return { id, name, status: 'active', madeHere: true, ...overrides };
+}
+
+/** A row of the viewer's own Sidekicks list, as `workspace_sidekick_list` carries it. */
+function ownSidekick(id: string, name: string): AutomationSummary {
+  return { id, name, description: '', scope: 'personal', status: 'active', nextRunAt: null, loadable: true } as AutomationSummary;
+}
+
+/** The menu row naming a Sidekick: its name and its state, read as one item. */
+function sidekickRow(name: string): HTMLElement {
+  return within(screen.getByRole('group', { name: 'Sidekicks' })).getByText(name).closest<HTMLElement>('[role="menuitem"]')!;
 }
 
 /** A row of the socket's Canvas list, as `workspace_canvas_list` carries it. */
@@ -115,6 +139,7 @@ beforeEach(() => {
   window.localStorage.clear();
   getCanvas.mockReset().mockResolvedValue(detail());
   archiveCanvas.mockReset().mockResolvedValue(undefined);
+  archiveAutomation.mockReset().mockResolvedValue(undefined);
   setCanvasPinned.mockReset().mockResolvedValue(undefined);
   setCanvasAudience.mockReset();
   renameCanvas.mockReset();
@@ -161,6 +186,103 @@ describe('CanvasScreen', () => {
     await openMenu('Q4 revenue review');
     await screen.findByRole('menuitem', { name: 'Copy link' });
     expect(screen.queryByRole('menuitem', { name: 'Archive canvas' })).toBeNull();
+  });
+
+  it.each([
+    [[], 'Rally does not offer a way to unarchive Canvases yet.'],
+    [[attached(TRACKER, 'Launch tracker'), attached(DIGEST, 'Weekly digest', { madeHere: false })],
+      'Rally does not offer a way to unarchive Canvases yet. Archiving also archives the Sidekick this Canvas made.'],
+    [[attached(TRACKER, 'Launch tracker'), attached(DIGEST, 'Weekly digest')],
+      'Rally does not offer a way to unarchive Canvases yet. Archiving also archives the 2 Sidekicks this Canvas made.'],
+  ])('says in the Archive Canvas confirmation that the Sidekicks the Canvas made are archived too (%#)', async (sidekicks, ending) => {
+    getCanvas.mockResolvedValue(detail({ sidekicks }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive canvas' }));
+    const copy = (await screen.findByRole('dialog', { name: 'Archive Canvas' })).querySelector('.modal-copy')!;
+    expect(copy.textContent.endsWith(` no longer be viewable in Rally. ${ending}`)).toBe(true);
+    expect(copy).not.toHaveTextContent('Launch tracker');
+  });
+
+  it('lists the attached Sidekicks in its menu by name and state, between Change appearance and Archive canvas', async () => {
+    getCanvas.mockResolvedValue(detail({ sidekicks: [
+      attached(TRACKER, 'Launch tracker'),
+      attached(DIGEST, 'Weekly digest', { status: 'paused', madeHere: false }),
+      attached('00000000-0000-7000-8000-0000000000d3', 'Unfinished', { status: 'draft' }),
+    ] }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('group', { name: 'Sidekicks' });
+    const order = screen.getAllByRole('menuitem').map((item) => item.getAttribute('aria-label') ?? item.textContent.trim());
+    expect(order.slice(order.indexOf('Change appearance'))).toEqual([
+      'Change appearance', 'Launch trackerActive', 'Archive Sidekick: Launch tracker', 'Weekly digestPaused',
+      'UnfinishedDraft', 'Archive Sidekick: Unfinished', 'Archive canvas',
+    ]);
+  });
+
+  it('draws no Sidekicks section for a Canvas with none, or from a server that sends none', async () => {
+    getCanvas.mockResolvedValue(detail({ sidekicks: [] }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByText('Sidekicks')).toBeNull();
+    cleanup();
+    getCanvas.mockResolvedValue(detail());
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByText('Sidekicks')).toBeNull();
+  });
+
+  it("opens a Sidekick's page from its row only when it is in the viewer's own Sidekicks, and says how to change it otherwise", async () => {
+    getCanvas.mockResolvedValue(detail({ sidekicks: [attached(TRACKER, 'Launch tracker'), attached(DIGEST, 'Weekly digest')] }));
+    const client = renderCanvas();
+    act(() => { applyVersionedSidebarList(client, 'automations', 1, [ownSidekick(TRACKER, 'Launch tracker')]); });
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('group', { name: 'Sidekicks' });
+    const unshared = sidekickRow('Weekly digest');
+    expect(unshared).toHaveAttribute('aria-disabled', 'true');
+    expect(unshared).not.toHaveAttribute('href');
+    act(() => unshared.focus());
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Ask in this Canvas’s chat to change it. Its creator can share it with you to open it.');
+    fireEvent.click(unshared);
+    expect(screen.queryByText(/Sidekick page/u)).toBeNull();
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(sidekickRow('Launch tracker')).not.toHaveAttribute('aria-disabled');
+    fireEvent.click(sidekickRow('Launch tracker'));
+    expect(await screen.findByText(`Sidekick page /sidekicks/${TRACKER}`)).toBeInTheDocument();
+  });
+
+  it('archives a Sidekick the Canvas made once confirmed, and drops its row with the refreshed Canvas', async () => {
+    getCanvas.mockResolvedValue(detail({ sidekicks: [attached(TRACKER, 'Launch tracker'), attached(DIGEST, 'Weekly digest', { madeHere: false })] }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('group', { name: 'Sidekicks' });
+    expect(screen.queryByRole('menuitem', { name: 'Archive Sidekick: Weekly digest' })).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive Sidekick: Launch tracker' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive Sidekick' });
+    expect(dialog).toHaveTextContent('Launch tracker will be removed');
+    expect(archiveAutomation).not.toHaveBeenCalled();
+    getCanvas.mockResolvedValue(detail({ sidekicks: [attached(DIGEST, 'Weekly digest', { madeHere: false })] }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive' }));
+    await waitFor(() => expect(archiveAutomation).toHaveBeenCalledWith(TRACKER));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive Sidekick' })).toBeNull());
+    await openMenu('Q4 revenue review');
+    const section = await screen.findByRole('group', { name: 'Sidekicks' });
+    expect(within(section).getByText('Weekly digest')).toBeInTheDocument();
+    expect(within(section).queryByText('Launch tracker')).toBeNull();
+  });
+
+  it('says in an acknowledged popup that a Sidekick could not be archived, and keeps its row', async () => {
+    archiveAutomation.mockRejectedValue(new ApiError('This Sidekick could not be archived', 409, 'sidekick_archive_conflict'));
+    getCanvas.mockResolvedValue(detail({ sidekicks: [attached(TRACKER, 'Launch tracker')] }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive Sidekick: Launch tracker' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive Sidekick' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('This Sidekick could not be archived');
+    expect(getCanvas).toHaveBeenCalledTimes(1);
   });
 
   it("opens the Canvas's Chat as a canvas conversation under a header naming it", async () => {

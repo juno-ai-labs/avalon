@@ -6955,7 +6955,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-sidekicks { display: flex; flex-direction: column; gap: 2px; }
 .canvas-sidekick-row { align-items: center; display: flex; gap: 2px; }
 .canvas-sidekick-open { flex: 1; min-width: 0; }
-.canvas-sidekick-mark { display: inline-flex; flex: none; height: 22px; width: 22px; }
+/* Centred on the 18px icon column the rows above use, so the names line up. */
+.canvas-sidekick-mark { display: inline-flex; flex: none; height: 22px; margin: 0 -2px; width: 22px; }
 /* A row that opens nothing still names the Sidekick, so it keeps its ink. */
 .title-pill-menu .canvas-sidekick-open[data-disabled] { cursor: default; opacity: 1; }
 .title-pill-menu .menu-item.canvas-sidekick-archive { flex: none; justify-content: center; min-height: 46px; padding: 0; width: 40px; }
