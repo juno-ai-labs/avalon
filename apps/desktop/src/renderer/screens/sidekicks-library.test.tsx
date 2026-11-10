@@ -163,6 +163,10 @@ describe('the Sidekicks home', () => {
       { id: 'paused', name: 'Inbox listener', description: '', scope: 'you', status: 'paused', updatedAt: '2026-11-07T09:00:00.000Z',
         attachedCanvases: [{ id: CANVAS, title: 'Launch plan' }] },
       { id: 'none', name: 'Weekly changelog', description: '', scope: 'workspace', status: 'active', updatedAt: '2026-11-07T09:00:00.000Z', attachedCanvases: [] },
+      { id: 'many', name: 'Portfolio watcher', description: '', scope: 'you', status: 'active', updatedAt: '2026-11-07T09:00:00.000Z',
+        attachedCanvases: ['a', 'b', 'c', 'd', 'e'].map((letter) => ({ id: `canvas-${letter}`, title: `Canvas ${letter.toUpperCase()}` })) },
+      { id: 'three', name: 'Trio watcher', description: '', scope: 'you', status: 'active', updatedAt: '2026-11-07T09:00:00.000Z',
+        attachedCanvases: ['a', 'b', 'c'].map((letter) => ({ id: `canvas-${letter}`, title: `Canvas ${letter.toUpperCase()}` })) },
       // An older Worker sends no list.
       { id: 'older', name: 'Daily brief', description: '', scope: 'you', status: 'active', updatedAt: '2026-11-07T09:00:00.000Z' },
     ] satisfies AutomationSummary[]);
@@ -178,6 +182,14 @@ describe('the Sidekicks home', () => {
     expect(tracker.querySelector('.sidekick-card-canvases')).not.toHaveClass('is-below-status');
     expect((await card('Inbox listener')).querySelector('.sidekick-card-canvases')).toHaveClass('is-below-status');
     expect((await card('Weekly changelog')).querySelector('.sidekick-card-canvases')).toBeNull();
+    // The preview holds three rows: three Canvases are all shown, and more
+    // than three show two and a last row that opens the Sidekick, which lists them all.
+    expect(within(await card('Trio watcher')).getAllByRole('link').filter((link) => link.classList.contains('sidekick-card-canvas'))
+      .map((link) => link.textContent)).toEqual(['Canvas A', 'Canvas B', 'Canvas C']);
+    expect(within(await card('Portfolio watcher')).getAllByRole('link').filter((link) => link.classList.contains('sidekick-card-canvas'))
+      .map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+      ['Canvas A', '/canvases/canvas-a'], ['Canvas B', '/canvases/canvas-b'], ['+3 more', '/sidekicks/many'],
+    ]);
     expect((await card('Daily brief')).querySelector('.sidekick-card-canvases')).toBeNull();
   });
 

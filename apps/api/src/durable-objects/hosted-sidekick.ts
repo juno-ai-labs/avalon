@@ -539,22 +539,30 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   async create(input: AutomationCreateRequest): Promise<{ created: boolean }> {
     const request = parseRpcInput(AutomationCreateRequestSchema, input, "create");
     if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
+    const creatorRelationship = await this.host.readRelationship(request.workspaceId, request.authorUserId);
+    const active = creatorRelationship?.status === "active";
+    const author = {
+      userId: request.authorUserId,
+      actorRole: active && creatorRelationship.accessClass === "member" ? creatorRelationship.role ?? "member" as const : null,
+    };
     const existing = this.row();
     if (existing) {
       this.assertSidekick(request.workspaceId, request.automationId);
-      // A replay is its author's, of the same create: a caller-minted id that
-      // names somebody else's Sidekick, or one this Canvas did not make, is
-      // not answered as though this request had made it.
-      if (request.homeCanvasId !== undefined && (existing.author_user_id !== request.authorUserId
-        || !this.madeIn(request.homeCanvasId))) {
-        throw new ApiError(409, "sidekick_id_unavailable", "This Sidekick id is already in use");
+      if (request.homeCanvasId !== undefined) {
+        if (!active) throw this.delegationError("sidekick_delegation_membership_unavailable");
+        // A replay is its author's, of the same create: a caller-minted id
+        // that names somebody else's Sidekick, or one this Canvas did not
+        // make, is not answered as though this request had made it.
+        if (existing.author_user_id !== request.authorUserId || !this.madeIn(request.homeCanvasId)) {
+          throw new ApiError(409, "sidekick_id_unavailable", "This Sidekick id is already in use");
+        }
+        // And it is made for a Canvas the author can still open: a caller
+        // that lost the Canvas does not reach its Sidekick through it.
+        this.assertHomeCanvas(request.workspaceId, request.homeCanvasId, author);
       }
       return { created: false };
     }
-    const creatorRelationship = await this.host.readRelationship(request.workspaceId, request.authorUserId);
-    if (creatorRelationship?.status !== "active") {
-      throw this.delegationError("sidekick_delegation_membership_unavailable");
-    }
+    if (!active) throw this.delegationError("sidekick_delegation_membership_unavailable");
     const now = Date.now();
     const homeCanvasId = request.homeCanvasId ?? null;
     // The insert is the existence check: a repeat finds the row and returns
@@ -562,10 +570,13 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     return this.storage.transactionSync(() => {
       // A Sidekick made in a Canvas's Chat: the person asking must be in that
       // Canvas now, since the Sidekick's runs will write there for them.
-      if (homeCanvasId !== null) this.assertHomeCanvas(request.workspaceId, homeCanvasId, {
-        userId: request.authorUserId,
-        actorRole: creatorRelationship.accessClass === "member" ? creatorRelationship.role ?? "member" : null,
-      });
+      if (homeCanvasId !== null) this.assertHomeCanvas(request.workspaceId, homeCanvasId, author);
+      // A Canvas and a Sidekick are both conversation parents named by one
+      // id space, and a Sidekick's row is asked for first: a caller-minted
+      // id that names a Canvas would take that Canvas's conversation over.
+      if (this.sql.exec(`SELECT 1 FROM canvas_directory WHERE canvas_id = ? LIMIT 1`, request.automationId).toArray().length > 0) {
+        throw new ApiError(409, "sidekick_id_unavailable", "This Sidekick id is already in use");
+      }
       const created = this.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, region, author_user_id, run_as_user_id, source_version, payload_hash,
