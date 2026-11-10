@@ -72,9 +72,7 @@ adds a Sidekick's definition, triggers and runs; `HostedCanvas` adds the
 Canvas's row and audience. The Canvas takes the date of the latest saved
 Chat message from `lastMessageAt` in the common projection. This includes
 human and Sidekick posts and saved Rally text, including a reply before a
-tool call. An index on the transcript's message timestamps lets the
-projection read the newest message when reserved turns save out of order.
-The unread cursor is projected separately.
+tool call. The unread cursor is projected separately.
 
 The Chat is an `AgentLoopDO` like every other conversation; its root row says
 `parent_kind = 'canvas'` (conversation migration 83 widened the CHECK). Opening
@@ -325,9 +323,10 @@ since a viewer last read the Chat makes the Canvas's row unread to them, by
 the rule a pinned artifact's news uses (a republish or replacement, not their
 own or one made on their behalf).
 
-The workspace's resource-version ledger also advances recency for versions
-of artifacts already linked to a Canvas, including versions from another
-producer. The date comes from the saved version, so a retried note preserves it.
+The workspace's resource-version ledger also advances recency when an
+already linked artifact is published or replaced. Renames and connector
+refetches refresh artifact previews and leave the Canvas date intact. The date
+comes from the saved version, so a retried note preserves it.
 
 By the same rule, a new version tells everyone who **pinned** the Canvas:
 the note reads the resource's newest version and, when it is news, records
@@ -431,9 +430,9 @@ Sidekick is shared with, most recently active first, at most 250, the bound
 the Sidekick list already has; an owner's or administrator's list does not add
 every private Canvas they could open. **Recent** sorts by the Canvas's
 `updatedAt` and displays that same date. It starts at creation (or the old
-Thread's last activity on conversion). New Chat messages and saved artifact
-versions advance it. Opening, reading, renaming, sharing, and changing the
-Canvas's appearance leave its date intact.
+Thread's last activity on conversion). New Chat messages, artifact publishes,
+and artifact replacements advance it. Opening, reading, renaming, sharing,
+and changing the Canvas's appearance leave its date intact.
 
 The Pinned group mechanism, shared with Sidekicks, is
 [`pinning.md`](pinning.md)'s. What is particular to a Canvas: it is pinned with
@@ -661,10 +660,7 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
   creator's row and face pile, at a waterline newer than the subscribe
   payload's, as the client applies it; a pin moves only its owner's row; a Canvas the
   viewer may not open is neither pinned nor present. The same file covers
-  `hasStoredData` on pushed rows and its registry and listing conditions. It
-  also opens a converted Canvas through the ticket route and checks that the
-  reader's unread state clears while the Canvas keeps its date and position,
-  even when the stored Chat activity is newer than the Canvas date.
+  `hasStoredData` on pushed rows and its registry and listing conditions.
 - `canvas-conversation.test.ts` publishes through the Terminal's resource
   bridge: the first publish is version 1 by Rally, a republish a new version
   of the same artifact, another path another artifact; and a Sidekick run's
@@ -801,8 +797,8 @@ why the refresh lease shares the owning object's transaction.
 ### 2026-11-09 — Date Canvases by saved messages and artifact versions
 
 **What changed** — Opening publishes viewer read state. The recency date
-comes from saved Chat messages and artifact versions. Canvas metadata
-mutations leave that date intact.
+comes from saved Chat messages and artifact publishes or replacements.
+Canvas metadata mutations leave that date intact.
 
 **Why** — Opening a converted Canvas sent its first projection to the
 Organization. Its historical attention ordinal looked new to the directory,

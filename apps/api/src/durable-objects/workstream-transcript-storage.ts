@@ -546,27 +546,27 @@ export class WorkstreamTranscriptStorage {
     transition: BindLoopTransition,
     now = Date.now(),
     executionFence?: TranscriptExecutionFence,
-    enqueueRegionalEffectsInTransaction?: (
-      deliveries: readonly PendingInputDeliveryEffectInput[],
-    ) => void,
-    assertAdmissionInTransaction?: () => void,
+    hooks?: {
+      enqueueRegionalEffects?: (deliveries: readonly PendingInputDeliveryEffectInput[]) => void;
+      enqueueAssistantText?: () => undefined;
+      assertAdmission?: () => void;
+    },
   ): Promise<void> {
     const previous = this.readBindProjection(transition.loopId);
     const next = applyBindLoopTransition(previous, transition);
     const facts = await this.materializeProjectionFacts(transition, previous, next);
 
     this.storage.transactionSync(() => {
-      assertAdmissionInTransaction?.();
+      hooks?.assertAdmission?.();
       this.assertExpectedHead(previous, transition);
       for (const fact of facts.materials) this.insertFact(fact, now);
       this.writeBindState(transition, next, facts, now);
       if (transition.kind === "assistant_accepted") {
         if (!facts.appendedFactId) throw new Error("assistant_projection_fact_missing");
-        const deliveries = this.projectAssistantTurn(transition, facts.appendedFactId, now);
-        if (deliveries && enqueueRegionalEffectsInTransaction) {
-          invokeSynchronousEffectEnqueue(enqueueRegionalEffectsInTransaction, deliveries);
-        } else if (deliveries?.length) {
-          throw new Error("assistant_mention_effect_enqueue_required");
+        const delivery = this.projectAssistantTurn(transition, facts.appendedFactId, now, hooks?.enqueueAssistantText);
+        if (delivery) {
+          if (!hooks?.enqueueRegionalEffects) throw new Error("assistant_mention_effect_enqueue_required");
+          invokeSynchronousEffectEnqueue(hooks.enqueueRegionalEffects, [delivery]);
         }
       }
       if (executionFence) {
@@ -3596,7 +3596,8 @@ export class WorkstreamTranscriptStorage {
     transition: Extract<BindLoopTransition, { kind: "assistant_accepted" }>,
     rootFactId: string,
     now: number,
-  ): readonly PendingInputDeliveryEffectInput[] | null {
+    enqueueAssistantText?: () => undefined,
+  ): PendingInputDeliveryEffectInput | null {
     const existing = this.sql.exec<{ turn_id: string } & Record<string, SqlStorageValue>>(
       `SELECT turn_id FROM participant_transcript_turns WHERE turn_id = ?`,
       transition.turnId,
@@ -3731,9 +3732,12 @@ export class WorkstreamTranscriptStorage {
       now,
     );
     // A saved reply can move Canvas recency without generating an unread mention.
-    if (attentionOrdinal === null) return content.length > 0 ? [] : null;
+    if (attentionOrdinal === null) {
+      if (content.length > 0) enqueueAssistantText?.();
+      return null;
+    }
     const mentionedUserIds = [...new Set(mentions.map((mention) => mention.targetUserId!))];
-    return [{
+    return {
       inputId: transition.turnId,
       turnId: transition.turnId,
       transcriptSequence: sequence,
@@ -3746,7 +3750,7 @@ export class WorkstreamTranscriptStorage {
       confirmedParticipantUserIds: [],
       affectedUserIds: mentionedUserIds,
       activatedParticipants: [],
-    }];
+    };
   }
 
   /**
