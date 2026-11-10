@@ -15,6 +15,10 @@ available to Rally users by virtue of product membership.
 
 - `apps/engineering-mcp/` is the public MCP Worker, Cloudflare Access verifier,
   tool registry, deployment provisioner, and its tests.
+- `apps/engineering-mcp/src/tasks.ts` owns task negotiation, the wire schemas,
+  and the authenticated task methods. `src/task-do.ts` owns each task's durable
+  execution, result, cancellation fence and expiry. `src/worker.ts` exports
+  the Worker and its `EngineeringTaskDO` binding.
 - `apps/api/src/engineering-inspection-bridge.ts` is the private named
   `WorkerEntrypoint` exported by each regional API Worker.
 - `apps/api/src/services/engineering-creation.ts` adapts operator Organization
@@ -63,7 +67,8 @@ origins. The MCP transport admits those same hosted request origins after
 authentication. The origin independently verifies the signed
 `Cf-Access-Jwt-Assertion`, including issuer and this application's dedicated
 audience. A verified request reaches the stateless MCP handler; every other
-request fails closed.
+request fails closed. Task execution lives outside that handler in its own
+Durable Object, so a new HTTP request can retrieve an earlier result.
 
 The regional bridge uses D1 only for identity and routing:
 
@@ -137,6 +142,76 @@ only through the product's own read-only admitted query path
 (`queryData`/`pageData`, behind work-stream authorization), and giving the
 console arbitrary SQL there would mean changing the facet host module every
 stateful artifact runs. See [`live-web-artifacts.md`](live-web-artifacts.md).
+
+### Deferred engineering tasks
+
+`query_data_lake` and `retire_org` support the
+[MCP Tasks extension, revision 2026-07-28](https://tasks.extensions.modelcontextprotocol.io/specification/2026-07-28/tasks).
+`server/discover` advertises `io.modelcontextprotocol/tasks`. Only a request
+whose per-request client capabilities include that extension gets a task;
+legacy clients and modern clients without it retain synchronous results. Other
+tools remain synchronous. This is the current extension, not the older
+`execution.taskSupport` / `tasks/result` protocol.
+
+The SDK validates arguments, headers (including encoded `Mcp-Name` values),
+and Origins. Task creation returns JSON; other calls retain the transport's
+normal automatic response mode. `tasks/get` returns state and the final
+`CallToolResult`; `tasks/update` acknowledges unknown input-response keys
+because neither operation requests mid-flight input.
+The HTTP adapter rewrites only responses whose request actually created a task;
+synchronous tool results and polls pass through without buffering or parsing.
+
+Creation commits the input, trusted Access principal, state and execution alarm
+before returning a handle. Lakehouse reads can repeat after an interrupted
+execution and incur another scan charge. Retirement resumes its existing journal.
+`task-schema.ts` uses the shared SQLite migration runner during blocked object
+initialization. Versioned, strict tables hold task state and ordered payload
+segments; state transitions use synchronous transactions. Alarm writes follow
+without an intervening await so they share the platform's atomic write commit.
+The regional walk attempts every node in one pass: an incomplete receipt means
+failed work, not pagination or expected progress. Cloudflare's native alarm
+backoff retries those failures up to six times; this is the published platform
+budget, not an elapsed-time deadline. Exhaustion returns the partial receipt as
+an `isError: true` result, and a new `retire_org` call can resume it.
+
+Malformed stored inputs complete with a named tool error, erase their input
+fragments and schedule retention cleanup. Other catchable alarm failures use the
+native retry budget and attempt the same terminal transition on exhaustion.
+A provider or regional refusal is also a completed tool error, not a JSON-RPC
+`failed` task or proof that no side effect happened. Repeated isolate termination
+or unavailable storage can prevent even that terminal write. Such a task can
+remain `working` with retained input after platform retries stop; it requires
+operator recovery. Seven-day retention begins only once termination is committed.
+
+Every task read, update and cancellation checks both the current Access subject
+and application audience against the stored principal. Unknown, expired and
+another operator's tasks have the same `task_not_found` response. A task id is
+not an authorization credential. No task enumeration endpoint is provided.
+Assertions without a stable Access subject retain synchronous execution so
+unidentified service callers cannot share ownership of stored results.
+
+Query cancellation makes the task terminal immediately. An already issued
+provider read may finish, but its late result cannot overwrite cancellation.
+Retirement cancellation acknowledges intent and lets the irreversible operation
+continue; it does not strand an Organization halfway through retirement or
+promise rollback. Cancellation is cooperative under the extension.
+
+The team selected **seven days after completion** on 2026-11-10. Terminal tasks
+retain their result and operator metadata until then. Input arguments are erased
+on completion or cancellation. An expiry alarm erases all task storage, and
+reads refuse expired tasks even if alarm delivery is delayed. `ttlMs` is null
+while working and becomes the total lifetime from creation through expiry when
+terminal, as the protocol requires. Results use ordered SQLite text segments,
+preserving Unicode boundaries and avoiding the platform's per-row limit without
+truncation. Expiry erases task rows and payloads; only the schema and migration
+receipts remain. The task stores no provider
+credentials and does not log SQL, returned rows, or raw errors.
+
+This object's sole alarm has two mutually exclusive purposes: executing its
+one task, then expiring it. It is separate from the regional product objects'
+multi-purpose scheduled-alarm coordinator. There is no additional queue,
+Workflow, or application retry scheduler. It uses KV storage without an
+application SQL migration history.
 
 ### Product creation
 
@@ -239,8 +314,9 @@ subject goes into the pass as its operator id, so the region's
 the Organization rather than a represented user, since no user acts.
 
 It takes no typed confirmation; its caller supplies the resolved Organization ID.
-A receipt with `complete: false` means parts are still open; calling again
-resumes the walk.
+A synchronous receipt with `complete: false` means parts are still open; calling
+again resumes the walk. A task-enabled request resumes incomplete passes through
+native alarm retries and reports partial progress through `tasks/get`.
 
 ### Retiring Threads
 
@@ -416,8 +492,10 @@ its contents are reachable only through the product's admitted read path.
 
 `MigrationProbeDO` holds no product state by design.
 
-The Worker does not retain query history, cache results, copy databases, or
-provide a D1 fallback. Creation explicitly names the Rally identity to act as;
+Synchronous calls retain no query history or results. Deferred tasks retain
+their inputs while working and their results for seven days after completion;
+these are private execution receipts, not a reusable query cache or a database
+copy. The Worker provides no D1 fallback. Creation explicitly names the Rally identity to act as;
 Access identity is never silently mapped to a product user.
 
 ## Failure modes and limits
@@ -474,6 +552,13 @@ days. Pair a run-filtered query with command backlog and dead-letter inspection;
 use the [CLI](forced-migrations.md) to execute a migration pass.
 
 ## Testing
+
+`apps/api/test-workers/engineering-mcp-tasks.test.ts` covers HTTP negotiation,
+encoded headers, real task storage/alarms, eviction, damaged input, cancellation,
+expiry, and real retirement/auditing. Basin HTTP is the only provider double.
+The test wrapper imports the engineering Worker into the API runtime suite to
+exercise real regional authorities. Its explicit API export list has a type
+check for drift; the Node transport suite covers legacy synchronous clients.
 
 `apps/api/test-workers/engineering-creation.test.ts` drives the regional bridge
 against real D1 and Durable Objects: Organization creation with its initial
@@ -611,6 +696,30 @@ the Worker. It does not create an Access app or import another app's policy.
 
 
 ## Changelog
+
+### 2026-11-10 — Defer lakehouse queries and Organization retirement
+
+**What changed:** The two tools return durable MCP task handles to clients that
+advertise the current extension. Each task persists its operator, progress and
+result in versioned SQLite tables, supports authenticated polling and cooperative cancellation, and erases
+terminal data after the team's chosen seven days. Existing clients retain the
+synchronous contract.
+
+**Why:** Lakehouse scans should survive a client disconnect, and retirement's
+existing resumable journal should be driven without asking the caller to issue
+the same operation repeatedly after a partial pass.
+
+**Considered and rejected:** Making every tool asynchronous adds latency to
+ordinary reads. An in-memory task map or `waitUntil` cannot provide durable
+results after the request ends. A separate queue or Workflow adds another
+execution lifecycle to these two operations. One native alarm and the task's
+own storage are sufficient; retirement already owns its durable progress.
+
+**Consequences:** Task results add a short-lived, operator-private copy of
+production data. Read-only queries may repeat on platform redelivery; retirement
+reuses its journal. Cancellation never rolls back retirement. SDK upgrades must
+preserve the actual `resultType: "task"` wire response and remove the carrier
+adapter when the SDK can emit it directly.
 
 ### 2026-11-10 — Retire administration apps
 

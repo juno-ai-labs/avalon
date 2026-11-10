@@ -1,4 +1,5 @@
 import type { Env as AvalonEnv } from "../src/env";
+import type { EngineeringTaskDO } from "../../engineering-mcp/src/task-do";
 import type { MigrationProbeDO } from "../src/durable-objects/migration-probe-do";
 import type {
   SupportedTerminalConfiguration,
@@ -46,6 +47,7 @@ declare global {
   namespace Cloudflare {
     // The Workers test pool discovers bindings only through this ambient name.
     interface Env extends AvalonEnv {
+      ENGINEERING_TASKS?: DurableObjectNamespace<EngineeringTaskDO>;
       MIGRATION_PROBE_DO?: DurableObjectNamespace<MigrationProbeDO>;
       TELEMETRY_RPC_TEST?: TelemetryDeliveryRpcBinding;
       TERMINAL_RPC_TEST?: TerminalRpcTestBinding;

@@ -174,6 +174,7 @@ export default tseslint.config(
     files: [
       "apps/api/src/durable-objects/**/*.ts",
       "apps/api/src/crash-symbolicator-container.ts",
+      "apps/engineering-mcp/src/task-do.ts",
     ],
     rules: {
       "rally/durable-object-sql-storage": "error",

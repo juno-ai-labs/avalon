@@ -69,6 +69,11 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
 
 function testEnv(bindings: Partial<Env> = {}): Env {
   return {
+    // These transport tests cover synchronous calls; real task bindings live
+    // in test-workers/engineering-mcp-tasks.test.ts.
+    ENGINEERING_TASKS: new Proxy({} as Env["ENGINEERING_TASKS"], {
+      get() { throw new Error("Task execution must run in workerd"); },
+    }),
     GLOBAL_INSPECTION: regionalBinding("global"),
     QUEUES_API_TOKEN: "queues-test-token",
     ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
@@ -85,7 +90,7 @@ async function rpc(
   params: unknown = {},
   origin?: string,
 ): Promise<Record<string, unknown>> {
-  const handler = createEngineeringMcpHandler(env, principal, "json");
+  const handler = createEngineeringMcpHandler(env, principal);
   const response = await handler.fetch(new Request("https://mcp.internal.rallywith.ai/mcp", {
     method: "POST",
     headers: {
