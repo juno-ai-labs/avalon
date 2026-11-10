@@ -171,7 +171,8 @@ export function createArtifactDataToolContext(
     ...(write ? {
       async resolveWritableArtifact(reference: string): Promise<WritableArtifactResolution> {
         const match = await visibleSite(reference);
-        if (!match) return { outcome: "not_found" };
+        // Only a person's run writes (`artifactDataWriteAccess`).
+        if (!match || input.principal.type !== "user") return { outcome: "not_found" };
         const workspaceId = asWorkspaceId(input.workspaceId);
         const workspace = await durableObjectStubForWorkspace(
           env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
@@ -179,10 +180,14 @@ export function createArtifactDataToolContext(
           workspaceId: input.workspaceId,
           resourceId: match.id,
           sidekickId: write.kind === "sidekick_run" ? write.sidekickId : null,
+          userId: input.principal.userId,
         });
         if (!facts) return { outcome: "not_found" };
         if (facts.canvasArchived) return { outcome: "canvas_archived" };
         if (write.kind === "sidekick_run" && !facts.attachedToSidekick) return { outcome: "not_attached" };
+        // The attachment is where the Sidekick may write; its person must
+        // still be in the Canvas, which reading the site does not show.
+        if (write.kind === "sidekick_run" && !facts.actorAdmitted) return { outcome: "not_found" };
         // A Chat changes its own Canvas's sites. One from another Canvas,
         // attached here as context, is linked to this conversation and so
         // readable, and that link is not leave to write to it.

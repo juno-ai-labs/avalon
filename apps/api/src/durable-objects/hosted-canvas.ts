@@ -567,6 +567,23 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   }
 
   /**
+   * The Sidekicks this Canvas's Chat made that are archived, by id and name:
+   * what a retried `archive_sidekick` is answered from, since `sidekicks`
+   * no longer lists one once the first attempt archived it.
+   */
+  archivedMadeSidekicks(): { id: string; name: string }[] {
+    return this.sql.exec<{ automation_id: string; title: string }>(
+      `SELECT directory.automation_id, directory.title
+         FROM sidekick_conversation_attachments attachment
+         JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
+        WHERE attachment.parent_kind = 'canvas' AND attachment.parent_id = ? AND attachment.substream_id = '0'
+          AND attachment.made_here = 1 AND directory.lifecycle = 'deleted'
+        ORDER BY attachment.attached_at, attachment.automation_id`,
+      this.canvasId,
+    ).toArray().map((row) => ({ id: row.automation_id, name: row.title || "New Sidekick" }));
+  }
+
+  /**
    * A publish from the Canvas's Chat, or from a run of a Sidekick attached to it,
    * attached this resource to the Canvas's conversation: record it among the
    * Canvas's artifacts and move the row's recency, its last editor and the
