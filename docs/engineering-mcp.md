@@ -76,7 +76,7 @@ The regional bridge uses D1 only for identity and routing:
 | --- | --- | --- |
 | `create_org` | Caller names the region | Regional onboarding commits the owner and initial members together, then performs ordinary member seating |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
-| `pause_sidekick`, `resume_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause or resume, which call HostedSidekick in WorkspaceDO |
+| `pause_sidekick`, `resume_sidekick`, `archive_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause, resume or archive, which call HostedSidekick in WorkspaceDO |
 | `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, the regional retirement service: the D1 fence, then the graph walk over every object |
 | `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
@@ -312,6 +312,10 @@ and `resume` as the app's buttons, as the selected user, so HostedSidekick
 decides who may manage the Sidekick and refuses with its own codes. Both are
 idempotent, so they take no `operationId`; the bridge mints one per call only
 to pair the attempt and result audit rows.
+
+`archive_sidekick` calls AutomationService `archive` the same way, in any
+lifecycle. It is the one of the three with no undo, so it is marked
+destructive.
 
 ### Retiring an Organization
 
@@ -705,6 +709,19 @@ the Worker. It does not create an Access app or import another app's policy.
 
 
 ## Changelog
+
+### 2026-11-10 — Archive a Sidekick as a user
+
+**What changed:** `archive_sidekick` archives a Sidekick as a selected user
+through AutomationService `archive`, over a new bridge method
+`archiveSidekick`, audited as `archive_sidekick`.
+
+**Why:** An operator asked to archive every paused and draft Sidekick on the
+platform. The server could pause and resume but not archive, and the only
+other route was a SQL update of `lifecycle`, which skips the run stop, the
+alarm cancellation, the registration clearing and the list refresh the
+product's archive does. A change here must keep the tool on the product's own
+path for that reason.
 
 ### 2026-11-10 — Defer lakehouse queries and Organization retirement
 

@@ -219,6 +219,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `list_canvases` | `workspaceId` | Lists the Organization's Canvases from `canvas_directory` in WorkspaceDO, most recently updated first. |
 | `list_sidekicks` | `workspaceId` | Reads the authoritative WorkspaceDO Sidekick directory, in every lifecycle including deleted. |
 | `pause_sidekick`, `resume_sidekick` | `orgId`, `userId`, `sidekickId` | Pauses or resumes the Sidekick as that user, through the app's own Pause and Resume path. The user must be allowed to manage it; its author always is. Returns the resulting lifecycle. |
+| `archive_sidekick` | `orgId`, `userId`, `sidekickId` | Archives the Sidekick as that user, through the app's own Archive path, in any lifecycle. There is no undo. The user must be allowed to manage it; its author always is. |
 | `retire_org` | `orgId` | Retires the Organization permanently through Ace's retirement door. There is no undo. If the receipt says `complete: false`, call again to resume. |
 | `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO live web artifact registry. |
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO, including a Canvas's parent state in `canvas_directory` and its shares in the `parent_*` tables. |
