@@ -849,9 +849,10 @@ every check on the inventory body, still fails on the first response.
 distribution because one inventory read, for one renderer source map among
 hundreds of sequential uploads, returned HTTP 500. The object had uploaded with
 matching metadata. One transient provider error was enough to block a desktop
-release. The retry policy copies the read-after-write verification that
-`publish-r2-release.mjs`, `release-cache.mjs` and `promote-stable-release.mjs`
-already apply to R2, rather than introducing a new number.
+release. The retry copies the attempt count and backoff of the R2
+verification loops in `publish-r2-release.mjs`, `release-cache.mjs` and
+`promote-stable-release.mjs`, rather than introducing a new number. Unlike
+those loops, it does not retry a thrown `fetch` error.
 
 **Considered and rejected:** Retrying the PUT as well, because no PUT failure
 has been observed and its error path already names the provider's error codes.
