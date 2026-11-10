@@ -92,10 +92,7 @@ export function writerSidekickAdmits(sql: SqlStorage, sidekickId: string, actor:
  * Canvas its `made_here` attachment names. A Sidekick made anywhere else has
  * none and answers `false`; so does one whose Canvas was archived, which
  * archives the Sidekick with it.
- *
- * A guest the Canvas admits is included. What a guest's edit may bind is
- * narrower (`HostedSidekick.applyRevision`): the Organization's connections
- * only, never a person's.
+
  */
 export function sidekickMadeInCanvasAdmits(sql: SqlStorage, sidekickId: string, actor: AdmissionActor): boolean {
   const canvas = sql.exec<CanvasAdmissionRow & Record<string, SqlStorageValue>>(
