@@ -20,6 +20,9 @@ import {
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
   type SendEngineeringMessageResult,
+  ArchiveEngineeringSidekickInputSchema,
+  ArchiveEngineeringSidekickResultSchema,
+  type ArchiveEngineeringSidekickResult,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
   type SetEngineeringSidekickPausedResult,
@@ -93,7 +96,7 @@ import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-au
 import { createEngineeringOrg } from "./services/engineering-creation";
 import { sendEngineeringMessage, readEngineeringConversation } from "./services/engineering-messages";
 import { auditedEngineeringWrite } from "./services/engineering-audit";
-import { setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
+import { archiveEngineeringSidekick, setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
 import { retireWorkspaceForOperator } from "./services/workspace-retirement-service";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
@@ -260,6 +263,18 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         action: request.paused ? "pause_sidekick" : "resume_sidekick", orgId: request.orgId,
         representedUserId: request.userId, operationId: crypto.randomUUID(), sidekickId: request.sidekickId,
       }, async () => SetEngineeringSidekickPausedResultSchema.parse(await setEngineeringSidekickPaused(this.env, request)),
+      (result) => ({ lifecycle: result.lifecycle }));
+    });
+  }
+
+  async archiveSidekick(input: unknown, operator: unknown): Promise<ArchiveEngineeringSidekickResult> {
+    return this.productOperation("archiveSidekick", async () => {
+      const request = ArchiveEngineeringSidekickInputSchema.parse(input);
+      // Archiving an archived Sidekick changes nothing, so as with pause there is no caller recovery key.
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "archive_sidekick", orgId: request.orgId,
+        representedUserId: request.userId, operationId: crypto.randomUUID(), sidekickId: request.sidekickId,
+      }, async () => ArchiveEngineeringSidekickResultSchema.parse(await archiveEngineeringSidekick(this.env, request)),
       (result) => ({ lifecycle: result.lifecycle }));
     });
   }

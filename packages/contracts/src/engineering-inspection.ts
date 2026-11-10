@@ -89,6 +89,16 @@ export const SetEngineeringSidekickPausedResultSchema = deferredZodSchema(() => 
 }));
 export type SetEngineeringSidekickPausedResult = z.infer<typeof SetEngineeringSidekickPausedResultSchema>;
 
+export const ArchiveEngineeringSidekickInputSchema = deferredZodSchema(() => SetEngineeringSidekickPausedInputSchema.unwrap().omit({ paused: true }));
+export type ArchiveEngineeringSidekickInput = z.infer<typeof ArchiveEngineeringSidekickInputSchema>;
+export const ArchiveEngineeringSidekickResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  sidekickId: AutomationIdSchema,
+  lifecycle: z.literal("deleted"),
+}));
+export type ArchiveEngineeringSidekickResult = z.infer<typeof ArchiveEngineeringSidekickResultSchema>;
+
 export const RetireEngineeringOrgInputSchema = deferredZodSchema(() => z.strictObject({
   orgId: WorkspaceIdSchema.describe("The Organization to close for good. Retiring it again resumes an unfinished walk."),
 }));
@@ -482,6 +492,7 @@ export interface EngineeringInspectionRpcBinding {
   revokeUserPassword(input: EngineeringPasswordUserInput, operator: EngineeringOperator): Promise<EngineeringRevokePasswordResult>;
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
+  archiveSidekick(input: ArchiveEngineeringSidekickInput, operator: EngineeringOperator): Promise<ArchiveEngineeringSidekickResult>;
   retireOrg(input: RetireEngineeringOrgInput, operator: EngineeringOperator): Promise<RetireEngineeringOrgResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;
