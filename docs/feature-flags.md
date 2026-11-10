@@ -25,7 +25,7 @@ The checked-in product defaults are:
 | Constant field | Default | Optional environment variable |
 | --- | --- | --- |
 | `developerSettings` | false | `FEATURE_FLAG_DEVELOPER_SETTINGS` |
-| `multipleWorkspacesEnabled` | false | `FEATURE_FLAG_MULTIPLE_WORKSPACES_ENABLED` |
+| `multipleWorkspacesEnabled` | true | `FEATURE_FLAG_MULTIPLE_WORKSPACES_ENABLED` |
 | `pushNotificationsEnabled` | true | `FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED` |
 
 Overrides accept native JSON booleans and numbers `1`/`0`, or their string forms,
@@ -170,6 +170,21 @@ and add a behavioral test for its gate. A new agent role must be mapped in
 `AGENT_MODEL_ENV_KEYS`; no service provisioning or admin editor is required.
 
 ## Changelog
+
+### 2026-11-10 — Restore organization switching by default
+
+**What changed:** `multipleWorkspacesEnabled` defaults to `true`, restoring the
+account menu's Organizations, invitations and creation controls on desktop and
+web, together with background organization attention.
+
+**Why:** Replacing Flagship with local configuration carried forward the original
+rollout's off default, hiding the existing organization selector unless a
+deployment explicitly enabled it.
+
+**Considered and rejected:** Forcing the menu visible in the client would leave
+directory discovery and attention disabled by the same flag. The shared default
+keeps the existing consumers consistent; an explicit environment override can
+still disable the presentation without changing membership or authorization.
 
 Entries below the 2026-11-09 local-configuration change describe the retired
 Flagship design, including the earlier entries from that same date.
