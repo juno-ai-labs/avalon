@@ -5207,12 +5207,16 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
           executionEpoch: execution.executionEpoch,
           leaseOwner: execution.leaseOwner,
           expectedBindStateRevision: current.bind_state_revision,
-        }, (effects) => this.product.enqueueRegionalEffectsInTransaction(effects), () => {
-          if (transition.kind === "protocol_user_appended"
-            && transition.provenance.sourceKind === "completion_verification"
-            && readCompletionVerificationSnapshot(this.state.storage, execution.runId, null).lifecycle === "cancelled") {
-            throw new Error("completion_verification_stopped");
-          }
+        }, {
+          enqueueRegionalEffects: (effects) => this.product.enqueueRegionalEffectsInTransaction(effects),
+          enqueueAssistantText: () => this.product.enqueueCanvasAssistantTextInTransaction(),
+          assertAdmission: () => {
+            if (transition.kind === "protocol_user_appended"
+              && transition.provenance.sourceKind === "completion_verification"
+              && readCompletionVerificationSnapshot(this.state.storage, execution.runId, null).lifecycle === "cancelled") {
+              throw new Error("completion_verification_stopped");
+            }
+          },
         });
         await this.flushSemanticRealtimeOutboxBestEffort();
       },

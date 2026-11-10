@@ -583,8 +583,8 @@ describe("work-stream transcript on workerd SQLite", () => {
         executionEpoch: 1,
         leaseOwner: "workerd-test-owner",
         expectedBindStateRevision: 2,
-      }, (effects) => {
-        deliveredUserIds = effects[0]?.mentionedUserIds;
+      }, {
+        enqueueRegionalEffects: (effects) => { deliveredUserIds = effects[0]?.mentionedUserIds; },
       });
       expect(deliveredUserIds).toEqual([USER_ID]);
 

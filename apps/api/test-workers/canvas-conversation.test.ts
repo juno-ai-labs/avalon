@@ -144,6 +144,26 @@ function workspace(): DurableObjectStub<WorkspaceDO> {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName(env.AVALON_REGION, WORKSPACE_ID)));
 }
 
+/** The development seed writes canonical turns with a supplied timestamp. */
+async function seedChatMessage(transcript: ReturnType<typeof createTranscriptObjectPort>, expectedTranscriptSequence: number,
+  actor: "human" | "assistant", text: string, createdAtUtc: string): Promise<void> {
+  const mutable = env as { APP_ENV?: string };
+  const appEnv = mutable.APP_ENV;
+  mutable.APP_ENV = "development";
+  try {
+    await transcript.seedDevelopmentConversationTurn({
+      turnId: crypto.randomUUID(), clientMessageId: actor === "human" ? crypto.randomUUID() : null, actor,
+      authorUserId: actor === "human" ? CREATOR : null,
+      authorSnapshot: actor === "human" ? { displayName: "Creator", avatarUrl: null } : null,
+      externalActorJson: null, messageType: "text", text, structuredContentJson: null, producedByRunId: null,
+      expectedTranscriptSequence, createdAtUtc,
+    });
+  } finally {
+    if (appEnv === undefined) delete mutable.APP_ENV;
+    else mutable.APP_ENV = appEnv;
+  }
+}
+
 async function opens(userId: string, canvasId: string): Promise<boolean> {
   try {
     await new ConversationService(TEST_ENV, auth(userId)).authorizeViewer(canvasId);
@@ -401,6 +421,9 @@ describe("the Canvas list", () => {
         actor: { userId: CREATOR, actorRole: "member" }, update: { visibility: "workspace", userIds: [] } });
     }
     const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    const routed = await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, canvasId, "canvas");
+    await seedChatMessage(createTranscriptObjectPort(routed, WORKSPACE_ID, canvasId), 1, "human", "A saved message from before conversion.",
+      "2026-10-18T18:39:04.461Z");
     await deliverChildEffects(TEST_ENV, chat);
     // The converted directory can lag the Chat. Opening must not catch up the date or reorder the list.
     const olderActivity = "2026-10-17T18:00:00.000Z";
@@ -411,10 +434,6 @@ describe("the Canvas list", () => {
           Date.parse(activity), Date.parse(activity), id);
       }
       state.storage.sql.exec("DELETE FROM sidekick_child_projections WHERE sidekick_id = ?", canvasId);
-    });
-    await runInDurableObject(chat, (_instance, state) => {
-      state.storage.sql.exec("UPDATE workstream SET last_people_activity_at = ?, next_attention_ordinal = 2 WHERE id = 1",
-        Date.parse("2026-10-18T18:39:04.461Z"));
     });
     const { frames } = await connect(MEMBER);
     const newer = { id: newerId, updatedAt: newerActivity };
@@ -705,23 +724,7 @@ describe("a Canvas's title and pin order", () => {
     const say = async (actor: "human" | "assistant", text: string) => {
       const sequence = await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ next: number }>(
         `SELECT next_transcript_sequence AS next FROM transcript_counters WHERE id = 1`).one().next);
-      // The seed operation is the one way to write a turn exactly as stored
-      // (an empty text, a reply with no run) and answers only in development.
-      const mutable = env as { APP_ENV?: string };
-      const appEnv = mutable.APP_ENV;
-      mutable.APP_ENV = "development";
-      try {
-        await transcript.seedDevelopmentConversationTurn({
-          turnId: crypto.randomUUID(), clientMessageId: actor === "human" ? crypto.randomUUID() : null, actor,
-          authorUserId: actor === "human" ? CREATOR : null,
-          authorSnapshot: actor === "human" ? { displayName: "Creator", avatarUrl: null } : null,
-          externalActorJson: null, messageType: "text", text, structuredContentJson: null, producedByRunId: null,
-          expectedTranscriptSequence: sequence, createdAtUtc: new Date().toISOString(),
-        });
-      } finally {
-        if (appEnv === undefined) delete mutable.APP_ENV;
-        else mutable.APP_ENV = appEnv;
-      }
+      await seedChatMessage(transcript, sequence, actor, text, new Date().toISOString());
     };
     /** Run the naming entry, as the Chat's next message would arm it, and wait for it to be done. */
     const name = async () => {

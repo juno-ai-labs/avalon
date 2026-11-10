@@ -3,6 +3,7 @@ import { ResourceVersionCauseSchema, type ResourceHead, type ResourceVersionCaus
 import { truncateUtf16Safe } from "@rally/contracts/text";
 
 import { listedResourceVisibilitySql } from "../services/resource-listing";
+import { isArtifactNewsCause } from "./workspace-pin-storage";
 
 /**
  * Migration 114: one ledger of new resource versions, filled by a trigger on
@@ -78,9 +79,10 @@ export function drainResourceVersionChanges(sql: SqlStorage): ResourceVersionCha
     .sort((a, b) => a.resourceId.localeCompare(b.resourceId) || a.version - b.version);
 }
 
-/** Advance every active Canvas that lists a changed artifact to the version's source date. */
+/** Advance active Canvases that list a published or replaced artifact to its version date. */
 export function advanceCanvasArtifactRecency(sql: SqlStorage, changes: readonly ResourceVersionChange[]): boolean {
-  if (changes.length === 0) return false;
+  const published = changes.filter((change) => isArtifactNewsCause(change.cause));
+  if (published.length === 0) return false;
   return sql.exec(
     `UPDATE canvas_directory AS canvas SET updated_at = activity.at
        FROM (
@@ -95,7 +97,7 @@ export function advanceCanvasArtifactRecency(sql: SqlStorage, changes: readonly 
        ) activity
       WHERE canvas.canvas_id = activity.canvas_id AND canvas.archived_at IS NULL AND canvas.updated_at < activity.at
       RETURNING canvas_id`,
-    JSON.stringify(changes.map((change) => [change.resourceId, change.version])),
+    JSON.stringify(published.map((change) => [change.resourceId, change.version])),
   ).toArray().length > 0;
 }
 

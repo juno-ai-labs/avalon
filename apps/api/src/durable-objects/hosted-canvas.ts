@@ -44,7 +44,7 @@ import type { DirectoryCommonEffect } from "./conversation-parent-object";
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationHost, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { sidekickManagerAllows, sidekickReaderAllows } from "./hosted-sidekick";
 import { ScopeInvitationService } from "./scope-invitation-service";
-import { artifactNewsSql } from "./workspace-pin-storage";
+import { artifactNewsCauseSql, artifactNewsSql } from "./workspace-pin-storage";
 import { tellCanvasPinners } from "./canvas-artifact-notices";
 import {
   accessRefusals,
@@ -553,9 +553,12 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     if (!row || row.workspace_id !== request.workspaceId || row.archived_at !== null) return { noted: false };
     const now = Date.now();
     this.host.storage.transactionSync(() => {
-      const publication = this.sql.exec<{ published_at: string }>(
-        `SELECT COALESCE((SELECT captured_at FROM resource_versions WHERE resource_id = resource.id ORDER BY version DESC LIMIT 1),
-                         resource.updated_at) AS published_at FROM resources resource
+      const publication = this.sql.exec<{ published_at: string | null }>(
+        `SELECT COALESCE((SELECT version.captured_at FROM resource_versions version
+                           WHERE version.resource_id = resource.id AND (version.version = 1 OR ${artifactNewsCauseSql("version")})
+                           ORDER BY version.version DESC LIMIT 1),
+                         CASE WHEN resource.current_version <= 1 THEN resource.updated_at END) AS published_at
+           FROM resources resource
           WHERE resource.id = ? AND ${listedResourceVisibilitySql("resource")}`, request.resourceId,
       ).toArray()[0];
       this.sql.exec(
@@ -565,7 +568,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       this.sql.exec(
         `UPDATE canvas_directory SET updated_at = MAX(updated_at, ?), last_editor_kind = ?, last_editor_id = ?,
                 last_writer_run_id = ? WHERE canvas_id = ?`,
-        publication ? Date.parse(publication.published_at) : 0, request.editor.kind, request.editor.id, request.runId ?? null, this.canvasId,
+        publication?.published_at ? Date.parse(publication.published_at) : 0,
+        request.editor.kind, request.editor.id, request.runId ?? null, this.canvasId,
       );
       this.host.noteCanvasDirectoryChanged(this.canvasId);
     });

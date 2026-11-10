@@ -161,6 +161,8 @@ describe("a pinned Canvas's new version", () => {
     await publish(2, { kind: "member", userId: AUTHOR }, editor);
     expect((await detail()).updatedAt).toBe("2026-11-08T10:00:02.000Z");
 
+    await workspace().renameResource({ workspaceId: WORKSPACE_ID, resourceId: REPORT, title: "Renamed report",
+      renamedByUserId: asUserId(AUTHOR), at: "2026-11-08T10:00:03.000Z" });
     await workspace().canvasNoteArtifact({ workspaceId: WORKSPACE_ID, canvasId: CANVAS, resourceId: REPORT, editor });
     expect((await detail()).updatedAt).toBe("2026-11-08T10:00:02.000Z");
   });

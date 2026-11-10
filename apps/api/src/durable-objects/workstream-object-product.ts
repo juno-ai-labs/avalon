@@ -3016,6 +3016,14 @@ export class WorkstreamObjectProductService {
     }));
   }
 
+  /** Publish a Canvas's saved assistant text in the transaction that wrote it. */
+  enqueueCanvasAssistantTextInTransaction(): undefined {
+    if (this.objectStore.identity()?.parentKind !== "canvas") return;
+    this.objectStore.enqueueEffectsInCurrentTransaction([
+      { partitionKey: "common", effect: this.commonEffect(this.root()) },
+    ]);
+  }
+
   /**
    * Join transcript promotion's SQLite transaction so no acknowledged input
    * can commit without its regional projections and notifications in outbox.
@@ -3023,12 +3031,7 @@ export class WorkstreamObjectProductService {
   enqueueRegionalEffectsInTransaction(
     deliveryEffects: readonly PendingInputDeliveryEffectInput[],
   ): number {
-    if (deliveryEffects.length === 0) {
-      if (this.objectStore.identity()?.parentKind !== "canvas") return 0;
-      return this.objectStore.enqueueEffectsInCurrentTransaction([
-        { partitionKey: "common", effect: this.commonEffect(this.root()) },
-      ]);
-    }
+    if (deliveryEffects.length === 0) return 0;
     const root = this.root();
     const affectedUserIds = [...new Set(deliveryEffects.flatMap((delivery) =>
       delivery.affectedUserIds))];
