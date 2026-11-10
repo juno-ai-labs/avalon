@@ -2,7 +2,6 @@ import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  PIPELINE_INGEST_REQUEST_BYTES,
   consumeInferenceLakehouseQueue,
   deliverInferenceLakehousePointer,
 } from "../src/queues/inference-lakehouse-consumer";
@@ -77,7 +76,12 @@ function fixture() {
     PAYLOADS: bucket,
     INFERENCE_LAKEHOUSE_QUEUE: queue,
     INFERENCE_LAKEHOUSE: {
+      // Production's binding refuses any one record above 1 MB, whatever the
+      // request total; see PIPELINE_MESSAGE_BYTES.
       async send(records: InferenceLakehouseRecord[]) {
+        if (records.some((row) => new TextEncoder().encode(JSON.stringify(row)).byteLength > 1_000_000)) {
+          throw new Error("CF_PIPELINE_MESSAGE_TOO_LARGE: Individual message must not exceed 1 MB");
+        }
         delivered.push(records);
       },
     },
@@ -468,9 +472,9 @@ describe("inference lakehouse", () => {
     expect(objects.has(pointer.objectKey)).toBe(true);
   });
 
-  it("keeps an oversized exact record in regional R2 and sends a queryable pointer row", async () => {
+  it("sends a record between the 1 MB record limit and the 5 MB request limit as a queryable pointer row", async () => {
     const { env, objects, delivered } = fixture();
-    const expected = record({ request: { body: "x".repeat(PIPELINE_INGEST_REQUEST_BYTES) } });
+    const expected = record({ request: { body: "x".repeat(2_000_000) } });
     const pointer = await stageInferenceLakehouseRecord(env, expected);
 
     const result = await deliverInferenceLakehousePointer(env, pointer);
@@ -483,14 +487,23 @@ describe("inference lakehouse", () => {
       payload_bytes: pointer.payloadBytes,
       metadata: {
         overflow: {
-          reason: "pipeline_ingest_request_limit",
-          maximumBytes: PIPELINE_INGEST_REQUEST_BYTES,
+          reason: "pipeline_message_limit",
+          maximumBytes: 1_000_000,
           fullRecordAvailableInRegionalR2: true,
         },
       },
     });
     expect(delivered[0]?.[0]?.request).toBeUndefined();
     expect(objects.has(pointer.objectKey)).toBe(true);
+  });
+
+  it("delivers a record just under the 1 MB record limit whole", async () => {
+    const { env, delivered } = fixture();
+    const expected = record({ request: { body: "x".repeat(990_000) } });
+    const pointer = await stageInferenceLakehouseRecord(env, expected);
+
+    await expect(deliverInferenceLakehousePointer(env, pointer)).resolves.toMatchObject({ overflow: false });
+    expect(delivered).toEqual([[expected]]);
   });
 
   it("acknowledges poison and cross-region pointers without touching storage", async () => {
