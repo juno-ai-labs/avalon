@@ -255,7 +255,16 @@ handler checks `x-rally-viewer-id` before every route and before its asset
 fallback, returning 401 when the header is absent. Rally injects that header
 only after the session flow below succeeds; inbound copies are stripped first.
 This makes the handler's check an authorization boundary rather than a
-guessable-URL convention. The site-building skill teaches this shape explicitly.
+guessable-URL convention. The site-building skill teaches this shape explicitly
+and uses it by default for private connected data. The session is scoped to the
+artifact and minted only after canonical resource authorization, including the
+Canvas audience for Canvas artifacts; signing into Rally or holding a link is
+not sufficient. Generated sites need no second Canvas membership lookup. This
+does not check each viewer's access at the original data provider. The app task
+skill distinguishes importing dashboard data from collecting visitors' entries,
+so the latter's shared-versus-private question does not block an authorized
+dashboard build. The prompt-policy incident and decision are recorded in
+[`agent-harness.md`](agent-harness.md#changelog).
 
 **Signing in from the site itself.** Someone who follows a site's link
 directly has no viewer session. `/__rally/sign-in?return=<path>` sends them to
