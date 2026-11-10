@@ -12,6 +12,7 @@ const deploymentToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
 // Optional so a missing GitHub secret does not fail the API release this deploy
 // runs inside; the tool names the missing secret instead.
 const runtimeSecrets = [
+  { name: "QUEUES_API_TOKEN", tool: "inspect_queues" },
   { name: "BASIN_SQL_API_TOKEN", tool: "query_data_lake" },
   { name: "WORKERS_OBSERVABILITY_API_TOKEN", tool: "query_worker_observability" },
 ].map((secret) => ({ ...secret, value: process.env[`ENGINEERING_MCP_${secret.name}`]?.trim() }));

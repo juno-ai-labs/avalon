@@ -18,6 +18,8 @@ const principal: AccessPrincipal = {
 function regionalBinding(region: string): EngineeringInspectionRpcBinding {
   return {
     createOrg: vi.fn<EngineeringInspectionRpcBinding["createOrg"]>(),
+    inspectOrganizationUsage: vi.fn<EngineeringInspectionRpcBinding["inspectOrganizationUsage"]>(),
+    changeOrganizationPlan: vi.fn<EngineeringInspectionRpcBinding["changeOrganizationPlan"]>(),
     sendMessage: vi.fn<EngineeringInspectionRpcBinding["sendMessage"]>(),
     setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
     retireOrg: vi.fn<EngineeringInspectionRpcBinding["retireOrg"]>(),
@@ -68,6 +70,7 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
 function testEnv(bindings: Partial<Env> = {}): Env {
   return {
     GLOBAL_INSPECTION: regionalBinding("global"),
+    QUEUES_API_TOKEN: "queues-test-token",
     ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
     CLOUDFLARE_ACCOUNT_ID: "account-1",
     BASIN_SQL_API_TOKEN: "basin-token",
@@ -250,6 +253,11 @@ describe("Rally engineering MCP tools", () => {
       "run_d1_sql",
       "query_data_lake",
       "query_worker_observability",
+      "inspect_queues",
+      "inspect_dead_letters",
+      "inspect_usage_plan",
+      "change_usage_plan",
+      "inspect_migration_progress",
     ]);
     for (const tool of result.tools.filter((item) => /^(run|update)_/.test(item.name))) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
@@ -930,5 +938,51 @@ describe("Rally engineering MCP tools", () => {
         [{}],
       ]);
     }
+  });
+});
+
+describe("operations tools", () => {
+  it("inspects queues and peeks only active dead letters without consuming messages", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input); calls.push({ url, method: init?.method ?? "GET" });
+      const result = url.includes("/messages/peek") ? { messages: [{ id: "failed-1", body: "payload" }] }
+        : url.includes("/metrics") ? { backlog_count: 3 }
+        : [{ queue_id: "source", queue_name: "jobs", consumers: [{ dead_letter_queue: "failed" }] }, { queue_id: "dead", queue_name: "failed" }];
+      return Response.json({ success: true, result, result_info: { total_pages: 1 } });
+    });
+    const env = testEnv();
+    expect(JSON.stringify(await rpc(env, "tools/call", { name: "inspect_queues", arguments: { deadLettersOnly: true } }))).toContain("backlog_count");
+    expect(JSON.stringify(await rpc(env, "tools/call", { name: "inspect_dead_letters", arguments: { queueId: "dead" } }))).toContain("failed-1");
+    expect((await rpc(env, "tools/call", { name: "inspect_dead_letters", arguments: { queueId: "source" } })).result).toMatchObject({ isError: true });
+    expect(calls.filter((c) => c.method === "POST")).toEqual([{ url: "https://api.cloudflare.com/client/v4/accounts/account-1/queues/dead/messages/peek", method: "POST" }]);
+  });
+
+  it("routes usage and plan changes to the owning region with the Access actor", async () => {
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ac1");
+    const global = regionalBinding("global"); const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "global", authorityGeneration: 1 } });
+    const usage = { plan: "growth" as const, quotaRemainingPercent: 80, weekResetsAt: "2026-11-12T00:00:00Z", overage: { amountMicrousd: 0, periodStart: "2026-11-01T00:00:00Z", periodEndsAt: "2026-12-01T00:00:00Z", billed: false as const } };
+    vi.mocked(global.inspectOrganizationUsage).mockResolvedValue({ orgId, region: "global", usage });
+    vi.mocked(global.changeOrganizationPlan).mockResolvedValue({ orgId, region: "global", usage });
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+    expect((await rpc(env, "tools/call", { name: "inspect_usage_plan", arguments: { orgId } })).result).not.toHaveProperty("isError", true);
+    expect((await rpc(env, "tools/call", { name: "change_usage_plan", arguments: { orgId, plan: "growth" } })).result).not.toHaveProperty("isError", true);
+    expect(global.changeOrganizationPlan).toHaveBeenCalledWith({ orgId, plan: "growth" }, principal);
+    expect(enterprise.changeOrganizationPlan).not.toHaveBeenCalled();
+  });
+
+  it("queries regional migration outcomes with run filtering and pagination", async () => {
+    let body: Record<string, unknown> | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      body = JSON.parse(String(init?.body));
+      return Response.json({ success: true, result: { events: [{ event: "migration_command_applied", schema_version: 7, expected_version: 8 }] } });
+    });
+    const runId = "00000000-0000-4000-8000-000000000ac1";
+    expect(JSON.stringify(await rpc(testEnv(), "tools/call", { name: "inspect_migration_progress", arguments: { region: "global", from: "2026-11-10T00:00:00Z", runId, offset: "page-two" } }))).toContain("schema_version");
+    expect(body).toMatchObject({ offset: "page-two", parameters: { filterCombination: "and", filters: expect.arrayContaining([
+      { key: "$metadata.service", operation: "eq", type: "string", value: "avalon-api-global" },
+      { key: "run_id", operation: "eq", type: "string", value: runId },
+    ]) } });
   });
 });

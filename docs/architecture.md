@@ -817,7 +817,7 @@ kept as documents; changelog entries that cite one name it as text.
 - `private-access-security-audit-2026-09-09.md`: the early-access security
   audit of PR #637 and its verdict to hold the public launch until admission
   limits and bot protection existed. Cited by
-  [`private-access.md`](private-access.md).
+  `private-access.md` (private-access management was removed).
 
 ## Changelog
 

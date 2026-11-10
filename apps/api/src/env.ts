@@ -47,8 +47,6 @@ export interface Env extends FeatureFlagEnvironment {
   /** Shared, content-free routing authority available to both product regions. */
   PLATFORM_DB: D1Database;
   PAYLOADS: R2Bucket;
-  /** Global-only installer stream for private download grants. */
-  DESKTOP_RELEASES?: R2Bucket;
   TELEMETRY_PAYLOADS: R2Bucket;
   /** One globally replicated cache shared by the configured Workers. */
   INFERENCE_PRICING_CACHE: KVNamespace;
@@ -183,9 +181,6 @@ export interface Env extends FeatureFlagEnvironment {
   AZURE_INFERENCE_ENDPOINT?: string;
   AZURE_INFERENCE_API_KEY?: string;
   FIRECRAWL_API_KEY?: string;
-  /** Acquisition-only controls; missing production bindings fail closed. */
-  ACCESS_EDGE_RATE_LIMITER?: RateLimit;
-  TURNSTILE_SECRET_KEY?: string;
   /** Native Cloudflare Email Service send binding. */
   EMAIL?: { send(message: EmailMessageBuilder): Promise<EmailSendResult> };
   EMAIL_FROM?: string;
