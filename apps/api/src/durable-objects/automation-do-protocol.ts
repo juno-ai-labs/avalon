@@ -45,10 +45,10 @@ export const AutomationCreateRequestSchema = z.strictObject({
   /**
    * The Canvas this Sidekick is being made for, by its Chat or by a request
    * to the Canvas's own route. It is attached to that Canvas in the creating
-   * transaction, marked `made_here`, and the members the Canvas admits steer
+   * transaction, marked `made_here`, and everyone the Canvas admits manages
    * it. The host derives it; no caller names another conversation's Canvas.
    */
-  homeCanvasId: IdSchema.optional(),
+  madeInCanvasId: IdSchema.optional(),
 });
 export type AutomationCreateRequest = z.input<typeof AutomationCreateRequestSchema>;
 

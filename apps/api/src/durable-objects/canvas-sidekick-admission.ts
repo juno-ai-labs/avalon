@@ -7,7 +7,7 @@ import { canvasAdmits, sidekickAdmits } from "../services/authorization-policy";
  * The rules read each other, so they live in one module:
  *  * a Canvas a Sidekick run made admits whoever that Sidekick admits
  *    (`canvas_directory.writer_sidekick_id`);
- *  * a Sidekick a Canvas's Chat made is steered by the members that Canvas
+ *  * a Sidekick a Canvas's Chat made is managed by everyone that Canvas
  *    admits (the `made_here` attachment). It is not opened by them: who reads
  *    a Sidekick never depends on a Canvas, so the chain ends after one step.
  * Both are read live, so nothing copies one list into the other.
@@ -136,11 +136,9 @@ export function sidekickManagerAllows(
 }
 
 /**
- * Who steers a Sidekick, changing what it does and whether it runs:
- * `sidekickManagerAllows`, and everyone the Canvas whose Chat made it
- * admits, guests included. Steering is not opening, and not deciding who opens: such a person
- * reads its conversation and runs only if it is shared with them, and its
- * audience stays `sidekickManagerAllows`' to change.
+ * Who manages a Sidekick: `sidekickManagerAllows`, and everyone the Canvas
+ * whose Chat made it admits. Managing is not opening: such a person reads its
+ * conversation and runs only once it is shared with them.
  */
 export function sidekickManages(
   row: { automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null },

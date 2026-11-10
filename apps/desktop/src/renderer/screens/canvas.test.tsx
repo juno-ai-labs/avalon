@@ -13,7 +13,6 @@ import { RENAME_CANVAS_STATE } from '../lib/canvases';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
 import type * as Platform from '../lib/platform';
-import type { AutomationSummary } from '../lib/types';
 import { expandRequest, openResourceRequest } from '../lib/navigation-routes';
 import type { ConversationSurfaceProps } from './conversation-surface';
 import type * as ConversationSurfaceExports from './conversation-surface';
@@ -105,11 +104,6 @@ const DIGEST = '00000000-0000-7000-8000-0000000000d2';
 /** A Sidekick attached to the Canvas, as its detail lists it. */
 function attached(id: string, name: string, overrides: Partial<CanvasSidekick> = {}): CanvasSidekick {
   return { id, name, status: 'active', madeHere: true, ...overrides };
-}
-
-/** A row of the viewer's own Sidekicks list, as `workspace_sidekick_list` carries it. */
-function ownSidekick(id: string, name: string): AutomationSummary {
-  return { id, name, description: '', scope: 'you', status: 'active', updatedAt: '2026-11-07T09:30:00.000Z', loadable: true };
 }
 
 /** The menu row naming a Sidekick: its name and its state, read as one item. */
@@ -259,10 +253,11 @@ describe('CanvasScreen', () => {
     expect(screen.queryByText('Sidekicks')).toBeNull();
   });
 
-  it("opens a Sidekick's page from its row only when it is in the viewer's own Sidekicks, and says how to change it otherwise", async () => {
-    getCanvas.mockResolvedValue(detail({ sidekicks: [attached(TRACKER, 'Launch tracker'), attached(DIGEST, 'Weekly digest')] }));
-    const client = renderCanvas();
-    act(() => { applyVersionedSidebarList(client, 'automations', 1, [ownSidekick(TRACKER, 'Launch tracker')]); });
+  it("opens a Sidekick's page from its row only for someone it is shared with, and says how to change it otherwise", async () => {
+    getCanvas.mockResolvedValue(detail({ sidekicks: [
+      attached(TRACKER, 'Launch tracker', { canOpen: true }), attached(DIGEST, 'Weekly digest', { canOpen: false }),
+    ] }));
+    renderCanvas();
     await openMenu('Q4 revenue review');
     await screen.findByRole('group', { name: 'Sidekicks' });
     const unshared = sidekickRow('Weekly digest');
@@ -273,21 +268,6 @@ describe('CanvasScreen', () => {
     fireEvent.click(unshared);
     expect(screen.queryByText(/Sidekick page/u)).toBeNull();
     expect(screen.getByRole('menu')).toBeInTheDocument();
-    expect(sidekickRow('Launch tracker')).not.toHaveAttribute('aria-disabled');
-    fireEvent.click(sidekickRow('Launch tracker'));
-    expect(await screen.findByText(`Sidekick page /sidekicks/${TRACKER}`)).toBeInTheDocument();
-  });
-
-  it("takes the server's word on which Sidekicks the viewer can open, whatever their own Sidekicks list holds", async () => {
-    // A guest's list is never sent, and a member's stops at its limit: neither says a Sidekick cannot be opened.
-    getCanvas.mockResolvedValue(detail({ sidekicks: [
-      attached(TRACKER, 'Launch tracker', { canOpen: true }), attached(DIGEST, 'Weekly digest', { canOpen: false }),
-    ] }));
-    const client = renderCanvas();
-    act(() => { applyVersionedSidebarList(client, 'automations', 1, [ownSidekick(DIGEST, 'Weekly digest')]); });
-    await openMenu('Q4 revenue review');
-    await screen.findByRole('group', { name: 'Sidekicks' });
-    expect(sidekickRow('Weekly digest')).toHaveAttribute('aria-disabled', 'true');
     expect(sidekickRow('Launch tracker')).not.toHaveAttribute('aria-disabled');
     fireEvent.click(sidekickRow('Launch tracker'));
     expect(await screen.findByText(`Sidekick page /sidekicks/${TRACKER}`)).toBeInTheDocument();

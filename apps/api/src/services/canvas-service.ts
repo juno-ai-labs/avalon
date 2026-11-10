@@ -124,7 +124,7 @@ export class CanvasService {
   async addSidekick(canvasId: string, request: AddCanvasSidekickRequest): Promise<AddedCanvasSidekick> {
     if (this.auth.role === null) throw new ApiError(403, "canvas_sidekick_member_required", "Only a member of the Organization can make a Sidekick");
     const { automationId } = await createAutomation(this.env, {
-      workspaceId: this.auth.workspaceId, authorUserId: this.auth.userId, scope: "personal", homeCanvasId: canvasId,
+      workspaceId: this.auth.workspaceId, authorUserId: this.auth.userId, scope: "personal", madeInCanvasId: canvasId,
       ...(request.sidekickId ? { automationId: request.sidekickId } : {}),
     });
     // Its own service, not the caller's: an MCP client's reach stops at

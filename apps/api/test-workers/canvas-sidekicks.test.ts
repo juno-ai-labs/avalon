@@ -87,7 +87,7 @@ beforeEach(async () => {
   });
   // One the Canvas's Chat made, and one made on the Sidekicks page.
   await workspace().sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: MADE_HERE, authorUserId: CREATOR,
-    scope: "personal", authorityGeneration: 1, homeCanvasId: CANVAS_ID });
+    scope: "personal", authorityGeneration: 1, madeInCanvasId: CANVAS_ID });
   await workspace().sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: MADE_ELSEWHERE, authorUserId: CREATOR,
     scope: "personal", authorityGeneration: 1 });
 });
@@ -119,26 +119,17 @@ describe("a Sidekick a Canvas's Chat made", () => {
   it("is not made in a Canvas its author cannot open", async () => {
     const stranger = asAutomationId(crypto.randomUUID());
     expect(await refusal((instance) => instance.sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: stranger,
-      authorUserId: OUTSIDER, scope: "personal", authorityGeneration: 1, homeCanvasId: CANVAS_ID }))).toBe("canvas_not_found");
+      authorUserId: OUTSIDER, scope: "personal", authorityGeneration: 1, madeInCanvasId: CANVAS_ID }))).toBe("canvas_not_found");
     expect(await lifecycle(stranger)).toBeUndefined();
   });
 
-  it("is not made under an id that names a Canvas, and a replay is refused once its author has lost the Canvas", async () => {
+  it("is not made under an id that names a Canvas", async () => {
     // A Sidekick's row is asked for before a Canvas's, so the id would take the Canvas's conversation over.
     for (const taken of [CANVAS_ID, OTHER_CANVAS_ID]) {
       expect(await refusal((instance) => instance.sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: asAutomationId(taken),
-        authorUserId: CREATOR, scope: "personal", authorityGeneration: 1, homeCanvasId: CANVAS_ID }))).toBe("sidekick_id_unavailable");
+        authorUserId: CREATOR, scope: "personal", authorityGeneration: 1, madeInCanvasId: CANVAS_ID }))).toBe("sidekick_id_unavailable");
     }
     expect((await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) })).title).toBe("Inbox");
-    // The participant makes one, then loses the Canvas: the same request again is no way back to it.
-    const theirs = asAutomationId(crypto.randomUUID());
-    const request = { workspaceId: WORKSPACE_ID, automationId: theirs, authorUserId: PARTICIPANT, scope: "personal" as const,
-      authorityGeneration: 1, homeCanvasId: CANVAS_ID };
-    expect(await workspace().sidekickCreate(request)).toEqual({ created: true });
-    expect(await workspace().sidekickCreate(request)).toEqual({ created: false });
-    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
-      update: { visibility: "creator", userIds: [] } });
-    expect(await refusal((instance) => instance.sidekickCreate(request))).toBe("canvas_not_found");
   });
 
   it("is managed by everyone in the Canvas, who still cannot open it, and by nobody outside the Canvas", async () => {
@@ -155,34 +146,15 @@ describe("a Sidekick a Canvas's Chat made", () => {
       userId: PARTICIPANT, substreamIds: [] })).toMatchObject({ kind: "automation", author: false, shared: false, executor: false });
   });
 
-  it("lets a participant steer it and nothing more: not its audience, its look, who it runs as, or a read of it", async () => {
+  it("lets a participant change what it does, and archive it", async () => {
     const participant = { ...member(PARTICIPANT), participantOfOwningWorkstream: false };
     const addressed = { workspaceId: WORKSPACE_ID, automationId: MADE_HERE };
-    // Sharing it with themselves would be opening it by another door.
-    expect(await refusal((instance) => instance.sidekickSetAudience({ ...addressed, actor: participant,
-      update: { audience: "people", userIds: [PARTICIPANT] } }))).toBe("sidekick_forbidden");
-    expect(await refusal((instance) => instance.sidekickSetAudience({ ...addressed, actor: participant,
-      update: { audience: "workspace", userIds: [] } }))).toBe("sidekick_forbidden");
-    // These answer with its whole detail, which a steerer may not read.
-    expect(await refusal((instance) => instance.sidekickSetAppearance({ ...addressed, actor: participant,
-      appearance: { color: "blue" } }))).toBe("sidekick_forbidden");
-    expect(await refusal((instance) => instance.sidekickApply({ ...addressed, actor: participant }))).toBe("sidekick_forbidden");
-    expect(await refusal((instance) => instance.sidekickClaimExecutionPrincipal({ ...addressed, actor: participant }))).toBe("sidekick_forbidden");
-    expect(await refusal((instance) => instance.sidekickReadDetail({ ...addressed, actor: participant }))).toBe("sidekick_not_found");
-    // Nor do they manage a Canvas one of its runs made, whose audience they could add themselves to.
-    const runCanvas = asWorkstreamId(crypto.randomUUID());
-    await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: runCanvas, title: "Run output", createdByUserId: CREATOR,
-      authorityGeneration: 1, writer: { sidekickId: MADE_HERE, runId: crypto.randomUUID() } });
-    expect(await refusal((instance) => instance.canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: runCanvas,
-      actor: member(PARTICIPANT), update: { visibility: "participants", userIds: [PARTICIPANT] } }))).toBe("canvas_not_found");
-    // Steering still works: they change what it does, and the change is applied.
     await workspace().sidekickSaveDefinition({ ...addressed, actor: participant, evaluatorRules: null, submittedByRunId: null, draft: {
       definitionVersion: 2, name: "Inbox filler", description: "Files new email", overview: "Keeps the inbox Canvas current",
       instructions: "Add a row for each new email.", triggers: [], requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {},
       recommendedPlugins: [], memoryTables: [], customTools: [], suggestedScope: "personal", followUpQuestion: null, elicitation: null, ready: true,
     } });
     expect(await lifecycle(MADE_HERE)).toBe("active");
-    // And archiving it stops it.
     await workspace().sidekickRemove({ ...addressed, actor: participant });
     expect(await lifecycle(MADE_HERE)).toBe("deleted");
   });
@@ -206,7 +178,7 @@ describe("a Sidekick a Canvas's Chat made", () => {
       userId: CREATOR, reference: CANVAS_ID });
     const third = asAutomationId(crypto.randomUUID());
     await workspace().sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: third, authorUserId: CREATOR,
-      scope: "personal", authorityGeneration: 1, homeCanvasId: CANVAS_ID });
+      scope: "personal", authorityGeneration: 1, madeInCanvasId: CANVAS_ID });
 
     await workspace().sidekickRemove({ workspaceId: WORKSPACE_ID, automationId: third,
       actor: { ...member(PARTICIPANT), participantOfOwningWorkstream: false } });

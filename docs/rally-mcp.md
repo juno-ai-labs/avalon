@@ -285,7 +285,7 @@ a message to the Chat followed by reading it; and what `read_canvas_chat` and
 A client adds a Sidekick to a Canvas with `add_canvas_sidekick`, or as it
 makes the Canvas with `create_canvas`'s `sidekick` argument. Both are
 `CanvasService.addSidekick`: the Sidekick is made attached to the Canvas
-(`homeCanvasId`), exactly as one the Canvas's own Chat makes
+(`madeInCanvasId`), exactly as one the Canvas's own Chat makes
 ([`automation-lifecycle.md`](automation-lifecycle.md#a-sidekick-made-in-a-canvas)),
 and the caller's `instructions` are sent to the Sidekick's conversation as the
 person's message to its wizard (`intent: "edit_sidekick"`). The wizard, not the

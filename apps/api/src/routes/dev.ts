@@ -43,7 +43,7 @@ const seedAutomation = z.strictObject({
   authorUserId: z.string().uuid(),
   scope: z.enum(["personal", "workspace"]),
   /** A seeded Canvas whose Chat made it: it is created attached there, as `sidekick_create` in that Chat does. */
-  homeCanvasId: z.string().uuid().optional(),
+  madeInCanvasId: z.string().uuid().optional(),
   draft: AutomationDraftSchema,
 });
 
@@ -269,7 +269,7 @@ export async function seedProduct(env: Env, body: z.infer<typeof SeedProductBody
       authorUserId: automation.authorUserId,
       scope: automation.scope,
       automationId: automation.id,
-      ...(automation.homeCanvasId ? { homeCanvasId: automation.homeCanvasId } : {}),
+      ...(automation.madeInCanvasId ? { madeInCanvasId: automation.madeInCanvasId } : {}),
     });
     const workspace = await hostedParentStub(env, workspaceId);
     await workspace.sidekickSubmitDefinition({

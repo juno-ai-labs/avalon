@@ -285,7 +285,7 @@ export class AgentCommunicationService {
     const address = agentAddressForId(agentId);
     if (address.parentKind !== "automation" || address.substreamId !== "0") return;
     if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_contact_user_unavailable");
-    // Steering is the whole test. A Sidekick a Canvas's Chat made is steered
+    // Managing is the whole test. A Sidekick a Canvas's Chat made is managed
     // by everyone in that Canvas (`sidekickManages`), who need not be people
     // it is shared with; every other manager can open it anyway.
     if (await personManagesSidekick(this.env, {
@@ -377,7 +377,7 @@ export class AgentCommunicationService {
     const canvasId = this.canvasChatId();
     const created = await createAutomation(this.env, { workspaceId: this.input.workspaceId,
       authorUserId: this.input.executionPrincipal.userId, scope, automationId: creationId,
-      ...(canvasId ? { homeCanvasId: canvasId } : {}) });
+      ...(canvasId ? { madeInCanvasId: canvasId } : {}) });
     return { sidekickId: created.automationId, agentId: agentIdForAddress({ parentKind: "automation",
       parentId: created.automationId, substreamId: asSubstreamId("0") }),
       ...(canvasId ? { attachedToCanvasId: canvasId } : {}) };
@@ -410,21 +410,13 @@ export class AgentCommunicationService {
    */
   async archiveSidekick(reference: string) {
     if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_contact_user_unavailable");
-    if (this.canvasChatId() === null) throw new AgentCommunicationError("sidekick_archive_outside_canvas");
     const named = reference.trim().toLowerCase();
-    const canvasId = this.canvasChatId()!;
+    const canvasId = this.canvasChatId();
+    if (canvasId === null) throw new AgentCommunicationError("sidekick_archive_not_made_here");
     const context = await (await this.workspace()).canvasContext({ workspaceId: this.input.workspaceId, canvasId });
     const made = (context?.sidekicks ?? []).filter((sidekick) => sidekick.madeHere)
       .map((sidekick) => ({ sidekickId: sidekick.id, name: sidekick.name }));
     const matches = made.filter((sidekick) => sidekick.sidekickId === named || sidekick.name.trim().toLowerCase() === named);
-    // A retry after the first attempt archived it: the Sidekick is no longer
-    // among the ones the Canvas lists, and the answer is the first one's. By
-    // id always; by name only when no active Sidekick has that name, which
-    // would be a different one to archive.
-    const already = matches.length === 0
-      ? (context?.archivedMadeSidekicks ?? []).filter((sidekick) => sidekick.id === named || sidekick.name.trim().toLowerCase() === named)
-      : [];
-    if (already.length === 1) return { sidekickId: already[0]!.id, name: already[0]!.name, archived: true };
     if (matches.length !== 1) {
       throw new AgentCommunicationError(matches.length ? "sidekick_archive_ambiguous" : "sidekick_archive_not_made_here",
         made.map((sidekick) => sidekick.name));
@@ -523,7 +515,6 @@ class AgentCommunicationError extends Error {
       sidekick_contact_forbidden: "Choose a Sidekick you can access. This Sidekick is unavailable to this execution.",
       sidekick_contact_user_unavailable: "Ask your coordinator to contact the Sidekick. This execution has no user identity for Sidekick access.",
       sidekick_edit_requires_manager: "Tell the person that only the people who manage this Sidekick can change it. Its wizard was not messaged.",
-      sidekick_archive_outside_canvas: "Only a Canvas's Chat can archive a Sidekick this way, and only one that Canvas made.",
       sidekick_archive_not_made_here: "No Sidekick this Canvas made has that id or exact name. Use sidekicks_list to see the ones it made; a Sidekick made elsewhere is archived from its own page.",
       sidekick_archive_ambiguous: "Several Sidekicks this Canvas made have that name. Pass the sidekickId from sidekicks_list instead.",
       sidekick_change_outside_run: "Use sidekicks_list and message the Sidekick's authoring agentId. Only a Sidekick run can request a change to its own Sidekick this way.",

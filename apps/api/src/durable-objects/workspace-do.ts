@@ -708,14 +708,13 @@ import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-bat
 import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
 import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
 import { CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_STATEMENTS, CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
-import { sidekickAttachedToCanvas } from "./canvas-sidekick-admission";
-import { canvasAppearanceReporter, canvasesAttachedTo, canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
+import { canvasReaderAllows, sidekickAttachedToCanvas, sidekickReaderAllows, writerSidekickAdmits } from "./canvas-sidekick-admission";
+import { canvasAppearanceReporter, canvasesAttachedTo, canvasesWrittenBy, canvasSidebarRows, HostedCanvas, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS, SIDEKICK_RUN_SEED_DROP_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
   HOSTED_SIDEKICK_ALARM_KINDS,
   hostedSidekickAlarmTarget,
-  sidekickReaderAllows,
   skillSource,
   skillSummary,
   type HostedSidekickRow,
@@ -5280,10 +5279,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       },
       noteCanvasDirectoryChanged: () => this.noteCanvasDirectoryMoved(),
       noteAttachedCanvasChanged: (canvasId) => this.noteAttachedCanvasMoved(canvasId),
-      archiveHomeSidekicks: (canvasId, now) => {
+      archiveMadeSidekicks: (canvasId, now) => {
         const host = this.hostedSidekickHost();
-        for (const sidekickId of this.homeSidekickIds(canvasId)) {
-          if (new HostedSidekick(host, sidekickId).archiveWithHome(now)) this.homeSidekicksArchived.push(sidekickId);
+        for (const sidekickId of this.madeSidekickIds(canvasId)) {
+          if (new HostedSidekick(host, sidekickId).archiveWithCanvas(now)) this.madeSidekicksArchived.push(sidekickId);
         }
       },
       noteActivityChanged: (userId) => this.noteActivityMoved(userId),
@@ -5301,10 +5300,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /** Sidekicks a Canvas archive archived in its transaction, owed `afterSidekickRegistrations` once it commits. */
-  private homeSidekicksArchived: string[] = [];
+  private madeSidekicksArchived: string[] = [];
 
   /** The Sidekicks a Canvas's Chat made that are not archived (the `made_here` attachments). */
-  private homeSidekickIds(canvasId: string): string[] {
+  private madeSidekickIds(canvasId: string): string[] {
     return this.state.storage.sql.exec<{ automation_id: string }>(
       `SELECT attachment.automation_id FROM sidekick_conversation_attachments attachment
          JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
@@ -5369,15 +5368,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async canvasArchive(input: Parameters<HostedCanvas["archive"]>[0]): Promise<void> {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
     await this.canvasWrite(async () => {
-      this.homeSidekicksArchived = [];
+      this.madeSidekicksArchived = [];
       canvas.archive(input);
       this.broadcastPresence();
       // A Sidekick attached to it names it on its dashboard card.
       this.noteAttachedCanvasMoved(input.canvasId);
       // What `HostedSidekick.remove` owes after its own archive commits: the
       // Sidekicks this archive took with it stop matching connector events.
-      const archived = this.homeSidekicksArchived;
-      this.homeSidekicksArchived = [];
+      const archived = this.madeSidekicksArchived;
+      this.madeSidekicksArchived = [];
       for (const sidekickId of archived) await this.afterSidekickRegistrations(sidekickId, null, []);
     });
   }
@@ -5410,12 +5409,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
       // The attachment says where the Sidekick may write; the person it acts
       // as must still be able to open the Canvas, as every post there asks.
-      // Read last, and the row again after the await, so the decision is of
-      // the Canvas as it stands.
       const relationship = await this.readRelationship(input.workspaceId, input.userId);
       const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
-      const current = sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, input.canvasId).toArray()[0];
-      if (relationship?.status !== "active" || !current || !canvasReaderAllows(current, { userId: input.userId, actorRole }, sql)) {
+      if (relationship?.status !== "active" || !canvasReaderAllows(row, { userId: input.userId, actorRole }, sql)) {
         throw new ApiError(403, "canvas_access_denied", "The person this run acts as cannot open that Canvas");
       }
       return { canvasId: input.canvasId };
@@ -5456,8 +5452,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
     const row = canvas?.row();
     if (!canvas || !row || row.archived_at !== null || row.workspace_id !== input.workspaceId) return null;
-    return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.agentArtifacts(), sidekicks: canvas.sidekicks(),
-      archivedMadeSidekicks: canvas.archivedMadeSidekicks() };
+    return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.agentArtifacts(), sidekicks: canvas.sidekicks() };
   }
 
   /**
@@ -5817,7 +5812,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.sidekickReadersMoved.add(userId);
       },
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
-      noteHomeCanvasChanged: () => this.noteCanvasDirectoryMoved(),
+      noteMadeInCanvasChanged: () => this.noteCanvasDirectoryMoved(),
       noteAttachedSidekickFace: (sidekickId, face) => {
         if (this.attachedSidekickFaces.get(sidekickId) === face) return;
         this.attachedSidekickFaces.set(sidekickId, face);
@@ -7769,10 +7764,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ArtifactDataWriteFactsRequestSchema, input, "artifact_data_write_facts");
     this.assertWorkspace(request.workspaceId);
     const sql = this.state.storage.sql;
-    if (!artifactDataWriteFacts(sql, request)) return null;
     const relationship = await this.readRelationship(request.workspaceId, request.userId);
     const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
-    // Read after the await, so the facts and the admission are of one moment.
     const facts = artifactDataWriteFacts(sql, request);
     if (!facts) return null;
     const canvas = sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, facts.canvasId).toArray()[0];
