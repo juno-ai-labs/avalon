@@ -154,6 +154,8 @@ describe('token references', () => {
     // the colour and this states how it is applied, which is not a theme's to
     // choose.
     '--hover-layer',
+    // The tile highlight blends existing theme colors for both interaction surfaces.
+    '--action-tile-highlight-background',
     // Markdown's paint, named as a group on `.markdown-body` and re-pointed by
     // a surface that fills itself — the person's bubble, whose fill is
     // near-black or a profile colour and whose ink is whichever absolute one
