@@ -352,6 +352,13 @@ describe("connector observability", () => {
     expect(connectorObservationErrorCode(error)).toBe("request_aborted");
   });
 
+  it("classifies an AbortSignal.timeout expiry as request_timeout", async () => {
+    const signal = AbortSignal.timeout(1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(connectorObservationErrorCode(signal.reason)).toBe("request_timeout");
+  });
+
   it("logs healthy, degraded, and unhealthy health-check terminal conditions", async () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const observer: ConnectorObserver = (...entry) => observations.push(entry);
