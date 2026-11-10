@@ -251,8 +251,9 @@ export interface ActivityViewer {
 /**
  * The rows this viewer may open the parent of, with whether each is seen: the
  * one filter the page and the counts read, so they cannot disagree. Binds
- * `?1` the user, `?2` the Organization, `?3` member (1) or guest (0) and `?5`
- * the admitting writer Sidekicks (JSON).
+ * `?1` the user, `?2` the Organization, `?3` member (1) or guest (0), `?5`
+ * the admitting writer Sidekicks (JSON) and `?6` whether the Sidekick source
+ * kinds list (1) or are left out for a build that cannot parse them (0).
  */
 function listedSql(sidekickListedSql: string): string {
   return `WITH mine AS (
@@ -275,7 +276,8 @@ function listedSql(sidekickListedSql: string): string {
                 -- cannot open it, on purpose, and its answer goes to whoever
                 -- asked about that Sidekick by name: each lists while the
                 -- Sidekick exists, whoever its readers are now.
-                WHEN mine.kind IN ${SOURCE_KINDS_SQL} THEN directory.automation_id IS NOT NULL
+                -- Left out whole for a build that cannot parse these kinds (?6).
+                WHEN mine.kind IN ${SOURCE_KINDS_SQL} THEN ?6 = 1 AND directory.automation_id IS NOT NULL
                   AND directory.workspace_id = ?2 AND directory.lifecycle <> 'deleted'
                 WHEN canvas.canvas_id IS NOT NULL THEN canvas.archived_at IS NULL AND (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
                   OR (?3 = 1 AND canvas.visibility = 'workspace')
@@ -309,6 +311,19 @@ function admittingWriters(sql: SqlStorage, writerAdmits: (sidekickId: string) =>
 }
 
 /**
+ * What the build a page is read for can parse. `ActivityKindSchema` is a
+ * closed enum inside the workspace socket's strict sync event, so one row of
+ * a kind a build does not know fails its parse of the whole subscribe answer.
+ * A kind newer than the oldest served build is therefore left out, row and
+ * count alike, for a socket whose ticket declared an older contract
+ * (`SOURCE_ACTIVITY_CLIENT_CONTRACT`).
+ */
+export interface ActivityReads {
+  /** The three kinds a Sidekick source request writes. */
+  sourceKinds: boolean;
+}
+
+/**
  * One person's newest `limit` items that they may open the parent of, and how
  * many of those are unseen, in one statement: the count is a window over every
  * listed row before the page's `LIMIT`. Whether the viewer may open a parent
@@ -328,6 +343,7 @@ export function activityPage(
   limit: number,
   sidekickListedSql: string,
   writerAdmits: (sidekickId: string) => boolean,
+  reads: ActivityReads,
 ): { unseenCount: number; items: ActivityItem[] } {
   const writers = admittingWriters(sql, writerAdmits);
   const rows = sql.exec<ActivityRow>(
@@ -347,7 +363,7 @@ export function activityPage(
        LEFT JOIN sidekick_source_requests source ON listed.kind IN ${SOURCE_KINDS_SQL} AND source.request_id = listed.subject_id
       ORDER BY listed.created_at DESC, listed.item_id DESC
       LIMIT ?4`,
-    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit, JSON.stringify(writers),
+    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit, JSON.stringify(writers), reads.sourceKinds ? 1 : 0,
   ).toArray();
   return {
     unseenCount: rows[0]?.unseen_count ?? 0,
@@ -401,7 +417,8 @@ export function activityCounts(
      SELECT SUM(1 - seen) AS unseen, SUM(CASE WHEN kind = 'needs_input' THEN 1 - seen ELSE 0 END) AS unseen_needs_input,
             SUM(CASE WHEN kind = 'mention' THEN 1 - seen ELSE 0 END) AS unseen_mentions
        FROM listed`,
-    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, null, JSON.stringify(admittingWriters(sql, writerAdmits)),
+    // Every kind: this count is the person's, whatever build asks for it.
+    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, null, JSON.stringify(admittingWriters(sql, writerAdmits)), 1,
   ).toArray()[0];
   return { unseen: row?.unseen ?? 0, unseenNeedsInput: row?.unseen_needs_input ?? 0, unseenMentions: row?.unseen_mentions ?? 0 };
 }

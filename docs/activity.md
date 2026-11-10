@@ -251,8 +251,10 @@ does not move: "You approved" or "You denied" to the decider themselves
 or "Maya denied" to the others, or the name alone from a server older than the
 id. The message stays the preview, and the row is seen. A request for a
 Sidekick source (`source_request`, [`sidekick-sources.md`](sidekick-sources.md))
-is the same group for the person asked: "<requester> asked to start <Sidekick>
-from your <connector>" behind a bolt, and under it Approve and Decline, the
+is the same group for the person asked: "<requester> asked for your
+<connector> to start <Sidekick>" behind a bolt, and under it the condition in
+full when there is one (the one-line preview cuts it, and it is what they are
+agreeing to), then Approve and Decline, the
 pair the conversation's card and the Sidekick panel draw
 ([`shared-ui.md`](shared-ui.md#sidekick-sources)), sending
 `POST /sidekicks/:id/source-requests/:requestId/decision` for the row's
@@ -261,8 +263,9 @@ is drawn filled and held until the Activity push settles the row, which then
 reads "You approved", "You declined" or "Replaced by a newer request" in the
 buttons' place. Only the person asked has the row, so the answer is always
 theirs. The requester's `source_approved` and `source_declined` rows are plain
-rows: "<person> approved starting <Sidekick> from their <connector>", or
-"declined", the person named by the directory or else by
+rows: "<person> approved their <connector> for <Sidekick>", or "declined
+their <connector> for <Sidekick>", the Sidekick last as every row's place
+is, the person named by the directory or else by
 `sourceRequest.personName`. The connector is worded as the card words it
 ("Gmail"); the preview is the server's. With nothing listed,
 the section names every kind it carries. A seen row recedes through one text

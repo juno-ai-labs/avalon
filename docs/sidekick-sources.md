@@ -36,6 +36,9 @@ notice are.
 | `apps/api/src/durable-objects/sidekick-source-notices.ts` | The Activity rows and notices a request writes. |
 | `apps/api/src/services/semantic-trigger-admission.ts` | The delivery: asks, judges the source's condition and the trigger's, admits with both verdicts. |
 | `apps/api/src/services/sidekick-source-service.ts`, `apps/api/src/routes/automations.ts` | The routes a signed-in person and an agent use. |
+| `apps/api/src/services/sidekick-source-tools.ts` | The agent's tools: list, ask, and try a filter. |
+| `packages/agent-harness/src/filtered-trigger-skill.ts` | `setting-up-a-filtered-trigger`, the wizard's procedure. |
+| `apps/api/src/services/sidekick-event-content.ts`, `packages/connectors/src/types.ts` (`readActivityContent`) | The host's read of what an admitted event is about, and the run's opening with it. |
 
 ## How it works
 
@@ -129,6 +132,67 @@ person's filter kept out. Both are judged by the one JEV question
 [`semantic-activity-triggers.md`](semantic-activity-triggers.md) owns, on the
 event's title, summary and snippet.
 
+### What a run is handed
+
+A connector event carries a title, a summary and a snippet. For new mail the
+snippet is a line or two, and a run that has to say what a message said would
+otherwise read it with the mailbox's tools, which only a delegate lends. So
+the host reads it.
+
+When a run is provisioned, `runProvisioning` names the event that started it
+and its connection (`eventContent`), after checking again that a person's
+connection still has its owner's eligible source for that event type. The
+provisioning consumer then calls the connector's `readActivityContent` with
+that connection's credential and adds the result to the run's opening
+(`openingWithEventContent`). Google implements it for `email.received`: that
+one message's headers, text and attachment names. Never its thread, and never
+a search. Content that cannot be read leaves the run its event and a line
+saying why; it never blocks the run. A source taken back between admission and
+provisioning hands the run the event's summary and nothing more.
+
+The run holds no tool on that account. Its instructions are written for what
+it receives, which the skill below says.
+
+### Agent tools
+
+The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
+`sidekick_`) offers three tools wherever it offers its delegation tools: a
+Sidekick's wizard, any conversation a person is working in, and a run's
+background workers. Loading the plugin starts nothing.
+
+| Wire name | Mode | Input | Output |
+| --- | --- | --- | --- |
+| `sidekick_sources_list` | `read`, `safe` | `{ sidekickId }` | `{ sidekickId, sources: [{ userId, name, account, connectorType, eventTypes, condition, available }], requests: [{ requestId, userId, name, connectorType, eventTypes, condition, state, requestedByName }] }` |
+| `sidekick_request_source` | `write`, `record_before_execute`, serial, re-entered on its receipt | `{ sidekickId, userIds, connectorType, eventTypes, condition? }` | The route's `SidekickSourceRequestResult`: `{ sidekickId, requests: [...] }`, each request with its `state`. The client draws this output as the card. |
+| `sidekick_test_source_condition` | `read`, `safe` | `{ connectorType, eventType, condition }` | `{ judged, condition, letIn, total, events: [{ title, summary, snippet, occurredAt, letIn, verdict, confidence }] }` |
+
+- **Where ids come from.** `sidekickId` from the conversation's Sidekick or
+  the Sidekick tools; `userIds` from people search; `connectorType` and
+  `eventTypes` from inspecting the connector's declared events, as a trigger
+  names them.
+- **Asking never waits.** `sidekick_request_source` returns each request as
+  it stands: `approved` for the acting person's own account, `pending` for
+  everyone else. The host derives the card's place from the loop: a Canvas's
+  Chat or a Sidekick's shared conversation, and none from a run. A retried
+  call carries its receipt as `operationId`, and the object answers with the
+  requests that receipt already made, whatever has been answered since.
+- **No tool answers.** There is no approve or decline tool, by design.
+- **Trying a filter** judges the acting person's own ten most recent events of
+  that type with the production judge. It reads nobody else's events. With no
+  classifier configured it answers `judged: false`.
+- **Refusals** carry a code and a sentence: `sidekick_source_request_requires_manager`,
+  `sidekick_source_person_unavailable`, `sidekick_source_connector_unknown`,
+  `sidekick_source_event_unknown` (which names the event type), and
+  `sidekick_source_connection_missing` when the acting person asks for their
+  own account and has none connected.
+
+The skill `setting-up-a-filtered-trigger` is the procedure: settle who and
+what, write the filter as a claim about one event, try it, save the trigger
+and ask, and write the run's instructions for the one message it receives. It
+gives the model the facts a good filter needs (what one event carries, how it
+is judged, that the person reads and approves the same words) and leaves the
+wording to it.
+
 ## Invariants
 
 - **Nothing about a trigger reads `sidekick_delegations`.** Registration,
@@ -144,6 +208,8 @@ event's title, summary and snippet.
   `putOwnSources` keeps an existing condition; nothing else writes one.
 - **Withdrawing needs no access.** A person ends their own source whatever
   they can still read.
+- **The host reads a person's content only while their source lets the event
+  in.** `runEventContent` checks at provisioning, not only at admission.
 
 ## Boundary
 
@@ -175,6 +241,23 @@ source's condition.
   measurement; none has been made.
 - **A source names a Sidekick, not a Canvas.** A manager who attaches the
   Sidekick to another Canvas sends admitted events' results there too.
+
+## Testing
+
+| Suite | Covers |
+| --- | --- |
+| `apps/api/test-workers/sidekick-sources.test.ts` | Real workerd. A person's mail starts a Sidekick through their source whether or not they are a delegate, and stops when the source is taken back while they stay a delegate; an event matched before a withdrawal is refused at admission; only the person asked answers and only a manager asks; a filtered source refuses without a verdict and with a refusing one, and an unfiltered one needs none; saving a definition keeps a person's own filter; a repeated ask answers with what it already asked; a run with no delegate starts as the Sidekick itself and only a manager continues it; content is withheld once the source is gone. |
+| `apps/api/test/workspace-sidekick-sources-migration.test.ts` | Migration 145's backfill over the real migration chain: a delegate gets a source for each connection of theirs a rule is configured or registered on, every delegate gets one on a configured Organization connection, and a withdrawn grant, a grant with no membership and a person with no grant get none. |
+| `packages/connectors/src/index.test.ts` | Google's `readActivityContent`: one message for new mail, by one request, and nothing for a label change, a subject with no message, a missing message, or a connection that may not read mail. |
+| `apps/api/test/sidekick-event-content.test.ts` | The opening with content, cut content, no content, and unreadable content. |
+
+The workerd file was proved against these breaks, one behavior each:
+registration without the source check, `eventSource` admitting everything, the
+asked-person check removed, the source verdict check removed, `putOwnSources`
+clearing the condition, the operation lookup removed, a null coordinator
+admitted as Needs input, the manager check removed, and `runEventContent`
+skipping the source. The migration file was proved by letting a withdrawn
+grant through.
 
 ## Changelog
 

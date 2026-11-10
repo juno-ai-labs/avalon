@@ -152,7 +152,7 @@ import {
   type OnboardingJourney,
   type UpdateOnboardingJourney,
 } from "@rally/contracts";
-import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import { RALLY_HEADERS, SOURCE_ACTIVITY_CLIENT_CONTRACT, readRallyHeader } from "@rally/contracts/http-headers";
 import type { OrganizationUsage, WorkspaceUsageEvent } from "@rally/contracts/usage";
 
 import { sendInteractive } from "../services/interactive-queue";
@@ -856,6 +856,14 @@ const SocketIdentitySchema = z.object({
    * and never records them opening a Channel.
    */
   impersonatorUserId: UserIdSchema.optional(),
+  /**
+   * The client contract the socket's ticket request declared
+   * (`CLIENT_CONTRACT_VERSION`), from the signed ticket. Absent for a client
+   * that declares none and for a socket attached before this field existed;
+   * both are read as older than every gated payload, so they are sent only
+   * what every served build parses (`SOURCE_ACTIVITY_CLIENT_CONTRACT`).
+   */
+  clientContract: z.coerce.number().int().nonnegative().optional(),
 });
 
 type SocketIdentity = z.infer<typeof SocketIdentitySchema>;
@@ -4525,6 +4533,16 @@ function viewerOf(attachment: WorkspaceSocketAttachment): Viewer {
   return { userId: attachment.userId, accessClass: attachment.accessClass ?? "member" };
 }
 
+/**
+ * Whether this socket's build parses the Activity kinds a Sidekick source
+ * request writes. One row of a kind a build does not know fails its parse of
+ * the whole subscribe answer, so an older build is sent its Activity without
+ * them (`SOURCE_ACTIVITY_CLIENT_CONTRACT`).
+ */
+function readsSourceActivity(attachment: WorkspaceSocketAttachment): boolean {
+  return (attachment.clientContract ?? 0) >= SOURCE_ACTIVITY_CLIENT_CONTRACT;
+}
+
 function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
   try {
     const parsed = SocketIdentitySchema.extend({
@@ -5709,8 +5727,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed || !recipients.has(attachment.userId)) continue;
-      // One read per person and kind of access, however many sockets they hold.
-      const key = `${attachment.userId}:${viewerOf(attachment).accessClass}`;
+      // One read per person, kind of access and what their build reads, however many sockets they hold.
+      const key = `${attachment.userId}:${viewerOf(attachment).accessClass}:${readsSourceActivity(attachment)}`;
       if (!lists.has(key)) {
         lists.set(key, this.sidebarListFrame("workspace_activity_list", attachment.userId, () => WorkspaceActivityListEventSchema.parse({
           type: "workspace_activity_list", occurredAt, waterline, ...this.activityList(attachment),
@@ -5733,7 +5751,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return activityPage(this.state.storage.sql, { userId: attachment.userId, workspaceId: attachment.workspaceId, member },
       SIDEBAR_LIST_LIMIT, SIDEBAR_SIDEKICK_LISTED_SQL,
       (sidekickId) => writerSidekickAdmits(this.state.storage.sql, sidekickId,
-        { userId: attachment.userId, actorRole: member ? "member" : null }));
+        { userId: attachment.userId, actorRole: member ? "member" : null }),
+      { sourceKinds: readsSourceActivity(attachment) });
   }
 
   /** Who is in each Canvas now: the people whose foreground socket has it open. */
@@ -11386,6 +11405,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ticketId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_ID) ?? null,
       ticketExpiresAt: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT) ?? null,
       impersonatorUserId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_IMPERSONATOR_ID),
+      clientContract: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_CLIENT_CONTRACT),
     });
     if (!identity.success) return json({ error: "invalid_socket_identity" }, 400);
 

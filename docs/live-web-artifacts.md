@@ -364,11 +364,15 @@ not offered the tool:
    Sidekick: a `sidekick_conversation_attachments` row for the Sidekick with
    `parent_kind = 'canvas'`, the Canvas's id and `substream_id = '0'`, and a
    `canvas_directory` row that is not archived. That table is the only
-   Sidekick-to-Canvas edge the gate reads. The run-as person must also be
-   able to read the site, as for a read; being able to read it is not enough
-   to write it, and the refusal is `artifact_canvas_not_attached`.
+   Sidekick-to-Canvas edge the gate reads. The run must also be able to read
+   the site, as for a read; being able to read it is not enough to write it,
+   and the refusal is `artifact_canvas_not_attached`. The run writes whoever
+   it acts as, a person or the Sidekick itself: the attachment is the
+   Sidekick's own reach. Only a run somebody asked for under their own access
+   also needs that person in the Canvas
+   ([`automation-lifecycle.md`](automation-lifecycle.md#who-a-run-acts-as)).
 3. **Nobody else**: not a Sidekick's wizard conversation, a background agent,
-   a loop under Organization authority, or any other parent kind.
+   a Chat under Organization authority, or any other parent kind.
 
 The read resolution runs first, then one WorkspaceDO call,
 `artifactDataWriteFacts`, in place of the read path's registry lookup. A site

@@ -49,10 +49,11 @@ function rowParts(item: ActivityItem, who: string, where: string): RowPart[] {
     case 'access_denied': return [actor, ' declined your request to open a Canvas'];
     // A source is one person's events from one of their accounts, so the row
     // says whose account: the reader's own when they are asked, the asked
-    // person's when the requester is told how they answered.
-    case 'source_request': return [actor, ' asked to start ', place, ` from your ${sourceAccount(item)}`];
-    case 'source_approved': return [actor, ' approved starting ', place, ` from their ${sourceAccount(item)}`];
-    case 'source_declined': return [actor, ' declined starting ', place, ` from their ${sourceAccount(item)}`];
+    // person's when the requester is told how they answered. The Sidekick
+    // comes last, as every row's place does, so the two-line cut spares it.
+    case 'source_request': return [actor, ` asked for your ${sourceAccount(item)} to start `, place];
+    case 'source_approved': return [actor, ` approved their ${sourceAccount(item)} for `, place];
+    case 'source_declined': return [actor, ` declined their ${sourceAccount(item)} for `, place];
   }
 }
 
@@ -243,10 +244,14 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
         <div className="activity-row-actions">
           {sourceRequest
             ? sourceRequest.state === 'pending'
-              ? <SourceRequestActions
-                request={{ sidekickId: item.parentId, requestId: sourceRequest.requestId, connectorType: sourceRequest.connectorType, eventTypes: sourceRequest.eventTypes }}
-                sidekickName={item.parentTitle ?? undefined}
-              />
+              ? <>
+                {/* The preview is one line and cuts the condition; nobody approves a filter they cannot read. */}
+                {sourceRequest.condition && <p className="activity-row-condition">Only when “{sourceRequest.condition}”</p>}
+                <SourceRequestActions
+                  request={{ sidekickId: item.parentId, requestId: sourceRequest.requestId, connectorType: sourceRequest.connectorType, eventTypes: sourceRequest.eventTypes }}
+                  sidekickName={item.parentTitle ?? undefined}
+                />
+              </>
               : <p className="activity-row-settled">{sourceSettledText(sourceRequest.state)}</p>
             : request!.state === 'pending'
               ? <AccessDecisionActions canvasId={item.parentId} canvasTitle={item.parentTitle ?? undefined} label={membersById.get(item.actor.id!)?.name || undefined} userId={item.actor.id!} />

@@ -7,6 +7,7 @@ import {
   POLLING_FOR_EVENTS_SKILL,
   READING_GOOGLE_MEETING_NOTES_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
+  SETTING_UP_A_FILTERED_TRIGGER_SKILL,
   WRITING_AN_EMAIL_SKILL,
   runHarness,
   type HarnessEvent,
@@ -693,6 +694,28 @@ describe("built-in skills", () => {
     // string would stay green through the next rename while the skill silently
     // left every catalog.
     expect(POLLING_FOR_EVENTS_SKILL.ownerPlugin).toBe(AUTOMATIONS_PLUGIN_ID);
+  });
+
+  it("scopes the filtered-trigger skill to the plugin whose tools it names, and keeps its load-bearing rules", () => {
+    expect(SETTING_UP_A_FILTERED_TRIGGER_SKILL.ownerPlugin).toBe(AUTOMATIONS_PLUGIN_ID);
+    const body = SETTING_UP_A_FILTERED_TRIGGER_SKILL.body;
+    // A source is not delegation: without this the model enrolls the person as
+    // a delegate, which lends their whole account.
+    expect(body).toContain("A source lets events in and nothing else.");
+    expect(body).toContain("**Enrolling the person as a delegate to get their mail.**");
+    // What the classifier sees is the whole basis for writing a filter it can settle.
+    expect(body).toContain("sees only that event's title, summary and a short snippet");
+    // The person reads and approves the same words.
+    expect(body).toContain("The filter is also what the person reads when they are asked.");
+    // A close call goes narrow: it is a permission.
+    expect(body).toContain("prefer\nthe narrower wording");
+    // Asking is not approving, and the run gets one message and no mailbox.
+    expect(body).toContain("An ask is not an approval;");
+    expect(body).toContain("A run\ncannot search or read a mailbox whose owner only shared a source");
+    // The owner plugin's own tools, by their stable wire names.
+    for (const tool of ["sidekick_test_source_condition", "sidekick_request_source", "sidekick_sources_list"]) {
+      expect(body).toContain(`\`${tool}\``);
+    }
   });
 
   it("states the polling floor the team set, and the rule that keeps a run honest", () => {
