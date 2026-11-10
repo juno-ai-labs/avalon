@@ -83,7 +83,7 @@ const MCP_ROUTES: ReadonlyArray<readonly [method: string, path: RegExp]> = [
   ["POST", /^\/canvases$/u],
   ["GET", new RegExp(`^/canvases/${ID}$`, "u")],
   ["PATCH", new RegExp(`^/canvases/${ID}$`, "u")],
-  ["POST", new RegExp(`^/canvases/${ID}/(?:audience|pin|artifacts)$`, "u")],
+  ["POST", new RegExp(`^/canvases/${ID}/(?:audience|pin|artifacts|sidekicks)$`, "u")],
   ["POST", new RegExp(`^/canvases/${ID}/access-requests/${ID}/decision$`, "u")],
   ["GET", new RegExp(`^/canvases/${ID}/artifacts/${ID}/versions/\\d+/(?:content|model-content)$`, "u")],
   ["GET", new RegExp(`^/conversations/${ID}/text$`, "u")],
