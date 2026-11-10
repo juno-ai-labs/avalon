@@ -294,6 +294,14 @@ obtains its own authorized ticket; starting earlier bypasses no access check.
 The resume registry outlives the feed, so returning to a conversation resumes
 from its last room sequence.
 
+Live `resource_attached` and previously unseen `resource_updated` entries are
+prepended to the conversation's resource list, matching snapshots' newest
+attachment first ordering. Updating an existing entry preserves its position.
+This lets the artifact panel select the newest addition even when several
+frames reach the renderer in one batch. The snapshot-generation marker lets
+the panel treat a replacement snapshot as a baseline instead of live additions,
+including when a returning conversation initially paints retained query data.
+
 ### Opening a feed
 
 The feed hook requests its purpose-specific 60-second ticket over authenticated
