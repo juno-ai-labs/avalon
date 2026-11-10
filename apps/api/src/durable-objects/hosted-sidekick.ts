@@ -532,8 +532,16 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   async create(input: AutomationCreateRequest): Promise<{ created: boolean }> {
     const request = parseRpcInput(AutomationCreateRequestSchema, input, "create");
     if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
-    if (this.row()) {
+    const existing = this.row();
+    if (existing) {
       this.assertSidekick(request.workspaceId, request.automationId);
+      // A replay is its author's, of the same create: a caller-minted id that
+      // names somebody else's Sidekick, or one this Canvas did not make, is
+      // not answered as though this request had made it.
+      if (request.homeCanvasId !== undefined && (existing.author_user_id !== request.authorUserId
+        || !this.madeIn(request.homeCanvasId))) {
+        throw new ApiError(409, "sidekick_id_unavailable", "This Sidekick id is already in use");
+      }
       return { created: false };
     }
     const creatorRelationship = await this.host.readRelationship(request.workspaceId, request.authorUserId);
@@ -597,6 +605,15 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       this.host.noteDirectoryChanged(this.sidekickId, false, now);
       return { created: true };
     });
+  }
+
+  /** Whether this Canvas's Chat, or a request for this Canvas, made the Sidekick. */
+  private madeIn(canvasId: string): boolean {
+    return this.sql.exec(
+      `SELECT 1 FROM sidekick_conversation_attachments
+        WHERE automation_id = ? AND parent_kind = 'canvas' AND parent_id = ? AND substream_id = '0' AND made_here = 1`,
+      this.sidekickId, canvasId,
+    ).toArray().length > 0;
   }
 
   /** The Canvas a Sidekick is being made in: this Organization's, not archived, and open to the person asking. */
