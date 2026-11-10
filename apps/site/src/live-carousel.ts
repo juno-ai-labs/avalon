@@ -1,14 +1,14 @@
 /**
  * Plays the hero carousel that `renderLiveCarousel` (live-examples.ts) writes.
  *
- * Each slide steps through its events: step n turns on every `[data-at]` at or
- * below n, ticks every `[data-done]` row at or below n, marks what changed at
- * this step with `is-new`, and moves the version and byline on. When a slide
+ * Each slide steps through its events with `applyStep` (steps.ts), and this
+ * module moves the version and byline on and flies a dot from the event to
+ * the row it changed. When a slide
  * finishes, the next audience's slide takes over. It only runs on screen, a
  * chosen tab plays its slide from the start, and the pause button stops it.
  * With reduced motion nothing rotates and every slide shows its end.
  */
-const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+import { applyStep, reducedMotion as reduced, whenVisible } from './steps';
 
 /** Seconds each step holds: the opening state, three events, the person's tick. */
 const STEP_HOLD = [1.4, 2.4, 2.4, 2.4, 4.6] as const;
@@ -45,23 +45,10 @@ function animateChange(slide: HTMLElement, step: number): void {
   ], { duration: 900, easing: 'cubic-bezier(.5,0,.2,1)' }).finished.then(() => dot.remove(), () => dot.remove());
 }
 
-function showStep(slide: HTMLElement, step: number): void {
-  slide.dataset.step = String(step);
-  for (const line of slide.querySelectorAll<HTMLElement>('[data-status]')) {
-    line.classList.toggle('is-current', Number(line.dataset.status) === step);
-  }
+function showStep(slide: HTMLElement, step: number, played = true): void {
+  applyStep(slide, step, STEPS, played);
   const version = Number(slide.dataset.version);
   const events = Array.from(slide.querySelectorAll<HTMLElement>('.signal'));
-  for (const part of slide.querySelectorAll<HTMLElement>('[data-at]')) {
-    const at = Number(part.dataset.at);
-    part.classList.toggle('is-on', at <= step);
-    part.classList.toggle('is-new', at === step && at > 0);
-  }
-  for (const row of slide.querySelectorAll<HTMLElement>('[data-done]')) {
-    const done = Number(row.dataset.done);
-    row.classList.toggle('is-done', done <= step);
-    if (done === step && step > 0) row.classList.add('is-new');
-  }
   const eventsSeen = Math.min(step, events.length);
   const versionLabel = slide.querySelector('[data-live-version]');
   if (versionLabel) versionLabel.textContent = `v${version + eventsSeen}`;
@@ -101,7 +88,7 @@ function run(carousel: HTMLElement): void {
     const tab = tabs[current];
     if (visible && strip && tab) strip.scrollTo({ left: tab.offsetLeft - strip.offsetWidth / 2 + tab.offsetWidth / 2, behavior: reduced ? 'auto' : 'smooth' });
     step = reduced ? STEPS : 0;
-    showStep(slides[current]!, step);
+    showStep(slides[current]!, step, false);
     schedule();
   };
 
@@ -159,14 +146,12 @@ function run(carousel: HTMLElement): void {
       schedule();
     });
   }
-  new IntersectionObserver(([entry]) => { visible = entry?.isIntersecting ?? false; schedule(); }).observe(carousel);
+  whenVisible(carousel, (next) => { visible = next; schedule(); });
 
   // Every slide but the shown one starts at its end, so a reader who picks a
   // tab without motion, or before it plays, still sees the whole artifact.
-  slides.forEach((slide) => showStep(slide, STEPS));
+  slides.forEach((slide) => showStep(slide, STEPS, false));
   select(0);
 }
 
 document.querySelectorAll<HTMLElement>('[data-carousel]').forEach(run);
-
-export {};

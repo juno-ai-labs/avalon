@@ -6,7 +6,7 @@
 | --- | --- |
 | `apps/site/src/access-copy.ts`, `landing.css`, `index.html` | Replaceable static landing copy, layout, and direct canonical installer link. |
 | `apps/site/src/pilot-offer.ts` | The landing's pilot offer card: when it slides in, each visitor's six-day deadline, and remembering that a visitor closed it. |
-| `apps/site/src/section-nav.ts`, `src/fonts/`, `src/assets/` | The landing's current-section marker, its self-hosted Barlow faces, and its hero and team images. |
+| `apps/site/src/section-nav.ts`, `src/fonts/`, `src/assets/` | The landing's current-section marker, its self-hosted faces (Instrument Serif, Geist and Geist Mono; see [`site-design-system.md`](site-design-system.md)), and its hero and team images. |
 | `apps/api/src/services/access-request-content.ts` | Replaceable acknowledgement subject and body, delivered as plain text. |
 | `apps/api/src/services/access-request-service.ts` | Persist-before-send acknowledgement, deduplication and explicit retry. |
 | `apps/api/src/routes/private-access.ts` | Global public intake and explicit POST download redemption. |
