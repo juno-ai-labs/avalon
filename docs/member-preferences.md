@@ -39,7 +39,7 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
    kind not named reads from the push switch in `push_json` (migration 106)
    someone may have turned off before channels existed, then from
    `DEFAULT_NOTIFICATION_CHANNELS` (`storedMemberPreferences`), which is push
-   alone for every kind. A channel this build does not know is dropped from a
+   alone for every kind but `sourceRequests`. A channel this build does not know is dropped from a
    stored list as it is read; `slack_agent_dm`, no longer a channel, reads that
    way, so a stored Slack choice is read as absent and never consulted (and a
    save naming it is dropped the same way). `push` in the
@@ -118,12 +118,34 @@ predates the field sends no `viewerPreferences`, which also reads as defaults.
 ## Testing
 
 `apps/api/test/member-preferences-kinds.test.ts` covers the record's kinds
-(the offered six defaulted, a stored Thread-era kind dropped) and which choice
+(every offered kind defaulted, a stored Thread-era kind dropped) and which choice
 each pushed kind reads.
 `apps/api/test-workers/member-push-preferences-migration.test.ts` covers
 migrations 106 and 107 over populated rows.
 
 ## Changelog
+
+### 2026-11-10 — Source requests are a kind of their own, and the first to default to email
+
+**What changed:** `NotificationKindSchema` and `OFFERED_NOTIFICATION_KINDS` gain
+`sourceRequests`, which the Activity kinds `source_request`, `source_approved`
+and `source_declined` read. Its default is push and email; every other kind
+still defaults to push alone.
+
+**Why:** The owner asked, 2026-11-10, for a request to let your events start a
+Sidekick to reach the person "by email with a simple approve/decline". The
+person asked may never have opened the Canvas it was asked in, and the email
+is where they answer.
+
+**Considered and rejected:** Reading the `added` kind, which is the nearest
+existing one: its default is push alone, so the email would reach nobody who
+had not already chosen it, and turning email on for `added` would start mailing
+everyone about every Canvas they are added to.
+
+**Consequences:** A kind's default may now differ from push alone, so nothing
+may assume one default for all kinds; `DEFAULT_NOTIFICATION_CHANNELS` is the
+only place to read it. A person who turns email off for this kind still gets
+the request in Activity and in the Canvas.
 
 ### 2026-11-09 — Notifications go by push and email only, and Settings offers only kinds a producer records
 
