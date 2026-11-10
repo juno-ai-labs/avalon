@@ -1163,7 +1163,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     // Each request's id and its notice are made before the transaction: a notice is hashed, which yields.
     const requestIds = userIds.map((_, index) => uuidV7(now + index));
     const askNotices = await prepareSourceRequestNotices(this.env, { sidekickId: this.sidekickId, sidekickName: initial.title || "Sidekick",
-      connectorType: request.ask.connectorType, eventTypes, condition, requesterName: request.actorName, requestIds });
+      connectorType: request.ask.connectorType, eventTypes, condition, requesterName: request.actorName, requestIds,
+      ...(request.ask.place?.parentKind === "canvas" ? { placeCanvasId: request.ask.place.parentId } : {}) });
     const asked = this.storage.transactionSync(() => {
       const row = this.assertSidekick(request.workspaceId, request.automationId);
       if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");

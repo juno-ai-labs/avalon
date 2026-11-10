@@ -522,9 +522,12 @@ export class SiteData extends DurableObject {
   it("lets a Sidekick run change a site's rows only while the site's Canvas is attached to that Sidekick and open", async () => {
     await seedSidekick("0");
     const site = await statefulSite("inbox", ROOM_ID);
+    // A run resolves a site as its own conversation, so the run has one, as every provisioned run does.
+    const runId = asSubstreamId(crypto.randomUUID());
+    await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "automation", AUTOMATION_ID, runId);
     const write = writeTool({
       workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal: { type: "user", userId: AUTHOR_ID }, reader: null,
-      write: { kind: "sidekick_run", sidekickId: AUTOMATION_ID, runId: crypto.randomUUID() },
+      write: { kind: "sidekick_run", sidekickId: AUTOMATION_ID, runId },
     });
     // The run-as person can read the site, and that is not enough to write it.
     await expect(write(site.resourceId, "m1")).rejects.toMatchObject({ code: "artifact_canvas_not_attached" });

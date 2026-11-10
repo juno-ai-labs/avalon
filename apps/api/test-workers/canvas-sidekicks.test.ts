@@ -205,13 +205,33 @@ describe("where a Sidekick's run may publish", () => {
     expect(await publishInto(MADE_ELSEWHERE, CANVAS_ID)).toBeNull();
   });
 
-  it("stops when the person the run acts as can no longer open the Canvas, though the Sidekick is still attached", async () => {
+  it("goes on as the Sidekick itself when a person can no longer open the Canvas, and stops only a run somebody asked for under their own access", async () => {
     expect(await publishInto(MADE_HERE, CANVAS_ID, PARTICIPANT)).toBeNull();
+    // A participant who lends the Sidekick nothing asks it for a run: that run acts under their own access.
+    const addressed = { workspaceId: WORKSPACE_ID, automationId: MADE_HERE };
+    await workspace().sidekickSaveDefinition({ ...addressed, actor: { ...member(CREATOR), participantOfOwningWorkstream: false },
+      evaluatorRules: null, submittedByRunId: null, draft: {
+        definitionVersion: 2, name: "Inbox filler", description: "Files new email", overview: "Keeps the inbox Canvas current",
+        instructions: "Add a row for each new email.", triggers: [{ type: "manual" }], requiredCapabilities: [], expectedOutputs: [],
+        defaultBehavior: {}, recommendedPlugins: [], memoryTables: [], customTools: [], suggestedScope: "personal",
+        followUpQuestion: null, elicitation: null, ready: true,
+      } });
+    const routed = await workspace().sidekickAdmitConversationMessage({ ...addressed, actor: member(PARTICIPANT),
+      messageId: crypto.randomUUID(), intent: null, authorName: "Participant", text: "Add today's mail." });
+    expect(routed).toMatchObject({ route: "run" });
+    const asked = (routed as { runId: string }).runId;
+    const publishAsked = () => refusal((instance) => instance.canvasForSidekickRun({
+      workspaceId: WORKSPACE_ID, sidekickId: MADE_HERE, runId: asked, canvasId: CANVAS_ID }));
+    expect(await publishAsked()).toBeNull();
+
     await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
       update: { visibility: "creator", userIds: [] } });
-    expect(await publishInto(MADE_HERE, CANVAS_ID, PARTICIPANT)).toBe("canvas_access_denied");
-    // Someone never in the Canvas, and its creator, are decided the same way.
-    expect(await publishInto(MADE_HERE, CANVAS_ID, OUTSIDER)).toBe("canvas_access_denied");
+    // The run that person asked for is held to what they can open now.
+    expect(await publishAsked()).toBe("canvas_access_denied");
+    // A run nobody asked for reaches the Canvas by the attachment alone: neither a former
+    // participant nor someone never in the Canvas takes that away, whoever it is said to act as.
+    expect(await publishInto(MADE_HERE, CANVAS_ID, PARTICIPANT)).toBeNull();
+    expect(await publishInto(MADE_HERE, CANVAS_ID, OUTSIDER)).toBeNull();
     expect(await publishInto(MADE_HERE, CANVAS_ID, CREATOR)).toBeNull();
   });
 
@@ -237,10 +257,15 @@ describe("where a Sidekick's run may publish", () => {
     expect(await publishInto(MADE_HERE, runCanvas)).toBe("canvas_not_attached_to_sidekick");
   });
 
-  it("tells a run about the Canvases it was attached to, and only those its person can open", async () => {
+  it("tells a run about every Canvas its Sidekick was attached to, and the wizard only about those its person can open", async () => {
     const told = (userId: string) => workspace().sidekickCanvasContext({ workspaceId: WORKSPACE_ID, sidekickId: MADE_HERE, userId });
     expect(await told(CREATOR)).toEqual([{ canvasId: CANVAS_ID, title: "Inbox", artifacts: [] }]);
     expect(await told(OUTSIDER)).toEqual([]);
+    // A run names itself, and is told the Sidekick's attachments whoever it acts as, nobody included.
+    for (const userId of [OUTSIDER, null]) {
+      expect(await workspace().sidekickCanvasContext({ workspaceId: WORKSPACE_ID, sidekickId: MADE_HERE, userId, runId: crypto.randomUUID() }))
+        .toEqual([{ canvasId: CANVAS_ID, title: "Inbox", artifacts: [] }]);
+    }
     // A Canvas each of its own runs made is not repeated to every later run.
     await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: asWorkstreamId(crypto.randomUUID()), title: "Run output",
       createdByUserId: CREATOR, authorityGeneration: 1, writer: { sidekickId: MADE_HERE, runId: crypto.randomUUID() } });

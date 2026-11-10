@@ -34,9 +34,9 @@ const SETTING_LABEL: Partial<Record<PushNotificationData["kind"], string>> = {
   artifact_updated: "Pinned Canvas updates",
   access_request: "Access requests",
   access_denied: "Access requests",
-  source_request: "Access requests",
-  source_approved: "Access requests",
-  source_declined: "Access requests",
+  source_request: "Source requests",
+  source_approved: "Source requests",
+  source_declined: "Source requests",
 };
 
 /** Who the email goes to, read now: an inactive member is sent nothing. */

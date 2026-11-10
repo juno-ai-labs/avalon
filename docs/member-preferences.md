@@ -13,8 +13,12 @@ follow the member across devices. Two kinds today:
   (`OFFERED_NOTIFICATION_KINDS`): **Mentions** (`mentions`), **New messages**
   (`newMessages`), **Being added** (`added`, which also covers being let into
   a Canvas you asked for), **Sidekick runs** (`runFinished`, both run
-  notices), **Pinned Canvas updates** (`artifactUpdates`) and **Access
-  requests** (`accessRequests`, for whoever decides on a Canvas's people).
+  notices), **Pinned Canvas updates** (`artifactUpdates`), **Access
+  requests** (`accessRequests`, for whoever decides on a Canvas's people) and
+  **Source requests** (`sourceRequests`, for being asked to let your events
+  start a Sidekick and for the answer to your own ask). Every kind defaults to
+  push alone but the last, which defaults to push and email: a source request
+  is answered from its email ([`sidekick-sources.md`](sidekick-sources.md)).
   In the client, each kind's picker offers **Push** (only where this
   deployment can push, though a stored `push` stays in a save) and **Email**,
   the same two for every kind (`NotificationChannelSettings`); a stored

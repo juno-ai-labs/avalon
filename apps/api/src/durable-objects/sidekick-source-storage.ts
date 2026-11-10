@@ -26,6 +26,10 @@ import { ApiError } from "../lib/api-error";
  * restricted audience was admitted through a delegate inside that audience. Their grant's membership incarnation carries over, so a person who
  * left and rejoined is no more a source than they were a delegate.
  *
+ * A request's `person_name` is the asked person's name as it stood when they
+ * answered, so the asker's Activity row names them without a read of D1; null
+ * until they answer, and for a request a newer one cancelled.
+ *
  * `docs/sidekick-sources.md` owns the mechanism.
  */
 export const SIDEKICK_SOURCE_SCHEMA_STATEMENTS = [
@@ -54,6 +58,7 @@ export const SIDEKICK_SOURCE_SCHEMA_STATEMENTS = [
     state TEXT NOT NULL CHECK (state IN ('pending', 'approved', 'declined', 'cancelled')),
     requested_by_user_id TEXT NOT NULL,
     requested_by_name TEXT NOT NULL,
+    person_name TEXT,
     place_parent_kind TEXT CHECK (place_parent_kind IS NULL OR place_parent_kind IN ('canvas', 'automation')),
     place_parent_id TEXT,
     operation_id TEXT,

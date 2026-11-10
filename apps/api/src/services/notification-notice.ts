@@ -227,7 +227,9 @@ async function parentNoticeWords(env: Env, workspace: WorkspaceStub, row: Worksp
     title: words.title,
     body: rewriteMessageAsPlainText(words.body, { sources: "none" }),
     actorName: words.actorName,
-    parentId: row.workstreamId,
+    // A source request opens the Canvas it was asked in, where its card is:
+    // the Sidekick is closed to the person asked until they approve.
+    parentId: notice.kind === "source_request" && notice.placeCanvasId ? notice.placeCanvasId : row.workstreamId,
     substreamId: notice.kind === "new_message" ? "0" : null,
     ...(notice.kind === "artifact_updated" ? { artifactId: notice.resourceId } : {}),
     ...(notice.kind === "new_message" ? messagePosition(notice.messageId, notice.messageSequence) : {}),
