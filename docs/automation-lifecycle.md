@@ -1639,10 +1639,12 @@ A Sidekick's row (`AutomationSummary.attachedCanvases`, on the sidebar list and
 may open (`canvasesAttachedTo`): the one that made it and any its wizard
 attached, never the Canvas each run made, which is its output. The Sidekicks
 home draws each as a pill at the right of the card's preview, under the Paused
-pill when there is one, with the Canvas's title and an up-right arrow; it is a
+pill when there is one, with the Canvas's actual mark, title and an up-right arrow; it is a
 link to the Canvas, above the card's own stretched link. A Canvas archive moves
 the Sidekick list, so an attached Sidekick's pill leaves with it; a retitle
-reaches the pill at the list's next frame.
+reaches the pill at the list's next frame. The attachment summary carries the
+appearance and newest artifact kind itself, independently of the capped Canvas
+sidebar page. Appearance and artifact changes also advance the Sidekick list.
 
 A definition may set `failureNotificationConversationId` to a canonical
 `conversation_list` id in this scope: the Sidekick's own conversation, a Canvas
@@ -2247,6 +2249,18 @@ conversation-object SQLite; the vocabulary, `StatusDot`, the
 survive as described above.
 
 ## Changelog
+
+### 2026-11-10 — Canvas card links carry their own appearance
+
+Sidekick attachment summaries now include each admitted Canvas's chosen
+appearance and newest artifact kind, and changes to either refresh the Sidekick
+list. The 250-row Canvas sidebar page can omit an older attached Canvas, so
+looking up its mark there left a permanent blank. Carrying the mark in the
+existing attachment read preserves the actual icon without per-Canvas requests
+or a generic fallback. Older summaries still use the client's Canvas directory
+when available. The title display stops after 30 graphemes while preserving the
+full name for hover and assistive technology.
+
 
 ### 2026-11-10 — A Sidekick's Canvas attachment is the publish grant, and a Canvas makes Sidekicks it steers
 
