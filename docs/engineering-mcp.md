@@ -213,14 +213,30 @@ multi-purpose scheduled-alarm coordinator. There is no additional queue,
 Workflow, or application retry scheduler. It uses KV storage without an
 application SQL migration history.
 
+### Password credentials
+
+`provision_user_password` and `revoke_user_password` always route to
+`GLOBAL_INSPECTION`, targeting an existing Global `userId` resolved with
+`search_users`. Provisioning generates a random password, returns it once, and
+replaces any previous password. It is non-idempotent: after a lost response,
+provision again and use the new result. Revocation is idempotent. Both require the
+verified Access operator and an attempt audit before mutation. Neither changes
+verified emails, membership or existing sessions.
+
+Account-level audit rows use `identity:global` as their workspace scope and the
+selected user as target. The provisioning result is secret-bearing; ordinary
+MCP logs and audit events carry no password or hash. Keep the result private to
+its intended recipient. [Password sign-in](password-login.md) owns hashing,
+rate limiting, rotation and the two client entry points.
+
 ### Product creation
 
 The tools use today's product names: `orgId` is a stored workspace ID, a
 Canvas ID or Sidekick ID names its conversation (a stored workstream ID), and
 `creatorUserId` (creation) or `userId` (send/read) selects an existing regional
-Rally user. The Access identity remains the audited operator. No tool issues a
-login credential, promotes a guest, or bypasses the selected user's ordinary
-product permissions. Guests can be selected; actions the app refuses for them
+Rally user. The Access identity remains the audited operator. These product tools issue no login credential, promote no guest, and never
+bypass the selected user's ordinary product permissions. Password credential
+administration is the separate operator capability above. Guests can be selected; actions the app refuses for them
 are refused here too.
 
 Creation takes a fresh UUID `operationId`, reused with the original arguments
@@ -720,6 +736,23 @@ production data. Read-only queries may repeat on platform redelivery; retirement
 reuses its journal. Cancellation never rolls back retirement. SDK upgrades must
 preserve the actual `resultType: "task"` wire response and remove the carrier
 adapter when the SDK can emit it directly.
+
+### 2026-11-10 — Provision password credentials through the private operator bridge
+
+**What changed:** Added Global-only `provision_user_password` and
+`revoke_user_password`, with trusted operator attribution and attempt-before-write
+auditing. Provision returns a generated secret once; logs retain metadata only.
+
+**Why:** External reviewers need credentials that work without email challenges,
+while credential administration must remain unavailable to product users.
+
+**Considered and rejected:** Public password management expands the requested
+surface. A raw SQL recipe bypasses hashing and audited lifecycle operations.
+
+**Consequences:** Provisioning again rotates the password and is non-idempotent.
+Existing sessions remain valid. Account operations use the `identity:global`
+audit scope; [password sign-in](password-login.md) owns the credential mechanism.
+
 
 ### 2026-11-10 — Retire administration apps
 

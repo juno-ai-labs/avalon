@@ -39,6 +39,15 @@ local-cache wipes, with a shared storage generation fencing image saves in
 other browser tabs. A 403/404 response removes the saved image bytes. Persisted
 bytes never serve as a permission lease.
 
+## Password authentication
+
+[Password sign-in](password-login.md) adds an optional credential to an existing
+Global identity. Only engineering MCP provisions or revokes it. The native form
+passes the proof through trusted IPC; main chooses the endpoint and retains the
+ordinary encrypted session. Web receives only an HttpOnly cookie. Rotation and
+revocation fence new session issuance at the INSERT; existing sessions retain
+their normal lifecycle. Audit records contain the operator and target, no secret.
+
 ## Sidekick authoring and loading
 
 Sidekick delegation is separate from human reader/manager access. WorkspaceDO

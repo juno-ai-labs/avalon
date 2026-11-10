@@ -30,6 +30,7 @@ const sessionState = vi.hoisted(() => ({
   api,
   clearDeepLinkError: vi.fn(),
   createDevelopmentSession: vi.fn(),
+  signInWithPassword: vi.fn(),
   deepLinkError: null as string | null,
   declineInvitation: vi.fn(),
   exchangingTicket: false,
@@ -246,4 +247,20 @@ describe('identity-first onboarding screens', () => {
     await waitFor(() => expect(sessionState.declineInvitation).toHaveBeenCalledWith('enterprise', invitation.id));
     expect(onChanged).toHaveBeenCalledOnce();
   });
+});
+
+
+it('signs in with a password and lets the user return to the other sign-in options', async () => {
+  sessionState.signInWithPassword.mockResolvedValue(undefined);
+  render(<SignInScreen />);
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in with password' }));
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'Reviewer@Example.test' } });
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'example-password-with-spaces ' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+  await waitFor(() => expect(sessionState.signInWithPassword).toHaveBeenCalledWith({
+    email: 'reviewer@example.test', password: 'example-password-with-spaces ',
+  }), { timeout: 5_000 });
+  await waitFor(() => expect(screen.getByLabelText('Password')).toHaveValue(''), { timeout: 5_000 });
+  fireEvent.click(screen.getByRole('button', { name: 'Other sign-in options' }));
+  expect(screen.getByRole('button', { name: 'Continue with Google' })).toBeInTheDocument();
 });

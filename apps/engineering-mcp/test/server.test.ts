@@ -17,6 +17,8 @@ const principal: AccessPrincipal = {
 
 function regionalBinding(region: string): EngineeringInspectionRpcBinding {
   return {
+    provisionUserPassword: vi.fn<EngineeringInspectionRpcBinding["provisionUserPassword"]>(),
+    revokeUserPassword: vi.fn<EngineeringInspectionRpcBinding["revokeUserPassword"]>(),
     createOrg: vi.fn<EngineeringInspectionRpcBinding["createOrg"]>(),
     inspectOrganizationUsage: vi.fn<EngineeringInspectionRpcBinding["inspectOrganizationUsage"]>(),
     changeOrganizationPlan: vi.fn<EngineeringInspectionRpcBinding["changeOrganizationPlan"]>(),
@@ -108,6 +110,26 @@ async function rpc(
 }
 
 describe("Rally engineering MCP tools", () => {
+  it("routes password administration only to Global and excludes returned secrets from logs", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const userId = asUserId("00000000-0000-7000-8000-000000000ef2");
+    vi.mocked(global.provisionUserPassword).mockResolvedValue({ userId, email: "reviewer@example.test", password: "test-secret-returned-once" });
+    vi.mocked(global.revokeUserPassword).mockResolvedValue({ userId, passwordEnabled: false });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+      const provision = await rpc(env, "tools/call", { name: "provision_user_password", arguments: { userId } });
+      expect(provision.result).not.toHaveProperty("isError", true);
+      expect(global.provisionUserPassword).toHaveBeenCalledExactlyOnceWith({ userId }, principal);
+      expect(enterprise.provisionUserPassword).not.toHaveBeenCalled();
+      const revoke = await rpc(env, "tools/call", { name: "revoke_user_password", arguments: { userId } });
+      expect(revoke.result).not.toHaveProperty("isError", true);
+      expect(global.revokeUserPassword).toHaveBeenCalledExactlyOnceWith({ userId }, principal);
+      expect(JSON.stringify(log.mock.calls)).not.toContain("test-secret-returned-once");
+    } finally { log.mockRestore(); }
+  });
+
   it("advertises its purpose and usage instructions in initialization", async () => {
     const response = await rpc(testEnv({ GLOBAL_INSPECTION: regionalBinding("global") }), "initialize", {
       protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Rally", version: "1" },
@@ -237,6 +259,8 @@ describe("Rally engineering MCP tools", () => {
     const response = await rpc(env, "tools/list");
     const result = response.result as { tools: Array<{ name: string; annotations?: Record<string, boolean> }> };
     expect(result.tools.map((tool) => tool.name)).toEqual([
+      "provision_user_password",
+      "revoke_user_password",
       "create_org",
       "send_message",
       "pause_sidekick",
