@@ -20,16 +20,16 @@ import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 
-let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000cb000");
-const CREATOR = asUserId("00000000-0000-7000-8000-0000000cb001");
+let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000005d5000");
+const CREATOR = asUserId("00000000-0000-7000-8000-0000005d5001");
 /** On the Canvas's participant list; not someone any Sidekick is shared with. */
-const PARTICIPANT = asUserId("00000000-0000-7000-8000-0000000cb002");
+const PARTICIPANT = asUserId("00000000-0000-7000-8000-0000005d5002");
 /** In the Organization, in no Canvas. */
-const OUTSIDER = asUserId("00000000-0000-7000-8000-0000000cb003");
-let CANVAS_ID = asWorkstreamId("00000000-0000-7000-8000-0000000cb100");
-let OTHER_CANVAS_ID = asWorkstreamId("00000000-0000-7000-8000-0000000cb101");
-let MADE_HERE = asAutomationId("00000000-0000-7000-8000-0000000cb200");
-let MADE_ELSEWHERE = asAutomationId("00000000-0000-7000-8000-0000000cb201");
+const OUTSIDER = asUserId("00000000-0000-7000-8000-0000005d5003");
+let CANVAS_ID = asWorkstreamId("00000000-0000-7000-8000-0000005d5100");
+let OTHER_CANVAS_ID = asWorkstreamId("00000000-0000-7000-8000-0000005d5101");
+let MADE_HERE = asAutomationId("00000000-0000-7000-8000-0000005d5200");
+let MADE_ELSEWHERE = asAutomationId("00000000-0000-7000-8000-0000005d5201");
 
 const member = (userId: string) => ({ userId: asUserId(userId), actorRole: "member" as const });
 
