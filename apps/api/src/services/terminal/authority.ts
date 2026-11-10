@@ -145,13 +145,19 @@ export async function resolveTerminalPublicationHome(env: Env, input: Pick<Works
       asWorkspaceId(input.workspaceId), workspaceDOName(env.AVALON_REGION, input.workspaceId));
     const found = await workspace.canvasForSidekickRun({
       workspaceId: input.workspaceId, sidekickId: input.parentId, runId, canvasId: request.canvas ?? null,
+      userId: input.executionPrincipal.userId,
     }).catch((error: unknown) => {
       if ((error as { code?: string }).code === "canvas_archived") {
-        throw new TerminalToolError("canvas_archived", "That Canvas was archived. Publish into another active Canvas this Sidekick writes, or start a new Sidekick run to create a new Canvas.");
+        throw new TerminalToolError("canvas_archived", "That Canvas was archived. Publish into another active Canvas attached to this Sidekick, or start a new Sidekick run to create a new Canvas.");
       }
-      if ((error as { code?: string }).code === "canvas_not_written_by_sidekick") {
-        throw new TerminalToolError("canvas_not_written_by_sidekick",
-          "That Canvas is not one this Sidekick writes. Omit canvas to publish into this run's own Canvas, or name a Canvas this Sidekick made.",
+      if ((error as { code?: string }).code === "canvas_access_denied") {
+        throw new TerminalToolError("canvas_access_denied",
+          "The person this run acts as can no longer open that Canvas, so nothing was published there. Ask for access and wait, or report it in your final message.",
+          { field: "canvas" });
+      }
+      if ((error as { code?: string }).code === "canvas_not_attached_to_sidekick") {
+        throw new TerminalToolError("canvas_not_attached_to_sidekick",
+          "That Canvas is not attached to this Sidekick. Omit canvas to publish into this run's own Canvas, or name a Canvas from ATTACHED CANVASES or one an earlier run of this Sidekick made.",
           { field: "canvas" });
       }
       throw error;

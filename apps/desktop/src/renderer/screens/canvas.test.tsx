@@ -1,5 +1,5 @@
 import { asUserId } from '@rally/contracts';
-import type { CanvasDetail, CanvasSidebarRow } from '@rally/contracts';
+import type { CanvasDetail, CanvasSidebarRow, CanvasSidekick } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -87,10 +87,28 @@ function renderCanvas(entry: string | { pathname: string; state: unknown } = `/c
       <Routes>
         <Route element={<CanvasScreen />} path="/canvases/:id" />
         <Route element={<p>Canvases home</p>} path="/canvases" />
+        <Route element={<SidekickPage />} path="/sidekicks/:id" />
       </Routes>
     </MemoryRouter></Tooltip.Provider>
   </QueryClientProvider></ErrorNoticeProvider>);
   return client;
+}
+
+function SidekickPage(): React.JSX.Element {
+  return <p>Sidekick page {useLocation().pathname}</p>;
+}
+
+const TRACKER = '00000000-0000-7000-8000-0000000000d1';
+const DIGEST = '00000000-0000-7000-8000-0000000000d2';
+
+/** A Sidekick attached to the Canvas, as its detail lists it. */
+function attached(id: string, name: string, overrides: Partial<CanvasSidekick> = {}): CanvasSidekick {
+  return { id, name, status: 'active', madeHere: true, ...overrides };
+}
+
+/** The menu row naming a Sidekick: its name and its state, read as one item. */
+function sidekickRow(name: string): HTMLElement {
+  return within(screen.getByRole('group', { name: 'Sidekicks' })).getByText(name).closest<HTMLElement>('[role="menuitem"]')!;
 }
 
 /** A row of the socket's Canvas list, as `workspace_canvas_list` carries it. */
@@ -161,6 +179,98 @@ describe('CanvasScreen', () => {
     await openMenu('Q4 revenue review');
     await screen.findByRole('menuitem', { name: 'Copy link' });
     expect(screen.queryByRole('menuitem', { name: 'Archive canvas' })).toBeNull();
+  });
+
+  it.each([
+    [[], ''],
+    [[attached(TRACKER, 'Launch tracker'), attached(DIGEST, 'Weekly digest', { madeHere: false })],
+      ' Archiving also archives the Sidekick this Canvas made.'],
+    [[attached(TRACKER, 'Launch tracker'), attached(DIGEST, 'Weekly digest')],
+      ' Archiving also archives the 2 Sidekicks this Canvas made.'],
+  ])('says in the Archive Canvas confirmation that the Sidekicks the Canvas made are archived too (%#)', async (sidekicks, ending) => {
+    getCanvas.mockResolvedValue(detail({ sidekicks }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive canvas' }));
+    const copy = (await screen.findByRole('dialog', { name: 'Archive Canvas' })).querySelector('.modal-copy')!;
+    expect(copy.textContent.endsWith(` no longer be viewable in Rally.${ending}`)).toBe(true);
+    expect(copy).not.toHaveTextContent('Launch tracker');
+  });
+
+  it('lists the attached Sidekicks in its menu by name and state, between Change appearance and Archive canvas', async () => {
+    getCanvas.mockResolvedValue(detail({ sidekicks: [
+      attached(TRACKER, 'Launch tracker'),
+      attached(DIGEST, 'Weekly digest', { status: 'paused', madeHere: false }),
+      attached('00000000-0000-7000-8000-0000000000d3', 'Unfinished', { status: 'draft' }),
+    ] }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('group', { name: 'Sidekicks' });
+    const order = screen.getAllByRole('menuitem').map((item) => item.getAttribute('aria-label') ?? item.textContent.trim());
+    expect(order.slice(order.indexOf('Change appearance'))).toEqual([
+      'Change appearance', 'Launch trackerActive', 'Weekly digestPaused', 'UnfinishedDraft', 'Archive canvas',
+    ]);
+    // The menu archives no Sidekick, whichever Canvas made it: that is asked of the Chat.
+    expect(screen.queryByRole('menuitem', { name: /Archive Sidekick/u })).toBeNull();
+  });
+
+  it("follows the Canvas list for its Sidekicks, so one made or paused while the Canvas is open reaches its menu", async () => {
+    // The detail this screen opened with knows of no Sidekick.
+    getCanvas.mockResolvedValue(detail({ sidekicks: [] }));
+    const client = renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByText('Sidekicks')).toBeNull();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    // Its Chat makes one: the socket's list row carries it, and no detail is read again.
+    act(() => { applyVersionedSidebarList(client, 'canvases', 1, [listRow('Q4 revenue review', { sidekicks: [attached(TRACKER, 'Launch tracker', { status: 'draft' })] })]); });
+    await openMenu('Q4 revenue review');
+    expect(sidekickRow('Launch tracker')).toHaveTextContent('Launch trackerDraft');
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    // Renamed and paused, then archived.
+    act(() => { applyVersionedSidebarList(client, 'canvases', 2, [listRow('Q4 revenue review', { sidekicks: [attached(TRACKER, 'Inbox listener', { status: 'paused' })] })]); });
+    await openMenu('Q4 revenue review');
+    expect(sidekickRow('Inbox listener')).toHaveTextContent('Inbox listenerPaused');
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    act(() => { applyVersionedSidebarList(client, 'canvases', 3, [listRow('Q4 revenue review', { sidekicks: [] })]); });
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByText('Sidekicks')).toBeNull();
+    expect(getCanvas).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws no Sidekicks section for a Canvas with none, or from a server that sends none', async () => {
+    getCanvas.mockResolvedValue(detail({ sidekicks: [] }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByText('Sidekicks')).toBeNull();
+    cleanup();
+    getCanvas.mockResolvedValue(detail());
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByText('Sidekicks')).toBeNull();
+  });
+
+  it("opens a Sidekick's page from its row only for someone it is shared with, and says how to change it otherwise", async () => {
+    getCanvas.mockResolvedValue(detail({ sidekicks: [
+      attached(TRACKER, 'Launch tracker', { canOpen: true }), attached(DIGEST, 'Weekly digest', { canOpen: false }),
+    ] }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('group', { name: 'Sidekicks' });
+    const unshared = sidekickRow('Weekly digest');
+    expect(unshared).toHaveAttribute('aria-disabled', 'true');
+    expect(unshared).not.toHaveAttribute('href');
+    act(() => unshared.focus());
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Ask in this Canvas’s chat to change it. Its creator can share it with you to open it.');
+    fireEvent.click(unshared);
+    expect(screen.queryByText(/Sidekick page/u)).toBeNull();
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(sidekickRow('Launch tracker')).not.toHaveAttribute('aria-disabled');
+    fireEvent.click(sidekickRow('Launch tracker'));
+    expect(await screen.findByText(`Sidekick page /sidekicks/${TRACKER}`)).toBeInTheDocument();
   });
 
   it("opens the Canvas's Chat as a canvas conversation under a header naming it", async () => {

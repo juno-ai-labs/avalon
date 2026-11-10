@@ -172,8 +172,11 @@ review**, shared with Samantha, and **Launch plan**, open to the Organization â€
 through `createCanvas`, restores their Chats' turns from the fixture, notes the
 fixture resource as Launch plan's artifact (its body, the fixture's `payloads`
 entry, stored in R2 where the resource's `content_ref` points, so the
-artifact renders), and publishes the **Weekly
-changelog** Sidekick through `createAutomation` and its definition. `seed.sql`
+artifact renders), and publishes two Sidekicks through `createAutomation`
+and their definitions: **Weekly changelog**, and **Launch tracker**, which is
+made in Launch plan (`madeInCanvasId`) and so is attached to that Canvas the way
+one its Chat made is. Canvases are seeded first, because a Sidekick cannot be
+made in a Canvas that does not exist yet. `seed.sql`
 anchors no conversation: the creation paths anchor and route what they make,
 as in production. The Workers must be running for the product import. The command is
 idempotent and repairs partial imports; rerun it after starting a missing Worker.
@@ -422,7 +425,7 @@ Capture the screens you touched and read the images.
 
 Development sign-in works end to end in this setup: **Use local development
 account** authenticates against the local Global Worker and opens the seeded
-workspace with its Canvases, its Sidekick, and onboarding checklist.
+workspace with its Canvases, its two Sidekicks, and onboarding checklist.
 
 **Settings is a second page that has to be opened before it can be captured.**
 Once a session has an Organization, the main process builds the

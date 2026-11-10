@@ -81,7 +81,7 @@ const publishResourceArguments = z.strictObject({
   filePath: relativePath,
   displayName: z.string().min(1).max(300).optional(),
   description: z.string().max(2_000).optional(),
-  /** A Sidekick run's choice of a Canvas it already writes to publish into; see `resolveTerminalPublicationHome`. */
+  /** A Sidekick run's choice of a Canvas attached to its Sidekick to publish into; see `resolveTerminalPublicationHome`. */
   canvas: z.string().uuid().optional(),
 });
 const publishBranchAndPrArguments = z.strictObject({
@@ -291,7 +291,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
       filePath: pathProperty("Path relative to AVALON_RESOURCE_DIR (/workspace/.rally-output), not to the workspace root. A file path publishes that file; a directory path publishes the whole tree beneath it."),
       displayName: { type: "string", minLength: 1, maxLength: 300, description: "Optional participant-visible resource title." },
       description: { type: "string", maxLength: 2_000, description: "Optional participant-visible description." },
-      canvas: { type: "string", format: "uuid", description: "Sidekick runs only: the id of a Canvas this Sidekick already writes, to publish into it. Omit it to publish into the Canvas this run made, which the first publish creates." },
+      canvas: { type: "string", format: "uuid", description: "Sidekick runs only: the id of a Canvas attached to this Sidekick (one in ATTACHED CANVASES, or one an earlier run made), to publish into it. Omit it to publish into the Canvas this run made, which the first publish creates." },
     }, ["filePath"]),
   },
   publish_branch_and_pr: {
