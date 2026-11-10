@@ -834,13 +834,18 @@ describe('the Activity section', () => {
           createdAt: 1, decidedAt: 2,
         });
         const rows = await rowsOf([asked()]);
-        expect(rows[0]).toHaveAttribute('title', 'Avery asked to start Deals from your Gmail');
+        expect(rows[0]).toHaveAttribute('title', 'Avery asked for your Gmail to start Deals');
         expect(rows[0]).toHaveTextContent('Events: Email received. Only when: it is about a pre-seed round');
         expect(rows[0]!.querySelector('.activity-row-glyph.is-source_request svg')).toHaveClass('tabler-icon-bolt');
         // The Sidekick would refuse this person: the row leads to the Activity home, and is never drawn open.
         expect(rows[0]).toHaveAttribute('href', '/activity');
         expect(rows[0]).not.toHaveAttribute('aria-current');
         expect(within(rows[0]!).queryByRole('button')).toBeNull();
+        // The Sidekick is the last, bold thing in the sentence, where the two-line cut spares it.
+        expect([...rows[0]!.querySelectorAll('.activity-row-text strong')].map((strong) => strong.textContent)).toEqual(['Avery', 'Deals']);
+        expect(rows[0]!.querySelector('.activity-row-text')?.textContent?.endsWith('Deals')).toBe(true);
+        // The whole condition, above the buttons: the preview line cuts it.
+        expect(rows[0]!.closest('.activity-row-group')?.querySelector('.activity-row-actions')).toHaveTextContent('Only when “it is about a pre-seed round”');
         const approve = screen.getByRole('button', { name: 'Approve your Gmail for Deals' });
         const decline = screen.getByRole('button', { name: 'Decline your Gmail for Deals' });
         expect([approve, decline].map((button) => button.getAttribute('aria-pressed'))).toEqual(['false', 'false']);
@@ -874,9 +879,9 @@ describe('the Activity section', () => {
         // The directory's name once it has loaded; until then, and for a
         // person it does not hold, the name the request kept.
         await waitFor(() => expect(rows.map((row) => row.getAttribute('title'))).toEqual([
-          'Avery asked to start Incident triage from your Gmail',
-          'Maya approved starting Incident triage from their Gmail',
-          'Priya Shah declined starting Incident triage from their Gmail',
+          'Avery asked for your Gmail to start Incident triage',
+          'Maya approved their Gmail for Incident triage',
+          'Priya Shah declined their Gmail for Incident triage',
         ]));
         expect(rows.map((row) => row.getAttribute('href'))).toEqual(['/sidekicks/triage', '/sidekicks/triage', '/sidekicks/triage']);
         // The requester's rows are plain: only the asked person's has actions.

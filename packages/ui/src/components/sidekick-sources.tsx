@@ -178,12 +178,13 @@ export function SidekickSourcesList({ data, loading, words, onDecide, deciding =
             <small>{source.connectionName} · {words(source).events}</small>
             {source.condition && <small>Only when {quoted(source.condition)}</small>}
             {!source.available && <small>Unavailable — restore Organization membership</small>}
+            {/* Under the copy, as a request's pair is: the details column is 340px wide. */}
+            {source.yours && <Button
+              aria-label={`Stop allowing ${source.connectionName}`}
+              disabled={withdrawing !== null}
+              onClick={() => onWithdraw(source.connectionId)}
+            >{withdrawing === source.connectionId ? 'Stopping…' : 'Stop allowing'}</Button>}
           </span>
-          {source.yours && <Button
-            aria-label={`Stop allowing ${source.connectionName}`}
-            disabled={withdrawing !== null}
-            onClick={() => onWithdraw(source.connectionId)}
-          >{withdrawing === source.connectionId ? 'Stopping…' : 'Stop allowing'}</Button>}
         </li>)}
       </ul>}
       {data.requests.length > 0 && <h3 className="sidekick-sources-asked" id="sidekick-sources-asked">Asked</h3>}

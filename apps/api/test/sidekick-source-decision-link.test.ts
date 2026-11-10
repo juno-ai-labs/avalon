@@ -9,6 +9,8 @@ import { createHmac } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { asWorkspaceId } from "@rally/contracts";
+
 import { createApp } from "../src/app";
 import { sourceNoticeText } from "../src/durable-objects/sidekick-source-notices";
 import { decideSourceRequestByLink, sourceDecisionActions, sourceDecisionUrl } from "../src/services/sidekick-source-decision-link";
@@ -17,7 +19,7 @@ import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const SIGNING_KEY = "source-decision-test-signing-key";
 const CLAIM = {
-  workspaceId: "00000000-0000-7000-8000-0000000d1c01", sidekickId: "00000000-0000-7000-8000-0000000d1c02",
+  workspaceId: asWorkspaceId("00000000-0000-7000-8000-0000000d1c01"), sidekickId: "00000000-0000-7000-8000-0000000d1c02",
   requestId: "00000000-0000-7000-8000-0000000d1c03", userId: "00000000-0000-7000-8000-0000000d1c04", decision: "approve" as const,
 };
 
@@ -67,7 +69,7 @@ describe("a source request's emailed decision link", () => {
     for (const edited of [
       { ...CLAIM, decision: "decline" as const }, { ...CLAIM, userId: "00000000-0000-7000-8000-0000000d1c05" },
       { ...CLAIM, requestId: "00000000-0000-7000-8000-0000000d1c06" }, { ...CLAIM, sidekickId: "00000000-0000-7000-8000-0000000d1c07" },
-      { ...CLAIM, workspaceId: "00000000-0000-7000-8000-0000000d1c08" },
+      { ...CLAIM, workspaceId: asWorkspaceId("00000000-0000-7000-8000-0000000d1c08") },
     ]) {
       await expect(decideSourceRequestByLink(env, { ...edited, token })).rejects.toMatchObject({ status: 401, code: "sidekick_source_link_invalid" });
     }
