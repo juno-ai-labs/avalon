@@ -157,7 +157,9 @@ export type WritableArtifactResolution =
   /** The site's Canvas is archived. */
   | { outcome: "canvas_archived" }
   /** A Sidekick run, and the site's Canvas is not attached to that Sidekick. */
-  | { outcome: "not_attached" };
+  | { outcome: "not_attached" }
+  /** A Canvas's Chat, and the site belongs to another Canvas: attached here as context, not this Canvas's to change. */
+  | { outcome: "other_canvas" };
 
 /** What the caller needs to resolve a site resource and reach its artifact. */
 export interface ArtifactDataToolContext {
@@ -375,6 +377,14 @@ export function createWorkstreamArtifactDataTools(
           throw new ArtifactDataToolError(
             "artifact_canvas_not_attached",
             `This Sidekick cannot change this site's data: the site's Canvas is not attached to the Sidekick. ${reason} The site's data can still be read.`,
+            { reason },
+          );
+        }
+        if (resolved.outcome === "other_canvas") {
+          const reason = "Ask in that site's own Canvas to change its data.";
+          throw new ArtifactDataToolError(
+            "artifact_in_another_canvas",
+            `This site belongs to another Canvas and is here only as context, so this Canvas cannot change its data. ${reason} The site's data can still be read.`,
             { reason },
           );
         }

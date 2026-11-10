@@ -378,6 +378,11 @@ instructions go to its wizard as the person's edit. `POST /canvases` takes the
 same as `sidekick`, after the Canvas and its prompt. A guest makes none
 (`canvas_sidekick_member_required`).
 
+The Canvas list row carries the same list, and an open Canvas's menu reads it
+from the row, which the socket keeps current, rather than from the detail it
+opened with. A Sidekick's directory write pushes the Canvas list when its
+name, state or appearance moved (`noteAttachedSidekickFace`).
+
 `GET /canvases/:id` lists them as `sidekicks` (`HostedCanvas.sidekicks`): id,
 name, state, appearance, and `madeHere` for one this Canvas's Chat made. Every
 reader of the Canvas sees the list; attaching a Sidekick is the consent to show
@@ -451,10 +456,8 @@ desktop compares in the same ledger as the Sidekick list
 (`applyVersionedSidebarList`).
 
 A row (`canvasSidebarRows`) is the summary plus: `sidekicks`, the Sidekicks
-attached to it by id, name and appearance, read for every listed Canvas in one
-statement over the attachments (a Sidekick renamed, redressed or archived
-reaches a connected client's card at its next Canvas list frame, as a deleted
-Sidekick's run line does); `unread`, the Chat's read
+attached to it as its detail lists them, read for every listed Canvas in one
+statement over the attachments; `unread`, the Chat's read
 state as `sidekick_viewer_reads` projects it against the Chat's latest
 attention ordinal (a Canvas never opened is unread to anyone but its creator);
 `presentUserIds`, the people whose foreground socket has the Canvas open now;

@@ -400,6 +400,13 @@ export interface HostedSidekickHost {
    * differs from the last it saw, so a run's own touches cost no list push.
    */
   noteWriterReaders(sidekickId: string, readers: string): void;
+  /**
+   * Inside the transaction that touched the directory row of a Sidekick
+   * attached to a Canvas, with what such a Canvas shows of it (name, state,
+   * appearance). The host marks the Canvas list moved when that differs from
+   * the last it saw.
+   */
+  noteAttachedSidekickFace(sidekickId: string, face: string): void;
   /** Inside the transaction that attached a Sidekick to the Canvas it was made in: that Canvas's detail and context moved. */
   noteHomeCanvasChanged(canvasId: string): void;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
@@ -3164,6 +3171,19 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       this.sidekickId,
     ));
     if (readers) this.host.noteWriterReaders(this.sidekickId, readers.readers);
+    // A Canvas it is attached to shows its name, state and mark, on its card
+    // and in its menu. Read here for the reason above; the host pushes the
+    // Canvas list only when these differ from what it last saw, so a run's
+    // own touches cost nothing.
+    const face = first(this.sql.exec<{ face: string }>(
+      `SELECT directory.title || '|' || directory.lifecycle || '|' || COALESCE(directory.appearance_json, '') AS face
+         FROM automation_directory directory
+        WHERE directory.automation_id = ?1
+          AND EXISTS (SELECT 1 FROM sidekick_conversation_attachments
+                       WHERE automation_id = ?1 AND parent_kind = 'canvas' AND substream_id = '0')`,
+      this.sidekickId,
+    ));
+    if (face) this.host.noteAttachedSidekickFace(this.sidekickId, face.face);
   }
 }
 
