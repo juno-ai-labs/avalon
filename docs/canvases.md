@@ -513,11 +513,6 @@ card grid with Sidekicks; the shared layout is described in
   the detail's, and a change to the list row's title is written into the
   detail's cache once the socket has applied the list, so the header follows a
   rename from anywhere without a refetch.
-- **Share Canvas** uses the header menu's icon-and-label tile styling for
-  its three audience choices. The tiles form a single radio group, with the
-  selected audience's explanation beneath the row. **Everyone in the
-  Organization** keeps members and guests searchable. Members are already
-  included and show checked, disabled boxes. Guests can still be selected.
 - **A link to no Canvas** (`canvas_not_found`, or a malformed id,
   `canvas_id_invalid:id:<issue>`) draws one in-pane "This Canvas does not
   exist." state with nothing to try again (`isNotFoundError`), and a restored
@@ -552,13 +547,14 @@ card grid with Sidekicks; the shared layout is described in
   (`canvas_rename_invalid:title:<issue>`), and the notice
   (`canvasRenameRefusal`) leaves the field open on what was typed. Leaving the
   field saves only a title that differs from the one last sent.
-- **Share** offers the three visibilities and a people picker to someone the
-  detail says may manage it (`canManage`), saving with
-  `POST /canvases/:id/audience`; anyone else sees the audience read-only. A
-  Canvas a Sidekick writes says it is also open to the Sidekick's audience. The
-  picker never lists the viewer or the creator, and with the Organization
-  visibility lists guests only. Save is the dialog's one primary action: it
-  sends the audience, then invites the typed guest addresses through
+- **Share** offers one of three audience choices and a people picker to
+  someone the detail says may manage it (`canManage`). Other viewers see the
+  audience read-only. A Canvas a Sidekick writes says it is also open to the
+  Sidekick's audience. The picker omits the viewer and creator. With
+  **Everyone in the Organization**, members and guests remain searchable.
+  Active members show checked, disabled boxes, invited rows show their pending
+  status, and guests remain selectable. Save sends the audience through
+  `POST /canvases/:id/audience`, then invites the typed guest addresses through
   `useScopeInvitations` with a `workstream` target naming the Canvas. For a
   decider, a **Requests** section lists `pendingAccessRequests` with
   `AccessDecisionActions`, the component the Activity row uses; an approval

@@ -6953,6 +6953,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-share-audience { border: 0; margin: 0; min-inline-size: 0; padding: 0; }
 .canvas-share-options { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .canvas-share-option { border: 1px solid transparent; line-height: 1.2; overflow-wrap: anywhere; position: relative; text-wrap: balance; }
+.canvas-share-option:hover:not(:has(:checked)) { background: var(--action-tile-highlight-background); color: var(--av-sys-color-text-default); }
 .canvas-share-option:has(:checked) {
   background: var(--av-cmp-row-background-selected);
   border-color: currentColor;
@@ -7747,6 +7748,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 /* Icon-and-label tiles for title menus and audience choices. */
 .title-menu-tiles { display: grid; gap: 8px; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; margin: 6px 0 8px; }
 .action-tile {
+  --action-tile-highlight-background: color-mix(in srgb, var(--av-sys-color-surface-sunken) 88%, var(--av-sys-color-text-disabled));
   align-items: center;
   background: var(--av-sys-color-surface-sunken);
   border-radius: 12px;
@@ -7767,7 +7769,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 }
 .action-tile > svg { color: var(--av-sys-color-text-default); }
 .title-menu-tile { white-space: nowrap; }
-.title-menu-tile[data-highlighted], .canvas-share-option:hover:not(:has(:checked)) { background: color-mix(in srgb, var(--av-sys-color-surface-sunken) 88%, var(--av-sys-color-text-disabled)); color: var(--av-sys-color-text-default); }
+.title-menu-tile[data-highlighted] { background: var(--action-tile-highlight-background); color: var(--av-sys-color-text-default); }
 .title-menu-tile[data-disabled] { opacity: .42; }
 /* Too narrow for five labels on one line each: let a label take two. */
 @media (max-width: 480px) {
