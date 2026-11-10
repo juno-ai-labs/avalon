@@ -67,7 +67,7 @@ export * from "./workstream-transcript";
 
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
 import { ConversationParentKindSchema } from "./conversation-parent";
-import { CanvasSidebarListSchema, CanvasSummarySchema } from "./canvases";
+import { CanvasArtifactKindSchema, CanvasSidebarListSchema, CanvasSummarySchema } from "./canvases";
 import { ActivityMarkAllSeenCommandSchema, ActivityPageSchema } from "./activity";
 import { RegionSchema, ConfiguredRegionSchema } from "./regions";
 
@@ -1600,7 +1600,13 @@ export const AutomationSummarySchema = z.object({
    * made, which is its output rather than where it works. The dashboard card
    * links each. Absent from an older Worker and from reads that do not ask.
    */
-  attachedCanvases: z.array(z.object({ id: IdSchema, title: z.string() })).optional(),
+  attachedCanvases: z.array(z.object({
+    id: IdSchema, title: z.string(),
+    // Self-contained appearance even when this Canvas is outside the sidebar page.
+    // Optional for summaries from older Workers.
+    artifactKind: CanvasArtifactKindSchema.nullable().optional(),
+    appearance: WorkstreamAppearanceSchema.optional(),
+  })).optional(),
   /**
    * This viewer has not read the latest message in the Sidekick's shared
    * conversation, or marked it unread. Sidebar rows only; absent elsewhere.

@@ -106,22 +106,23 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
  * opens its page, where Writes to lists them all.
  */
 const CARD_CANVAS_ROWS = 3;
+const CARD_CANVAS_TITLE_GRAPHEMES = 30;
 
 const canvasTitleSegments = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
 function SidekickCanvasPill({ canvas, row }: {
-  canvas: { id: string; title: string };
+  canvas: NonNullable<AutomationSummary['attachedCanvases']>[number];
   row: CanvasSidebarRow | undefined;
 }): React.JSX.Element {
-  const title = row?.title ?? canvas.title;
+  // Current summaries carry the mark independently of the capped Canvas list.
+  // Use that list only for an older Worker that sends id and title alone.
+  const source = canvas.artifactKind !== undefined ? canvas : row;
+  const title = source?.title ?? canvas.title;
   const characters = [...canvasTitleSegments.segment(title)];
-  const label = characters.length > 30 ? `${characters.slice(0, 30).map(({ segment }) => segment).join('').trimEnd()}…` : title;
-  // The live Canvas directory owns appearance and artifact kind. Wait for its
-  // row instead of guessing an icon from the attachment's id and title alone.
-  const mark = row ? canvasMark(row.id, row.artifactKind, row.appearance) : null;
-  const Icon = mark?.icon;
+  const label = characters.length > CARD_CANVAS_TITLE_GRAPHEMES ? `${characters.slice(0, CARD_CANVAS_TITLE_GRAPHEMES).map(({ segment }) => segment).join('').trimEnd()}…` : title;
+  const mark = source ? canvasMark(canvas.id, source.artifactKind ?? null, source.appearance) : null;
   return <Link aria-label={`Canvas: ${title}`} className="sidekick-card-canvas" title={title} to={canvasRoute(canvas.id)}>
-    {Icon && <Icon aria-hidden="true" size={14} strokeWidth={1.9} style={{ color: mark?.ink }} />}
+    {mark && <mark.icon aria-hidden="true" size={14} strokeWidth={1.9} style={{ color: mark.ink }} />}
     <span>{label}</span><IconArrowUpRight aria-hidden="true" size={14} stroke={1.9} />
   </Link>;
 }
