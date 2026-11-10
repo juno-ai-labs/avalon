@@ -513,6 +513,10 @@ pause, resume, delete, run now, the run-history dialog) outside the feed rather 
 inside it. Neither host may smuggle those controls through an optional common
 prop.
 
+Elicitation choices show selection with an accent wash, filled keycap and check.
+The row's keyboard focus outline applies only to its radio or checkbox; typing
+in **Other** uses the text field's own focus styling without outlining the row.
+
 Each conversation's header is what the host renders through `renderHeader`;
 the header context carries the detail, the socket state, who is present, and
 `openArtifact` and `openResource` for opening one of the conversation's
