@@ -92,11 +92,15 @@ async function runs() {
   }>("SELECT run_id,coordinator_user_id,state,summary,opening_json FROM sidekick_runs WHERE sidekick_id=? ORDER BY created_at,run_id", automationId).toArray());
 }
 
-/** A run's start was handed to provisioning: starting it is what records its conversation, and a blocked run has none. */
+/**
+ * A run's start was handed to provisioning: starting it is what records its
+ * conversation, and a blocked run has none. Waited for as long as a
+ * reconciliation is, since both are the object's alarm draining.
+ */
 async function started(runId: string) {
   await expect.poll(async () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
     "SELECT count(*) AS count FROM sidekick_children WHERE sidekick_id=? AND substream_id=?", automationId, runId,
-  ).one().count)).toBe(1);
+  ).one().count), { timeout: SOURCE_RECONCILIATION_TIMEOUT_MS }).toBe(1);
 }
 
 async function execution() {
@@ -150,7 +154,7 @@ describe("shared Sidekick delegation admission", () => {
     expect(eligibility).not.toHaveBeenCalled();
   });
 
-  it("checks only the preferred delegate for manual and personal-event admission", async () => {
+  it("checks only the delegate it picks to coordinate, for a manual run and for an admitted event", async () => {
     const request = await webhook();
     await consent(other, true);
     await runDurableObjectAlarm(stub());
