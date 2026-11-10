@@ -7861,7 +7861,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const report = this.invalidAppearanceReporter(request.workspaceId);
     // The sidebar's rule: a member's own reach, without an owner's into every Canvas.
     const canvases = canvasesAttachedTo(this.state.storage.sql,
-      { userId: request.userId, actorRole: request.accessClass === "guest" ? null : "member" }, admitted.map((row) => row.automation_id));
+      { userId: request.userId, actorRole: request.accessClass === "guest" ? null : "member" }, admitted.map((row) => row.automation_id), canvasAppearanceReporter(this.env));
     return { items: admitted.map((row) => ({ ...automationSummary(row, report), attachedCanvases: canvases.get(row.automation_id) ?? [] })) };
   }
 
@@ -11365,7 +11365,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray();
     // Only a member is sent this list. Their role is not read: an owner's
     // reach into every Canvas is for managing one, not for listing it here.
-    const canvases = canvasesAttachedTo(this.state.storage.sql, { userId, actorRole: "member" }, rows.map((row) => row.automation_id));
+    const canvases = canvasesAttachedTo(this.state.storage.sql, { userId, actorRole: "member" }, rows.map((row) => row.automation_id), canvasAppearanceReporter(this.env));
     return rows.map((row) => ({ ...automationSummary(row, this.invalidAppearanceReporter(workspaceId)),
       pinnedPosition: row.pinned_position, attachedCanvases: canvases.get(row.automation_id) ?? [] }));
   }

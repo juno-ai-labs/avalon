@@ -1,7 +1,8 @@
 import type * as PlatformModule from '../lib/platform';
+import { asUserId, asWorkstreamId, type CanvasSidebarRow } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
@@ -199,6 +200,71 @@ describe('the Sidekicks home', () => {
     expect(await screen.findByText('No Sidekicks yet')).toBeInTheDocument();
     expect(screen.getByText('Describe what you would like to delegate to create one.')).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: 'New Sidekick' })).toHaveLength(2);
+  });
+
+  it('truncates Canvas titles after 30 characters without splitting emoji and retains the full name', async () => {
+    socket.mounted = true;
+    const client = new QueryClient();
+    const attachedCanvases = [
+      { id: '00000000-0000-7000-8000-0000000000c1', title: 'Weekly product release updates for everyone' },
+      { id: '00000000-0000-7000-8000-0000000000c2', title: 'Weekly product release updates' },
+      { id: '00000000-0000-7000-8000-0000000000c3', title: 'Weekly product launch notes: 👩🏽‍💻 next' },
+    ];
+    applyVersionedSidebarList(client, 'automations', 1, [
+      { id: 'tracker', name: 'Launch tracker', description: '', scope: 'you', status: 'active', updatedAt: '2026-11-07T09:00:00.000Z', attachedCanvases },
+    ]);
+    render(<QueryClientProvider client={client}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
+    const chosen = await screen.findByRole('link', { name: 'Canvas: Weekly product release updates for everyone' });
+    expect(chosen).toHaveTextContent(/^Weekly product release updates…$/);
+    expect(chosen).toHaveAttribute('title', 'Weekly product release updates for everyone');
+    expect(chosen.querySelector('.lucide')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Canvas: Weekly product release updates' })).toHaveTextContent(/^Weekly product release updates$/);
+    expect(screen.getByRole('link', { name: 'Canvas: Weekly product launch notes: 👩🏽‍💻 next' })).toHaveTextContent(/^Weekly product launch notes: 👩🏽‍💻…$/);
+
+  });
+
+  it('uses the live directory for legacy attachments and follows appearance changes', async () => {
+    socket.mounted = true;
+    const client = new QueryClient();
+    const attachedCanvases = [{ id: '00000000-0000-7000-8000-0000000000c1', title: 'Release notes' }];
+    applyVersionedSidebarList(client, 'automations', 1, [
+      { id: 'tracker', name: 'Launch tracker', description: '', scope: 'you', status: 'active', updatedAt: '2026-11-07T09:00:00.000Z', attachedCanvases },
+    ]);
+    render(<QueryClientProvider client={client}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
+    const chosen = await screen.findByRole('link', { name: 'Canvas: Release notes' });
+    expect(chosen.querySelector('.lucide')).toBeNull();
+    const rows: CanvasSidebarRow[] = attachedCanvases.map((canvas) => ({
+      ...canvas, id: asWorkstreamId(canvas.id), createdByUserId: asUserId('00000000-0000-7000-8000-0000000000a1'),
+      createdAt: '2026-11-07T09:00:00.000Z', updatedAt: '2026-11-07T09:00:00.000Z',
+      lastEditor: null, writerSidekickId: null, visibility: 'creator', unread: false,
+      presentUserIds: [], pinnedPosition: null, sharedWithMe: false,
+      artifactKind: 'site', appearance: { icon: canvas.id === '00000000-0000-7000-8000-0000000000c1' ? 'flag' : null, color: 'orange' },
+    }));
+    act(() => { applyVersionedSidebarList(client, 'canvases', 1, rows); });
+    await waitFor(() => { expect(chosen.querySelector('.lucide-flag')).toBeInTheDocument(); });
+    act(() => { applyVersionedSidebarList(client, 'canvases', 2, rows.map((row) => ({ ...row, appearance: { icon: 'star', color: 'blue' } }))); });
+    await waitFor(() => { expect(chosen.querySelector('.lucide-star')).toBeInTheDocument(); });
+    expect(chosen).toHaveAttribute('href', '/canvases/00000000-0000-7000-8000-0000000000c1');
+  });
+
+  it('shows actual attachment icons outside the loaded Canvas page and follows attachment updates', async () => {
+    socket.mounted = true;
+    const client = new QueryClient();
+    applyVersionedSidebarList(client, 'canvases', 1, []);
+    const item: AutomationSummary = { id: 'tracker', name: 'Launch tracker', description: '', scope: 'you', status: 'active', updatedAt: '2026-11-07T09:00:00.000Z',
+      attachedCanvases: [
+        { id: 'custom', title: 'Release notes', artifactKind: 'file', appearance: { icon: 'flag', color: 'orange' } },
+        { id: 'site', title: 'Dashboard', artifactKind: 'site', appearance: { icon: null, color: null } },
+      ] };
+    applyVersionedSidebarList(client, 'automations', 1, [item]);
+    render(<QueryClientProvider client={client}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
+    const chosen = await screen.findByRole('link', { name: 'Canvas: Release notes' });
+    expect(chosen.querySelector('.lucide-flag')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Canvas: Dashboard' }).querySelector('.lucide-globe')).toBeInTheDocument();
+    act(() => { applyVersionedSidebarList(client, 'automations', 2, [{ ...item, attachedCanvases: [
+      { id: 'custom', title: 'Updated notes', artifactKind: null, appearance: { icon: 'star', color: 'blue' } },
+    ] }]); });
+    await waitFor(() => { expect(screen.getByRole('link', { name: 'Canvas: Updated notes' }).querySelector('.lucide-star')).toBeInTheDocument(); });
   });
 
   it.each(['desktop', 'browser'] as const)('renders in the main window (%s)', async (host) => {
