@@ -709,7 +709,8 @@ import {
 import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-batch";
 import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
 import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
-import { CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_STATEMENTS, CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
+import { CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_STATEMENTS, CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
+import { sidekickAttachedToCanvas } from "./canvas-sidekick-admission";
 import { canvasAppearanceReporter, canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS, SIDEKICK_RUN_SEED_DROP_STATEMENTS } from "./hosted-sidekick-schema";
 import {
@@ -741,6 +742,7 @@ import {
   type ConversationToolResolveResult,
   type ConversationToolScopeResult,
 } from "./workspace-conversation-tool-protocol";
+import { ArtifactDataWriteFactsRequestSchema, artifactDataWriteFacts, type ArtifactDataWriteFacts } from "./workspace-artifact-data-write";
 
 import { SIDEKICK_DELEGATION_SCHEMA_STATEMENTS, SidekickDelegationStorage } from "./sidekick-delegation-storage";
 
@@ -4424,6 +4426,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `DROP TABLE IF EXISTS automation_email_rate_windows`,
     `DROP TABLE IF EXISTS workstream_email_receipts`,
   ],
+}, {
+  version: 144,
+  description: "a Sidekick made in a Canvas records that Canvas as its home, and a Sidekick's Canvas attachments become the one record of which Canvases it works on",
+  // See SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS and docs/automation-lifecycle.md#attached-conversations.
+  statements: SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4455,6 +4462,7 @@ const ReorderSidebarPinsRequestSchema = SidebarPinOrderRequestSchema.extend({
   workspaceId: WorkspaceIdSchema, userId: UserIdSchema,
 });
 const CanvasContextRequestSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, canvasId: IdSchema });
+const SidekickCanvasContextRequestSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, sidekickId: IdSchema, userId: UserIdSchema });
 const CanvasForSidekickRunRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, sidekickId: IdSchema, runId: IdSchema, canvasId: IdSchema.nullable(),
 });
@@ -5188,7 +5196,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async hostedConversationAuthorizationFacts(input: Parameters<HostedSidekick["readAuthorizationFacts"]>[0]) {
     const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
     if (hosted instanceof HostedCanvas) return { kind: "canvas" as const, ...await hosted.readAuthorizationFacts(input) };
-    if (hosted instanceof HostedSidekick) return { kind: "automation" as const, ...hosted.readAuthorizationFacts(input) };
+    if (hosted instanceof HostedSidekick) return { kind: "automation" as const, ...await hosted.readAuthorizationFacts(input) };
     return { kind: null, exists: false as const, validatedAt: Date.now() };
   }
 
@@ -5263,9 +5271,36 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.canvasReadersMoved.add(userId);
       },
       noteCanvasDirectoryChanged: () => this.noteCanvasDirectoryMoved(),
+      noteCanvasAudienceChanged: (canvasId) => {
+        // A Sidekick made in the Canvas admits whoever the Canvas does, so
+        // the Sidekick list moves with the Canvas's audience. One indexed
+        // probe, and nothing for a Canvas that made no Sidekick.
+        if (this.homeSidekickIds(canvasId).length === 0) return;
+        this.state.storage.sql.exec(
+          `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`,
+        );
+        this.sidekickDirectoryMoved = true;
+      },
+      archiveHomeSidekicks: (canvasId, now) => {
+        const host = this.hostedSidekickHost();
+        for (const sidekickId of this.homeSidekickIds(canvasId)) {
+          if (new HostedSidekick(host, sidekickId).archiveWithHome(now)) this.homeSidekicksArchived.push(sidekickId);
+        }
+      },
       noteActivityChanged: (userId) => this.noteActivityMoved(userId),
       noteActivityReadMoved: (userId, parentId) => this.noteActivityReadMoved(userId, parentId),
     };
+  }
+
+  /** Sidekicks a Canvas archive archived in its transaction, owed `afterSidekickRegistrations` once it commits. */
+  private homeSidekicksArchived: string[] = [];
+
+  /** The Sidekicks made in a Canvas's Chat that are not archived (`automation_directory.home_canvas_id`). */
+  private homeSidekickIds(canvasId: string): string[] {
+    return this.state.storage.sql.exec<{ automation_id: string }>(
+      `SELECT automation_id FROM automation_directory WHERE home_canvas_id = ? AND lifecycle <> 'deleted' ORDER BY automation_id`,
+      canvasId,
+    ).toArray().map((row) => row.automation_id);
   }
 
   /**
@@ -5299,6 +5334,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     try {
       return await run();
     } finally {
+      // A no-op unless the write moved a Sidekick made in the Canvas (its audience, or its archive).
+      this.publishSidekickList();
       this.publishCanvasList();
       this.publishActivityList();
       await this.afterHostedWrite();
@@ -5320,8 +5357,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async canvasArchive(input: Parameters<HostedCanvas["archive"]>[0]): Promise<void> {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
     await this.canvasWrite(async () => {
+      this.homeSidekicksArchived = [];
       canvas.archive(input);
       this.broadcastPresence();
+      // What `HostedSidekick.remove` owes after its own archive commits: the
+      // Sidekicks this archive took with it stop matching connector events.
+      const archived = this.homeSidekicksArchived;
+      this.homeSidekicksArchived = [];
+      for (const sidekickId of archived) await this.afterSidekickRegistrations(sidekickId, null, []);
     });
   }
 
@@ -5334,19 +5377,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * Which Canvas a Sidekick run publishes into: the one named, which must be
-   * one this Sidekick writes, or the one this run already made; `null` when
-   * the run has made none yet, and its caller creates it.
+   * attached to this Sidekick, or the one this run already made; `null` when
+   * the run has made none yet, and its caller creates it. A run's own Canvas
+   * is attached as it is made, so the attachment is the one publish grant.
    */
   async canvasForSidekickRun(rawInput: { workspaceId: string; sidekickId: string; runId: string; canvasId: string | null }): Promise<{ canvasId: string | null }> {
     await this.initialized;
     const input = parseRpcInput(CanvasForSidekickRunRequestSchema, rawInput, "canvas_for_sidekick_run");
     this.assertWorkspace(input.workspaceId);
     if (input.canvasId !== null) {
-      const row = this.state.storage.sql.exec<{ writer_sidekick_id: string | null; archived_at: number | null }>(
-        `SELECT writer_sidekick_id, archived_at FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, input.canvasId, input.workspaceId,
+      const row = this.state.storage.sql.exec<{ archived_at: number | null }>(
+        `SELECT archived_at FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, input.canvasId, input.workspaceId,
       ).toArray()[0];
-      if (row?.writer_sidekick_id !== input.sidekickId) {
-        throw new ApiError(404, "canvas_not_written_by_sidekick", "This Sidekick does not write that Canvas");
+      if (!row || !sidekickAttachedToCanvas(this.state.storage.sql, input.sidekickId, input.canvasId)) {
+        throw new ApiError(404, "canvas_not_attached_to_sidekick", "This Sidekick is not attached to that Canvas");
       }
       if (row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
       return { canvasId: input.canvasId };
@@ -5387,7 +5431,38 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
     const row = canvas?.row();
     if (!canvas || !row || row.archived_at !== null || row.workspace_id !== input.workspaceId) return null;
-    return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.artifacts() };
+    return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.agentArtifacts(), sidekicks: canvas.sidekicks() };
+  }
+
+  /**
+   * What a Sidekick's run is told about the Canvases it was attached to: each
+   * one's title and artifacts, as `canvasContext` gives a Canvas's own Chat.
+   * Only Canvases somebody attached it to (the one it was made in, and any its
+   * wizard attached), never the Canvas each of its own runs made, which would
+   * grow by one per run; and only those the acting person may open now.
+   */
+  async sidekickCanvasContext(rawInput: { workspaceId: string; sidekickId: string; userId: string }) {
+    await this.initialized;
+    const input = parseRpcInput(SidekickCanvasContextRequestSchema, rawInput, "sidekick_canvas_context");
+    this.assertWorkspace(input.workspaceId);
+    const sql = this.state.storage.sql;
+    const attached = sql.exec<CanvasRow>(
+      `SELECT canvas.* FROM sidekick_conversation_attachments attachment
+         JOIN canvas_directory canvas ON canvas.canvas_id = attachment.parent_id
+        WHERE attachment.automation_id = ?1 AND attachment.parent_kind = 'canvas' AND attachment.substream_id = '0'
+          AND canvas.workspace_id = ?2 AND canvas.archived_at IS NULL
+          AND (canvas.writer_sidekick_id IS NULL OR canvas.writer_sidekick_id <> ?1)
+        ORDER BY attachment.attached_at, attachment.parent_id`,
+      input.sidekickId, input.workspaceId,
+    ).toArray();
+    if (attached.length === 0) return [];
+    const relationship = await this.readRelationship(input.workspaceId, input.userId);
+    if (relationship?.status !== "active") return [];
+    const actorRole = relationship.accessClass === "member" ? relationship.role ?? "member" : null;
+    const host = this.hostedCanvasHost();
+    return attached.filter((row) => canvasReaderAllows(row, { userId: input.userId, actorRole }, sql)).map((row) => ({
+      canvasId: row.canvas_id, title: row.title, artifacts: new HostedCanvas(host, row.canvas_id).agentArtifacts(),
+    }));
   }
 
   /** Retitle a Canvas or choose its appearance; see `HostedCanvas.update`. */
@@ -5416,7 +5491,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Change who can open a Canvas; see `HostedCanvas.setAudience`. */
   async canvasSetAudience(input: Parameters<HostedCanvas["setAudience"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
-    return this.canvasWrite(() => this.closingNarrowedConversations(input.workspaceId, [input.canvasId], async () => {
+    // A Sidekick made in the Canvas admits whoever the Canvas does, so a
+    // narrowing reaches those conversations too.
+    return this.canvasWrite(() => this.closingNarrowedConversations(input.workspaceId, [input.canvasId, ...this.homeSidekickIds(input.canvasId)], async () => {
       const detail = await canvas.setAudience(input);
       // Someone the Canvas no longer admits stops being shown in it, and the
       // people still in it are told who is left, before the one Canvas list
@@ -5716,6 +5793,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.sidekickReadersMoved.add(userId);
       },
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
+      noteHomeCanvasChanged: () => this.noteCanvasDirectoryMoved(),
       noteWriterReaders: (sidekickId, readers) => {
         if (this.writerSidekickReaders.get(sidekickId) === readers) return;
         this.writerSidekickReaders.set(sidekickId, readers);
@@ -7682,6 +7760,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // failed tool call. The normal post-commit lane retries the signal.
     await this.afterHostedWrite();
     return { ok: true, alreadyAttached: attached.alreadyAttached, conversation: conversationToolEntry(target) };
+  }
+
+  /**
+   * What `write_artifact_data` needs to gate a row write: the artifact a
+   * resource is, its Canvas, and whether that Canvas is open and attached to
+   * the Sidekick named. One local read; it admits nobody by itself
+   * (`workspace-artifact-data-write.ts`).
+   */
+  async artifactDataWriteFacts(input: unknown): Promise<ArtifactDataWriteFacts | null> {
+    await this.initialized;
+    const request = parseRpcInput(ArtifactDataWriteFactsRequestSchema, input, "artifact_data_write_facts");
+    this.assertWorkspace(request.workspaceId);
+    return artifactDataWriteFacts(this.state.storage.sql, request);
   }
 
   /**

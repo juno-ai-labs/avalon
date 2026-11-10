@@ -18,7 +18,7 @@ import {
   SidekickReviewNoticeV1Schema, type SidekickReviewNoticeV1,
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
-import { sidekickAdmits } from "../services/authorization-policy";
+import { sidekickAttachedToCanvas, canvasReaderAllows as homeCanvasReaderAllows, sidekickHomeAdmits, sidekickManages, sidekickReaderAllows, sidekickSharedWith } from "./canvas-sidekick-admission";
 import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "./sidekick-source-registrations";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
@@ -131,7 +131,7 @@ import {
 import { RECEIVE_CHILD_EFFECTS_MAX_ENVELOPES, type DirectoryCommonEffect } from "./conversation-parent-object";
 import { sidekickAudienceAllows } from "./sidekick-audience";
 import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
-import { conversationIdOf } from "./workspace-sidekick-conversation-storage";
+import { attachSidekickConversation, conversationIdOf } from "./workspace-sidekick-conversation-storage";
 
 /**
  * A Sidekick's parent, hosted in its Organization's `WorkspaceDO`.
@@ -250,6 +250,8 @@ export interface HostedSidekickRow extends Record<string, SqlStorageValue> {
   lifecycle: Lifecycle;
   paused_by: "person" | "room_archive" | null;
   scope: AutomationScope;
+  /** The Canvas whose Chat made this Sidekick (migration 144); everyone that Canvas admits reads and manages it. */
+  home_canvas_id: string | null;
   title: string;
   description: string;
   current_definition_revision: number;
@@ -400,6 +402,8 @@ export interface HostedSidekickHost {
    * differs from the last it saw, so a run's own touches cost no list push.
    */
   noteWriterReaders(sidekickId: string, readers: string): void;
+  /** Inside the transaction that attached a Sidekick to the Canvas it was made in: that Canvas's detail and context moved. */
+  noteHomeCanvasChanged(canvasId: string): void;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** See `HostedConversationHost.noteActivityChanged`. */
   noteActivityChanged(userId: string): void;
@@ -454,47 +458,7 @@ function scheduleDueAfter(kind: "calendar" | "interval", definitionJson: string,
   )?.getTime() ?? null;
 }
 
-/**
- * The library's and the management API's read rule, over a directory row
- * alone, so a Sidekick whose import has not run is decided the same way:
- * `sidekickAdmits` over its scope, its author and executor, and its `people`
- * list. A guest has no `actorRole`, so Organization scope never admits one.
- */
-export function sidekickReaderAllows(
-  row: {
-    automation_id: string;
-    scope: string; author_user_id: string; run_as_user_id: string | null; lifecycle: string;
-  },
-  actor: { userId: string; actorRole: "owner" | "admin" | "member" | null },
-  sql: SqlStorage,
-): boolean {
-  if (row.lifecycle === "deleted") return false;
-  return sidekickAdmits({
-    scope: row.scope,
-    author: row.author_user_id === actor.userId,
-    executor: row.run_as_user_id === actor.userId,
-    shared: sidekickSharedWith(sql, row.automation_id, actor.userId),
-  }, actor.actorRole != null);
-}
-
-/**
- * Who manages a Sidekick: its author, the person it runs as, and for an
- * Organization one its owners and administrators. Also who manages the
- * audience of a Canvas the Sidekick writes.
- */
-export function sidekickManagerAllows(
-  row: { scope: string; author_user_id: string; run_as_user_id: string | null },
-  actor: { userId: string; actorRole?: "owner" | "admin" | "member" | null | undefined },
-): boolean {
-  return row.author_user_id === actor.userId || row.run_as_user_id === actor.userId
-    || (row.scope === "workspace" && (actor.actorRole === "owner" || actor.actorRole === "admin"));
-}
-
-/** Whether this person is on a Sidekick's `people` list. */
-export function sidekickSharedWith(sql: SqlStorage, sidekickId: string, userId: string): boolean {
-  return sql.exec(`SELECT 1 FROM sidekick_audience WHERE sidekick_id = ? AND user_id = ? LIMIT 1`, sidekickId, userId)
-    .toArray().length > 0;
-}
+export { sidekickManagerAllows, sidekickManages, sidekickReaderAllows, sidekickSharedWith } from "./canvas-sidekick-admission";
 
 
 /** What a skill read says about its audience: the request without the Sidekick it names. */
@@ -579,9 +543,16 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       throw this.delegationError("sidekick_delegation_membership_unavailable");
     }
     const now = Date.now();
+    const homeCanvasId = request.homeCanvasId ?? null;
     // The insert is the existence check: a repeat finds the row and returns
     // nothing, and is answered from the row it found.
     return this.storage.transactionSync(() => {
+      // A Sidekick made in a Canvas's Chat: the person asking must be in that
+      // Canvas now, since the Sidekick's runs will write there for them.
+      if (homeCanvasId !== null) this.assertHomeCanvas(request.workspaceId, homeCanvasId, {
+        userId: request.authorUserId,
+        actorRole: creatorRelationship.accessClass === "member" ? creatorRelationship.role ?? "member" : null,
+      });
       const created = this.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, region, author_user_id, run_as_user_id, source_version, payload_hash,
@@ -590,9 +561,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
             current_definition_revision, accepted_definition_revision, connector_bindings_json,
             default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
             model_override, effective_after_event_sequence, authority_generation,
-            stop_generation, chat_appearance_json, delegation_migrated, created_at, updated_at)
+            stop_generation, chat_appearance_json, delegation_migrated, created_at, updated_at, home_canvas_id)
          VALUES (?, ?, ?, ?, ?, 1, 'hosted', 'draft', NULL, ?, NULL, '0', NULL, '', '', NULL, ?, 0, NULL,
-                 0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, ?, 0, NULL, 1, ?, ?)
+                 0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, ?, 0, NULL, 1, ?, ?, ?)
          ON CONFLICT(automation_id) DO NOTHING
          RETURNING automation_id`,
         request.automationId,
@@ -605,10 +576,18 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         request.authorityGeneration,
         now,
         now,
+        homeCanvasId,
       ).toArray().length === 1;
       if (!created) {
         this.assertSidekick(request.workspaceId, request.automationId);
         return { created: false };
+      }
+      // The same transaction attaches it, so a Sidekick with a home always
+      // reaches that Canvas: there is no made-but-unattached state to repair.
+      if (homeCanvasId !== null) {
+        attachSidekickConversation(this.sql, { automationId: this.sidekickId,
+          address: { parentKind: "canvas", parentId: homeCanvasId, substreamId: "0" }, userId: request.authorUserId, now });
+        this.host.noteHomeCanvasChanged(homeCanvasId);
       }
       this.registerChild("0", "main", request.authorUserId, now);
       if (!this.delegations().read(this.sidekickId, request.authorUserId)) {
@@ -621,6 +600,30 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       this.host.noteDirectoryChanged(this.sidekickId, false, now);
       return { created: true };
     });
+  }
+
+  /** The Canvas a Sidekick is being made in: this Organization's, not archived, and open to the person asking. */
+  private assertHomeCanvas(workspaceId: string, canvasId: string, actor: { userId: string; actorRole: "owner" | "admin" | "member" | null }): void {
+    const canvas = first(this.sql.exec<{
+      canvas_id: string; created_by_user_id: string; writer_sidekick_id: string | null; visibility: string; archived_at: number | null;
+    }>(
+      `SELECT canvas_id, created_by_user_id, writer_sidekick_id, visibility, archived_at
+         FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, canvasId, workspaceId,
+    ));
+    if (canvas && canvas.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
+    if (!canvas || !homeCanvasReaderAllows(canvas, actor, this.sql)) throw new ApiError(404, "canvas_not_found", "This Canvas does not exist");
+  }
+
+  /**
+   * Archive a Sidekick with the Canvas it was made in, inside that archive's
+   * transaction. No manager is asked: whoever archived the Canvas manages it.
+   * The caller owes `afterRegistrations` once the transaction commits.
+   */
+  archiveWithHome(now: number): boolean {
+    const row = this.row();
+    if (!row || row.lifecycle === "deleted") return false;
+    this.archive(now);
+    return true;
   }
 
   private delegations(): SidekickDelegationStorage {
@@ -1642,15 +1645,25 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   // ---------------------------------------------------------------------------
 
   /** No participant admission and no projection-dependent permission decision. */
-  readAuthorizationFacts(input: ConversationAuthorizationRequest) {
+  async readAuthorizationFacts(input: ConversationAuthorizationRequest) {
     const request = parseRpcInput(ConversationAuthorizationRequestSchema, input, "read_authorization_facts");
-    const row = this.row();
-    if (!row || row.lifecycle === "deleted") return { exists: false as const, validatedAt: Date.now() };
-    this.assertIdentity(row, request.workspaceId, request.parentId);
+    const initial = this.row();
+    if (!initial || initial.lifecycle === "deleted") return { exists: false as const, validatedAt: Date.now() };
+    this.assertIdentity(initial, request.workspaceId, request.parentId);
+    // Only a Sidekick made in a Canvas reads a relationship: its home's
+    // Organization visibility admits a member and never a guest.
+    const named = sidekickSharedWith(this.sql, this.sidekickId, request.userId);
+    const relationship = named || initial.home_canvas_id === null ? null
+      : request.relationship ?? await this.host.readRelationship(initial.workspace_id, request.userId);
+    // Read again after the await: the row is what the facts describe.
+    const row = this.row() ?? initial;
+    if (row.lifecycle === "deleted") return { exists: false as const, validatedAt: Date.now() };
+    const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
     return {
       exists: true as const, scope: row.scope,
       author: row.author_user_id === request.userId,
-      shared: sidekickSharedWith(this.sql, this.sidekickId, request.userId),
+      shared: named || (relationship?.status === "active"
+        && sidekickHomeAdmits(this.sql, this.sidekickId, { userId: request.userId, actorRole })),
       executor: row.run_as_user_id === request.userId,
       children: this.childRegistry().map((child) => child.substreamId),
       revision: JSON.stringify([row.authority_generation, row.updated_at]), validatedAt: Date.now(),
@@ -3008,7 +3021,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   }
 
   private async managerAllows(row: HostedSidekickRow, actor: AutomationActor): Promise<boolean> {
-    return sidekickManagerAllows(row, actor);
+    return sidekickManages(row, actor, this.sql);
   }
 
   /** The management API's read check (`sidekickReader`). */
@@ -3061,6 +3074,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       lifecycle: row.lifecycle,
       authorUserId: row.author_user_id,
       runAsUserId: row.run_as_user_id,
+      homeCanvasId: row.home_canvas_id,
       delegationAttention: row.delegation_attention_code === null ? null : {
         code: SidekickDelegationAttentionCodeSchema.parse(row.delegation_attention_code),
         message: SIDEKICK_DELEGATION_ATTENTION_MESSAGES[SidekickDelegationAttentionCodeSchema.parse(row.delegation_attention_code)],
