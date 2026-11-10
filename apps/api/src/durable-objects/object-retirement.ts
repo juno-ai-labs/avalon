@@ -245,8 +245,9 @@ export type DropResultFactory = (args: readonly unknown[]) => unknown;
  * `runInspectionSql` is not read-only, and the permit is deliberate: it is the
  * repair door (`docs/engineering-mcp.md`), and the one way an operator can
  * inspect or correct what a retired object holds — including the tombstone
- * itself. It is the single path by which a retired object can be written, and
- * `docs/workspace-retirement.md` names it as such.
+ * itself. It is the only write permitted on every class;
+ * `docs/workspace-retirement.md` names it and the one class-specific write,
+ * `WorkspaceDO.sidekickRemove`.
  *
  * A permit names an *entry point*, and it carries the whole call: see
  * {@link unfencedView}.
