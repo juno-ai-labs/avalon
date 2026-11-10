@@ -39,19 +39,12 @@ function sharedWith(item: AutomationSummary, membersById: ReadonlyMap<string, Wo
   if (item.audience !== 'people') return item.scope === 'you' ? 'Only you' : 'Organization';
   const ids = item.sharedWithUserIds ?? [];
   if (ids.length === 0) return 'People';
-  const members = ids.flatMap((id) => {
+  const visible = ids.flatMap((id) => {
     const member = membersById.get(id);
     return member ? [member] : [];
-  });
-  if (members.length === 0) return ids.length === 1 ? '1 person' : `${ids.length} people`;
-
-  const missing = ids.length - members.length;
-  const names = members.map((member) => member.name);
-  if (missing > 0) names.push(`and ${missing} more`);
-  const limit = 4;
-  return <span aria-label={names.join(', ')} role="img">
-    <AvatarStack members={members} limit={limit} extraCount={ids.length - Math.min(members.length, limit)} />
-  </span>;
+  }).slice(0, 4);
+  if (visible.length === 0) return ids.length === 1 ? '1 person' : `${ids.length} people`;
+  return <AvatarStack members={visible} extraCount={ids.length - visible.length} role="img" />;
 }
 
 /**
@@ -78,6 +71,7 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
   );
   const { data: members } = useWorkspaceMembers(api, {
     enabled: items.some((item) => item.audience === 'people' && item.sharedWithUserIds?.length),
+    staleTime: Number.POSITIVE_INFINITY,
   });
   const membersById = new Map(members?.map((member) => [member.id, member]));
   const newSidekick = <Link className="button button-primary window-no-drag" to="/sidekicks/new"><Plus aria-hidden="true" size={16} />New Sidekick</Link>;
@@ -98,25 +92,23 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
   </main>;
 }
 
-/** The whole card is one link, so hovering an avatar can show a name and clicking it still opens the Sidekick. */
+/** The title link stretches over the card while its facts remain separate from the link. */
 function SidekickCard({ item, membersById }: { item: AutomationSummary; membersById: ReadonlyMap<string, WorkspaceMember> }): React.JSX.Element {
   const { tint } = resolveWorkstreamAppearance(item.id, item.appearance ?? undefined);
   return <li className="dashboard-card">
-    <Link aria-label={item.name} className="dashboard-card-link sidekick-card-link" to={`/sidekicks/${encodeURIComponent(item.id)}`}>
-      <div className="dashboard-card-preview" style={{ background: `color-mix(in srgb, ${tint} 45%, var(--av-sys-color-surface-raised))` }}>
-        <span className="sidekick-card-glyph"><AutomationGlyph {...(item.appearance ? { appearance: item.appearance } : {})} id={item.id} /></span>
-        {item.status === 'paused' && <span className="sidekick-card-status"><span className="sidekick-status-pill is-paused"><IconPlayerPause aria-hidden="true" size={13} stroke={1.8} />Paused</span></span>}
-        {sidekickStatus(item) === 'needs_input' && <span className="sidekick-needs-input-badge">Needs input</span>}
-      </div>
-      <div className="sidekick-card-body">
-        <h3>{item.name}</h3>
-        <p>{item.description}</p>
-        <dl className="sidekick-card-facts">
-          <div><dt>Shared with</dt><dd>{sharedWith(item, membersById)}</dd></div>
-          <div><dt>Next</dt><dd>{sidekickNext(item)}</dd></div>
-        </dl>
-      </div>
-    </Link>
+    <div className="dashboard-card-preview" style={{ background: `color-mix(in srgb, ${tint} 45%, var(--av-sys-color-surface-raised))` }}>
+      <span className="sidekick-card-glyph"><AutomationGlyph {...(item.appearance ? { appearance: item.appearance } : {})} id={item.id} /></span>
+      {item.status === 'paused' && <span className="sidekick-card-status"><span className="sidekick-status-pill is-paused"><IconPlayerPause aria-hidden="true" size={13} stroke={1.8} />Paused</span></span>}
+      {sidekickStatus(item) === 'needs_input' && <span className="sidekick-needs-input-badge">Needs input</span>}
+    </div>
+    <div className="sidekick-card-body">
+      <h3><Link className="dashboard-card-link" to={`/sidekicks/${encodeURIComponent(item.id)}`}>{item.name}</Link></h3>
+      <p>{item.description}</p>
+      <dl className="sidekick-card-facts">
+        <div><dt>Shared with</dt><dd>{sharedWith(item, membersById)}</dd></div>
+        <div><dt>Next</dt><dd>{sidekickNext(item)}</dd></div>
+      </dl>
+    </div>
   </li>;
 }
 

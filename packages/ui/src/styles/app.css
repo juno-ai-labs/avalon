@@ -6932,8 +6932,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-card-run { color: inherit; position: relative; text-decoration: none; z-index: 1; }
 .canvas-card-run:hover { color: var(--av-sys-color-text-default); text-decoration: underline; }
 /* Sidekicks use the Canvas card shell, carrying their own identity and facts. */
-.sidekick-card-link { display: block; height: 100%; }
-.sidekick-card-link::after { content: none; }
 .sidekick-card-glyph { height: 72px; width: 72px; }
 .sidekick-card-status { position: absolute; right: 12px; top: 12px; }
 .dashboard-card-preview .sidekick-needs-input-badge { left: 12px; margin: 0; position: absolute; top: 12px; }
@@ -6944,6 +6942,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-card-facts div { min-width: 0; }
 .sidekick-card-facts dt { color: var(--av-sys-color-text-muted); font-size: 11.5px; margin-bottom: 3px; }
 .sidekick-card-facts dd { align-items: center; display: flex; font-size: 12.5px; margin: 0; min-height: 24px; overflow-wrap: anywhere; }
+.sidekick-card-facts .avatar-stack { position: relative; z-index: 1; }
 .canvas-prompt-card { border: 1px solid var(--av-sys-color-border-default); border-radius: 16px; max-width: 560px; padding: 20px; }
 .canvas-prompt-card h2 { align-items: center; display: flex; font-size: 16px; font-weight: 500; gap: 8px; margin: 0 0 6px; }
 .canvas-prompt-card p { color: var(--av-sys-color-text-muted); font-size: 14px; margin: 0 0 14px; }
