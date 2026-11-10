@@ -1260,6 +1260,11 @@ export class RallyApi {
     await this.requestVoid(`/canvases/${encodeURIComponent(id)}/pin`, { method: 'POST', body: { pinned } });
   }
 
+  /** The Canvas list and navigation rail share this one pin order. */
+  async reorderCanvasPins(itemIds: string[]): Promise<void> {
+    await this.requestVoid('/canvases/pinned-order', { method: 'PUT', body: { itemIds } });
+  }
+
   /** Pin a Sidekick in, or out of, the Sidekick list's Pinned group. */
   async setSidekickPinned(id: string, pinned: boolean): Promise<void> {
     await this.requestVoid(`/sidekicks/${encodeURIComponent(id)}/pin`, { method: 'POST', body: { pinned } });

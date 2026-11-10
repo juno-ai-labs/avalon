@@ -27,7 +27,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/durable-objects/workspace-do.ts` | The facade: `canvasCreate`, `canvasDetail`, `canvasUpdate` (the title and the appearance), `canvasSetAudience`, `hostedConversationAuthorizationFacts`, every conversation-parent method for a Canvas id, and the Canvas branch of `createScopeInvitations`, `claimScopeInvitations`, `revokeScopeInvitation` and the invitation alarms. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Conversation object migration 83: its root row admits the `canvas` parent kind. |
 | `apps/api/src/services/canvas-service.ts` | `createCanvas`: the directory row, then the Chat's object, bootstrapped and provisioned with the creator seated; `CanvasService`, the routes' service. |
-| `apps/api/src/routes/canvases.ts` | `GET /canvases` (the reader's list, as their sidebar socket sends it, for a client with no socket such as the [MCP server](rally-mcp.md)), `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title and the appearance), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`, `POST /canvases/:id/archive`, `POST /canvases/:id/artifacts` (a person publishing a file or static site made elsewhere; [`rally-mcp.md`](rally-mcp.md#publishing)). `PUT /workspace/pinned-order` (in `routes/workspace.ts`) orders a Pinned group. |
+| `apps/api/src/routes/canvases.ts` | `GET /canvases` (the reader's list, as their sidebar socket sends it, for a client with no socket such as the [MCP server](rally-mcp.md)), `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title and the appearance), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`, `POST /canvases/:id/archive`, `POST /canvases/:id/artifacts` (a person publishing a file or static site made elsewhere; [`rally-mcp.md`](rally-mcp.md#publishing)). `PUT /canvases/pinned-order` orders personal Canvas pins for members and guests; the legacy member-only `/workspace/pinned-order` remains. |
 | `apps/api/src/services/integrations.ts` | `canvasRunContextMessage`: the `CANVAS CONTEXT` message a run in a Canvas's Chat is given. |
 | `apps/api/src/services/terminal/authority.ts` | `resolveTerminalPublicationHome` (a Sidekick run publishes into a Canvas) and `canvasArtifactNoter` (a publish tells its Canvas). |
 | `apps/api/src/services/conversation-service.ts`, `socket-service.ts` | Opening a Canvas's Chat: admission by the Canvas, the reader seated, and a ticket whose `pk` is `canvas`. |
@@ -578,7 +578,8 @@ card grid with Sidekicks; the shared layout is described in
   back the access just given.
 - **Pinning** is `POST /canvases/:id/pin`, from the pill's menu, a row's
   context menu, or dragging a row into the section's Pinned group
-  (`useRowPinDrop`); a pin lands at the end of the group
+  (`useCanvasPinDrag`), including the left rail; both surfaces share one order,
+  and support drag or Alt + Up/Down reordering
   ([`pinning.md`](pinning.md)).
 
 Copying a Canvas's link is **Copy link**, the form
