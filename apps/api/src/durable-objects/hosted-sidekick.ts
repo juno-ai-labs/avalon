@@ -1,3 +1,4 @@
+import type { ConversationToolResolveRequest, ConversationToolResolveResult } from "./workspace-conversation-tool-protocol";
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
 import { sidekickRowRunState } from "./sidekick-directory-sql";
@@ -364,6 +365,7 @@ export interface SidekickReviewDelivery {
 
 /** What `WorkspaceDO` lends a hosted Sidekick. */
 export interface HostedSidekickHost {
+  resolveConversationToolTarget(input: ConversationToolResolveRequest): Promise<ConversationToolResolveResult>;
   env: Env;
   storage: DurableObjectStorage;
   /**
@@ -993,10 +995,21 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     if (!revision || revision.ready !== 1) {
       throw new ApiError(422, "sidekick_definition_not_ready", "The Sidekick's definition is not ready to apply");
     }
+    const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
+    if (definition.failureNotificationConversationId) {
+      const destination = await this.host.resolveConversationToolTarget({
+        workspaceId: asWorkspaceId(row.workspace_id), userId: asUserId(row.run_as_user_id),
+        scope: { kind: "sidekick", automationId: row.automation_id },
+        reference: definition.failureNotificationConversationId,
+      });
+      if (!destination.ok || destination.conversation.conversationId !== definition.failureNotificationConversationId) {
+        throw new ApiError(422, "sidekick_failure_notification_destination_unavailable",
+          "failureNotificationConversationId must name an accessible conversation in this Sidekick's scope. Attach the intended Canvas before saving this Sidekick.");
+      }
+    }
     if (row.lifecycle === "active" && row.accepted_definition_revision === revision.definition_revision) {
       return this.detail();
     }
-    const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
     const prepared = definition.triggers.length === 0
       ? { selections: { defaultPluginIds: [], activitySourcePluginIds: {} }, connectorBindings: {}, evaluators: [], schedules: [] }
       : await this.prepareApplication(row, revision, definition, request.actor.userId);
@@ -1411,6 +1424,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         instructions: definition.instructions,
         requiredCapabilities: definition.requiredCapabilities,
         expectedOutputs: definition.expectedOutputs,
+        ...(definition.failureNotificationConversationId === undefined ? {}
+          : { failureNotificationConversationId: definition.failureNotificationConversationId }),
         defaultBehavior: definition.defaultBehavior,
         recommendedPlugins: definition.recommendedPlugins,
         memoryTables: definition.memoryTables,

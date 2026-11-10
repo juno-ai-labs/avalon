@@ -48,7 +48,7 @@ import { SlackAgentService } from "../src/services/slack-agent-service";
 
 import { deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { memberInputs, useOpenRouterDouble } from "./helpers/openrouter-double";
+import { memberInputs, useOpenRouterDouble, withSuccessfulSidekickOutcome } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { runSidekickAlarms } from "./helpers/sidekick";
@@ -104,7 +104,7 @@ const DEFINITION: AutomationDraft = {
  * pointed at (later run).
  */
 let opening: "send" | { read: string } = "send";
-const provider = useOpenRouterDouble((call) => {
+const provider = useOpenRouterDouble(withSuccessfulSidekickOutcome((call) => {
   if (call.messages.at(-1)?.role === "tool") return { say: "Done." };
   const lastUser = text(memberInputs(call).at(-1)?.content);
   if (lastUser.startsWith("This run is continuing because")) {
@@ -114,7 +114,7 @@ const provider = useOpenRouterDouble((call) => {
   const send = call.toolNames.find((name) => /^slack.*send_message$/u.test(name));
   if (!send) return { say: `no Slack send tool among ${call.toolNames.join(",")}` };
   return { callTool: { name: send, arguments: { channel_id: DM_CHANNEL, text: ASK_TEXT } } };
-});
+}));
 useSelectedModel();
 useHeldEffectQueue();
 
