@@ -2956,7 +2956,7 @@ describe("canonical ordered work-stream transcript", () => {
       reserved.transition,
       NOW + 2,
       reserved.executionFence,
-      (effects) => deliveries.push(...effects),
+      { enqueueRegionalEffects: (effects) => deliveries.push(...effects) },
     );
 
     expect(transcript.participantTurn("run-1:turn:1")).toMatchObject({
