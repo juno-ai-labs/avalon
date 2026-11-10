@@ -15,17 +15,18 @@ function RunningCount({ count }: { count: number }): React.JSX.Element {
 
 /** Live execution only. Unknown, disconnected and zero counts occupy no space. */
 export function ComposerAgentActivity({ activity }: { activity: CanvasRunningActivity | undefined }): React.JSX.Element | null {
-  if (!activity || (activity.backgroundAgents === 0 && activity.sidekicks === 0)) return null;
+  const { backgroundAgents, sidekicks } = activity ?? { backgroundAgents: 0, sidekicks: 0 };
   const labels = [];
-  if (activity.backgroundAgents > 0) labels.push(`${activity.backgroundAgents} background ${activity.backgroundAgents === 1 ? 'agent' : 'agents'} running`);
-  if (activity.sidekicks > 0) labels.push(`${activity.sidekicks} ${activity.sidekicks === 1 ? 'Sidekick' : 'Sidekicks'} running`);
-  return <div className="composer-agent-activity" role="status" aria-live="polite" aria-atomic="true" aria-label={labels.join(' · ')}>
-    <span aria-hidden="true">
-      {activity.backgroundAgents > 0 && <span><RunningCount count={activity.backgroundAgents} />{' '}
-        <span className="background-agent-shimmer">background {activity.backgroundAgents === 1 ? 'agent' : 'agents'} running</span></span>}
-      {activity.backgroundAgents > 0 && activity.sidekicks > 0 && ' · '}
-      {activity.sidekicks > 0 && <span><RunningCount count={activity.sidekicks} />{' '}
-        <span className="background-agent-shimmer">{activity.sidekicks === 1 ? 'Sidekick' : 'Sidekicks'} running</span></span>}
-    </span>
-  </div>;
+  if (backgroundAgents > 0) labels.push(`${backgroundAgents} background ${backgroundAgents === 1 ? 'agent' : 'agents'} running`);
+  if (sidekicks > 0) labels.push(`${sidekicks} ${sidekicks === 1 ? 'Sidekick' : 'Sidekicks'} running`);
+  return <>
+    <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{labels.join(' · ')}</span>
+    {labels.length > 0 && <div className="composer-agent-activity" aria-hidden="true">
+      {backgroundAgents > 0 && <span><RunningCount count={backgroundAgents} />{' '}
+        <span className="background-agent-shimmer">background {backgroundAgents === 1 ? 'agent' : 'agents'} running</span></span>}
+      {backgroundAgents > 0 && sidekicks > 0 && ' · '}
+      {sidekicks > 0 && <span><RunningCount count={sidekicks} />{' '}
+        <span className="background-agent-shimmer">{sidekicks === 1 ? 'Sidekick' : 'Sidekicks'} running</span></span>}
+    </div>}
+  </>;
 }

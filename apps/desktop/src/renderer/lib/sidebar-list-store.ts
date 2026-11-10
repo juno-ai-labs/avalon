@@ -1,4 +1,4 @@
-import type { ActivityItem, CanvasSidebarRow } from '@rally/contracts';
+import type { ActivityItem, CanvasDetail, CanvasSidebarRow } from '@rally/contracts';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import type { AutomationSummary } from './types';
@@ -113,9 +113,18 @@ export function applyVersionedSidebarList<K extends SidebarList>(
   if (list === 'canvases') {
     // An opened Canvas may be beyond the sidebar page, or opened by an admin
     // who is not on its list. Listed Canvases use the pushed row directly.
-    const ids = new Set<string>(queryClient.getQueryData<CanvasSidebarRow[]>(SIDEBAR_LIST_QUERY_KEYS.canvases)?.map((row) => row.id));
-    void queryClient.invalidateQueries({ queryKey: ['canvas'], predicate: (query) =>
-      query.queryKey.length === 2 && !ids.has(String(query.queryKey[1])) });
+    const ids = new Set<string>((items as CanvasSidebarRow[]).map((row) => row.id));
+    const openDetails = queryClient.getQueryCache().findAll({ queryKey: ['canvas'], predicate: (query) =>
+      query.queryKey.length === 2 && query.isActive() && query.state.status !== 'error' && !ids.has(String(query.queryKey[1])) });
+    for (const query of openDetails) {
+      const filter = { queryKey: query.queryKey, exact: true };
+      // Cancel even the initial read: invalidation alone reuses an in-flight
+      // request with no cached data, which may have read before this push.
+      void queryClient.cancelQueries(filter);
+      if (authoritative) queryClient.setQueryData<CanvasDetail>(query.queryKey, (detail) =>
+        detail ? { ...detail, runningActivity: undefined } : undefined);
+      void queryClient.invalidateQueries(filter);
+    }
   }
   return applied !== waterline;
 }

@@ -868,6 +868,8 @@ export function canvasSidebarRows(
   report: InvalidCanvasAppearanceReport,
   /** Only Canvases whose title contains this, ignoring case, across every Canvas rather than the first page. */
   titleQuery: string | null = null,
+  /** Reused only within one synchronous publish, across viewers of the same Canvas. */
+  activityCache = new Map<string, { backgroundAgents: number; sidekicks: number }>(),
 ): CanvasSidebarRow[] {
   const rows = sql.exec<CanvasRow & {
     participant: number; unread: number; pinned_position: number | null; artifact_type: string | null; artifact_mime: string | null;
@@ -958,7 +960,7 @@ export function canvasSidebarRows(
     attached.set(sidekick.canvas_id, held);
   }
   const listed: CanvasSidebarRow[] = [];
-  const activity = canvasRunningActivity(sql, admittedRows.map((row) => row.canvas_id));
+  const activity = canvasRunningActivity(sql, admittedRows.map((row) => row.canvas_id), activityCache);
   for (const row of admittedRows) {
     listed.push(CanvasSidebarRowSchema.parse({
       ...canvasSummary(row, report),

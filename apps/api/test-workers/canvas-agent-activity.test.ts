@@ -143,3 +143,22 @@ it("counts overlapping runs and wizard once until both stop, excluding archived 
       .toEqual({ backgroundAgents: 0, sidekicks: 0 });
   } finally { live.socket.close(); }
 });
+
+it('publishes execution changes only to attached Canvases without touching the Sidekick library', async () => {
+  const waterlines = () => runInDurableObject(workspace(), (_instance: WorkspaceDO, state) =>
+    Object.fromEntries(state.storage.sql.exec<{ list: string; waterline: number }>('SELECT list, waterline FROM workspace_sidebar_list_state').toArray()
+      .map((row) => [row.list, row.waterline])));
+  const before = await waterlines();
+  await project(sidekickId, '0', 1, 'running');
+  const working = await waterlines();
+  expect(working.automations).toBe(before.automations);
+  expect(working.canvases).toBe(before.canvases! + 1);
+  // No state flip and no reader-visible attention change: progress is not a list change.
+  await project(sidekickId, '0', 2, 'running');
+  expect(await waterlines()).toEqual(working);
+  await runInDurableObject(workspace(), (_instance: WorkspaceDO, state) => {
+    state.storage.sql.exec('DELETE FROM sidekick_conversation_attachments WHERE automation_id = ?', sidekickId);
+  });
+  await project(sidekickId, '0', 3, 'idle');
+  expect(await waterlines()).toEqual(working);
+});

@@ -206,12 +206,9 @@ distinguish an idle worker from one with queued work without resuming it;
 its reply is still the thing to wait for. A stopped background agent reports
 no pending work until an explicit continuation resumes it.
 
-Background identity travels in the existing child common-state projection,
-with the agent's root conversation beside the flag. Canvas composers count
-running agents rooted in their own Chat, including nested workers, through the
-Canvas list's `runningActivity`. Attached Sidekicks count once each, including
-setup work. [`canvases.md`](canvases.md#running-helpers-above-the-composer)
-owns those counts and their socket delivery.
+Background identity and its root conversation travel in the child common-state
+projection; [`canvases.md`](canvases.md#running-helpers-above-the-composer) owns
+the composer counts derived from them.
 
 Agent tools are preloaded through the existing persisted plugin-activation path,
 so they are available on the first model call. Bind still validates live execution
