@@ -9,6 +9,14 @@ export interface SemanticChunkPolicy {
   countTokens: (text: string) => number | Promise<number>;
   /** Optional title/section context; counted in each chunk's budget. */
   prefix?: string;
+  /**
+   * Optional exact counter for spans of one source text: for every span,
+   * `spanCounter(text)(start, end)` equals `countTokens(text.slice(start, end))`.
+   * Planning measures many overlapping spans of the same text, so a tokenizer
+   * that can answer them without re-tokenizing each span keeps planning cost
+   * near one pass over the text. Not used with a prefix.
+   */
+  spanCounter?: (text: string) => (start: number, end: number) => number;
 }
 
 export interface SemanticChunk {
@@ -34,13 +42,14 @@ export async function semanticChunks(text: string, policy: SemanticChunkPolicy):
   }
   if (!text.trim()) return [];
   const prefix = policy.prefix ?? "";
-  const count = async (value: string): Promise<number> => {
-    const tokens = await policy.countTokens(value);
+  const checked = (tokens: number) => {
     if (!Number.isSafeInteger(tokens) || tokens < 0) throw new Error("invalid_embedding_token_count");
     return tokens;
   };
-  const fits = async (start: number, end: number) =>
-    await count(prefix + text.slice(start, end)) <= policy.maxTokens;
+  const spans = prefix ? undefined : policy.spanCounter?.(text);
+  const count = async (start: number, end: number): Promise<number> =>
+    checked(spans ? spans(start, end) : await policy.countTokens(prefix + text.slice(start, end)));
+  const fits = async (start: number, end: number) => await count(start, end) <= policy.maxTokens;
 
   // Code-point boundaries prevent truncating surrogate pairs, including when
   // a document has no whitespace (code, URLs, or CJK text).
@@ -142,7 +151,7 @@ export async function semanticChunks(text: string, policy: SemanticChunkPolicy):
       while (low <= high) {
         const middle = Math.floor((low + high) / 2);
         const offset = boundaries[middle]!;
-        if (await count(text.slice(offset, end)) <= policy.overlapTokens) {
+        if (checked(spans ? spans(offset, end) : await policy.countTokens(text.slice(offset, end))) <= policy.overlapTokens) {
           next = offset; high = middle - 1;
         } else low = middle + 1;
       }
