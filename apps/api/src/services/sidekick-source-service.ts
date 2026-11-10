@@ -1,9 +1,8 @@
 import {
-  SidekickSourceRequestResultSchema, SidekickSourceRequestViewSchema, SidekickSourcesResultSchema,
+  SidekickSourceRequestResultSchema, SidekickSourceRequestViewSchema, SidekickSourceRequestsReadResultSchema, SidekickSourcesResultSchema,
   asWorkspaceId, type SidekickSourceRequestInput, type SidekickSourceRequestResult, type SidekickSourceRequestView,
   type SidekickSourcesResult, type UserId, type WorkspaceId,
 } from "@rally/contracts";
-import { z } from "zod";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
@@ -60,7 +59,7 @@ export class SidekickSourceService {
 
   /** Requests by id, each only if this person may see it: what a card in a conversation reads. */
   async readRequests(requestIds: readonly string[]): Promise<{ requests: SidekickSourceRequestView[] }> {
-    return z.object({ requests: z.array(SidekickSourceRequestViewSchema) }).parse(await (await this.workspace()).sidekickReadSourceRequests({
+    return SidekickSourceRequestsReadResultSchema.parse(await (await this.workspace()).sidekickReadSourceRequests({
       workspaceId: this.workspaceId, actor: { userId: this.userId }, requestIds: [...requestIds],
     }));
   }
