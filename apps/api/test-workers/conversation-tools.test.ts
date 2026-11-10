@@ -555,6 +555,44 @@ export class SiteData extends DurableObject {
     expect(await site.page()).toHaveLength(2);
   });
 
+  it("writes a site's rows as the Sidekick itself when nobody is behind the run, and not for a run whose asker cannot open the Canvas", async () => {
+    await seedSidekick("0");
+    // The author's alone: the colleague cannot open it.
+    const privateRoom = asWorkstreamId(crypto.randomUUID());
+    await seedRoom(privateRoom, "Private");
+    const site = await statefulSite("private-inbox", privateRoom);
+    // A publish links the site to its Canvas, which is how a run with no person finds it: through the attachment.
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: privateRoom,
+      resourceId: site.resourceId, attachedByUserId: AUTHOR_ID });
+    expect(await workspace().attachSidekickConversation({
+      workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID, userId: AUTHOR_ID, reference: privateRoom,
+    })).toMatchObject({ ok: true });
+    // One run the Sidekick started for itself, and one the colleague asked for under their own access.
+    const [own, asked] = [asSubstreamId(crypto.randomUUID()), asSubstreamId(crypto.randomUUID())];
+    for (const runId of [own, asked]) await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "automation", AUTOMATION_ID, runId);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (const [runId, requester] of [[own, null], [asked, COLLEAGUE_ID]] as const) {
+        state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
+            harness_run_id, state, run_as_user_id, coordinator_user_id, requester_user_id, created_at, updated_at)
+          VALUES (?, ?, ?, '{"kind":"manual"}', 1, ?, 'running', ?, ?, ?, 1, 1)`,
+        AUTOMATION_ID, runId, `run:${runId}`, `${runId}-harness`, requester, requester, requester);
+      }
+    });
+    // The colleague's own access is read from the authorization projection, so it has to have run.
+    await projectResourceAccess();
+    const write = (runId: string, principal: Parameters<typeof createArtifactDataToolContext>[1]["principal"]) => writeTool({
+      workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal, reader: null,
+      write: { kind: "sidekick_run", sidekickId: AUTOMATION_ID, runId },
+    });
+    // No person at all: the Organization's principal, and the attachment is the leave to write.
+    await expect(write(own, { type: "workspace", workspaceId: WORKSPACE_ID })(site.resourceId, "m1"))
+      .resolves.toMatchObject({ output: { resource: site.resourceId } });
+    // The colleague cannot open the Canvas, so their own ask cannot write it through the Sidekick.
+    await expect(write(asked, { type: "user", userId: COLLEAGUE_ID })(site.resourceId, "m2"))
+      .rejects.toMatchObject({ code: "resource_not_found" });
+    expect(await site.page()).toEqual([{ message_id: "m1", subject: "Subject m1" }]);
+  });
+
   it("lets a Canvas's Chat change the rows of a site linked to that Canvas, and of no other site", async () => {
     const linked = await statefulSite("linked-inbox", ROOM_ID);
     // The same author's site in another Canvas: readable by them, not linked here.
@@ -889,6 +927,40 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
     expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
       `SELECT parent_id FROM sidekick_conversation_attachments WHERE automation_id = ?`, AUTOMATION_ID,
     ).toArray())).toEqual([{ parent_id: WRITTEN() }]);
+  });
+
+  it("lets a run nobody asked for reach every attached Canvas, and holds a run somebody asked for to what that person can open", async () => {
+    await seedCanvases();
+    await conversationTools(AUTHOR_ID).run("attach", { conversation: SIDE_ROOM() });
+    // One run the Sidekick started for itself (an event, nobody behind it), and one the colleague asked for.
+    const [own, asked] = [crypto.randomUUID(), crypto.randomUUID()];
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (const [runId, requester] of [[own, null], [asked, COLLEAGUE_ID]] as const) {
+        state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
+            harness_run_id, state, run_as_user_id, coordinator_user_id, requester_user_id, created_at, updated_at)
+          VALUES (?, ?, ?, '{"kind":"manual"}', 1, ?, 'running', ?, ?, ?, 1, 1)`,
+        AUTOMATION_ID, runId, `run:${runId}`, `${runId}-harness`, requester, requester, requester);
+      }
+    });
+    const scope = { kind: "sidekick" as const, automationId: AUTOMATION_ID };
+    const reached = async (runId: string, userId: string | null) => (await workspace().conversationToolScope({
+      workspaceId: WORKSPACE_ID, userId, runId, scope })).conversations.map((entry) => entry.conversationId);
+    const named = (runId: string, userId: string | null) => workspace().resolveConversationToolTarget({
+      workspaceId: WORKSPACE_ID, userId, runId, scope, reference: SIDE_ROOM() });
+
+    // The attachment is the reach: nobody acts, and the side room nobody but the author can open is there.
+    expect(await reached(own, null)).toEqual([AUTOMATION_ID, WRITTEN(), SIDE_ROOM()]);
+    // A delegate who cannot open the side room does not take it away from the run.
+    expect(await reached(own, COLLEAGUE_ID)).toEqual([AUTOMATION_ID, WRITTEN(), SIDE_ROOM()]);
+    expect(await named(own, null)).toMatchObject({ ok: true, conversation: { parentId: SIDE_ROOM() } });
+    // The colleague's own ask reads nothing through the Sidekick that they cannot open themselves.
+    expect(await reached(asked, COLLEAGUE_ID)).toEqual([AUTOMATION_ID, WRITTEN()]);
+    expect(await named(asked, COLLEAGUE_ID)).toMatchObject({ ok: false, code: "conversation_access_denied" });
+
+    // Archiving is what ends the Sidekick's own reach.
+    await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId: SIDE_ROOM(), actor: { userId: AUTHOR_ID, actorRole: "member" } });
+    expect(await reached(own, null)).toEqual([AUTOMATION_ID, WRITTEN()]);
+    expect(await named(own, null)).toMatchObject({ ok: false, code: "conversation_archived" });
   });
 
   it("posts into a Canvas's Chat the Sidekick writes, once per receipt, and reads it back", async () => {
