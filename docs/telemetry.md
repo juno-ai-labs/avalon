@@ -865,6 +865,8 @@ instead of immediately, still naming the last HTTP status. Integrity checks are
 unchanged: a retried read must still be `DYNAMIC` and must match the uploaded
 key, size, ETag and timestamp.
 
+Shipped in #1536.
+
 ### 2026-11-03 — A new account's signup flow merges into its person
 
 **What changed:** Account creation queues an `epoch_transition` profile job
