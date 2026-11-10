@@ -1,4 +1,4 @@
-import { IconPlayerPause } from '@tabler/icons-react';
+import { IconArrowUpRight, IconPlayerPause } from '@tabler/icons-react';
 import { Plus } from 'lucide-react';
 import { AutomationGlyph, resolveWorkstreamAppearance } from '../components/workstream-glyph';
 import { SidebarSearch } from '../components/sidebar-search';
@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
+import { canvasRoute } from '../lib/canvases';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
@@ -100,6 +101,12 @@ function SidekickCard({ item, membersById }: { item: AutomationSummary; membersB
       <span className="sidekick-card-glyph"><AutomationGlyph {...(item.appearance ? { appearance: item.appearance } : {})} id={item.id} /></span>
       {item.status === 'paused' && <span className="sidekick-card-status"><span className="sidekick-status-pill is-paused"><IconPlayerPause aria-hidden="true" size={13} stroke={1.8} />Paused</span></span>}
       {sidekickStatus(item) === 'needs_input' && <span className="sidekick-needs-input-badge">Needs input</span>}
+      {/* The Canvases it works on, each a link above the card's stretched title link. */}
+      {item.attachedCanvases !== undefined && item.attachedCanvases.length > 0 && <span className={item.status === 'paused' ? 'sidekick-card-canvases is-below-status' : 'sidekick-card-canvases'}>
+        {item.attachedCanvases.map((canvas) => <Link aria-label={`Canvas: ${canvas.title}`} className="sidekick-card-canvas" key={canvas.id} to={canvasRoute(canvas.id)}>
+          <span>{canvas.title}</span><IconArrowUpRight aria-hidden="true" size={14} stroke={1.9} />
+        </Link>)}
+      </span>}
     </div>
     <div className="sidekick-card-body">
       <h3><Link className="dashboard-card-link" to={`/sidekicks/${encodeURIComponent(item.id)}`}>{item.name}</Link></h3>

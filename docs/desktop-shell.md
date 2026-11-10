@@ -297,6 +297,15 @@ level in place (`useTitleMenuNav`), the title, Escape or the left arrow step
 back to the root, and `TitleMenuMorph` travels the popout's size between
 levels; reduced motion turns that off.
 
+- **Canvas menu** (`screens/canvas.tsx`): the four action tiles, Rename… and
+  Change appearance, then a **Sidekicks** section when the Canvas has any
+  attached (`CanvasSidekicksSection`), then Archive canvas for a manager. A
+  Sidekick's row is its hexagon, name and state (Draft, Active, Paused). It
+  opens the Sidekick's page only for someone whose own Sidekicks list holds
+  it; for anyone else it stays focusable, opens nothing, and its tooltip says
+  to ask in the Canvas's chat. The menu archives no Sidekick: one the
+  Canvas made is archived by asking its chat, or with the Canvas.
+  [`canvases.md`](canvases.md#in-the-client) owns the rest of that menu.
 - **Artifact menu** (`InspectorRail`, shared by the side panel, expanded panel,
   and detached artifact windows): the root offers Download for available files,
   Rename and Copy link as tiles, plus More when archiving is available.

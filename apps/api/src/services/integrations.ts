@@ -284,7 +284,7 @@ import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { createWorkstreamArtifactDataTools } from "./workstream-artifact-data-tools";
-import { artifactDataReader, createArtifactDataToolContext } from "./workstream-artifact-data-wiring";
+import { artifactDataReader, artifactDataWriteAccess, createArtifactDataToolContext } from "./workstream-artifact-data-wiring";
 import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { transcriptLister } from "../runtime/message-projection";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
@@ -5192,14 +5192,53 @@ async function canvasRunContextMessage(env: Env, input: WorkstreamWorkflowInput)
     content: `CANVAS CONTEXT (host-provided):\n${JSON.stringify({
       canvasId: canvas.canvasId,
       title: canvas.title,
-      artifacts: canvas.artifacts.map((artifact) => ({
-        resourceId: artifact.resourceId, title: artifact.title, kind: artifact.kind, version: artifact.version,
+      artifacts: canvas.artifacts.map(agentCanvasArtifact),
+      sidekicks: canvas.sidekicks.map((sidekick) => ({
+        sidekickId: sidekick.id, name: sidekick.name, status: sidekick.status, madeHere: sidekick.madeHere,
       })),
       publishing: "This conversation is a Canvas's Chat, open to everyone in the Canvas. The artifacts above are the Canvas. "
         + "To change one, read it (read_resource, view_resource, or import_resource into the Terminal), then publish_resource the same filePath: "
-        + "that is a new version of it, attributed to you. Publishing a different filePath adds another artifact to this Canvas.",
+        + "that is a new version of it, attributed to you. Publishing a different filePath adds another artifact to this Canvas. "
+        + "The sidekicks above are attached to this Canvas and may update its artifacts on their own schedule or events.",
     })}`,
   }, "canvas_context", input.triggerMessageId ?? input.harnessRunId);
+}
+
+/** One of a Canvas's artifacts as an agent is told of it; see `HostedCanvas.agentArtifacts`. */
+function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind: string; version: number; filePath: string | null; storesData: boolean }) {
+  return { resourceId: artifact.resourceId, title: artifact.title, kind: artifact.kind, version: artifact.version,
+    filePath: artifact.filePath, storesData: artifact.storesData };
+}
+
+/**
+ * What a Sidekick's wizard or run is told about the Canvases the Sidekick was
+ * attached to: each one's artifacts, and the two ways to change one. A
+ * derived user message for the reason `canvasRunContextMessage` is one: the
+ * list moves with every publish. Nothing is sent for a Sidekick attached to
+ * no Canvas, which is most of them, so their runs read no extra message.
+ * `docs/automation-lifecycle.md#attached-conversations`.
+ */
+async function sidekickCanvasContextMessage(env: Env, input: WorkstreamWorkflowInput): Promise<ModelMessage | null> {
+  if (input.executionPrincipal.type !== "user") return null;
+  const canvases = await (await hostedParentStub(env, input.workspaceId)).sidekickCanvasContext({
+    workspaceId: input.workspaceId, sidekickId: input.parentId, userId: input.executionPrincipal.userId,
+  });
+  if (canvases.length === 0) return null;
+  return modelDerivative({
+    role: "user",
+    content: `ATTACHED CANVASES (host-provided):
+${JSON.stringify({
+      canvases: canvases.map((canvas) => ({
+        canvasId: canvas.canvasId, title: canvas.title, artifacts: canvas.artifacts.map(agentCanvasArtifact),
+      })),
+      updating: "This Sidekick is attached to the Canvases above, so its runs may change their artifacts. "
+        + "For an artifact with storesData true, change its rows with write_artifact_data (describe_artifact_data shows its tables): "
+        + "a row write is safe when runs overlap and makes no new version. "
+        + "To change an artifact's files, import_resource it to its filePath, edit, and publish_resource that filePath with canvas set to the canvasId: "
+        + "that is a new version, attributed to this Sidekick. Runs can overlap, so a run that republishes rebuilds the whole artifact from its sources rather than patching the last version. "
+        + "conversation_post with the canvasId tells the people in that Canvas what changed.",
+    })}`,
+  }, "sidekick_canvas_context", input.triggerMessageId ?? input.automationRun?.runId ?? input.harnessRunId);
 }
 
 async function loadRunPromptContext(
@@ -5331,6 +5370,12 @@ async function loadRunPromptContext(
   if (input.parentKind === "canvas") {
     const canvas = await canvasRunContextMessage(env, input);
     if (canvas) additionalMessages.push(canvas);
+  }
+  // A wizard turn or a run, never a background worker's own substream, whose
+  // owner already holds the context.
+  if (input.parentKind === "automation" && (input.automationRun || (input.substreamId ?? "0") === "0")) {
+    const attached = await sidekickCanvasContextMessage(env, input);
+    if (attached) additionalMessages.push(attached);
   }
   if (input.automationRun && input.automationContinuation) {
     // After the input that continued the run, which is already in the
@@ -5870,7 +5915,9 @@ async function loadHarnessTools(
   const builtinPlugins = [
     createSidekickTaskOutcomePlugin(input),
     createAgentCommunicationPlugin(new AgentCommunicationService(env, input), agentCoordinationRoleGuidance(input),
-      { sidekickRun: input.automationRun !== undefined }),
+      { sidekickRun: input.automationRun !== undefined,
+        canvasChat: input.parentKind === "canvas" && (input.substreamId ?? "0") === "0" && input.backgroundAgent !== true
+          && input.executionPrincipal.type === "user" }),
     workstreamPlugin,
     webPlugin,
     terminalPlugin,
@@ -8506,7 +8553,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       },
     } satisfies HarnessTool] : []),
     ...createWorkstreamAttachmentTools(env, input),
-    // Reading a live artifact's stored data is a work-stream capability, not a
+    // Reading (and, for a Canvas's Chat or a Sidekick run, writing) a live
+    // artifact's stored data is a work-stream capability, not a
     // Terminal one: answering "who hasn't voted?" must not require a sandbox,
     // and the run that answers it is usually not the run that built the page.
     ...createWorkstreamArtifactDataTools(createArtifactDataToolContext(env, {
@@ -8514,6 +8562,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       workstreamId: input.parentId,
       principal: input.executionPrincipal,
       reader: artifactDataReader(input),
+      // Only a Canvas's Chat and a Sidekick run get `write_artifact_data`.
+      write: artifactDataWriteAccess(input),
     })),
     {
       definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,

@@ -152,6 +152,35 @@ describe('the Sidekicks home', () => {
     expect(within(paused).getByText('Needs input')).toBeInTheDocument();
   });
 
+  it('links each Canvas a Sidekick is attached to from a pill on its card, under the Paused pill when it has one', async () => {
+    socket.mounted = true;
+    const client = new QueryClient();
+    const CANVAS = '00000000-0000-7000-8000-0000000000c1';
+    const OTHER = '00000000-0000-7000-8000-0000000000c2';
+    applyVersionedSidebarList(client, 'automations', 1, [
+      { id: 'tracker', name: 'Launch tracker', description: '', scope: 'you', status: 'active', updatedAt: '2026-11-07T09:00:00.000Z',
+        attachedCanvases: [{ id: CANVAS, title: 'Launch plan' }, { id: OTHER, title: 'Roadmap' }] },
+      { id: 'paused', name: 'Inbox listener', description: '', scope: 'you', status: 'paused', updatedAt: '2026-11-07T09:00:00.000Z',
+        attachedCanvases: [{ id: CANVAS, title: 'Launch plan' }] },
+      { id: 'none', name: 'Weekly changelog', description: '', scope: 'workspace', status: 'active', updatedAt: '2026-11-07T09:00:00.000Z', attachedCanvases: [] },
+      // An older Worker sends no list.
+      { id: 'older', name: 'Daily brief', description: '', scope: 'you', status: 'active', updatedAt: '2026-11-07T09:00:00.000Z' },
+    ] satisfies AutomationSummary[]);
+    render(<QueryClientProvider client={client}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
+    const card = async (name: string) => (await screen.findByRole('link', { name })).closest('li')!;
+    const tracker = await card('Launch tracker');
+    const pills = within(tracker).getAllByRole('link', { name: /^Canvas: / });
+    expect(pills.map((pill) => [pill.textContent, pill.getAttribute('href')])).toEqual([
+      ['Launch plan', `/canvases/${CANVAS}`], ['Roadmap', `/canvases/${OTHER}`],
+    ]);
+    // The arrow sits after the title, at the pill's right.
+    expect(pills[0]!.lastElementChild).toHaveClass('tabler-icon-arrow-up-right');
+    expect(tracker.querySelector('.sidekick-card-canvases')).not.toHaveClass('is-below-status');
+    expect((await card('Inbox listener')).querySelector('.sidekick-card-canvases')).toHaveClass('is-below-status');
+    expect((await card('Weekly changelog')).querySelector('.sidekick-card-canvases')).toBeNull();
+    expect((await card('Daily brief')).querySelector('.sidekick-card-canvases')).toBeNull();
+  });
+
   it('offers New Sidekick beside the empty copy when there are none', async () => {
     getSidekicks.mockResolvedValue([]);
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);

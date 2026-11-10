@@ -147,11 +147,11 @@ export async function resolveTerminalPublicationHome(env: Env, input: Pick<Works
       workspaceId: input.workspaceId, sidekickId: input.parentId, runId, canvasId: request.canvas ?? null,
     }).catch((error: unknown) => {
       if ((error as { code?: string }).code === "canvas_archived") {
-        throw new TerminalToolError("canvas_archived", "That Canvas was archived. Publish into another active Canvas this Sidekick writes, or start a new Sidekick run to create a new Canvas.");
+        throw new TerminalToolError("canvas_archived", "That Canvas was archived. Publish into another active Canvas attached to this Sidekick, or start a new Sidekick run to create a new Canvas.");
       }
-      if ((error as { code?: string }).code === "canvas_not_written_by_sidekick") {
-        throw new TerminalToolError("canvas_not_written_by_sidekick",
-          "That Canvas is not one this Sidekick writes. Omit canvas to publish into this run's own Canvas, or name a Canvas this Sidekick made.",
+      if ((error as { code?: string }).code === "canvas_not_attached_to_sidekick") {
+        throw new TerminalToolError("canvas_not_attached_to_sidekick",
+          "That Canvas is not attached to this Sidekick. Omit canvas to publish into this run's own Canvas, or name a Canvas from ATTACHED CANVASES or one an earlier run of this Sidekick made.",
           { field: "canvas" });
       }
       throw error;
