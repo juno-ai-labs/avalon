@@ -22,27 +22,36 @@ const TaskCarrierResponseSchema = z.object({
   result: z.object({ _meta: z.object({ [TASK_CARRIER]: TaskSnapshotSchema }).passthrough() }),
 });
 
+// SEP-2243 permits UTF-8 Base64 sentinels in Mcp-Name. The SDK validates
+// ordinary tool headers; private task dispatch must preserve the same check.
+function taskNameHeader(request: Request): string | undefined {
+  const value = request.headers.get("Mcp-Name")?.trim();
+  if (!value?.startsWith("=?base64?") || !value.endsWith("?=")) return value;
+  const encoded = value.slice(9, -2);
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) return undefined;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0)));
+  } catch { return undefined; }
+}
+
 export function createEngineeringMcpHandler(
   env: Env,
   principal: AccessPrincipal,
-  responseMode: "json" = "json",
 ) {
-  const handler = createMcpHandler(() => createEngineeringMcpServer(env, principal), {
-    allowedOriginHostnames: hostedClients.originHostnames,
-    responseMode,
-  });
   return {
     async fetch(request: Request) {
+      let createdTask = false;
+      const handler = createMcpHandler(() => createEngineeringMcpServer(env, principal, () => { createdTask = true; }), {
+        allowedOriginHostnames: hostedClients.originHostnames,
+      });
       const headerMethod = request.headers.get("Mcp-Method");
-      const mayCreateTask = headerMethod === "tools/call"
-        && ["query_data_lake", "retire_org"].includes(request.headers.get("Mcp-Name") ?? "");
       if (request.method === "POST" && TASK_METHODS.some((method) => method === headerMethod)) {
         const body = await request.text();
         let parsed: unknown;
         try { parsed = JSON.parse(body); } catch { /* The SDK reports malformed JSON. */ }
         const taskRequest = TaskRequestSchema.safeParse(parsed);
         if (taskRequest.success && taskRequest.data.method === headerMethod
-          && request.headers.get("Mcp-Name") === taskRequest.data.params.taskId) {
+          && taskNameHeader(request) === taskRequest.data.params.taskId) {
           const method = taskDispatchMethod(taskRequest.data.method);
           const headers = new Headers(request.headers);
           headers.set("Mcp-Method", method);
@@ -54,13 +63,13 @@ export function createEngineeringMcpHandler(
       const response = await handler.fetch(request);
       // Polls may carry large results. Only task-creating tool responses need
       // inspection; leave every other SDK response body untouched.
-      if (!mayCreateTask || !response.ok || !response.headers.get("content-type")?.includes("application/json")) return response;
-      const body: unknown = await response.json();
-      const carrier = TaskCarrierResponseSchema.safeParse(body);
-      if (!carrier.success) return Response.json(body, { status: response.status, headers: response.headers });
-      const { [TASK_CARRIER]: task, ...meta } = carrier.data.result._meta;
+      if (!createdTask || !response.ok || !response.headers.get("content-type")?.includes("application/json")) return response;
+      const body = await response.text();
+      // Task creation emits no notifications, so auto mode returns JSON.
+      const carrier = TaskCarrierResponseSchema.parse(JSON.parse(body));
+      const { [TASK_CARRIER]: task, ...meta } = carrier.result._meta;
       return Response.json({
-        jsonrpc: "2.0", id: carrier.data.id,
+        jsonrpc: "2.0", id: carrier.id,
         result: { ...task, resultType: "task", _meta: meta },
       }, { status: response.status, headers: response.headers });
     },

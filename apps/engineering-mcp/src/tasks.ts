@@ -47,7 +47,6 @@ export function acceptsTasks(ctx: ServerContext): boolean {
 }
 
 function taskStub(env: Env, taskId: string) {
-  if (!env.ENGINEERING_TASKS) throw new Error("engineering_tasks_unconfigured");
   return env.ENGINEERING_TASKS.get(env.ENGINEERING_TASKS.idFromName(taskId));
 }
 
