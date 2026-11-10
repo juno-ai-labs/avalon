@@ -1616,6 +1616,8 @@ export const AutomationSummarySchema = z.object({
   updatedAt: TimestampSchema,
   /** Who it is shared with; absent from a server that predates it. */
   audience: SidekickAudienceSchema.optional(),
+  /** The named recipients, excluding the author. Absent from reads that do not include the list. */
+  sharedWithUserIds: z.array(IdSchema).optional(),
   /**
    * This viewer has not read the latest message in the Sidekick's shared
    * conversation, or marked it unread. Sidebar rows only; absent elsewhere.
@@ -1680,8 +1682,6 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   runnable: z.boolean().default(false),
   connectorBindings: z.record(z.string(), z.string()),
   recentRuns: z.array(AutomationRunSchema),
-  /** The people a `people` Sidekick is shared with, besides its author; empty for the other audiences. Absent from a server that predates it. */
-  sharedWithUserIds: z.array(IdSchema).optional(),
   /** The Canvases this Sidekick writes that the reader may open, most recently active first. Absent from a server that predates it. */
   canvases: z.array(CanvasSummarySchema).optional(),
 });

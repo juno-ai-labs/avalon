@@ -1222,9 +1222,10 @@ loaded into someone else's conversation, not a read of its own.
 - **Storage.** `people` is stored as scope `personal` with its list in
   `sidekick_audience` (WorkspaceDO migration 136), so the released scope CHECK
   and every reader of `scope` are unchanged. The wire carries it as `audience`
-  beside `scope` on the summary and the detail, and the detail lists
-  `sharedWithUserIds`: a third `scope` value would fail a released client's
-  whole sidebar parse.
+  beside `scope` on the summary and the detail. A third `scope` value would
+  fail a released client's whole sidebar parse. The sidebar and library
+  summaries include `sharedWithUserIds` for a `people` Sidekick, as its detail
+  does.
 - **Changing it.** A manager's `POST /automations/:id/audience` with
   `{audience, userIds}` (`HostedSidekick.setAudience`); `userIds` is required
   exactly for `people`, and everyone named must be an active member or guest

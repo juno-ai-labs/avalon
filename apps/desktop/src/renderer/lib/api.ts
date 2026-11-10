@@ -508,6 +508,7 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     ...(automation.needsInput === undefined ? {} : { needsInput: automation.needsInput }),
     ...(automation.pinnedPosition === undefined ? {} : { pinnedPosition: automation.pinnedPosition }),
     ...(automation.audience === undefined ? {} : { audience: automation.audience }),
+    ...(automation.sharedWithUserIds === undefined ? {} : { sharedWithUserIds: automation.sharedWithUserIds }),
     ...(automation.runState === undefined ? {} : { runState: automation.runState }),
     ...(automation.running === undefined ? {} : { running: automation.running }),
     ...(automation.pendingQuestion ? { pendingQuestion: automation.pendingQuestion } : {}),
@@ -530,7 +531,6 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     connectorBindings: { ...detail.connectorBindings },
     triggerSummaries: (detail.currentDefinition?.triggers ?? []).map(triggerSummary),
     recentRuns: detail.recentRuns.map(mapAutomationRun),
-    ...(detail.sharedWithUserIds === undefined ? {} : { sharedWithUserIds: detail.sharedWithUserIds }),
     ...(detail.canvases === undefined ? {} : { canvases: detail.canvases }),
   };
 }

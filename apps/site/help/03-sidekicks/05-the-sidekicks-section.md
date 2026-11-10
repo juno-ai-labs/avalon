@@ -37,10 +37,11 @@ The Sidekicks home page, headed **Sidekicks**, shows every Sidekick on one page.
 Below them is the list, titled **Your Sidekicks** (or **Search results**
 while you search) with a count. Each row shows the Sidekick's hexagon, its
 name, its description, its **Status** (such as **Active**, **Working**,
-**Needs input**, **Paused** or **Draft**), who it is **Shared with** (**Only
-you**, **Named people** or **Organization**), and when it wakes up **Next**: a
-time, or **On alert** or **On email** for one that waits for an event. Click a
-row to open the Sidekick.
+**Needs input**, **Paused** or **Draft**), who it is **Shared with**, and when
+it wakes up **Next**. **Shared with** shows **Only you**, **Organization**,
+or avatars for the people named. **Next** shows a time, or **On alert** or
+**On email** for a Sidekick that waits for an event. Click a card to open the
+Sidekick.
 
 If you have none yet, the list says **No Sidekicks yet**. If a search finds
 nothing, it says **No matching Sidekicks**; try a different word or filter.
