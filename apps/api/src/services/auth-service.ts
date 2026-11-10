@@ -959,11 +959,19 @@ export class AuthService {
     const refreshToken = prepared?.refreshToken ?? randomToken(48);
     const at = prepared?.createdAt ?? nowIso();
     const insert = this.env.DB.prepare(
-      `INSERT INTO sessions
-       (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
-       SELECT ?, ?, ?, ?, ?, ?, ?
-       ${passwordCredentialId ? 'WHERE EXISTS (SELECT 1 FROM user_password_credentials WHERE user_id = ? AND credential_id = ?)' : ''}
-       ON CONFLICT(id) DO NOTHING ${passwordCredentialId ? 'RETURNING id' : ''}`,
+      passwordCredentialId
+        ? `INSERT INTO sessions
+           (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?
+           WHERE EXISTS (
+             SELECT 1 FROM user_password_credentials c
+             JOIN users u ON u.id = c.user_id
+             JOIN user_verified_emails v ON v.user_id = u.id AND v.email = u.email COLLATE NOCASE
+             WHERE c.user_id = ? AND c.credential_id = ?
+           ) ON CONFLICT(id) DO NOTHING RETURNING id`
+        : `INSERT INTO sessions
+           (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
     )
       .bind(
         sessionId,

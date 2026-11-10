@@ -2252,6 +2252,7 @@ async function signInWithPassword(input: unknown): Promise<DesktopSession> {
   const proof = PasswordLoginRequestSchema.parse(input);
   const apiBaseUrl = configuredApiBase('global');
   const expectedLifecycleEpoch = sessionLifecycleEpoch;
+  // A password attempt supersedes any pending Google callback for this endpoint.
   const { attemptId } = createDesktopAuthAttempt({ apiBaseUrl, region: 'global' });
   try {
     const session = await requestSession(apiBaseUrl, '/auth/password', proof);

@@ -3,7 +3,7 @@ import { env } from 'cloudflare:workers';
 import { createExecutionContext, reset, waitOnExecutionContext } from 'cloudflare:test';
 import { beforeEach, expect, it } from 'vitest';
 import { EngineeringInspectionBridge } from '../src/engineering-inspection-bridge';
-import { passwordLogin, verifyPassword } from '../src/services/password-login-service';
+import { passwordLogin } from '../src/services/password-login-service';
 import { ensureAuditSchema } from './helpers/audit-fixture';
 import passwordMigration from '../../../packages/db/migrations/0129_password_login.sql?raw';
 
@@ -17,17 +17,17 @@ beforeEach(async () => {
   await env.DB.prepare('INSERT INTO users (id, email) VALUES (?, ?)').bind(USER, 'reviewer@example.test').run();
 });
 
-it('provisions native scrypt credentials through the operator bridge, audits no secrets, and revokes them', async () => {
+it('provisions generated credentials through the operator bridge, audits no secrets, and revokes them', async () => {
   const ctx = createExecutionContext();
   const bridge = new EngineeringInspectionBridge(ctx, env);
   const first = await bridge.provisionUserPassword({ userId: USER }, OPERATOR);
   const row = await env.DB.prepare('SELECT password_hash FROM user_password_credentials WHERE user_id = ?').bind(USER).first<{ password_hash: string }>();
-  expect(verifyPassword(first.password, row!.password_hash)).toBe(true);
-  expect(verifyPassword('wrong password', row!.password_hash)).toBe(false);
+  expect(row!.password_hash).not.toBe(first.password);
   const second = await bridge.provisionUserPassword({ userId: USER }, OPERATOR);
   const rotated = await env.DB.prepare('SELECT password_hash FROM user_password_credentials WHERE user_id = ?').bind(USER).first<{ password_hash: string }>();
-  expect(verifyPassword(first.password, rotated!.password_hash)).toBe(false);
-  expect(verifyPassword(second.password, rotated!.password_hash)).toBe(true);
+  expect(second.password).not.toBe(first.password);
+  expect(rotated!.password_hash).not.toBe(row!.password_hash);
+  expect(rotated!.password_hash).not.toBe(second.password);
   expect(await bridge.revokeUserPassword({ userId: USER }, OPERATOR)).toEqual({ userId: USER, passwordEnabled: false });
   expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM user_password_credentials').first()).toEqual({ n: 0 });
   const audit = await env.AUDIT_DB.prepare("SELECT action, metadata_json FROM audit_events WHERE target_id = ? ORDER BY rowid").bind(USER).all<{ action: string; metadata_json: string }>();

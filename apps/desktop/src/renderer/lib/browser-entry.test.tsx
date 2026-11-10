@@ -897,8 +897,28 @@ it('adopts a password cookie session and shows a failed password without losing 
   fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
   await screen.findByText('Shared team');
   expect(submitted).toEqual([
-    { email: 'guest@example.test', password: 'incorrect' },
-    { email: 'guest@example.test', password: 'correct password ' },
+    { email: 'Guest@Example.test', password: 'incorrect' },
+    { email: 'Guest@Example.test', password: 'correct password ' },
   ]);
   expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+});
+
+
+it('shows organization discovery failure after password login unmounts the form', async () => {
+  let finishDiscovery!: (response: Response) => void;
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1];
+    if (path === '/password') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    if (path === '/workspaces') return new Promise<Response>((resolve) => { finishDiscovery = resolve; });
+    return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+  }));
+  render(<BrowserEntry />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign in with password' }));
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'guest@example.test' } });
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct password' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+  await screen.findByText('Loading your organizations…');
+  expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+  await act(async () => { finishDiscovery(Response.json({ error: { message: 'Organization discovery unavailable' } }, { status: 503 })); });
+  expect(await screen.findByText('Organization discovery unavailable')).toBeVisible();
 });

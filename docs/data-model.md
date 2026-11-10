@@ -67,7 +67,7 @@ Passwordless challenge storage is defined by migration 0111 and documented in
 session receipt; workspace relationships and grants remain separate authorities.
 
 D1 migration `0129_password_login.sql` adds `user_password_credentials`, one
-salted hash and random credential generation per existing user, and
+SHA-256 digest and random credential generation per existing user, and
 `password_login_attempts`, one expiring counter per normalized-address digest.
 Only Global uses these tables. Neither table grants membership or verifies an
 email; [password sign-in](password-login.md) owns their lifecycle.
