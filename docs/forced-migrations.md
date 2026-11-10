@@ -78,6 +78,14 @@ invocations. `--region=all` targets configured regions. Add the corresponding
 unrestricted external namespace bindings to the probe config when enabling a
 new region. The probe only parses IDs and never opens objects.
 
+## MCP inspection
+
+Use `inspect_migration_progress` with `region` and `from`, optionally `runId`,
+`objectId`, `to`, and pagination, to read forced-migration diagnostics. Compare
+`schema_version` with `expected_version` for shortfalls. It reads seven-day logs,
+not a durable registry; missing events do not establish completion. Use
+`inspect_queues` and `inspect_dead_letters` to inspect command backlog and failures.
+
 ## Changelog
 
 ### 2026-11-10 — Retain forced migrations without a tracker

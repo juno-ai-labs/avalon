@@ -14,7 +14,6 @@ import { auditSupportWrites, refuseSupportSession, requireAuth, requireIdentityA
 import { errorHandler, notFoundHandler } from "./middleware/errors";
 import { requestContext, securityMiddleware } from "./middleware/request-context";
 import { workspaceRealtimeInvalidation } from "./middleware/workspace-realtime";
-import { accessOperatorRoutes } from './routes/access-operations';
 import { authRoutes } from "./routes/auth";
 import { automationRoutes, sidekickRoutes } from "./routes/automations";
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
@@ -53,7 +52,6 @@ import {
   isSharedSlackIngress,
 } from "./services/slack-routing-service";
 
-import { privateAccessRoutes } from "./routes/private-access";
 
 export function createApp(): Hono<HonoAppEnv> {
   const app = new Hono<HonoAppEnv>();
@@ -125,7 +123,6 @@ export function createApp(): Hono<HonoAppEnv> {
 
   app.get("/", (c) => c.json({ service: "avalon-api", region: c.env.AVALON_REGION }));
   app.route("/health", healthRoutes);
-  app.route("/access", privateAccessRoutes);
   app.route("/auth", authRoutes);
   // Rally's MCP authorization server; the MCP Worker forwards here (`docs/rally-mcp.md`).
   app.route("/mcp-oauth", mcpOAuthRoutes);
@@ -145,7 +142,6 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/links", linkRoutes);
   app.route('/internal/telemetry', telemetryOperatorRoutes);
   app.route('/internal/connector-maintenance', connectorMaintenanceOperatorRoutes);
-  app.route('/internal/access', accessOperatorRoutes);
   app.route('/internal/workspaces', workspaceOperatorRoutes);
 
   const identityApi = new Hono<HonoAppEnv>();

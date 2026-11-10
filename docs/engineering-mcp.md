@@ -439,6 +439,43 @@ Access identity is never silently mapped to a product user.
 - `query_worker_observability` fails as `observability_token_unconfigured`
   until its secret is installed.
 
+## Operations tools
+
+| Tool | Behavior |
+| --- | --- |
+| `inspect_queues` | Lists account queue backlog metrics and active dead-letter relationships; `deadLettersOnly` restricts the result. |
+| `inspect_dead_letters` | Non-consuming peek of a queue ID returned by the queue list, after revalidating that a live consumer names it as a dead-letter queue. No acknowledge, pull, replay, or delete operation is exposed. |
+| `inspect_usage_plan` | Resolves an Organization to exactly one region and reads its authoritative plan, quota remaining, reset, and overage. |
+| `change_usage_plan` | Uses the same regional metering service as the operator API, updates this week's quota and plan history, and publishes the new meter to connected clients. |
+| `inspect_migration_progress` | Queries regional Worker logs for forced-migration outcomes, failures, invalid/deleted/misrouted commands, with optional run and object filters and provider pagination. |
+
+Queue inspection uses `apps/engineering-mcp/src/queues.ts`. Set the deployment
+secret `ENGINEERING_MCP_QUEUES_API_TOKEN` to a dedicated account Queue API token
+with permissions for queue inventory, metrics, and message peek (Cloudflare
+Queues Edit for the peek endpoint). Deployment installs it as the runtime secret
+`QUEUES_API_TOKEN`. It is separate from deployment credentials. Until configured,
+queue tools refuse with `queues_token_unconfigured`; other tools remain available.
+Queue messages can contain customer payloads and are visible only behind the
+existing engineering Access boundary. Neither payloads nor token values enter
+MCP audit metadata.
+
+Usage methods are part of `EngineeringInspectionBridge` and its shared contracts.
+Plan changes record an independent audit attempt and result with the authenticated
+Access actor. The service updates the usage ledger and regional workspace record;
+a cross-authority failure can follow a committed change, so inspect the plan
+before retrying an uncertain response. Publication is post-commit and best effort.
+
+Migration inspection uses the existing Workers Observability runtime credential.
+It returns logged outcomes and schema-versus-expected-version fields, not a fleet
+inventory or proof that every dormant object is current. Logs expire after seven
+days. Pair a run-filtered query with command backlog and dead-letter inspection;
+use the [CLI](forced-migrations.md) to execute a migration pass.
+
+Private-access request intake, acknowledgements, download-grant issuance and
+redemption, and the corresponding recovery API have been removed. Organization
+invitations and normal sign-in remain independent. Historical database migrations
+remain unchanged; no live tool reads or writes the legacy private-access tables.
+
 ## Testing
 
 `apps/api/test-workers/engineering-creation.test.ts` drives the regional bridge
@@ -579,6 +616,11 @@ the Worker. It does not create an Access app or import another app's policy.
 ## Changelog
 
 ### 2026-11-10 — Retire administration apps
+
+Added queue/dead-letter inspection, typed usage-plan operations with regional
+audit records, and migration-log inspection to retain useful operator actions
+without another site. Removed private-access management completely at the
+product owner's request, including invitation grant links.
 
 The engineering MCP retains the Access verifier and its authentication tests
 after the tracker was deleted. Deployment preserves its own Access application

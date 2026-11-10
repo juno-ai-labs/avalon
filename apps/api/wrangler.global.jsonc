@@ -13,7 +13,6 @@
   "preview_urls": false,
   // Team approved 30 requests/IP/minute on 2026-09-09. Coarse pre-D1 admission;
   // the Global D1 budget separately bounds acknowledgement attempts.
-  "ratelimits": [{ "name": "ACCESS_EDGE_RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }],
   "vars": {
     "APP_ENV": "production",
     "APP_VERSION": "0.24.0",
@@ -151,7 +150,6 @@
   // shape but does not create the buckets. The deployment preflight reads this
   // list and proves every named bucket exists before migrations or deployment.
   "r2_buckets": [
-    { "binding": "DESKTOP_RELEASES", "bucket_name": "avalon-desktop-releases" },
     { "binding": "PAYLOADS", "bucket_name": "avalon-global-payloads" },
     { "binding": "TELEMETRY_PAYLOADS", "bucket_name": "avalon-global-telemetry" }
   ],
