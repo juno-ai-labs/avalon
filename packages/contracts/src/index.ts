@@ -1622,6 +1622,14 @@ export const AutomationSummarySchema = z.object({
   /** The named recipients, excluding the author. Absent from reads that do not include the list. */
   sharedWithUserIds: z.array(IdSchema).optional(),
   /**
+   * The Canvases somebody attached this Sidekick to that the viewer may open,
+   * in the order they were attached: the one whose Chat made it, and any its
+   * configuration conversation attached. Not the Canvas each of its runs
+   * made, which is its output rather than where it works. The dashboard card
+   * links each. Absent from an older Worker and from reads that do not ask.
+   */
+  attachedCanvases: z.array(z.object({ id: IdSchema, title: z.string() })).optional(),
+  /**
    * This viewer has not read the latest message in the Sidekick's shared
    * conversation, or marked it unread. Sidebar rows only; absent elsewhere.
    */
