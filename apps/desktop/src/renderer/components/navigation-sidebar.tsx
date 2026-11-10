@@ -16,6 +16,7 @@ import { useDockBadge } from '../lib/dock-badge';
 import type { ActivityList } from '../lib/sidebar-list-store';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { ActivitySection, activityRoute, useActivityList } from './activity-sidebar-section';
+import { CanvasPinDragProvider } from './canvas-pin-drag';
 import { CanvasPinRail } from './canvas-pin-rail';
 import { CanvasesSection } from './canvas-sidebar-section';
 import { ErrorNotice, IconButton } from './primitives';
@@ -271,7 +272,7 @@ export function NavigationSidebar({
     setSection(next);
     if (next === 'sidekicks' && !guest) openSidekicksHome();
   };
-  return <ResizableSidebar
+  return <CanvasPinDragProvider><ResizableSidebar
     aria-label="Rally navigation"
     className={clsx('sidebar single-sidebar navigation-sidebar', sidebarOpen && 'is-mobile-open')}
     id={NAVIGATION_SHEET_ID}
@@ -349,7 +350,7 @@ export function NavigationSidebar({
         {footerItems && <SidebarFooterItems>{footerItems}</SidebarFooterItems>}
       </div>
     </div>
-  </ResizableSidebar>;
+  </ResizableSidebar></CanvasPinDragProvider>;
 }
 
 /** The section a route belongs to, or null for one that belongs to neither. */

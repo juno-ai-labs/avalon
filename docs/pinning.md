@@ -25,10 +25,10 @@ list row's `pinnedPosition`, so nothing else answers the question.
 | `apps/api/src/durable-objects/canvas-schema.ts` | WorkspaceDO migration 137, which admits `canvas` and `sidekick` in `workspace_pins.item_kind`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `setSidebarPin` and `reorderSidebarPins`, the visibility check on a pin, and the republish of the pinner's list. |
 | `apps/api/src/routes/canvases.ts`, `apps/api/src/routes/automations.ts` | `POST /canvases/:id/pin` and `POST /sidekicks/:id/pin` (`{pinned}`; `/automations/:id/pin` is the same route under the storage name). Both are mounted on `identityApi`, so a guest pins as a member does. |
-| `apps/api/src/routes/workspace.ts` | `PUT /workspace/pinned-order` (`{kind, itemIds}`): one person's order for one list's Pinned group. |
+| `apps/api/src/routes/canvases.ts` | `PUT /canvases/pinned-order` (`{itemIds}`): one person's Canvas pin order, for members and guests. |
 | `apps/api/src/routes/navigation.ts` | `GET /navigation/artifact-pins`, kept for the detached artifact window and always empty (see [Artifact pins](#artifact-pins)). |
 | `packages/contracts/src/canvases.ts` | `SidebarPinRequestSchema`, `SidebarPinOrderRequestSchema`. |
-| `apps/desktop/src/renderer/components/navigation-rows.tsx` | The Pinned group both sections draw: `PinnedSection`, `PinnableRow`, `usePinWrite`, `splitPinned`, `useRowPinDrop`. |
+| `apps/desktop/src/renderer/components/navigation-rows.tsx` | The Pinned group both sections draw: `PinnedSection`, `PinnableRow`, `usePinWrite`, `splitPinned`; Sidekicks alone use `useRowPinDrop`. |
 | `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx` | Each list's Pinned group above its other rows. |
 | `apps/desktop/src/renderer/components/canvas-pin-drag.ts`, `canvas-pin-rail.tsx` | Shared Canvas drag payload and ordering; the rail shortcuts read the same Canvas list. |
 | `apps/desktop/src/renderer/screens/canvas.tsx` | The Canvas title menu's pin switch. |
@@ -49,8 +49,7 @@ nothing writes one.
   `sidekick_not_found` for an item the person may not open (a Canvas outside
   its audience, a Sidekick outside its share list); an unpin is never refused.
   A pin appends at the end of the person's group.
-- **Order.** `PUT /workspace/pinned-order` takes one kind and its ids, first
-  to last, for legacy member callers. `PUT /canvases/pinned-order` takes
+- **Order.** `PUT /canvases/pinned-order` takes
   `{itemIds}` and admits members and guests, like pinning itself; both Canvas
   surfaces use it. An id that is not pinned is dropped; a pin the request leaves out
   keeps its relative order behind the ones it names, so a second window that
@@ -79,12 +78,12 @@ write, so a refused order can leave it pinned at the end; the failure is shown
 and the server list stays authoritative. Sidekicks retain append-only drag
 pinning through `useRowPinDrop`.
 
-The rail keeps the pin group centered between equal outer tracks, with section
-navigation at the top and the account menu at the bottom. Long pin groups scroll
-without hiding those controls. Each shortcut is a circle filled with its Canvas
-colour, with the Canvas icon in the palette’s contrasting ink. A separated ring
-and heavier label mark the open Canvas; the tooltip is only its title. At phone
-width the sheet uses its full Pinned list and omits the duplicate shortcuts.
+One `CanvasPinDragProvider` owns the drag state, memoized split and write
+lifecycle for both views. It arms both empty drop destinations at drag start
+and prevents another move until the write finishes and its order arrives on
+the socket, so a quick second move cannot use stale positions. Reorder and
+unpin failures have independent notices. The shell owns the rail's layout and
+appearance ([`desktop-shell.md`](desktop-shell.md#the-sidebar)).
 
 ### Ordering
 
@@ -145,7 +144,7 @@ is this document's, for both kinds.
 | Suite | What it covers |
 | --- | --- |
 | `apps/desktop/src/renderer/components/canvas-sidebar-section.test.tsx` | The Canvases list's Pinned group above every other row, and a drop into it pinning the row. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.test.tsx` | Shared pin order, cross-surface drag, rail reordering, keyboard ordering, navigation and failed writes. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.test.tsx` | Shared pin order, cross-surface drag and pending writes, keyboard ordering, navigation, unread labels and successive failures. |
 | `apps/api/test/canvas-routes.test.ts` | Canvas ordering route for members and guests, and named invalid-id errors. |
 | `apps/desktop/src/renderer/components/sidekick-sidebar-section.test.tsx` | The Sidekicks list's Needs input and Pinned groups. |
 
@@ -170,11 +169,14 @@ recency table `workspace_workstream_access` were dropped by migration 139.
 
 **What changed:** The left rail shows Canvas pins at its center. Both views
 read `pinnedPosition`, accept Canvas drags, and reorder through the existing
-pin storage. A Canvas-scoped order route admits guests as well as members.
+pin storage. A Canvas-scoped order route admits guests as well as members,
+replacing the unused workspace order route.
 
 **Why:** A pinned Canvas needed to remain one click away while another sidebar
 section was open, and arranging those shortcuts must arrange the Pinned list
-too. The previous section-local drag state could not cross into the rail.
+too. The previous drag handler required source and destination to share a list
+component. A typed payload now crosses the two surfaces, and one provider
+keeps their drag and pending-write state together.
 
 **Considered and rejected:** A separate shortcut collection or device-local
 order would let the two views disagree and lose the arrangement on another

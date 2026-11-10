@@ -201,9 +201,9 @@ export type CreatedCanvas = z.infer<typeof CreatedCanvasSchema>;
 export const SidebarPinRequestSchema = z.strictObject({ pinned: z.boolean() });
 
 /**
- * `PUT /workspace/pinned-order`: one viewer's order for one list's Pinned
- * group, first to last. Ids not pinned in that list are ignored, and pins the
- * request leaves out keep their order after the ones it names.
+ * Workspace pin RPC input, first to last. `PUT /canvases/pinned-order` takes
+ * only `itemIds` and supplies the Canvas kind on the server. Ids not pinned
+ * in that list are ignored; omitted pins retain their relative order.
  */
 export const SidebarPinOrderRequestSchema = z.strictObject({
   kind: z.enum(["canvas", "sidekick"]),

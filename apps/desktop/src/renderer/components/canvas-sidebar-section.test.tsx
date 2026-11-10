@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { canvasRenameRequested, canvasShareRequested } from '../lib/canvases';
 import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
+import { CanvasPinDragProvider } from './canvas-pin-drag';
 import { CanvasesSection } from './canvas-sidebar-section';
 
 const ME = asUserId('00000000-0000-7000-8000-0000000000a1');
@@ -33,7 +34,7 @@ function renderSection(rows: CanvasSidebarRow[] | null, at = '/'): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   if (rows) applyVersionedSidebarList(client, 'canvases', 1, rows);
   render(<QueryClientProvider client={client}><Tooltip.Provider><MemoryRouter initialEntries={[at]}>
-    <CanvasesSection scroll={createRef()} />
+    <CanvasPinDragProvider><CanvasesSection scroll={createRef()} /></CanvasPinDragProvider>
   </MemoryRouter></Tooltip.Provider></QueryClientProvider>);
   return client;
 }
@@ -125,7 +126,7 @@ describe('CanvasesSection', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     applyVersionedSidebarList(client, 'canvases', 1, [canvas('00000000-0000-7000-8000-0000000000c1', 'Launch plan')]);
     render(<QueryClientProvider client={client}><Tooltip.Provider><MemoryRouter initialEntries={['/']}>
-      <CanvasesSection scroll={createRef()} />
+      <CanvasPinDragProvider><CanvasesSection scroll={createRef()} /></CanvasPinDragProvider>
       <Routes><Route element={<Opened />} path="/canvases/:id" /><Route element={null} path="/" /></Routes>
     </MemoryRouter></Tooltip.Provider></QueryClientProvider>);
     fireEvent.contextMenu(screen.getByRole('link', { name: /Launch plan/ }));
@@ -143,7 +144,7 @@ describe('CanvasesSection', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     applyVersionedSidebarList(client, 'canvases', 1, [canvas('00000000-0000-7000-8000-0000000000c1', 'Launch plan')]);
     render(<QueryClientProvider client={client}><Tooltip.Provider><MemoryRouter initialEntries={['/']}>
-      <CanvasesSection scroll={createRef()} />
+      <CanvasPinDragProvider><CanvasesSection scroll={createRef()} /></CanvasPinDragProvider>
       <Routes><Route element={<Opened />} path="/canvases/:id" /><Route element={null} path="/" /></Routes>
     </MemoryRouter></Tooltip.Provider></QueryClientProvider>);
     fireEvent.contextMenu(screen.getByRole('link', { name: /Launch plan/ }));
