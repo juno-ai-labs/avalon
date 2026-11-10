@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { forceAgentLoopDOMigrations } from './force-substream-agent-migrations.mjs';
+import { forceDurableObjectMigrations } from './force-substream-agent-migrations.mjs';
 
 const accountId = 'account';
 const environment = { CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: 'token' };
@@ -69,7 +69,7 @@ function fixtureFetch({
 
 test('dry-run inventories stored objects without sending migration commands', async () => {
   const fixture = fixtureFetch({ globalObjects: [objectId(1), objectId(2)] });
-  const result = await forceAgentLoopDOMigrations({
+  const result = await forceDurableObjectMigrations({
     argv: ['--region=global'],
     environment,
     fetcher: fixture.fetcher,
@@ -83,7 +83,7 @@ test('dry-run inventories stored objects without sending migration commands', as
 });
 
 test('rejects a non-HTTP jurisdiction probe URL before inventory', async () => {
-  await assert.rejects(forceAgentLoopDOMigrations({
+  await assert.rejects(forceDurableObjectMigrations({
     argv: ['--jurisdiction-probe-url=not-a-url'],
     environment,
     fetcher: async () => { throw new Error('inventory_must_not_run'); },
@@ -94,7 +94,7 @@ test('rejects a non-HTTP jurisdiction probe URL before inventory', async () => {
 test('apply batches only stored object ids and waits for the regional queue to drain', async () => {
   const stored = Array.from({ length: 101 }, (_, index) => objectId(index + 1));
   const fixture = fixtureFetch({ globalObjects: [...stored, objectId(999)] });
-  const result = await forceAgentLoopDOMigrations({
+  const result = await forceDurableObjectMigrations({
     argv: [
       '--',
       '--apply',
@@ -128,7 +128,7 @@ test('apply fails when the dead-letter queue grows while commands drain', async 
   });
 
   await assert.rejects(
-    forceAgentLoopDOMigrations({
+    forceDurableObjectMigrations({
       argv: [
         '--apply',
         '--region=global',
@@ -150,7 +150,7 @@ test('apply dispatches only ids in the regional Durable Object jurisdiction', as
     globalObjects: [usObject, unrestrictedObject, objectId(999)],
     jurisdictionByObjectId: new Map([[unrestrictedObject, null]]),
   });
-  const result = await forceAgentLoopDOMigrations({
+  const result = await forceDurableObjectMigrations({
     argv: [
       '--apply',
       '--region=global',
@@ -172,7 +172,7 @@ test('apply dispatches only ids in the regional Durable Object jurisdiction', as
 
 test('apply requires a jurisdiction probe before it can enqueue commands', async () => {
   await assert.rejects(
-    forceAgentLoopDOMigrations({
+    forceDurableObjectMigrations({
       argv: ['--apply', '--region=global'],
       environment,
       fetcher: fixtureFetch().fetcher,
@@ -196,20 +196,20 @@ test('refuses an ambiguous regional AgentLoopDO namespace', async () => {
   };
 
   await assert.rejects(
-    forceAgentLoopDOMigrations({
+    forceDurableObjectMigrations({
       argv: ['--region=global'],
       environment,
       fetcher,
       logger: { log() {} },
     }),
-    /global_substream_agent_namespace_count_2/u,
+    /global_AgentLoopDO_namespace_count_2/u,
   );
 });
 
 
 test('apply selects WorkspaceDO and sends that class in the command', async () => {
   const fixture = fixtureFetch({ className: 'WorkspaceDO', globalObjects: [objectId(1), objectId(999)] });
-  const result = await forceAgentLoopDOMigrations({
+  const result = await forceDurableObjectMigrations({
     argv: ['--class=WorkspaceDO', '--region=global', '--apply', '--jurisdiction-probe-url=http://jurisdiction-probe.test'],
     environment, fetcher: fixture.fetcher, wait: async () => {}, logger: { log() {} },
   });

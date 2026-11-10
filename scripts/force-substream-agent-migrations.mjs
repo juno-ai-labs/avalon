@@ -200,7 +200,7 @@ function selectRegionalResources(namespaces, queues, regions, className) {
     const namespaceMatches = namespaces.filter((namespace) =>
       namespace.class === className && namespace.script === workerName(region));
     if (namespaceMatches.length !== 1 || typeof namespaceMatches[0]?.id !== 'string') {
-      throw new Error(`${region}_substream_agent_namespace_count_${namespaceMatches.length}`);
+      throw new Error(`${region}_${className}_namespace_count_${namespaceMatches.length}`);
     }
     const commandMatches = queues.filter((queue) => queue.queue_name === commandQueueName(region));
     const deadLetterMatches = queues.filter((queue) => queue.queue_name === deadLetterQueueName(region));
@@ -281,7 +281,7 @@ async function waitForDrain(credentials, resources, initialDeadLetters, fetcher,
   }
 }
 
-export async function forceAgentLoopDOMigrations({
+export async function forceDurableObjectMigrations({
   argv = process.argv.slice(2),
   environment = process.env,
   fetcher = fetch,
@@ -364,7 +364,7 @@ export async function forceAgentLoopDOMigrations({
 }
 
 if (isEntryPoint(import.meta.url)) {
-  forceAgentLoopDOMigrations().catch((error) => {
+  forceDurableObjectMigrations().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   });

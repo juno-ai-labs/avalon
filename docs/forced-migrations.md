@@ -7,7 +7,6 @@ regional command consumer, and operator CLI. It does not maintain a fleet regist
 ## Where the code lives
 
 - `apps/api/src/durable-objects/migratable-durable-object.ts` owns constructor gating and `forceMigration`.
-- `apps/api/src/durable-objects/migration-runtime.ts` traces synchronous schema application and reads version receipts.
 - `apps/api/src/queues/migration-command-consumer.ts` routes commands to supported regional namespaces.
 - `packages/contracts/src/durable-object-migrations.ts` defines the command contract.
 - `scripts/force-substream-agent-migrations.mjs` inventories objects and queues commands for `AgentLoopDO` or `WorkspaceDO`.
@@ -80,11 +79,8 @@ new region. The probe only parses IDs and never opens objects.
 
 ## MCP inspection
 
-Use `inspect_migration_progress` with `region` and `from`, optionally `runId`,
-`objectId`, `to`, and pagination, to read forced-migration diagnostics. Compare
-`schema_version` with `expected_version` for shortfalls. It reads seven-day logs,
-not a durable registry; missing events do not establish completion. Use
-`inspect_queues` and `inspect_dead_letters` to inspect command backlog and failures.
+The [engineering MCP operations tools](engineering-mcp.md#operations-tools)
+inspect migration logs and queue backlogs; execution remains in this CLI.
 
 ## Changelog
 

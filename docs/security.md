@@ -304,10 +304,9 @@ are canonical storage services, not authorization layers.
   operator UUID and role with timing-safe token comparison — `support` and
   `security` from `TELEMETRY_OPERATORS_JSON`, `demos` from the separate
   `DEMO_OPERATORS_JSON`; every operator router names the roles it admits and
-  the secret it reads, so the `demos` role (Ace's operator role; the stored
-  name is the retired demo feature's) reaches only the workspace retirement,
-  access and connector-maintenance routes Ace calls, and neither telemetry
-  role reaches those. Ace holds one `demos` token per region, each
+  the secret it reads, so the `demos` role (a stored name from the retired demo feature) reaches only
+  connector-maintenance routes, and neither telemetry role reaches those.
+  Operators hold one maintenance token per region, each
   known to that region alone. Raw access and replay derive audit identity from
   that principal; neither endpoint accepts an operator ID or role in its body.
 

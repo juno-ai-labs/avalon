@@ -38,7 +38,6 @@ import { telemetryOperatorRoutes } from './routes/telemetry-operations';
 import { connectedAppRoutes, deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
 import { mcpOAuthRoutes } from "./routes/mcp-oauth";
-import { workspaceOperatorRoutes } from './routes/workspace-operations';
 import {
   isAllowedGitHubIngressRoute,
   isSharedGitHubIngress,
@@ -142,7 +141,6 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/links", linkRoutes);
   app.route('/internal/telemetry', telemetryOperatorRoutes);
   app.route('/internal/connector-maintenance', connectorMaintenanceOperatorRoutes);
-  app.route('/internal/workspaces', workspaceOperatorRoutes);
 
   const identityApi = new Hono<HonoAppEnv>();
   // Both sub-apps are root-mounted. Hono runs their wildcard middleware in
