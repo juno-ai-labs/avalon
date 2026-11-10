@@ -543,6 +543,16 @@ telemetry roles.
   a schedule behind it is a decision about what retirement is for beyond the
   workspaces it was built for.
 
+## Operator API
+
+The workspace retirement UI has been removed. An operator may still call
+`POST /internal/workspaces/:workspaceId/retire` on the owning regional API with
+`Authorization: Bearer <operator-token>` and JSON
+`{"confirmWorkspaceId":"<workspaceId>"}`. The token must be configured in that
+region's `DEMO_OPERATORS_JSON` with the operator's fixed UUID and role `demos`.
+The matching confirmation ID prevents a request naming a different workspace;
+the existing retirement service and its resumable graph remain authoritative.
+
 ## Changelog
 
 ### 2026-11-09 — The Thread operations are removed once run, and the workspace walk stops reading Threads

@@ -141,7 +141,7 @@ contract, and it is edited whenever the contract itself changes.
 | --- | --- |
 | `prd.md` | **Required.** The PRD itself: the problem, the goals and non-goals, the proposed product behavior, and the decisions. This is the file other documents link to. |
 | `state.md` | **Required.** The three-line state checklist above, plus a supersession or standing-contract note where one applies. Nothing else. |
-| `plan.md` | The phased build checklist for the PRD, with an acceptance gate per phase. Write it only after the PRD is approved, and only when the work is large enough that sequencing matters. A flagged feature registers its flag in Ace in the phase that introduces it, per **Rollout** below. |
+| `plan.md` | The phased build checklist for the PRD, with an acceptance gate per phase. Write it only after the PRD is approved, and only when the work is large enough that sequencing matters. A flagged feature provisions its Flagship definition in the phase that introduces it, per **Rollout** below. |
 | `design.md` | Architecture and rationale too detailed for the PRD body — schemas, protocols, migration strategy. |
 | `research.md` | Prior art, competitor behavior, or investigation that informed the PRD but is not itself a proposal. |
 | `README.md` | Only for a folder that has grown into a bundle: a short map saying which file is actionable and which are supporting provenance. |

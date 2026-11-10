@@ -2,25 +2,7 @@
 
 ## Where the code lives
 
-| Path | Responsibility |
-| --- | --- |
-| `apps/site/src/access-copy.ts`, `landing.css`, `index.html` | Replaceable static landing copy, layout, and direct canonical installer link. |
-| `apps/site/src/pilot-offer.ts` | The landing's pilot offer card: when it slides in, each visitor's six-day deadline, and remembering that a visitor closed it. |
-| `apps/site/src/section-nav.ts`, `src/fonts/`, `src/assets/` | The landing's current-section marker, its self-hosted Barlow faces, and its hero and team images. |
-| `apps/api/src/services/access-request-content.ts` | Replaceable acknowledgement subject and body, delivered as plain text. |
-| `apps/api/src/services/access-request-service.ts` | Persist-before-send acknowledgement, deduplication and explicit retry. |
-| `apps/api/src/routes/private-access.ts` | Global public intake and explicit POST download redemption. |
-| `packages/contracts/src/private-access.ts` | Runtime-validated public and Ace contracts. |
-| `packages/db/src/private-access.ts` | Shared grant issuer, hash, URL builder, redemption and request listing. |
-| `packages/db/migrations/0101_private_access.sql` | Access requests, download grants, optional expiry and frozen acknowledgement sender. |
-| `apps/ace/src/private-access.ts`, `client/private-access.tsx` | Access-protected request list and ad hoc grant generator. |
-| `apps/site/download/index.html`, `src/download.ts` | Fragment-based grant handoff and deliberate Download button. |
-| `apps/api/src/services/workspace-service.ts` | Issues a `workspace_invitation` grant alongside each Global workspace invitation. |
-| `apps/api/src/services/invitation-email-service.ts` | Renders the optional download link into the invitation email. |
-
 ## How it works
-
-The public landing page links directly to the canonical macOS installer. It does not collect access requests or load Turnstile. The existing intake API, Ace review tools, and token-based invitation downloads remain available for their separate workflows. Downloading the installer does not grant workspace membership.
 
 Global `POST /access/requests` remains the intake boundary for a future authorized client. Validation trims and lowercases the email. D1 has a unique normalized email: repeated submissions preserve
 the original row, request time, and frozen acknowledgement sender/subject/body. A new or
@@ -30,22 +12,6 @@ never calls the provider. An acknowledged duplicate returns the same accepted
 response without sending another message. The endpoint still requires and verifies
 a Turnstile proof from any future authorized client; the current landing page does
 not initialize that client or a browser widget.
-
-Ace reads Global requests from its existing D1 binding, searches server-side, and keyset-pages 50 rows at a time. It shows acknowledgement state, first-attempt time and request ID for provider reconciliation. Grant history is separately paginated and contains recipient attribution and lifecycle timestamps, never raw tokens; `listDownloadGrants` resolves that email by joining `source_id` against whichever table the grant's `source` names — `access_requests` for `manual`/`access_invitation`, `workspace_invitations` for `workspace_invitation` — so a workspace-invitation grant is findable by the invitee's email rather than always rendering as an unattributed standalone link. Revocation is a same-origin Access-protected write. An operator can generate a standalone download or
-associate one with a request. This creates a `manual` grant and returns its URL
-once; it does not send mail or mark the person invited. The same exported
-`issueDownloadGrant` accepts `access_invitation` and `workspace_invitation` sources
-for email producers; the workspace invitation caller is described below, and
-`access_invitation`'s bulk Ace sender remains planned. Source fields are
-attribution, not authority.
-There is one generator, independent of the UI or any particular email template.
-Its optional `expiresAt` accepts a future ISO timestamp with an explicit offset,
-normalizes it to UTC, and makes the grant repeatable until that instant. Omission
-preserves single-use behavior with no time expiry. Ace defaults to timed mode and requires operators to choose an
-exact date/time in their displayed local timezone; no default duration is assumed.
-Both standalone and request-linked generation use this choice. The returned
-`expiresAt` is null for single-use links and is displayed with each newly issued
-URL so changing the next link's settings cannot mislabel the previous one.
 
 The issuer generates 256 random bits and persists a SHA-256 digest. The URL
 carries the raw token in its fragment, which the browser strips from history once
@@ -191,10 +157,6 @@ Mutation checks prove the write, token admission, forced concurrent claim,
 origin, expiry, rate/body guards and sender/idempotency paths fail when their
 production behavior is broken. The focused tests pass again after restoration.
 
-The test fixture installer is text bytes, never executable software. Browser
-verification uses the actual Vite pages and explicitly synthetic Ace records; no
-production requests, emails or grants are created.
-
 ## Launch copy and outreach
 
 [Launch copy](PRDs/2026-09-09_private-access/launch-copy.md) holds the supplied
@@ -264,11 +226,6 @@ mail retains its existing sender. Landing copy is compiled
 at build time; changing it requires a site deploy. New email copy affects new
 requests, while retries retain their original sender and content.
 
-The independent deployment workflows do not enforce this ordering. For the first
-release, dispatch the verified API revision through the existing deployment
-workflow, confirm migrations and regional health, then merge the site/Ace change. Invitation dispatch and
-closing legacy distribution remain the next implementation phases in the PRD.
-
 ### Handling an acquisition erasure request
 
 Use the existing privacy-contact and identity-verification process, not an
@@ -310,6 +267,20 @@ above. Manual suppression is retained while needed to prevent unwanted acknowled
 when its associated purpose ends. Delete expired/used/revoked grants after their
 related delivery/support investigation is complete. No automatic age-based sweep
 or numerical retention period is configured.
+
+## Administration after UI retirement
+
+Private-access request review, manual download-grant issuance, and grant
+revocation have no replacement administration UI or MCP tool. Operators with
+engineering MCP production SQL access can inspect the authoritative
+`access_requests` and download-grant tables using their checked-in schema;
+any manual mutation requires the same care as other production SQL.
+
+Acknowledgement recovery remains available through
+`POST /internal/access/requests/:id/recover` with a regional `demos` operator
+credential and the action/generation fields defined by
+`apps/api/src/routes/access-operations.ts`. Connector maintenance continues to
+use `scripts/connector-maintenance.mjs` with the same regional credential.
 
 ## Changelog
 

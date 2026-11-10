@@ -83,21 +83,18 @@ function policyShape(policy) {
 
 async function ensureAccessApplication() {
   const applications = await cloudflareList("/access/apps");
-  const policySource = applications.find((application) => application.domain === mcpDomain);
-  if (!policySource) throw new Error(`Provision the ${mcpDomain} Access application and policy before deployment`);
+  const existing = applications.find((application) => application.domain === mcpDomain);
+  if (!existing) throw new Error(`Provision the ${mcpDomain} Access application and policy before deployment`);
   const sourcePolicies = await cloudflareList(
-    `/access/apps/${encodeURIComponent(policySource.id)}/policies`,
+    `/access/apps/${encodeURIComponent(existing.id)}/policies`,
   );
   if (!Array.isArray(sourcePolicies) || sourcePolicies.length === 0) {
     throw new Error("The engineering MCP Access application has no policy to reuse");
   }
-  if (typeof policySource.session_duration !== "string" || policySource.session_duration.length === 0) {
+  const current = await cloudflare(`/access/apps/${encodeURIComponent(existing.id)}`);
+  if (typeof current.session_duration !== "string" || current.session_duration.length === 0) {
     throw new Error("The engineering MCP Access application has no session duration to reuse");
   }
-  const existing = applications.find((application) => application.domain === mcpDomain);
-  const current = existing
-    ? await cloudflare(`/access/apps/${encodeURIComponent(existing.id)}`)
-    : null;
   const currentAllowedRedirectUris = Array.isArray(
     current?.oauth_configuration?.dynamic_client_registration?.allowed_uris,
   )
@@ -107,10 +104,10 @@ async function ensureAccessApplication() {
     name: "Rally engineering MCP",
     type: "self_hosted",
     domain: mcpDomain,
-    session_duration: policySource.session_duration,
+    session_duration: current.session_duration,
     app_launcher_visible: false,
-    auto_redirect_to_identity: policySource.auto_redirect_to_identity ?? false,
-    ...(Array.isArray(policySource.allowed_idps) ? { allowed_idps: policySource.allowed_idps } : {}),
+    auto_redirect_to_identity: current.auto_redirect_to_identity ?? false,
+    ...(Array.isArray(current.allowed_idps) ? { allowed_idps: current.allowed_idps } : {}),
     oauth_configuration: {
       enabled: true,
       dynamic_client_registration: {
@@ -129,13 +126,8 @@ async function ensureAccessApplication() {
     },
     policies: sourcePolicies.map(policyShape),
   };
-  const result = existing
-    ? await cloudflare(`/access/apps/${encodeURIComponent(existing.id)}`, {
+  const result = await cloudflare(`/access/apps/${encodeURIComponent(existing.id)}`, {
         method: "PUT",
-        body: JSON.stringify(application),
-      })
-    : await cloudflare("/access/apps", {
-        method: "POST",
         body: JSON.stringify(application),
       });
   if (typeof result.aud !== "string" || result.aud.length === 0) {

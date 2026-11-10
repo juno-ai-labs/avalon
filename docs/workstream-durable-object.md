@@ -1342,7 +1342,7 @@ does not compile. `forceMigration` is called only by the regional queue consumer
 behind the tracker's operator site, and it applies nothing itself — waking the
 object is what runs its schema, so the method awaits construction and reports
 where the object landed. See
-`durable-object-migration-tracking.md` (retired app).
+[forced migrations](forced-migrations.md).
 
 ### Retired maintenance-window cutover
 

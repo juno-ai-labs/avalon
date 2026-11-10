@@ -501,9 +501,9 @@ MCP handler, tool discovery, cross-region aggregation, destructive annotations,
 single-region SQL execution, and proof that a duplicate-region resolution makes
 no SQL call. `apps/api/test/engineering-inspection-routes.test.ts` exercises the
 checked-in regional D1 schema and proves that lifecycle, serving-contract, and
-generation fences admit only the current active authority. Existing Access tests own JWT
-signature, issuer, audience, cookie, and header verification because this
-Worker imports that one verifier rather than forking it.
+generation fences admit only the current active authority. `apps/engineering-mcp/test/access.test.ts` owns JWT signature, issuer,
+audience, cookie, header, and fail-closed configuration verification against
+the local verifier.
 
 `apps/api/test-workers/engineering-d1-inspection.test.ts` writes and reads a
 D1 database through `runD1Sql`, BLOBs included, and proves the call reached
@@ -520,13 +520,6 @@ Durable Objects. The shared Worker never receives a database handle or a copy of
 the SQLite file, only the requested result.
 
 ## Security and trust model
-
-Cloudflare Access is the identity and policy authority. Managed OAuth supplies
-standards-based authorization and Dynamic Client Registration for remote MCP
-clients; the deployment enables loopback redirect registration for installed
-clients. Access reuses the same configured identity provider and admission
-policy as Ace, but the distinct application/audience prevents an Ace token from
-being replayed at the MCP origin.
 
 The SQL capability is production-destructive by design. Access membership is
 therefore equivalent to database-console access across both Rally regions.
@@ -560,17 +553,6 @@ Operator connection instructions for Codex, Claude Code, and Cursor Desktop,
 including the first safe schema query and OAuth troubleshooting, live in
 [`internal-admin-mcp-server.md`](internal-admin-mcp-server.md).
 
-The provisioner requires `CLOUDFLARE_ACCOUNT_ID` and
-`CLOUDFLARE_API_TOKEN`. It requires the existing Ace Access application as the
-policy, identity-provider, and session-duration source; missing source state is
-a deployment failure, not permission to create a broader policy. Generated
-configuration contains the Access audience, is owner-readable, and is removed
-after Wrangler exits. Redeployment preserves an existing Managed OAuth grant
-configuration and administrator-added HTTPS redirect allowlist entries. It also
-ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
-Changing that managed provider list remains an explicit Access administration
-decision.
-
 The provisioner also injects the account ID as a Worker variable and, when the
 `ENGINEERING_MCP_BASIN_SQL_API_TOKEN` and
 `ENGINEERING_MCP_WORKERS_OBSERVABILITY_API_TOKEN` GitHub secrets are set in the
@@ -580,6 +562,7 @@ token the Worker already has, and its tool fails as
 `lakehouse_token_unconfigured` or `observability_token_unconfigured` if it has
 none: the MCP deploys inside the API release, and a missing read credential
 should not turn that release red.
+## Access provisioning
 
 
 ## Changelog

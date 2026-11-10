@@ -214,7 +214,7 @@ The queue itself needs no handling. Declare it in the Wrangler file — producer
 binding, consumer settings, dead-letter queue — and the deployment preflight
 creates it if the account does not hold it; there is no step to run by hand,
 and a queue only one side names is refused as a misspelling. The procedure is
-in [`runbook.md`](runbook.md#the-durable-object-migration-tracker).
+in [`runbook.md`](forced-migrations.md#operations).
 
 ## The limits that decide the argument
 
