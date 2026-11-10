@@ -91,6 +91,9 @@ records where a running signal would come from.
   the human, assistant, tool, activity, attachment, and failure rows it
   composes. Both adapters render `MessageFeed`; windowing is the one thing it
   takes from its host, because only the paging surface needs it.
+  Its `ElicitationPanel` keeps keyboard focus on a choice distinct from focus
+  inside **Other**: the radio or checkbox outlines its row; the nested text
+  field uses its own focus styling.
 - `MessageActions` in `workstream-blocks.tsx` is the one hover row under a
   message, on every surface that draws one: Rally's turn and a person's turn.
   The host says whether the text actions apply; the row owns order, labels,
@@ -512,10 +515,6 @@ the answer under the prompt. An automation's page keeps its lifecycle controls (
 pause, resume, delete, run now, the run-history dialog) outside the feed rather than
 inside it. Neither host may smuggle those controls through an optional common
 prop.
-
-Elicitation choices show selection with an accent wash, filled keycap and check.
-The row's keyboard focus outline applies only to its radio or checkbox; typing
-in **Other** uses the text field's own focus styling without outlining the row.
 
 Each conversation's header is what the host renders through `renderHeader`;
 the header context carries the detail, the socket state, who is present, and
