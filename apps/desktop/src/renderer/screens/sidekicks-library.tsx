@@ -9,11 +9,12 @@ import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
-import { EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
+import { AvatarStack, EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
 import { sidekickNext, sidekickStatus } from '../lib/sidekick-status';
-import type { AutomationSummary } from '../lib/types';
+import type { AutomationSummary, WorkspaceMember } from '../lib/types';
 import { useDocumentTitle } from '../lib/document-title';
+import { useWorkspaceMembers } from '../lib/workspace-members';
 
 type SidekickFilter = 'all' | 'you' | 'workspace' | 'paused';
 
@@ -34,9 +35,16 @@ function matchesFilter(item: AutomationSummary, filter: SidekickFilter): boolean
   }
 }
 
-function sharedWithLabel(item: AutomationSummary): string {
-  if (item.audience === 'people') return 'Named people';
-  return item.scope === 'you' ? 'Only you' : 'Organization';
+function sharedWith(item: AutomationSummary, membersById: ReadonlyMap<string, WorkspaceMember>): React.ReactNode {
+  if (item.audience !== 'people') return item.scope === 'you' ? 'Only you' : 'Organization';
+  const ids = item.sharedWithUserIds ?? [];
+  if (ids.length === 0) return 'People';
+  const visible = ids.flatMap((id) => {
+    const member = membersById.get(id);
+    return member ? [member] : [];
+  }).slice(0, 4);
+  if (visible.length === 0) return ids.length === 1 ? '1 person' : `${ids.length} people`;
+  return <AvatarStack members={visible} extraCount={ids.length - visible.length} role="img" />;
 }
 
 /**
@@ -61,6 +69,11 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
     matchesFilter(item, filter)
     && `${item.name} ${item.description}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
   );
+  const { data: members } = useWorkspaceMembers(api, {
+    enabled: items.some((item) => item.audience === 'people' && item.sharedWithUserIds?.length),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const membersById = new Map(members?.map((member) => [member.id, member]));
   const newSidekick = <Link className="button button-primary window-no-drag" to="/sidekicks/new"><Plus aria-hidden="true" size={16} />New Sidekick</Link>;
   return <main className="sidekicks-library dashboard-home">
     <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1><p>AI teammates your whole team can talk to.</p></div><div className="sidekicks-library-actions">{newSidekick}</div></header>
@@ -74,13 +87,13 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
     <section aria-labelledby="sidekick-results-title">
     <div className="sidekick-results-heading"><h2 id="sidekick-results-title">{search ? 'Search results' : 'Your Sidekicks'}</h2><span role="status" aria-label="Sidekick count">{query.isSuccess ? `${items.length} ${items.length === 1 ? 'Sidekick' : 'Sidekicks'}` : ''}</span></div>
     {query.isLoading ? (socket ? <PushedListPending label="Loading Sidekicks…" noun="Sidekicks" /> : <OpeningState label="Loading Sidekicks…" />) : query.error ? <ErrorNotice occurrence={query.error}>{query.error.message}</ErrorNotice> : items.length === 0 ? <EmptyState action={query.data?.length ? undefined : newSidekick} title={query.data?.length ? "No matching Sidekicks" : "No Sidekicks yet"} description={query.data?.length ? "Try a different search or ownership filter." : "Describe what you would like to delegate to create one."} /> :
-      <ul className="dashboard-grid">{items.map((item) => <SidekickCard item={item} key={item.id} />)}</ul>}
+      <ul className="dashboard-grid">{items.map((item) => <SidekickCard item={item} key={item.id} membersById={membersById} />)}</ul>}
     </section>
   </main>;
 }
 
-/** The title link covers the card, with one keyboard stop for opening it. */
-function SidekickCard({ item }: { item: AutomationSummary }): React.JSX.Element {
+/** The title link stretches over the card while its facts remain separate from the link. */
+function SidekickCard({ item, membersById }: { item: AutomationSummary; membersById: ReadonlyMap<string, WorkspaceMember> }): React.JSX.Element {
   const { tint } = resolveWorkstreamAppearance(item.id, item.appearance ?? undefined);
   return <li className="dashboard-card">
     <div className="dashboard-card-preview" style={{ background: `color-mix(in srgb, ${tint} 45%, var(--av-sys-color-surface-raised))` }}>
@@ -92,7 +105,7 @@ function SidekickCard({ item }: { item: AutomationSummary }): React.JSX.Element 
       <h3><Link className="dashboard-card-link" to={`/sidekicks/${encodeURIComponent(item.id)}`}>{item.name}</Link></h3>
       <p>{item.description}</p>
       <dl className="sidekick-card-facts">
-        <div><dt>Shared with</dt><dd>{sharedWithLabel(item)}</dd></div>
+        <div><dt>Shared with</dt><dd>{sharedWith(item, membersById)}</dd></div>
         <div><dt>Next</dt><dd>{sidekickNext(item)}</dd></div>
       </dl>
     </div>
