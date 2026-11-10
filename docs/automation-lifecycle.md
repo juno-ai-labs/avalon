@@ -1557,8 +1557,8 @@ A definition may set `failureNotificationConversationId` to a canonical
 `conversation_list` id in this scope: the Sidekick's own conversation, a Canvas
 it writes, or an explicitly attached Canvas. This declares an additional
 failure-notification destination; it grants no access. Apply resolves it through
-normal scope and canonical admission, refusing an unattached, inaccessible,
-archived or noncanonical destination with
+normal scope and canonical admission for the default run-as person, refusing
+an unattached, inaccessible, archived or noncanonical destination with
 `sidekick_failure_notification_destination_unavailable`. Attach a new Canvas
 through `conversation_attach` before saving. The activation's host-provided
 context carries the configured destination. An absent field or explicit null
@@ -1575,16 +1575,21 @@ required delivery attempts. Its completed tool receipt is the durable outcome;
 there is no second outcome ledger. The host reads the latest report from this
 execution before committing its terminal state. A blocked or failed task maps
 to a failed run with `sidekick_task_blocked` or `sidekick_task_failed`. A missing
-or uncommitted report is `sidekick_task_outcome_missing`, never success.
+or uncommitted report on a fresh activation is `sidekick_task_outcome_missing`,
+never success. A conversational continuation may reply without another report;
+its own explicit outcome still applies. This avoids an extra inference turn
+for ordinary follow-ups and prevents a previous declaration in history from
+making the next reply look like a failed task.
+
+The initial activation deliberately requires a positive declaration: defaulting
+a missing report to success would reproduce the original false completion. It
+costs one reporting turn for a fresh activation; a failure-only tool was rejected
+because forgetting that tool would silently mark the blocked task successful.
+
 Cancellation, ambiguous writes and explicit needs-input retain their existing
 precedence. Delegated agents do not report their coordinator's task outcome.
 A recovered intermediate tool error does not itself fail a successful task;
 delivering a failure notice does not make the original task successful.
-
-`apps/api/src/services/sidekick-task-outcome.ts` owns the reporting plugin and
-receipt decoding; `integrations.ts` applies its outcome at terminal settlement.
-`test-workers/hosted-sidekick.test.ts` exercises model invocation, receipt
-persistence across eviction, and the resulting Sidekick history state.
 
 ### Lifecycle
 
@@ -2150,10 +2155,13 @@ survive as described above.
 ### 2026-11-09 — Authorized failure destinations and explicit task outcomes
 
 **What changed:** Definitions can name a failure-notification destination that
-apply validates against existing conversation scope and access. Activations receive
+apply validates against existing conversation scope and the default execution
+principal's access. Activations receive
 that destination as host context and report their final task outcome through
 an ordinary durable tool receipt. The host settles blocked, failed and
-unconfirmed tasks as failures even when the model loop ends normally.
+unconfirmed fresh activations as failures even when the model loop ends normally.
+Ordinary continuations can answer without another success declaration, while
+their own explicit blocked/failed report still changes task state.
 
 **Why:** Dashboard run 457 could neither execute nor notify: its Organization
 Sidekick named an unattached "home" only in prose, then normal loop completion

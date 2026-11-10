@@ -998,7 +998,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
     if (definition.failureNotificationConversationId) {
       const destination = await this.host.resolveConversationToolTarget({
-        workspaceId: asWorkspaceId(row.workspace_id), userId: asUserId(request.actor.userId),
+        workspaceId: asWorkspaceId(row.workspace_id), userId: asUserId(row.run_as_user_id),
         scope: { kind: "sidekick", automationId: row.automation_id },
         reference: definition.failureNotificationConversationId,
       });
