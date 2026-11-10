@@ -59,6 +59,7 @@ function objectApi({
   inventoryInvalidJson = false,
   inventoryStatus = 200,
   inventoryStatuses = [],
+  inventoryBodyErrors = false,
   inventoryTimestamp = '2026-08-13T19:09:29.001Z',
   putErrors = [],
   putInvalidJson = false,
@@ -124,6 +125,10 @@ function objectApi({
     if (status < 200 || status >= 300) {
       const body = new ReadableStream({
         start(controller) {
+          if (inventoryBodyErrors) {
+            controller.error(new Error('terminated'));
+            return;
+          }
           controller.enqueue(Buffer.from('provider error'));
         },
         cancel() {
@@ -361,7 +366,7 @@ test('validates authoritative inventory responses without trusting cached object
 
   await t.test('transient inventory failure recovers on retry', async () => {
     const { root, desktopDirectory } = await fixture();
-    const api = objectApi({ inventoryStatuses: [500, 429] });
+    const api = objectApi({ inventoryStatuses: [500, 503] });
     const sleeps = [];
     try {
       await publishTelemetryArtifacts({
@@ -380,10 +385,9 @@ test('validates authoritative inventory responses without trusting cached object
     }
   });
 
-  await t.test('non-transient inventory refusal is not retried', async () => {
+  await t.test('a transient response whose body already errored is still retried', async () => {
     const { root, desktopDirectory } = await fixture();
-    const api = objectApi({ inventoryStatus: 403 });
-    const sleeps = [];
+    const api = objectApi({ inventoryStatus: 502, inventoryBodyErrors: true });
     try {
       await assert.rejects(
         publishTelemetryArtifacts({
@@ -391,18 +395,42 @@ test('validates authoritative inventory responses without trusting cached object
           environment: runtimeEnvironment,
           fetchImpl: api.fetchImpl,
           runCommand: commandRunner().runCommand,
-          sleepImpl: async (milliseconds) => { sleeps.push(milliseconds); },
+          sleepImpl: async () => {},
           temporaryRoot: root,
         }),
-        /Could not verify .* HTTP 403/u,
+        /Could not verify .* HTTP 502/u,
       );
-      assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 1);
-      assert.deepEqual(sleeps, []);
-      assert.equal(api.errorBodyCancelled, true);
+      assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 7);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  for (const status of [403, 429]) {
+    await t.test(`non-transient inventory refusal is not retried: ${status}`, async () => {
+      const { root, desktopDirectory } = await fixture();
+      const api = objectApi({ inventoryStatus: status });
+      const sleeps = [];
+      try {
+        await assert.rejects(
+          publishTelemetryArtifacts({
+            desktopDirectory,
+            environment: runtimeEnvironment,
+            fetchImpl: api.fetchImpl,
+            runCommand: commandRunner().runCommand,
+            sleepImpl: async (milliseconds) => { sleeps.push(milliseconds); },
+            temporaryRoot: root,
+          }),
+          new RegExp(`Could not verify .* HTTP ${status}`, 'u'),
+        );
+        assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 1);
+        assert.deepEqual(sleeps, []);
+        assert.equal(api.errorBodyCancelled, true);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
 
   for (const cacheStatus of ['HIT', 'STALE', 'UPDATING', 'REVALIDATED', null]) {
     await t.test(`non-dynamic inventory response: ${cacheStatus ?? 'missing'}`, async () => {

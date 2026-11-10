@@ -106,8 +106,12 @@ function sleep(milliseconds) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
 }
 
-function isTransientStatus(status) {
-  return status === 429 || status >= 500;
+async function discardBody(response) {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Preserve the provider's status when stream teardown also fails.
+  }
 }
 
 async function uploadAndVerify(
@@ -187,11 +191,13 @@ async function uploadAndVerify(
         ...jurisdictionHeaders,
       },
     });
-    if (!isTransientStatus(inventory.status)) break;
-    if (attempt < INVENTORY_ATTEMPTS - 1) await inventory.body?.cancel();
+    // Only 5xx: a 429 here is the account API rate limit, whose five-minute
+    // block this backoff cannot outlast.
+    if (inventory.status < 500) break;
+    if (attempt < INVENTORY_ATTEMPTS - 1) await discardBody(inventory);
   }
   if (!inventory.ok) {
-    await inventory.body?.cancel();
+    await discardBody(inventory);
     throw new Error(`Could not verify r2://${target}: Cloudflare returned HTTP ${inventory.status}`);
   }
   if (inventory.headers.get('cf-cache-status') !== 'DYNAMIC') {

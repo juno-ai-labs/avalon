@@ -841,9 +841,10 @@ signals, never by weakening policy or deadline tests.
 ### 2026-11-10 — Artifact inventory verification retries transient Cloudflare failures
 
 **What changed:** After each private artifact upload, the publisher's
-exact-prefix inventory read retries an HTTP 429 or 5xx response up to seven
-attempts, waiting 500 ms and doubling between them. Every other status, and
-every check on the inventory body, still fails on the first response.
+exact-prefix inventory read retries an HTTP 5xx response up to seven attempts,
+waiting 500 ms and doubling between them. A discarded response whose body
+stream has already failed is still retried. Every other status, and every check
+on the inventory body, still fails on the first response.
 
 **Why:** Release v1.714.0 built, signed and notarized, then aborted before
 distribution because one inventory read, for one renderer source map among
@@ -857,7 +858,10 @@ those loops, it does not retry a thrown `fetch` error.
 **Considered and rejected:** Retrying the PUT as well, because no PUT failure
 has been observed and its error path already names the provider's error codes.
 Treating any non-OK status as retryable, because a 403 from a revoked token
-would then cost a minute before it reached the operator. Retrying a request
+would then cost half a minute before it reached the operator. Retrying 429,
+because the account-wide API rate limit blocks a token for five minutes, which
+this backoff cannot outlast; surviving it would need `Retry-After` handling on
+the PUT as well. Retrying a request
 timeout, because each attempt may already have taken five minutes.
 
 **Consequences:** A persistent 5xx now fails after roughly 31 seconds of backoff
