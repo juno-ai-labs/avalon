@@ -1,5 +1,5 @@
 import { asUserId } from '@rally/contracts';
-import type { AutomationSummary, CanvasDetail, CanvasSidebarRow, CanvasSidekick } from '@rally/contracts';
+import type { CanvasDetail, CanvasSidebarRow, CanvasSidekick } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -13,6 +13,7 @@ import { RENAME_CANVAS_STATE } from '../lib/canvases';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
 import type * as Platform from '../lib/platform';
+import type { AutomationSummary } from '../lib/types';
 import { expandRequest, openResourceRequest } from '../lib/navigation-routes';
 import type { ConversationSurfaceProps } from './conversation-surface';
 import type * as ConversationSurfaceExports from './conversation-surface';
@@ -109,7 +110,7 @@ function attached(id: string, name: string, overrides: Partial<CanvasSidekick> =
 
 /** A row of the viewer's own Sidekicks list, as `workspace_sidekick_list` carries it. */
 function ownSidekick(id: string, name: string): AutomationSummary {
-  return { id, name, description: '', scope: 'personal', status: 'active', nextRunAt: null, loadable: true } as AutomationSummary;
+  return { id, name, description: '', scope: 'you', status: 'active', updatedAt: '2026-11-07T09:30:00.000Z', loadable: true };
 }
 
 /** The menu row naming a Sidekick: its name and its state, read as one item. */
