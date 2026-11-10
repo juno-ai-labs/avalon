@@ -124,12 +124,14 @@ repeat discovery.
    entities.
 2. **Map the joins.** From the samples, name each key that links two sources,
    how many sample rows actually matched on it, and which sources stand alone.
-3. **Write a plan and show it to the person.** List the sources, the joins,
-   the cuts and slices the report will offer, and two or three combinations
-   they may not have thought of. Ask which to keep before saving.
+3. **Choose a plan that fulfills the request.** Use the sources, joins and
+   report slices the person asked for, with sensible defaults for reversible
+   choices. Continue with that plan rather than asking which optional
+   combinations to keep.
 4. **Save the plan as the run procedure.** Record the exact queries, ranges and
    tool arguments that worked, the join keys and how to normalize them, the
    output shape, and where to deliver it, so every run follows the same plan.
+   Summarize what you saved so the person can request adjustments.
 
 ## Anti-patterns
 

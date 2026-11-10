@@ -37,10 +37,10 @@ something, and a signed-in site can still show everyone's entries, as a vote
 does. The request's own words decide, in this order:
 
 1. **Open site.** The app saves nothing people add: it works on what the
-   person types or pastes, or shows content you publish with it. A character
+   person types or pastes, or shows public content you publish with it. A character
    counter for pasted text, a word or reading-time counter, a unit or currency
    converter, a tip or loan calculator, a JSON or CSV formatter, a countdown
-   timer, a color picker, a reference page or a dashboard of data you publish.
+   timer, a color picker, a reference page or a dashboard of public data.
    Anyone with the link can use it. **Build it without asking.** It may keep
    one person's preferences in their own browser, which needs no sign-in.
 2. **Anonymous.** The request says "anonymous", or answers should not record
@@ -51,16 +51,20 @@ does. The request's own words decide, in this order:
 4. **Shared.** Any other app that saves what people add: a vote, an RSVP list,
    a sign-up sheet, a kudos wall, a shared board.
 
-"Private", "members-only" or "team-only" describing the **site** means only
-signed-in people may open it (the protected site in \`building-live-sites\`).
-It does not by itself make each person's entries hidden from the others.
+"Private", "members-only" or "team-only" describing the **site** requires a
+protected site, as does a dashboard displaying private connected data. Follow
+\`building-live-sites\` for the guard and Rally's resource authorization;
+build and populate it using that protection. A dashboard storing data you
+retrieve is not an app collecting people's entries and needs no entry-privacy
+question. Site protection does not by itself hide each person's entries from
+the other authorized viewers.
 
 **Who can answer.** When the request names people outside Rally (the public,
 customers, guests, clients, parents, anyone, the internet), anyone with the
 link can submit, as the "Anonymous answers" section of \`building-live-sites\`
 shows. Otherwise people sign in with Rally to add entries; someone who follows
 the site's link signs in from the site and comes straight back. Reading stays
-open to anyone with the link unless the request makes the site private.
+open to anyone with the link unless the site needs protection as described above.
 
 **Ask only when the app saves what people add and the request does not say
 who sees it.** Then ask one question, right away and before writing any
@@ -111,7 +115,7 @@ needs it.
 export const CREATING_AN_APP_SKILL: HarnessSkill = {
   name: "creating-an-app",
   description:
-    "What \"create an app\" means in Rally: a live web site, never a native iOS or Android app, open by default, with sign-in only when it saves what people add, and whether its entries are shared, private or anonymous.",
+    "What \"create an app\" means in Rally: a live web site, never a native iOS or Android app; when it needs protection, sign-in, or shared, private or anonymous entries.",
   whenToUse:
     "When someone asks to create, make or build an app or tool that people will open and use in a browser or on a phone. Load it before building-live-sites.",
   body: CREATING_AN_APP_BODY,
