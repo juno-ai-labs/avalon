@@ -5,6 +5,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
+import { WORKSPACE_MEMBERS_QUERY_KEY } from '../lib/workspace-members';
 import type { AutomationSummary } from '../lib/types';
 import { SidekicksLibraryRoute, SidekicksLibraryScreen } from './sidekicks-library';
 
@@ -86,12 +87,16 @@ describe('the Sidekicks home', () => {
     ] satisfies AutomationSummary[]);
     render(<QueryClientProvider client={client}><Tooltip.Provider><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></Tooltip.Provider></QueryClientProvider>);
     expect(getSidekicks).not.toHaveBeenCalled();
-    const triage = (await screen.findByRole('link', { name: 'Incident triage' })).closest('li')!;
+    const triageLink = await screen.findByRole('link', { name: 'Incident triage' });
+    const triage = triageLink.closest('li')!;
     expect(within(triage).getByText('Needs input')).toBeInTheDocument();
-    const facepile = await within(triage).findByRole('img', { name: 'Alex Rivera, Sam Chen, and 1 more' });
+    const facepile = await within(triage).findByRole('img', { name: 'Alex Rivera; Sam Chen; and 1 more' });
     expect(within(facepile).getByText('+1')).toBeInTheDocument();
+    expect(triageLink).not.toContainElement(facepile);
     // What wakes it, the alert ahead of a request.
-    expect(within(triage).getByText('Next').nextElementSibling).toHaveTextContent('On alert');
+    const next = within(triage).getByText('Next');
+    expect(next.nextElementSibling).toHaveTextContent('On alert');
+    expect(triageLink).not.toContainElement(next);
     const changelog = screen.getByRole('link', { name: 'Weekly changelog' }).closest('li')!;
     expect(within(changelog).getByText('Organization')).toBeInTheDocument();
     expect(within(changelog).queryByText('Working')).toBeNull();
@@ -108,6 +113,20 @@ describe('the Sidekicks home', () => {
     // Shared with named people is not only its author's.
     expect(screen.queryByRole('link', { name: 'Incident triage' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Revenue analyst' })).toBeInTheDocument();
+  });
+
+  it('uses the cached Organization roster when opening the dashboard', async () => {
+    socket.mounted = true;
+    const client = new QueryClient();
+    client.setQueryData(WORKSPACE_MEMBERS_QUERY_KEY,
+      [{ id: 'alex', name: 'Cached Alex', email: 'alex@example.com', timezone: 'UTC' }],
+      { updatedAt: Date.now() - 120_000 });
+    applyVersionedSidebarList(client, 'automations', 1, [
+      { id: 'triage', name: 'Incident triage', description: 'Watches alerts.', scope: 'you', audience: 'people', sharedWithUserIds: ['alex'], status: 'active', updatedAt: '2026-11-07T09:00:00.000Z' },
+    ] satisfies AutomationSummary[]);
+    render(<QueryClientProvider client={client}><Tooltip.Provider><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></Tooltip.Provider></QueryClientProvider>);
+    expect(await screen.findByRole('img', { name: 'Cached Alex' })).toBeInTheDocument();
+    expect(getWorkspaceMembers).not.toHaveBeenCalled();
   });
 
   it('only shows the top-right pill for paused Sidekicks and preserves Needs input', async () => {

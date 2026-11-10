@@ -1259,8 +1259,7 @@ loaded into someone else's conversation, not a read of its own.
   beside `scope` on the summary and the detail. A third `scope` value would
   fail a released client's whole sidebar parse. The sidebar and library
   summaries include `sharedWithUserIds` for a `people` Sidekick, as its detail
-  does. The dashboard resolves those IDs from the Organization roster to show
-  the recipients' avatars, with one shared roster read for the page.
+  does.
 - **Changing it.** A manager's `POST /automations/:id/audience` with
   `{audience, userIds}` (`HostedSidekick.setAudience`); `userIds` is required
   exactly for `people`, and everyone named must be an active member or guest
