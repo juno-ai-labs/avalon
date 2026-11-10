@@ -197,7 +197,9 @@ function renderRow(row: Row): string {
   const done = row.done === undefined ? '' : ` data-done="${row.done}"`;
   const by = row.by ? `<span class="live-by">${face(row.by)}</span>` : '';
   const tick = row.done === undefined ? '' : '<svg class="live-tick" viewBox="0 0 16 16" width="16" height="16"><path d="M3.5 8.5l3 3 6-7"/></svg>';
-  return `<li class="live-row${row.approve ? ' is-approve' : ''}" data-at="${row.at}"${done}><span class="live-rank"></span>`
+  // Rendered in the slide's finished state (arrived, ticked); live-carousel.ts rewinds it when it plays.
+  const state = `${row.approve ? ' is-approve' : ''} is-on${row.done === undefined ? '' : ' is-done'}`;
+  return `<li class="live-row${state}" data-at="${row.at}"${done}><span class="live-rank"></span>`
     + `<span class="live-text">${escape(row.text)}<small>${escape(row.meta)}</small></span>`
     + `<span class="live-check">${tick}${by}</span></li>`;
 }
@@ -206,12 +208,13 @@ function renderSlide(example: LiveExample, index: number): string {
   const { id, who, title, kind, text, sidekick, reads, audience, people, version, events, rows, status, gotcha } = example;
   const statuses = status.map((line, step) => {
     const warn = line.startsWith('!');
-    return `<span class="live-status-line${warn ? ' is-warn' : ''}" data-status="${step}">${escape(warn ? line.slice(1) : line)}</span>`;
+    const current = step === status.length - 1 ? ' is-current' : '';
+    return `<span class="live-status-line${warn ? ' is-warn' : ''}${current}" data-status="${step}">${escape(warn ? line.slice(1) : line)}</span>`;
   }).join('');
   // Without a script every slide shows its last step: the final version and every row.
   const last = version + events.length;
   const signals = events.map(({ tool, text: event }, step) =>
-    `<li class="signal" data-at="${step + 1}"><span class="signal-tool">${escape(tool)}</span>${escape(event)}</li>`).join('');
+    `<li class="signal is-on" data-at="${step + 1}"><span class="signal-tool">${escape(tool)}</span>${escape(event)}</li>`).join('');
   return `<div class="slide${index === 0 ? ' is-active' : ''}" id="slide-${id}" role="tabpanel" aria-labelledby="tab-${id}" data-slide data-version="${version}"${index === 0 ? '' : ' hidden'}>`
     + `<div class="slide-copy"><p class="slide-who">For ${escape(who.toLowerCase())}</p>`
     + `<h2 class="slide-title">${escape(title)}</h2><p class="slide-text">${escape(text)}</p>`
@@ -224,7 +227,7 @@ function renderSlide(example: LiveExample, index: number): string {
     + `<p class="live-title">${escape(title)}</p><p class="live-byline" data-live-byline>Updated by ${escape(sidekick)} &middot; after ${escape(events[2].tool)}</p>`
     + `<p class="live-status">${statuses}</p>`
     + `<ol class="live-list">${rows.map(renderRow).join('')}</ol>`
-    + `<p class="gotcha" data-at="4"><b>${escape(gotcha.big)}</b><span>${escape(gotcha.text)}</span></p></div></div></div>`;
+    + `<p class="gotcha is-on" data-at="4"><b>${escape(gotcha.big)}</b><span>${escape(gotcha.text)}</span></p></div></div></div>`;
 }
 
 /** The hero carousel: a tab per audience, a slide per live artifact. */
