@@ -5916,7 +5916,8 @@ async function loadHarnessTools(
     createSidekickTaskOutcomePlugin(input),
     createAgentCommunicationPlugin(new AgentCommunicationService(env, input), agentCoordinationRoleGuidance(input),
       { sidekickRun: input.automationRun !== undefined,
-        canvasChat: input.parentKind === "canvas" && (input.substreamId ?? "0") === "0" && input.executionPrincipal.type === "user" }),
+        canvasChat: input.parentKind === "canvas" && (input.substreamId ?? "0") === "0" && input.backgroundAgent !== true
+          && input.executionPrincipal.type === "user" }),
     workstreamPlugin,
     webPlugin,
     terminalPlugin,

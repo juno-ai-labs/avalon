@@ -2,7 +2,6 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import {
-  AddCanvasSidekickRequestSchema,
   AddedCanvasSidekickSchema,
   CanvasAccessDecisionSchema,
   CanvasDetailSchema,
@@ -14,6 +13,7 @@ import {
   CanvasVisibilitySchema,
   CreateCanvasRequestSchema,
   CreatedCanvasSchema,
+  type AddCanvasSidekickRequestSchema,
   type CanvasAccessDecisionRequestSchema,
   type CanvasAudienceUpdateSchema,
 } from "@rally/contracts/canvases";
