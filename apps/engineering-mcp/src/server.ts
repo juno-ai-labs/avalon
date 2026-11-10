@@ -273,7 +273,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
   }
 
   server.registerTool("archive_sidekick", {
-    description: "Archive a Sidekick as userId, exactly as the app's Archive action does: open runs stop, scheduled and pending runs are cancelled, its activity triggers are cleared, and it leaves everyone's Sidekick list. There is no undo. userId must be allowed to manage the Sidekick in the app; its author always is. Works in any lifecycle; archiving an archived Sidekick changes nothing. Returns the resulting lifecycle.",
+    description: "Archive a Sidekick as userId, exactly as the app's Archive action does: open runs stop, scheduled and pending runs are cancelled, its activity triggers are cleared, and it leaves everyone's Sidekick list. There is no undo. userId must be allowed to manage the Sidekick in the app; its author always is. Works in any lifecycle; archiving an archived Sidekick changes nothing. Also works in an abandoned or retired Organization, as a user who is still an active member of it. Returns the resulting lifecycle.",
     inputSchema: sidekickPauseSchema.shape,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, (request) => tool(principal, "archive_sidekick", {
