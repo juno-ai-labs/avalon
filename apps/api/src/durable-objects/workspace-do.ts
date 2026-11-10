@@ -7734,11 +7734,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.pendingSyncFollowUps.push(this.recordSyncFollowUp({
         workspaceId: request.workspaceId, syncTopics: ["automations"],
       }));
-      // The Canvas's card and detail name its Sidekicks.
-      if (!result.alreadyAttached) this.noteCanvasDirectoryMoved();
+      // The Canvas's card and detail name its Sidekicks, and the Sidekick's
+      // card names its Canvases: both lists moved.
+      if (!result.alreadyAttached) {
+        this.noteCanvasDirectoryMoved();
+        sql.exec(`UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`);
+        this.sidekickDirectoryMoved = true;
+      }
       return result;
     });
     if (!attached) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
+    this.publishSidekickList();
     this.publishCanvasList();
     // A notification failure must not turn a committed attachment into a
     // failed tool call. The normal post-commit lane retries the signal.

@@ -104,6 +104,13 @@ export const CanvasSidekickSchema = z.object({
   status: z.enum(["draft", "active", "paused"]),
   appearance: WorkstreamAppearanceSchema.optional(),
   madeHere: z.boolean(),
+  /**
+   * Whether the reader may open the Sidekick's own page: its audience, which
+   * the Canvas does not decide. Present on a read made for a viewer (the
+   * detail and the list row); absent where nobody is reading, and from an
+   * older Worker.
+   */
+  canOpen: z.boolean().optional(),
 });
 export type CanvasSidekick = z.infer<typeof CanvasSidekickSchema>;
 
