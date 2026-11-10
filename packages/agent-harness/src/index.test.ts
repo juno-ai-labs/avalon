@@ -797,8 +797,8 @@ describe("agent harness", () => {
       primaryModel: "test/model",
       fetch: receiverAwareFetch,
       traceContext: {
-        source: "workstream_naming",
-        feature: "agent-model-workstream-naming",
+        source: "resource_naming",
+        feature: "agent-model-resource-naming",
         workspaceId: "workspace-1",
         workstreamId: "workstream-1",
         substreamId: "substream-1",
@@ -842,10 +842,10 @@ describe("agent harness", () => {
       session_id: "workstream-1-substream-1",
       trace: {
         trace_id: "request-1",
-        trace_name: "rally.workstream_naming",
+        trace_name: "rally.resource_naming",
         span_name: "rally.structured.host_fetch",
         generation_name: "host_fetch",
-        feature: "agent-model-workstream-naming",
+        feature: "agent-model-resource-naming",
         product: "rally",
         invocation_type: "structured",
         provider: "openrouter",
@@ -921,7 +921,7 @@ describe("agent harness", () => {
     expect(requestBodies[1]?.reasoning).toEqual({ effort: "low" });
     expect(requestBodies[2]?.reasoning).toEqual({ effort: "none" });
     expect(requestBodies[3]?.reasoning).toEqual({ effort: "low" });
-    expect(requestBodies[4]?.reasoning).toEqual({ effort: "low" });
+    expect(requestBodies[4]).not.toHaveProperty("reasoning");
     expect(requestBodies[5]?.reasoning).toEqual({ effort: "high" });
   });
 
@@ -980,8 +980,8 @@ describe("agent harness", () => {
       sameModelRetries: 0,
       fetch: fetcher,
       traceContext: {
-        source: "workstream_naming",
-        feature: "agent-model-workstream-naming",
+        source: "resource_naming",
+        feature: "agent-model-resource-naming",
         workspaceId: "workspace-1",
       },
     });
@@ -1734,7 +1734,7 @@ describe("agent harness", () => {
       }],
       traceContext: {
         source: "workstream",
-        feature: "agent-model-workstream",
+        feature: "agent-model-canvas",
         workspaceId: "workspace-1",
         workstreamId: "workstream-1",
         substreamId: "substream-1",
@@ -1787,7 +1787,7 @@ describe("agent harness", () => {
         trace_name: "rally.workstream",
         span_name: "rally.turn.run-1:turn:1",
         generation_name: "rally.turn.run-1:turn:1",
-        feature: "agent-model-workstream",
+        feature: "agent-model-canvas",
         product: "rally",
         invocation_type: "streaming",
         intended_model: "test/model",

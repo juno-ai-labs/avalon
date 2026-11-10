@@ -276,12 +276,8 @@ The affected Worker exits when that proxy cannot be established.
 `wrangler dev --local` disables remote bindings and avoids the proxy session.
 
 What that costs: `env.AI` is unavailable, so Cloudflare-backed PDF OCR cannot
-run. `env.FLAGS` (Flagship) is also
-reported `not supported`, because Flagship bindings are always remote — but
-unlike the others the binding object is still present, and it is each *call*
-that rejects with `Binding FLAGS needs to be run remotely`. Every agent then
-uses the model ids in its `OPENROUTER_*` Worker variables, which is the designed
-fallback rather than a degradation — see
+run. Feature flags and models resolve locally from checked-in constants and
+optional environment overrides; see
 [the feature-flag document](feature-flags.md#local-development).
 
 Verify configured deployments:
@@ -453,9 +449,8 @@ message before capturing or clicking the row.
 
 ## What cannot be verified in a sandbox
 
-- **Workers AI PDF OCR** (`env.AI`) and **Flagship**
-  (`env.FLAGS`), per above. Served flag values cannot be exercised locally; the
-  Worker-variable fallback they resolve to can.
+- **Workers AI PDF OCR** (`env.AI`), per above. Feature flag and model
+  configuration can be exercised locally in full.
 - **Real OAuth callbacks.** Providers require a public HTTPS redirect; a local
   Worker has none unless a tunnel is configured.
 - **Dictation past the button press.** The capture half works — Electron takes

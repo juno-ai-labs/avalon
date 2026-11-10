@@ -9,22 +9,19 @@ import { verifyRuntimeQueuePermissions } from './runtime-token-permissions.mjs';
 const appDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
 const deploymentToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
-// The GitHub secret keeps its original name so an Ace release does not require
-// a second credential migration. Its token now serves Ace's two Cloudflare API
-// surfaces and is restricted to Flagship Write plus Queues Edit.
-const aceRuntimeToken = process.env.ACE_FLAGSHIP_API_TOKEN?.trim();
+// The legacy secret is accepted during the transition; this token now needs only Queues Edit.
+const aceRuntimeToken = process.env.ACE_QUEUES_API_TOKEN?.trim() || process.env.ACE_FLAGSHIP_API_TOKEN?.trim();
 // The operator tokens Ace's operator pages present to the regional API
 // Workers. These are Rally operator credentials; the existing Global token
 // remains in RALLY_OPERATOR_TOKEN.
 const rallyOperatorToken = process.env.ACE_RALLY_OPERATOR_TOKEN?.trim();
-const flagshipAppId = 'bec01d3a-d6b6-4d8c-b89a-37440ed63b8c';
 const aceDomain = 'ace.internal.rallywith.ai';
 const migrationDomain = 'migrations.internal.rallywith.ai';
 const generatedConfig = join(appDirectory, 'wrangler.generated.json');
 
 if (!accountId) throw new Error('CLOUDFLARE_ACCOUNT_ID is required');
 if (!deploymentToken) throw new Error('CLOUDFLARE_API_TOKEN is required');
-if (!aceRuntimeToken) throw new Error('ACE_FLAGSHIP_API_TOKEN is required');
+if (!aceRuntimeToken) throw new Error('ACE_QUEUES_API_TOKEN is required');
 if (!rallyOperatorToken) throw new Error('ACE_RALLY_OPERATOR_TOKEN is required');
 
 async function cloudflare(path, init = {}, authorization = deploymentToken) {
@@ -81,88 +78,11 @@ async function ensureAccessApplication() {
   return result.aud;
 }
 
-let existingFlagKeysPromise;
-async function flagExists(key) {
-  existingFlagKeysPromise ??= cloudflare(`/flagship/apps/${flagshipAppId}/flags`, {}, aceRuntimeToken)
-    .then((flags) => new Set(Array.isArray(flags) ? flags.map((flag) => flag.key) : []));
-  return (await existingFlagKeysPromise).has(key);
-}
-
-async function retireFlag(key) {
-  if (!await flagExists(key)) return;
-  await cloudflare(`/flagship/apps/${flagshipAppId}/flags/${encodeURIComponent(key)}`, {
-    method: 'DELETE',
-  }, aceRuntimeToken);
-  (await existingFlagKeysPromise).delete(key);
-}
-
-async function ensureFlag(key, description, defaultVariation = 'off') {
-  if (await flagExists(key)) return;
-  await cloudflare(`/flagship/apps/${flagshipAppId}/flags`, {
-    method: 'POST',
-    body: JSON.stringify({
-      key,
-      description,
-      enabled: true,
-      default_variation: defaultVariation,
-      variations: { off: false, on: true },
-      rules: [],
-    }),
-  }, aceRuntimeToken);
-}
-
-async function ensureModelFlag(key, description, model, fallbackModels) {
-  if (await flagExists(key)) return;
-  await cloudflare(`/flagship/apps/${flagshipAppId}/flags`, {
-    method: 'POST',
-    body: JSON.stringify({
-      key,
-      description,
-      enabled: true,
-      default_variation: 'current',
-      variations: { current: { model, fallbackModels } },
-      rules: [],
-      type: 'json',
-    }),
-  }, aceRuntimeToken);
-}
-
-
 function run(command, args, options = {}) {
   execFileSync(command, args, { cwd: appDirectory, stdio: 'inherit', ...options });
 }
 
 const audience = await ensureAccessApplication();
-await Promise.all([
-  retireFlag('meeting-recording-enabled'),
-  retireFlag('control-tower-refresh-seconds'),
-  retireFlag('agent-model-meeting-notes'),
-  retireFlag('hypersight-enabled'),
-  retireFlag('agent-model-block-dashboard'),
-  retireFlag('automation-workspace-templates-enabled'),
-  retireFlag('agent-model-automation-compiler'),
-  retireFlag('agent-model-automation-result-disposition'),
-  retireFlag('agent-model-activity-structured'),
-  retireFlag('agent-model-addressing-classifier'),
-  retireFlag('agent-model-hypersight'),
-  retireFlag('digests-enabled'),
-  retireFlag('live-artifacts-enabled'),
-  retireFlag('agent-model-workstream-description'),
-  retireFlag('agent-model-suggestion-draft'),
-  retireFlag('agent-model-work-opportunity-admission'),
-  retireFlag('agent-model-work-opportunity-ranking'),
-  retireFlag('agent-model-session-import'),
-  retireFlag('suggested-work-enabled'),
-]);
-await Promise.all([
-  ensureFlag('multiple-workspaces-enabled', 'True shows workspace switching, invitations, creation, and background attention in Electron; false hides them without changing API availability.'),
-  ensureFlag('push-notifications-enabled', 'True enables Apple push delivery and the desktop Notifications setting for everyone from launch; false pauses push for the targeted users.', 'on'),
-  ensureModelFlag('agent-model-workstream', 'Runs a Canvas\'s Chat or a Sidekick\'s conversation and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
-  ensureModelFlag('agent-model-inline-child', 'Runs a bounded read-only child task delegated by a Canvas chat\'s or Sidekick conversation\'s agent and returns the result to its parent.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
-  ensureModelFlag('agent-model-workstream-naming', 'Titles a long pasted text from its contents, so the attachment chip has a name.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
-  ensureModelFlag('agent-model-memory-sweep', 'Reads a window of a Canvas or Sidekick conversation after it settles and decides which facts Rally should remember, revise or retract; the judgment is what a colleague would need later, so it runs on a strong model.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
-  ensureModelFlag('agent-model-sidekick-authoring', 'Creates and revises Sidekick definitions in their authoring conversations, including event bindings, schedules, tools, and durable run instructions.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
-]);
 await verifyRuntimeQueuePermissions({ accountId, token: aceRuntimeToken });
 
 const source = await readFile(join(appDirectory, 'wrangler.jsonc'), 'utf8');
@@ -172,10 +92,15 @@ await writeFile(generatedConfig, `${JSON.stringify(config, null, 2)}\n`, { mode:
 try {
   run('pnpm', ['build:client']);
   run('pnpm', ['exec', 'wrangler', 'deploy', '--config', generatedConfig]);
-  run('pnpm', ['exec', 'wrangler', 'secret', 'put', 'CLOUDFLARE_FLAGSHIP_API_TOKEN', '--config', generatedConfig], {
+  run('pnpm', ['exec', 'wrangler', 'secret', 'put', 'CLOUDFLARE_QUEUES_API_TOKEN', '--config', generatedConfig], {
     input: `${aceRuntimeToken}\n`,
     stdio: ['pipe', 'inherit', 'inherit'],
   });
+  // The new binding is installed before removing the retired secret name.
+  const secrets = await cloudflare(`/workers/scripts/${encodeURIComponent(config.name)}/secrets`);
+  if (secrets.some((secret) => secret.name === 'CLOUDFLARE_FLAGSHIP_API_TOKEN')) {
+    await cloudflare(`/workers/scripts/${encodeURIComponent(config.name)}/secrets/CLOUDFLARE_FLAGSHIP_API_TOKEN`, { method: 'DELETE' });
+  }
   run('pnpm', ['exec', 'wrangler', 'secret', 'put', 'RALLY_OPERATOR_TOKEN', '--config', generatedConfig], {
     input: `${rallyOperatorToken}\n`,
     stdio: ['pipe', 'inherit', 'inherit'],

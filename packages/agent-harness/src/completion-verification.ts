@@ -1,3 +1,4 @@
+import { COMPLETION_VERIFICATION_MODEL } from "@rally/contracts/runtime-config";
 import type { ModelMessage, OpenRouterTraceContext, StructuredModelDiagnostic } from "./index";
 import { askJev, jevFailureKind } from "./jev";
 import { answers, questions, type CompletionAnswer, type CompletionState } from "./completion-verification-question";
@@ -40,7 +41,7 @@ export async function judgeCompletionStop(input: {
   if (!input.apiKey) return { reprompt: true, answer: null, model: null, failureKind: "credential_missing" };
   try {
     const result = await askJev({
-      apiKey: input.apiKey, model: "jev-1.14.0", timeoutMs: 1000,
+      apiKey: input.apiKey, model: COMPLETION_VERIFICATION_MODEL, timeoutMs: 1000,
       schemaName: "premature_stop_evaluation", state: input.state, questions, answers,
       signal: input.signal, fetch: input.fetch, onDiagnostic: input.onDiagnostic, traceContext: input.traceContext,
     });

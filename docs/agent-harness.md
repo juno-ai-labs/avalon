@@ -56,7 +56,7 @@ owned deadline permits fallback. The OpenRouter leg has a 15-second owned
 deadline, above the measured 10.0-11.6 second p99 range. If both providers fail
 or stall, the conservative deterministic classifier is the terminal availability
 floor so addressing cannot prevent the user's message from being persisted. The cascade has no
-Flagship role or Worker model variable: changing
+configurable agent role or Worker model variable: changing
 its model, provider, prompt, or threshold requires a new evaluation and deploy.
 The OpenRouter fallback model list is deliberately not used on this path.
 Production and staging require `TYPESAFE_API_KEY`; development without it
@@ -425,7 +425,7 @@ hash, the opening message as its user-role message: two to four words, thirty
 characters or less, sentence case and never every word capitalized, the rules
 the Thread naming prompt measured. The Thread naming pass is
 deleted ([its retirement record](canvases.md#retired-documents) is in `canvases.md`). The
-`workstream_naming` model role serves that call and one other, the title a
+`resource_naming` model role serves that call and one other, the title a
 long pasted text is given (`pasted-text-service.ts`).
 
 ### Activation, admission, and immutable run scope
@@ -1038,9 +1038,13 @@ leaves the completed receipt and its original output untouched.
 
 ### Model routing and inference ledger
 
-Each agent's default model and its fallback stages are one Cloudflare Flagship flag, resolved once per run and evaluated against the region, the environment, and the run's subject — the workspace, conversation, and user, each carrying the attributes a targeting rule matches on; the regional Worker variables remain the checked-in default that an absent flag, an unbound binding, and a failed evaluation all resolve to. [`feature-flags.md`](feature-flags.md) owns the flag keys, the value shape, and how a model change is rolled out.
+Each agent's default model and fallback stages resolve locally from its role in
+`@rally/contracts/runtime-config`, with optional deployment-wide environment
+overrides and conversation pins. There are no remote evaluations or targeting
+lookups. [`feature-flags.md`](feature-flags.md) owns the roles, complete-route
+shape, and deployment procedure.
 
-Standalone structured-output agents enter through `runStructuredInference`. The gateway resolves the role's flag, constructs the provider client, combines any caller cancellation with a two-minute ceiling, and emits redacted diagnostics for every request, repair, validation, fallback, and completion stage. ESLint prevents API feature modules from constructing `OpenRouterClient`, reading model-selection variables directly, or removing the gateway's signal and diagnostic hooks.
+Standalone structured-output agents enter through `runStructuredInference`. The gateway resolves the role's configured route, constructs the provider client, combines any caller cancellation with a two-minute ceiling, and emits redacted diagnostics for every request, repair, validation, fallback, and completion stage. ESLint prevents API feature modules from constructing `OpenRouterClient`, reading model-selection variables directly, or removing the gateway's signal and diagnostic hooks.
 
 Bind and its Rally adapter both run on workerd and receive host capabilities
 through explicit ports. ESLint bars imports of database, connector, API, and
@@ -1248,7 +1252,7 @@ A conversation provisioned with an `agent_profile` (a column on its
 `runWorkstreamHarness` reads it from the conversation's identity and, for a
 profiled run, replaces three things wholesale: the system prompt (the
 profile's, not the conversation prompt), the model route (the profile's
-Flagship role, `resolveAgentModelRouting`), and the tool surface — exactly the
+configured role, `resolveAgentModelRouting`), and the tool surface — exactly the
 profile's plugins as always-active core plugins, through `profileHarnessTools`,
 with no built-in or connector plugin and no plugin discovery. Its skill
 catalog is exactly the skills the profile names, with no inherited built-in,

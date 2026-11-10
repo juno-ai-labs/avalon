@@ -76,7 +76,7 @@ function options(argv: string[]): Options {
   return {
     dataset: resolve(dataset),
     models: target === "typesafe"
-      ? ["typesafe/jev-latest"]
+      ? [`typesafe/${TYPESAFE_ADDRESSING_MODEL}`]
       : target === "cascade"
         ? [ADDRESSING_FALLBACK_MODEL]
         : requestedModels,
@@ -161,7 +161,7 @@ async function evaluateCase(
             onDiagnostic,
             ...(reasoningEffort ? { reasoningEffort } : {}),
           });
-    const resultModel = target === "cascade" ? `typesafe/jev-latest -> ${model}` : model;
+    const resultModel = target === "cascade" ? `typesafe/${TYPESAFE_ADDRESSING_MODEL} -> ${model}` : model;
     const continuationSelected = admission?.continuation !== undefined && admission.continuation.decision !== "use_addressing";
     return {
       caseId: evaluationCase.id,
@@ -184,7 +184,7 @@ async function evaluateCase(
   } catch (error) {
     return {
       caseId: evaluationCase.id,
-      model: target === "cascade" ? `typesafe/jev-latest -> ${model}` : model,
+      model: target === "cascade" ? `typesafe/${TYPESAFE_ADDRESSING_MODEL} -> ${model}` : model,
       expected: evaluationCase.expected,
       latencyMs: Math.round(performance.now() - startedAt),
       resolvedModels: [...resolvedModels],
@@ -268,7 +268,7 @@ async function main(): Promise<void> {
       },
     },
     models: selected.models.map((model) => {
-      const resultModel = selected.target === "cascade" ? `typesafe/jev-latest -> ${model}` : model;
+      const resultModel = selected.target === "cascade" ? `typesafe/${TYPESAFE_ADDRESSING_MODEL} -> ${model}` : model;
       return summarizeAddressingEvaluation(
         resultModel,
         results.filter((result) => result.model === resultModel),

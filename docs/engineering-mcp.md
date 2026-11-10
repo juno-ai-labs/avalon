@@ -5,8 +5,7 @@ SQLite database inside a workspace, a Canvas's or Sidekick's conversation, or
 a live web artifact Durable Object, and to each region's D1 databases.
 It recreates the useful part of Cloudflare's dashboard database console through
 standard MCP tools at `https://mcp.internal.rallywith.ai/mcp`, including deliberate
-repair writes. It also reads and changes the feature flags and agent model
-routes that Ace manages, through Ace, and runs read-only queries against the
+repair writes. It also runs read-only queries against the
 Global analytical lakehouses and the account's Workers Logs and Traces. Product tools create and retire Organizations, send messages
 to a Canvas's Chat or a Sidekick's shared conversation, and read their
 participant-visible text as a selected user, through the same services as the app. It is not a product API and it is never
@@ -37,9 +36,6 @@ available to Rally users by virtue of product membership.
   routes all four.
 - `packages/contracts/src/engineering-inspection.ts` is the runtime-validated
   RPC vocabulary shared by both Workers.
-- `apps/ace/src/flag-administration.ts` is the private named `WorkerEntrypoint`
-  Ace exports for the flag tools. Its interface and input schemas live in
-  `apps/ace/src/protocol.ts`, which this Worker compiles.
 - `apps/engineering-mcp/src/lakehouse.ts` is the Basin SQL client behind
   `query_data_lake`. It takes bucket and table names from the checked-in
   `config/*-lakehouse.json` manifests.
@@ -285,28 +281,11 @@ and counters, so `rowsWritten` misses an earlier statement's writes. D1 returns
 a BLOB as an array of bytes, which the bridge turns into `{ type: "blob",
 base64 }`, and refuses `BEGIN` and `SAVEPOINT`.
 
-### Feature and model flags
+### Feature and model configuration
 
-The four flag tools call Ace's `FlagAdministration` entrypoint over the
-`FLAG_ADMINISTRATION` Service Binding. They hold no Flagship credential and
-write nothing themselves:
-
-| Tool | Ace method | Effect |
-| --- | --- | --- |
-| `list_feature_flags` | `listProductFlags` | Each managed product flag's catalog entry and live Flagship definition, `null` if not provisioned |
-| `update_feature_flag` | `updateProductFlag` | Replaces the flag's whole definition, then queues the key-only client notification |
-| `list_model_flags` | `listModelFlags` | Each agent role's catalog entry, checked-in default route, and live Flagship definition |
-| `update_model_flag` | `updateModelRouting` | Checks every model id against OpenRouter, then replaces the default variation's route plan, keeping rules and other variations |
-
-These are the same catalogs, schemas and write functions the Ace pages use, so
-an MCP write is validated, fanned out to connected clients, and limited to the
-managed keys exactly as an Ace save is. See [`ace.md`](ace.md) for what each
-write does in Flagship and [`feature-flags.md`](feature-flags.md) for what
-each flag controls.
-
-`update_feature_flag` is a whole replacement because Flagship's API is: rules
-left out of the call are deleted. The tool description tells the client to read
-the flag first and send it back with its change.
+Feature flags and model routes live in centralized API constants with optional
+deployment environment overrides. The former four remote flag administration
+tools and Ace Service Binding are retired. See [`feature-flags.md`](feature-flags.md).
 
 ### Lakehouses
 
@@ -399,11 +378,6 @@ names the view only; filter values and the needle can quote product data.
   it. Adding the next object kind's id as a required field breaks every existing
   SQL tool for the length of the deployment window.
 
-- Flag tools reach Flagship only through Ace. A direct Flagship write from this
-  Worker would skip the client notification and the managed-key allowlist, and
-  would put a second Flagship token on a second Worker.
-- Ace records `actor_subject` and `via: "engineering_mcp"` on every flag write
-  it makes for this Worker, beside this Worker's own audit event.
 - The lakehouse token reaches only Basin SQL, from inside this Worker. It never
   crosses to a client, and its permissions are scoped to the three lakehouse
   buckets, not the account.
@@ -535,9 +509,6 @@ Worker imports that one verifier rather than forking it.
 D1 database through `runD1Sql`, BLOBs included, and proves the call reached
 the named binding and not another.
 
-`apps/ace/test/flag-administration.test.ts` drives the entrypoint against
-Flagship and OpenRouter doubles, the two APIs that cannot run here.
-
 The deployment workflow dry-runs the MCP bundle during verification and, after
 deployment, requires a non-browser `401` carrying an OAuth protected-resource
 challenge.
@@ -572,7 +543,7 @@ means message text ([`runbook.md`](runbook.md#log-shape)).
 Policy changes, identity-provider changes, and client approval belong in the
 Cloudflare Access application, not in application code.
 
-`BASIN_SQL_API_TOKEN` is a runtime credential, like Ace's Flagship token, not
+`BASIN_SQL_API_TOKEN` is a runtime credential, like Ace's Queue inspection token, not
 the deployment token. Basin SQL requires R2 storage read/write on the buckets it
 reads, so create it as an R2 API token restricted to the three lakehouse
 buckets with Basin SQL Read, Basin Catalog Read, and R2 Storage Write. Never
@@ -610,13 +581,22 @@ token the Worker already has, and its tool fails as
 none: the MCP deploys inside the API release, and a missing read credential
 should not turn that release red.
 
-Model routes support optional `routing.reasoningEffort` (`low`, `medium`, or
-`high`) through `list_model_flags` and `update_model_flag`. Omission restores
-each selected model's configured default; an explicit value applies to the
-primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
 
+### 2026-11-09 — Retire remote flag administration tools
+
+**What changed:** Removed the four feature/model flag tools and the Ace flag
+administration binding.
+
+**Why:** Runtime flags now resolve from code and deployment variables. Remote
+writes would no longer affect the configuration agents or clients receive.
+
+**Considered and rejected:** Retaining the old tools would advertise controls
+whose writes have no product effect.
+
+**What future changes must respect:** Edit the API's centralized defaults or
+optional deployment overrides; retain its complete-route and pin semantics.
 ### 2026-11-09 — Remove the Thread operations
 
 **What changed:** `dump_thread_transcripts`, `convert_threads_to_canvases` and

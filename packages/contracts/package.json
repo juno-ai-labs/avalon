@@ -45,7 +45,8 @@
     "./browser-session": "./src/browser-session.ts",
     "./client-session": "./src/client-session.ts",
     "./usage": "./src/usage.ts",
-    "./message-issues": "./src/message-issues.ts"
+    "./message-issues": "./src/message-issues.ts",
+    "./runtime-config": "./src/runtime-config.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

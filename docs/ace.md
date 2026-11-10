@@ -1,16 +1,11 @@
 # Ace internal administration
 
 Ace is Rally's internal administration Worker at
-`https://ace.internal.rallywith.ai`. Its feature-flag surface manages
-Boolean product flags in Cloudflare Flagship: presentation controls for
-Electron and the operational control for Apple push delivery. Its Queues
-surface lists every actively configured Cloudflare dead-letter queue, its live
-backlog, and a non-consuming peek at its messages. Its Models surface manages
-the primary model and ordered fallback array for every model-using agent role.
-Its Workspaces page sets the plan of, or retires, any workspace, by relaying
-to the regional API.
-New internal tools extend the same Hono application and Ace-owned component
-library instead of creating another operator site or visual language.
+`https://ace.internal.rallywith.ai`. It provides Access request review,
+workspace administration, and a read-only view of Cloudflare
+Queue dead letters. New internal pages extend the same Hono application and
+component library. Product flags and model routes are configured in code and
+optional API environment variables; see [`feature-flags.md`](feature-flags.md).
 
 The **Access** page lists Global pre-workspace email requests and their
 acknowledgement state. It also generates ad hoc single-use or timed downloads, optionally
@@ -26,59 +21,26 @@ until that deadline. Both generation actions share the current lifetime choice, 
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/ace/src/index.ts` | Hono routes, Access admission, same-origin writes, and static assets. |
-| `apps/ace/src/access.ts` | Reuses the migration tracker's signed Cloudflare Access assertion verifier. |
-| `apps/ace/src/private-access.ts`, `apps/ace/src/client/private-access.tsx` | The Access page: request review, download-grant issuance and revocation, and acknowledgement recovery. |
-| `apps/ace/src/protocol.ts` | The managed flags, the ranked model-role catalog and its Azure-only Sol policy, safe targeting attributes, all Flagship operators, and Flagship's request limits. |
-| `apps/ace/src/client/models.tsx` | The model-role catalog UI, free-text model inputs, and ordered fallback editor. |
-| `apps/ace/src/openrouter.ts` | Exact model-id and live-route validation against OpenRouter's public endpoints API. |
-| `apps/ace/src/directory.ts` | Read-only user and workspace search across both regional D1 databases. |
-| `apps/ace/src/regional-api.ts` | The client for the regional API's operator routes, over the operator credential; every answer parsed with the shared contract. |
-| `apps/ace/src/client/workspaces.tsx` | The workspaces tab: find any workspace, set its plan, and retire it behind a typed-id confirmation. |
-| `apps/ace/src/flagship.ts` | Flagship reads and writes plus the post-write change notification. |
-| `apps/ace/src/flag-administration.ts` | The `FlagAdministration` RPC entrypoint the engineering MCP's flag tools call; the same catalogs and write functions as the pages. See [`engineering-mcp.md`](engineering-mcp.md#feature-and-model-flags). |
-| `apps/ace/src/cloudflare-queue-admin.ts` | Active dead-letter discovery, realtime backlog metrics, and non-consuming message peeks through Cloudflare's REST API. |
-| `apps/ace/src/client/queues.tsx` | The Queues page: dead-letter backlogs and the peeked batch. |
-| `apps/ace/src/queues.ts` | Account-wide workspace enumeration and regional fan-out. |
-| `apps/ace/src/client/components/ui.tsx` | Ace's shared controls and panels; future pages extend these components. |
-| `apps/ace/src/client/main.tsx`, `styles.css` | Feature-flag application and responsive visual system. |
-| `apps/ace/scripts/deploy.mjs` | Idempotent Access, flag, Worker, asset, and secret provisioning, and the `retireFlag` list that deletes the keys of retired flags and model roles. |
-| `apps/ace/scripts/runtime-token-permissions.mjs` | The deploy-time proof that the runtime token can list Queues and peek one. |
-| `.github/workflows/deploy-ace.yml` | The complete merge-to-main release transaction. |
+| `apps/ace/src/index.ts` | Hono routes, Access admission, same-origin writes, and static assets |
+| `apps/ace/src/access.ts` | Shared signed Cloudflare Access assertion verifier |
+| `apps/ace/src/private-access.ts`, `apps/ace/src/client/private-access.tsx` | Access request review, download-grant issuance and revocation, and acknowledgement recovery |
+| `apps/ace/src/directory.ts` | Read-only user and workspace search across configured regional D1 databases |
+| `apps/ace/src/regional-api.ts` | Regional operator client with shared response contracts |
+| `apps/ace/src/client/workspaces.tsx` | Workspace lookup, plan changes, and retirement |
+| `apps/ace/src/cloudflare-queue-admin.ts` | Active dead-letter discovery, metrics, and non-consuming message peeks |
+| `apps/ace/src/client/queues.tsx` | Dead-letter backlogs and non-consuming message peek |
+| `apps/ace/scripts/runtime-token-permissions.mjs` | Deploy-time Queue list and peek permission check |
+| `apps/ace/src/client/components/ui.tsx` | Shared controls and panels |
+| `apps/ace/src/client/main.tsx`, `styles.css` | Application navigation and visual system |
+| `apps/ace/scripts/deploy.mjs`, `.github/workflows/deploy-ace.yml` | Access provisioning, Worker/assets deployment, and runtime secrets |
 
 ## How it works
 
-Cloudflare Access runs before Ace. The Worker independently verifies the signed
-`Cf-Access-Jwt-Assertion`, including issuer and Ace's application audience, then
-trusts the verified identity. The deploy script creates or updates an
-Ace-specific Access application by copying the migration site's policies and
-identity-provider settings. Ace therefore follows the same employee rule while
-keeping a distinct audience.
-
-`GET /api/flags` reads `multiple-workspaces-enabled` and
-`push-notifications-enabled`. `suggested-work-enabled`, which gated the deleted
-Suggested Work surfaces, is retired: the deploy script's `retireFlag` deletes it
-from Flagship ([`feature-flags.md`](feature-flags.md)). The editor exposes enabled/paused state, default Boolean
-value, ordered first-match rules, all eleven operators, nested AND/OR groups,
-and sticky percentage rollouts. A rule is reordered by dragging its handle
-onto another or, from that same handle, ArrowUp/ArrowDown. A person search
-accepts name or full
-email but writes the stable `userPlatformId`; a workspace search accepts name or
-slug but writes its opaque `workspaceId`. Exact email targeting therefore works
-without storing an address in Flagship. Domains, workspace role, region, age,
-member count, slug, and application environment use the same attributes the API
-already evaluates.
-
-After Flagship accepts a PUT, Ace places only the flag key on
-`avalon-product-feature-flag-changes` after Flagship's documented
-[up-to-30-second propagation window](https://developers.cloudflare.com/flagship/concepts/).
-Its
-consumer keyset-pages every workspace from configured deployments D1, then sends one
-key-and-workspace message to the owning regional queue. The regional API
-consumer RPCs to that workspace's `WorkspaceDO`. The object evaluates the
-complete client flag contract per connected user and privately sends the values
-to that user's sockets. A subscribe response performs the same evaluation, so
-reconnect is the reconciliation path.
+Cloudflare Access authenticates the operator before Ace. The Worker independently
+verifies the signed `Cf-Access-Jwt-Assertion`, issuer, and Ace's audience. Deploy
+copies the migration site's policies and identity providers into Ace's separate
+Access application. The default page is Access; Queues and Workspaces
+are the other navigation entries.
 
 **Workspaces.** The tab searches configured deployments' directories and retires the
 selected workspace in the region that owns it, through
@@ -131,251 +93,99 @@ not invent one. Peek does not lease, acknowledge, retry, or remove a message.
 Ace deliberately discards Cloudflare's returned purge reference, so this first
 Queues surface has no delete capability.
 
-`GET /api/models` reads the five managed `agent-model-*` JSON flags, one per
-role in `AGENT_MODEL_ROLES`, in rank order: the main agent run of a Canvas's
-Chat or a Sidekick's conversation (`workstream`, labelled Conversation agent;
-the role and its key keep their storage name), the delegated inline subagent
-(`inline_child`), pasted-text naming (`workstream_naming`, labelled Pasted-text
-naming, which titles a long pasted text so its attachment chip has a name, and
-keeps its Thread-era key because the key is what Flagship stores), the memory sweep (`memory_sweep`), and the Sidekick wizard's
-independent `agent-model-sidekick-authoring` route. The roles that served
-retired surfaces — work-stream description, suggestion draft, suggested-work
-admission and ranking, and conversation import — are not in the catalog, and
-`apps/ace/scripts/deploy.mjs` deletes their keys
-(`agent-model-workstream-description`, `agent-model-suggestion-draft`,
-`agent-model-work-opportunity-admission`,
-`agent-model-work-opportunity-ranking`, `agent-model-session-import`) on every
-deploy with the other retired flags, so no route a rollout could still target
-survives in Flagship. Ace hard-codes
-the role catalog because Flagship knows only opaque keys: each entry explains
-the code path the model serves and carries the same checked-in route the API
-Worker uses when Flagship is unavailable. The suggested model list combines
-the reviewed pin choices (`AGENT_MODEL_OVERRIDES`, today the models a Sidekick
-can be pinned to) with the classifier model used only by
-fleet routing; either a primary or fallback input may also carry an arbitrary
-OpenRouter model id entered as free text. GPT-5.6 Sol is the exception: Ace suggests
-and accepts it only for `inline_child`, whose complete execution path receives
-Bind's Azure configuration and pricing port. A role such as `workstream` is not safe merely because its main
-turn is routed: its attachment-summary pass still uses the structured
-OpenRouter gateway.
-
-Suggested IDs describe canonical model identity, not an Azure deployment name.
-Ace's public OpenRouter lookup validates that a canonical ID exists; it does not
-select that provider. The role policy is checked in the client and repeated by
-the PUT schema before either the public lookup or Flagship I/O. Bind remains the
-owner of the Azure-only runtime provider fence.
-
-The sidebar is an explicit stack rank, not alphabetical order. It weights a
-role's product criticality first and its execution frequency second: main runs
-and delegated work lead; pasted-text naming, which runs on each paste that
-becomes an attachment, follows; the background memory sweep and the on-demand
-Sidekick wizard come last. Each row shows its numeric rank and the usage reason behind it.
-The rank lives beside the hard-coded role explanation so adding a role requires
-making its operational importance explicit rather than letting insertion order
-decide where operators see it.
-
-The route editor includes optional reasoning effort (`low`, `medium`, or
-`high`); Model default omits the field. Read, edit, and save preserve it as
-part of the atomic route alongside the primary model and fallback array.
-
-The client debounces edits to the atomic route and asks
-`POST /api/models/validate` to check every distinct id against OpenRouter's
-live per-model endpoints API. Invalid fields are marked and saving remains
-disabled while the route is incomplete, being checked, unavailable, or invalid.
-The PUT repeats the same validation before it contacts Flagship, so bypassing
-the browser check cannot persist an unknown id. An exact id match with at least
-one current endpoint is required; OpenRouter validation uses the public API and
-receives no Rally or Cloudflare credential. Each provider lookup has a
-five-second deadline chosen by the product owner; a stalled request returns the
-same `502` validation-unavailable response as another provider outage and no
-Flagship read or write begins.
-
-`PUT /api/models/:role` changes the route plan in that flag's current default
-variation. The route plan remains atomic — one primary `model` and one ordered
-`fallbackModels` array. Cloudflare's update endpoint replaces a complete flag,
-so Ace reads the live definition immediately before saving and copies its flag
-status, rules, rollout percentages, and every non-default variation back
-unchanged. New runs resolve the change on admission; no client notification
-fan-out is needed.
-
-The Flagship API does not expose an ETag, version precondition, or other
-conditional-update token. Ace therefore has the same read-then-replace race as
-Wrangler: two operators editing one model flag concurrently are last-writer-wins.
-The editor disables an unchanged save to avoid needless rewrites, but operators
-must not edit one flag in Ace and Wrangler at the same time. Flagship appends a
-changelog entry for every update, which is the recovery and audit path if edits
-overlap.
-
 ## Invariants
 
-- Product Boolean names end in **Enabled**, and their keys end in `-enabled`, so
-  `true` has one unambiguous meaning in Flagship, Ace, logs, and client code.
-- The product features default to false in the shared client schema. No network
-  response, stale cache, missing field, Flagship error, or older API enables one.
-- The account-wide and regional Queue messages never carry a flag value. Values
-  are user-specific and are evaluated in the owning WorkspaceDO after Flagship
-  propagation; carrying one value would leak one audience's answer to another.
-- A pushed value is private to sockets belonging to the evaluated user. It
-  never rides a workspace-wide broadcast or durable waterline.
-- Full email addresses and names may be used to search D1 but never become
-  Flagship attributes. Breaking this sends personal data to the global
-  targeting plane on every evaluation.
-- Ace is the write authority for its managed product flags and the ordinary
-  default-route editor for agent models, from its pages and from the
-  engineering MCP, which writes only through Ace's `FlagAdministration`
-  entrypoint. Direct product-flag dashboard or
-  Wrangler edits do not emit Ace's Queue notification and leave connected
-  clients stale until reconnect. Model changes need no notification because
-  agents re-evaluate their flag on each run.
-- Access policy lives in Cloudflare Access. Ace verifies provenance and does not
-  duplicate an employee-domain allowlist in application code.
-- Queue identity comes from Cloudflare's returned resource ID and active
-  consumer relationship. A caller cannot supply another account Queue ID to the
-  peek route and turn this page into an arbitrary message browser.
-- The message `ref` returned by Cloudflare never reaches the client. It is the
-  capability needed to purge a peeked message, and deletion is not in this
-  surface's contract.
+- Access policy lives in Cloudflare Access; application code verifies provenance.
+- Mutations require the Ace page's origin before parsing or contacting a service.
+- Workspace changes reach the regional API that owns the workspace.
+- Queue identity comes from the returned resource ID and active consumer
+  relationship; the peek route cannot inspect an arbitrary account Queue ID.
+- Cloudflare's purge reference never reaches the client. Peek does not delete.
+- Ace has no feature-flag or model-route management endpoint or RPC entrypoint.
 
 ## Boundary
 
-Ace owns internal administration UI, the write workflow for its explicit
-managed-flag and model-role allowlists, and the read-only operator view over
-active Queue dead letters. Flagship owns flag configuration, evaluation, and
-its changelog.
-Cloudflare Queues owns queue configuration, backlog metrics, message retention,
-and peek semantics. Regional D1 owns identity, membership, and workspace lookup
-data; Ace reads that identity/membership data without writing it. The Access
-page separately issues `download_grants` in Global D1, through its existing
-operator authentication and same-origin write boundary. Regional API Workers own
-their Durable Object namespaces and the socket protocol.
+Ace owns operator UI and its relays, Global Access intake review and download
+grants, directory lookup, and read-only Queue inspection. Regional Workers own
+product state, Durable Objects, and their access rules. Deployment-wide feature
+configuration lives in the API constants and optional environment overrides.
 
 ## Failure modes and limits
 
-- Ace is laid out for a desktop operator's window. At phone width (390px) its
-  navigation strip and the Workspaces search results overflow sideways; this
-  is known and not fixed, since no operator runs Ace on a phone (the round-5
-  visual check, F13).
-
-- Missing or invalid Access configuration returns 403. The development bypass
-  works only with `APP_ENV=development` and `ACE_DEV_AUTH=true`.
-- A cross-origin mutation returns 403 before parsing or contacting Flagship.
-- An invalid or currently unroutable OpenRouter id returns 400 before Ace reads
-  or writes Flagship. If OpenRouter validation itself is unavailable, Ace fails
-  closed with 502 and keeps the existing route unchanged.
-- A Flagship write failure returns an error and sends no notification. A Queue
-  send failure fails the request after Flagship has changed; retrying the same
-  save is safe and repairs notification.
-- Fan-out and regional delivery are at-least-once. Re-evaluation and socket
-  replacement are idempotent, so duplicates cost work but do not change the
-  answer.
-- Malformed Queue messages are acknowledged as poison; transient D1, Queue, RPC,
-  and Flagship failures retry and eventually reach the configured dead-letter
-  queue.
-- Queue backlog metrics are best effort because Cloudflare's distributed
-  counter may be approximate. A failure for one metrics request leaves that
-  Queue visible with “Metrics unavailable” rather than hiding the DLQ.
-- Cloudflare exposes no cursor on peek. The backlog count states when more exist;
-  this first surface does not pretend it can paginate what the provider cannot
-  paginate or guess a defensive batch ceiling the team has not chosen.
-- Condition strings are at most 256 characters, descriptions 512 characters,
-  nesting is at most five groups, and rollout percentages are 0 through 100.
-  The string, description, and nesting limits come from
-  [Flagship's platform limits](https://developers.cloudflare.com/flagship/reference/limits/),
-  not Ace-chosen defensive bounds.
+Missing or invalid Access configuration returns 403. Local bypass requires both
+`APP_ENV=development` and `ACE_DEV_AUTH=true`. Cross-origin mutations return 403.
+Regional refusals retain their code and message; unavailable directories show an
+outage rather than an empty search. Queue metrics are best effort and may be
+approximate; a failed metrics request leaves the Queue visible as unavailable.
+Cloudflare's peek API has no cursor, so the UI shows one provider-defined batch.
 
 ## Testing
 
-`pnpm --filter @rally/ace test` covers Access failure, same-origin mutation,
-active DLQ discovery, metrics, non-consuming peek, the exact
-Flagship-and-Queue write contract, the safe attribute vocabulary, operators,
-nested targeting, regional fan-out, the ranked model-role catalog, live exact-match
-OpenRouter validation, invalid free-text rejection, ordered fallbacks, and
-preservation of staged model variations and rules. The operator pages have a
-Worker suite and a page suite: `workspaces.test.ts` proves the relay — the
-operator credential presented, a regional refusal relayed by its own code, an
-outage answered as unavailable rather than as an empty page, the typed
-confirmation forwarded — and `workspaces-client.test.tsx` proves the page
-against a fetch double: the typed-id ceremony and an incomplete retirement
-kept armed. `directory.test.ts`
-proves the two-region search against real SQLite, one region down included.
-`pnpm --filter @rally/ace typecheck`
-checks both browser and Worker programs; `pnpm --filter @rally/ace build`
-builds the Vite client and performs a Wrangler dry run. API workerd tests cover
-the real Queue dispatch and Durable Object WebSocket behavior. Desktop tests
-cover the fail-closed product gates and live socket cache replacement.
-
-The Flagship binding is not locally emulated. Tests use a double only for the
-external Flagship management and evaluation APIs; D1, Queue dispatch, Durable
-Object storage, RPC, and WebSockets use the workerd suite where their runtime
-behavior matters.
-
-Ace deliberately has no live local-backend command: a partial Worker without
-its two D1 bindings, Queues, Access audience, and Flagship credentials is a
-misleading approximation that can accidentally write the shared control plane.
-Use the tests and dry-run build for backend changes; use explicit browser
-fixtures when visually exercising the component library.
+`pnpm --filter @rally/ace test` covers Access admission, same-origin writes,
+directory queries, Queue discovery/metrics/peek, operator relays, and the pages.
+The retired flag/model endpoints return 404. Directory tests use real SQLite;
+external HTTP APIs use typed capability doubles. The Workspaces suite
+cover receipts, polling, offline state, typed confirmations, and regional errors.
+`pnpm --filter @rally/ace typecheck` checks browser and Worker programs.
+`pnpm --filter @rally/ace build` builds the browser bundle and dry-runs Wrangler.
+Use explicit browser fixtures for visual checks of the operator pages.
 
 ## Regional impact
 
-The workspaces tab retires in the region that owns the workspace, through that
-region's API, so no retirement crosses a region; the directory search that
-finds the workspace is the existing cross-regional lookup described above.
+Workspace changes use that workspace's regional
+API. Directory searches read identity data across configured deployments.
 
 ## Security and trust model
 
-Ace treats request headers, URL parameters, JSON, directory queries, Flagship
-responses, and Queue bodies as untrusted. Cloudflare Access is identity-aware
-admission, but the Worker still verifies the signed assertion and its audience.
-Mutations require same origin and a fixed managed-key schema. OpenRouter
-validation is an outbound public read: the request carries only the typed model
-id and an `Accept` header, never the Flagship token or operator identity.
+Ace treats headers, URL parameters, JSON, directory queries, and remote responses
+as untrusted. Mutations require same origin and validated requests. Deployment
+credentials stay in GitHub Actions. The Worker receives a dedicated encrypted
+`CLOUDFLARE_QUEUES_API_TOKEN`, which needs Queues Edit for the non-consuming
+`messages/peek` endpoint. This permission also permits Queue mutations, so Ace
+exposes only its explicit read/peek allowlist and discards purge references.
+No token is compiled into the browser bundle or plain Worker variables.
 
-The deployment credential stays in GitHub Actions. Ace receives a separate
-encrypted `CLOUDFLARE_FLAGSHIP_API_TOKEN` secret with only Flagship Write and
-Queues Edit on the Rally Cloudflare account. The binding keeps its historical
-name so the existing secret remains in place while its token is rotated.
-Cloudflare requires Queues Edit for the
-non-consuming `messages/peek` endpoint; Queues Read alone can list Queues and
-metrics but cannot view message bodies. The token can change flags and could use
-other Queue mutation endpoints, so Ace keeps its API routes on an explicit
-read/peek allowlist and never exposes Cloudflare's purge reference. It cannot
-deploy Workers, change Access policy, read D1, or administer other account
-products. No token is compiled into the Vite bundle or stored as a plain Worker
-variable.
+Regional operator credentials are separate from Cloudflare credentials and
+remain scoped to their regional API. The Access page uses its existing Global
+D1 download-grant authority.
 
 ## Operations
 
-A merge to `main` starts `deploy-ace.yml` when it changes Ace runtime or
-configuration, the reused Access verifier, shared runtime contracts or DB code, dependency
-resolution, the shared TypeScript configuration, or one of the deployment-time
-scripts. Test-only changes under Ace, shared contracts/DB, or the Queue provisioner
-remain CI-only and do not redeploy production. The workflow validates the
-repository, creates all declared Queues, clones the migration Access policy,
-ensures all Enabled-named flags and managed JSON model flags exist from their
-checked-in defaults without overwriting existing definitions, injects Ace's
-returned Access audience, uses the runtime token to list a dynamically selected Queue
-and perform a non-consuming peek, deploys the Hono Worker and assets, installs
-the token as an encrypted secret, and verifies an unauthenticated request is
-redirected by Access. A missing Queues Edit permission therefore fails the
-deployment before a broken Queues page reaches production. The API deploy and
-signed desktop release start from their existing `packages/**` and
-`apps/desktop/**` triggers in the same merge.
-There is no per-release manual command or dashboard step.
+`deploy-ace.yml` validates the repository, ensures declared Queues, copies the
+migration Access policy, injects Ace's audience, verifies the runtime token can
+list and peek Queues, deploys the Worker/assets, installs runtime secrets, and
+checks the unauthenticated Access redirect. The preferred GitHub secret is
+`ACE_QUEUES_API_TOKEN`; `ACE_FLAGSHIP_API_TOKEN` remains an accepted legacy
+secret name during transition. The Worker also accepts its previous runtime
+secret name until deployment installs the Queue-named secret, then deletes the
+legacy Worker secret. Renaming a secret does not narrow the token's permissions:
+rotate to a dedicated Queues Edit token, set `ACE_QUEUES_API_TOKEN`, and revoke the
+old token after deployment. Remove the workflow, deploy-input, and Worker legacy
+aliases once every deployment has the new binding and the GitHub secret has been
+rotated. No flag service is provisioned or contacted.
 
-When a save succeeds but clients do not change, inspect in order:
-
-1. Flagship's changelog for the enabled-named key.
-2. `avalon-product-feature-flag-changes-dead-letter`.
-3. The matching regional product-feature-flag dead-letter queue.
-4. `product_feature_flag_fanout_failed` and `client_flag_unresolved` logs.
-5. A reconnect, which must receive current values on the private subscribe
-   response even if a live notification was lost.
-
-Shared DB runtime sources and package exports are deployment inputs alongside
-contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only changes
-do not publish a new Ace bundle.
+Feature flags and Models are retired from Ace and the engineering MCP. Change
+`packages/contracts/src/runtime-config.ts` or optional API variables, then deploy
+the API. Existing clients refresh through their HTTP reads or subscriptions.
+No flag-change queues or propagation window are involved.
 
 ## Changelog
+
+### 2026-11-09 — Retire remote feature and model administration
+
+**What changed:** Ace retains Access, Queues and Workspaces. Flag editors,
+Flagship API calls, the flag-administration RPC, provisioning, and fan-out queues
+are removed. The runtime Cloudflare credential now serves Queue inspection only.
+
+**Why:** Product features and models are now deployment configuration backed by
+central constants and optional variables, so an editor for remote flags would
+change settings the product no longer reads.
+
+**Considered and rejected:** Keeping inactive editors would suggest that a
+successful remote save changes production behavior.
+
+**What future changes must respect:** Keep Queue inspection's dedicated runtime
+credential separate from the deploy token and retain regional operator authority.
 
 ### 2026-10-16 — Ace stops managing `digests-enabled`
 

@@ -228,7 +228,7 @@ async function receipts(runId: string): Promise<ReceiptRow[]> {
   return runInDurableObject(childStub(runId), (_instance, state) => {
     try {
       return state.storage.sql.exec<ReceiptRow>(
-        `SELECT run_id, status, terminalized_at, execution_context_json FROM runs
+        `SELECT run_id, status, model, terminalized_at, execution_context_json FROM runs
           WHERE execution_context_json IS NOT NULL ORDER BY created_at, run_id`,
       ).toArray();
     } catch {
@@ -427,6 +427,26 @@ describe("Sidekick run continuation", () => {
     expect(provider.calls.length - callsBefore).toBe(blocked ? 2 : 1);
     await deliverChildEffects(TEST_ENV, childStub(runId));
     expect(await runState(runId)).toBe(blocked ? "failed" : "completed");
+  });
+
+  it("records and executes the Sidekick run route independently of wizard and Canvas routes", async () => {
+    const previous = TEST_ENV.AGENT_MODEL_ROUTING_JSON;
+    TEST_ENV.AGENT_MODEL_ROUTING_JSON = JSON.stringify({
+      canvas: { model: "double/canvas", fallbackModels: [] },
+      sidekick_wizard: { model: "double/wizard", fallbackModels: [] },
+      sidekick_run: { model: "double/run", fallbackModels: [] },
+    });
+    try {
+      await activeSidekick();
+      const { runId, status } = await startedRun();
+      expect(status).toBe("completed");
+      expect((await receipts(runId))[0]?.model).toBe("double/run");
+      // Reporting the outcome can take another turn; every turn must use the run route.
+      expect([...new Set(provider.calls.map((call) => call.model))]).toEqual(["double/run"]);
+    } finally {
+      if (previous === undefined) delete TEST_ENV.AGENT_MODEL_ROUTING_JSON;
+      else TEST_ENV.AGENT_MODEL_ROUTING_JSON = previous;
+    }
   });
 
   it.each(["run", "worker"] as const)("continues a %s through another eligible delegate after coordinator withdrawal", async (target) => {

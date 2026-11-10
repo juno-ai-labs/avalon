@@ -1,3 +1,4 @@
+import { AZURE_MODEL_DEPLOYMENTS, MODEL_IDS } from "@rally/contracts/runtime-config";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
@@ -75,7 +76,7 @@ async function main(): Promise<void> {
     const startedAt = performance.now();
     try {
       await client.stream({
-        model: "gpt-5.6-sol",
+        model: AZURE_MODEL_DEPLOYMENTS[MODEL_IDS.GPT_5_6_SOL],
         messages,
         includeWebSearch: false,
         reasoningEffort: "medium",
@@ -109,7 +110,7 @@ async function main(): Promise<void> {
     generatedAt: new Date().toISOString(),
     datasetSha256,
     sourceReportSha256: createHash("sha256").update(reportSource).digest("hex"),
-    judge: { model: "openai/gpt-5.6-sol", providerModel: "gpt-5.6-sol", reasoningEffort: "medium" },
+    judge: { model: MODEL_IDS.GPT_5_6_SOL, providerModel: AZURE_MODEL_DEPLOYMENTS[MODEL_IDS.GPT_5_6_SOL], reasoningEffort: "medium" },
     disagreementCases: disagreements.size,
     judgments,
   };
