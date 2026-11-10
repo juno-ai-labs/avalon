@@ -1,3 +1,4 @@
+import { PasswordSignInForm } from '../../desktop/src/renderer/components/password-sign-in-form';
 import { uuidV7 } from '../../desktop/src/renderer/lib/telemetry';
 import { clearAllDrafts as clearAllDraftsOnly } from '../../desktop/src/renderer/lib/draft-cache';
 import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
@@ -126,6 +127,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [challenge, setChallenge] = useState<{ id: string; redemptionId: string } | null>(null);
   // The signed-out screen leads with Google and opens the email form on request.
   const [emailChosen, setEmailChosen] = useState(false);
+  const [passwordChosen, setPasswordChosen] = useState(false);
   // Whether this API offers the development account (`GET /dev/session`
   // answers 204 only in development with RALLY_DEV_AUTH): asked once, the
   // first time the signed-out screen shows.
@@ -174,7 +176,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const sessionChannel = useRef<BroadcastChannel | null>(null);
   const refreshSession = useRef<((renew: boolean) => void) | null>(null);
   // A later signed-out screen starts from the Google-first choice again.
-  useEffect(() => { if (session) setEmailChosen(false); }, [session]);
+  useEffect(() => { if (session) { setEmailChosen(false); setPasswordChosen(false); } }, [session]);
   useEffect(() => {
     const userId = session?.user.id;
     if (!userId || !listed?.workspaces.length) return;
@@ -523,9 +525,14 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       </> : <>
         <h1>{proof ? "Confirm your sign-in" : challenge ? "Check your email" : "Welcome to Rally"}</h1>
         <p>{proof ? "Continue to what was shared with you." : challenge ? iosStandalone() ? `Enter the code sent to ${email}.` : `Enter the code sent to ${email}, or open the sign-in link in that email.` : linkKind === "canvas" ? "Sign in to open this Canvas." : linkKind === "sidekick" ? "Sign in to open this Sidekick." : destination ? "Sign in to open this Organization." : siteTarget ? "Sign in to open this site." : retiredLink ? RETIRED_LINK_MESSAGE : "Your team, your work, and Rally. All in one place."}</p>
-        {!proof && !challenge && !emailChosen ? <>
+        {!proof && !challenge && passwordChosen ? <PasswordSignInForm disabled={checking || busy}
+          onSubmit={async (input) => {
+            await adopt(await browserRequest(IDENTITY_REGION, "/password", BrowserSessionSchema, input), IDENTITY_REGION);
+          }} onBack={() => setPasswordChosen(false)} /> : !proof && !challenge && !emailChosen ? <>
           <Button className="button-primary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}><ConnectorMark mark="google" />Continue with Google</Button>
           <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => setEmailChosen(true)}><Mail aria-hidden="true" size={16} />Continue with email</Button>
+          <button className="text-button onboarding-signout" type="button" disabled={busy || checking}
+            onClick={() => { setPasswordChosen(true); setError(null); setGoogleNotice(null); }}>Sign in with password</button>
           {developmentAccount && <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => { void useDevelopmentAccount(); }}>Use local development account</Button>}
         </> : <form onSubmit={(event) => { void submit(event); }}>
           {!proof && (challenge ? <label className="onboarding-field"><span>Sign-in code</span><span className="onboarding-input-wrap"><KeyRound aria-hidden="true" size={16} /><input key="otp" autoComplete="one-time-code" inputMode="numeric" required value={code} onChange={(event) => setCode(event.target.value)} /></span></label>

@@ -1,8 +1,14 @@
 import { InspectEngineeringUsageInputSchema, ChangeEngineeringPlanInputSchema, EngineeringUsageResultSchema, type EngineeringUsageResult } from "@rally/contracts/engineering-inspection";
 import { readOrganizationUsage, setWorkspacePlan, publishOrganizationUsage } from "./services/usage-metering";
+import { provisionUserPassword, revokeUserPassword } from './services/password-login-service';
 import { RegionSchema } from "@rally/contracts/regions";
 import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
+  EngineeringPasswordUserInputSchema,
+  EngineeringProvisionPasswordResultSchema,
+  EngineeringRevokePasswordResultSchema,
+  type EngineeringProvisionPasswordResult,
+  type EngineeringRevokePasswordResult,
   ArtifactInspectionInputSchema,
   ArtifactSqlInspectionInputSchema,
   D1SqlInspectionInputSchema,
@@ -320,6 +326,26 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
       if (api) throw new Error(`engineering_operation_failed:${api.code}`, { cause: error });
       throw error;
     }
+  }
+
+  async provisionUserPassword(input: unknown, operator: unknown): Promise<EngineeringProvisionPasswordResult> {
+    return this.productOperation("provisionUserPassword", async () => {
+      const request = EngineeringPasswordUserInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "provision_user_password", representedUserId: request.userId, operationId: crypto.randomUUID(),
+      }, async () => EngineeringProvisionPasswordResultSchema.parse(await provisionUserPassword(this.env, request.userId)),
+      () => ({ passwordEnabled: true }));
+    });
+  }
+
+  async revokeUserPassword(input: unknown, operator: unknown): Promise<EngineeringRevokePasswordResult> {
+    return this.productOperation("revokeUserPassword", async () => {
+      const request = EngineeringPasswordUserInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "revoke_user_password", representedUserId: request.userId, operationId: crypto.randomUUID(),
+      }, async () => EngineeringRevokePasswordResultSchema.parse(await revokeUserPassword(this.env, request.userId)),
+      () => ({ passwordEnabled: false }));
+    });
   }
 
   async createOrg(input: unknown, operator: unknown): Promise<CreateEngineeringOrgResult> {
