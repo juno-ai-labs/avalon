@@ -85,6 +85,7 @@ import { useVirtualScrollAnchor } from '../lib/use-virtual-scroll-anchor';
 import { useSiteArtifacts } from '../lib/use-site-artifacts';
 import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton } from '../components/conversation-follow';
 import { openRailAtEvenSplit, restoreRail, useRailFillsPane } from '../lib/rail-split';
+import { useOpenAttachedArtifact } from '../lib/use-open-attached-artifact';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
@@ -1303,6 +1304,12 @@ function ConversationSurfaceContent({
     setPanel(null);
     closeOwnRail();
   }, [resourcePanel, closeOwnRail, feedFromLocalCache, routedDetail]);
+  useOpenAttachedArtifact(
+    artifactPanelKey,
+    feedFromLocalCache ? undefined : routedDetail?.resources,
+    conversationVisible,
+    openResourceDetails,
+  );
   // Popped-out windows follow new versions from the app shell
   // (`App.tsx`), which reads every version this conversation's socket carries
   // through `followResourceHeads`.
