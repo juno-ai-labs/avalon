@@ -19,6 +19,15 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(env)).not.toThrow();
   });
 
+  it("leaves typed overrides to their local readers instead of failing Worker startup", () => {
+    expect(() => assertEnvContract(contractCompleteEnv({
+      AGENT_MODEL_ROUTING_JSON: { canvas: { model: "custom/native", fallbackModels: [] } },
+      FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED: false,
+      OPENROUTER_PRIMARY_MODEL: "",
+      OPENROUTER_FASTER_MODEL: false,
+    }))).not.toThrow();
+  });
+
   it("refuses a malformed retry budget rather than parsing a prefix out of it", () => {
     // `countEnv` reads this key with `Number.parseInt`, which would take `1` out
     // of `"1oops"` and out of `"1.5"`. It never sees either: the contract holds

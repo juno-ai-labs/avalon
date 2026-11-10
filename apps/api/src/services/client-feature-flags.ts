@@ -10,8 +10,13 @@ interface ClientFeatureFlagSubject {
 
 function resolveBooleanFlag(env: Env, key: keyof ClientFeatureFlags): boolean {
   const variable = FEATURE_FLAG_ENV_KEYS[key];
-  const value = env[variable]?.trim().toLowerCase();
-  if (!value) return FEATURE_FLAGS[key];
+  const raw = env[variable];
+  if (raw === undefined || raw === null) return FEATURE_FLAGS[key];
+  const value = typeof raw === "string" ? raw.trim().toLowerCase() : raw;
+  if (value === "") return FEATURE_FLAGS[key];
+  if (typeof value === "boolean") return value;
+  if (value === 1) return true;
+  if (value === 0) return false;
   if (value === "true" || value === "1") return true;
   if (value === "false" || value === "0") return false;
   logStructuredEvent(env, "warn", "feature_flag_override_invalid", { variable });

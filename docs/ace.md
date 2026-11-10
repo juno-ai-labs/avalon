@@ -7,9 +7,15 @@ Queue dead letters. New internal pages extend the same Hono application and
 component library. Product flags and model routes are configured in code and
 optional API environment variables; see [`feature-flags.md`](feature-flags.md).
 
-The **Access** page lists Global pre-workspace email requests and acknowledgement
-state, issues timed or single-use download grants, and copies private download
-links. [`private-access.md`](private-access.md) owns that workflow.
+The **Access** page lists Global pre-workspace email requests and their
+acknowledgement state. It also generates ad hoc single-use or timed downloads, optionally
+associated with a request, through the shared database issuer. Ace now writes
+`download_grants` in Global D1; it still does not modify workspace identity or
+membership. It sends no invitation email yet. [Private access](private-access.md)
+owns that lifecycle and the remaining distribution work.
+
+Timed links use an operator-chosen local date/time and permit repeat downloads
+until that deadline. Both generation actions share the current lifetime choice, defaulting to timed mode. Requests and grant history are searched server-side and paged in groups of 50. Access-protected same-origin actions revoke grants and relay acknowledgement recovery to the Global operator API. The existing Ace operator role (stored as `demos`) also authorizes these acquisition recovery actions; it does not authorize telemetry administration. The same regional credential also authorizes the reviewed connector-maintenance command described in [connector installation lifecycle](connector-installation-lifecycle.md#operator-maintenance); telemetry and read-only engineering credentials cannot use it.
 
 ## Where the code lives
 
@@ -17,10 +23,13 @@ links. [`private-access.md`](private-access.md) owns that workflow.
 | --- | --- |
 | `apps/ace/src/index.ts` | Hono routes, Access admission, same-origin writes, and static assets |
 | `apps/ace/src/access.ts` | Shared signed Cloudflare Access assertion verifier |
+| `apps/ace/src/private-access.ts`, `apps/ace/src/client/private-access.tsx` | Access request review, download-grant issuance and revocation, and acknowledgement recovery |
 | `apps/ace/src/directory.ts` | Read-only user and workspace search across configured regional D1 databases |
 | `apps/ace/src/regional-api.ts` | Regional operator client with shared response contracts |
 | `apps/ace/src/client/workspaces.tsx` | Workspace lookup, plan changes, and retirement |
 | `apps/ace/src/cloudflare-queue-admin.ts` | Active dead-letter discovery, metrics, and non-consuming message peeks |
+| `apps/ace/src/client/queues.tsx` | Dead-letter backlogs and non-consuming message peek |
+| `apps/ace/scripts/runtime-token-permissions.mjs` | Deploy-time Queue list and peek permission check |
 | `apps/ace/src/client/components/ui.tsx` | Shared controls and panels |
 | `apps/ace/src/client/main.tsx`, `styles.css` | Application navigation and visual system |
 | `apps/ace/scripts/deploy.mjs`, `.github/workflows/deploy-ace.yml` | Access provisioning, Worker/assets deployment, and runtime secrets |
@@ -148,8 +157,12 @@ list and peek Queues, deploys the Worker/assets, installs runtime secrets, and
 checks the unauthenticated Access redirect. The preferred GitHub secret is
 `ACE_QUEUES_API_TOKEN`; `ACE_FLAGSHIP_API_TOKEN` remains an accepted legacy
 secret name during transition. The Worker also accepts its previous runtime
-secret name until deployment installs the Queue-named secret. Flagship permission is no longer required and
-no flag service is provisioned or contacted.
+secret name until deployment installs the Queue-named secret, then deletes the
+legacy Worker secret. Renaming a secret does not narrow the token's permissions:
+rotate to a dedicated Queues Edit token, set `ACE_QUEUES_API_TOKEN`, and revoke the
+old token after deployment. Remove the workflow, deploy-input, and Worker legacy
+aliases once every deployment has the new binding and the GitHub secret has been
+rotated. No flag service is provisioned or contacted.
 
 Feature flags and Models are retired from Ace and the engineering MCP. Change
 `packages/contracts/src/runtime-config.ts` or optional API variables, then deploy
@@ -173,8 +186,6 @@ successful remote save changes production behavior.
 
 **What future changes must respect:** Keep Queue inspection's dedicated runtime
 credential separate from the deploy token and retain regional operator authority.
-
-## Changelog
 
 ### 2026-10-16 — Ace stops managing `digests-enabled`
 

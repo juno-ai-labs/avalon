@@ -296,7 +296,7 @@ for (const region of configuredRegions) {
   const serialized = workerKeys
     .filter((key) => (region === "global" || !globalOnlyKeys.has(key))
       && typeof regional[key] === "string"
-      && (regional[key].length > 0 || key === "OPENROUTER_FALLBACK_MODEL"))
+      && (regional[key].length > 0 || /^OPENROUTER_(PRIMARY|SMARTER|FALLBACK|FASTER)_MODEL$/.test(key)))
     .map((key) => `${key}=${workerEnvValue(key, regional[key])}`)
     .join("\n");
   await writeFile(regionalTargetPaths[region], `${serialized}\n`, { mode: 0o600 });

@@ -111,6 +111,49 @@ describe("local agent model configuration", () => {
     await expect(resolveAgentModelRouting(env, "sidekick_wizard")).resolves.toEqual({ model: "custom/smarter", fallbackModels: [] });
   });
 
+  it("accepts a native routing object even when its shared group is disabled", async () => {
+    await expect(resolveAgentModelRouting(createTestEnv({ OPENROUTER_PRIMARY_MODEL: "", AGENT_MODEL_ROUTING_JSON: {
+      canvas: { model: "custom/native", fallbackModels: [] },
+    } }), "canvas")).resolves.toEqual({ model: "custom/native", fallbackModels: [] });
+  });
+
+  it("fails before inference when a model group is explicitly disabled", async () => {
+    await expect(resolveAgentModelRouting(createTestEnv({ OPENROUTER_PRIMARY_MODEL: "" }), "canvas"))
+      .rejects.toMatchObject({ code: "agent_model_disabled:OPENROUTER_PRIMARY_MODEL" });
+  });
+
+  it("defaults safely for invalid typed model and routing overrides", async () => {
+    await expect(resolveAgentModelRouting(createTestEnv({ OPENROUTER_PRIMARY_MODEL: false,
+      OPENROUTER_FALLBACK_MODEL: [], AGENT_MODEL_ROUTING_JSON: true }), "canvas"))
+      .resolves.toEqual({ model: "openai/gpt-5.6-terra", fallbackModels: ["google/gemini-3.8-flash"] });
+  });
+
+  it.each(["resource_naming", "memory_sweep"] as const)("rejects Azure-only primary and fallback JSON routes atomically for %s", async (role) => {
+    for (const routing of [
+      { model: "openai/gpt-5.6-sol", fallbackModels: ["custom/fallback"], reasoningEffort: "high" },
+      { model: "custom/primary", fallbackModels: ["openai/gpt-5.6-sol"], reasoningEffort: "high" },
+    ]) {
+      await expect(resolveAgentModelRouting(createTestEnv({ AGENT_MODEL_ROUTING_JSON: { [role]: routing } }), role))
+        .resolves.toEqual({ model: role === "memory_sweep" ? "openai/gpt-6.1-sol" : "openai/gpt-5.6-terra", fallbackModels: ["google/gemini-3.8-flash"] });
+    }
+  });
+
+  it("rejects shared overrides as a whole when they violate the gateway policy", async () => {
+    for (const overrides of [
+      { OPENROUTER_FASTER_MODEL: "openai/gpt-5.6-sol", OPENROUTER_FALLBACK_MODEL: "custom/fallback" },
+      { OPENROUTER_FASTER_MODEL: "custom/primary", OPENROUTER_FALLBACK_MODEL: "openai/gpt-5.6-sol" },
+    ]) {
+      await expect(resolveAgentModelRouting(createTestEnv(overrides), "resource_naming"))
+        .resolves.toEqual({ model: "openai/gpt-5.6-terra", fallbackModels: ["google/gemini-3.8-flash"] });
+    }
+  });
+
+  it("keeps Azure-only models available to harness roles", async () => {
+    await expect(resolveAgentModelRouting(createTestEnv({ AGENT_MODEL_ROUTING_JSON: {
+      canvas: { model: "openai/gpt-5.6-sol", fallbackModels: [] },
+    } }), "canvas")).resolves.toEqual({ model: "openai/gpt-5.6-sol", fallbackModels: [] });
+  });
+
   it("selects the Sidekick run role before a scheduled conversation exists", async () => {
     const env = createTestEnv({ AGENT_MODEL_ROUTING_JSON: JSON.stringify({
       canvas: { model: "custom/canvas", fallbackModels: [] },
