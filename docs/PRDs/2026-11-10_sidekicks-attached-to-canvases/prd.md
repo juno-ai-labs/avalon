@@ -160,23 +160,23 @@ Sidekick without reading its run history.
 Canvas-made Sidekick changes what runs with its creator's connections. That is
 accepted and stated in the Security section.
 
-### 2026-11-10 — Steering is narrower than managing
+### 2026-11-10 — One rule: the Canvas's people manage the Sidekick
 
-**Decided:** A member the made-in Canvas admits may change what the Sidekick
-does, pause, resume, run and archive it. Changing who opens it, how it looks
-or who it runs as stays with its author, the person it runs as and, for an
-Organization Sidekick, owners and administrators.
+**Decided:** Everyone the made-in Canvas admits manages its Sidekick, with
+every action a manager has, including its audience.
 
-**Why:** Review of the first build, which gave the Canvas's audience every
-managed action. That let a participant share the Sidekick with themselves and
-read the run history the decision above keeps closed, or claim its run-as
-seat.
+**Why:** The owner's call, reversing a review-driven split. Review found that
+a participant could share the Sidekick with themselves and so read its runs,
+and a build split "steering" (change, pause, run, archive) from "managing"
+(audience, look, run-as). The owner judged two rules and two sets of checks
+too much for the product that exists and accepted the cost.
 
-**Changes:** The Security section.
+**Changes:** A participant can open a Canvas-made Sidekick by sharing it with
+themselves. Non-goal 2 holds only by default, not as a boundary.
 
-### 2026-11-10 — A guest of the Canvas steers like a member
+### 2026-11-10 — A guest of the Canvas manages like a member
 
-**Decided:** A guest the made-in Canvas admits steers its Sidekick exactly as a
+**Decided:** A guest the made-in Canvas admits manages its Sidekick exactly as a
 member does. There is no guest rule.
 
 **Why:** The owner's call. Review had excluded guests because a Sidekick runs
@@ -254,11 +254,10 @@ None. Every row is in the Organization's own `WorkspaceDO`.
 - A run acts as its run-as person with that person's connections. Attaching a
   Sidekick sends its output to whoever the Canvas admits, now and later.
 - Every write admits the acting person again; losing the Canvas stops it.
-- A Canvas-made Sidekick can be changed, paused, run and archived by anyone
-  the Canvas admits, guests included, so they decide what runs with its
-  creator's connections. Its creator chose that by making it in a shared
-  Canvas. Nobody gains the power to change who opens the Sidekick or who it
-  runs as.
+- A Canvas-made Sidekick is managed by anyone the Canvas admits, guests
+  included, so they decide what runs with its creator's connections and can
+  share it with themselves to read its runs. Its creator chose that by making
+  it in a shared Canvas.
 - The Canvas a tool acts on is the loop's own. A model cannot name another.
 - A row write obeys the per-viewer rule reads obey: unattended runs and the
   site's author write any row, and a member's Chat run is refused on a site
@@ -275,8 +274,7 @@ and [`automation-lifecycle.md`](../../automation-lifecycle.md#attached-conversat
 for the `CANVAS CONTEXT` and `ATTACHED CANVASES` messages. In short:
 
 - **`rally_agents` in a Canvas's Chat** (preloaded, user principal). Adds
-  `archive_sidekick({ sidekick })`, `write`; a retry after it succeeded
-  answers with the same result: `sidekick` is a
+  `archive_sidekick({ sidekick })`, `write`: `sidekick` is a
   `sidekickId` from `sidekicks_list` or an exact name. It returns
   `{ sidekickId, name, archived }`. Refusals: `sidekick_archive_not_made_here`
   and `sidekick_archive_ambiguous`, each with the names this Canvas made in

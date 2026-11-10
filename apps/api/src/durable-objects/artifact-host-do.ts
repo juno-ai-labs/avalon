@@ -794,9 +794,6 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
         detail: "This site keeps private rows, so only the person who published it can change its data from a Chat. Ask them, or use the site itself.",
       };
     }
-    // Asked again after the awaits above: an archive that committed while the
-    // facet was being reached must still stop the write.
-    if (this.canvasArchived()) return { ok: false, reason: "canvas_archived" };
     const written = await host.rallyWrite(admission.sql, params, maxRows);
     if (!written.ok) return { ok: false, reason: "sql_failed", detail: written.detail };
     return { ok: true, rowsWritten: written.rowsWritten, columns: written.columns, rows: written.rows, truncated: written.truncated };

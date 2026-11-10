@@ -288,10 +288,10 @@ for no other.
 
 | Tool | In a Canvas's Chat |
 | --- | --- |
-| `create_sidekick({ scope })` | Makes the Sidekick attached to this Canvas (`createAutomation` with `homeCanvasId`) and returns `{ sidekickId, agentId, attachedToCanvasId }`. Always attached; there is no unattached create here. |
+| `create_sidekick({ scope })` | Makes the Sidekick attached to this Canvas (`createAutomation` with `madeInCanvasId`) and returns `{ sidekickId, agentId, attachedToCanvasId }`. Always attached; there is no unattached create here. |
 | `sidekicks_list({})` | Returns the Sidekicks this Canvas made: `{ sidekickId, name, status, canEdit, agentId }`, read from `canvasContext`. A Sidekick only attached here is in `CANVAS CONTEXT` and not in this list. |
-| `archive_sidekick({ sidekick })` | Only here. `sidekick` is a `sidekickId` from `sidekicks_list` or an exact name, matched among the Sidekicks this Canvas made. Returns `{ sidekickId, name, archived: true }`. `write`; a retry after it succeeded answers the same. |
-| `send_message` to a wizard | Unchanged in shape. Whoever is talking may message the wizard of a Sidekick this Canvas made, because everyone in the Canvas steers it. |
+| `archive_sidekick({ sidekick })` | Only here. `sidekick` is a `sidekickId` from `sidekicks_list` or an exact name, matched among the Sidekicks this Canvas made. Returns `{ sidekickId, name, archived: true }`. `write`. |
+| `send_message` to a wizard | Unchanged in shape. Whoever is talking may message the wizard of a Sidekick this Canvas made, because everyone in the Canvas manages it. |
 
 The plugin's message gains `CANVAS_SIDEKICK_GUIDANCE` there: a Sidekick made
 here is attached to this Canvas, what its runs may do, and that recurring
@@ -307,11 +307,10 @@ Refusals `archive_sidekick` adds, each with the names this Canvas made in
 | --- | --- |
 | `sidekick_archive_not_made_here` | No Sidekick this Canvas made has that id or exact name. Use sidekicks_list to see the ones it made; a Sidekick made elsewhere is archived from its own page. |
 | `sidekick_archive_ambiguous` | Several Sidekicks this Canvas made have that name. Pass the sidekickId from sidekicks_list instead. |
-| `sidekick_archive_outside_canvas` | Only a Canvas's Chat can archive a Sidekick this way, and only one that Canvas made. |
 
-**Who may message a wizard is who steers the Sidekick**
+**Who may message a wizard is who manages the Sidekick**
 (`authorizeWizardContact`, `personManagesSidekick`). Such a person is not asked to
-also be someone the Sidekick is shared with: everyone in a Canvas steers a
+also be someone the Sidekick is shared with: everyone in a Canvas manages a
 Sidekick that Canvas made without being able to open it
 ([`automation-lifecycle.md`](automation-lifecycle.md#a-sidekick-made-in-a-canvas)).
 A non-manager is refused `sidekick_contact_forbidden` when they cannot open it

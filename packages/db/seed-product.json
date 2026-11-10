@@ -85,7 +85,7 @@
       "id": "00000000-0000-7000-8000-000000000013",
       "authorUserId": "00000000-0000-7000-8000-000000000001",
       "scope": "personal",
-      "homeCanvasId": "00000000-0000-7000-8000-000000000021",
+      "madeInCanvasId": "00000000-0000-7000-8000-000000000021",
       "draft": {
         "name": "Launch tracker",
         "description": "Keeps the Launch plan Canvas current with what shipped and what is at risk.",

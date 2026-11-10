@@ -18,7 +18,7 @@ import {
   SidekickReviewNoticeV1Schema, type SidekickReviewNoticeV1,
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
-import { canvasReaderAllows as homeCanvasReaderAllows, sidekickManagerAllows, sidekickManages, sidekickReaderAllows, sidekickSharedWith } from "./canvas-sidekick-admission";
+import { canvasReaderAllows, sidekickManages, sidekickReaderAllows, sidekickSharedWith } from "./canvas-sidekick-admission";
 import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "./sidekick-source-registrations";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
@@ -408,7 +408,7 @@ export interface HostedSidekickHost {
    */
   noteAttachedSidekickFace(sidekickId: string, face: string): void;
   /** Inside the transaction that attached a Sidekick to the Canvas it was made in: that Canvas's detail and context moved. */
-  noteHomeCanvasChanged(canvasId: string): void;
+  noteMadeInCanvasChanged(canvasId: string): void;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** See `HostedConversationHost.noteActivityChanged`. */
   noteActivityChanged(userId: string): void;
@@ -463,7 +463,6 @@ function scheduleDueAfter(kind: "calendar" | "interval", definitionJson: string,
   )?.getTime() ?? null;
 }
 
-export { sidekickManagerAllows, sidekickManages, sidekickReaderAllows, sidekickSharedWith } from "./canvas-sidekick-admission";
 
 
 /** What a skill read says about its audience: the request without the Sidekick it names. */
@@ -548,34 +547,31 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const existing = this.row();
     if (existing) {
       this.assertSidekick(request.workspaceId, request.automationId);
-      if (request.homeCanvasId !== undefined) {
+      if (request.madeInCanvasId !== undefined) {
         if (!active) throw this.delegationError("sidekick_delegation_membership_unavailable");
         // A replay is its author's, of the same create: a caller-minted id
         // that names somebody else's Sidekick, or one this Canvas did not
         // make, is not answered as though this request had made it.
-        if (existing.author_user_id !== request.authorUserId || !this.madeIn(request.homeCanvasId)) {
+        if (existing.author_user_id !== request.authorUserId || !this.madeIn(request.madeInCanvasId)) {
           throw new ApiError(409, "sidekick_id_unavailable", "This Sidekick id is already in use");
         }
-        // And it is made for a Canvas the author can still open: a caller
-        // that lost the Canvas does not reach its Sidekick through it.
-        this.assertHomeCanvas(request.workspaceId, request.homeCanvasId, author);
       }
       return { created: false };
     }
     if (!active) throw this.delegationError("sidekick_delegation_membership_unavailable");
     const now = Date.now();
-    const homeCanvasId = request.homeCanvasId ?? null;
+    const madeInCanvasId = request.madeInCanvasId ?? null;
     // The insert is the existence check: a repeat finds the row and returns
     // nothing, and is answered from the row it found.
     return this.storage.transactionSync(() => {
       // A Sidekick made in a Canvas's Chat: the person asking must be in that
       // Canvas now, since the Sidekick's runs will write there for them.
-      if (homeCanvasId !== null) this.assertHomeCanvas(request.workspaceId, homeCanvasId, author);
+      if (madeInCanvasId !== null) this.assertMadeInCanvas(request.workspaceId, madeInCanvasId, author);
       // A Canvas and a Sidekick are both conversation parents named by one
       // id space, and a Sidekick's row is asked for first: an id that names a
       // Canvas would take that Canvas's conversation over. Asked where the
       // caller chose the id, which is only the request made for a Canvas.
-      if (homeCanvasId !== null
+      if (madeInCanvasId !== null
         && this.sql.exec(`SELECT 1 FROM canvas_directory WHERE canvas_id = ? LIMIT 1`, request.automationId).toArray().length > 0) {
         throw new ApiError(409, "sidekick_id_unavailable", "This Sidekick id is already in use");
       }
@@ -604,20 +600,15 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         now,
       ).toArray().length === 1;
       if (!created) {
-        // A concurrent create won the insert: this one is a replay of it only
-        // under the rule the replay above is held to.
-        const winner = this.assertSidekick(request.workspaceId, request.automationId);
-        if (homeCanvasId !== null && (winner.author_user_id !== request.authorUserId || !this.madeIn(homeCanvasId))) {
-          throw new ApiError(409, "sidekick_id_unavailable", "This Sidekick id is already in use");
-        }
+        this.assertSidekick(request.workspaceId, request.automationId);
         return { created: false };
       }
       // The same transaction attaches it, so a Sidekick a Canvas made always
       // reaches that Canvas: there is no made-but-unattached state to repair.
-      if (homeCanvasId !== null) {
+      if (madeInCanvasId !== null) {
         attachSidekickConversation(this.sql, { automationId: this.sidekickId, madeHere: true,
-          address: { parentKind: "canvas", parentId: homeCanvasId, substreamId: "0" }, userId: request.authorUserId, now });
-        this.host.noteHomeCanvasChanged(homeCanvasId);
+          address: { parentKind: "canvas", parentId: madeInCanvasId, substreamId: "0" }, userId: request.authorUserId, now });
+        this.host.noteMadeInCanvasChanged(madeInCanvasId);
       }
       this.registerChild("0", "main", request.authorUserId, now);
       if (!this.delegations().read(this.sidekickId, request.authorUserId)) {
@@ -642,7 +633,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   }
 
   /** The Canvas a Sidekick is being made in: this Organization's, not archived, and open to the person asking. */
-  private assertHomeCanvas(workspaceId: string, canvasId: string, actor: { userId: string; actorRole: "owner" | "admin" | "member" | null }): void {
+  private assertMadeInCanvas(workspaceId: string, canvasId: string, actor: { userId: string; actorRole: "owner" | "admin" | "member" | null }): void {
     const canvas = first(this.sql.exec<{
       canvas_id: string; created_by_user_id: string; writer_sidekick_id: string | null; visibility: string; archived_at: number | null;
     }>(
@@ -650,7 +641,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
          FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, canvasId, workspaceId,
     ));
     if (canvas && canvas.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
-    if (!canvas || !homeCanvasReaderAllows(canvas, actor, this.sql)) throw new ApiError(404, "canvas_not_found", "This Canvas does not exist");
+    if (!canvas || !canvasReaderAllows(canvas, actor, this.sql)) throw new ApiError(404, "canvas_not_found", "This Canvas does not exist");
   }
 
   /**
@@ -659,7 +650,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    * manages what it made.
    * The caller owes `afterRegistrations` once the transaction commits.
    */
-  archiveWithHome(now: number): boolean {
+  archiveWithCanvas(now: number): boolean {
     const row = this.row();
     if (!row || row.lifecycle === "deleted") return false;
     this.archive(now);
@@ -910,10 +901,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   async saveDefinition(input: AutomationSubmitDefinitionRequest & { actor: AutomationActor }): Promise<{ definitionRevision: number; ready: boolean }> {
     const { actor, ...definitionInput } = input;
     const request = parseRpcInput(AutomationSubmitDefinitionRequestSchema, definitionInput, "save_definition");
-    await this.assertSteers(this.assertSidekick(request.workspaceId, request.automationId), actor);
+    await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), actor);
     const submitted = await this.submitDefinition(request);
-    // Steering was just checked, and applying what they saved is steering.
-    if (submitted.ready) await this.applyRevision({ workspaceId: request.workspaceId, automationId: request.automationId, actor });
+    if (submitted.ready) await this.apply({ workspaceId: request.workspaceId, automationId: request.automationId, actor });
     if (request.origin === "sidekick_review") {
       logInfo(this.env, "sidekick_review_revised", {
         ...this.logFields(), definition_revision: submitted.definitionRevision, ready: submitted.ready,
@@ -1032,15 +1022,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    */
   async apply(input: AutomationActorRequest): Promise<AutomationDetail> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "apply");
-    // A manager's call: it answers with the Sidekick's whole detail.
-    await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
-    return this.applyRevision(request);
-  }
-
-  /** `apply` after its caller decided the actor may: a manager, or a steerer saving a ready revision. */
-  private async applyRevision(request: AutomationActorRequest): Promise<AutomationDetail> {
     const row = this.assertSidekick(request.workspaceId, request.automationId);
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
+    await this.assertManager(row, request.actor);
     const revision = this.revision(row.current_definition_revision);
     if (!revision || revision.ready !== 1) {
       throw new ApiError(422, "sidekick_definition_not_ready", "The Sidekick's definition is not ready to apply");
@@ -1187,7 +1171,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   async pause(input: AutomationActorRequest): Promise<void> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "pause");
     const row = this.assertSidekick(request.workspaceId, request.automationId);
-    await this.assertSteers(row, request.actor);
+    await this.assertManager(row, request.actor);
     const changed = this.storage.transactionSync(() => {
       const current = this.assertSidekick(request.workspaceId, request.automationId);
       if (current.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
@@ -1202,7 +1186,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   async resume(input: AutomationActorRequest): Promise<void> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "resume");
     const row = this.assertSidekick(request.workspaceId, request.automationId);
-    await this.assertSteers(row, request.actor);
+    await this.assertManager(row, request.actor);
     const resumed = this.storage.transactionSync(() => {
       const current = this.assertSidekick(request.workspaceId, request.automationId);
       if (current.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
@@ -1216,7 +1200,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   async remove(input: AutomationActorRequest): Promise<void> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "remove");
     const row = this.assertSidekick(request.workspaceId, request.automationId);
-    await this.assertSteers(row, request.actor);
+    await this.assertManager(row, request.actor);
     if (row.lifecycle === "deleted") return;
     this.storage.transactionSync(() => this.archive(Date.now()));
     await this.host.afterRegistrations(this.sidekickId, null, []);
@@ -1224,7 +1208,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
 
   async runNow(input: AutomationRunNowRequest): Promise<{ runId: string; reused: boolean }> {
     const request = parseRpcInput(AutomationRunNowRequestSchema, input, "run_now");
-    await this.assertSteers(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
     const coordinator = await this.coordinator(request.actor.userId, null, false);
     // Read after the access check's await: a revision applied or a pause
     // made meanwhile is what the run must see.
@@ -1271,7 +1255,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const request = parseRpcInput(SidekickConversationMessageRequestSchema, input, "admit_conversation_message");
     const initial = this.assertSidekick(request.workspaceId, request.automationId);
     if (request.intent === "edit_sidekick") {
-      return await this.steerAllows(initial, request.actor)
+      return await this.managerAllows(initial, request.actor)
         ? { route: "wizard" }
         : { route: "refused", code: "sidekick_edit_requires_manager" };
     }
@@ -1334,7 +1318,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    */
   allowsManager(input: z.input<typeof AutomationActorRequestSchema>): Promise<boolean> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "allows_manager");
-    return this.steerAllows(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    return this.managerAllows(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
   }
 
   /**
@@ -3053,32 +3037,15 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   }
 
   /**
-   * Who manages a Sidekick (`sidekickManagerAllows`): its author, the person
-   * it runs as, and an Organization one's owners and administrators. Every
-   * one of them can open it, so this gates what decides who else can (its
-   * audience, the Canvases it writes), what it looks like, who it runs as,
-   * and every write that answers with its detail.
+   * Who may change a Sidekick (`sidekickManages`): its author, the person it
+   * runs as, an Organization one's owners and administrators, and everyone
+   * the Canvas whose Chat made it admits.
    */
   private async assertManager(row: HostedSidekickRow, actor: AutomationActor): Promise<void> {
     if (!await this.managerAllows(row, actor)) throw forbidden();
   }
 
   private async managerAllows(row: HostedSidekickRow, actor: AutomationActor): Promise<boolean> {
-    return sidekickManagerAllows(row, actor);
-  }
-
-  /**
-   * Who steers a Sidekick (`sidekickManages`): its managers, and the members
-   * of the Canvas whose Chat made it. Steering is what it does and whether it
-   * runs: its definition, pause, resume, archive and a run. It is never
-   * reading it or deciding who reads it, since a steerer may be someone the
-   * Sidekick is not shared with.
-   */
-  private async assertSteers(row: HostedSidekickRow, actor: AutomationActor): Promise<void> {
-    if (!await this.steerAllows(row, actor)) throw forbidden();
-  }
-
-  private async steerAllows(row: HostedSidekickRow, actor: AutomationActor): Promise<boolean> {
     return sidekickManages(row, actor, this.sql);
   }
 

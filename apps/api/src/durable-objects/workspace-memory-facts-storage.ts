@@ -1,7 +1,8 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
 import type { WorkspaceRelationship } from "@rally/contracts/scope-grants";
 
-import { canvasReaderAllows, type CanvasRow } from "./hosted-canvas";
+import { canvasReaderAllows } from "./canvas-sidekick-admission";
+import type { CanvasRow } from "./hosted-canvas";
 import { admitsOrganizationWide, sidekickAdmits, type AccessClass } from "../services/authorization-policy";
 import {
   currentMemoryRevision,
