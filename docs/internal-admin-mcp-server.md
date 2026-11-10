@@ -18,12 +18,6 @@ for connecting an MCP client and making a first safe query.
 
 ## Access and authentication
 
-The endpoint is protected by its own Cloudflare Access application. Deployment
-copies the identity providers and admission policies from Ace, so sign in with
-the same company identity provider and account that you use for
-`ace.internal.rallywith.ai`. The MCP application has a separate Access audience:
-an Ace token cannot be reused directly.
-
 Cloudflare Access performs the OAuth authorization-code flow and Dynamic Client
 Registration. The installed clients below discover that flow from the endpoint,
 open a browser for company sign-in, and retain their own OAuth credentials. Do
@@ -148,12 +142,6 @@ origins:
 The MCP transport also admits request `Origin` headers from those four provider
 hosts. An authorization success followed by “no MCP server was found” usually
 means a new hosted provider was added to OAuth but not to this shared registry.
-
-Add `https://mcp.internal.rallywith.ai/mcp` in the hosted client's connector
-settings and choose its normal sign-in action. Dynamic Client Registration
-creates the client automatically; do not enter a static OAuth Client ID. The
-Cloudflare Access login still requires an engineering identity admitted by the
-Ace-derived policy.
 
 Cloudflare supports a trailing `/*` for all paths on a specific HTTPS origin,
 but does not document an allow-any-HTTPS-origin setting. Supporting another
@@ -286,14 +274,3 @@ maintenance; it is not a domain-level count of changed records.
   messages.
 
 ## Troubleshooting
-
-| Symptom | Check |
-| --- | --- |
-| Browser login never opens | Run the client's explicit login command or its MCP **Authenticate** action. Confirm the endpoint returns the OAuth `401` challenge above. |
-| Access denies the login | Confirm the same company identity is admitted to Ace. The MCP copies Ace's policy but has a separate application and token audience. |
-| Connector registration fails before login | Confirm the hosted client redirects through one of the documented provider origins. New hosted-provider origins must be added to the Access Managed OAuth allowlist and deployed. |
-| Client remains disconnected after login | Restart or reconnect the client, then inspect `codex mcp list`, Claude Code `/mcp`, or Cursor's **MCP Logs** output. |
-| No tools appear | Confirm the configured URL ends in `/mcp`, not merely the hostname. |
-| Target is not found | Re-run the list tools from the workspace downward and use the returned IDs. A missing routing record is refused rather than creating an empty object. |
-| Target exists in configured deployments | Stop. The server refuses ambiguous identity by design; repair regional routing before inspecting either object. |
-| SQL fails without useful server logs | Read the error returned to the authenticated client. Query text and SQLite errors are intentionally excluded from Worker logs. |

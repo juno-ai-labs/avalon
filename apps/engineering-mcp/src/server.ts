@@ -1,3 +1,5 @@
+import { InspectEngineeringUsageInputSchema, ChangeEngineeringPlanInputSchema, EngineeringUsageResultSchema } from "@rally/contracts/engineering-inspection";
+import { inspectQueues, peekDeadLetters } from "./queues";
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import {
   EngineeringArtifactListLookupSchema,
@@ -133,7 +135,7 @@ function executedSql(value: unknown, target: string) {
 async function tool(
   principal: AccessPrincipal,
   name: string,
-  target: Record<string, string | undefined>,
+  target: Record<string, string | boolean | undefined>,
   operation: () => Promise<unknown>,
 ): Promise<ToolResult> {
   try {
@@ -448,6 +450,52 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (query) => tool(principal, "query_worker_observability", { view: query.view }, () =>
     queryObservability({ accountId: env.CLOUDFLARE_ACCOUNT_ID, token: env.WORKERS_OBSERVABILITY_API_TOKEN }, query)));
+
+  server.registerTool("inspect_queues", {
+    description: "Inspect Cloudflare queue backlog metrics and active dead-letter relationships. Does not consume or acknowledge messages. Metrics describe a point in time, not successful delivery.",
+    inputSchema: { deadLettersOnly: z.boolean().default(false) },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ deadLettersOnly }) => tool(principal, "inspect_queues", { dead_letters_only: deadLettersOnly }, () => inspectQueues(env, deadLettersOnly)));
+
+  server.registerTool("inspect_dead_letters", {
+    description: "Peek messages in an active dead-letter queue returned by inspect_queues. Returns the provider's sample without consuming, leasing, replaying or acknowledging messages. Message bodies may contain customer data; inspect only for the requested investigation.",
+    inputSchema: { queueId: z.string().min(1) },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ queueId }) => tool(principal, "inspect_dead_letters", { queue_id: queueId }, () => peekDeadLetters(env, queueId)));
+
+  server.registerTool("inspect_usage_plan", {
+    description: "Read an Organization's current plan, weekly quota remaining and reset, and current-period overage from its owning region's authoritative usage ledger.",
+    inputSchema: InspectEngineeringUsageInputSchema.shape,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "inspect_usage_plan", { workspace_id: request.orgId }, async () =>
+    EngineeringUsageResultSchema.parse(await (await organizationBinding(request.orgId)).inspectOrganizationUsage(request))));
+
+  server.registerTool("change_usage_plan", {
+    description: "Change an Organization's plan. Applies its new quota to the current week, records the plan change, and notifies connected members. Past weekly quotas remain unchanged. Resolve an uncertain outcome with inspect_usage_plan before retrying.",
+    inputSchema: ChangeEngineeringPlanInputSchema.shape,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, (request) => tool(principal, "change_usage_plan", { workspace_id: request.orgId, plan: request.plan }, async () =>
+    EngineeringUsageResultSchema.parse(await (await organizationBinding(request.orgId)).changeOrganizationPlan(request, principal))));
+
+  server.registerTool("inspect_migration_progress", {
+    description: "Inspect forced-migration outcomes, failures, invalid or misrouted commands and schema version shortfalls in a region's Worker logs. Filters by run or object when supplied. Seven-day log retention applies; missing logs do not prove a fleet or object is current. Use inspect_queues for command backlog and dead letters. Ordinary constructor migrations are not a fleet registry.",
+    inputSchema: {
+      region: z.enum(configuredRegions as [string, ...string[]]),
+      from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }).optional(),
+      runId: z.uuid().optional(), objectId: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+      limit: z.number().int().positive().optional(), offset: z.string().optional(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ region, from, to, runId, objectId, limit, offset }) => tool(principal, "inspect_migration_progress", { region, run_id: runId, object_id: objectId }, () =>
+    queryObservability({ accountId: env.CLOUDFLARE_ACCOUNT_ID, token: env.WORKERS_OBSERVABILITY_API_TOKEN }, {
+      view: "events", from, to, limit, offset,
+      filters: [
+        { key: "$metadata.service", operation: "eq", type: "string", value: `avalon-api-${region}` },
+        { kind: "group", filterCombination: "or", filters: ["migration_command_applied", "migration_command_failed", "migration_command_invalid", "migration_command_class_deleted", "migration_command_misrouted"].map((event) => ({ key: "event", operation: "eq" as const, type: "string" as const, value: event })) },
+        ...(runId ? [{ key: "run_id", operation: "eq" as const, type: "string" as const, value: runId }] : []),
+        ...(objectId ? [{ key: "object_id", operation: "eq" as const, type: "string" as const, value: objectId }] : []),
+      ], filterCombination: "and",
+    })));
 
   return server;
 }

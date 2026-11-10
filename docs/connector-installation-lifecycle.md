@@ -234,7 +234,7 @@ to normalized summaries or trigger messages. Actual provider compatibility still
 requires an authorized Ashby organization; unavailable access does not disable
 this implemented automation path.
 
-Fleet maintenance uses the existing Ace `demos` operator credential identified
+Fleet maintenance uses the existing regional `demos` operator credential identified
 by the user. The new route is repository implementation, not a deployed permission
 grant or authorization to run a fleet operation. Read-only inspection credentials
 remain insufficient. The generic signing-key preparation/promotion protocol and
@@ -341,7 +341,7 @@ completion with every installation being current.
 
 `scripts/connector-maintenance.mjs` accepts `preview`, `apply`, `status`, `resume`,
 and `cancel`. Supply the regional API origin and a file containing the existing
-Ace operator credential. Preview takes a JSON file with `provider`, `region`,
+regional operator credential. Preview takes a JSON file with `provider`, `region`,
 `version`, and optional `workspaceIds`; omitting `workspaceIds` selects all eligible
 connections in that region. Subsequent commands take the returned operation ID.
 Administrative installation mutations, including the repair requested by Test,

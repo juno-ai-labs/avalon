@@ -156,23 +156,12 @@ WorkspaceDO migration 85 adds `external_conversation_bindings`, keyed by provide
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Typed, runtime-validated query and effect contracts joining conversation-parent facts to WorkspaceDO serving state. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
 
-### Early-access acquisition
+### Retired acquisition tables
 
-- `access_requests`: Global normalized email uniqueness, original request time,
-  frozen acknowledgement sender/subject/body, first-attempt time, generation and provider-acceptance/suppression state.
-- `download_grants`: SHA-256 token digest, manual/invitation source attribution,
-  operator, first admission, revocation and optional exact UTC expiry. Null expiry
-  means single-use without time expiry; a deadline allows repeated admission. Minute bucket/count fields coordinate download starts.
-- `access_request_rate_buckets`: hashed edge IP and current hourly count, written
-  only for a finite configured intake cap. Old buckets are removed on the next
-  guarded request; raw IPs are never stored.
-
-`access_email_budget` holds one hourly aggregate attempt counter in Global; it is distinct from IP counters. Stable `(created_at, id)` indexes support request/grant paging.
-
-All arrive in `0101_private_access.sql`. These pre-workspace records have no
-workspace association; existing workspace deletion does not erase them. Both
-regions share schema, while this slice writes only Global. [Private access](private-access.md)
-owns their lookup, erasure, admission and delivery semantics.
+Historical D1 migrations retain the private-access request, acknowledgement, rate
+bucket, and download-grant tables. Their runtime code and public/operator APIs
+were removed; no replacement management tool reads or writes them. Existing
+historical rows are not deleted by the code retirement.
 
 ### Scoped share lookup
 
@@ -1397,7 +1386,7 @@ key in the same change.
 
 **Why:** Public acquisition needs predictable failure and recoverable operator actions before launch, without imposing account approval or building a campaign system.
 
-**Consequences:** [Private access](private-access.md) owns configuration, undecided numerical limits, and recovery procedures. PR #637.
+**Consequences:** Private access (private-access management was removed) owns configuration, undecided numerical limits, and recovery procedures. PR #637.
 
 ### 2026-09-09 — Add pre-workspace access requests and download grants
 
@@ -1417,7 +1406,7 @@ persist rather than reusable bearer URLs.
 
 **Consequences:** Configured deployments receive schema; active intake stays Global. Timed
 grants preserve first admission while allowing repeats until expiry. The lifecycle
-and erasure procedure are in [private access](private-access.md).
+and erasure procedure are in private access (private-access management was removed).
 
 ### 2026-09-09 — The context-residency ledger
 

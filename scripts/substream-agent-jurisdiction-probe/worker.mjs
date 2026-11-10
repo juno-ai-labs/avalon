@@ -12,7 +12,8 @@ export default {
     if (request.method !== 'POST') return new Response('method_not_allowed', { status: 405 });
     const input = await request.json();
     const region = regions[input.region];
-    const namespace = region && environment[`${region.bindingPrefix}_SUBSTREAM_AGENTS`];
+    const binding = { AgentLoopDO: 'SUBSTREAM_AGENTS', WorkspaceDO: 'WORKSPACE_DOS' }[input.className ?? 'AgentLoopDO'];
+    const namespace = region && binding && environment[`${region.bindingPrefix}_${binding}`];
     if (!namespace) {
       return new Response('invalid_request', { status: 400 });
     }

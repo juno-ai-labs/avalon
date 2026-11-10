@@ -90,7 +90,7 @@ objects today.
   migration 55 is the one that had to add the delete pass.
 
 The migration runner and fleet visibility are documented in
-[`durable-object-migration-tracking.md`](durable-object-migration-tracking.md).
+[forced migrations](forced-migrations.md).
 
 Rally's shared object runner applies pending migrations in execution groups.
 Each group and every receipt for it commit in one `transactionSync`; a crash or

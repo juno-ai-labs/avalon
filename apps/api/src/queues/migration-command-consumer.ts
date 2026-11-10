@@ -1,37 +1,14 @@
 /**
- * Force one Durable Object onto the running build's schema.
- *
- * The receiving half of the tracker's **Force a migration** page. An operator
- * picks a class there; the tracker turns every object it knows of into one
- * message on this region's `avalon-<region>-migration-commands` queue; and this
- * consumer wakes the object each message names and reads back where it landed.
- * `docs/durable-object-migration-tracking.md` owns the flow.
- *
- * A queue between the two, rather than the tracker calling the objects itself:
- * a class has hundreds of instances and applying a migration means waking every
- * one of them, which is a fan-out no single invocation should hold open, and
- * which the queue meters into batches this Worker can absorb. It is also the
- * only shape available — a Durable Object can only be addressed by a Worker
- * holding a binding to its namespace, and only this region's Worker holds
- * bindings to this region's objects.
- *
- * The hop from here into the object is RPC because this consumer reads the
- * answer: `forceMigration` returns the version the object ended on and whether
- * its receipt was accepted, and an object that comes back below the version
- * *this deployment* ships is logged as a warning rather than a success. That is the split `docs/choosing-queues-or-rpc.md` describes —
- * a queue per hop, RPC inside the hop — and the same one `access-revocation.md`
- * already uses.
- *
- * Forcing an object twice is the same as forcing it once: the wake applies
- * whatever is unapplied and reports where it is. So a redelivered message needs
- * no dedupe key, which is what lets a failed hop retry on its own.
+ * Consume per-object commands from the operator migration CLI. Each regional
+ * Worker wakes only its own objects and retries failed migrations.
+ * See docs/forced-migrations.md.
  */
 import {
   DurableObjectMigrationCommandSchema,
   type DurableObjectMigrationCommand,
 } from "@rally/contracts/durable-object-migrations";
 
-import { latestMigrationVersion, type ForcedMigrationOutcome } from "../durable-objects/migration-reporting";
+import { latestMigrationVersion, type ForcedMigrationOutcome } from "../durable-objects/migratable-durable-object";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workspace-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-object-schema";
 import type { Env } from "../env";
@@ -53,10 +30,7 @@ import { logStructuredEvent, logWarn } from "../observability/logger";
  * same method. Resolving the stub inside each entry keeps each one concrete.
  *
  * `CrashSymbolicatorContainer` is absent because it is a container rather than a
- * migrated object; it runs no schema and has nothing to force. Add a class here
- * in the same change that adds it to the Worker, and to `REPORTING_CLASSES` in
- * `apps/migration-tracker/src/protocol.ts`, which is what decides whether the
- * tracker offers it at all.
+ * migrated object; it runs no schema and has nothing to force.
  */
 export function migrationCommandDispatchers(env: Env): Record<
   string,
@@ -166,8 +140,7 @@ export async function applyMigrationCommand(
  * region that owns the object or not at all.
  *
  * Everything else is retried, including a migration that threw. That is the
- * outcome to want: the object reports its own failure on the way past, so the
- * tracker shows the break, and the messages that exhaust their retries land in
+ * outcome to want: the messages that exhaust their retries land in
  * the dead-letter queue, which counts how many objects are stuck without
  * anybody building a tally.
  */
@@ -231,10 +204,6 @@ export async function consumeMigrationCommandQueue(
         // `expected_version` exactly when that isolate is on an older build.
         latest_version: outcome.latestVersion,
         expected_version: MIGRATION_COMMAND_HEADS[outcome.className] ?? null,
-        // False means the object woke and ran its schema but its receipt was
-        // not accepted by the report queue, so the tracker will not show this
-        // pass until the object's next wake. The migration still happened.
-        reported: outcome.reported,
       });
       message.ack();
     } catch (error) {

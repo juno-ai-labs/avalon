@@ -69,7 +69,7 @@ jobs:
       - name: Verify public entry routes
         run: |
           set -euo pipefail
-          # Reuse the Custom Domain propagation window from deploy-ace.
+          # Allow the Custom Domain configuration to propagate before probing.
           for path in / /invite /login/email /app/global; do
             ready=false
             for attempt in 1 2 3 4 5 6; do
