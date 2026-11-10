@@ -518,6 +518,7 @@ streams.
 | Start the configured Workers (workstation) | `pnpm dev:api` |
 | Global health | `curl -s http://127.0.0.1:8787/health` |
 | Desktop client, headless | see [§4](#4-run-the-desktop-client-headlessly) |
+| Preview the Getting Started guide's site | `pnpm preview:canvas-guide`, then open `http://localhost:8795/__preview` ([`canvas-seeds.md`](canvas-seeds.md)) |
 | Lint / typecheck / test | `pnpm lint`, `pnpm typecheck`, `pnpm test` |
 | Lint, ignoring the cache | `pnpm lint:fresh` |
 
