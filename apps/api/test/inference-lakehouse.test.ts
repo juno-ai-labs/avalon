@@ -325,7 +325,7 @@ describe("inference lakehouse", () => {
     const { env, objects, pointers } = fixture();
 
     await captureStructuredInferenceDiagnostic(env, {
-      source: "workstream_naming",
+      source: "canvas_naming",
       workspaceId: "workspace-1",
     }, {
       stage: "complete",
@@ -393,7 +393,7 @@ describe("inference lakehouse", () => {
     const { env, objects, pointers } = fixture();
 
     await captureStructuredInferenceDiagnostic(env, {
-      source: "workstream_naming",
+      source: "canvas_naming",
       workspaceId: "workspace-1",
       workstreamId: "workstream-1",
     }, {

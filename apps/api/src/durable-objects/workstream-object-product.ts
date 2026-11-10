@@ -71,6 +71,7 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { connectionFromRow } from "../mappers/connection";
 import {
   agentModelOverride,
+  conversationModelRole,
   pinnedModelRouting,
   resolveAgentModelRouting,
 } from "../services/agent-model-flags";
@@ -2957,7 +2958,12 @@ export class WorkstreamObjectProductService {
 
   private model(root: RootRow): Promise<string> {
     if (root.model_override) return Promise.resolve(pinnedModelRouting(root.model_override).model);
-    return resolveAgentModelRouting(this.env, "workstream", {
+    const identity = this.objectStore.identity();
+    const role = conversationModelRole({
+      parentKind: identity?.parentKind ?? "canvas",
+      substreamId: identity?.parentKind === "automation" ? this.sidekickAuthorityRunId() : this.externalSubstreamId(),
+    });
+    return resolveAgentModelRouting(this.env, role, {
       workspaceId: root.parent_workspace_key,
       workstreamId: root.workstream_key,
     }).then((routing) => routing.model);

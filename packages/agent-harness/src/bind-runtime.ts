@@ -2310,7 +2310,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             ? buildOpenRouterTracePayload(
                 args.input.traceContext ?? {
                   source: "agent_harness",
-                  feature: "agent-model-workstream",
+                  feature: "agent-model-canvas",
                   workspaceId: args.input.workspaceId,
                   workstreamId: args.input.workstreamId,
                   harnessRunId: args.input.harnessRunId,
