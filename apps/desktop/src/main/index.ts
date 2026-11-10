@@ -1,4 +1,4 @@
-import { PasswordLoginRequestSchema } from '@rally/contracts/password-login';
+import { parsePasswordLoginRequest } from '../common/password-login';
 import { annotationDraftKeyForScope } from '../common/draft-keys';
 import { createElectronFetch } from '@rally/electron-network';
 import { artifactWindowActionRequest, artifactWindowCanvasLink, artifactWindowSessionMatches } from './artifact-window-actions';
@@ -2249,7 +2249,7 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
 
 async function signInWithPassword(input: unknown): Promise<DesktopSession> {
   if (loggingOut) throw new Error('Wait for Rally to finish signing out before signing in again');
-  const proof = PasswordLoginRequestSchema.parse(input);
+  const proof = parsePasswordLoginRequest(input);
   const apiBaseUrl = configuredApiBase('global');
   const expectedLifecycleEpoch = sessionLifecycleEpoch;
   // A password attempt supersedes any pending Google callback for this endpoint.

@@ -37,11 +37,13 @@ before the mutation whose session has not yet been inserted. Existing sessions
 remain ordinary sessions until logout, revocation or expiry. These tools change
 credentials, not session lifetimes or Organization membership.
 
-Both sign-in screens offer **Sign in with password**. The form normalizes the
-email, preserves password bytes, clears the password after each attempt and
-returns to other sign-in options on request. Desktop sends the proof through
-trusted IPC to the main process, which chooses the configured Global endpoint;
-it stores the resulting credentials using the same encryption and generation
+Both sign-in screens offer **Sign in with password**. The server normalizes the
+email; the form preserves password bytes, clears the password after each attempt
+and returns to other sign-in options on request. Desktop sends the proof through
+trusted IPC to the main process, which chooses the configured Global endpoint.
+IPC validation carries declared-field diagnostic codes, which the renderer maps
+to readable email/password errors without exposing rejected values or raw Zod
+JSON. Main stores the resulting credentials using the same encryption and generation
 fences as Google sign-in. Browser sends `POST /browser/password`, receives an
 HttpOnly cookie and credential-free metadata, and adopts the existing workspace
 discovery/return-destination flow. Cookie writers use the same browser lock as
@@ -103,6 +105,8 @@ would require a slow password KDF and a new credential format.
   cannot sign in to claim a pending Canvas share.
 - `apps/engineering-mcp/test/server.test.ts`: tool discovery, Global routing,
   trusted operator forwarding and credential-free logging.
+- `apps/desktop/src/common/password-login.test.ts`: IPC input diagnostics and
+  readable field-error messages.
 - Desktop onboarding and browser-entry renderer tests: method switching,
   submission, discovery failures after form unmount, password clearing and browser
   session adoption. The onboarding test runs under its own setup. Real
