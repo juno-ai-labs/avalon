@@ -17,6 +17,7 @@ import { conversationParentStub } from "./conversation-parent-client";
 import { createAutomation } from "./automation-service";
 import { sidekickChangeRequestText } from "./agent-communication-prompts";
 import { personManagesSidekick } from "./sidekick-run-continuation";
+import { isCanvasChat } from "../lib/canvas-chat";
 
 // The wire names this service asks about — a message, and the delegation that
 // also counts as handing work on — are in `@rally/contracts` beside the schemas
@@ -387,8 +388,7 @@ export class AgentCommunicationService {
    * background agent works for a conversation and is not its Chat.
    */
   private canvasChatId(): string | null {
-    return this.input.parentKind === "canvas" && (this.input.substreamId ?? "0") === "0" && this.input.backgroundAgent !== true
-      ? this.input.parentId : null;
+    return isCanvasChat(this.input) ? this.input.parentId : null;
   }
 
   /** The Sidekicks this Canvas's Chat made, as `sidekicks_list` names them. */

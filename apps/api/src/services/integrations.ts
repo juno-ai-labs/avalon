@@ -15,6 +15,7 @@ import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { AgentCommunicationService } from "./agent-communication-service";
+import { isCanvasChat } from "../lib/canvas-chat";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
@@ -5204,6 +5205,19 @@ async function canvasRunContextMessage(env: Env, input: WorkstreamWorkflowInput)
   }, "canvas_context", input.triggerMessageId ?? input.harnessRunId);
 }
 
+/** How a run changes an attached Canvas: the tools are the run's own. */
+const RUN_CANVAS_UPDATING = "This Sidekick is attached to the Canvases above, so this run may change their artifacts. "
+  + "For an artifact with storesData true, change its rows with write_artifact_data (describe_artifact_data shows its tables): "
+  + "a row write is safe when runs overlap and makes no new version. "
+  + "To change an artifact's files, import_resource it to its filePath, edit, and publish_resource that filePath with canvas set to the canvasId: "
+  + "that is a new version, attributed to this Sidekick. Runs can overlap, so a run that republishes rebuilds the whole artifact from its sources rather than patching the last version. "
+  + "conversation_post with the canvasId tells the people in that Canvas what changed.";
+/** What the wizard saves for the runs: it configures, and does not write the Canvas itself. */
+const WIZARD_CANVAS_UPDATING = "This Sidekick is attached to the Canvases above, so its runs may change their artifacts; you configure it and do not change them yourself. "
+  + "Save instructions that name the canvasId and each artifact's resourceId. For an artifact with storesData true, have each run change rows with write_artifact_data, "
+  + "naming the tables and columns (describe_artifact_data shows them): a row write is safe when runs overlap and makes no new version. "
+  + "Only for a change to an artifact's files, have a run import it to its filePath and publish_resource that filePath with canvas set to the canvasId, rebuilding it from its sources.";
+
 /** One of a Canvas's artifacts as an agent is told of it; see `HostedCanvas.agentArtifacts`. */
 function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind: string; version: number; filePath: string | null; storesData: boolean }) {
   return { resourceId: artifact.resourceId, title: artifact.title, kind: artifact.kind, version: artifact.version,
@@ -5231,12 +5245,7 @@ ${JSON.stringify({
       canvases: canvases.map((canvas) => ({
         canvasId: canvas.canvasId, title: canvas.title, artifacts: canvas.artifacts.map(agentCanvasArtifact),
       })),
-      updating: "This Sidekick is attached to the Canvases above, so its runs may change their artifacts. "
-        + "For an artifact with storesData true, change its rows with write_artifact_data (describe_artifact_data shows its tables): "
-        + "a row write is safe when runs overlap and makes no new version. "
-        + "To change an artifact's files, import_resource it to its filePath, edit, and publish_resource that filePath with canvas set to the canvasId: "
-        + "that is a new version, attributed to this Sidekick. Runs can overlap, so a run that republishes rebuilds the whole artifact from its sources rather than patching the last version. "
-        + "conversation_post with the canvasId tells the people in that Canvas what changed.",
+      updating: input.automationRun ? RUN_CANVAS_UPDATING : WIZARD_CANVAS_UPDATING,
     })}`,
   }, "sidekick_canvas_context", input.triggerMessageId ?? input.automationRun?.runId ?? input.harnessRunId);
 }
@@ -5371,9 +5380,11 @@ async function loadRunPromptContext(
     const canvas = await canvasRunContextMessage(env, input);
     if (canvas) additionalMessages.push(canvas);
   }
-  // A wizard turn or a run, never a background worker's own substream, whose
-  // owner already holds the context.
-  if (input.parentKind === "automation" && (input.automationRun || (input.substreamId ?? "0") === "0")) {
+  // A run itself, or a wizard turn: the two that can act on it. A worker one
+  // of them started has neither the publish target nor the data write, so
+  // it is told nothing it could not do.
+  if (input.parentKind === "automation" && input.backgroundAgent !== true && !input.automationDelegation
+    && (input.automationRun || (input.substreamId ?? "0") === "0")) {
     const attached = await sidekickCanvasContextMessage(env, input);
     if (attached) additionalMessages.push(attached);
   }
@@ -5916,8 +5927,7 @@ async function loadHarnessTools(
     createSidekickTaskOutcomePlugin(input),
     createAgentCommunicationPlugin(new AgentCommunicationService(env, input), agentCoordinationRoleGuidance(input),
       { sidekickRun: input.automationRun !== undefined,
-        canvasChat: input.parentKind === "canvas" && (input.substreamId ?? "0") === "0" && input.backgroundAgent !== true
-          && input.executionPrincipal.type === "user" }),
+        canvasChat: isCanvasChat(input) && input.executionPrincipal.type === "user" }),
     workstreamPlugin,
     webPlugin,
     terminalPlugin,
