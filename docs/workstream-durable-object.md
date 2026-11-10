@@ -1947,7 +1947,7 @@ place that caches the kind inside the object must be rewritten by it too. A Stop
 never aborts the harness while a tool runs. A stored `merge_suggestion` alarm is
 acknowledged and dropped. The tracker translates reports and commands sent under
 the old class name
-([`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)).
+([forced migrations](forced-migrations.md)).
 
 Shipped in juno-ai-labs/avalon#1490. Design:
 `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.

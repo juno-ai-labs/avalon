@@ -135,7 +135,7 @@ function executedSql(value: unknown, target: string) {
 async function tool(
   principal: AccessPrincipal,
   name: string,
-  target: Record<string, string | undefined>,
+  target: Record<string, string | boolean | undefined>,
   operation: () => Promise<unknown>,
 ): Promise<ToolResult> {
   try {
@@ -455,7 +455,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     description: "Inspect Cloudflare queue backlog metrics and active dead-letter relationships. Does not consume or acknowledge messages. Metrics describe a point in time, not successful delivery.",
     inputSchema: { deadLettersOnly: z.boolean().default(false) },
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ deadLettersOnly }) => tool(principal, "inspect_queues", {}, () => inspectQueues(env, deadLettersOnly)));
+  }, ({ deadLettersOnly }) => tool(principal, "inspect_queues", { dead_letters_only: deadLettersOnly }, () => inspectQueues(env, deadLettersOnly)));
 
   server.registerTool("inspect_dead_letters", {
     description: "Peek messages in an active dead-letter queue returned by inspect_queues. Returns the provider's sample without consuming, leasing, replaying or acknowledging messages. Message bodies may contain customer data; inspect only for the requested investigation.",

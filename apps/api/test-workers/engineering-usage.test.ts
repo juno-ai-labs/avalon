@@ -1,7 +1,8 @@
+import * as usageMetering from "../src/services/usage-metering";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from "cloudflare:workers";
 import { createExecutionContext, reset, waitOnExecutionContext } from "cloudflare:test";
-import { beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridge";
 import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
 import usageMigration from "../../../packages/db/usage-migrations/0001_usage_ledger.sql?raw";
@@ -40,4 +41,24 @@ it("refuses an invalid plan and a workspace not owned by this region", async () 
   await env.DB.prepare("UPDATE workspaces SET region = 'enterprise' WHERE id = ?").bind(ORG).run();
   await expect(bridge.changeOrganizationPlan({ orgId: ORG, plan: "growth" }, OPERATOR)).rejects.toThrow(/organization_not_found/);
   expect(await env.DB.prepare("SELECT plan FROM workspaces WHERE id = ?").bind(ORG).first()).toEqual({ plan: "starter" });
+});
+
+
+afterEach(() => vi.restoreAllMocks());
+
+it("audits the requested plan even when another operator changes it before the snapshot", async () => {
+  const readUsage = usageMetering.readOrganizationUsage;
+  let concurrentChange: Promise<boolean> | undefined;
+  vi.spyOn(usageMetering, "readOrganizationUsage").mockImplementation(async (...args) => {
+    concurrentChange ??= usageMetering.setWorkspacePlan(env, ORG, "starter", Date.now() + 1);
+    await concurrentChange;
+    return readUsage(...args);
+  });
+  const context = createExecutionContext();
+  const bridge = new EngineeringInspectionBridge(context, env);
+  const result = await bridge.changeOrganizationPlan({ orgId: ORG, plan: "growth" }, OPERATOR);
+  await waitOnExecutionContext(context);
+  expect(result.usage.plan).toBe("starter");
+  const row = await env.AUDIT_DB.prepare("SELECT metadata_json FROM audit_events WHERE workspace_id = ? AND action = 'engineering.change_usage_plan.result'").bind(ORG).first<{ metadata_json: string }>();
+  expect(JSON.parse(row!.metadata_json)).toMatchObject({ operator: OPERATOR, plan: "growth" });
 });
