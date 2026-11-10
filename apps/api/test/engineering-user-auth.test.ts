@@ -66,7 +66,7 @@ describe("whom an engineering tool may act as", () => {
       sessionId: "engineering-read", workspaceId: ORG_ID, userId: MEMBER_ID, region: "global",
       role: "member", principal: "engineering",
     });
-    expect(await engineeringUserAuth(env, ORG_ID, GUEST_ID, "send-1")).toEqual({
+    expect(await engineeringUserAuth(env, ORG_ID, GUEST_ID, { operationId: "send-1" })).toEqual({
       sessionId: "send-1", workspaceId: ORG_ID, userId: GUEST_ID, region: "global",
       role: null, principal: "engineering",
     });
@@ -91,5 +91,17 @@ describe("whom an engineering tool may act as", () => {
     // reported as that user's missing membership.
     await expect(engineeringUserAuth(env, ORG_ID, STRANGER_ID))
       .rejects.toMatchObject({ status: 409, code: "organization_abandoned" });
+  });
+
+  it("admits an active user into an abandoned Organization for a caller that asks, and still refuses a user with no relationship", async () => {
+    const { database, env } = fixture();
+    database.exec(`UPDATE workspaces SET abandoned_at = '${AT}' WHERE id = '${ORG_ID}'`);
+
+    expect(await engineeringUserAuth(env, ORG_ID, OWNER_ID, { abandoned: "admit" })).toEqual({
+      sessionId: "engineering-read", workspaceId: ORG_ID, userId: OWNER_ID, region: "global",
+      role: "owner", principal: "engineering",
+    });
+    await expect(engineeringUserAuth(env, ORG_ID, STRANGER_ID, { abandoned: "admit" }))
+      .rejects.toMatchObject({ status: 403, code: "user_not_active_organization_user" });
   });
 });

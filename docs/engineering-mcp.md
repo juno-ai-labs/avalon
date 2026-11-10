@@ -239,13 +239,21 @@ together. It refuses with one of two codes, and the remedies differ:
 - `organization_abandoned`: `workspaces.abandoned_at` is set, the same fence
   that ends every session into the Organization
   ([`workspace-retirement.md`](workspace-retirement.md)). No user passes, so
-  trying another one cannot help. `send_message`, the two text reads and the
-  three Sidekick tools do not work in an abandoned Organization.
-- `user_not_active_organization_user`: the Organization is live and the named
-  user has no active member or guest relationship in it. Another user may pass.
+  trying another one cannot help. `send_message`, the two text reads,
+  `pause_sidekick` and `resume_sidekick` do not work in an abandoned
+  Organization.
+- `user_not_active_organization_user`: the named user has no active member or
+  guest relationship in the Organization. Another user may pass.
 
 The abandoned check runs first, so an abandoned Organization reports its own
 state whoever was named.
+
+`archive_sidekick` is the exception. It passes `abandoned: "admit"`, so it
+works in an abandoned Organization as one of its still-active users, and
+`WorkspaceDO` permits `sidekickRemove` on a retired object, so it works after
+`retire_org` too. An Organization its last member abandoned has no active user
+left (leaving suspends them), so nobody can be named there and the tool still
+refuses with `user_not_active_organization_user`.
 
 Creation takes a fresh UUID `operationId`, reused with the original arguments
 after an uncertain outcome. The Organization's ID is that operation ID, and
@@ -330,7 +338,11 @@ to pair the attempt and result audit rows.
 
 `archive_sidekick` calls AutomationService `archive` the same way, in any
 lifecycle. It is the one of the three with no undo, so it is marked
-destructive.
+destructive. It is also the one that works in an abandoned or retired
+Organization (see [Product creation](#product-creation)): a Sidekick left
+paused or in draft there is otherwise out of reach, and archiving only stops
+and hides it. On a retired object there is nothing left to stop, so the call
+writes the Sidekick's own rows and nothing else.
 
 ### Retiring an Organization
 
@@ -606,7 +618,11 @@ the checked-in migrations: an active member and an active guest are admitted,
 a suspended member and a stranger are refused as
 `user_not_active_organization_user`, and everyone in an abandoned
 Organization, its active owner included, is refused as
-`organization_abandoned`.
+`organization_abandoned` unless the caller asks to be admitted.
+`engineering-sidekick-inspection.test.ts` retires an Organization through the
+bridge, then proves a resume is refused as `organization_abandoned` and an
+archive by the author sets the Sidekick's lifecycle to `deleted` and leaves
+the object retired.
 Only the external model provider is doubled. The text formatter's unit tests
 cover bylines, display text, attachments, elicitation, annotations and hidden
 internal content; the desktop transcript suite covers the extracted display helper.
@@ -731,34 +747,40 @@ the Worker. It does not create an Access app or import another app's policy.
 
 ## Changelog
 
-### 2026-11-10 — Name the abandoned Organization refusal
+### 2026-11-10 — Archive in an abandoned Organization, and name its refusal
 
 **What changed:** `engineeringUserAuth` refuses an abandoned Organization as
 `organization_abandoned` (409) and keeps `user_not_active_organization_user`
 (403) for a missing or inactive relationship. It is still one D1 read: the
 Organization row with the relationship left-joined, where it was an inner join
-that required `abandoned_at IS NULL`.
+that required `abandoned_at IS NULL`. `archive_sidekick` passes
+`abandoned: "admit"` and so works in an abandoned Organization, and
+`WorkspaceDO` permits `sidekickRemove` on a retired object.
 
 **Why:** The inner join returned no row for either cause, and the one code it
 threw blamed the user. On 2026-11-10 `archive_sidekick` refused five calls
-that way in two abandoned Organizations whose acting users were active, one
-of them the owner. The code sent the operator to the Sidekick's run-as user
-and then an owner, neither of whom could pass.
+that way in two retired Organizations whose acting users were active, one of
+them the owner, and sent the operator to try users who could not pass either.
+Those five Sidekicks were then out of reach of any tool except hand-written
+SQL, which the archive tool exists to replace. The owner asked for archive to
+work there.
 
-**Considered and rejected:** A second query run only after a refusal, to find
-out which cause it was. It keeps the common path as it was, but it is a second
-statement to keep in step with the first, and the joined read costs the same
-one round trip.
+**Considered and rejected:** Admitting every tool into an abandoned
+Organization. A send, a read, a pause or a resume would be using an
+Organization that has been closed; archive is cleanup. Clearing
+`abandoned_at` by hand to archive and setting it back, which reopens sign-in
+for the window. A second query run only after a refusal to find its cause: the
+joined read costs the same one round trip.
 
-**Not done:** Whether these tools should work in an abandoned Organization at
-all is undecided. Today they do not, so a paused or draft Sidekick there
-cannot be archived through `archive_sidekick`. Letting an operator in would
-mean acting as a user whose own session the same fence has ended, so it needs
-a decision, not a fix here.
+**Not done:** An Organization its last member abandoned has no active user to
+name, because leaving suspends them. Archiving there would need the tool to
+act without a user, which nobody has asked for.
 
 **Consequences:** A change to this read must keep the two causes apart, and
 must tell a matched guest (role `NULL`) from no relationship by the member's
-id, not by the role.
+id, not by the role. A new tool is refused in an abandoned Organization unless
+it asks; add `abandoned: "admit"` only for one that cleans up.
+[`workspace-retirement.md`](workspace-retirement.md) owns the permit.
 
 ### 2026-11-10 — Archive a Sidekick as a user
 

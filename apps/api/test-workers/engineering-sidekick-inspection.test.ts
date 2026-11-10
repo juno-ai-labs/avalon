@@ -219,6 +219,28 @@ describe("engineering inspection of a Sidekick", () => {
     expect(JSON.parse(result!.metadata_json)).toMatchObject({ operator: OPERATOR, sidekickId: SIDEKICK_ID, outcome: "admitted", lifecycle: "deleted" });
   });
 
+  it("archives a paused Sidekick in a retired Organization, where a resume is refused by naming the abandonment", async () => {
+    await activeHourlySidekick();
+    const request = { orgId: WORKSPACE_ID, userId: AUTHOR_ID, sidekickId: SIDEKICK_ID };
+    await bridge().setSidekickPaused({ ...request, paused: true }, OPERATOR);
+    // The door's fence write stamps `updated_at`, which the shared fixture leaves out.
+    await env.DB.prepare("ALTER TABLE workspaces ADD COLUMN updated_at TEXT").run();
+    expect(await bridge().retireOrg({ orgId: WORKSPACE_ID }, OPERATOR)).toMatchObject({ complete: true });
+    expect(await workspace().objectRetirementState()).toMatchObject({ retired: true });
+    // Retirement closes the Organization and leaves the Sidekick's row as it stood.
+    expect(await sidekickState()).toEqual({ lifecycle: "paused", paused_by: "person", schedule_alarms: 0 });
+
+    await expect(bridge().setSidekickPaused({ ...request, paused: false }, OPERATOR))
+      .rejects.toThrow("engineering_operation_failed:organization_abandoned");
+    expect(await sidekickState()).toEqual({ lifecycle: "paused", paused_by: "person", schedule_alarms: 0 });
+
+    expect(await bridge().archiveSidekick(request, OPERATOR))
+      .toEqual({ region: "global", orgId: WORKSPACE_ID, sidekickId: SIDEKICK_ID, lifecycle: "deleted" });
+    expect(await sidekickState()).toEqual({ lifecycle: "deleted", paused_by: null, schedule_alarms: 0 });
+    // Still closed: the archive wrote one row and reopened nothing.
+    expect(await workspace().objectRetirementState()).toMatchObject({ retired: true });
+  });
+
   it("refuses a pause by a member who cannot manage the Sidekick, and leaves it running", async () => {
     await activeHourlySidekick();
 
