@@ -13,7 +13,6 @@ release/
 .playwright-cli/
 output/
 .wrangler/
-apps/ace/wrangler.generated.json
 apps/engineering-mcp/wrangler.generated.json
 apps/api/.wrangler.lakehouses.*.json
 # The Docker-free copy of each region's main Wrangler config that

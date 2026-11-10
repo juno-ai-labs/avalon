@@ -1,16 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ACCESS_PAGE_SIZE } from '@rally/contracts/private-access';
-import { issueDownloadGrant, redeemDownloadGrant } from '@rally/db/private-access';
 import type { Env, HonoAppEnv } from '../src/env';
 import { errorHandler } from '../src/middleware/errors';
 import { createPrivateAccessRoutes, privateAccessRoutes } from '../src/routes/private-access';
 import { accessOperatorRoutes } from '../src/routes/access-operations';
 import { admitAccessEmail, MAX_ACCESS_EMAILS_PER_HOUR } from '../src/services/access-request-limits';
 import { requestAccess } from '../src/services/access-request-service';
-import ace from '../../ace/src/index';
-import { createTestEnv as aceEnv } from '../../ace/test/helpers/cloudflare-test';
 import { createTestEnv } from './helpers/cloudflare-test';
 import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 import { mockAccessMail } from './helpers/access-providers';
@@ -42,9 +38,6 @@ function recover(action: string, generation = row().generation, token = operator
     method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({ action, generation, confirmed: true }),
   }, env);
-}
-function aceRequest(path: string, init: RequestInit = {}) {
-  return ace.fetch(new Request(`https://ace.test/api/access${path}`, init), aceEnv({ GLOBAL_DB: env.DB, APP_ENV: 'development', ACE_DEV_AUTH: 'true' }));
 }
 
 describe('launch acquisition essentials', () => {
@@ -182,25 +175,5 @@ describe('launch acquisition essentials', () => {
     expect(row().status).toBe('suppressed'); expect(mail).not.toHaveBeenCalled();
   });
 
-  it('paginates equal-time requests without overlap and searches on the server', async () => {
-    env.APP_ENV = 'development';
-    for (let index = 0; index < ACCESS_PAGE_SIZE + 2; index++) await requestAccess(env, `person${index}@example.com`, 0);
-    const first = await (await aceRequest('/requests')).json() as { requests: { id: string }[]; nextCursor: string };
-    expect(first.requests).toHaveLength(ACCESS_PAGE_SIZE);
-    const second = await (await aceRequest(`/requests?before=${first.nextCursor}`)).json() as { requests: { id: string }[]; nextCursor: string | null };
-    expect(second.requests).toHaveLength(2); expect(second.nextCursor).toBeNull();
-    expect(new Set([...first.requests, ...second.requests].map((r) => r.id)).size).toBe(ACCESS_PAGE_SIZE + 2);
-    expect(await (await aceRequest('/requests?q=person51%40')).json()).toMatchObject({ requests: [{ email: 'person51@example.com' }], nextCursor: null });
-  });
 
-  it('lists recipient-associated grants without secrets and revokes them through same-origin Ace writes', async () => {
-    await requestAccess(env, 'linked@example.com', 0);
-    const grant = await issueDownloadGrant(env.DB, { source: 'manual', createdBy: 'operator', sourceId: row().id, expiresAt: '2026-09-10T12:00:00Z' });
-    const list = await (await aceRequest('/downloads')).json();
-    expect(list).toMatchObject({ grants: [{ id: grant.id, email: 'linked@example.com', revokedAt: null }] });
-    expect(JSON.stringify(list)).not.toContain(grant.token);
-    expect((await aceRequest(`/downloads/${grant.id}/revoke`, { method: 'POST' })).status).toBe(403);
-    expect((await aceRequest(`/downloads/${grant.id}/revoke`, { method: 'POST', headers: { origin: 'https://ace.test' } })).status).toBe(200);
-    expect(await redeemDownloadGrant(env.DB, grant.token)).toBe(false);
-  });
 });

@@ -656,7 +656,7 @@ secret before running backfill. The 512/128-token policy ships with the code.
 development Workers. Use the existing migration tracker's **Force a
 migration** action for WorkspaceDO and AgentLoopDO in each region to wake
 stored objects; an untouched object does not migrate just because code deployed.
-See [Durable Object migration tracking](durable-object-migration-tracking.md).
+See Durable Object migration tracking (retired app).
 Verify migration reports, regional activity Queue drain and dead letters, then
 perform member searches and revocation checks. A current schema report proves
 schema application, not successful indexing. For this change the forced wake is
