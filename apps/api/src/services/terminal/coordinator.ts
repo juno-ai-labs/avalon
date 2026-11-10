@@ -529,6 +529,23 @@ export class TerminalSandboxCoordinator {
       row.sandboxId ? null : "start";
     let localFilesRetained = Boolean(row.sandboxId);
 
+    // A provider delete cannot commit atomically with the binding. Resume its
+    // generation-fenced intent before treating a metadata 404 as unexpected.
+    const cleanupFailure = row.failureCode === "provider_initialize_failed_cleanup_pending" ? "provider_initialize_failed"
+      : row.failureCode === "provider_policy_mismatch_cleanup_pending" ? "provider_policy_mismatch" : null;
+    if (row.sandboxId && cleanupFailure) {
+      if (!await this.discardUnverifiedSandbox(context, row, row.sandboxId, cleanupFailure, now)) {
+        throw providerStateError("failed");
+      }
+      row = { ...row, sandboxId: null, lifecycleState: "failed", failureCode: cleanupFailure };
+      localFilesRetained = false;
+    }
+    if (row.sandboxId && row.failureCode === "provider_replacement_cleanup_pending") {
+      row = await this.replaceForAuthority(context, row, authorityFingerprint, policy.revision, now);
+      telemetryAction = "start_fresh";
+      localFilesRetained = false;
+    }
+
     // Before anything else touches the provider. Authority replacement deletes
     // the sandbox and policy reconciliation stops and reconfigures it, and both
     // used to drive from the row — so a work stream whose sandbox Daytona had
@@ -584,10 +601,12 @@ export class TerminalSandboxCoordinator {
 
       if (!row.sandboxId) {
         row = await this.createReservedSandbox(context, row, domains, now, waitBudget);
-      } else if (row.lifecycleState === "starting" && observed) {
+      } else if (row.lifecycleState === "starting") {
         // A previous acquisition discovered the identity but did not finish
         // verifying its managed environment. Resume preparation, not reuse.
-        row = await this.prepareReservedSandbox(context, row, observed, domains, now, waitBudget);
+        const pending = observed ?? await this.observeProviderSandbox(context, row);
+        if (!pending) throw providerStateError("unknown");
+        row = await this.prepareReservedSandbox(context, row, pending, domains, now, waitBudget);
       } else {
         const resumed = await this.resumeProviderSandbox(
           context,
@@ -1150,7 +1169,7 @@ export class TerminalSandboxCoordinator {
     row = adopted;
     if (created.state !== "running") {
       const resumed = await this.resumeProviderSandbox(context, adopted, created,
-        row.authorityFingerprint, row.appliedNetworkRevision, domains, now, waitBudget, false);
+        row.authorityFingerprint, row.appliedNetworkRevision, domains, now, waitBudget, false, replacingLostSandbox);
       // Replacement has already prepared and committed its new generation.
       if (resumed.row.generation !== row.generation) return resumed.row;
       row = resumed.row;
@@ -1194,11 +1213,13 @@ export class TerminalSandboxCoordinator {
   /** Release an unverified identity only after deletion is confirmed. */
   private async discardUnverifiedSandbox(context: HarnessToolContext, row: TerminalSandboxRecord,
     sandboxId: string, failureCode: string, now: number): Promise<boolean> {
+    await this.terminal(context).failGeneration({ generation: row.generation,
+      failureCode: `${failureCode}_cleanup_pending`, now });
     try {
       await deleteTerminalSandbox(this.provider, sandboxId);
     } catch {
       await this.provider.stopSandbox(sandboxId).catch(() => undefined);
-      // Keep `starting`: a later acquisition must finish preparation before reuse.
+      // Keep the cleanup intent: a later acquisition must confirm deletion.
       return false;
     }
     await this.terminal(context).failGeneration({ generation: row.generation, failureCode, clearSandboxId: true, now });
@@ -1231,6 +1252,7 @@ export class TerminalSandboxCoordinator {
     now: number,
     waitBudget: TerminalSandboxWaitOptions,
     commitRunning = true,
+    replacingLostSandbox = false,
   ): Promise<{
     row: TerminalSandboxRecord;
     action: TerminalAcquisitionObservation["action"] | null;
@@ -1239,18 +1261,25 @@ export class TerminalSandboxCoordinator {
     const replaceLost = async (): Promise<{
       row: TerminalSandboxRecord;
       action: TerminalAcquisitionObservation["action"];
-    }> => ({
-      row: await this.replaceLostSandbox(
-        context,
-        row,
-        authorityFingerprint,
-        networkRevision,
-        domains,
-        now,
-        waitBudget,
-      ),
-      action: "start_fresh",
-    });
+    }> => {
+      if (replacingLostSandbox) {
+        throw new TerminalToolError("sandbox_unavailable",
+          "Daytona could not provision the replacement Terminal sandbox. Repair the managed snapshot or provider before retrying.",
+          { reason: "Repair the managed snapshot or provider before retrying." });
+      }
+      return {
+        row: await this.replaceLostSandbox(
+          context,
+          row,
+          authorityFingerprint,
+          networkRevision,
+          domains,
+          now,
+          waitBudget,
+        ),
+        action: "start_fresh",
+      };
+    };
     const observed = observation ?? await this.observeProviderSandbox(context, row);
     if (!observed) throw providerStateError("unknown");
     if (isTerminalSandboxLost(observed)) return replaceLost();
@@ -1351,7 +1380,10 @@ export class TerminalSandboxCoordinator {
       sandbox_generation: row.generation,
       lifecycle_state: row.lifecycleState,
     });
-    if (row.sandboxId) await deleteTerminalSandbox(this.provider, row.sandboxId);
+    if (row.sandboxId) {
+      await this.terminal(context).failGeneration({ generation: row.generation, failureCode: "provider_replacement_cleanup_pending", now });
+      await deleteTerminalSandbox(this.provider, row.sandboxId);
+    }
     const replaced = await this.terminal(context).replaceGeneration({
       generation: row.generation,
       authorityFingerprint,
@@ -1372,7 +1404,10 @@ export class TerminalSandboxCoordinator {
     networkRevision: number,
     now: number,
   ): Promise<TerminalSandboxRecord> {
-    if (row.sandboxId) await deleteTerminalSandbox(this.provider, row.sandboxId);
+    if (row.sandboxId) {
+      await this.terminal(context).failGeneration({ generation: row.generation, failureCode: "provider_replacement_cleanup_pending", now });
+      await deleteTerminalSandbox(this.provider, row.sandboxId);
+    }
     return this.terminal(context).replaceGeneration({
       generation: row.generation,
       authorityFingerprint,
@@ -1417,7 +1452,7 @@ export class TerminalSandboxCoordinator {
     await this.terminal(context).setAppliedNetworkRevision({ networkRevision: revision, now });
     return {
       ...row,
-      lifecycleState: row.sandboxId ? "stopped" : "starting",
+      lifecycleState: row.sandboxId && row.lifecycleState !== "starting" ? "stopped" : "starting",
       appliedNetworkRevision: revision,
       version: row.version + 1,
     };

@@ -24,7 +24,7 @@ export function createSidekickTaskOutcomePlugin(input: WorkstreamWorkflowInput):
     canonicalId: "rally:sidekick-outcome", modelId: "rally_sidekick_outcome", shortWireName: "sidekick",
     displayName: "Sidekick task outcome", description: "Record whether this activation accomplished its task.",
     preload: true, explicit: true,
-    systemMessage: "After all work and required delivery attempts, call sidekick_report_outcome once, then give your final response. Report succeeded only when the requested outputs were produced and required tool deliveries confirmed. Report blocked when an unresolved dependency or permission prevents completion, or failed when the work failed. A failure notice being delivered does not make the original task successful. A recovered intermediate tool error does not make a successful task fail. Keep the summary actionable and exclude secrets and raw provider errors. Host-delivered final replies happen after this loop finishes and retain their own delivery contract; do not claim that later delivery is confirmed here. No outcome report means task success is unconfirmed.",
+    systemMessage: "Record the initial activation's outcome with sidekick_report_outcome after work and required tool-delivery attempts, before your final reply. An ordinary follow-up answer needs no new report; report if it changes whether the task succeeded. A delivered failure notice is not a successful task, and a recovered tool error is not a failed task.",
     tools: [{
       definition: {
         name: "report_outcome", capability: SIDEKICK_TASK_OUTCOME_CAPABILITY,
