@@ -39,6 +39,23 @@ const TestConditionInputSchema = z.strictObject({
   condition: z.string().trim().min(1).describe("The draft filter to try."),
 });
 
+/**
+ * What a completed ask leaves in the transcript for everyone who reads the
+ * conversation: which requests it made, and nothing about them. The card
+ * reads each request's state as its own reader may see it, so the asker's
+ * view (names, the filter, who it is "yours" for) never rides the transcript.
+ * Null for any other tool, whose block keeps its summary.
+ */
+export function sidekickSourceRequestCard(event: { pluginId?: string | undefined; canonicalToolName: string; output: unknown }):
+  { sidekickId: string; requests: { requestId: string }[] } | null {
+  // A recovered receipt may name the tool by its wire name.
+  if (event.pluginId !== "rally:sidekicks" || !["request_source", "sidekick_request_source"].includes(event.canonicalToolName)) return null;
+  const asked = z.object({ sidekickId: IdSchema, requests: z.array(z.object({ requestId: IdSchema })).min(1) }).safeParse(event.output);
+  return asked.success
+    ? { sidekickId: asked.data.sidekickId, requests: asked.data.requests.map(({ requestId }) => ({ requestId })) }
+    : null;
+}
+
 /** How many of the person's own recent events one test judges. A product choice: one screenful to read. */
 const TEST_SAMPLE_EVENTS = 10;
 

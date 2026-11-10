@@ -11,7 +11,8 @@ import {
   IdSchema,
   SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema,
   SidekickSourceDecisionInputSchema, SidekickSourceRequestInputSchema, SidekickSourceRequestResultSchema,
-  SidekickSourceRequestViewSchema, SidekickSourceWithdrawInputSchema, SidekickSourcesResultSchema,
+  SidekickSourceRequestViewSchema, SidekickSourceRequestsReadInputSchema, SidekickSourceRequestsReadResultSchema,
+  SidekickSourceWithdrawInputSchema, SidekickSourceWithdrawResultSchema, SidekickSourcesResultSchema,
 } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -75,8 +76,8 @@ const sources = (c: Parameters<typeof getWorkspaceAuth>[0]) => {
   return new SidekickSourceService(c.env, auth.workspaceId, auth.userId, auth.role);
 };
 // What a request's card reads, wherever it is drawn: each request only if the reader may see it.
-automationRoutes.post("/source-requests/read", zValidator("json", z.strictObject({ requestIds: z.array(IdSchema).min(1) })), async (c) =>
-  c.json(z.object({ requests: z.array(SidekickSourceRequestViewSchema) }).parse(await sources(c).readRequests(c.req.valid("json").requestIds))));
+automationRoutes.post("/source-requests/read", zValidator("json", SidekickSourceRequestsReadInputSchema), async (c) =>
+  c.json(SidekickSourceRequestsReadResultSchema.parse(await sources(c).readRequests(c.req.valid("json").requestIds))));
 automationRoutes.get("/:id/sources", zValidator("param", idParam), async (c) =>
   c.json(SidekickSourcesResultSchema.parse(await sources(c).list(c.req.valid("param").id))));
 automationRoutes.post("/:id/source-requests", zValidator("param", idParam), zValidator("json", SidekickSourceRequestInputSchema), async (c) =>
@@ -87,7 +88,7 @@ automationRoutes.post("/:id/source-requests/:requestId/decision",
     return c.json(SidekickSourceRequestViewSchema.parse(await sources(c).decide(id, requestId, c.req.valid("json").decision)));
   });
 automationRoutes.post("/:id/sources/withdraw", zValidator("param", idParam), zValidator("json", SidekickSourceWithdrawInputSchema), async (c) =>
-  c.json(await sources(c).withdraw(c.req.valid("param").id, c.req.valid("json").connectionId)));
+  c.json(SidekickSourceWithdrawResultSchema.parse(await sources(c).withdraw(c.req.valid("param").id, c.req.valid("json").connectionId))));
 automationRoutes.post("/:id/run", zValidator("param", idParam), zValidator("header", runHeaders), async (c) => c.json(
   StartedRunSchema.parse(await new AutomationService(c.env, getWorkspaceAuth(c)).runNow(
     c.req.valid("param").id,

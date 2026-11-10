@@ -211,7 +211,7 @@ describe("what a Sidekick source request tells people", () => {
     // Still not theirs to open: the row lists without the Sidekick doing so.
     expect((await opened(PERSON)).sidekickIds).toEqual([]);
     expect(await alertFor(PERSON, `source_request:${request!.requestId}`))
-      .toEqual({ title: "Avery asked to use your Google for Deals", body: ASKED });
+      .toEqual({ title: "Avery asked to use your Gmail for Deals", body: ASKED });
     // Whoever asked is told nothing until the person answers.
     expect((await opened(MANAGER)).activity.items).toEqual([]);
     expect(queued.filter((message) => message.channel === "email")).toEqual([]);
@@ -233,7 +233,7 @@ describe("what a Sidekick source request tells people", () => {
     expect(await intents("source_approved")).toEqual([
       { intent_id: `source_approved:${request!.requestId}`, recipient_user_id: MANAGER, state: "delivered" }]);
     expect(await alertFor(MANAGER, `source_approved:${request!.requestId}`))
-      .toEqual({ title: "Robin approved Deals's use of their Google", body: ASKED });
+      .toEqual({ title: "Robin approved Deals's use of their Gmail", body: ASKED });
     // The same answer again reads back as it stands and tells nobody again.
     expect(await decide(request!.requestId, "approve")).toMatchObject({ state: "approved" });
     expect(await intents("source_approved")).toHaveLength(1);
@@ -261,7 +261,7 @@ describe("what a Sidekick source request tells people", () => {
       kind: "source_declined", parentTitle: "Deals", actor: { kind: "person", id: PERSON }, seen: false,
       sourceRequest: { state: "declined", personName: "Robin" } }] });
     expect(await alertFor(MANAGER, `source_declined:${second!.requestId}`))
-      .toEqual({ title: "Robin declined Deals's use of their Google", body: ASKED });
+      .toEqual({ title: "Robin declined Deals's use of their Gmail", body: ASKED });
 
     // Asking for one's own connection is one's own act: approved at once, and no row or notice for anybody.
     await connectGoogle(MANAGER);
@@ -282,7 +282,7 @@ describe("what a Sidekick source request tells people", () => {
     expect(await deliverPush(env, { region: "global", workspaceId: WORKSPACE_ID, recipientUserId: PERSON, intentId, channel: "email" },
       undefined, undefined, sink)).toBe(true);
     const notice = sink.mock.calls[0]![1];
-    expect(notice).toMatchObject({ kind: "source_request", title: "Avery asked to use your Google for Deals", body: ASKED, actorName: "Avery" });
+    expect(notice).toMatchObject({ kind: "source_request", title: "Avery asked to use your Gmail for Deals", body: ASKED, actorName: "Avery" });
     expect(notice.actions!.map((action) => action.label)).toEqual(["Approve", "Decline"]);
     const fields = (label: string) => {
       const url = new URL(notice.actions!.find((action) => action.label === label)!.url);
@@ -301,7 +301,7 @@ describe("what a Sidekick source request tells people", () => {
     const production = { ...env, APP_ENV: "production" as const, EMAIL_NOTIFICATION_FROM: "Rally <notify@rallywith.ai>" };
     expect(await sendNoticeEmail(production, notice, send)).toEqual({ outcome: "sent" });
     expect(send.mock.calls[0]![0].text).toBe([
-      "Hi Robin,", "", "Avery asked to use your Google for Deals.", "", `"${ASKED}"`, "",
+      "Hi Robin,", "", "Avery asked to use your Gmail for Deals.", "", `"${ASKED}"`, "",
       `Approve: ${notice.actions![0]!.url}`, `Decline: ${notice.actions![1]!.url}`, "",
       "Opening a button records your answer. You can also answer in Rally, under Activity.", "",
       "You chose email for Access requests in Juno Labs. Change it in Rally under Settings, Notifications.",
@@ -316,7 +316,7 @@ describe("what a Sidekick source request tells people", () => {
     await expect(decideSourceRequestByLink(env, { ...approve, userId: OTHER })).rejects.toMatchObject({ code: "sidekick_source_link_invalid" });
     expect(await requestStates()).toMatchObject([{ state: "pending" }]);
 
-    const approved = { state: "approved", applied: true, sidekickName: "Deals", requestedByName: "Avery", connectorName: "Google",
+    const approved = { state: "approved", applied: true, sidekickName: "Deals", requestedByName: "Avery", connectorName: "Gmail",
       eventLabels: ["Email received"], condition: CONDITION };
     expect(await decideSourceRequestByLink(env, approve)).toEqual(approved);
     expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
@@ -362,7 +362,7 @@ describe("what a Sidekick source request tells people", () => {
     await ask([PERSON]);
     expect(await decideSourceRequestByLink(env, { workspaceId: fragment.get("workspace")!, sidekickId: fragment.get("sidekick")!,
       requestId: fragment.get("request")!, userId: fragment.get("person")!, decision: "approve", token: fragment.get("token")! }))
-      .toEqual({ state: "cancelled", applied: false, sidekickName: "Deals", requestedByName: "Avery", connectorName: "Google",
+      .toEqual({ state: "cancelled", applied: false, sidekickName: "Deals", requestedByName: "Avery", connectorName: "Gmail",
         eventLabels: ["Email received"], condition: "it is about a seed round" });
     expect((await requestStates()).map((entry) => entry.state)).toEqual(["cancelled", "pending"]);
     expect(await intents("source_approved")).toEqual([]);

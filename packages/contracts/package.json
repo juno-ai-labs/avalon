@@ -43,6 +43,7 @@
     "./platform-diagnostics": "./src/platform-diagnostics.ts",
     "./password-login": "./src/password-login.ts",
     "./browser-session": "./src/browser-session.ts",
+    "./sidekick-source-words": "./src/sidekick-source-words.ts",
     "./client-session": "./src/client-session.ts",
     "./usage": "./src/usage.ts",
     "./message-issues": "./src/message-issues.ts",

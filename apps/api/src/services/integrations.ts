@@ -279,7 +279,7 @@ import { withToolPagination } from "./tool-pagination";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { sidekickDelegationTools, sidekickDelegationGuidance } from "./sidekick-delegation-tools";
-import { sidekickSourceGuidance, sidekickSourceTools } from "./sidekick-source-tools";
+import { sidekickSourceGuidance, sidekickSourceRequestCard, sidekickSourceTools } from "./sidekick-source-tools";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
@@ -4719,7 +4719,11 @@ export async function runWorkstreamHarness(
                 pluginId: event.pluginId,
                 toolName: event.toolName,
                 status: "completed",
-                participantSafeResult: event.result.summary,
+                // An ask for sources leaves its request ids, which the
+                // conversation draws as the request's card; every other tool
+                // leaves its summary.
+                participantSafeResult: sidekickSourceRequestCard({ pluginId: event.pluginId,
+                  canonicalToolName: receiptPolicy.definition.name, output: event.result.output }) ?? event.result.summary,
                 occurredAtUtc: new Date().toISOString(),
               });
               await orderedTranscript.upsertActivity({
