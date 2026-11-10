@@ -1,4 +1,5 @@
 import type {
+  ArchiveEngineeringSidekickInput, ArchiveEngineeringSidekickResult,
   SetEngineeringSidekickPausedInput, SetEngineeringSidekickPausedResult,
 } from "@rally/contracts/engineering-inspection";
 
@@ -24,4 +25,16 @@ export async function setEngineeringSidekickPaused(
     region: env.AVALON_REGION, orgId: input.orgId, sidekickId: input.sidekickId,
     lifecycle: input.paused ? "paused" : "active",
   };
+}
+
+/**
+ * Archive a Sidekick as a selected user, through the service the app's
+ * Archive action calls, so its manager check, run stop, alarm cancellation,
+ * registration clearing and list refresh all apply. There is no undo.
+ */
+export async function archiveEngineeringSidekick(
+  env: Env, input: ArchiveEngineeringSidekickInput,
+): Promise<ArchiveEngineeringSidekickResult> {
+  await new AutomationService(env, await engineeringUserAuth(env, input.orgId, input.userId)).archive(input.sidekickId);
+  return { region: env.AVALON_REGION, orgId: input.orgId, sidekickId: input.sidekickId, lifecycle: "deleted" };
 }

@@ -204,6 +204,21 @@ describe("engineering inspection of a Sidekick", () => {
     });
   });
 
+  it("archives a Sidekick as a user who manages it, through the app's own path, and refuses a member who does not", async () => {
+    await activeHourlySidekick();
+    await expect(bridge().archiveSidekick({ orgId: WORKSPACE_ID, userId: BYSTANDER_ID, sidekickId: SIDEKICK_ID }, OPERATOR))
+      .rejects.toThrow("engineering_operation_failed:sidekick_forbidden");
+    expect(await sidekickState()).toEqual({ lifecycle: "active", paused_by: null, schedule_alarms: 1 });
+
+    expect(await bridge().archiveSidekick({ orgId: WORKSPACE_ID, userId: AUTHOR_ID, sidekickId: SIDEKICK_ID }, OPERATOR))
+      .toEqual({ region: "global", orgId: WORKSPACE_ID, sidekickId: SIDEKICK_ID, lifecycle: "deleted" });
+    expect(await sidekickState()).toEqual({ lifecycle: "deleted", paused_by: null, schedule_alarms: 0 });
+    const result = await env.AUDIT_DB.prepare(
+      "SELECT metadata_json FROM audit_events WHERE workspace_id = ? AND action = 'engineering.archive_sidekick.result' ORDER BY created_at DESC LIMIT 1",
+    ).bind(WORKSPACE_ID).first<{ metadata_json: string }>();
+    expect(JSON.parse(result!.metadata_json)).toMatchObject({ operator: OPERATOR, sidekickId: SIDEKICK_ID, outcome: "admitted", lifecycle: "deleted" });
+  });
+
   it("refuses a pause by a member who cannot manage the Sidekick, and leaves it running", async () => {
     await activeHourlySidekick();
 
