@@ -24,6 +24,7 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     changeOrganizationPlan: vi.fn<EngineeringInspectionRpcBinding["changeOrganizationPlan"]>(),
     sendMessage: vi.fn<EngineeringInspectionRpcBinding["sendMessage"]>(),
     setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
+    archiveSidekick: vi.fn<EngineeringInspectionRpcBinding["archiveSidekick"]>(),
     retireOrg: vi.fn<EngineeringInspectionRpcBinding["retireOrg"]>(),
     readConversation: vi.fn<EngineeringInspectionRpcBinding["readConversation"]>(),
     listWorkspaces: vi.fn<EngineeringInspectionRpcBinding["listWorkspaces"]>(
@@ -196,6 +197,21 @@ describe("Rally engineering MCP tools", () => {
     expect(global.setSidekickPaused).not.toHaveBeenCalled();
   });
 
+  it("routes archive_sidekick to the Organization's region as the trusted operator", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
+    const sidekickId = asAutomationId("00000000-0000-7000-8000-000000000ef6");
+    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
+    vi.mocked(enterprise.archiveSidekick).mockResolvedValue({ region: "enterprise", orgId, sidekickId, lifecycle: "deleted" });
+    const request = { orgId, userId: asUserId("00000000-0000-7000-8000-000000000ef2"), sidekickId };
+    const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name: "archive_sidekick", arguments: request });
+    expect(response.result).not.toHaveProperty("isError", true);
+    expect(response.result).toMatchObject({ content: [{ type: "text", text: expect.stringContaining('"lifecycle": "deleted"') }] });
+    expect(enterprise.archiveSidekick).toHaveBeenCalledExactlyOnceWith(request, principal);
+    expect(global.archiveSidekick).not.toHaveBeenCalled();
+  });
+
   it("retires an Organization only in the region that owns it, as the trusted operator", async () => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
@@ -265,6 +281,7 @@ describe("Rally engineering MCP tools", () => {
       "send_message",
       "pause_sidekick",
       "resume_sidekick",
+      "archive_sidekick",
       "retire_org",
       "read_canvas_chat",
       "read_sidekick_conversation",
