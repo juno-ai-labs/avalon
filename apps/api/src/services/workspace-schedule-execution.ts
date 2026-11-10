@@ -665,12 +665,32 @@ async function runSchedule(
 
 }
 
+/**
+ * A connection whose grant the provider withdrew cannot poll: every attempt
+ * redeems the dead refresh token, fails, and logs an error. The schedule still
+ * advances, and reconnecting flips the row back to `healthy`, which resumes
+ * polling from the same cursor with no other step.
+ */
+async function connectionNeedsReconnect(
+  database: D1Database,
+  connectionId: string,
+  workspaceId: string,
+): Promise<boolean> {
+  const row = await database.prepare(
+    `SELECT 1 AS found FROM connector_connections
+      WHERE id = ?1 AND workspace_id = ?2 AND status = 'needs_reconnect'
+      LIMIT 1`
+  ).bind(connectionId, workspaceId).first<{ found: number }>();
+  return row !== null;
+}
+
 async function startConnectorPoll(
   ctx: WorkspaceScheduleContext,
   schedule: ScheduleRow,
 ): Promise<void> {
   const connectionId = schedule.connector_connection_id;
   if (!connectionId) throw new Error("missing_connector_connection");
+  if (await connectionNeedsReconnect(ctx.workspaceEnv.DB, connectionId, schedule.workspace_id)) return;
 
   const input: ConnectorPollWorkflowInput = ConnectorPollWorkflowInputSchema.parse({
     region: RegionSchema.parse(ctx.env.AVALON_REGION),
@@ -710,10 +730,12 @@ async function runResourceWatch(
     pollScheduleId: watch.id
   });
   const workflowId = `watch-${watch.id}-${Date.parse(watch.next_poll_at)}`;
-  try {
-    await ctx.env.CONNECTOR_POLL_WORKFLOW.create({ id: workflowId, params: input });
-  } catch (error) {
-    if (!workflowAlreadyExists(error)) throw error;
+  if (!(await connectionNeedsReconnect(workspaceDatabase, watch.connection_id, watch.workspace_id))) {
+    try {
+      await ctx.env.CONNECTOR_POLL_WORKFLOW.create({ id: workflowId, params: input });
+    } catch (error) {
+      if (!workflowAlreadyExists(error)) throw error;
+    }
   }
 
   let intervalSeconds = 900;
