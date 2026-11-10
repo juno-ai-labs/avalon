@@ -513,6 +513,11 @@ card grid with Sidekicks; the shared layout is described in
   the detail's, and a change to the list row's title is written into the
   detail's cache once the socket has applied the list, so the header follows a
   rename from anywhere without a refetch.
+- **Share Canvas** uses the header menu's icon-and-label tile styling for
+  its three audience choices. The tiles form a single radio group, with the
+  selected audience's explanation beneath the row. **Everyone in the
+  Organization** keeps members and guests searchable. Members are already
+  included and show checked, disabled boxes. Guests can still be selected.
 - **A link to no Canvas** (`canvas_not_found`, or a malformed id,
   `canvas_id_invalid:id:<issue>`) draws one in-pane "This Canvas does not
   exist." state with nothing to try again (`isNotFoundError`), and a restored
