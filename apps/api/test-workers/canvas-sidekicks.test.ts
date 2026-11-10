@@ -24,6 +24,8 @@ let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000005d5000");
 const CREATOR = asUserId("00000000-0000-7000-8000-0000005d5001");
 /** On the Canvas's participant list; not someone any Sidekick is shared with. */
 const PARTICIPANT = asUserId("00000000-0000-7000-8000-0000005d5002");
+/** A guest of the Organization, on the Canvas's participant list. */
+const GUEST = asUserId("00000000-0000-7000-8000-0000005d5004");
 /** In the Organization, in no Canvas. */
 const OUTSIDER = asUserId("00000000-0000-7000-8000-0000005d5003");
 let CANVAS_ID = asWorkstreamId("00000000-0000-7000-8000-0000005d5100");
@@ -68,8 +70,9 @@ beforeEach(async () => {
       role TEXT,status TEXT,incarnation TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))),
       revision INTEGER NOT NULL DEFAULT 1, joined_at TEXT, last_seen_at TEXT, PRIMARY KEY(workspace_id,user_id))`),
     env.DB.prepare(`INSERT INTO workspace_members(workspace_id,user_id,access_class,role,status) VALUES
-      (?1,?2,'member','member','active'), (?1,?3,'member','member','active'), (?1,?4,'member','member','active')`)
-      .bind(WORKSPACE_ID, CREATOR, PARTICIPANT, OUTSIDER),
+      (?1,?2,'member','member','active'), (?1,?3,'member','member','active'), (?1,?4,'member','member','active'),
+      (?1,?5,'guest',NULL,'active')`)
+      .bind(WORKSPACE_ID, CREATOR, PARTICIPANT, OUTSIDER, GUEST),
     env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, analytics_person_id TEXT, name TEXT, email TEXT)"),
     env.DB.prepare("INSERT INTO users (id, name) VALUES (?, 'Casey Creator')").bind(CREATOR),
     ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
@@ -78,7 +81,7 @@ beforeEach(async () => {
     workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, title: "Inbox", createdByUserId: CREATOR, authorityGeneration: 1,
   });
   await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
-    update: { visibility: "participants", userIds: [PARTICIPANT] } });
+    update: { visibility: "participants", userIds: [PARTICIPANT, GUEST] } });
   await workspace().canvasCreate({
     workspaceId: WORKSPACE_ID, canvasId: OTHER_CANVAS_ID, title: "Roadmap", createdByUserId: CREATOR, authorityGeneration: 1,
   });
@@ -150,6 +153,42 @@ describe("a Sidekick a Canvas's Chat made", () => {
       actor: { ...member(PARTICIPANT), participantOfOwningWorkstream: false } }))).toBe("sidekick_not_found");
     expect(await workspace().hostedConversationAuthorizationFacts({ workspaceId: WORKSPACE_ID, parentId: MADE_HERE,
       userId: PARTICIPANT, substreamIds: [] })).toMatchObject({ kind: "automation", author: false, shared: false, executor: false });
+  });
+
+  it("lets a participant steer it and nothing more: not its audience, its look, who it runs as, or a read of it", async () => {
+    const participant = { ...member(PARTICIPANT), participantOfOwningWorkstream: false };
+    const addressed = { workspaceId: WORKSPACE_ID, automationId: MADE_HERE };
+    // Sharing it with themselves would be opening it by another door.
+    expect(await refusal((instance) => instance.sidekickSetAudience({ ...addressed, actor: participant,
+      update: { audience: "people", userIds: [PARTICIPANT] } }))).toBe("sidekick_forbidden");
+    expect(await refusal((instance) => instance.sidekickSetAudience({ ...addressed, actor: participant,
+      update: { audience: "workspace", userIds: [] } }))).toBe("sidekick_forbidden");
+    // These answer with its whole detail, which a steerer may not read.
+    expect(await refusal((instance) => instance.sidekickSetAppearance({ ...addressed, actor: participant,
+      appearance: { color: "blue" } }))).toBe("sidekick_forbidden");
+    expect(await refusal((instance) => instance.sidekickApply({ ...addressed, actor: participant }))).toBe("sidekick_forbidden");
+    expect(await refusal((instance) => instance.sidekickClaimExecutionPrincipal({ ...addressed, actor: participant }))).toBe("sidekick_forbidden");
+    expect(await refusal((instance) => instance.sidekickReadDetail({ ...addressed, actor: participant }))).toBe("sidekick_not_found");
+    // Nor do they manage a Canvas one of its runs made, whose audience they could add themselves to.
+    const runCanvas = asWorkstreamId(crypto.randomUUID());
+    await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: runCanvas, title: "Run output", createdByUserId: CREATOR,
+      authorityGeneration: 1, writer: { sidekickId: MADE_HERE, runId: crypto.randomUUID() } });
+    expect(await refusal((instance) => instance.canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: runCanvas,
+      actor: member(PARTICIPANT), update: { visibility: "participants", userIds: [PARTICIPANT] } }))).toBe("canvas_not_found");
+    // Steering still works: archiving it stops it.
+    await workspace().sidekickRemove({ ...addressed, actor: participant });
+    expect(await lifecycle(MADE_HERE)).toBe("deleted");
+  });
+
+  it("is not steered by a guest of the Canvas, who is not someone the Organization lets decide what runs as a member", async () => {
+    const guest = { userId: GUEST, actorRole: null, participantOfOwningWorkstream: false };
+    // The guest opens the Canvas and sees the Sidekick named there.
+    expect((await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: { userId: GUEST, actorRole: null } })).sidekicks)
+      .toMatchObject([{ id: MADE_HERE, canOpen: false }]);
+    expect(await workspace().sidekickAllowsManager({ workspaceId: WORKSPACE_ID, automationId: MADE_HERE, actor: guest })).toBe(false);
+    expect(await refusal((instance) => instance.sidekickRemove({ workspaceId: WORKSPACE_ID, automationId: MADE_HERE, actor: guest })))
+      .toBe("sidekick_forbidden");
+    expect(await lifecycle(MADE_HERE)).toBe("draft");
   });
 
   it("stops being managed by someone the Canvas no longer admits", async () => {

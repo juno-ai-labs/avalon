@@ -16,6 +16,7 @@ import { asArtifactId, asWorkspaceId, IdSchema, type ExecutionPrincipal } from "
 
 import { artifactHostDOName, workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
+import { isCanvasChat } from "../lib/canvas-chat";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { loadVisibleWorkstreamResourcesByIds } from "./workstream-resource-visibility";
 import {
@@ -81,8 +82,7 @@ export function artifactDataWriteAccess(input: {
       ? { kind: "sidekick_run", sidekickId: input.automationRun.automationId }
       : null;
   }
-  if (input.parentKind !== "canvas") return null;
-  return (input.substreamId ?? "0") === "0" ? { kind: "canvas_chat" } : null;
+  return isCanvasChat(input) ? { kind: "canvas_chat" } : null;
 }
 
 export interface ArtifactDataWiringInput {

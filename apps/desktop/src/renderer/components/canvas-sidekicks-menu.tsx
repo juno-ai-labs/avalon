@@ -4,12 +4,15 @@ import { MenuActionItem } from '@rally/ui/components/menu-action-item';
 import { TitleMenuSeparator } from '@rally/ui/components/title-pill';
 import { useId } from 'react';
 
+import { useSidekickList } from './sidekick-sidebar-section';
 import { AutomationGlyph } from './workstream-glyph';
 
 const STATE_LABEL: Record<CanvasSidekick['status'], string> = { draft: 'Draft', active: 'Active', paused: 'Paused' };
 
-/** Why a Sidekick's row opens nothing: its own page is for the people it is shared with. */
+/** Why a row for a Sidekick this Canvas made opens nothing: its page is for the people it is shared with, and the Chat is how it is changed. */
 export const SIDEKICK_NOT_SHARED_REASON = 'Ask in this Canvas’s chat to change it. Its creator can share it with you to open it.';
+/** The same for one made elsewhere and attached here, which this Canvas's Chat does not change. */
+export const ATTACHED_SIDEKICK_NOT_SHARED_REASON = 'Someone who manages this Sidekick can share it with you to open it.';
 
 /**
  * What Archive canvas adds to its confirmation for the Sidekicks this Canvas's
@@ -34,12 +37,15 @@ export function madeSidekicksArchiveCopy(sidekicks: readonly CanvasSidekick[]): 
  * asking the Canvas's Chat, or with the Canvas. Draws nothing for a Canvas
  * with no Sidekicks.
  */
-export function CanvasSidekicksSection({ onOpen, openableIds, sidekicks }: {
+export function CanvasSidekicksSection({ onOpen, sidekicks }: {
   onOpen: (sidekick: CanvasSidekick) => void;
-  openableIds: ReadonlySet<string>;
   sidekicks: readonly CanvasSidekick[];
 }): React.JSX.Element | null {
   const labelId = useId();
+  // Read here, where the menu is open, so the Canvas screen does not redraw on
+  // every Sidekick list frame.
+  const own = useSidekickList();
+  const openableIds = new Set(own?.map((sidekick) => sidekick.id));
   if (sidekicks.length === 0) return null;
   return <>
     <TitleMenuSeparator />
@@ -49,19 +55,18 @@ export function CanvasSidekicksSection({ onOpen, openableIds, sidekicks }: {
         // The server's answer where it gave one; an older Worker sends none,
         // and then the viewer's own Sidekicks list is the best that is known.
         const openable = sidekick.canOpen ?? openableIds.has(sidekick.id);
-        return <div className="canvas-sidekick-row" key={sidekick.id}>
-          <MenuActionItem
+        return <MenuActionItem
+            key={sidekick.id}
             className="menu-item title-menu-item title-menu-action canvas-sidekick-open"
             disabled={!openable}
-            disabledReason={SIDEKICK_NOT_SHARED_REASON}
+            disabledReason={sidekick.madeHere ? SIDEKICK_NOT_SHARED_REASON : ATTACHED_SIDEKICK_NOT_SHARED_REASON}
             onSelect={() => onOpen(sidekick)}
             tooltipSide="right"
           >
             <span className="canvas-sidekick-mark"><AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} /></span>
             <span className="title-menu-item-copy">{sidekick.name}</span>
             <span className="title-menu-level-meta">{STATE_LABEL[sidekick.status]}</span>
-          </MenuActionItem>
-        </div>;
+          </MenuActionItem>;
       })}
     </DropdownMenu.Group>
   </>;

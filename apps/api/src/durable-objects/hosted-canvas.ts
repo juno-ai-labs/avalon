@@ -44,7 +44,7 @@ import type { ConversationParentAuthorizeViewerRequest } from "@rally/contracts/
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from "../services/authorization-policy";
 import type { DirectoryCommonEffect } from "./conversation-parent-object";
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationHost, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
-import { canvasParticipant, canvasReaderAllows, sidekickManages, sidekickReaderAllows, writerSidekick, writerSidekickAdmits } from "./canvas-sidekick-admission";
+import { canvasParticipant, canvasReaderAllows, sidekickManagerAllows, sidekickReaderAllows, writerSidekick, writerSidekickAdmits } from "./canvas-sidekick-admission";
 import { ScopeInvitationService } from "./scope-invitation-service";
 import { artifactNewsCauseSql, artifactNewsSql } from "./workspace-pin-storage";
 import { tellCanvasPinners } from "./canvas-artifact-notices";
@@ -159,6 +159,12 @@ export interface HostedCanvasHost extends HostedConversationHost {
   noteRelationship(relationship: WorkspaceRelationship): void;
   /** Inside the transaction that changed a Canvas's row or its participants: the sidebar list's waterline. */
   noteCanvasDirectoryChanged(canvasId: string): void;
+  /**
+   * Inside the transaction that changed a Canvas's title or who it admits: a
+   * Sidekick attached to it names it on its card, to the people who can open
+   * it, so the Sidekick list moved too.
+   */
+  noteAttachedCanvasChanged(canvasId: string): void;
   /** Inside the archive's transaction: archive every Sidekick this Canvas's Chat made. */
   archiveHomeSidekicks(canvasId: string, now: number): void;
 }
@@ -316,7 +322,10 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
           WHERE canvas_id = ? AND title_status = 'naming' RETURNING canvas_id`,
         title, this.canvasId,
       ).toArray().length === 1;
-      if (settled) this.host.noteCanvasDirectoryChanged(this.canvasId);
+      if (settled) {
+        this.host.noteCanvasDirectoryChanged(this.canvasId);
+        this.host.noteAttachedCanvasChanged(this.canvasId);
+      }
     });
   }
 
@@ -482,7 +491,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     const sidekick = row.writer_sidekick_id ? writerSidekick(this.sql, row.writer_sidekick_id) : null;
     return canvasManages({
       creator: row.created_by_user_id === actor.userId,
-      writerManager: sidekick !== null && sidekickManages(sidekick, actor, this.sql),
+      writerManager: sidekick !== null && sidekickManagerAllows(sidekick, actor),
     }, actor.actorRole);
   }
 
@@ -720,6 +729,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       if (request.title !== undefined) {
         this.sql.exec(`UPDATE canvas_directory SET title = ?, title_status = 'settled' WHERE canvas_id = ?`,
           request.title, this.canvasId);
+        this.host.noteAttachedCanvasChanged(this.canvasId);
       }
       if (appearance !== null) {
         this.sql.exec(`UPDATE canvas_directory SET appearance_json = ? WHERE canvas_id = ?`, JSON.stringify(appearance), this.canvasId);
@@ -763,6 +773,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       this.sql.exec(`UPDATE canvas_directory SET visibility = ? WHERE canvas_id = ?`,
         request.update.visibility, this.canvasId);
       this.host.noteCanvasDirectoryChanged(this.canvasId);
+      this.host.noteAttachedCanvasChanged(this.canvasId);
     });
     // A request from someone this audience now admits is settled: whoever
     // changed the audience let them in. Only a member asks, and an
@@ -816,6 +827,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         this.canvasId, grant.userId);
     }
     this.host.noteCanvasDirectoryChanged(this.canvasId);
+    this.host.noteAttachedCanvasChanged(this.canvasId);
   }
 
   async createInvitations(input: z.input<typeof CreateScopeInvitationsSchema>): Promise<ScopeInvitationResult> {
@@ -917,10 +929,23 @@ export function canvasSidebarRows(
       ORDER BY canvas.updated_at DESC, canvas.canvas_id`,
     viewer.userId, viewer.member ? 1 : 0, titleQuery,
   ).toArray();
-  // Every Canvas's attached Sidekicks in one read, grouped here, as each
-  // Canvas's detail lists them (`HostedCanvas.sidekicks`). Indexed by Canvas
-  // (migration 144), so it walks the attachments once however many Canvases
-  // are listed.
+  // A writer Sidekick's audience is the one rule not expressed above; the
+  // row is admitted by the whole rule, without the administrator's reach.
+  const admittedRows: typeof rows = [];
+  for (const row of rows) {
+    if (admittedRows.length >= limit) break;
+    if (canvasAdmits({
+      visibility: row.visibility,
+      creator: row.created_by_user_id === viewer.userId,
+      participant: row.participant === 1,
+      writerAudience: row.writer_sidekick_id !== null
+        && writerSidekickAdmits(sql, row.writer_sidekick_id, { userId: viewer.userId, actorRole: viewer.member ? "member" : null }),
+    }, viewer.member)) admittedRows.push(row);
+  }
+  // The listed Canvases' attached Sidekicks in one read, as each Canvas's
+  // detail lists them (`HostedCanvas.sidekicks`): only the listed ids, by
+  // the Canvas index (migration 144), so a run-made Canvas past the list's
+  // limit or archived costs nothing here.
   const attached = new Map<string, CanvasSidekick[]>();
   const reader = { userId: viewer.userId, actorRole: viewer.member ? "member" as const : null };
   for (const sidekick of sql.exec<{
@@ -931,8 +956,10 @@ export function canvasSidebarRows(
             directory.appearance_json, attachment.made_here, directory.scope, directory.author_user_id, directory.run_as_user_id
        FROM sidekick_conversation_attachments attachment
        JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
-      WHERE attachment.parent_kind = 'canvas' AND attachment.substream_id = '0' AND directory.lifecycle <> 'deleted'
+      WHERE attachment.parent_kind = 'canvas' AND attachment.parent_id IN (SELECT value FROM json_each(?))
+        AND attachment.substream_id = '0' AND directory.lifecycle <> 'deleted'
       ORDER BY attachment.attached_at, attachment.automation_id`,
+    JSON.stringify(admittedRows.map((row) => row.canvas_id)),
   ).toArray()) {
     const appearance = parsedAppearance(sidekick.appearance_json, "automation_appearance", () => undefined);
     const held = attached.get(sidekick.canvas_id) ?? [];
@@ -942,17 +969,7 @@ export function canvasSidebarRows(
     attached.set(sidekick.canvas_id, held);
   }
   const listed: CanvasSidebarRow[] = [];
-  for (const row of rows) {
-    if (listed.length >= limit) break;
-    // A writer Sidekick's audience is the one rule not expressed above; the
-    // row is admitted by the whole rule, without the administrator's reach.
-    if (!canvasAdmits({
-      visibility: row.visibility,
-      creator: row.created_by_user_id === viewer.userId,
-      participant: row.participant === 1,
-      writerAudience: row.writer_sidekick_id !== null
-        && writerSidekickAdmits(sql, row.writer_sidekick_id, { userId: viewer.userId, actorRole: viewer.member ? "member" : null }),
-    }, viewer.member)) continue;
+  for (const row of admittedRows) {
     listed.push(CanvasSidebarRowSchema.parse({
       ...canvasSummary(row, report),
       artifactKind: row.artifact_type === null ? null : canvasArtifactKind(row.artifact_type, row.artifact_mime),
@@ -1001,15 +1018,18 @@ export function canvasesWrittenBy(
 export function canvasesAttachedTo(
   sql: SqlStorage,
   actor: { userId: string; actorRole: CanvasActor["actorRole"] },
+  sidekickIds: readonly string[],
 ): Map<string, { id: string; title: string }[]> {
   const attached = new Map<string, { id: string; title: string }[]>();
   for (const row of sql.exec<CanvasRow & { automation_id: string }>(
     `SELECT canvas.*, attachment.automation_id
        FROM sidekick_conversation_attachments attachment
        JOIN canvas_directory canvas ON canvas.canvas_id = attachment.parent_id
-      WHERE attachment.parent_kind = 'canvas' AND attachment.substream_id = '0' AND canvas.archived_at IS NULL
+      WHERE attachment.automation_id IN (SELECT value FROM json_each(?))
+        AND attachment.parent_kind = 'canvas' AND attachment.substream_id = '0' AND canvas.archived_at IS NULL
         AND (canvas.writer_sidekick_id IS NULL OR canvas.writer_sidekick_id <> attachment.automation_id)
       ORDER BY attachment.attached_at, attachment.parent_id`,
+    JSON.stringify(sidekickIds),
   ).toArray()) {
     if (!canvasReaderAllows(row, actor, sql)) continue;
     const held = attached.get(row.automation_id) ?? [];
