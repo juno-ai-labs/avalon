@@ -4353,8 +4353,6 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .elicitation-cancelled summary:hover { color: var(--av-sys-color-text-default); }
 .elicitation-cancelled summary:focus-visible {
   border-radius: var(--av-sys-size-radius-sm);
-  outline: 2px solid var(--av-sys-color-border-highlight);
-  outline-offset: 2px;
 }
 /* Use the same icon gutter as the work accordion; the label stays on the
    transcript's text edge. */
