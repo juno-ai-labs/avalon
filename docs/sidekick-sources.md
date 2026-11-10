@@ -330,6 +330,7 @@ source's condition.
 | Suite | Covers |
 | --- | --- |
 | `apps/api/test-workers/sidekick-sources.test.ts` | Real workerd. A person's mail starts a Sidekick through their source whether or not they are a delegate, and stops when the source is taken back while they stay a delegate; an event matched before a withdrawal is refused at admission; only the person asked answers and only a manager asks; a filtered source refuses without a verdict and with a refusing one, and an unfiltered one needs none; saving a definition keeps a person's own filter; a repeated ask answers with what it already asked; a run with no delegate starts as the Sidekick itself and only a manager continues it; content is withheld once the source is gone. |
+| `apps/api/test-workers/conversation-tools.test.ts` | Real workerd. A run nobody is behind lists and reads every attached Canvas that is not archived, and writes a site's rows there, with no person at all; a run somebody asked for is held to what that person can open. |
 | `apps/api/test/workspace-sidekick-sources-migration.test.ts` | Migration 145's backfill over the real migration chain: a delegate gets a source for each connection of theirs a rule is configured or registered on, every delegate gets one on a configured Organization connection, and a withdrawn grant, a grant with no membership and a person with no grant get none. |
 | `packages/connectors/src/index.test.ts` | Google's `readActivityContent`: one message for new mail, by one request, and nothing for a label change, a subject with no message, a missing message, or a connection that may not read mail. |
 | `apps/api/test/sidekick-event-content.test.ts` | The opening with content, cut content, no content, and unreadable content. |
@@ -342,9 +343,12 @@ The workerd file was proved against these breaks, one behavior each:
 registration without the source check, `eventSource` admitting everything, the
 asked-person check removed, the source verdict check removed, `putOwnSources`
 clearing the condition, the operation lookup removed, a null coordinator
-admitted as Needs input, the manager check removed, and `runEventContent`
-skipping the source. The migration file was proved by letting a withdrawn
-grant through.
+admitted as Needs input, the manager check removed from asking and from
+continuing, and `runEventContent` skipping the source. The migration file was
+proved by letting a withdrawn grant through. The reach tests were proved by
+treating a requester's run as the Sidekick itself, checking the Sidekick's own
+run as its acting person, refusing the Sidekick's own write, and leaving an
+archived Canvas in reach.
 
 ## Changelog
 

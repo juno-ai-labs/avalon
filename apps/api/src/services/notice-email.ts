@@ -70,7 +70,8 @@ export async function sendNoticeEmail(env: Env, notice: Notice, send?: (message:
   const name = singleLine(to.name).split(" ")[0] ?? "";
   const workspaceName = singleLine(to.workspaceName);
   const setting = SETTING_LABEL[notice.kind] ?? "Notifications";
-  const footer = `You chose email for ${setting} in ${workspaceName}. Change it in Rally under Settings, Notifications.`;
+  // "You get", not "you chose": a source request goes by email until the person says otherwise.
+  const footer = `You get email for ${setting} in ${workspaceName}. Change it in Rally under Settings, Notifications.`;
   const actions = notice.actions?.length ? notice.actions : null;
   const buttons = actions ?? [{ label: "Open in Rally", url: notice.url }];
   const text = [
