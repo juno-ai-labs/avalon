@@ -16,7 +16,7 @@ const baseEnv = createTestEnv({ APP_ENV: "production", AVALON_REGION: "global", 
   OPENROUTER_FASTER_MODEL: "google/gemini-2.5-flash-lite",
 });
 function envWithRouting(routing: AgentModelRouting): Env {
-  return { ...baseEnv, AGENT_MODEL_ROUTING_JSON: JSON.stringify({ workstream: routing, sidekick_wizard: routing, sidekick_run: routing }) };
+  return { ...baseEnv, AGENT_MODEL_ROUTING_JSON: JSON.stringify({ canvas: routing, sidekick_wizard: routing, sidekick_run: routing }) };
 }
 
 const SEEDED_WORKSPACE_ID = "00000000-0000-4000-8000-000000000051";
@@ -93,27 +93,27 @@ describe("local agent model configuration", () => {
   afterEach(() => { while (openDatabases.length) openDatabases.pop()?.close(); vi.restoreAllMocks(); });
 
   it.each([
-    ["workstream", "openai/gpt-5.6-terra"], ["memory_sweep", "openai/gpt-5.6-terra"],
-    ["sidekick_wizard", "openai/gpt-6.1-sol"], ["sidekick_run", "openai/gpt-5.6-terra"], ["workstream_naming", "openai/gpt-5.6-terra"],
+    ["canvas", "openai/gpt-5.6-terra"], ["memory_sweep", "openai/gpt-6.1-sol"],
+    ["sidekick_wizard", "openai/gpt-6.1-sol"], ["sidekick_run", "openai/gpt-5.6-terra"], ["canvas_naming", "openai/gpt-5.6-terra"],
   ] as const)("uses the checked-in default for %s without environment setup", async (role, model) => {
     await expect(resolveAgentModelRouting(createTestEnv({}), role)).resolves.toEqual({ model, fallbackModels: ["google/gemini-3.8-flash"] });
   });
 
   it("supports the shared model environment variables and ordered fallbacks", () => {
-    expect(defaultAgentModelRouting(baseEnv, "workstream")).toEqual({ model: "x-ai/grok-4.3", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] });
-    expect(defaultAgentModelRouting({ ...baseEnv, OPENROUTER_FALLBACK_MODEL: "" }, "workstream_naming")).toEqual({ model: "google/gemini-2.5-flash-lite", fallbackModels: [] });
+    expect(defaultAgentModelRouting(baseEnv, "canvas")).toEqual({ model: "x-ai/grok-4.3", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] });
+    expect(defaultAgentModelRouting({ ...baseEnv, OPENROUTER_FALLBACK_MODEL: "" }, "canvas_naming")).toEqual({ model: "google/gemini-2.5-flash-lite", fallbackModels: [] });
   });
 
   it("overrides primary and smarter models independently", async () => {
     const env = createTestEnv({ OPENROUTER_PRIMARY_MODEL: "custom/primary", OPENROUTER_SMARTER_MODEL: "custom/smarter", OPENROUTER_FALLBACK_MODEL: "" });
-    await expect(resolveAgentModelRouting(env, "workstream")).resolves.toEqual({ model: "custom/primary", fallbackModels: [] });
+    await expect(resolveAgentModelRouting(env, "canvas")).resolves.toEqual({ model: "custom/primary", fallbackModels: [] });
     await expect(resolveAgentModelRouting(env, "sidekick_run")).resolves.toEqual({ model: "custom/primary", fallbackModels: [] });
     await expect(resolveAgentModelRouting(env, "sidekick_wizard")).resolves.toEqual({ model: "custom/smarter", fallbackModels: [] });
   });
 
   it("selects the Sidekick run role before a scheduled conversation exists", async () => {
     const env = createTestEnv({ AGENT_MODEL_ROUTING_JSON: JSON.stringify({
-      workstream: { model: "custom/canvas", fallbackModels: [] },
+      canvas: { model: "custom/canvas", fallbackModels: [] },
       sidekick_run: { model: "custom/sidekick", fallbackModels: [] },
     }) });
     await expect(scheduledWorkstreamModel(env, { workspaceId: "org", workstreamId: "sidekick" }, "sidekick_run"))
@@ -121,13 +121,13 @@ describe("local agent model configuration", () => {
   });
 
   it("applies a role's complete route including reasoning, without affecting other roles", async () => {
-    const env = { ...baseEnv, AGENT_MODEL_ROUTING_JSON: JSON.stringify({ workstream: { model: "custom/model", reasoningEffort: "high" } }) };
-    await expect(resolveAgentModelRouting(env, "workstream")).resolves.toEqual({ model: "custom/model", fallbackModels: [], reasoningEffort: "high" });
+    const env = { ...baseEnv, AGENT_MODEL_ROUTING_JSON: JSON.stringify({ canvas: { model: "custom/model", reasoningEffort: "high" } }) };
+    await expect(resolveAgentModelRouting(env, "canvas")).resolves.toEqual({ model: "custom/model", fallbackModels: [], reasoningEffort: "high" });
     await expect(resolveAgentModelRouting(env, "sidekick_run")).resolves.toEqual({ model: "x-ai/grok-4.3", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] });
   });
 
-  it.each(['{', '[]', 'null', '{"workstream":{"model":"custom/model","fallbackModels":"bad"}}'])("rejects malformed overrides atomically: %s", async (value) => {
-    await expect(resolveAgentModelRouting({ ...baseEnv, AGENT_MODEL_ROUTING_JSON: value }, "workstream")).resolves.toEqual({ model: "x-ai/grok-4.3", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] });
+  it.each(['{', '[]', 'null', '{"canvas":{"model":"custom/model","fallbackModels":"bad"}}'])("rejects malformed overrides atomically: %s", async (value) => {
+    await expect(resolveAgentModelRouting({ ...baseEnv, AGENT_MODEL_ROUTING_JSON: value }, "canvas")).resolves.toEqual({ model: "x-ai/grok-4.3", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] });
   });
 
   it("resolves a new or scheduled thread without reading an uncommitted object", async () => {
@@ -186,13 +186,13 @@ describe("local agent model configuration", () => {
     expect(conversationModelRole({ parentKind: "automation", substreamId: "activation" })).toBe("sidekick_run");
     expect(conversationModelRole({ parentKind: "automation", substreamId: "worker", backgroundAgent: true,
       automationDelegation: { runId: "00000000-0000-7000-8000-000000000001", stopGeneration: 0 } })).toBe("sidekick_run");
-    expect(conversationModelRole({ parentKind: "canvas", substreamId: "0" })).toBe("workstream");
+    expect(conversationModelRole({ parentKind: "canvas", substreamId: "0" })).toBe("canvas");
   });
 
   it("routes the wizard and runs independently of the Canvas override", async () => {
     const env = await envWithOverride(createTestEnv({ ...baseEnv,
       AGENT_MODEL_ROUTING_JSON: JSON.stringify({
-        workstream: { model: "x-ai/grok-4.5", fallbackModels: [] },
+        canvas: { model: "x-ai/grok-4.5", fallbackModels: [] },
         sidekick_run: { model: "openai/gpt-5.6-terra", fallbackModels: [] },
       }),
     }), null);

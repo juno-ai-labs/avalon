@@ -69,7 +69,7 @@ export async function resolveAgentModelRouting(
 export function resolveNewWorkstreamModelRouting(
   env: Env,
   context: { workspaceId: string; workstreamId: string },
-  role: AgentModelRole = "workstream",
+  role: AgentModelRole = "canvas",
 ): Promise<AgentModelRouting> {
   return resolveAgentModelRouting(env, role, context);
 }
@@ -77,7 +77,7 @@ export function resolveNewWorkstreamModelRouting(
 export async function scheduledWorkstreamModel(
   env: Env,
   context: { workspaceId: string; workstreamId: string },
-  role: AgentModelRole = "workstream",
+  role: AgentModelRole = "canvas",
 ): Promise<string> {
   return (await resolveNewWorkstreamModelRouting(env, context, role)).model;
 }
@@ -123,7 +123,7 @@ export function automationModelOverride(
   const unknown = unknownStoredOverride(value);
   if (unknown) {
     logStructuredEvent(env, "warn", "workstream_model_override_unknown", {
-      agent: "workstream",
+      agent: "sidekick_run",
       workspace_id: context.workspaceId,
       automation_id: context.automationId,
       stored_model: unknown,
@@ -173,8 +173,8 @@ export function conversationModelContext(
  */
 export function conversationModelRole(
   context: ConversationModelContext,
-): "workstream" | "sidekick_wizard" | "sidekick_run" {
-  if (context.parentKind !== "automation") return "workstream";
+): "canvas" | "sidekick_wizard" | "sidekick_run" {
+  if (context.parentKind !== "automation") return "canvas";
   return !context.automationRun && !context.automationDelegation
     && ((context.substreamId ?? "0") === "0" || context.backgroundAgent === true)
     ? "sidekick_wizard"
@@ -184,7 +184,7 @@ export function conversationModelRole(
 /**
  * The work-stream agent's route plan for one work stream: its own override if
  * it carries one, otherwise its conversation role's configured default.
- * Sidekick wizard and run roles are independent of the Canvas `workstream` role.
+ * Sidekick wizard and run roles are independent of the Canvas `canvas` role.
  *
  * The override wins over configuration. Configuration is a
  * fleet-wide default and an override is somebody asking this one work stream to

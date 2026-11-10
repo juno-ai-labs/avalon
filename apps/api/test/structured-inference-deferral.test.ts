@@ -36,7 +36,7 @@ describe("structured inference telemetry lifecycle", () => {
         async send() {},
       }),
     }), {
-      role: "workstream_naming",
+      role: "canvas_naming",
       activity: "channel_naming",
       routing: { model: "test/model", fallbackModels: [], reasoningEffort: "medium" },
       context: { workspaceId: "workspace-1" },
@@ -95,7 +95,7 @@ describe("structured inference telemetry lifecycle", () => {
       PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: vi.fn() }),
       USAGE_QUEUE: createCloudflareTestBinding<Queue>({ send: usageSend }),
     }), {
-      role: "workstream_naming",
+      role: "canvas_naming",
       activity: "channel_naming",
       routing: { model: "test/model", fallbackModels: [] },
       context: { workspaceId: "workspace-1", workstreamId: "workstream-1" },

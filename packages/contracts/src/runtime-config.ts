@@ -69,11 +69,11 @@ export const AGENT_MODEL_DEFAULTS = {
 } as const;
 
 export const AGENT_MODEL_ENV_KEYS = {
-  workstream: "OPENROUTER_PRIMARY_MODEL",
-  memory_sweep: "OPENROUTER_PRIMARY_MODEL",
+  canvas: "OPENROUTER_PRIMARY_MODEL",
+  memory_sweep: "OPENROUTER_SMARTER_MODEL",
   sidekick_wizard: "OPENROUTER_SMARTER_MODEL",
   sidekick_run: "OPENROUTER_PRIMARY_MODEL",
-  workstream_naming: "OPENROUTER_FASTER_MODEL",
+  canvas_naming: "OPENROUTER_FASTER_MODEL",
 } as const satisfies Record<AgentModelRole, keyof typeof AGENT_MODEL_DEFAULTS>;
 
 /** Model choices for inference paths with their own persistence or provider contracts. */
@@ -125,7 +125,6 @@ export interface ModelInferenceDefaults {
 
 /** Unlisted models keep their provider-defined reasoning defaults. */
 export const MODEL_INFERENCE_DEFAULTS: Readonly<Record<string, ModelInferenceDefaults>> = {
-  [MODEL_IDS.GPT_6_1_SOL]: { reasoningEffort: "low" },
   [MODEL_IDS.GROK_4_6]: { reasoningEffort: "low", reasoningRequired: true },
   [MODEL_IDS.GEMINI_3_7_FLASH]: { reasoningEffort: "low", reasoningRequired: true },
   [MODEL_IDS.GEMINI_3_8_FLASH]: { reasoningEffort: "low", reasoningRequired: true },
