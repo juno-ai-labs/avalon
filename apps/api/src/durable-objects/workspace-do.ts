@@ -719,6 +719,7 @@ import {
   skillSummary,
   type HostedSidekickRow,
   type HostedSidekickHost,
+  type SidekickSourceRelationships,
 } from "./hosted-sidekick";
 import {
   SidekickBatchDetailRequestSchema,
@@ -742,6 +743,7 @@ import {
 import { ArtifactDataWriteFactsRequestSchema, artifactDataWriteFacts, type ArtifactDataWriteFacts } from "./workspace-artifact-data-write";
 
 import { SIDEKICK_DELEGATION_SCHEMA_STATEMENTS, SidekickDelegationStorage } from "./sidekick-delegation-storage";
+import { SIDEKICK_SOURCE_SCHEMA_STATEMENTS } from "./sidekick-source-storage";
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "sidekick_delegations", "sidekick_delegation_receipts", "sidekick_delegation_preparations", "sidekick_claim_access",
@@ -4428,6 +4430,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "a Sidekick's Canvas attachments become the one record of which Canvases it works on, and mark the one a Canvas's Chat made",
   // See SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS and docs/automation-lifecycle.md#attached-conversations.
   statements: SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS,
+}, {
+  version: 145,
+  description: "record who lets events into a Sidekick apart from who it may act as, and the requests that ask",
+  // See SIDEKICK_SOURCE_SCHEMA_STATEMENTS and docs/sidekick-sources.md.
+  statements: SIDEKICK_SOURCE_SCHEMA_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4459,11 +4466,16 @@ const ReorderSidebarPinsRequestSchema = SidebarPinOrderRequestSchema.extend({
   workspaceId: WorkspaceIdSchema, userId: UserIdSchema,
 });
 const CanvasContextRequestSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, canvasId: IdSchema });
-const SidekickCanvasContextRequestSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, sidekickId: IdSchema, userId: UserIdSchema });
+const SidekickCanvasContextRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema, sidekickId: IdSchema,
+  /** The wizard's person. A run names itself instead, and the object reads whose reach applies from its row. */
+  userId: UserIdSchema.nullable(),
+  runId: IdSchema.optional(),
+});
 const CanvasForSidekickRunRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, sidekickId: IdSchema, runId: IdSchema, canvasId: IdSchema.nullable(),
-  /** The person the run acts as, who must be able to open a Canvas it names. */
-  userId: UserIdSchema,
+  /** Sent by callers that predate the run's own reach; no longer read. */
+  userId: UserIdSchema.nullable().optional(),
 });
 
 /** Send a sidebar list push; a socket closing as it is sent is not a failure, since a reconnect receives the whole list. */
@@ -5225,9 +5237,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (userIds.length === 0) return false;
     const targets = this.state.storage.sql.exec<{ automation_id: string }>(
       `SELECT DISTINCT directory.automation_id FROM automation_directory directory
-         JOIN sidekick_delegations consent ON consent.sidekick_id=directory.automation_id
+         JOIN sidekick_sources source ON source.sidekick_id=directory.automation_id
         WHERE directory.lifecycle='active' AND directory.evaluator_projection_json<>'[]'
-          AND consent.user_id IN (SELECT value FROM json_each(?)) AND json_extract(consent.grant_json,'$.allowed')=1`,
+          AND source.user_id IN (SELECT value FROM json_each(?))`,
       JSON.stringify(userIds),
     ).toArray();
     const host = this.hostedSidekickHost();
@@ -5394,10 +5406,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * the run has made none yet, and its caller creates it. A run's own Canvas
    * is attached as it is made, so the attachment is the one publish grant.
    */
-  async canvasForSidekickRun(rawInput: { workspaceId: string; sidekickId: string; runId: string; canvasId: string | null; userId: string }): Promise<{ canvasId: string | null }> {
+  async canvasForSidekickRun(rawInput: { workspaceId: string; sidekickId: string; runId: string; canvasId: string | null; userId?: string | null }):
+    Promise<{ canvasId: string | null; authorUserId: string | null }> {
     await this.initialized;
     const input = parseRpcInput(CanvasForSidekickRunRequestSchema, rawInput, "canvas_for_sidekick_run");
     this.assertWorkspace(input.workspaceId);
+    // Who a run with nobody behind it creates its own Canvas as: the Sidekick's author.
+    const authorUserId = this.state.storage.sql.exec<{ author_user_id: string | null }>(
+      `SELECT author_user_id FROM automation_directory WHERE automation_id = ? AND workspace_id = ?`, input.sidekickId, input.workspaceId,
+    ).toArray()[0]?.author_user_id ?? null;
     if (input.canvasId !== null) {
       const sql = this.state.storage.sql;
       const row = sql.exec<CanvasRow>(
@@ -5407,20 +5424,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         throw new ApiError(404, "canvas_not_attached_to_sidekick", "This Sidekick is not attached to that Canvas");
       }
       if (row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
-      // The attachment says where the Sidekick may write; the person it acts
-      // as must still be able to open the Canvas, as every post there asks.
-      const relationship = await this.readRelationship(input.workspaceId, input.userId);
-      const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
-      if (relationship?.status !== "active" || !canvasReaderAllows(row, { userId: input.userId, actorRole }, sql)) {
-        throw new ApiError(403, "canvas_access_denied", "The person this run acts as cannot open that Canvas");
+      // The attachment is the Sidekick's own reach and is all a run needs.
+      // Only a run somebody asked for under their own access is held to what
+      // that person can open (`sidekickRunPerson`).
+      const requester = this.sidekickRunPerson(input.sidekickId, input.runId);
+      if (requester !== null) {
+        const relationship = await this.readRelationship(input.workspaceId, requester);
+        const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
+        if (relationship?.status !== "active" || !canvasReaderAllows(row, { userId: requester, actorRole }, sql)) {
+          throw new ApiError(403, "canvas_access_denied", "The person this run acts as cannot open that Canvas");
+        }
       }
-      return { canvasId: input.canvasId };
+      return { canvasId: input.canvasId, authorUserId };
     }
     const row = this.state.storage.sql.exec<{ canvas_id: string; archived_at: number | null }>(
       `SELECT canvas_id, archived_at FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`, input.sidekickId, input.runId,
     ).toArray()[0];
     if (row && row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
-    return { canvasId: row?.canvas_id ?? null };
+    return { canvasId: row?.canvas_id ?? null, authorUserId };
   }
 
   /**
@@ -5462,7 +5483,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * wizard attached), never the Canvas each of its own runs made, which would
    * grow by one per run; and only those the acting person may open now.
    */
-  async sidekickCanvasContext(rawInput: { workspaceId: string; sidekickId: string; userId: string }) {
+  async sidekickCanvasContext(rawInput: { workspaceId: string; sidekickId: string; userId: string | null; runId?: string }) {
     await this.initialized;
     const input = parseRpcInput(SidekickCanvasContextRequestSchema, rawInput, "sidekick_canvas_context");
     this.assertWorkspace(input.workspaceId);
@@ -5477,13 +5498,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       input.sidekickId, input.workspaceId,
     ).toArray();
     if (attached.length === 0) return [];
-    const relationship = await this.readRelationship(input.workspaceId, input.userId);
-    if (relationship?.status !== "active") return [];
-    const actorRole = relationship.accessClass === "member" ? relationship.role ?? "member" : null;
     const host = this.hostedCanvasHost();
-    return attached.filter((row) => canvasReaderAllows(row, { userId: input.userId, actorRole }, sql)).map((row) => ({
+    const context = (rows: readonly CanvasRow[]) => rows.map((row) => ({
       canvasId: row.canvas_id, title: row.title, artifacts: new HostedCanvas(host, row.canvas_id).agentArtifacts(),
     }));
+    // A run is told every Canvas the Sidekick is attached to: that is its own
+    // reach. A run somebody asked for under their own access, and the wizard,
+    // are told those their person can open.
+    const person = input.runId === undefined ? input.userId : this.sidekickRunPerson(input.sidekickId, input.runId);
+    if (person === null) return input.runId === undefined ? [] : context(attached);
+    const relationship = await this.readRelationship(input.workspaceId, person);
+    if (relationship?.status !== "active") return [];
+    const actorRole = relationship.accessClass === "member" ? relationship.role ?? "member" : null;
+    return context(attached.filter((row) => canvasReaderAllows(row, { userId: person, actorRole }, sql)));
   }
 
   /** Retitle a Canvas or choose its appearance; see `HostedCanvas.update`. */
@@ -6201,6 +6228,48 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async sidekickReadExecutionDelegation(input: Parameters<HostedSidekick["readExecutionDelegation"]>[0]) {
     return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readExecutionDelegation(input));
+  }
+
+  // Sources: whose events may start a Sidekick. docs/sidekick-sources.md.
+
+  async sidekickReadSources(input: Parameters<HostedSidekick["readSources"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readSources(input));
+  }
+
+  async sidekickRequestSources(input: Parameters<HostedSidekick["requestSources"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.requestSources(input));
+  }
+
+  async sidekickDecideSourceRequest(input: Parameters<HostedSidekick["decideSourceRequest"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.decideSourceRequest(input));
+  }
+
+  async sidekickWithdrawSource(input: Parameters<HostedSidekick["withdrawSource"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.withdrawSource(input));
+  }
+
+  /**
+   * Requests by id, as one person may see each: what a request's card reads,
+   * wherever it is drawn. One a person may not see, or that is gone, is left
+   * out rather than named.
+   */
+  async sidekickReadSourceRequests(rawInput: { workspaceId: string; actor: { userId: string }; requestIds: string[] }) {
+    await this.initialized;
+    const input = parseRpcInput(z.strictObject({
+      workspaceId: WorkspaceIdSchema, actor: z.strictObject({ userId: UserIdSchema }), requestIds: z.array(IdSchema),
+    }), rawInput, "sidekick_read_source_requests");
+    if (!this.workspaceId()) return { requests: [] };
+    this.assertWorkspace(input.workspaceId);
+    const located = input.requestIds.length === 0 ? [] : this.state.storage.sql.exec<{ request_id: string; sidekick_id: string }>(
+      `SELECT request_id, sidekick_id FROM sidekick_source_requests WHERE request_id IN (SELECT value FROM json_each(?))
+        ORDER BY created_at, request_id`, JSON.stringify(input.requestIds),
+    ).toArray();
+    const views = await Promise.all(located.map(async (row) => {
+      const sidekick = await this.hostedSidekick(row.sidekick_id, input.workspaceId);
+      return sidekick.readSourceRequest({ workspaceId: input.workspaceId, automationId: row.sidekick_id,
+        actor: { userId: input.actor.userId, participantOfOwningWorkstream: false }, requestId: row.request_id });
+    }));
+    return { requests: views.filter((view) => view !== null) };
   }
 
   /** Own consent records remain readable without membership or Sidekick viewer access. */
@@ -7603,8 +7672,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ConversationToolScopeRequestSchema, input, "conversation_tool_scope");
     this.assertWorkspace(request.workspaceId);
     const scoped = scopeConversations(this.state.storage.sql, request.scope);
-    const conversations = await this.reachableConversations(request.workspaceId, scoped, request.userId);
+    const person = this.conversationToolPerson(request);
+    const conversations = person.itself ? scoped.filter((conversation) => !this.scopedConversationArchived(conversation))
+      : await this.reachableConversations(request.workspaceId, scoped, person.userId);
     return { conversations: conversations.map(conversationToolEntry) };
+  }
+
+  /**
+   * Whose access a Sidekick's reach is checked against.
+   *
+   * A run reaches its Sidekick's own conversation and the Canvases the
+   * Sidekick is attached to as the Sidekick itself: the attachment is the
+   * reach, whoever the run acts as, so a delegate who cannot open a Canvas
+   * does not take it away from the run. The exception is a run somebody asked
+   * for under their own access (`sidekick_runs.requester_user_id`): a person
+   * must not read, through the Sidekick, what they cannot open themselves.
+   * The wizard names no run, and reaches what its person can open.
+   */
+  private sidekickRunPerson(sidekickId: string, runId: string): string | null {
+    return this.state.storage.sql.exec<{ requester_user_id: string | null }>(
+      `SELECT requester_user_id FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, sidekickId, runId,
+    ).toArray()[0]?.requester_user_id ?? null;
+  }
+
+  private conversationToolPerson(request: { userId: string | null; runId?: string | undefined; scope: { automationId: string } }):
+    { itself: true } | { itself: false; userId: string | null } {
+    if (request.runId === undefined) return { itself: false, userId: request.userId };
+    const requester = this.sidekickRunPerson(request.scope.automationId, request.runId);
+    return requester === null ? { itself: true } : { itself: false, userId: requester };
+  }
+
+  /** Whether a conversation in a Sidekick's scope is archived, asked where no person's admission is. */
+  private scopedConversationArchived(conversation: { parentKind: string; parentId: string }): boolean {
+    const sql = this.state.storage.sql;
+    return conversation.parentKind === "canvas"
+      ? sql.exec(`SELECT 1 FROM canvas_directory WHERE canvas_id = ? AND archived_at IS NULL`, conversation.parentId).toArray().length === 0
+      : sql.exec(`SELECT 1 FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`, conversation.parentId).toArray().length === 0;
   }
 
   /**
@@ -7615,8 +7718,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private async reachableConversations<T extends { parentId: string; substreamId: string }>(
     workspaceId: string,
     scoped: readonly T[],
-    userId: string,
+    userId: string | null,
   ): Promise<T[]> {
+    if (userId === null) return [];
     const relationship = await this.readRelationship(workspaceId, userId);
     if (relationship?.status !== "active") return [];
     const reachable: T[] = [];
@@ -7667,16 +7771,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // A title is matched only among the conversations this person can open,
     // so a title never confirms, or hands over the id of, one they cannot.
     const byId = conversationNamedById(scoped, request.reference);
+    const person = this.conversationToolPerson(request);
     let target: ScopedConversation;
     if (byId) {
       target = byId;
-      const admission = await this.conversationToolAdmission(request.workspaceId, target, request.userId);
+      // The Sidekick itself is admitted by being in scope: the scope is its
+      // own conversation and its attachments.
+      const admission = person.itself ? { authorized: true, archived: this.scopedConversationArchived(target) }
+        : person.userId === null ? { authorized: false, archived: false }
+        : await this.conversationToolAdmission(request.workspaceId, target, person.userId);
       if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], target.parentId);
       if (admission.archived) return conversationToolRefusal("conversation_archived", [], target.parentId);
     } else {
       // Admitted already: `reachableConversations` keeps only what the
       // person can open now and is not archived.
-      const reachable = await this.reachableConversations(request.workspaceId, scoped, request.userId);
+      const reachable = person.itself ? scoped.filter((conversation) => !this.scopedConversationArchived(conversation))
+        : await this.reachableConversations(request.workspaceId, scoped, person.userId);
       const match = matchConversationReference<ScopedConversation>(reachable, request.reference);
       if (match.outcome === "missing") {
         return conversationToolRefusal("conversation_not_in_scope", reachable.map((conversation) => conversation.conversationId));
@@ -7764,13 +7874,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ArtifactDataWriteFactsRequestSchema, input, "artifact_data_write_facts");
     this.assertWorkspace(request.workspaceId);
     const sql = this.state.storage.sql;
-    const relationship = await this.readRelationship(request.workspaceId, request.userId);
-    const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
     const facts = artifactDataWriteFacts(sql, request);
     if (!facts) return null;
     const canvas = sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, facts.canvasId).toArray()[0];
+    // A Sidekick's run writes as the Sidekick itself: its attachment, which
+    // `facts` carries, is all it needs. A run somebody asked for under their
+    // own access, and a Canvas's Chat, write as a person who must be able to
+    // open the Canvas now (`sidekickRunPerson`).
+    const ownRun = request.sidekickId !== null && request.runId !== undefined;
+    const person = ownRun ? this.sidekickRunPerson(request.sidekickId!, request.runId!) : request.userId;
+    if (person === null) return { ...facts, actorAdmitted: ownRun && canvas !== undefined };
+    const relationship = await this.readRelationship(request.workspaceId, person);
+    const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
     return { ...facts, actorAdmitted: relationship?.status === "active" && canvas !== undefined
-      && canvasReaderAllows(canvas, { userId: request.userId, actorRole }, sql) };
+      && canvasReaderAllows(canvas, { userId: person, actorRole }, sql) };
   }
 
   /**
@@ -8129,7 +8246,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const boundSidekickId = binding?.outcome === "deliver" && binding.target.parentKind === "automation"
       ? binding.target.parentId
       : null;
-    const delegateEligibility = new Map<string, Promise<boolean>>();
+    const sourceRelationships: SidekickSourceRelationships = new Map();
     const matches = await Promise.all(registrations.map(async (registration) => {
       if (registration.resource_id && !resourceIds.includes(registration.resource_id)) return [];
       if (boundSidekickId !== null && registration.automation_id === boundSidekickId) return [];
@@ -8137,12 +8254,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (!evaluateExternalEventPredicate(evaluator.when, context)) return [];
       if (registration.destination_kind === "automation") {
         const sidekick = registration.automation_id === null ? null : await this.sidekickParent(registration.automation_id, request.workspaceId);
-        if (!sidekick || await sidekick.eventCoordinator(workspaceEvent, registration.registration_id, delegateEligibility) === null) {
+        // Whose events may start a Sidekick is its sources' answer, never its
+        // delegates': see docs/sidekick-sources.md.
+        if (!sidekick || await sidekick.eventSource(workspaceEvent, registration.registration_id, sourceRelationships) === null) {
           if (sidekick && registration.automation_id) await this.sidekickCall(registration.automation_id, request.workspaceId,
             (target) => target.noteDelegationAttention("event_no_eligible_delegate"));
-          logInfo(this.env, "external_event_delegation_refused", {
+          logInfo(this.env, "external_event_source_refused", {
             workspace_id: request.workspaceId, event_id: request.eventId,
-            automation_id: registration.automation_id, code: "sidekick_no_eligible_delegate",
+            automation_id: registration.automation_id, code: "sidekick_source_not_permitted",
           });
           return [];
         }

@@ -8,6 +8,7 @@ import {
   PickedAppearanceSchema,
   SidekickAudienceUpdateSchema,
   SidekickMessageIntentSchema,
+  SidekickSourceRequestInputSchema,
   UserIdSchema,
   WorkspaceExternalEventSchema,
   WorkspaceIdSchema,
@@ -77,6 +78,35 @@ export const AutomationActorRequestSchema = z.strictObject({
   actor: AutomationActorSchema,
 });
 export type AutomationActorRequest = z.infer<typeof AutomationActorRequestSchema>;
+
+/** A manager asks people to let events from one of their connectors start the Sidekick. */
+export const SidekickSourceAskRequestSchema = AutomationActorRequestSchema.extend({
+  ask: SidekickSourceRequestInputSchema,
+  /** The asker's name as it is now, kept on the request for the person asked. */
+  actorName: z.string(),
+});
+export type SidekickSourceAskRequest = z.infer<typeof SidekickSourceAskRequestSchema>;
+
+/** The asked person answers. `userId` is who answers, established by the caller (a session, or the signed link). */
+export const SidekickSourceDecisionRequestSchema = z.strictObject({
+  ...Addressed,
+  requestId: IdSchema,
+  userId: UserIdSchema,
+  decision: z.enum(["approve", "decline"]),
+});
+export type SidekickSourceDecisionRequest = z.infer<typeof SidekickSourceDecisionRequestSchema>;
+
+/** A person takes back what they let in from one connection. */
+export const SidekickSourceWithdrawRequestSchema = z.strictObject({
+  ...Addressed,
+  userId: UserIdSchema,
+  connectionId: IdSchema,
+});
+export type SidekickSourceWithdrawRequest = z.infer<typeof SidekickSourceWithdrawRequestSchema>;
+
+/** One request as one reader may see it; null from the object when they may not. */
+export const SidekickSourceRequestReadSchema = AutomationActorRequestSchema.extend({ requestId: IdSchema });
+export type SidekickSourceRequestRead = z.infer<typeof SidekickSourceRequestReadSchema>;
 
 export const AutomationRunListRequestSchema = AutomationActorRequestSchema.extend({
   before: z.strictObject({ createdAt: z.number().int().nonnegative(), runId: IdSchema }).optional(),
@@ -169,6 +199,13 @@ export const AutomationExternalEventAdmissionSchema = z.strictObject({
    * `webhook` trigger, which is nearly all of them — carries nothing extra.
    */
   conditionVerdict: AutomationSemanticConditionVerdictSchema.optional(),
+  /**
+   * The verdict on the source's own condition: the filter of the person whose
+   * events these are. Required in effect for an event whose source carries a
+   * condition, and separate from `conditionVerdict` because the two filters
+   * have different owners and both must hold.
+   */
+  sourceVerdict: AutomationSemanticConditionVerdictSchema.optional(),
 });
 export type AutomationExternalEventAdmission = z.infer<typeof AutomationExternalEventAdmissionSchema>;
 
@@ -241,6 +278,8 @@ export const SidekickRunContinuationRefusalCodeSchema = z.enum([
   "run_no_eligible_delegate",
   /** A person other than its requester wrote in a run that acts under the requester's own access. */
   "run_continuation_requires_requester",
+  /** A person who does not manage the Sidekick wrote in a run that acts as the Sidekick itself. */
+  "run_continuation_requires_manager",
   /** A person who is not an eligible delegate wrote in a run that acts under a delegate's access. */
   "run_continuation_requires_delegate",
   /** Another agent's message acting for no person who may continue the run. */
@@ -268,7 +307,14 @@ export const SidekickRunContinuationSchema = z.discriminatedUnion("outcome", [
   z.strictObject({
     outcome: z.literal("continue"),
     automationRun: AutomationRunReferenceV1Schema,
-    executionPrincipal: z.strictObject({ type: z.literal("user"), userId: UserIdSchema }),
+    /**
+     * Who the continued run acts as: a person, or the Organization when no
+     * delegate is behind the run and it acts as the Sidekick itself.
+     */
+    executionPrincipal: z.union([
+      z.strictObject({ type: z.literal("user"), userId: UserIdSchema }),
+      z.strictObject({ type: z.literal("workspace"), workspaceId: WorkspaceIdSchema }),
+    ]),
     stopGeneration: z.number().int().nonnegative(),
   }),
 ]);

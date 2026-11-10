@@ -391,6 +391,11 @@ async function consumeOne(message: Message<unknown>, env: Env,
           semantic_gate_model: result.gate?.model,
           semantic_gate_failure_kind: result.gate?.failureKind,
           semantic_condition_count: result.gate?.conditionCount,
+          source_gate_code: result.sourceGate?.code,
+          source_gate_confidence: result.sourceGate?.confidence,
+          source_gate_model: result.sourceGate?.model,
+          source_gate_failure_kind: result.sourceGate?.failureKind,
+          source_condition_count: result.sourceGate?.conditionCount,
         });
       } else {
         const substream = await durableObjectStubForWorkspace(

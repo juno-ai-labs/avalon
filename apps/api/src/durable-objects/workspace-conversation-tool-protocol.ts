@@ -51,8 +51,24 @@ const Addressed = {
   userId: UserIdSchema,
 } as const;
 
+/**
+ * Whose reach a list, read, search or post is checked against.
+ *
+ * A Sidekick's run (`runId`) reaches its own conversation and the Canvases it
+ * is attached to as the Sidekick itself: the attachment is the reach, whoever
+ * the run acts as. The one exception is the object's to apply, from the run's
+ * row: a run somebody asked for under their own access reaches only what that
+ * person can open. Without a `runId` (the wizard) `userId` is the acting
+ * person, and their own admission decides.
+ */
+const Reaching = {
+  workspaceId: WorkspaceIdSchema,
+  userId: UserIdSchema.nullable(),
+  runId: IdSchema.optional(),
+} as const;
+
 export const ConversationToolScopeRequestSchema = z.strictObject({
-  ...Addressed,
+  ...Reaching,
   scope: ConversationToolScopeSchema,
 });
 export type ConversationToolScopeRequest = z.input<typeof ConversationToolScopeRequestSchema>;
@@ -80,7 +96,7 @@ export interface ConversationToolScopeResult {
 }
 
 export const ConversationToolResolveRequestSchema = z.strictObject({
-  ...Addressed,
+  ...Reaching,
   scope: ConversationToolScopeSchema,
   /** A conversationId or an exact title. */
   reference: z.string().min(1),
