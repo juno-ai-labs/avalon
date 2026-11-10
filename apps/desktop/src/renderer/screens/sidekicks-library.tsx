@@ -93,19 +93,36 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
   </main>;
 }
 
+/**
+ * How many rows of Canvas pills a card's preview holds. A layout number, not
+ * a guard: the preview is 150px tall and clips what overflows it, a pill row
+ * is 30px with its gap, and under the Paused pill the column starts at 46px,
+ * which leaves room for three ((150 - 46) / 30 = 3.5). A Sidekick attached to
+ * more Canvases than that shows two and a last row counting the rest, which
+ * opens its page, where Writes to lists them all.
+ */
+const CARD_CANVAS_ROWS = 3;
+
 /** The title link stretches over the card while its facts remain separate from the link. */
 function SidekickCard({ item, membersById }: { item: AutomationSummary; membersById: ReadonlyMap<string, WorkspaceMember> }): React.JSX.Element {
   const { tint } = resolveWorkstreamAppearance(item.id, item.appearance ?? undefined);
+  // An older Worker sends none.
+  const attachedCanvases = item.attachedCanvases ?? [];
+  const shownCanvases = attachedCanvases.length > CARD_CANVAS_ROWS ? attachedCanvases.slice(0, CARD_CANVAS_ROWS - 1) : attachedCanvases;
   return <li className="dashboard-card">
     <div className="dashboard-card-preview" style={{ background: `color-mix(in srgb, ${tint} 45%, var(--av-sys-color-surface-raised))` }}>
       <span className="sidekick-card-glyph"><AutomationGlyph {...(item.appearance ? { appearance: item.appearance } : {})} id={item.id} /></span>
       {item.status === 'paused' && <span className="sidekick-card-status"><span className="sidekick-status-pill is-paused"><IconPlayerPause aria-hidden="true" size={13} stroke={1.8} />Paused</span></span>}
       {sidekickStatus(item) === 'needs_input' && <span className="sidekick-needs-input-badge">Needs input</span>}
       {/* The Canvases it works on, each a link above the card's stretched title link. */}
-      {item.attachedCanvases !== undefined && item.attachedCanvases.length > 0 && <span className={item.status === 'paused' ? 'sidekick-card-canvases is-below-status' : 'sidekick-card-canvases'}>
-        {item.attachedCanvases.map((canvas) => <Link aria-label={`Canvas: ${canvas.title}`} className="sidekick-card-canvas" key={canvas.id} to={canvasRoute(canvas.id)}>
+      {attachedCanvases.length > 0 && <span className={item.status === 'paused' ? 'sidekick-card-canvases is-below-status' : 'sidekick-card-canvases'}>
+        {shownCanvases.map((canvas) => <Link aria-label={`Canvas: ${canvas.title}`} className="sidekick-card-canvas" key={canvas.id} to={canvasRoute(canvas.id)}>
           <span>{canvas.title}</span><IconArrowUpRight aria-hidden="true" size={14} stroke={1.9} />
         </Link>)}
+        {/* The rest are on the Sidekick's own page, under Writes to. */}
+        {attachedCanvases.length > shownCanvases.length && <Link className="sidekick-card-canvas" to={`/sidekicks/${encodeURIComponent(item.id)}`}>
+          <span>{`+${attachedCanvases.length - shownCanvases.length} more`}</span>
+        </Link>}
       </span>}
     </div>
     <div className="sidekick-card-body">

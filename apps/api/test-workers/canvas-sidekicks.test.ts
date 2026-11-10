@@ -120,6 +120,24 @@ describe("a Sidekick a Canvas's Chat made", () => {
     expect(await lifecycle(stranger)).toBeUndefined();
   });
 
+  it("is not made under an id that names a Canvas, and a replay is refused once its author has lost the Canvas", async () => {
+    // A Sidekick's row is asked for before a Canvas's, so the id would take the Canvas's conversation over.
+    for (const taken of [CANVAS_ID, OTHER_CANVAS_ID]) {
+      expect(await refusal((instance) => instance.sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: asAutomationId(taken),
+        authorUserId: CREATOR, scope: "personal", authorityGeneration: 1, homeCanvasId: CANVAS_ID }))).toBe("sidekick_id_unavailable");
+    }
+    expect((await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) })).title).toBe("Inbox");
+    // The participant makes one, then loses the Canvas: the same request again is no way back to it.
+    const theirs = asAutomationId(crypto.randomUUID());
+    const request = { workspaceId: WORKSPACE_ID, automationId: theirs, authorUserId: PARTICIPANT, scope: "personal" as const,
+      authorityGeneration: 1, homeCanvasId: CANVAS_ID };
+    expect(await workspace().sidekickCreate(request)).toEqual({ created: true });
+    expect(await workspace().sidekickCreate(request)).toEqual({ created: false });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
+      update: { visibility: "creator", userIds: [] } });
+    expect(await refusal((instance) => instance.sidekickCreate(request))).toBe("canvas_not_found");
+  });
+
   it("is managed by everyone in the Canvas, who still cannot open it, and by nobody outside the Canvas", async () => {
     const manages = (sidekickId: string, userId: string) => workspace().sidekickAllowsManager({
       workspaceId: WORKSPACE_ID, automationId: sidekickId, actor: { ...member(userId), participantOfOwningWorkstream: false } });

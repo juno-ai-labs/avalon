@@ -1,4 +1,4 @@
-import { IdSchema, WorkspaceIdSchema } from "@rally/contracts";
+import { IdSchema, UserIdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { z } from "zod";
 
 /**
@@ -22,6 +22,8 @@ export const ArtifactDataWriteFactsRequestSchema = z.strictObject({
   resourceId: IdSchema,
   /** The Sidekick whose run is writing, or null for a Canvas's Chat. */
   sidekickId: IdSchema.nullable(),
+  /** The person the write is made as, who must be able to open the artifact's Canvas now. */
+  userId: UserIdSchema,
 });
 export type ArtifactDataWriteFactsRequest = z.input<typeof ArtifactDataWriteFactsRequestSchema>;
 
@@ -38,13 +40,19 @@ export interface ArtifactDataWriteFacts {
    * not archived. Always false when no Sidekick was named.
    */
   attachedToSidekick: boolean;
+  /**
+   * The acting person may open that Canvas now. Reading the site does not
+   * show it: a resource can stay readable to someone the Canvas has stopped
+   * admitting. Filled by the Organization object, which knows their role.
+   */
+  actorAdmitted: boolean;
 }
 
 /** The facts for one resource, or null when it is no registered artifact here. */
 export function artifactDataWriteFacts(
   sql: SqlStorage,
   request: z.infer<typeof ArtifactDataWriteFactsRequestSchema>,
-): ArtifactDataWriteFacts | null {
+): Omit<ArtifactDataWriteFacts, "actorAdmitted"> | null {
   const row = sql.exec<{
     artifact_id: string; workstream_id: string; mode: string; stateful: number; archived: number; attached: number;
   }>(

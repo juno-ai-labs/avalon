@@ -5451,7 +5451,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
     const row = canvas?.row();
     if (!canvas || !row || row.archived_at !== null || row.workspace_id !== input.workspaceId) return null;
-    return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.agentArtifacts(), sidekicks: canvas.sidekicks() };
+    return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.agentArtifacts(), sidekicks: canvas.sidekicks(),
+      archivedMadeSidekicks: canvas.archivedMadeSidekicks() };
   }
 
   /**
@@ -7762,7 +7763,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(ArtifactDataWriteFactsRequestSchema, input, "artifact_data_write_facts");
     this.assertWorkspace(request.workspaceId);
-    return artifactDataWriteFacts(this.state.storage.sql, request);
+    const sql = this.state.storage.sql;
+    if (!artifactDataWriteFacts(sql, request)) return null;
+    const relationship = await this.readRelationship(request.workspaceId, request.userId);
+    const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
+    // Read after the await, so the facts and the admission are of one moment.
+    const facts = artifactDataWriteFacts(sql, request);
+    if (!facts) return null;
+    const canvas = sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, facts.canvasId).toArray()[0];
+    return { ...facts, actorAdmitted: relationship?.status === "active" && canvas !== undefined
+      && canvasReaderAllows(canvas, { userId: request.userId, actorRole }, sql) };
   }
 
   /**

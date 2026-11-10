@@ -412,8 +412,19 @@ export class AgentCommunicationService {
     if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_contact_user_unavailable");
     if (this.canvasChatId() === null) throw new AgentCommunicationError("sidekick_archive_outside_canvas");
     const named = reference.trim().toLowerCase();
-    const made = await this.canvasMadeSidekicks();
+    const canvasId = this.canvasChatId()!;
+    const context = await (await this.workspace()).canvasContext({ workspaceId: this.input.workspaceId, canvasId });
+    const made = (context?.sidekicks ?? []).filter((sidekick) => sidekick.madeHere)
+      .map((sidekick) => ({ sidekickId: sidekick.id, name: sidekick.name }));
     const matches = made.filter((sidekick) => sidekick.sidekickId === named || sidekick.name.trim().toLowerCase() === named);
+    // A retry after the first attempt archived it: the Sidekick is no longer
+    // among the ones the Canvas lists, and the answer is the first one's. By
+    // id always; by name only when no active Sidekick has that name, which
+    // would be a different one to archive.
+    const already = matches.length === 0
+      ? (context?.archivedMadeSidekicks ?? []).filter((sidekick) => sidekick.id === named || sidekick.name.trim().toLowerCase() === named)
+      : [];
+    if (already.length === 1) return { sidekickId: already[0]!.id, name: already[0]!.name, archived: true };
     if (matches.length !== 1) {
       throw new AgentCommunicationError(matches.length ? "sidekick_archive_ambiguous" : "sidekick_archive_not_made_here",
         made.map((sidekick) => sidekick.name));
