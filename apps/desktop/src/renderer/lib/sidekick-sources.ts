@@ -10,6 +10,7 @@ import type { QueryClient } from '@tanstack/react-query';
 
 import { ApiError } from './api';
 import { connectorPresentation } from './connector-presentation';
+import { sourceConnectorName } from '@rally/contracts/sidekick-source-words';
 
 /**
  * The client's side of Sidekick sources (`docs/sidekick-sources.md`): the
@@ -103,28 +104,13 @@ export function sourceEventWords(eventType: string): string {
 }
 
 /**
- * Google is one connector type and several products, and a source names
- * events rather than a product: mail events are Gmail's, calendar events
- * Google Calendar's, file events Google Drive's. A mix, or a family this does
- * not know, is Google.
- */
-function googleProduct(eventTypes: readonly string[]): string {
-  const families = new Set(eventTypes.map((eventType) => eventType.split('.')[0]));
-  const only = (...names: string[]): boolean => [...families].every((family) => family !== undefined && names.includes(family));
-  if (families.size === 0) return 'Google';
-  if (only('email')) return 'Gmail';
-  if (only('calendar')) return 'Google Calendar';
-  if (only('drive', 'docs', 'sheets')) return 'Google Drive';
-  return 'Google';
-}
-
-/**
  * What a source's connector and events are called. Every other connector is
  * named by `connectorPresentation`, the name its mention and its Settings
  * card already wear.
  */
 export const sourceWords: SourceWords = ({ connectorType, eventTypes }: SourceAsk) => ({
-  connector: connectorType === 'google' ? googleProduct(eventTypes) : connectorPresentation(connectorType).name,
+  // One rule with the notices' and the emailed page's (`sourceConnectorName`).
+  connector: sourceConnectorName(connectorType, eventTypes, connectorPresentation(connectorType).name),
   events: eventTypes.map(sourceEventWords).join(', '),
 });
 
