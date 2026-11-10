@@ -7,9 +7,9 @@ import { canvasAdmits, sidekickAdmits } from "../services/authorization-policy";
  * The rules read each other, so they live in one module:
  *  * a Canvas a Sidekick run made admits whoever that Sidekick admits
  *    (`canvas_directory.writer_sidekick_id`);
- *  * a Sidekick a Canvas's Chat made is managed by whoever that Canvas admits
- *    (the `made_here` attachment). It is not opened by them: who reads a
- *    Sidekick never depends on a Canvas, so the chain ends after one step.
+ *  * a Sidekick a Canvas's Chat made is steered by the members that Canvas
+ *    admits (the `made_here` attachment). It is not opened by them: who reads
+ *    a Sidekick never depends on a Canvas, so the chain ends after one step.
  * Both are read live, so nothing copies one list into the other.
  *
  * `docs/canvases.md#who-can-open-a-canvas` and
@@ -94,6 +94,9 @@ export function writerSidekickAdmits(sql: SqlStorage, sidekickId: string, actor:
  * archives the Sidekick with it.
  */
 export function sidekickMadeInCanvasAdmits(sql: SqlStorage, sidekickId: string, actor: AdmissionActor): boolean {
+  // Members only. A Sidekick runs as its creator with their connections, and
+  // a guest of one Canvas is not someone the Organization lets decide that.
+  if (actor.actorRole === null) return false;
   const canvas = sql.exec<CanvasAdmissionRow & Record<string, SqlStorageValue>>(
     `SELECT canvas.canvas_id, canvas.created_by_user_id, canvas.writer_sidekick_id, canvas.visibility, canvas.archived_at
        FROM sidekick_conversation_attachments attachment
@@ -135,10 +138,11 @@ export function sidekickManagerAllows(
 }
 
 /**
- * Who changes, pauses or archives a Sidekick: `sidekickManagerAllows`, and
- * everyone the Canvas whose Chat made it admits. Managing is not opening:
- * such a person steers the Sidekick from the Canvas and reads its
- * conversation and runs only if it is shared with them.
+ * Who steers a Sidekick, changing what it does and whether it runs:
+ * `sidekickManagerAllows`, and the members the Canvas whose Chat made it
+ * admits. Steering is not opening, and not deciding who opens: such a person
+ * reads its conversation and runs only if it is shared with them, and its
+ * audience stays `sidekickManagerAllows`' to change.
  */
 export function sidekickManages(
   row: { automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null },

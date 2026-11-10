@@ -4426,7 +4426,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   ],
 }, {
   version: 144,
-  description: "a Sidekick made in a Canvas records that Canvas as its home, and a Sidekick's Canvas attachments become the one record of which Canvases it works on",
+  description: "a Sidekick's Canvas attachments become the one record of which Canvases it works on, and mark the one a Canvas's Chat made",
   // See SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS and docs/automation-lifecycle.md#attached-conversations.
   statements: SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS,
 }];
@@ -5279,6 +5279,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.canvasReadersMoved.add(userId);
       },
       noteCanvasDirectoryChanged: () => this.noteCanvasDirectoryMoved(),
+      noteAttachedCanvasChanged: (canvasId) => this.noteAttachedCanvasMoved(canvasId),
       archiveHomeSidekicks: (canvasId, now) => {
         const host = this.hostedSidekickHost();
         for (const sidekickId of this.homeSidekickIds(canvasId)) {
@@ -5288,6 +5289,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       noteActivityChanged: (userId) => this.noteActivityMoved(userId),
       noteActivityReadMoved: (userId, parentId) => this.noteActivityReadMoved(userId, parentId),
     };
+  }
+
+  /** A Canvas some Sidekick is attached to changed what that Sidekick's card says of it: the Sidekick list moves. One indexed probe. */
+  private noteAttachedCanvasMoved(canvasId: string): void {
+    const sql = this.state.storage.sql;
+    if (sql.exec(`SELECT 1 FROM sidekick_conversation_attachments WHERE parent_kind = 'canvas' AND parent_id = ? LIMIT 1`, canvasId)
+      .toArray().length === 0) return;
+    sql.exec(`UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`);
+    this.sidekickDirectoryMoved = true;
   }
 
   /** Sidekicks a Canvas archive archived in its transaction, owed `afterSidekickRegistrations` once it commits. */
@@ -5363,12 +5373,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       canvas.archive(input);
       this.broadcastPresence();
       // A Sidekick attached to it names it on its dashboard card.
-      if (this.state.storage.sql.exec(
-        `SELECT 1 FROM sidekick_conversation_attachments WHERE parent_kind = 'canvas' AND parent_id = ? LIMIT 1`, input.canvasId,
-      ).toArray().length > 0) {
-        this.state.storage.sql.exec(`UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`);
-        this.sidekickDirectoryMoved = true;
-      }
+      this.noteAttachedCanvasMoved(input.canvasId);
       // What `HostedSidekick.remove` owes after its own archive commits: the
       // Sidekicks this archive took with it stop matching connector events.
       const archived = this.homeSidekicksArchived;
@@ -7861,7 +7866,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     const report = this.invalidAppearanceReporter(request.workspaceId);
-    const canvases = canvasesAttachedTo(this.state.storage.sql, { userId: request.userId, actorRole: actorRole ?? null });
+    // The sidebar's rule: a member's own reach, without an owner's into every Canvas.
+    const canvases = canvasesAttachedTo(this.state.storage.sql,
+      { userId: request.userId, actorRole: request.accessClass === "guest" ? null : "member" }, admitted.map((row) => row.automation_id));
     return { items: admitted.map((row) => ({ ...automationSummary(row, report), attachedCanvases: canvases.get(row.automation_id) ?? [] })) };
   }
 
@@ -11337,12 +11344,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
-    // Only a member is sent this list. Their role is not read: an owner's
-    // reach into every Canvas is for managing one, not for listing it here.
-    const canvases = canvasesAttachedTo(this.state.storage.sql, { userId, actorRole: "member" });
     // The viewer's own Sidekicks, the Organization's, and those shared with
     // them, each with what they have not read in its shared conversation.
-    return this.state.storage.sql.exec<AutomationDirectoryRow & { shared_with_user_ids: string; unread: number; needs_input: number;
+    const rows = this.state.storage.sql.exec<AutomationDirectoryRow & { shared_with_user_ids: string; unread: number; needs_input: number;
       run_state: "working" | "needs_input" | null; pending_question: string | null; running: number; last_run_at: number | null;
       trigger_kinds: string | null; schedule_time_zone: string | null;
       pinned_position: number | null }>(
@@ -11365,7 +11369,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       userId,
       workspaceId,
       limit,
-    ).toArray().map((row) => ({ ...automationSummary(row, this.invalidAppearanceReporter(workspaceId)),
+    ).toArray();
+    // Only a member is sent this list. Their role is not read: an owner's
+    // reach into every Canvas is for managing one, not for listing it here.
+    const canvases = canvasesAttachedTo(this.state.storage.sql, { userId, actorRole: "member" }, rows.map((row) => row.automation_id));
+    return rows.map((row) => ({ ...automationSummary(row, this.invalidAppearanceReporter(workspaceId)),
       pinnedPosition: row.pinned_position, attachedCanvases: canvases.get(row.automation_id) ?? [] }));
   }
 

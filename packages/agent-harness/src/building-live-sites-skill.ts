@@ -35,6 +35,13 @@ run instructions:
 - **Publication path:** That directory relative to \`/workspace/.rally-output\`.
 - **Data format:** File names, record layout, and field names and types.
 
+When the site stores its own data (an \`index.js\` with \`SiteData\`), a
+recurring refresh changes rows and publishes nothing: save the resource ID, the
+tables and columns, and the statement each run sends with
+\`write_artifact_data\`. Runs can overlap, and a row write is safe when they
+do. The import, edit and publish steps below are for a site whose content is
+its files, and for changing a site's code.
+
 A Sidekick run publishes into a Canvas attached to the Sidekick. Save the
 instruction to publish each refresh into the saved Canvas by naming it in
 \`publish_resource\`'s \`canvas\` argument; without it, a run's first publish

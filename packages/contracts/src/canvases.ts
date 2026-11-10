@@ -205,15 +205,6 @@ export const WorkspaceCanvasListEventSchema = z.strictObject({
 export type WorkspaceCanvasListEvent = z.infer<typeof WorkspaceCanvasListEventSchema>;
 
 /**
- * `POST /canvases`: a new Canvas with no artifacts. `canvasId` is an id the
- * caller minted: a retried create that names it again answers the Canvas the
- * first made, for its creator only (`canvas_id_unavailable` otherwise, or when
- * another conversation has the id). Without one each create makes a Canvas.
- * `prompt` is the "Start from a prompt" card's first message, sent to its
- * Chat as the creator's; `clientMessageId` makes a retry into the same Canvas
- * send it once.
- */
-/**
  * `POST /canvases/:id/sidekicks`: make a Sidekick for a Canvas and tell its
  * wizard what it is for. The Sidekick is attached to the Canvas as it is made,
  * as one the Canvas's own Chat makes is, so its runs can update the Canvas and
@@ -239,6 +230,15 @@ export const AddedCanvasSidekickSchema = z.object({
 });
 export type AddedCanvasSidekick = z.infer<typeof AddedCanvasSidekickSchema>;
 
+/**
+ * `POST /canvases`: a new Canvas with no artifacts. `canvasId` is an id the
+ * caller minted: a retried create that names it again answers the Canvas the
+ * first made, for its creator only (`canvas_id_unavailable` otherwise, or when
+ * another conversation has the id). Without one each create makes a Canvas.
+ * `prompt` is the "Start from a prompt" card's first message, sent to its
+ * Chat as the creator's; `clientMessageId` makes a retry into the same Canvas
+ * send it once.
+ */
 export const CreateCanvasRequestSchema = z.strictObject({
   canvasId: CanvasIdSchema.optional(),
   title: z.string().trim().max(300).optional(),
