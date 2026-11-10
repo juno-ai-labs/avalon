@@ -100,6 +100,11 @@ const AGENT_PROSE: Record<string, ToolProse> = {
     settled: "Created a Sidekick",
     failed: "Could not create a Sidekick",
   },
+  archive_sidekick: {
+    started: "Archiving a Sidekick",
+    settled: "Archived a Sidekick",
+    failed: "Could not archive a Sidekick",
+  },
   start_agent: {
     started: "Delegating to a background agent",
     settled: "Delegated to a background agent",

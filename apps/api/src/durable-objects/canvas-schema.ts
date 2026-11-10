@@ -216,19 +216,19 @@ export const CANVAS_ARCHIVE_ARTIFACT_ALARM = "canvas_archive_artifact";
  * WorkspaceDO migration 144: a Sidekick's Canvas attachment is the one record
  * of which Canvases it works on.
  *
- *  * `automation_directory.home_canvas_id` names the Canvas whose Chat made a
- *    Sidekick; null for one made anywhere else. Its index serves the Canvas's
- *    read of the Sidekicks it made, which its archive walks.
- *  * The attachment index serves the Canvas-side read ("the Sidekicks
- *    attached to this Canvas"); the primary key leads with the Sidekick.
+ *  * `made_here` marks the attachment a Canvas's own Chat wrote when it made
+ *    the Sidekick. It is the whole of what ties such a Sidekick to its
+ *    Canvas: everyone the Canvas admits may change or archive it, and
+ *    archiving the Canvas archives it. Who may open the Sidekick is unchanged.
+ *  * The index serves the Canvas-side read ("the Sidekicks attached to this
+ *    Canvas"); the primary key leads with the Sidekick.
  *  * Every Canvas a run made is attached to its writer Sidekick, so the
  *    publish gate reads attachments alone. `writer_sidekick_id` keeps its
  *    other meaning: whose audience such a Canvas admits.
  */
 export const SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS: readonly string[] = [
-  `ALTER TABLE automation_directory ADD COLUMN home_canvas_id TEXT`,
-  `CREATE INDEX automation_directory_home_canvas_idx ON automation_directory(home_canvas_id)
-     WHERE home_canvas_id IS NOT NULL`,
+  `ALTER TABLE sidekick_conversation_attachments
+     ADD COLUMN made_here INTEGER NOT NULL DEFAULT 0 CHECK (made_here IN (0, 1))`,
   `CREATE INDEX sidekick_conversation_attachments_parent_idx
      ON sidekick_conversation_attachments(parent_kind, parent_id)`,
   `INSERT OR IGNORE INTO sidekick_conversation_attachments

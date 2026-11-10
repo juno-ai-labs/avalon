@@ -975,10 +975,13 @@ describe("a Canvas's artifacts", () => {
       workspaceId: WORKSPACE_ID, automationId: sidekickId,
       actor: { userId: CREATOR, actorRole: "member", participantOfOwningWorkstream: false } }));
     expect(sidekick.canvases).toMatchObject([{ id: canvasId }]);
-    // A Canvas another Sidekick never wrote cannot be named.
+    // A Canvas not attached to the Sidekick cannot be named; once its
+    // configuration conversation attaches it, a person's own Canvas can.
     const { canvasId: elsewhere } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     await expect(resolveTerminalPublicationHome(TEST_ENV, run, { canvas: elsewhere }))
-      .rejects.toMatchObject({ code: "canvas_not_written_by_sidekick" });
+      .rejects.toMatchObject({ code: "canvas_not_attached_to_sidekick" });
+    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: sidekickId, userId: CREATOR, reference: elsewhere });
+    expect(await resolveTerminalPublicationHome(TEST_ENV, run, { canvas: elsewhere })).toEqual({ parentId: elsewhere, substreamId: "0" });
   });
 
   it("still pushes a writer Sidekick's Canvas when an audience change rolled back once and then committed", async () => {

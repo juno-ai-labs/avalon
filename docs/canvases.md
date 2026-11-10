@@ -352,7 +352,9 @@ the addressing classifier (`classifyWorkstreamMessage`) decides whether a
 message is for Rally or for the people. The run has the resource tools
 (`list_resources`, `read_resource`, `view_resource`, the artifact data tools
 keyed by the Canvas id) and the Terminal's `publish_resource`, which publishes
-into the Canvas. It has no conversation tools; those serve a Sidekick
+into the Canvas. One of the data tools writes: `write_artifact_data` changes
+rows in a stateful site linked to the Canvas without republishing it
+([live web artifacts](live-web-artifacts.md#writing-rows-from-a-run)). It has no conversation tools; those serve a Sidekick
 ([`conversation-tools.md`](conversation-tools.md)).
 
 Rally is told about the Canvas in a host-provided message, `CANVAS CONTEXT`
