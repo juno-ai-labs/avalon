@@ -425,8 +425,8 @@ export const GOOGLE_MAIL_CALENDAR_CAPABILITIES = [
 export const ClientFeatureFlagsSchema = z.object({
   /** Whether Application → Developer may be offered on this device. */
   developerSettings: z.boolean().default(false),
-  /** Whether Electron offers workspace switching and plural workspace setup. */
-  multipleWorkspacesEnabled: z.boolean().default(false),
+  /** Whether desktop and web offer organization switching and plural setup. */
+  multipleWorkspacesEnabled: z.boolean().default(true),
   pushNotificationsEnabled: z.boolean().default(false),
 });
 
