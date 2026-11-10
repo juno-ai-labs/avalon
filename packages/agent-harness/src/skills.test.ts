@@ -185,6 +185,43 @@ describe("skills in a run", () => {
     expect(systemPrompt(bodies[1]!)).toContain("## In a Sidekick wizard: map the data, then plan");
   });
 
+  it("loads protected-dashboard guidance into the provider prompt", async () => {
+    // This checks the instructions delivered to the model, not whether a live
+    // model follows them. The provider double requests both real skill bodies.
+    const bodies: Array<Record<string, unknown>> = [];
+    const responses = [
+      toolCallResponse("load_skill", { name: "creating-an-app" }),
+      toolCallResponse("load_skill", { name: "building-live-sites" }),
+      textResponse("Done."),
+    ];
+    const fetcher: typeof fetch = async (_request, init) => {
+      bodies.push(providerRequestView(JSON.parse(String(init?.body))) as Record<string, unknown>);
+      return responses.shift()!;
+    };
+    await expect(runHarness({
+      ...runInput(fetcher),
+      skills: [...BUILT_IN_SKILLS],
+      plugins: [{
+        canonicalId: "rally:terminal",
+        modelId: "rally_terminal",
+        shortWireName: "terminal",
+        description: "Build and publish sites.",
+        preload: false,
+        explicit: false,
+        tools: [],
+      }],
+    })).resolves.toMatchObject({ status: "completed" });
+
+    const prompt = systemPrompt(bodies[2]!);
+    expect(prompt).toContain('<skill_content name="creating-an-app">');
+    expect(prompt).toContain('<skill_content name="building-live-sites"');
+    expect(prompt).toContain("signing into Rally alone does not grant access");
+    expect(prompt).toContain("Holding the link does not grant access.");
+    expect(prompt).toContain("or the site displays private connected data");
+    expect(prompt).toContain("the requested publication, data population and updates.");
+    expect(prompt).toContain("not an app collecting people's entries and needs no entry-privacy");
+  });
+
   it("offers seen-item tracking with Tables without requiring Sidekick authoring tools", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const responses = [
