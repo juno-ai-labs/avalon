@@ -26,6 +26,10 @@
     // a run that dies in plumbing and a run refused by the provider stay
     // distinguishable. The fetch fails either way.
     "OPENROUTER_API_KEY": "test-not-a-real-key",
+    // Explicitly disable inference until a test opts into a provider double.
+    "OPENROUTER_PRIMARY_MODEL": "",
+    "OPENROUTER_SMARTER_MODEL": "",
+    "OPENROUTER_FASTER_MODEL": "",
     // Not credentials either: they register the Google connector, so a test
     // can seed a Google connection and a run that loads it does not fail on an
     // unconfigured connector type. No live Google request is made;

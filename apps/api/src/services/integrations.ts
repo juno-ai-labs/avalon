@@ -1,3 +1,4 @@
+import { agentModelTraceFeature } from "@rally/contracts/runtime-config";
 import { emitCompletionRepromptTelemetry, type CompletionRepromptObservation } from "../telemetry/completion-verification";
 import { connectorAuthorizationStatus } from "@rally/contracts";
 import { readConnectorResourceAttachment } from "./connector-resource-attachments";
@@ -3934,7 +3935,7 @@ export async function runWorkstreamHarness(
       executionPrincipal: input.executionPrincipal,
       traceContext: {
         source: "workstream",
-        feature: `agent-model-${modelRole.replaceAll("_", "-")}`,
+        feature: agentModelTraceFeature(modelRole),
         workspaceId: input.workspaceId,
         workstreamId: input.parentId,
         substreamId: input.substreamId ?? "0",

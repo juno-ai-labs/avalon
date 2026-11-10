@@ -772,14 +772,14 @@ arrive when it says so.
 ## Letting a run reach the model
 
 **Decide deliberately whether your test lets a run get as far as inference, and
-say which you chose.** The workers suite has no provider double and
-`wrangler.test.jsonc` carries a placeholder `OPENROUTER_API_KEY`, so a run that
-reaches the model makes a real outbound request. That request cannot succeed
-here — and it does not fail quickly either. The harness spends an establishment
-timeout, then a transport retry, then each configured fallback model before it
-gives up, which is far longer than a test's budget. The run stays `executing`,
-and the test waiting on it times out on an assertion that has nothing to do with
-what broke.
+say which you chose.** `wrangler.test.jsonc` explicitly disables primary,
+smarter, and faster model groups with empty strings. A run without an explicit
+route fails with `agent_model_disabled:<variable>` before provider I/O. Tests
+that reach inference select a synthetic route and install the scripted provider
+double; the placeholder `OPENROUTER_API_KEY` alone must not arm real requests.
+Without that guard, an accidental call can spend establishment timeouts,
+transport retries, and fallback attempts before giving up, leaving an unrelated
+assertion waiting on an `executing` run.
 
 Successful Sidekick activation scripts can use `withSuccessfulSidekickOutcome`
 from `test-workers/helpers/openrouter-double.ts`; outcome-specific tests script

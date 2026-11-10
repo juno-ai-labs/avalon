@@ -96,6 +96,11 @@ try {
     input: `${aceRuntimeToken}\n`,
     stdio: ['pipe', 'inherit', 'inherit'],
   });
+  // The new binding is installed before removing the retired secret name.
+  const secrets = await cloudflare(`/workers/scripts/${encodeURIComponent(config.name)}/secrets`);
+  if (secrets.some((secret) => secret.name === 'CLOUDFLARE_FLAGSHIP_API_TOKEN')) {
+    await cloudflare(`/workers/scripts/${encodeURIComponent(config.name)}/secrets/CLOUDFLARE_FLAGSHIP_API_TOKEN`, { method: 'DELETE' });
+  }
   run('pnpm', ['exec', 'wrangler', 'secret', 'put', 'RALLY_OPERATOR_TOKEN', '--config', generatedConfig], {
     input: `${rallyOperatorToken}\n`,
     stdio: ['pipe', 'inherit', 'inherit'],

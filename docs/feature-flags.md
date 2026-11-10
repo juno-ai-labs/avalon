@@ -20,7 +20,7 @@ Cloudflare Flagship binding, targeting database lookup, or remote flag service.
 
 ### Client-visible flags
 
-The defaults preserve the checked-in provisioned settings:
+The checked-in product defaults are:
 
 | Constant field | Default | Optional environment variable |
 | --- | --- | --- |
@@ -28,8 +28,8 @@ The defaults preserve the checked-in provisioned settings:
 | `multipleWorkspacesEnabled` | false | `FEATURE_FLAG_MULTIPLE_WORKSPACES_ENABLED` |
 | `pushNotificationsEnabled` | true | `FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED` |
 
-Overrides accept `true`/`false` and `1`/`0`, ignoring surrounding whitespace and
-case. Unset or empty values use the constant. Values apply to every user in the
+Overrides accept native JSON booleans and numbers `1`/`0`, or their string forms,
+ignoring surrounding whitespace and case for strings. Unset or empty values use the constant. Values apply to every user in the
 deployment. Product authorization still lives in its ordinary access checks;
 presentation flags do not grant access to data or disable API authorization.
 
@@ -37,7 +37,9 @@ Desktop and browser clients keep their existing HTTP and workspace subscription
 contracts. A reconnect or subsequent HTTP read picks up deployed configuration.
 The old per-user targeting and key-only Queue fan-out are retired. The legacy
 `workspace_feature_flags` event remains parseable by clients during rolling
-deployments, but the new server does not publish it.
+deployments, but the new server does not publish it. Remove that event schema
+and desktop handler once all API versions that publish it have been retired;
+current clients already refresh through HTTP and subscription snapshots.
 
 ### Agent model routing
 
@@ -52,9 +54,13 @@ deployments, but the new server does not publish it.
 
 `OPENROUTER_FALLBACK_MODEL` overrides the default `google/gemini-3.8-flash`
 fallback. It is a comma-separated ordered list; an explicitly empty string
-selects no fallbacks. Unset variables use the checked-in defaults.
+selects no fallbacks. Unset variables use the checked-in defaults. An explicitly
+empty primary, smarter, or faster model disables that model group and fails
+before provider I/O (`agent_model_disabled:<variable>`). The workerd suite uses
+this to require an explicit provider double before reaching inference.
 
-For one role, set `AGENT_MODEL_ROUTING_JSON` to an object keyed by role. A
+For one role, set `AGENT_MODEL_ROUTING_JSON` to a native JSON object or a JSON
+string keyed by role. A
 role's value replaces its complete route, including ordered fallbacks and
 optional `reasoningEffort` (`low`, `medium`, or `high`):
 
@@ -63,7 +69,14 @@ AGENT_MODEL_ROUTING_JSON='{"canvas":{"model":"openai/gpt-5.6-terra","fallbackMod
 ```
 
 Omitting `fallbackModels` in a role override means no fallbacks. Roles omitted
-from the object continue to use their model group. A task's explicit reasoning
+from the object continue to use their model group. Azure-only GPT-5.6 Sol is
+rejected for direct OpenRouter roles (`resource_naming`, `memory_sweep`) in both
+primary and fallback slots. Direct Canvas structured calls enforce that same
+restriction at their gateway; ordinary Canvas/Sidekick harness calls can use
+Azure-only models. Unsupported routes fall back as a whole. Persisted routes
+that violate provider policy fail before I/O rather than silently changing models.
+Other model IDs remain free-form overrides; the pin catalog is not a provider
+availability whitelist. A task's explicit reasoning
 setting retains precedence over route-level reasoning. Fixed embedding models keep their existing semantic contracts.
 
 ### Other runtime models
@@ -76,7 +89,7 @@ pricing catalogs, pin choices, and per-model reasoning defaults. API and harness
 modules import these constants; older public imports re-export the same values.
 Sol has no forced reasoning default; a caller may still request an explicit effort.
 Dictation continues to select its deployment through
-`REALTIME_TRANSCRIPTION_MODEL_ENV_KEY` (`AZURE_OPENAI_REALTIME_DEPLOYMENT`).
+`AZURE_OPENAI_REALTIME_DEPLOYMENT`.
 
 Centralizing a value preserves its existing contract: a changed embedding model
 requires a reindex. These fixed paths do not inherit the ordinary agent JSON overrides.
@@ -146,7 +159,7 @@ identities, image/audio requests, transcription configuration, and pricing.
 Put optional overrides in `.env.local`, run `pnpm env:sync`, and restart the
 Worker. No override or Cloudflare account is needed to use the constants.
 Generated `.dev.vars.*` files do not retain superseded model defaults; explicit
-empty `OPENROUTER_FALLBACK_MODEL` values are preserved.
+empty model and fallback variables are preserved.
 
 ### Adding a flag
 
@@ -157,6 +170,9 @@ and add a behavioral test for its gate. A new agent role must be mapped in
 `AGENT_MODEL_ENV_KEYS`; no service provisioning or admin editor is required.
 
 ## Changelog
+
+Entries below the 2026-11-09 local-configuration change describe the retired
+Flagship design, including the earlier entries from that same date.
 
 ### 2026-11-09 — Resolve flags locally from constants and environment overrides
 
@@ -184,7 +200,13 @@ the API and harness use the same catalog without importing an application
 implementation into a library.
 
 **Considered and rejected:** Keeping remote evaluation as a fallback would retain
-the external dependency and two competing sources of configuration.
+the external dependency and two competing sources of configuration. Retaining
+staff or workspace targeting would require identity reads on the local flag path;
+the selected configuration deliberately applies to everyone in a deployment.
+Developer settings and multi-workspace controls therefore no longer have a staff
+cohort, and push delivery is controlled through a deployment variable rather than
+a live Ace kill switch. The model defaults are the requested new choices, not a
+snapshot of live Flagship variations.
 
 **What future changes must respect:** Preserve complete-route validation and pin
 precedence and embedding identities. User-specific

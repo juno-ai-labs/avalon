@@ -78,6 +78,43 @@ describe("structured inference telemetry lifecycle", () => {
     }
   });
 
+  it.each(["model", "fallback"] as const)("keeps Azure-only %s overrides out of the direct Canvas gateway", async (field) => {
+    const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      void url; void init;
+      return new Response(JSON.stringify({
+      choices: [{ message: { content: '{"accepted":true}' } }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const deferred: Promise<unknown>[] = [];
+    const result = await runStructuredInference(createTestEnv({
+      OPENROUTER_API_KEY: "test-key", LOG_LEVEL: "error",
+      AGENT_MODEL_ROUTING_JSON: { canvas: {
+        model: field === "model" ? "openai/gpt-5.6-sol" : "custom/primary",
+        fallbackModels: field === "fallback" ? ["openai/gpt-5.6-sol"] : [],
+      } },
+    }), {
+      role: "canvas", activity: "channel_naming", context: {},
+      messages: [{ role: "user", content: "Return the decision" }],
+      schemaName: "provider_policy_test", jsonSchema: { type: "object" },
+      parse: (value) => value, defer: (promise) => { deferred.push(promise); },
+    });
+    await Promise.all(deferred);
+    expect(result.model).toBe("openai/gpt-5.6-terra");
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)).model).toBe("openai/gpt-5.6-terra");
+  });
+
+  it("refuses a persisted Azure-only route before contacting OpenRouter", async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    await expect(runStructuredInference(createTestEnv({}), {
+      role: "resource_naming", activity: "channel_naming", context: {},
+      routing: { model: "custom/primary", fallbackModels: ["openai/gpt-5.6-sol"] },
+      messages: [], schemaName: "provider_policy_test", jsonSchema: {}, parse: (value) => value,
+    })).rejects.toMatchObject({ code: "agent_model_routing:routing:azure_only_model" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("meters the call as its declared activity with the provider-reported cost", async () => {
     const usageSend = vi.fn(async (body: unknown) => { void body; });
     const deferred: Promise<unknown>[] = [];

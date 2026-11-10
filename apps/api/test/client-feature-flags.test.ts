@@ -29,12 +29,24 @@ describe("local client feature flags", () => {
     await expect(resolvePushNotificationsEnabled(env, subject)).resolves.toBe(false);
   });
 
-  it.each(["false", "0", " FALSE "])("accepts explicit off overrides: %s", async (value) => {
+  it.each(["false", "0", " FALSE ", false, 0])("accepts explicit off overrides: %s", async (value) => {
     await expect(resolvePushNotificationsEnabled(createTestEnv({ FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED: value }), subject)).resolves.toBe(false);
   });
 
   it.each([undefined, "", "   "])("uses the default for an unset or empty override: %s", async (value) => {
     await expect(resolvePushNotificationsEnabled(createTestEnv({ FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED: value }), subject)).resolves.toBe(true);
+  });
+
+  it.each([true, 1])("accepts native on overrides: %s", async (value) => {
+    await expect(resolveClientFeatureFlags(createTestEnv({ FEATURE_FLAG_DEVELOPER_SETTINGS: value }), auth))
+      .resolves.toMatchObject({ developerSettings: true });
+  });
+
+  it.each([{}, [], 2])("defaults safely for unsupported typed overrides: %s", async (value) => {
+    const logged = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(resolvePushNotificationsEnabled(createTestEnv({ LOG_LEVEL: "warn", FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED: value }), subject))
+      .resolves.toBe(true);
+    expect(logged).toHaveBeenCalledWith(expect.objectContaining({ event: "feature_flag_override_invalid", variable: "FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED" }));
   });
 
   it("reports a malformed override by variable name and retains its default", async () => {
