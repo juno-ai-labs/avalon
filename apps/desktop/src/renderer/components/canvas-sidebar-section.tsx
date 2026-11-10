@@ -9,9 +9,10 @@ import { canvasNaming, canvasRoute, canvasRowDetail, othersPresent, RENAME_CANVA
 import { copyLink } from '../lib/copy-link';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
+import { useCanvasPinDrag } from './canvas-pin-drag';
 import { CanvasMark } from './canvas-mark';
 import { DropdownSelect, ErrorNotice, TitleSkeleton } from './primitives';
-import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, splitPinned, usePinWrite, useRowPinDrop, useSectionMotion } from './navigation-rows';
+import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, splitPinned, usePinWrite, useSectionMotion } from './navigation-rows';
 import { SidebarListDown, usePushedListsDown } from './pushed-list-pending';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
@@ -36,9 +37,8 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
   const down = usePushedListsDown() && rows === undefined;
   const { membersById, sidekicksById } = useCanvasNameSources(api);
   const { pinned, rest } = useMemo(() => splitPinned(rows ?? []), [rows]);
-  const pinnedIds = useMemo(() => new Set(pinned.map((row) => row.id)), [pinned]);
   const { error: pinError, setPinned } = usePinWrite(api ? (id, next) => api.setCanvasPinned(id, next) : undefined, 'Canvas');
-  const { drop, sourceProps, targetProps } = useRowPinDrop(pinnedIds, (id) => setPinned(id, true));
+  const { error: orderError, over, sourceProps, targetProps } = useCanvasPinDrag();
   useSectionMotion(scroll, undefined);
   const [order, setOrder] = useState<CanvasOrder>('recent');
   const sorted = useMemo(() => order === 'name' ? [...rest].sort((a, b) => a.title.localeCompare(b.title)) : rest, [order, rest]);
@@ -51,9 +51,9 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
     const live = othersPresent(canvas, currentUserId).length > 0;
     return <PinnableRow
       active={canvas.id === open}
-      className="navigation-canvas-row"
+      className={`navigation-canvas-row${over === canvas.id ? ' pin-drop-before' : ''}`}
       detail={<>{live && <span aria-label="People are here" className="navigation-row-live-dot" role="img" />}{canvasRowDetail(canvas, membersById, sidekicksById, currentUserId)}</>}
-      drag={position === undefined ? sourceProps(canvas.id) : {}}
+      drag={{ ...sourceProps(canvas.id), ...(position !== undefined ? targetProps(canvas.id) : {}) }}
       key={canvas.id}
       motionKey={`canvas:${canvas.id}`}
       onPin={(next) => { void setPinned(canvas.id, next).catch(() => undefined); }}
@@ -84,16 +84,17 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
     />;
   };
   return <>
+    {orderError && <ErrorNotice occurrence={orderError}>Canvas pins could not be updated. Try again.</ErrorNotice>}
     {pinError && <ErrorNotice occurrence={pinError}>The Canvas could not be pinned. Try again.</ErrorNotice>}
     {linkError && <ErrorNotice occurrence={linkError}>The link couldn’t be copied.</ErrorNotice>}
     <PinnedSection
       count={pinned.length}
-      drop={drop}
+      drop={over ? { index: null } : null}
       label="Pinned Canvases"
       loading={rows === undefined && !down}
       noun="Canvas"
-      reorderable={false}
-      target={targetProps}
+      reorderable={pinned.length > 1}
+      target={{ ...targetProps(), className: `navigation-section${over === 'end' ? ' pin-drop-end' : ''}` }}
     >
       {pinned.map((canvas, index) => row(canvas, pinnedPosition(index, pinned.length)))}
     </PinnedSection>

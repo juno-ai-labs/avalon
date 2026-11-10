@@ -98,7 +98,8 @@ describe('CanvasesSection', () => {
     renderSection([canvas('00000000-0000-7000-8000-0000000000c1', 'Acme follow-up')]);
     const row = screen.getByRole('link', { name: /Acme follow-up/ });
     const target = screen.getByRole('region', { name: 'Pinned Canvases' });
-    const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };
+    const payload = new Map<string, string>();
+    const dataTransfer = { types: ['application/x-rally-canvas'], setData: (type: string, value: string) => payload.set(type, value), getData: (type: string) => payload.get(type), effectAllowed: '', dropEffect: '' };
     fireEvent.dragStart(row, { dataTransfer });
     const over = createEvent.dragOver(target, { dataTransfer });
     fireEvent(target, over);
