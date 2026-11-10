@@ -46,6 +46,28 @@ use the `publishing` skill: publish it, do not paste it into a message.
 - `decide_canvas_access_request` approves or denies a waiting request, listed
   in `get_canvas` as `pendingAccessRequests`.
 
+## Keeping a Canvas up to date
+
+A Sidekick is an agent Rally runs for the person, on a schedule or when
+something happens (a new email, a pull request opened, closed or merged), with
+the person's connected accounts. Give a Canvas one when the person wants it
+kept current without asking each time.
+
+- `add_canvas_sidekick` makes one for an existing Canvas; `create_canvas` with
+  `sidekick` makes one with a new Canvas. Use a fresh UUID as its
+  `operationId`, never the Canvas's.
+- Write `instructions` as you would brief a colleague: what starts a run,
+  which artifact it updates (by the title or `resourceId` from `get_canvas`)
+  and how, and what it leaves alone.
+- The call makes the Sidekick and hands your instructions to Rally's setup
+  agent. It is a **draft** until that agent saves it, and the agent may ask
+  the person a question in Rally. Check `sidekicks` in `get_canvas`; say
+  "active" only when the status says so.
+- Tell the person it runs as them, with their connected accounts, and that
+  everyone in the Canvas can change or stop it.
+- To change or stop one, ask in the Canvas's Chat with `send_canvas_message`.
+  Archiving the Canvas in Rally stops the Sidekicks made for it.
+
 ## Upkeep
 
 - `update_canvas` retitles a Canvas or sets its icon and colour.
