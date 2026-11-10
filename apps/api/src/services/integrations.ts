@@ -5038,17 +5038,21 @@ export async function runWorkstreamHarness(
     ? finalTurnId
     : null;
   const acceptedFinalText = acceptedFinalTurnId ? streamedText : "";
+  const taskOutcome = reportsSidekickTaskOutcome(input) && outcome.status === "completed"
+    ? sidekickTaskOutcomeFromReceipts(await createToolReceiptObjectPort(
+      env, input.workspaceId, input.parentId, undefined, conversationSubstreamId,
+    ).receiptsForRun({ runId: input.harnessRunId, capabilities: [SIDEKICK_TASK_OUTCOME_CAPABILITY] }))
+    : undefined;
   const terminalResult = workstreamHarnessTerminalResult({
     outcome,
     streamedText: acceptedFinalText,
     finalTurnId: acceptedFinalTurnId,
     ambiguousToolOutcome,
     stoppedByUser,
-    ...(reportsSidekickTaskOutcome(input) && outcome.status === "completed" ? {
-      sidekickTaskOutcome: sidekickTaskOutcomeFromReceipts(await createToolReceiptObjectPort(
-        env, input.workspaceId, input.parentId, undefined, conversationSubstreamId,
-      ).receiptsForRun({ runId: input.harnessRunId, capabilities: [SIDEKICK_TASK_OUTCOME_CAPABILITY] })),
-    } : {}),
+    // A conversational follow-up is not a fresh activation. Its own explicit
+    // report still applies, but an ordinary reply owes no new task declaration.
+    ...(taskOutcome === undefined || (input.automationContinuation && taskOutcome === null)
+      ? {} : { sidekickTaskOutcome: taskOutcome }),
   });
   await persistHarnessHostOutcome(
     runs,
@@ -5242,8 +5246,7 @@ async function loadRunPromptContext(
       instructions: definition.definition.instructions,
       expectedOutputs: definition.definition.expectedOutputs,
       homeConversationId,
-      failureNotificationConversationId: definition.definition.failureNotificationConversationId === undefined
-        ? homeConversationId : definition.definition.failureNotificationConversationId,
+      failureNotificationConversationId: definition.definition.failureNotificationConversationId ?? null,
       defaultBehavior: definition.definition.defaultBehavior,
       overrides: {},
       // What lives in the automation's memory scope: the tables its

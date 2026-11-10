@@ -65,11 +65,7 @@ run child woken without its `automationRun`. The plugin is `preload: true` and
 `explicit: true`, and loading it reads nothing: the first tool call is the
 first read.
 
-A Sidekick's configured `failureNotificationConversationId` is validated using
-this same scope and canonical admission when its definition is applied. It
-selects a conversation already in scope, never creates one. The configuration
-conversation must attach a new destination first; putting an id in saved prose
-is not authorization. See [Sidekick destinations and outcomes](automation-lifecycle.md#attached-conversations).
+Configured failure destinations use this same admission; see [Sidekick destinations and outcomes](automation-lifecycle.md#attached-conversations).
 
 ### Tools
 

@@ -514,13 +514,22 @@ generation in `starting` before restoring it. An explicitly unrecoverable
 sandbox is deleted and replaced through the existing generation transition;
 a recoverable one is restored in place. Missing recovery metadata preserves
 its identity. Preparation and policy readback still precede `running`, including
-when an interrupted acquisition resumes by the persisted ID. If provisioning
+when an interrupted acquisition resumes by the persisted ID. Network-policy
+updates preserve `starting`, including across interruption after the policy
+commit, so the retry must still finish managed preparation. If provisioning
 the replacement itself returns an explicitly lost sandbox, Rally retains that
 new binding and reports a provider/snapshot repair action instead of recursively
-provisioning more generations in the same acquisition. Failed verification
-clears the reserved provider ID only after confirmed deletion. An unconfirmed
-removal keeps the preparation stage, so a retry cannot reuse an unverified
-sandbox or become stuck looking up an ID Rally already deleted.
+provisioning more generations in the same acquisition. The same rule applies
+when start or recovery reveals that the replacement is lost.
+
+Before deleting an unverified sandbox or a generation being replaced, Rally
+records a generation-fenced cleanup intent in `failure_code`. Acquisition
+reconciles that intent before the ordinary unexpected-metadata-404 guard. It
+clears an unverified binding, or advances a replacement generation and its
+provenance, only after deletion or a provider 404 confirms removal. Ambiguous
+deletion and interruption between the provider delete and the local commit
+therefore retry cleanup instead of reusing an unverified sandbox or becoming
+stuck behind an ID Rally already deleted.
 
 **How long a restore may take is the acquisition budget's to say.** Starting an
 archived sandbox restores its filesystem, and the Daytona call that asks for
@@ -1435,6 +1444,9 @@ update lag before changing the default.
 **What changed:** A sandbox found after an ambiguous create is durably bound
 before entering the same restore/replacement handler as a recorded sandbox.
 Only preparation and policy verification publish the generation as running.
+Policy updates retain unfinished preparation, replacement recovery cannot
+recursively create generations, and a durable cleanup intent bridges provider
+deletion and the generation-fenced binding commit.
 
 **Why:** Dashboard run 457 repeatedly received a creation conflict for an
 existing unrecoverable sandbox. The name-lookup branch returned retry guidance

@@ -262,6 +262,80 @@ describe("Terminal sandbox coordinator", () => {
       .toEqual({ sandbox_id: "replacement-sandbox", generation: 2 });
   });
 
+  it.each(["stopped", "archived", "failed"] as const)("retains a replacement that becomes unrecoverable while restoring from %s", async (state) => {
+    const { env, objectStore, provider, clock } = fixture();
+    vi.mocked(provider.createSandbox).mockRejectedValueOnce(new Error("create conflict"))
+      .mockResolvedValueOnce({ id: "replacement", name: "stable", state, recoverable: true, domainAllowList: [] })
+      .mockImplementation(async (input) => ({ id: "unexpected-third-sandbox", name: input.stableName,
+        state: "running", domainAllowList: input.domainAllowList }));
+    vi.mocked(provider.getSandbox).mockResolvedValueOnce({ id: "original", name: "stable",
+      state: "failed", recoverable: false, domainAllowList: [] })
+      .mockResolvedValue({ id: "replacement", name: "stable", state: "failed", recoverable: false, domainAllowList: [] });
+    vi.mocked(provider.startSandbox).mockRejectedValue(new Error("start failed"));
+    vi.mocked(provider.recoverSandbox).mockRejectedValue(new Error("recovery failed"));
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable",
+      details: { reason: "Repair the managed snapshot or provider before retrying." } });
+    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
+    expect(workstreamObjectGet(objectStore, "SELECT sandbox_id, generation FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ sandbox_id: "replacement", generation: 2 });
+  });
+
+  it("keeps unfinished preparation through an interrupted network-policy update", async () => {
+    const { env, objectStore, provider, clock } = fixture();
+    objectStore.exec(`CREATE TRIGGER interrupt_running_commit BEFORE UPDATE ON terminal_workspace
+      WHEN NEW.lifecycle_state = 'running' BEGIN SELECT RAISE(ABORT, 'interrupted preparation'); END`);
+    provider.prepareSandbox = vi.fn<NonNullable<TerminalSandboxProvider["prepareSandbox"]>>(
+      async (id, domains) => ({ id, name: "stable", state: "running", domainAllowList: domains }));
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await expect(coordinator.acquire(context())).rejects.toThrow("interrupted preparation");
+    objectStore.exec("DROP TRIGGER interrupt_running_commit; UPDATE terminal_workspace SET applied_network_revision = 0 WHERE id = 1");
+    observeProviderState(provider, "sandbox-1", "running");
+    const snapshot = { id: "sandbox-1", name: "stable", state: "running" as const,
+      domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains };
+    vi.mocked(provider.getSandbox).mockResolvedValueOnce(snapshot).mockResolvedValueOnce(snapshot)
+      .mockRejectedValueOnce(new Error("interrupted after policy commit"));
+    await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
+    expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, applied_network_revision FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ lifecycle_state: "starting", applied_network_revision: 1 });
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ state: "running" });
+    expect(provider.prepareSandbox).toHaveBeenCalledTimes(2);
+  });
+
+  it("resumes cleanup after deletion commits but clearing its binding is interrupted", async () => {
+    const { env, objectStore, provider, clock } = fixture();
+    provider.prepareSandbox = vi.fn<NonNullable<TerminalSandboxProvider["prepareSandbox"]>>()
+      .mockRejectedValueOnce(new Error("preparation failed"))
+      .mockImplementation(async (id, domains) => ({ id, name: "stable", state: "running", domainAllowList: domains }));
+    objectStore.exec(`CREATE TRIGGER interrupt_cleanup BEFORE UPDATE ON terminal_workspace
+      WHEN NEW.sandbox_id IS NULL AND OLD.sandbox_id IS NOT NULL
+      BEGIN SELECT RAISE(ABORT, 'interrupted cleanup commit'); END`);
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await expect(coordinator.acquire(context())).rejects.toThrow("interrupted cleanup commit");
+    expect(workstreamObjectGet(objectStore, "SELECT failure_code, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ failure_code: "provider_initialize_failed_cleanup_pending", sandbox_id: "sandbox-1" });
+    objectStore.exec("DROP TRIGGER interrupt_cleanup");
+    vi.mocked(provider.getSandbox).mockRejectedValue(Object.assign(new Error("deleted"), { status: 404 }));
+    vi.mocked(provider.deleteSandbox).mockRejectedValue(Object.assign(new Error("already deleted"), { status: 404 }));
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ state: "running" });
+    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
+  });
+
+  it("resumes replacement after deletion commits but advancing its generation is interrupted", async () => {
+    const { env, objectStore, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    vi.mocked(provider.getSandbox).mockResolvedValue({ id: "sandbox-1", name: "stable",
+      state: "failed", recoverable: false, domainAllowList: [] });
+    objectStore.exec(`CREATE TRIGGER interrupt_replacement BEFORE UPDATE ON terminal_workspace
+      WHEN NEW.generation > OLD.generation BEGIN SELECT RAISE(ABORT, 'interrupted replacement commit'); END`);
+    await expect(coordinator.acquire(context())).rejects.toThrow("interrupted replacement commit");
+    objectStore.exec("DROP TRIGGER interrupt_replacement");
+    vi.mocked(provider.getSandbox).mockRejectedValue(Object.assign(new Error("deleted"), { status: 404 }));
+    vi.mocked(provider.deleteSandbox).mockRejectedValue(Object.assign(new Error("already deleted"), { status: 404 }));
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-2", generation: 2 });
+  });
+
   it("retains a reconciled identity when unrecoverable sandbox deletion is unconfirmed", async () => {
     const { env, objectStore, provider, clock } = fixture();
     vi.mocked(provider.createSandbox).mockRejectedValueOnce(new Error("DaytonaConflictError:409"));
@@ -289,10 +363,13 @@ describe("Terminal sandbox coordinator", () => {
     const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
     expect(workstreamObjectGet(objectStore, "SELECT sandbox_id, lifecycle_state FROM terminal_workspace WHERE id = 1"))
-      .toEqual({ sandbox_id: deleted ? null : "sandbox-1", lifecycle_state: deleted ? "failed" : "starting" });
+      .toEqual({ sandbox_id: deleted ? null : "sandbox-1", lifecycle_state: "failed" });
+    // An ambiguous deletion may finish after its failed readback. The next
+    // attempt must reconcile cleanup before the normal unexpected-404 guard.
+    if (!deleted) vi.mocked(provider.getSandbox).mockRejectedValue(Object.assign(new Error("deleted later"), { status: 404 }));
     await expect(coordinator.acquire(context())).resolves.toMatchObject({ state: "running" });
     expect(provider.prepareSandbox).toHaveBeenCalledTimes(2);
-    expect(provider.createSandbox).toHaveBeenCalledTimes(deleted ? 2 : 1);
+    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
   });
 
   it("fails closed when a new sandbox does not report the requested trusted policy", async () => {

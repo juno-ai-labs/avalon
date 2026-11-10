@@ -204,6 +204,29 @@ beforeEach(async () => {
 });
 
 describe("configured failure destinations", () => {
+  it("validates the default execution principal even when an administrator applies the definition", async () => {
+    const destinationId = asWorkstreamId(crypto.randomUUID());
+    await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: COLLEAGUE_ID,
+      canvasId: destinationId, title: "Administrator's private notices" });
+    await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: false, relationship: {
+      workspaceId: WORKSPACE_ID, userId: COLLEAGUE_ID, accessClass: "member", role: "admin", status: "active",
+      incarnation: "existing-member", revision: 2,
+    } });
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
+      scope: "workspace", automationId: AUTOMATION_ID });
+    const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
+    const actor = { userId: COLLEAGUE_ID, actorRole: "admin" as const, participantOfOwningWorkstream: false };
+    expect(await workspace().attachSidekickConversation({ ...addressed, userId: COLLEAGUE_ID, reference: destinationId }))
+      .toMatchObject({ ok: true });
+    await workspace().sidekickSubmitDefinition({ ...addressed,
+      draft: { ...DEFINITION, failureNotificationConversationId: destinationId }, evaluatorRules: null, submittedByRunId: null });
+    await expect(applySidekick(TEST_ENV, { ...addressed, actor })).rejects.toThrow("failureNotificationConversationId");
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: destinationId,
+      actor: { userId: actor.userId, actorRole: actor.actorRole },
+      update: { visibility: "participants", userIds: [AUTHOR_ID] } });
+    expect(await applySidekick(TEST_ENV, { ...addressed, actor })).toMatchObject({ lifecycle: "active" });
+  });
+
   it("requires an authorized attachment for an Organization Sidekick's configured failure destination", async () => {
     const destinationId = asWorkstreamId(crypto.randomUUID());
     await seedRoom(destinationId, "Dashboard notices");

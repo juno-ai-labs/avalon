@@ -771,14 +771,6 @@ arrive when it says so.
 
 ## Letting a run reach the model
 
-Successful Sidekick scripts use `withSuccessfulSidekickOutcome` from
-`test-workers/helpers/openrouter-double.ts` around their provider handler. It
-calls the offered `sidekick_report_outcome` tool before returning the scripted
-final reply; the receipt and terminal state remain production behavior. It
-retains that final across the extra tool turn so it cannot consume a later
-continuation's scripted answer. Tests of blocked, failed or missing outcomes
-script those explicitly instead of using this successful-completion adapter.
-
 **Decide deliberately whether your test lets a run get as far as inference, and
 say which you chose.** The workers suite has no provider double and
 `wrangler.test.jsonc` carries a placeholder `OPENROUTER_API_KEY`, so a run that
@@ -788,6 +780,10 @@ timeout, then a transport retry, then each configured fallback model before it
 gives up, which is far longer than a test's budget. The run stays `executing`,
 and the test waiting on it times out on an assertion that has nothing to do with
 what broke.
+
+Successful Sidekick activation scripts can use `withSuccessfulSidekickOutcome`
+from `test-workers/helpers/openrouter-double.ts`; outcome-specific tests script
+the declaration themselves.
 
 That failure is worse than it sounds, because the passing case is not
 necessarily better. A notification suite, since deleted in plan step C-2, used to start an opening
