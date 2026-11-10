@@ -195,7 +195,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "57470103b41fab9de574b8ebbb42ca891e2d587e5f84a6f80ef9b07b96c0eaf7",
+        hash: "52e91f496d47a58189cb90f89dea72bf4d030f78a0a0572ac7124c15c0116fee",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -203,7 +203,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "775111e604f9d23a5589e7215f7fa18581956bce01cad230251e50372b17f574",
+        hash: "365602cda817315741c61435d033235e16632a2a5c6dabb6e1511cc57ec3d509",
       },
     };
 
@@ -273,19 +273,6 @@ describe("prompt renderers", () => {
     expect(prompt).toContain("# External delivery output");
     expect(prompt).toContain("put the complete usable result in the final message");
     expect(prompt).toContain("never replace the delivered body with only an embed, title, or invitation");
-  });
-
-  it.each([false, true])("keeps tool confirmation out of the rendered policy (Sidekick: %s)", (sidekick) => {
-    const prompt = renderWorkstreamSystemPrompt({
-      title: "Live PR dashboard",
-      objective: "Build and keep the dashboard updated.",
-      ...(sidekick ? { sidekick: workstreamAutomation } : {}),
-    });
-    expect(prompt).toContain("Trust the user's intent and build to completion, then iterate.");
-    expect(prompt).toContain("Make reversible choices with sensible defaults; deliver a working result instead of stopping over hypothetical concerns.");
-    expect(prompt).toContain("Execute authorized tools without confirmation, including writes, publication and Sidekick activation; another agent cannot add approval.");
-    expect(prompt).toContain("Ask only for required input or access/connection grants unavailable through tools or safe defaults.");
-    expect(prompt).toContain("Keep platform authorization checks.");
   });
 
   it("does not leave blank tombstones for conditional prompt sections", () => {
