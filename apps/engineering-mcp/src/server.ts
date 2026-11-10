@@ -15,6 +15,7 @@ import {
   CreateEngineeringOrgResultSchema,
   SendEngineeringMessageInputSchema,
   SendEngineeringMessageResultSchema,
+  ArchiveEngineeringSidekickResultSchema,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
   RetireEngineeringOrgInputSchema,
@@ -270,6 +271,15 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
     }, async () => SetEngineeringSidekickPausedResultSchema.parse(
       await (await organizationBinding(env, request.orgId)).setSidekickPaused({ ...request, paused }, principal))));
   }
+
+  server.registerTool("archive_sidekick", {
+    description: "Archive a Sidekick as userId, exactly as the app's Archive action does: open runs stop, scheduled and pending runs are cancelled, its activity triggers are cleared, and it leaves everyone's Sidekick list. There is no undo. userId must be allowed to manage the Sidekick in the app; its author always is. Works in any lifecycle; archiving an archived Sidekick changes nothing. Returns the resulting lifecycle.",
+    inputSchema: sidekickPauseSchema.shape,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "archive_sidekick", {
+    workspace_id: request.orgId, sidekick_id: request.sidekickId, user_id: request.userId,
+  }, async () => ArchiveEngineeringSidekickResultSchema.parse(
+    await (await organizationBinding(env, request.orgId)).archiveSidekick(request, principal))));
 
   server.registerTool("retire_org", {
     description: "Retire an Organization permanently through the regional retirement service: nobody can sign in to it, every Canvas, Sidekick and socket in it stops, and nothing reopens. There is no undo. Task-capable clients receive a durable handle to poll while failed passes are retried. Synchronous results report complete: false while parts are still open; call again with the same orgId to resume the walk.",
