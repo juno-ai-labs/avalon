@@ -94,14 +94,14 @@ describe("local agent model configuration", () => {
 
   it.each([
     ["canvas", "openai/gpt-5.6-terra"], ["memory_sweep", "openai/gpt-6.1-sol"],
-    ["sidekick_wizard", "openai/gpt-6.1-sol"], ["sidekick_run", "openai/gpt-5.6-terra"], ["canvas_naming", "openai/gpt-5.6-terra"],
+    ["sidekick_wizard", "openai/gpt-6.1-sol"], ["sidekick_run", "openai/gpt-5.6-terra"], ["resource_naming", "openai/gpt-5.6-terra"],
   ] as const)("uses the checked-in default for %s without environment setup", async (role, model) => {
     await expect(resolveAgentModelRouting(createTestEnv({}), role)).resolves.toEqual({ model, fallbackModels: ["google/gemini-3.8-flash"] });
   });
 
   it("supports the shared model environment variables and ordered fallbacks", () => {
     expect(defaultAgentModelRouting(baseEnv, "canvas")).toEqual({ model: "x-ai/grok-4.3", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] });
-    expect(defaultAgentModelRouting({ ...baseEnv, OPENROUTER_FALLBACK_MODEL: "" }, "canvas_naming")).toEqual({ model: "google/gemini-2.5-flash-lite", fallbackModels: [] });
+    expect(defaultAgentModelRouting({ ...baseEnv, OPENROUTER_FALLBACK_MODEL: "" }, "resource_naming")).toEqual({ model: "google/gemini-2.5-flash-lite", fallbackModels: [] });
   });
 
   it("overrides primary and smarter models independently", async () => {

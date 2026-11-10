@@ -48,7 +48,7 @@ deployments, but the new server does not publish it.
 | --- | --- | --- |
 | `canvas`, `sidekick_run` | `openai/gpt-5.6-terra` | `OPENROUTER_PRIMARY_MODEL` |
 | `sidekick_wizard`, `memory_sweep` | `openai/gpt-6.1-sol` | `OPENROUTER_SMARTER_MODEL` |
-| `canvas_naming` | `openai/gpt-5.6-terra` | `OPENROUTER_FASTER_MODEL` |
+| `resource_naming` | `openai/gpt-5.6-terra` | `OPENROUTER_FASTER_MODEL` |
 
 `OPENROUTER_FALLBACK_MODEL` overrides the default `google/gemini-3.8-flash`
 fallback. It is a comma-separated ordered list; an explicitly empty string
@@ -174,9 +174,9 @@ defaults to `openai/gpt-5.6-terra`; explicit deployment and
 per-role overrides retain precedence. The unused structured-model constant was
 removed with its retired roles. The unused `inline_child` model role and its
 logging-source type were also removed because no production caller selects it.
-The conversation roles are named `canvas` and `canvas_naming`; memory sweeps
+The conversation roles are named `canvas` and `resource_naming`; memory sweeps
 share the smarter Sol model with the wizard. Existing JSON overrides must
-rename `workstream` and `workstream_naming` to the new role keys.
+rename `workstream` to `canvas` and `workstream_naming` to `resource_naming`.
 
 **Why:** Feature configuration should be straightforward to review and run locally,
 without depending on Cloudflare's feature flag service. Shared placement lets

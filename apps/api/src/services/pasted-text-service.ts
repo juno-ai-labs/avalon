@@ -134,7 +134,7 @@ export async function preparePastedTextWithClient(
 export async function preparePastedText(env: Env, request: PastedTextRequest): Promise<File> {
   return preparePastedTextWithClient(env, env.OPENROUTER_API_KEY
     ? async (messages) => (await runStructuredInference(env, {
-      role: "canvas_naming",
+      role: "resource_naming",
       activity: "attachment_naming",
       context: {
         workspaceId: request.workspaceId,

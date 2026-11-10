@@ -797,8 +797,8 @@ describe("agent harness", () => {
       primaryModel: "test/model",
       fetch: receiverAwareFetch,
       traceContext: {
-        source: "canvas_naming",
-        feature: "agent-model-canvas-naming",
+        source: "resource_naming",
+        feature: "agent-model-resource-naming",
         workspaceId: "workspace-1",
         workstreamId: "workstream-1",
         substreamId: "substream-1",
@@ -842,10 +842,10 @@ describe("agent harness", () => {
       session_id: "workstream-1-substream-1",
       trace: {
         trace_id: "request-1",
-        trace_name: "rally.canvas_naming",
+        trace_name: "rally.resource_naming",
         span_name: "rally.structured.host_fetch",
         generation_name: "host_fetch",
-        feature: "agent-model-canvas-naming",
+        feature: "agent-model-resource-naming",
         product: "rally",
         invocation_type: "structured",
         provider: "openrouter",
@@ -980,8 +980,8 @@ describe("agent harness", () => {
       sameModelRetries: 0,
       fetch: fetcher,
       traceContext: {
-        source: "canvas_naming",
-        feature: "agent-model-canvas-naming",
+        source: "resource_naming",
+        feature: "agent-model-resource-naming",
         workspaceId: "workspace-1",
       },
     });

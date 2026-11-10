@@ -425,7 +425,7 @@ hash, the opening message as its user-role message: two to four words, thirty
 characters or less, sentence case and never every word capitalized, the rules
 the Thread naming prompt measured. The Thread naming pass is
 deleted ([its retirement record](canvases.md#retired-documents) is in `canvases.md`). The
-`canvas_naming` model role serves that call and one other, the title a
+`resource_naming` model role serves that call and one other, the title a
 long pasted text is given (`pasted-text-service.ts`).
 
 ### Activation, admission, and immutable run scope
