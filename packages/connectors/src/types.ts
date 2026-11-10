@@ -746,6 +746,19 @@ export interface ConnectorAdapter {
   resourceRegistrationCapability?: string;
   /** Whether a configured source has the same provider ID across connections. */
   isPortableActivityResource?(activity: Pick<NormalizedActivity, "provider" | "resourceType" | "providerResourceId">): boolean;
+  /**
+   * The content one activity is about, read with the connection the activity
+   * came from: for new mail, that one message and nothing else in the mailbox.
+   * The host calls this for an event that was let into a Sidekick, so the run
+   * is handed what its event is about without holding the account's tools.
+   * Null when the activity has no content beyond what its event carries, or
+   * the content is gone.
+   */
+  readActivityContent?(
+    connection: AuthorizedConnectorConnection,
+    activity: { eventType: string; subject: Record<string, unknown> },
+    signal: AbortSignal,
+  ): Promise<{ text: string; truncated: boolean } | null>;
   probeResourceAccess?(
     connection: AuthorizedConnectorConnection,
     reference: string,

@@ -213,9 +213,14 @@ export function NavigationSidebar({
     if (address !== '/sidekicks') void navigate('/sidekicks');
   };
   const workspaceSocket = useOptionalWorkspaceSocket();
+  const sidekickRows = useSidekickList();
   const openActivityDestination = useCallback((list: ActivityList, replace: boolean): void => {
     const top = list.items[0];
-    const target = top ? activityRoute(top) : '/activity';
+    // A source request about a Sidekick this person cannot open yet has no
+    // conversation to land in; it leads to the Activity home (`activityRoute`).
+    const target = top
+      ? activityRoute(top, top.parentKind !== 'automation' || (sidekickRows ?? []).some((row) => row.id === top.parentId))
+      : '/activity';
     if (target === address) {
       // A rail pick can reveal the empty page without a route change.
       if (!top && !replace) setSidebarOpen(false);
@@ -224,7 +229,7 @@ export function NavigationSidebar({
     const { sidebarOpen: sheetOpen, setSheetAfterNavigation } = useUiStore.getState();
     if (sheetOpen && top && target.split('?')[0] !== pathname) setSheetAfterNavigation(true);
     void navigate(target, { replace });
-  }, [address, navigate, pathname, setSidebarOpen]);
+  }, [address, navigate, pathname, setSidebarOpen, sidekickRows]);
   // A rail click opens the top row or the empty page, with one Back step.
   // A launch may replace a dashboard or the Activity home restored from
   // storage. Opening /activity directly or through history selects the list.

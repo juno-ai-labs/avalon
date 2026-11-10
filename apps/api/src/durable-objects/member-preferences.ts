@@ -84,6 +84,12 @@ export const NOTIFICATION_KIND_FOR_PUSH: Partial<Record<PushNotificationData["ki
   access_granted: "added",
   // Being declined is the answer to your own access request.
   access_denied: "accessRequests",
+  // Being asked to let your events start a Sidekick is a request you decide,
+  // and its answer is the answer to a request you made: the same choice a
+  // Canvas's access request and its denial read (docs/sidekick-sources.md).
+  source_request: "accessRequests",
+  source_approved: "accessRequests",
+  source_declined: "accessRequests",
 };
 
 /** `changes` over `base`, switch by switch; a switch `changes` does not name keeps its value. */

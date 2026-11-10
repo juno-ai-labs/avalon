@@ -7147,8 +7147,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidebar-collapse-footer-toggle { display: flex; }
 .sidebar-drag-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--av-sys-color-text-muted); opacity: .25; pointer-events: none; z-index: 100; }
 
-.sidekick-delegation { margin-top: 0; }
-.sidekick-delegation h2 { font-size: 14px; margin: 0 0 10px; }
+:is(.sidekick-delegation, .sidekick-sources) { margin-top: 0; }
+:is(.sidekick-delegation, .sidekick-sources) h2 { font-size: 14px; margin: 0 0 10px; }
 .sidekick-delegation-disclosure { color: var(--av-sys-color-text-muted); font-size: 12px; line-height: 1.5; }
 .sidekick-delegation-disclosure p { margin: 0 0 10px; }
 .sidekick-delegates { list-style: none; margin: 16px 0; padding: 0; display: grid; gap: 14px; }
@@ -7158,6 +7158,43 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-delegate-copy > span { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 .sidekick-delegate-copy small { font-size: 11px; color: var(--av-sys-color-text-muted); }
 .sidekick-delegation > button { margin: 4px 0; max-width: 100%; white-space: normal; text-align: left; }
+/* Sources sit beside delegation in the same list shape: a person, what
+   their account lets in, and their own control at the row's end. */
+.sidekick-sources .sidekick-delegates li { align-items: flex-start; }
+.sidekick-sources .sidekick-delegates li > .button { flex: none; min-height: 28px; padding: 3px 10px; }
+.sidekick-sources-empty { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 10px 0 0; }
+.sidekick-source-requests .source-decision { margin-top: 5px; }
+
+/* Approve and Decline for a Sidekick source request: the pair is the
+   request's state as much as its controls, and reads the same on the card,
+   the Activity row and the Sidekick panel. While nobody has chosen both are
+   outlines; the choice is filled, green for Approve and red for Decline, and
+   the other stays an outline. A reader who cannot answer sees the same two
+   buttons, so `:disabled` here means "not yours to press" or "answered", not
+   "unavailable": it is never dimmed, or a filled choice would wash out.
+   The outline is the hue mixed towards transparent so it holds on the feed,
+   the elevated card and a hovered sidebar row alike; the person who can
+   answer gets it at full strength. */
+.source-decision { display: flex; flex: none; gap: 6px; }
+.source-decision-button.button { background: transparent; border-radius: var(--av-sys-size-radius-pill); font-weight: 500; min-height: 28px; padding: 3px 12px; }
+.source-decision-button:disabled { cursor: default; opacity: 1; }
+.source-decision-button.is-approve { border-color: color-mix(in srgb, var(--av-sys-color-success-base) 45%, transparent); color: var(--av-sys-color-success-strong); }
+.source-decision-button.is-decline { border-color: color-mix(in srgb, var(--av-sys-color-danger-base) 45%, transparent); color: var(--av-sys-color-danger-strong); }
+.source-decision.is-live .source-decision-button.is-approve { border-color: var(--av-sys-color-success-base); }
+.source-decision.is-live .source-decision-button.is-decline { border-color: var(--av-sys-color-danger-base); }
+/* A hover carrying the hue, which is the point of it, so not the shared wash. */
+.source-decision.is-live .source-decision-button.is-approve:hover:not(:disabled) { background: var(--av-sys-color-success-tint); background-image: none; border-color: var(--av-sys-color-success-strong); color: var(--av-sys-color-success-strong); }
+.source-decision.is-live .source-decision-button.is-decline:hover:not(:disabled) { background: var(--av-sys-color-danger-tint); background-image: none; border-color: var(--av-sys-color-danger-strong); color: var(--av-sys-color-danger-strong); }
+.source-decision .source-decision-button.is-approve.is-chosen { background: var(--av-sys-color-success-strong); border-color: var(--av-sys-color-success-strong); color: var(--av-sys-color-success-on); }
+.source-decision .source-decision-button.is-decline.is-chosen { background: var(--av-sys-color-danger-base); border-color: var(--av-sys-color-danger-base); color: var(--av-sys-color-danger-on); }
+
+/* The card an ask for a source draws in its conversation: the connection
+   card's geometry, then one row per person asked. */
+.source-request-people { border-top: 1px solid var(--av-sys-color-border-subtle); display: grid; gap: 8px; list-style: none; margin: 0; padding: 10px 0 0; }
+.source-request-people li { align-items: center; display: flex; gap: 10px; min-width: 0; }
+.source-request-person { align-items: baseline; display: flex; flex: 1; font-size: 13.5px; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.source-request-person small { color: var(--av-sys-color-text-muted); font-size: 11px; }
+.source-request-replaced, .source-request-card-status { color: var(--av-sys-color-text-muted); font-size: 12.5px; margin: 0; }
 .settings-account-profile { display: grid; gap: 12px; }
 .settings-support-note { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 0; padding: 0 8px; }
 .settings-account-profile .settings-profile-card { border-radius: 0; }
@@ -8194,6 +8231,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .activity-row-actions { padding: 2px 10px 8px calc(10px + 36px + 11px); }
 .access-decision-actions { display: flex; gap: 6px; }
 .access-decision-actions .button { min-height: 26px; padding: 2px 10px; }
+/* A source request's pair takes the same height here, so settling it does not move the list either. */
+.activity-row-actions .source-decision-button.button { min-height: 26px; padding: 2px 10px; }
 /* Who settled it, on a line as tall as the buttons it replaced, so settling
    does not move the list. */
 .activity-row-settled { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 12.5px; margin: 0; min-height: 26px; }
@@ -8201,6 +8240,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
    row controls do; the settled line keeps their height. */
 @media (max-width: 640px) {
   .access-decision-actions .button { min-height: var(--av-sys-size-control-height); padding: 6px 14px; }
+  .activity-row-actions .source-decision-button.button { min-height: var(--av-sys-size-control-height); padding: 6px 14px; }
   .activity-row-settled { min-height: var(--av-sys-size-control-height); }
 }
 .navigation-row-lock { color: var(--av-sys-color-text-muted); flex: none; }

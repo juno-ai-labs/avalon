@@ -16,8 +16,8 @@ import {
   sidekickSourcesQueryKey,
   sourceRefusal,
   sourceWords,
-  type SidekickSourceRequestCardInput,
 } from '../lib/sidekick-sources';
+import type { SidekickSourceRequestCardInput } from '../lib/sidekick-source-request-card';
 import { Button, ErrorNotice } from './primitives';
 
 /**
@@ -106,7 +106,9 @@ export function SidekickSourceRequestCard({ card }: { card: SidekickSourceReques
       </ErrorNotice>}
       live={query.data !== undefined && !query.isPlaceholderData}
       onDecide={(request, decision) => decide.mutate({ request, decision })}
-      requests={query.data}
+      // A failed read leaves what the tool answered on screen, unpressable,
+      // or says the request is unavailable; it never reads as still loading.
+      requests={query.data ?? (query.isError ? asked ?? [] : undefined)}
       words={sourceWords}
     />
     <DecisionRefusal decide={decide} />

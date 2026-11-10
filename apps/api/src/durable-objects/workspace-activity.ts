@@ -291,10 +291,13 @@ function listedSql(sidekickListedSql: string): string {
      )`;
 }
 
-/** A request's stored event types; a value that is not a list of strings names none rather than failing the page. */
+/**
+ * A request's stored event types. The column's CHECK holds it to valid JSON;
+ * anything in it that is not a string is left out rather than failing the
+ * person's whole page.
+ */
 function sourceEventTypes(json: string | null): string[] {
-  let value: unknown;
-  try { value = JSON.parse(json ?? "[]"); } catch { return []; }
+  const value: unknown = JSON.parse(json ?? "[]");
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 

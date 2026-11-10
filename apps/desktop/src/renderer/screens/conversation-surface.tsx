@@ -115,6 +115,7 @@ import {
   connectorResourceAuthorizationRequest,
 } from '../components/connector-mentions';
 import { isUnrecognizedConnectorConnectionCard } from '../lib/connector-connection-card';
+import { sidekickSourceRequestCardFromToolEvent } from '../lib/sidekick-source-request-card';
 import type { ComposerMenuAction } from '../components/composer-input';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { useRailExitFade } from '../components/rail-surface';
@@ -1490,6 +1491,7 @@ function ConversationSurfaceContent({
               connectorResourceAuthorizationRequest(message) !== null
                 || connectorConnectionCardInput(message) !== null
                 || isUnrecognizedConnectorConnectionCard(message)
+                || sidekickSourceRequestCardFromToolEvent(message.toolEvent) !== null
             ))),
           ),
         ),

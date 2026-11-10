@@ -1,6 +1,5 @@
 import {
   SIDEKICK_SOURCE_ERRORS,
-  SidekickSourceRequestViewSchema,
   type ActivityItem,
   type SidekickSourceErrorCode,
   type SidekickSourceRequestView,
@@ -8,15 +7,15 @@ import {
 } from '@rally/contracts';
 import type { SourceAsk, SourceWords } from '@rally/ui/components/sidekick-sources';
 import type { QueryClient } from '@tanstack/react-query';
-import { z } from 'zod';
 
 import { ApiError } from './api';
 import { connectorPresentation } from './connector-presentation';
 
 /**
  * The client's side of Sidekick sources (`docs/sidekick-sources.md`): the
- * cache keys its three surfaces read under, what moves them, the words a
- * connector and its events are called, and the card a tool call draws.
+ * cache keys its three surfaces read under, what moves them, and the words a
+ * connector and its events are called. `sidekick-source-request-card.ts`
+ * holds the card a tool call draws.
  */
 
 /**
@@ -88,18 +87,15 @@ export function invalidateMovedSourceRequests(
 /**
  * An event type in words. The contract carries the connector's own type
  * (`email.received`) and no label, and the label a connector's manifest
- * declares stays on the server, so this follows that manifest's default
+ * declares stays on the server, where the request's push, email and Activity
+ * preview are worded from it. This is that manifest's default rule
  * (`humanizeActivityEventType` in `packages/connectors/src/types.ts`: the
- * family dropped past two segments, underscores to spaces, a capital) and
- * words the few a person meets most the way the product says them.
+ * family dropped past two segments, underscores to spaces, a capital), so the
+ * card and the panel say "Email received" as the notice does. A connector
+ * that overrides a label reads differently here until the contract carries
+ * the label.
  */
-const EVENT_WORDS: Readonly<Record<string, string>> = {
-  'email.received': 'New email',
-};
-
 export function sourceEventWords(eventType: string): string {
-  const known = EVENT_WORDS[eventType];
-  if (known) return known;
   const parts = eventType.split('.');
   if (parts.length > 2) parts.shift();
   const text = parts.join(' ').replaceAll('_', ' ').trim();
@@ -145,50 +141,4 @@ export function sourceRefusal(error: Error, ask?: SourceAsk): string {
   }
   if (code !== undefined && code in SIDEKICK_SOURCE_ERRORS) return SIDEKICK_SOURCE_ERRORS[code as SidekickSourceErrorCode];
   return error.message;
-}
-
-/** The agent tool that asks people for a source (plugin `rally_sidekicks`, `request_source`). */
-export const SIDEKICK_SOURCE_REQUEST_WIRE_NAME = 'sidekick_request_source';
-
-/**
- * A card needs only which requests to read; where each stands is read live.
- * The tool's output is otherwise the asker's view at the moment it asked
- * (`yours` is the asker's, and every state is already old), so nothing else
- * of it is required to draw a card.
- */
-const sourceRequestCardEnvelopeSchema = z.object({
-  sidekickId: z.string().min(1),
-  requests: z.array(z.object({ requestId: z.string().min(1) })).min(1),
-});
-
-export interface SidekickSourceRequestCardInput {
-  sidekickId: string;
-  requestIds: string[];
-  /**
-   * The requests as the tool answered them, when its output is whole: what
-   * the card paints until its own read lands. Never authority for a state.
-   */
-  asked: SidekickSourceRequestView[] | null;
-}
-
-/**
- * The card a completed `sidekick_request_source` call draws, from the output
- * its transcript block keeps. A call still running, one that failed, and one
- * whose output did not survive stay ordinary tool activity.
- */
-export function sidekickSourceRequestCardFromToolEvent(event: {
-  name: string;
-  wireName?: string | undefined;
-  status?: string | undefined;
-  output?: unknown;
-} | undefined): SidekickSourceRequestCardInput | null {
-  if (!event || (event.wireName ?? event.name) !== SIDEKICK_SOURCE_REQUEST_WIRE_NAME || event.status !== 'completed') return null;
-  const parsed = sourceRequestCardEnvelopeSchema.safeParse(event.output);
-  if (!parsed.success) return null;
-  const asked = z.object({ requests: z.array(SidekickSourceRequestViewSchema) }).safeParse(event.output);
-  return {
-    sidekickId: parsed.data.sidekickId,
-    requestIds: parsed.data.requests.map((request) => request.requestId),
-    asked: asked.success ? asked.data.requests : null,
-  };
 }

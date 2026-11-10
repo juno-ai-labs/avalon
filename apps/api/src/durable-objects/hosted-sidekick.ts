@@ -19,7 +19,10 @@ import {
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
 import { SidekickSourceStorage, sidekickSourceError } from "./sidekick-source-storage";
-import { recordSourceRequestAsked, recordSourceRequestSettled } from "./sidekick-source-notices";
+import {
+  enqueueSourceNotices, prepareSourceAnswerNotice, prepareSourceRequestNotices, recordSourceRequestAsked, recordSourceRequestSettled,
+  type RecordedSourceNotice,
+} from "./sidekick-source-notices";
 import {
   SidekickSourceAskRequestSchema, SidekickSourceDecisionRequestSchema, SidekickSourceRequestReadSchema,
   SidekickSourceWithdrawRequestSchema,
@@ -363,6 +366,13 @@ export interface SidekickRunProvisioning {
   modelOverride: string | null;
   definitionRevision: number;
   definition: AutomationRunDefinitionV1;
+  /**
+   * The event that started the run and the connection it came from, when the
+   * host may read what the event is about (for new mail, that one message)
+   * and hand it to the run. Null for every other run, and once the person
+   * whose connection it is no longer lets that event in.
+   */
+  eventContent: { connectionId: string; connectorType: string; eventType: string; subject: Record<string, unknown> } | null;
 }
 
 /** What a review's delivery needs, read once by the Queue consumer that wakes the wizard. */
@@ -1128,9 +1138,18 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const condition = request.ask.condition ?? null;
     const eventTypes = [...new Set(request.ask.eventTypes)].sort();
     const now = Date.now();
+    // Each request's id and its notice are made before the transaction: a notice is hashed, which yields.
+    const requestIds = userIds.map((_, index) => uuidV7(now + index));
+    const askNotices = await prepareSourceRequestNotices(this.env, { sidekickId: this.sidekickId, sidekickName: initial.title || "Sidekick",
+      connectorType: request.ask.connectorType, eventTypes, condition, requesterName: request.actorName, requestIds });
     const asked = this.storage.transactionSync(() => {
       const row = this.assertSidekick(request.workspaceId, request.automationId);
       if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
+      const notices: RecordedSourceNotice[] = [];
+      // A retried call answers with what it already asked, whatever has been
+      // answered since: asking again is a new operation's to do.
+      const already = request.ask.operationId ? this.sources().requestsForOperation(this.sidekickId, request.ask.operationId) : [];
+      if (already.length > 0) return { row, requests: already, notices };
       const requests: SidekickSourceRequest[] = [];
       let sourcesMoved = false;
       for (const [index, userId] of userIds.entries()) {
@@ -1146,14 +1165,16 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         const connections = own ? this.personalConnections(row.workspace_id, userId, request.ask.connectorType) : [];
         if (own && connections.length === 0) throw sidekickSourceError("sidekick_source_connection_missing");
         const { request: created, replaced } = this.sources().ask({
-          requestId: uuidV7(now + index), sidekickId: this.sidekickId, userId, connectorType: request.ask.connectorType,
+          requestId: requestIds[index]!, sidekickId: this.sidekickId, userId, connectorType: request.ask.connectorType,
           eventTypes, condition, requestedByUserId: request.actor.userId, requestedByName: request.actorName,
-          place: request.ask.place ?? null,
+          place: request.ask.place ?? null, operationId: request.ask.operationId ?? null,
         }, now);
-        if (replaced) recordSourceRequestSettled(this.host, { workspaceId: row.workspace_id, request: replaced,
-          sidekickName: row.title || "Sidekick", deciderName: null, now });
+        // A newer ask replaced it: a cancel settles the asked person's row and tells nobody.
+        if (replaced) recordSourceRequestSettled(this.host, { workspaceId: row.workspace_id, generation: row.authority_generation,
+          request: replaced, answer: null, now });
         if (!own) {
-          recordSourceRequestAsked(this.host, { workspaceId: row.workspace_id, request: created, sidekickName: row.title || "Sidekick", now });
+          notices.push(...recordSourceRequestAsked(this.host, { workspaceId: row.workspace_id, generation: row.authority_generation,
+            request: created, notice: askNotices.get(created.requestId)!, now }));
           requests.push(created);
           continue;
         }
@@ -1166,8 +1187,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       }
       if (sourcesMoved) this.scheduleSourceReconciliation();
       this.touchDirectory(now);
-      return { row, requests };
+      return { row, requests, notices };
     });
+    await enqueueSourceNotices(this.host, asked.row.workspace_id, asked.notices);
     const person = await this.sourcePeople(asked.requests.map((entry) => entry.userId));
     return SidekickSourceRequestResultSchema.parse({
       sidekickId: this.sidekickId,
@@ -1192,11 +1214,15 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const person = await this.sourcePeople([stored.userId]);
     const state = request.decision === "approve" ? "approved" as const : "declined" as const;
     const now = Date.now();
+    // What whoever asked is told, made before the transaction: a notice is hashed, which yields.
+    const personName = person(stored.userId).displayName;
+    const answer = { personName, notice: await prepareSourceAnswerNotice(this.env, { request: stored,
+      sidekickName: initial.title || "Sidekick", state, personName }) };
     const settled = this.storage.transactionSync(() => {
       const row = this.row();
       const current = this.sources().readRequest(request.requestId);
       if (!row || !current) throw sidekickSourceError("sidekick_source_request_not_found");
-      if (current.state === state) return { row, request: current };
+      if (current.state === state) return { row, request: current, notices: [] };
       if (current.state !== "pending") throw sidekickSourceError("sidekick_source_request_settled");
       if (state === "approved") {
         if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
@@ -1213,11 +1239,12 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       }
       const decided = this.sources().settle(current.requestId, state, now);
       if (!decided) throw sidekickSourceError("sidekick_source_request_settled");
-      recordSourceRequestSettled(this.host, { workspaceId: row.workspace_id, request: decided,
-        sidekickName: row.title || "Sidekick", deciderName: person(decided.userId).displayName, now });
+      const notices = recordSourceRequestSettled(this.host, { workspaceId: row.workspace_id, generation: row.authority_generation,
+        request: decided, answer, now });
       this.touchDirectory(now);
-      return { row, request: decided };
+      return { row, request: decided, notices };
     });
+    await enqueueSourceNotices(this.host, settled.row.workspace_id, settled.notices);
     return this.sourceRequestView(settled.row, settled.request, request.userId, person(settled.request.userId));
   }
 
@@ -2882,7 +2909,35 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       modelOverride: sidekick.model_override,
       definitionRevision: run.definition_revision,
       definition: this.runDefinition(view),
+      eventContent: await this.runEventContent(storedRunTrigger(run.trigger_json)),
     };
+  }
+
+  /**
+   * Which event's content the host may read for a run, checked again here
+   * rather than trusted from admission: a person's connection is read only
+   * while its owner's source still lets that event in, so a source taken back
+   * between admission and provisioning hands the run the event's summary and
+   * nothing more. An Organization connection is the Sidekick's own.
+   */
+  private async runEventContent(trigger: AutomationRunTriggerV1): Promise<SidekickRunProvisioning["eventContent"]> {
+    if (trigger.kind !== "external_event") return null;
+    const event = first(this.sql.exec<{
+      connection_id: string; connector_type: string; event_type: string; subject_json: string;
+      connection_scope: string; connection_owner_user_id: string | null;
+    }>(`SELECT connection_id, connector_type, event_type, subject_json, connection_scope, connection_owner_user_id
+          FROM workspace_connector_events WHERE event_id = ?`, trigger.workspaceEventId));
+    if (!event) return null;
+    if (event.connection_scope === "personal") {
+      const source = event.connection_owner_user_id === null ? null
+        : this.sources().read(this.sidekickId, event.connection_owner_user_id, event.connection_id);
+      if (!source || !source.eventTypes.includes(event.event_type) || !await this.sourceEligible(source)) return null;
+    }
+    let subject: unknown;
+    try { subject = JSON.parse(event.subject_json); } catch { return null; }
+    if (typeof subject !== "object" || subject === null || Array.isArray(subject)) return null;
+    return { connectionId: event.connection_id, connectorType: event.connector_type, eventType: event.event_type,
+      subject: subject as Record<string, unknown> };
   }
 
   /** The provisioning consumer started the run's loop: mark it running and settle its entry. */

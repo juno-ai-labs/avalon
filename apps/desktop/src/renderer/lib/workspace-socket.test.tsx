@@ -1550,6 +1550,79 @@ describe('WorkspaceSocketProvider', () => {
     expect(sent.at(-1)).toEqual({ type: 'activity_mark_all_seen' });
   });
 
+  it('re-reads a Sidekick\'s sources when an Activity push moves one of its source requests, and not otherwise', async () => {
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    const DEALS = '00000000-0000-7000-8000-0000000000d1';
+    const DIGEST = '00000000-0000-7000-8000-0000000000d2';
+    // What an open Sources section and an open card hold: reads under each Sidekick's sources key.
+    const reads = { deals: 0, card: 0, digest: 0 };
+    function Probe(): null {
+      useQuery({ queryKey: ['automation', DEALS, 'sources'], queryFn: () => { reads.deals += 1; return reads.deals; } });
+      useQuery({ queryKey: ['automation', DEALS, 'sources', 'requests', 'r1'], queryFn: () => { reads.card += 1; return reads.card; } });
+      useQuery({ queryKey: ['automation', DIGEST, 'sources'], queryFn: () => { reads.digest += 1; return reads.digest; } });
+      return null;
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider region="global"
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <Probe />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const asked = (sidekickId: string, state: 'pending' | 'approved', seen: boolean) => ({
+      id: `source_request:${sidekickId}`, kind: 'source_request', parentKind: 'automation', parentId: sidekickId, parentTitle: 'Deals',
+      substreamId: '0', messageId: null, messageSequence: null, runId: null,
+      actor: { kind: 'person', id: '00000000-0000-7000-8000-0000000000a4' }, preview: 'Events: Email received',
+      createdAt: '2026-11-10T10:00:00.000Z', seen,
+      sourceRequest: {
+        requestId: '00000000-0000-7000-8000-0000000000e1', state, connectorType: 'google', eventTypes: ['email.received'],
+        condition: null, requestedByName: 'Adam', personName: null,
+      },
+    });
+    act(() => socket.message({
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000018',
+      waterline: 4,
+      occurredAt: '2026-11-10T10:00:00.000Z',
+      topics: [],
+      reason: 'initial',
+      sidebar: {
+        automations: { waterline: 3, items: [] },
+        activity: { waterline: 5, unseenCount: 2, items: [asked(DEALS, 'pending', false), asked(DIGEST, 'pending', false)] },
+      },
+    }));
+    await flushPromises();
+    // The first page this window hears moves nothing: each read is its one mount.
+    expect(reads).toEqual({ deals: 1, card: 1, digest: 1 });
+
+    // Mark all seen: the list moved, no request did.
+    act(() => socket.message({
+      type: 'workspace_activity_list', occurredAt: '2026-11-10T10:01:00.000Z', waterline: 6,
+      unseenCount: 0, items: [asked(DEALS, 'pending', true), asked(DIGEST, 'pending', true)],
+    }));
+    await flushPromises();
+    expect(reads).toEqual({ deals: 1, card: 1, digest: 1 });
+
+    // The Deals request was answered: its Sources section and its card read again; Digest's does not.
+    act(() => socket.message({
+      type: 'workspace_activity_list', occurredAt: '2026-11-10T10:02:00.000Z', waterline: 7,
+      unseenCount: 0, items: [asked(DEALS, 'approved', true), asked(DIGEST, 'pending', true)],
+    }));
+    await flushPromises();
+    expect(reads).toEqual({ deals: 2, card: 2, digest: 1 });
+  });
+
   it('names the field when a pushed event this build knows the type of does not parse', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const queryClient = new QueryClient();
