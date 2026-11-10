@@ -72,7 +72,7 @@ The regional bridge uses D1 only for identity and routing:
 | `create_org` | Caller names the region | Regional onboarding commits the owner and initial members together, then performs ordinary member seating |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause or resume, which call HostedSidekick in WorkspaceDO |
-| `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, Ace's retirement door: the D1 fence, then the graph walk over every object |
+| `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, the regional retirement service: the D1 fence, then the graph walk over every object |
 | `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
 | `list_orgs`, `search_orgs` | None | D1 `workspaces` and `workspace_members` in every region, filtered there and ordered here |
@@ -231,17 +231,14 @@ to pair the attempt and result audit rows.
 
 ### Retiring an Organization
 
-`retire_org` calls `retireWorkspaceForOperator`, the same function behind Ace's
-Retire button, through a bridge method, `retireOrg`. So the region check,
+`retire_org` calls `retireWorkspaceForOperator`, the regional retirement service, through a bridge method, `retireOrg`. So the region check,
 `workspaces.abandoned_at`, the tombstones and the resumable walk are all
 [`workspace-retirement.md`](workspace-retirement.md)'s, unchanged. The Access
 subject goes into the pass as its operator id, so the region's
 `workspace_retirement_pass` log names who closed it, and the audit pair targets
 the Organization rather than a represented user, since no user acts.
 
-It takes no typed confirmation. In Ace that is a page ceremony for a person;
-here the caller is a client that would fill both fields from the same value,
-and the tool's destructive annotation is what asks the client to check first.
+It takes no typed confirmation; its caller supplies the resolved Organization ID.
 A receipt with `complete: false` means parts are still open; calling again
 resumes the walk.
 
@@ -362,8 +359,8 @@ names the view only; filter values and the needle can quote product data.
   half-finished publish.
 - The origin verifies Access JWT provenance. A header's presence alone is not
   authentication.
-- The Access application is separate from Ace and has its own audience, while
-  its policy and allowed identity providers are copied from Ace at deployment.
+- The Access application has its own audience, policy, and identity providers,
+  all preserved at deployment.
 - SQL tools are annotated non-read-only, destructive, and non-idempotent. The
   list tools are read-only.
 - The SQL text, bindings, returned rows, and error message never enter Worker
@@ -536,7 +533,7 @@ means message text ([`runbook.md`](runbook.md#log-shape)).
 Policy changes, identity-provider changes, and client approval belong in the
 Cloudflare Access application, not in application code.
 
-`BASIN_SQL_API_TOKEN` is a runtime credential, like Ace's Queue inspection token, not
+`BASIN_SQL_API_TOKEN` is a runtime credential, not
 the deployment token. Basin SQL requires R2 storage read/write on the buckets it
 reads, so create it as an R2 API token restricted to the three lakehouse
 buckets with Basin SQL Read, Basin Catalog Read, and R2 Storage Write. Never
@@ -564,8 +561,28 @@ none: the MCP deploys inside the API release, and a missing read credential
 should not turn that release red.
 ## Access provisioning
 
+Before the first deployment, create a **Self-hosted** application in Cloudflare
+Zero Trust → Access → Applications for `mcp.internal.rallywith.ai` in the deployment
+account. Select the approved organization identity provider, configure the team's
+session duration, and add an Allow policy restricted to the authorized engineering
+operators. Do not use an Allow Everyone or Bypass policy: membership grants
+production database write access. Verify the intended operator can authenticate
+and an unauthorized identity is refused before deploying.
+
+The deployment token needs Access application read/edit permissions as well as
+Worker deployment permissions. The deploy script requires this app and a nonempty
+policy list, preserves its session duration and identity providers, enables the
+hosted-client OAuth redirect configuration, and injects the app's audience into
+the Worker. It does not create an Access app or import another app's policy.
+
 
 ## Changelog
+
+### 2026-11-10 — Retire administration apps
+
+The engineering MCP retains the Access verifier and its authentication tests
+after the tracker was deleted. Deployment preserves its own Access application
+and policy rather than depending on another app's provisioner.
 
 ### 2026-11-09 — Retire remote flag administration tools
 
