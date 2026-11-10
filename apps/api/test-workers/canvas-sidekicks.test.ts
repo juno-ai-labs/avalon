@@ -101,6 +101,12 @@ describe("a Sidekick a Canvas's Chat made", () => {
     expect(listed.map((row) => [row.title, row.sidekicks])).toEqual([["Inbox", [{ id: MADE_HERE, name: "New Sidekick" }]]]);
     expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: MADE_HERE,
       actor: { ...member(CREATOR), participantOfOwningWorkstream: false } })).toMatchObject({ madeInCanvasId: CANVAS_ID });
+    // And the Sidekick's own row names the Canvas, for its dashboard card's link.
+    const library = await workspace().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: CREATOR,
+      accessClass: "member", role: "member" });
+    expect(library.items.map((item) => [item.id, item.attachedCanvases])).toEqual(expect.arrayContaining([
+      [MADE_HERE, [{ id: CANVAS_ID, title: "Inbox" }]], [MADE_ELSEWHERE, []],
+    ]));
   });
 
   it("is not made in a Canvas its author cannot open", async () => {
