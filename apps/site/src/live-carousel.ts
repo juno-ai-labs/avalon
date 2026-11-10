@@ -70,7 +70,7 @@ function run(carousel: HTMLElement): void {
   let visible = false;
   let held = false;
 
-  const select = (index: number, focus = false): void => {
+  const select = (index: number, chosen = false): void => {
     current = (index + slides.length) % slides.length;
     tabs.forEach((tab, i) => {
       const on = i === current;
@@ -82,11 +82,12 @@ function run(carousel: HTMLElement): void {
       slide.hidden = i !== current;
       slide.classList.toggle('is-active', i === current);
     });
-    if (focus) tabs[current]?.focus();
+    if (chosen) tabs[current]?.focus();
     // Keep the chosen tab in view in the scrolling tab row, without moving the page.
     const strip = tabs[current]?.parentElement;
     const tab = tabs[current];
-    if (visible && strip && tab) strip.scrollTo({ left: tab.offsetLeft - strip.offsetWidth / 2 + tab.offsetWidth / 2, behavior: reduced ? 'auto' : 'smooth' });
+    // Only a person's choice scrolls the tab row: autoplay scrolling it would read as page input to traffic-signals.ts.
+    if (chosen && strip && tab) strip.scrollTo({ left: tab.offsetLeft - strip.offsetWidth / 2 + tab.offsetWidth / 2, behavior: reduced ? 'auto' : 'smooth' });
     step = reduced ? STEPS : 0;
     showStep(slides[current]!, step, false);
     schedule();
@@ -127,11 +128,12 @@ function run(carousel: HTMLElement): void {
     tab.addEventListener('click', () => {
       // Choosing an example is a request to see it, so it plays even if paused.
       if (held && pause) pause.click();
-      select(index);
+      select(index, true);
     });
     tab.addEventListener('keydown', (event) => {
       const move = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
-      if (move) { event.preventDefault(); select(current + move, true); }
+      // From the tab that has focus, which autoplay may have left behind the selected one.
+      if (move) { event.preventDefault(); select(index + move, true); }
       if (event.key === 'Home') { event.preventDefault(); select(0, true); }
       if (event.key === 'End') { event.preventDefault(); select(slides.length - 1, true); }
     });

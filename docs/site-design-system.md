@@ -147,7 +147,18 @@ stops rotation.
 To add an audience, add an entry to `liveExamples`. Its events must be ones a
 Sidekick can be started by, as the help center's Triggers and schedules page
 lists them; a tool read on a schedule (Google Drive, Calendar) is labelled
-as the schedule.
+as the schedule. Every example is a **Site**: its people tick rows, and
+nobody types into a Document or Spreadsheet directly, while a live site that
+remembers things takes visitors' entries and a Sidekick's runs write rows
+into it.
+
+### Moving content
+
+Anything that moves on its own for more than a few seconds has a pause
+control (WCAG 2.2.2): the carousel and the Canvas demo each have a pause
+button, and Fig. 02 a play and pause button. The connector names are a static
+list, not a marquee. Only a person's choice scrolls the carousel's tab row:
+an automatic scroll would count as page input in `traffic-signals.ts`.
 
 ### Explorable figures
 

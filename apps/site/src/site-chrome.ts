@@ -59,7 +59,6 @@ export function renderSiteFooter(): string {
     '<a href="/canvases/">Canvases</a>',
     '<a href="/sidekicks/">Sidekicks</a>',
     '<a href="/#pricing">Pricing</a>',
-    '<a href="/#team">Team</a>',
   ];
   return `<footer class="rally-footer"><div class="footer-grid">`
     + `<div class="footer-brand"><a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt=""><span>rally</span></a>`
@@ -110,7 +109,7 @@ export function renderLlmsTxt(): string {
 
 ## Product
 
-- [Rally home](${ORIGIN}/): what Rally is, Canvases, Sidekicks, pricing, team, and technology
+- [Rally home](${ORIGIN}/): what Rally is, Canvases, Sidekicks, pricing, and technology
 - [Canvases](${ORIGIN}/canvases/): live artifacts, documents, spreadsheets, dashboards and sites that Rally keeps current from your connected tools and that a team works from together
 - [Sidekicks](${ORIGIN}/sidekicks/): shared AI agents that run on a schedule or when something happens
 - [Help Center](${ORIGIN}/help/): the Rally manual, from installing Rally to running an Organization. Its own index of every page, each published as Markdown: ${ORIGIN}/help/llms.txt
