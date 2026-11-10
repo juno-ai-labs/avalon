@@ -464,7 +464,7 @@ describe('MessageBlock human identity', () => {
     render(<MessageBlock {...actions} currentUserId="user-adam" message={elicitationMessage} />);
 
     const response = screen.getByLabelText('Your elicitation response');
-    expect(response).toHaveClass('human-message', 'own-human-message', 'elicitation-response-message');
+    expect(response).toHaveClass('human-message', 'elicitation-response-message');
     expect(response).not.toHaveClass('transcript-event');
     // An answer is a turn, and every turn says who and when — the reader's own
     // answer included.
@@ -546,11 +546,10 @@ describe('MessageBlock human identity', () => {
     render(<MessageBlock {...actions} currentUserId="user-adam" message={elicitationMessage} />);
 
     const response = screen.getByLabelText('Response from Sam');
-    expect(response).toHaveClass('coworker-message');
-    expect(screen.getByText('Sam')).toBeInTheDocument();
-    // A colleague's answer reads as their turn does: name first, under their avatar.
+    expect(response).toHaveClass('human-message', 'elicitation-response-message');
+    expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Compare offer vs. RSPA');
     const header = response.querySelector('header')!;
-    expect(header.firstElementChild).toHaveClass('message-author');
+    expect(header.lastElementChild).toHaveTextContent('Sam');
     expect(header.querySelector('.message-author-avatar')).toHaveTextContent('S');
   });
 
@@ -639,7 +638,7 @@ describe('MessageBlock human identity', () => {
     render(<MessageBlock {...actions} currentUserId="user-adam" message={baseMessage} />);
 
     const own = screen.getByLabelText('Message from Adam');
-    expect(own).toHaveClass('own-human-message');
+    expect(own).toHaveClass('human-message');
     // The same three parts a coworker's turn carries, in the same order: the
     // reader's own messages are not the one row in the feed with no time
     // against them.
@@ -664,11 +663,11 @@ describe('MessageBlock human identity', () => {
 
     expect(screen.getByText('Expanded by Rally from suggested work'))
       .toHaveClass('message-context-label');
-    expect(screen.getByLabelText('Message from Adam')).toHaveClass('own-human-message');
+    expect(screen.getByLabelText('Message from Adam')).toHaveTextContent('Trace the failed release, identify the owner, and prepare the fix.');
     expect(screen.getByText('Adam').closest('.message-author')).toBeInTheDocument();
   });
 
-  it('shows compact identity for a coworker prompt', () => {
+  it('shows a coworker message in a human bubble with their byline on the trailing edge', () => {
     const coworkerMessage: Message = {
       ...baseMessage,
       id: 'message-sam',
@@ -677,10 +676,9 @@ describe('MessageBlock human identity', () => {
     render(<MessageBlock {...actions} currentUserId="user-adam" message={coworkerMessage} />);
 
     const row = screen.getByLabelText('Message from Sam');
-    expect(row).toHaveClass('coworker-message');
-    // A colleague leads with their avatar, on the leading edge (design.html §2).
+    expect(row.querySelector('.human-message-bubble')).toHaveTextContent('Please investigate this.');
     const header = row.querySelector('header')!;
-    expect(header.firstElementChild).toHaveClass('message-author');
+    expect(header.lastElementChild).toHaveClass('message-author');
     expect(header.querySelector('.message-author-avatar')).toHaveTextContent('S');
     expect(screen.getByText('Sam')).toHaveClass('message-author-name');
   });
@@ -701,7 +699,7 @@ describe('MessageBlock human identity', () => {
     };
     render(<MessageBlock {...actions} currentUserId="user-adam" message={externalMessage} />);
 
-    expect(screen.getByLabelText('Message from Taylor · Slack')).toHaveClass('coworker-message');
+    expect(screen.getByLabelText('Message from Taylor · Slack')).toHaveClass('human-message');
     expect(screen.getByText('Taylor · Slack')).toHaveClass('message-author-name');
     expect(screen.queryByText('Rally')).not.toBeInTheDocument();
   });
