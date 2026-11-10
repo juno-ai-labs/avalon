@@ -29,6 +29,9 @@ export function observeConnector(
 export function connectorObservationErrorCode(error: unknown): string {
   if (error instanceof ConnectorError) return zodDiagnosticCode(error.cause, "schema") ?? error.code;
   if (error instanceof Error && error.name === "AbortError") return "request_aborted";
+  // A platform deadline (`AbortSignal.timeout`) rejects with `TimeoutError`; a
+  // 20 s Google poll that timed out was logged as `unexpected_error`.
+  if (error instanceof Error && error.name === "TimeoutError") return "request_timeout";
   // A schema rejection is the one "unexpected" error that knows exactly what
   // went wrong. A provider answering 200 with a body this adapter does not
   // model is an ordinary Tuesday — the shape drifts, a field goes null, an
