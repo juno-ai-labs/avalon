@@ -222,12 +222,14 @@ const singleSelectElicitation: ElicitationData = {
 };
 
 describe('ElicitationPanel', () => {
-  it('shows a cancelled question without answer controls', () => {
+  it('shows a collapsed cancellation with the original question and no answer controls', () => {
     render(<ElicitationPanel
       elicitation={{ ...singleSelectElicitation, status: 'cancelled', answer: null }}
       onAnswer={vi.fn()}
     />);
-    expect(screen.getByLabelText('Question cancelled')).toBeVisible();
+    expect(screen.getByText('Question cancelled')).toBeVisible();
+    expect(screen.getByText(singleSelectElicitation.prompt)).not.toBeVisible();
+    expect(screen.getByText('No answer was recorded.')).not.toBeVisible();
     expect(screen.queryByRole('button', { name: 'Submit' })).not.toBeInTheDocument();
   });
   it('keeps answer and skip diagnostics out of the response control', async () => {

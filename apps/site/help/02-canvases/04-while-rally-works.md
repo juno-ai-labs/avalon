@@ -135,7 +135,8 @@ couldn’t be saved. Try again.**
 
 Once answered, your answer appears in the conversation as a message from you,
 so everyone can see who decided what. A question Rally withdrew shows as
-**Question cancelled**.
+**Question cancelled** in a muted, collapsed row. Click it to read the original
+question. No answer was recorded, and the row has no response controls.
 
 ## When a run fails
 

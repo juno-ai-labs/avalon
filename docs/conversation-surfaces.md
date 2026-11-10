@@ -508,7 +508,10 @@ drawn as Rally's turn with the prompt, and the answer is the person's own row
 after it: `orderedTranscriptMessages` gives the answering turn its own row
 (`elicitation-<id>:answer`) and marks the question `elicitationAnswerFollows`
 with the answered state, and until that turn lands the question's row draws
-the answer under the prompt. An automation's page keeps its lifecycle controls (apply,
+the answer under the prompt. A cancelled question is a muted, collapsed
+disclosure, not a person's message bubble. Expanding it shows the original
+prompt and “No answer was recorded”; it offers no answer or retry controls.
+An automation's page keeps its lifecycle controls (apply,
 pause, resume, delete, run now, the run-history dialog) outside the feed rather than
 inside it. Neither host may smuggle those controls through an optional common
 prop.

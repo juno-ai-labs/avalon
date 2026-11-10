@@ -2541,7 +2541,18 @@ export function ElicitationPanel({
     );
   }
   if (elicitation.status === 'cancelled') {
-    return <div aria-label="Question cancelled" className="elicitation-resolved-answer human-message-bubble">Question cancelled</div>;
+    return (
+      <details key={elicitation.id} aria-label="Question cancelled" className="elicitation-cancelled">
+        <summary>
+          <ChevronRight aria-hidden="true" size={14} strokeWidth={1.8} />
+          <span>Question cancelled</span>
+        </summary>
+        <div className="elicitation-cancelled-content">
+          <p>{normalizeModelText(elicitation.prompt)}</p>
+          <p className="elicitation-cancelled-note">No answer was recorded.</p>
+        </div>
+      </details>
+    );
   }
 
   const toggle = (value: string): void => {

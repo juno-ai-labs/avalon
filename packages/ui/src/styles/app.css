@@ -4339,6 +4339,34 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .elicitation-submit:disabled { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-8); }
 .elicitation-submit:disabled kbd { color: var(--av-ref-color-neutral-7); }
 .elicitation-resolved-answer { color: var(--av-ref-color-neutral-13); font-size: 14px; line-height: 1.45; }
+.elicitation-cancelled { color: var(--av-sys-color-text-subtle); font-size: 12px; line-height: 20px; }
+.elicitation-cancelled summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  list-style: none;
+  min-height: 24px;
+  position: relative;
+  width: fit-content;
+}
+.elicitation-cancelled summary::-webkit-details-marker { display: none; }
+.elicitation-cancelled summary:hover { color: var(--av-sys-color-text-default); }
+.elicitation-cancelled summary:focus-visible {
+  border-radius: var(--av-sys-size-radius-sm);
+  outline: 2px solid var(--av-sys-color-border-highlight);
+  outline-offset: 2px;
+}
+/* Use the same icon gutter as the work accordion; the label stays on the
+   transcript's text edge. */
+.elicitation-cancelled summary svg { left: -20px; position: absolute; }
+.elicitation-cancelled[open] summary svg { transform: rotate(90deg); }
+.elicitation-cancelled-content {
+  border-left: 1px solid var(--av-sys-color-border-default);
+  margin: var(--space-1) 0 0 var(--space-1);
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+}
+.elicitation-cancelled-content p { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.elicitation-cancelled-content .elicitation-cancelled-note { margin-top: var(--space-2); }
 .elicitation-collapsed-bar { align-items: center; color: var(--av-ref-color-neutral-11); display: grid; gap: var(--space-2); grid-template-columns: auto minmax(0, 1fr) auto; min-height: 48px; padding: var(--space-2) var(--space-3); text-align: left; }
 .elicitation-collapsed-bar:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 6%, var(--av-sys-color-surface-raised)); border-color: color-mix(in srgb, var(--av-sys-color-brand-base) 34%, var(--av-ref-color-line-5)); }
 .elicitation-collapsed-bar span { color: var(--av-sys-color-brand-ink); font-size: 9px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
