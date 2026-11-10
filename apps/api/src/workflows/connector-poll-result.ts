@@ -70,3 +70,15 @@ export function terminalPollFailure(error: unknown): { code: string; message: st
   const code = timedOut ? "connector_poll_timeout" : failedPollAttemptCode(error) ?? pollAttemptErrorCode(error);
   return { code, message: timedOut ? "Connector poll timed out" : `Connector poll failed after retries: ${code}` };
 }
+
+/**
+ * `warn` for a grant the provider refused (`unauthorized…`): that is the
+ * member's account state, already recorded as `needs_reconnect`, and the poll
+ * fires again on schedule. Logged as `error` it repeated every poll interval
+ * per connection and buried real platform faults. Every other failure stays
+ * `error`.
+ */
+export function terminalPollFailureLevel(error: unknown): "warn" | "error" {
+  const code = failedPollAttemptCode(error) ?? pollAttemptErrorCode(error);
+  return code === "unauthorized" || code.startsWith("unauthorized:") ? "warn" : "error";
+}
