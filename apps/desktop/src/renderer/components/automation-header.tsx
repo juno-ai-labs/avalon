@@ -270,7 +270,11 @@ export function AutomationHeader({
           {canvases.length === 0
             ? <p className="sidekick-profile-empty">{NOTHING_YET}</p>
             : <ul aria-label="Canvases it writes to" className="sidekick-canvas-links">
-              {canvases.map((canvas) => <li key={canvas.id}><Link to={canvasRoute(canvas.id)}><CanvasMark kind={null} size={24} />{canvas.title}</Link></li>)}
+              {canvases.map((canvas) => <li key={canvas.id}>
+                <Link to={canvasRoute(canvas.id)}><CanvasMark kind={null} size={24} />{canvas.title}</Link>
+                {/* The Canvas whose Chat made this Sidekick, among the ones it is attached to. */}
+                {canvas.id === automation.madeInCanvasId && <small className="sidekick-canvas-made">Made in this Canvas</small>}
+              </li>)}
             </ul>}
         </section>
         {/* Who it may act as is a question for a Sidekick that runs; a draft has nobody to ask yet. */}

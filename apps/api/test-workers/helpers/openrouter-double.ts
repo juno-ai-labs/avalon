@@ -65,7 +65,8 @@ export function memberInputs(call: Pick<ProviderCall, "messages">): ProviderCall
 /** Whether one provider message is a person's or a peer's input, not the host's appended context. */
 export function isMemberInput(message: { role?: unknown; content?: unknown }): boolean {
   return message.role === "user"
-    && !(typeof message.content === "string" && message.content.startsWith("CANVAS CONTEXT (host-provided):"));
+    && !(typeof message.content === "string" && (message.content.startsWith("CANVAS CONTEXT (host-provided):")
+      || message.content.startsWith("ATTACHED CANVASES (host-provided):")));
 }
 
 /**

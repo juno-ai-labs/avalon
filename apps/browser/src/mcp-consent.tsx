@@ -195,7 +195,7 @@ export function McpConsent(): React.JSX.Element {
     : name ? `Allow an app that calls itself \u201c${name}\u201d to use Rally?` : "Allow an app to use Rally?";
   return <ConsentCard title={title}>
     {client && session && <>
-      <p className="entry-lead">The app will be able to read, create, change and share the Canvases you can open in the Organization you choose, acting as {session.user.email}. It can do only what you can.</p>
+      <p className="entry-lead">The app will be able to read, create, change and share the Canvases you can open in the Organization you choose, acting as {session.user.email}. It can also set up Sidekicks that keep a Canvas up to date for you, which run with your connected accounts. It can do only what you can.</p>
       <p className="signed-in-identity">{name ? "Rally has not verified the name the app gave itself. " : ""}You will return to {client.redirectOrigin}</p>
       {workspaces && workspaces.length > 0 ? <fieldset className="signin-choice-list">
         <legend className="mb-2 text-[length:var(--av-sys-font-size-meta)] text-[color:var(--av-sys-color-text-subtle)]">Organization</legend>

@@ -351,6 +351,94 @@ describe("a stateful artifact's facet", () => {
     expect(survived).toMatchObject({ ok: true, rows: [{ choice: "yes" }] });
   });
 
+  it("commits a row write the page then reads, and returns a RETURNING statement's rows", async () => {
+    // The write path `write_artifact_data` uses: one statement, committed in
+    // the same database the site's own handler reads, with no republish.
+    const version = await publish(VOTING_MODULE);
+    const host = hostStub();
+    await host.fetchThroughFacet(viewerRequest("/vote?choice=yes"));
+    const inserted = await host.writeData(
+      "INSERT INTO votes (member, choice) VALUES (?, ?) ON CONFLICT(member) DO NOTHING RETURNING member, choice",
+      [OTHER_VIEWER, "no"], 10, ALL_ROWS);
+    expect(inserted).toMatchObject({
+      ok: true, columns: ["member", "choice"], rows: [{ member: OTHER_VIEWER, choice: "no" }], truncated: false,
+    });
+    expect(inserted.ok && inserted.rowsWritten).toBeGreaterThan(0);
+    const updated = await host.writeData("UPDATE votes SET choice = ? WHERE member = ?", ["maybe", VIEWER], 10, ALL_ROWS);
+    expect(updated).toMatchObject({ ok: true, columns: [], rows: [] });
+    const tally = await (await host.fetchThroughFacet(viewerRequest("/tally"))).json();
+    expect(tally).toEqual({ votes: [{ member: VIEWER, choice: "maybe" }, { member: OTHER_VIEWER, choice: "no" }] });
+    // No version was made: the site still serves what was published.
+    expect((await host.currentState())?.version).toBe(version);
+    // A site with no private table takes a write from any member's Chat.
+    expect(await host.writeData("DELETE FROM votes WHERE member = ?", [OTHER_VIEWER], 10, VIEWER_ROWS))
+      .toMatchObject({ ok: true });
+    expect(await host.queryData("SELECT member FROM votes", [], 10, ALL_ROWS)).toMatchObject({ rows: [{ member: VIEWER }] });
+  });
+
+  it("refuses a schema statement, a read and a second statement through the write path, and changes nothing", async () => {
+    await publish(VOTING_MODULE);
+    const host = hostStub();
+    await host.fetchThroughFacet(viewerRequest("/vote?choice=yes"));
+    for (const sql of [
+      "DROP TABLE votes",
+      "ALTER TABLE votes ADD COLUMN weight INTEGER",
+      "CREATE TABLE extra (id TEXT)",
+      "PRAGMA table_info(votes)",
+      "DELETE FROM votes; DROP TABLE votes",
+    ]) {
+      expect(await host.writeData(sql, [], 10, ALL_ROWS), sql).toMatchObject({ ok: false, reason: "sql_refused" });
+    }
+    expect(await host.writeData("SELECT choice FROM votes", [], 10, ALL_ROWS)).toMatchObject({
+      ok: false, reason: "sql_refused", detail: "This tool changes rows. Run a SELECT with query_artifact_data instead.",
+    });
+    const described = await host.describeData(ALL_ROWS);
+    expect(described.tables.map((table) => table.name)).toEqual(["votes"]);
+    expect(described.tables[0]).toMatchObject({ rowCount: 1, columns: [{ name: "member" }, { name: "choice" }] });
+  });
+
+  it("returns the database's own refusal of a write and leaves nothing of the statement behind", async () => {
+    await publish(VOTING_MODULE);
+    const host = hostStub();
+    await host.fetchThroughFacet(viewerRequest("/vote?choice=yes"));
+    const missing = await host.writeData("INSERT INTO ballots (member) VALUES (?)", ["x"], 10, ALL_ROWS);
+    expect(missing).toMatchObject({ ok: false, reason: "sql_failed" });
+    expect(!missing.ok && "detail" in missing && missing.detail).toContain("no such table: ballots");
+    // The second row breaks the primary key: the first must not survive it.
+    const conflicting = await host.writeData(
+      "INSERT INTO votes (member, choice) VALUES ('new-member', 'no'), (?, 'no')", [VIEWER], 10, ALL_ROWS);
+    expect(conflicting).toMatchObject({ ok: false, reason: "sql_failed" });
+    expect(!conflicting.ok && "detail" in conflicting && conflicting.detail).toContain("UNIQUE constraint failed: votes.member");
+    expect(await host.queryData("SELECT member, choice FROM votes", [], 10, ALL_ROWS))
+      .toMatchObject({ rows: [{ member: VIEWER, choice: "yes" }] });
+  });
+
+  it("refuses a viewer-scoped writer on a site with private rows, and lets the author and Sidekicks write", async () => {
+    await publish(JOURNAL_MODULE);
+    const host = hostStub();
+    await host.fetchThroughFacet(viewerRequest("/write?body=theirs", OTHER_VIEWER));
+    // Even a shared table: free SQL cannot be held to one viewer's rows.
+    expect(await host.writeData("INSERT INTO prompts (body) VALUES ('hi')", [], 10, VIEWER_ROWS))
+      .toMatchObject({ ok: false, reason: "private_rows" });
+    expect(await host.writeData("DELETE FROM entries", [], 10, VIEWER_ROWS))
+      .toMatchObject({ ok: false, reason: "private_rows" });
+    expect((await host.pageData("entries", 0, 10, ALL_ROWS) as { rows: unknown[] }).rows).toHaveLength(1);
+    expect(await host.pageData("prompts", 0, 10, ALL_ROWS)).toMatchObject({ rows: [] });
+    expect(await host.writeData("INSERT INTO entries (private_to_viewer, body) VALUES (?, 'imported')", [VIEWER], 10, ALL_ROWS))
+      .toMatchObject({ ok: true });
+    expect(await host.pageData("entries", 0, 10, VIEWER_ROWS))
+      .toMatchObject({ rows: [{ private_to_viewer: VIEWER, body: "imported" }] });
+  });
+
+  it("takes no write for a site whose Canvas is archived", async () => {
+    await publish(VOTING_MODULE);
+    const host = hostStub();
+    await host.fetchThroughFacet(viewerRequest("/vote?choice=yes"));
+    await host.archiveCanvas({ workspaceId: WORKSPACE, canvasId: WORKSTREAM });
+    expect(await host.writeData("DELETE FROM votes", [], 10, ALL_ROWS)).toEqual({ ok: false, reason: "canvas_archived" });
+    expect(await host.queryData("SELECT choice FROM votes", [], 10, ALL_ROWS)).toMatchObject({ rows: [{ choice: "yes" }] });
+  });
+
   it("rolls back even a read, so nothing a statement did can persist", async () => {
     // The second line of defence, proven on the real runtime rather than
     // assumed: admission is what stops a write, and this is what stops one that

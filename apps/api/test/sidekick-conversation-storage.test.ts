@@ -109,23 +109,68 @@ describe("the WorkspaceDO home-conversation migration", () => {
   });
 });
 
+describe("the WorkspaceDO Canvas-attachment migration", () => {
+  it("attaches every Canvas a run made to its writer Sidekick, and marks none as made in a Canvas", () => {
+    const database = new DatabaseSync(":memory:");
+    applyWorkspace(database, 143);
+    seedIdentity(database);
+    seedCanvas(database, WRITTEN, "Monday brief", 10, SIDEKICK, 40);
+    seedCanvas(database, NEWER_WRITTEN, "Tuesday brief", 20, SIDEKICK);
+    seedCanvas(database, ATTACHED, "Launch", 5);
+    // One a wizard had already attached keeps who attached it and when.
+    database.prepare(`INSERT INTO sidekick_conversation_attachments
+      (automation_id, parent_kind, parent_id, substream_id, attached_by_user_id, attached_at)
+      VALUES (?, 'canvas', ?, '0', ?, 7)`).run(SIDEKICK, WRITTEN, STRANGER);
+
+    applyWorkspace(database, 144, 143);
+
+    expect(database.prepare(
+      `SELECT automation_id, parent_id, attached_by_user_id, attached_at, made_here
+         FROM sidekick_conversation_attachments ORDER BY parent_id`,
+    ).all()).toEqual([
+      { automation_id: SIDEKICK, parent_id: WRITTEN, attached_by_user_id: STRANGER, attached_at: 7, made_here: 0 },
+      { automation_id: SIDEKICK, parent_id: NEWER_WRITTEN, attached_by_user_id: AUTHOR, attached_at: 20, made_here: 0 },
+    ]);
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
+  it("records that a Canvas's Chat made the Sidekick only on the attachment that says so", () => {
+    const database = currentWorkspace();
+    const sql = createTestSqlStorage(database);
+    seedSidekick(database);
+    attachSidekickConversation(sql, { automationId: SIDEKICK, madeHere: true,
+      address: { parentKind: "canvas", parentId: WRITTEN, substreamId: "0" }, userId: AUTHOR, now: 1 });
+    attachSidekickConversation(sql, { automationId: SIDEKICK,
+      address: { parentKind: "canvas", parentId: ATTACHED, substreamId: "0" }, userId: AUTHOR, now: 2 });
+    // A later attach of the same Canvas neither sets nor clears the mark.
+    attachSidekickConversation(sql, { automationId: SIDEKICK, madeHere: true,
+      address: { parentKind: "canvas", parentId: ATTACHED, substreamId: "0" }, userId: AUTHOR, now: 3 });
+    expect(database.prepare(
+      `SELECT parent_id, made_here FROM sidekick_conversation_attachments ORDER BY parent_id`,
+    ).all()).toEqual([{ parent_id: WRITTEN, made_here: 1 }, { parent_id: ATTACHED, made_here: 0 }]);
+  });
+});
+
 describe("a Sidekick's scope", () => {
-  it("puts its own conversation first, then the Canvases it writes newest made first, then its attachments in order", () => {
+  it("puts its own conversation first, then the Canvases attached to it in the order they were attached", () => {
     const database = currentWorkspace();
     const sql = createTestSqlStorage(database);
     seedSidekick(database);
     seedSidekick(database, OTHER_SIDEKICK);
-    // Written later than it was made, so only creation order puts it second.
     seedCanvas(database, WRITTEN, "Monday brief", 10, SIDEKICK, 40);
     seedCanvas(database, NEWER_WRITTEN, "Tuesday brief", 20, SIDEKICK, 20);
     seedCanvas(database, ATTACHED, "Launch", 5);
     // Another Sidekick's Canvas is not this one's.
     seedCanvas(database, "00000000-0000-7000-8000-0000000000f4", "Elsewhere", 30, OTHER_SIDEKICK);
+    attachSidekickConversation(sql, { automationId: OTHER_SIDEKICK,
+      address: { parentKind: "canvas", parentId: "00000000-0000-7000-8000-0000000000f4", substreamId: "0" }, userId: AUTHOR, now: 1 });
     attachSidekickConversation(sql, { automationId: SIDEKICK,
       address: { parentKind: "canvas", parentId: ATTACHED, substreamId: "0" }, userId: AUTHOR, now: 1 });
-    // A Canvas both written and attached is listed once, where it is written.
     attachSidekickConversation(sql, { automationId: SIDEKICK,
       address: { parentKind: "canvas", parentId: WRITTEN, substreamId: "0" }, userId: AUTHOR, now: 2 });
+    // A second attach of the same Canvas is still one entry.
+    attachSidekickConversation(sql, { automationId: SIDEKICK,
+      address: { parentKind: "canvas", parentId: WRITTEN, substreamId: "0" }, userId: STRANGER, now: 9 });
     // An attachment of a Thread from before the cutover names nothing.
     database.prepare(`INSERT INTO sidekick_conversation_attachments
       (automation_id, parent_kind, parent_id, substream_id, attached_by_user_id, attached_at)
@@ -134,11 +179,12 @@ describe("a Sidekick's scope", () => {
     const listed = (authoring?: boolean) => scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK,
       ...(authoring ? { authoring } : {}) }).map((conversation) => [conversation.conversationId, conversation.kind,
       conversation.title, conversation.isOwn, conversation.isParent]);
+    // The attachment is the whole of it: NEWER_WRITTEN names this Sidekick as
+    // its writer and holds no attachment, so it is not in scope.
     expect(listed(true)).toEqual([
       [SIDEKICK, "sidekick", "Weekly call prep", true, false],
-      [NEWER_WRITTEN, "canvas", "Tuesday brief", false, false],
-      [WRITTEN, "canvas", "Monday brief", false, false],
       [ATTACHED, "canvas", "Launch", false, false],
+      [WRITTEN, "canvas", "Monday brief", false, false],
     ]);
     // A run sits inside the Sidekick's own conversation.
     expect(listed()[0]).toEqual([SIDEKICK, "sidekick", "Weekly call prep", false, true]);

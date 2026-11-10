@@ -80,6 +80,37 @@
         "elicitation": null,
         "ready": true
       }
+    },
+    {
+      "id": "00000000-0000-7000-8000-000000000013",
+      "authorUserId": "00000000-0000-7000-8000-000000000001",
+      "scope": "personal",
+      "homeCanvasId": "00000000-0000-7000-8000-000000000021",
+      "draft": {
+        "name": "Launch tracker",
+        "description": "Keeps the Launch plan Canvas current with what shipped and what is at risk.",
+        "overview": "Review launch work each weekday and update the Launch plan.",
+        "instructions": "Review progress on the launch each weekday morning and update the Launch plan with what shipped, what slipped and what is at risk.",
+        "triggers": [
+          {
+            "type": "calendar",
+            "rrule": "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0",
+            "timezone": "America/Los_Angeles",
+            "summary": "Every weekday at 9:00 AM"
+          }
+        ],
+        "requiredCapabilities": [],
+        "expectedOutputs": [
+          "launch status"
+        ],
+        "defaultBehavior": {},
+        "recommendedPlugins": [],
+        "memoryTables": [],
+        "suggestedScope": "personal",
+        "followUpQuestion": null,
+        "elicitation": null,
+        "ready": true
+      }
     }
   ],
   "canvases": [

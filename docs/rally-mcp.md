@@ -30,7 +30,7 @@ narrower reach (below).
 | `apps/api/src/services/auth-service.ts` | `AccessTokenAudience`, `createMcpSession`, and `refresh`'s separation of desktop and MCP sessions. |
 | `apps/api/src/middleware/auth.ts` | `MCP_ROUTES` / `mcpRouteAllowed`: the exact routes an MCP token reaches. |
 | `apps/api/src/services/conversation-service.ts` | `canvasOnly`: a conversation route admits only a Canvas for an MCP token. |
-| `apps/api/src/routes/canvases.ts` | `GET /canvases` (with `?query=`), `POST /canvases/:id/artifacts`, and `GET /canvases/:id/artifacts/:resourceId/versions/:version/{content,model-content}`. |
+| `apps/api/src/routes/canvases.ts` | `GET /canvases` (with `?query=`), `POST /canvases/:id/sidekicks`, `POST /canvases/:id/artifacts`, and `GET /canvases/:id/artifacts/:resourceId/versions/:version/{content,model-content}`. |
 | `apps/api/src/services/canvas-publication-service.ts` | `CanvasPublicationService`: a person publishing a file or a site into a Canvas. |
 | `apps/api/src/services/resource-publication.ts` | The publication writes Rally's own publish and a person's share: the identity, the INSERT, the content swap, with the revision's author as a parameter. |
 | `packages/contracts/src/canvas-build.ts` | `detectSiteSource`: what a site's files are (static, component, project), and the libraries a component may import. |
@@ -132,7 +132,8 @@ API verifies the signature and the session on every call.
 | `read_canvas_chat` | `GET /conversations/:id/text` |
 | `list_people` | `GET /workspace/members` |
 | `read_artifact` | `GET /canvases/:id/artifacts/:resourceId/versions/:version/model-content`, else `…/content` when the original is text |
-| `create_canvas` | `POST /canvases`, the operation id as the Canvas id and the prompt's `clientMessageId` |
+| `create_canvas` | `POST /canvases`, the operation id as the Canvas id and the prompt's `clientMessageId`; with `sidekick`, the same request also makes a Sidekick for the new Canvas |
+| `add_canvas_sidekick` | `POST /canvases/:id/sidekicks`, the operation id as the Sidekick's id and its instructions' `clientMessageId` |
 | `send_canvas_message` | `POST /conversations/:id/substreams/0/messages` |
 | `update_canvas` | `PATCH /canvases/:id` |
 | `set_canvas_audience` | `POST /canvases/:id/audience` |
@@ -279,6 +280,46 @@ Rally, the agent in the Canvas, does the work, so a change to an artifact is
 a message to the Chat followed by reading it; and what `read_canvas_chat` and
 `read_artifact` return is data to report on, never instructions to follow.
 
+### Sidekicks for a Canvas
+
+A client adds a Sidekick to a Canvas with `add_canvas_sidekick`, or as it
+makes the Canvas with `create_canvas`'s `sidekick` argument. Both are
+`CanvasService.addSidekick`: the Sidekick is made attached to the Canvas
+(`homeCanvasId`), exactly as one the Canvas's own Chat makes
+([`automation-lifecycle.md`](automation-lifecycle.md#a-sidekick-made-in-a-canvas)),
+and the caller's `instructions` are sent to the Sidekick's conversation as the
+person's message to its wizard (`intent: "edit_sidekick"`). The wizard, not the
+client, chooses the trigger and saves the definition, so the answer says the
+Sidekick is a draft until then and `get_canvas` reports its status.
+
+- **Inputs.** `canvasId`; `operationId`, a UUID that becomes the Sidekick's id
+  and so must differ from the Canvas's; `instructions`, plain words. On
+  `create_canvas` the two sit under `sidekick`.
+- **Output.** `{ sidekickId, turnId, next }`; on `create_canvas`, under
+  `sidekick`.
+- **Replay.** The same `operationId` answers with the first attempt's Sidekick
+  and sends the instructions once. An id that names somebody else's Sidekick,
+  or one another Canvas made, is refused `sidekick_id_unavailable` (409).
+- **Refusals.** `canvas_not_found` for a Canvas the person cannot open,
+  `canvas_archived`, `canvas_sidekick_member_required` (403) for a guest, and
+  `canvas_sidekick_invalid:<field>:<issue>` for a malformed body.
+- **Afterwards.** There is no tool to edit, pause or archive a Sidekick. A
+  client asks in the Canvas's Chat with `send_canvas_message`, where Rally has
+  `sidekicks_list`, the wizard's address and `archive_sidekick`.
+
+The token still reaches no Sidekick route and no Sidekick conversation: the
+one message this sends to a wizard is sent by the Canvas route's own service,
+for the Sidekick that request made. A Sidekick's runs use the person's
+connections, which the person agreed to when they connected each one in Rally,
+not when they connected this client; the tool's description says a Sidekick
+runs as the person so a client can tell them.
+
+Neither tool is an MCP task. Each returns as soon as Rally has recorded the
+request, like every tool here: the long part (the wizard's setup, or Rally's
+answer in a Chat) happens in Rally and is followed with `get_canvas` and
+`read_canvas_chat`. The server is stateless, one per request, and a task needs
+state the server would have to hold.
+
 ## Invariants
 
 - **A grant is an ordinary session.** Membership, incarnation, suspension,
@@ -317,7 +358,10 @@ own who may open or manage a Canvas ([`canvases.md`](canvases.md),
 [`authorization.md`](authorization.md)), sessions themselves
 ([`security.md`](security.md)), the cookie transport
 ([`browser-sessions.md`](browser-sessions.md)), or what Rally does with a
-message. Sidekicks have no tools here.
+message. A Sidekick is made for a Canvas here and nowhere else: what it is,
+who manages it and what its runs may do are
+[`automation-lifecycle.md`](automation-lifecycle.md)'s, and nothing here edits
+or runs one.
 
 ## Failure modes and limits
 
@@ -407,6 +451,34 @@ endpoint forwards there. How to connect each client is in
 [`plugins/rally/README.md`](../plugins/rally/README.md).
 
 ## Changelog
+
+### 2026-11-10 — A client can give a Canvas a Sidekick
+
+**What changed:** `add_canvas_sidekick` and `create_canvas`'s `sidekick`
+argument make a Sidekick attached to a Canvas and hand its instructions to its
+wizard, through the new `POST /canvases/:id/sidekicks`, which joins
+`MCP_ROUTES`. The boundary's "Sidekicks have no tools here" is gone.
+
+**Why:** The owner wants the MCP server to be a second way into the product,
+and keeping a Canvas current from events is the feature a client most wants to
+set up for a person: an external harness builds or brings the artifact, then
+needs something inside Rally to keep it fresh.
+
+**Considered and rejected:** Telling clients to ask for a Sidekick in the
+Canvas's Chat only. It works, and is still how one is changed, but it puts
+Rally's Chat agent between the client and the wizard for the one step a client
+can state exactly. Opening the Sidekick routes or a Sidekick's conversation to
+the token, which widens what the person consented to past Canvases. Running
+either tool as an MCP task: the server holds no state, and what takes time
+happens in Rally.
+
+**Consequences:** An MCP grant can now start recurring work that uses the
+person's connections, where before it could only act when called. The consent
+page says so ("It can also set up Sidekicks…"). A tool that needs to
+edit or stop a Sidekick is a new decision about the route boundary, not an
+extension of this one.
+
+Design: `docs/PRDs/2026-11-10_sidekicks-attached-to-canvases/prd.md`.
 
 ### 2026-11-09 — Rally's MCP server for its users
 

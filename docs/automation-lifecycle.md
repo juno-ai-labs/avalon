@@ -376,7 +376,7 @@ skill read's Channel branch that read it.
 
 A Sidekick's own reach is separate: `conversation_attach` files a Canvas's Chat
 in `sidekick_conversation_attachments` as `canvas`, and the conversation tools
-offer the Sidekick its own conversation, every Canvas it writes, and those
+offer the Sidekick its own conversation and those
 attachments, each admitted for the acting person by `canvasAdmits` or
 `sidekickAdmits` ([`conversation-tools.md`](conversation-tools.md)).
 
@@ -396,7 +396,7 @@ The Sidekick's details column shows, as design §4 draws it, Pause/Resume and
 a "⋯" menu (Run now, Run history, Copy link, Archive), then three blocks that
 are always present: **Wakes on** (one row per trigger with its mark, and the
 next run), **Uses** (the connections its runs use, with their count) and
-**Writes to** (the Canvases it writes). A block with nothing in it reads
+**Writes to** (the Canvases attached to it). A block with nothing in it reads
 **Nothing yet** rather than disappearing, so "uses nothing" and "not shown"
 cannot be confused. Who it may act as follows the blocks. A draft shows no
 Pause and no delegation block: nothing runs yet, and it is finished in the
@@ -428,7 +428,8 @@ records where a running signal would come from.
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by an agent's `create_sidekick`; and `AutomationService`, the Worker-side access every route goes through. It passes who is asking; whether they manage the Sidekick is decided where the Sidekick lives. |
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /:id`, `GET /:id/delegation`, `POST /:id/delegation`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/audience`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
 | `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; the history projection's `sidekick_review_due` branch, which admits the notice row as the model's user turn; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names no home conversation (`homeConversationId` is `null`: the run delivers its own result); and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a Canvas's Chat. |
-| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | `sidekick_conversation_attachments` (WorkspaceDO migration 86) and the conversation scope a Sidekick reaches: its own conversation, the Canvases it writes, and its attached Canvases. |
+| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | `sidekick_conversation_attachments` (WorkspaceDO migrations 86 and 144), the write that attaches a Sidekick to a Canvas, and the conversation scope a Sidekick reaches: its own conversation and its attached Canvases. |
+| `apps/api/src/durable-objects/canvas-sidekick-admission.ts` | Who opens a Canvas or a Sidekick and who manages a Sidekick, from WorkspaceDO's rows: `canvasReaderAllows`, `sidekickReaderAllows`, `sidekickManagerAllows`, `sidekickManages` (which adds the Canvas that made it) and `sidekickAttachedToCanvas`. One module because the Canvas and Sidekick rules read each other. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), `SidekickReviewNoticeV1` (the review row's structured content: counts and the sampled run ids), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
@@ -497,7 +498,8 @@ wizard submission, and a manager can widen it again. The summary and detail no l
 create a second draft. A coordinating conversation uses `rally_agents` to create
 a Sidekick (personal by default, the Organization's when the person asks) and
 send setup instructions to its authoring agent; `sidekicks_list` lists only the
-Sidekick the conversation belongs to
+Sidekick the conversation belongs to, or in a Canvas's Chat the Sidekicks that
+Canvas made
 ([`agent-communication.md`](agent-communication.md)). Those
 instructions open the authoring conversation and are shown there as its
 **Opening instructions** row
@@ -1543,22 +1545,106 @@ owns the tool and the frame.
 A Sidekick has no home conversation outside itself. Its own conversation
 (`"0"`, the shared conversation) is where it posts by default and where
 everyone it is shared with reads. Nothing archives a Sidekick but its own
-archive.
+archive and the archive of [the Canvas that made it](#a-sidekick-made-in-a-canvas).
 
-A Sidekick reads and posts through the `rally:conversations` plugin
-([`conversation-tools.md`](conversation-tools.md)), whose scope for a Sidekick is
-its own conversation, every Canvas it writes, and the Canvases attached to it
-in WorkspaceDO's `sidekick_conversation_attachments`. Only the Sidekick's
-configuration conversation attaches (the `conversation_attach` tool), and only
-a Canvas the attaching person can open, since attaching is the consent to
-publish there. A run posts with `conversation_post`, which defaults to the
-Sidekick's own conversation; nothing posts a run's result for it. That table
-is not `parent_sidekicks`, which recorded that a Channel's conversations may
-load the Sidekick as a skill and which nothing writes now.
+**A Sidekick's Canvas attachment is the one record of which Canvases it works
+on.** A row of WorkspaceDO's `sidekick_conversation_attachments` lets the
+Sidekick's runs:
+
+- read, search and post in that Canvas's Chat, through the
+  `rally:conversations` plugin ([`conversation-tools.md`](conversation-tools.md));
+- publish into the Canvas, by naming it in `publish_resource`'s `canvas`
+  argument (`canvasForSidekickRun`, `canvas_not_attached_to_sidekick`
+  otherwise). A run and the Canvas's Chat share an artifact's identity
+  (`terminal:<canvasId>:<path>`), so publishing a path the Chat published is a
+  new version of that artifact;
+- write rows into a stateful artifact the Canvas holds, with
+  `write_artifact_data` ([`live-web-artifacts.md`](live-web-artifacts.md#writing-rows-from-a-run)).
+
+Three things write a row, and nothing removes one:
+
+| Writer | When | `made_here` |
+| --- | --- | --- |
+| `HostedCanvas.create` with a `writer` | A run's first publish makes its Canvas | 0 |
+| `HostedSidekick.create` with `homeCanvasId` | A Canvas's Chat makes the Sidekick | 1 |
+| `conversation_attach`, the configuration conversation's tool | A manager attaches a Canvas they can open | 0 |
+
+Attaching is the consent to publish there: whoever attached it chose that
+Canvas's audience for the Sidekick's output. It changes who can open neither
+side. A run posts with `conversation_post`, which defaults to the Sidekick's
+own conversation; nothing posts a run's result for it. `canvas_directory.
+writer_sidekick_id` is not this grant: it says whose audience a Canvas a run
+made admits ([`canvases.md`](canvases.md#who-can-open-a-canvas)), and nothing
+else reads it as reach.
+
+A wizard turn and a run are told about the Canvases the Sidekick was attached
+to in a host-provided message, `ATTACHED CANVASES`
+(`sidekickCanvasContextMessage`, from `WorkspaceDO.sidekickCanvasContext`):
+each Canvas's id, title and artifacts with their `resourceId`, the `filePath`
+a publish names, and `storesData`, and the two ways to change one. It lists
+only Canvases somebody attached the Sidekick to, never the Canvas each of its
+own runs made, which would grow by one per run, and only those the acting
+person may open. A Sidekick attached to none is sent nothing. It is a derived
+user message for the reason `CANVAS CONTEXT` is one: the system prompt prefix
+is byte-stable and the list moves with every publish.
+
+Runs are not coalesced: each occurrence starts one, and they overlap. So a run
+that fires per event writes rows, which are atomic, and republishes only to
+change an artifact's code. Two overlapping runs that each import, edit and
+republish lose one's change; the guidance in `ATTACHED CANVASES` tells a
+republishing run to rebuild the artifact from its sources.
+
+### A Sidekick made in a Canvas
+
+A Canvas's Chat makes a Sidekick with the agents plugin's `create_sidekick`
+([`agent-communication.md`](agent-communication.md#in-a-canvass-chat)). The
+host passes the loop's own Canvas as `homeCanvasId`; no tool names a Canvas, so
+a Chat makes a Sidekick for its own Canvas and for no other. A client outside
+Rally makes one the same way through `POST /canvases/:id/sidekicks`
+([`canvases.md`](canvases.md#sidekicks-attached-to-a-canvas)), where the Canvas
+is the route's and the person must be able to open it. A replay of either
+names the same Sidekick; an id that names another person's, or one this Canvas
+did not make, is refused (`sidekick_id_unavailable`).
+`HostedSidekick.create` refuses a Canvas the author cannot open
+(`canvas_not_found`) or an archived one (`canvas_archived`), and writes the
+directory row and the attachment in one transaction, the attachment marked
+`made_here`. There is no made-but-unattached state.
+
+That mark is the whole of what ties the Sidekick to the Canvas:
+
+- **Everyone the Canvas admits manages it.** `sidekickManages` is
+  `sidekickManagerAllows` (author, run-as, and an Organization Sidekick's
+  owners and administrators) or `canvasReaderAllows` over the Canvas its
+  `made_here` attachment names. `HostedSidekick.managerAllows` applies it, so
+  every managed action follows: the wizard's save, pause, resume, archive, and
+  the agents plugin's contact rule.
+- **Managing is not opening.** `sidekickReaderAllows` does not read the mark.
+  Someone in the Canvas who is not someone the Sidekick is shared with steers
+  it from the Canvas and cannot open its conversation or runs. Its creator
+  shares it the ordinary way.
+- **Archiving the Canvas archives it.** `HostedCanvas.archive` calls the
+  host's `archiveHomeSidekicks` inside its transaction, which runs
+  `HostedSidekick.archiveWithHome` for each one the Canvas made; the
+  registrations are cleared after the commit, as `remove` does. A Sidekick
+  only attached to the Canvas is left alone.
+
+The Sidekick is otherwise an ordinary one: personal to its creator unless they
+asked for the Organization's, listed in their Sidekicks section, with its own
+shared conversation and runs.
+
+A Sidekick's row (`AutomationSummary.attachedCanvases`, on the sidebar list and
+`GET /sidekicks`) names the Canvases somebody attached it to that the viewer
+may open (`canvasesAttachedTo`): the one that made it and any its wizard
+attached, never the Canvas each run made, which is its output. The Sidekicks
+home draws each as a pill at the right of the card's preview, under the Paused
+pill when there is one, with the Canvas's title and an up-right arrow; it is a
+link to the Canvas, above the card's own stretched link. A Canvas archive moves
+the Sidekick list, so an attached Sidekick's pill leaves with it; a retitle
+reaches the pill at the list's next frame.
 
 A definition may set `failureNotificationConversationId` to a canonical
 `conversation_list` id in this scope: the Sidekick's own conversation, a Canvas
-it writes, or an explicitly attached Canvas. This declares an additional
+made, or any other Canvas attached to it. This declares an additional
 failure-notification destination; it grants no access. Apply resolves it through
 normal scope and canonical admission for the default run-as person, refusing
 an unattached, inaccessible, archived or noncanonical destination with
@@ -1936,6 +2022,7 @@ instruction body.
 | Suite | Command | Covers |
 | --- | --- | --- |
 | `apps/api/test-workers/hosted-sidekick.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg; and the scheduled self-review: ten finishes arming, requesting and delivering a review with the counts and sample, whose row carries the sentence a person reads and whose model turn is asked with the Rally-attributed notice first; the three-day floor, a new revision resetting the count and retiring a pending request, a finish under the previous revision not counting, delivery re-arming from the count, resume resending a request still owed; the accepted revision's runs sampled with failures before stops and other revisions excluded, a lost message resent and then delivered once; the Sidekick row's question read from its newest waiting run while a later run works and after it finishes, and gone once answered. |
+| `apps/api/test-workers/canvas-sidekicks.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: a Sidekick made with a Canvas is attached to it as it is made and named on the Canvas's detail; it is not made in a Canvas its author cannot open; everyone in the Canvas manages it, cannot open it, and stops managing it when the Canvas stops admitting them; a run publishes into any attached Canvas and no other; archiving the Canvas archives the Sidekicks it made and leaves an attached one; `ATTACHED CANVASES` lists only what the person can open. Each was seen to fail with the attach, the author check, the manager rule, the publish gate, the archive hook or the admission filter removed. |
 | `apps/api/test-workers/sidekick-shared-conversation.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: who starts a run from the shared conversation and who reaches the wizard; a run's row written, numbered, carrying its requester and its reply, and parsed by the previous release's schemas; the row's directory effects applied by the Sidekick when it writes the row, in chunks past one call's limit, so the requester's list is sent once with their own run read; the list carrying the zone its next scheduled run is read in; the question a run waits on on its row and on the Sidekick's list row; unread and manual marks per reader. |
 | `apps/api/test/sidekick-review-notice.test.ts`, `test/model-protocol-transcript.test.ts` | `pnpm --filter @rally/api test` | The notice's row sentence and model framing against literals, both windows and an empty sample; and the history projection admitting the notice as one user turn under Rally's first line. |
 | `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | Continuing a finished run as its run-as user; refusals while paused; a pause after a continuation's approval fencing its writes; a run's loop acting while its row still reads `pending`, before provisioning reports it running; and background workers beneath authoring or run conversations executing initial and follow-up assignments with inherited authority; a reader who is not a delegate refused by name, with nothing run, when they write in a run that acts as a delegate, and their answer to the run's question refused before it is recorded, so the author can still give it. |
@@ -2007,7 +2094,11 @@ activation cutoff even for an empty replacement; migration 49 adds
 `automation_directory.appearance_json`, nullable and never backfilled; migration 86
 adds `automation_directory.owning_substream_id` (`NOT NULL DEFAULT '0'`) and
 `sidekick_conversation_attachments`, keyed by `(automation_id, parent_kind,
-parent_id, substream_id)` with who attached it and when. Migration 85 is the
+parent_id, substream_id)` with who attached it and when; migration 144 adds its
+`made_here` flag (0 unless a Canvas's Chat made the Sidekick), indexes it by
+`(parent_kind, parent_id)` for the Canvas's read of its Sidekicks, and inserts
+one row for every Canvas a run had made (`writer_sidekick_id`), so the publish
+gate reads this table alone. Migration 85 is the
 external conversation bindings table's. Owner migration 4 stores the
 source counter. Versioned registration IDs equal immutable evaluator IDs, so a
 late delivery from a superseded predicate is refused by the owner.
@@ -2154,6 +2245,46 @@ conversation-object SQLite; the vocabulary, `StatusDot`, the
 survive as described above.
 
 ## Changelog
+
+### 2026-11-10 — A Sidekick's Canvas attachment is the publish grant, and a Canvas makes Sidekicks it steers
+
+**What changed:** `sidekick_conversation_attachments` grants everything a
+Sidekick does to a Canvas: Chat read and post as before, publishing into it
+(`canvasForSidekickRun` checks the attachment, not `writer_sidekick_id`), and
+writing its stateful artifacts' rows. A run's own Canvas is attached as it is
+made, and migration 144 attached the existing ones. A Canvas's Chat makes a
+Sidekick attached to its own Canvas, marked `made_here`; everyone the Canvas
+admits manages that Sidekick (`sidekickManages`), and archiving the Canvas
+archives it. Wizard turns and runs receive `ATTACHED CANVASES`.
+
+**Why:** Recurring events could not update a Canvas a person made. Two
+relations linked a Sidekick to a Canvas and the one that granted publishing was
+one per Canvas and set only when a run created it, so a Sidekick could publish
+only into its own output. The owner wanted an inbox or a pull-request dashboard
+kept current by a Sidekick, set up from the Canvas itself.
+
+**Considered and rejected:** Recording a home Canvas on the Sidekick and
+making the Canvas's audience the Sidekick's audience, read live. It was built
+first. The audience rule is read in the library, the sidebar SQL, canonical
+authorization, search, memory and notifications, each of which needed the
+Canvas rule joined in; it made Canvas and Sidekick admission recursive; and it
+was the conversation-owned Sidekick migration 136 had just retired. The owner
+judged it too tight and accepted that a participant steers a Canvas-made
+Sidekick without reading its runs. Also rejected: attach and detach tools in
+the Chat (deferred, the owner's call), and coalescing runs, which the row
+write makes unnecessary for the per-event case.
+
+**Consequences:** Reach is the attachment and only the attachment; a new
+capability a Sidekick gets over a Canvas checks `sidekickAttachedToCanvas`,
+never the writer column, whose one meaning is audience. Nothing removes an
+attachment, so reach lasts until the Canvas or the Sidekick is archived.
+Anyone in a Canvas can rewrite what a Canvas-made Sidekick does with its
+creator's connections; a change that should not allow that has to narrow
+`sidekickManages`, not the tools. `sidekickReaderAllows` must stay free of the
+`made_here` mark, or the rule becomes the rejected one. The Sidekick detail's
+`canvases` now lists every attached Canvas.
+
+Design: `docs/PRDs/2026-11-10_sidekicks-attached-to-canvases/prd.md`.
 
 ### 2026-11-09 — Authorized failure destinations and explicit task outcomes
 

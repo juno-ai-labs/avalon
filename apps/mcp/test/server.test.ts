@@ -130,6 +130,37 @@ describe("the Canvas tools", () => {
     expect(JSON.parse(body.result!.content[0]!.text)).toMatchObject({ canvasId: "0190a000-0000-7000-8000-0000000000aa", turnId: "turn-1" });
   });
 
+  it("adds a Sidekick to a Canvas through the Canvas's own route, with the operation id as the Sidekick's id and its instructions' message id", async () => {
+    const SIDEKICK = "0190a000-0000-7000-8000-0000000000cc";
+    const upstream = api(async (request) => {
+      expect(`${request.method} ${new URL(request.url).pathname}`).toBe(`POST /canvases/${CANVAS}/sidekicks`);
+      expect(await request.json()).toEqual({ sidekickId: SIDEKICK,
+        instructions: { text: "On every new email, add a row to Inbox.", clientMessageId: SIDEKICK } });
+      return Response.json({ sidekickId: SIDEKICK, turnId: "turn-9" }, { status: 201 });
+    });
+    const { body } = await rpc(upstream.binding, call("add_canvas_sidekick", {
+      canvasId: CANVAS, operationId: SIDEKICK, instructions: "  On every new email, add a row to Inbox. " }));
+    expect(JSON.parse(body.result!.content[0]!.text)).toEqual({ sidekickId: SIDEKICK, turnId: "turn-9",
+      next: "The Sidekick is made and Rally's setup agent has the instructions. It is a draft until that agent saves it: check its status with get_canvas, and tell the person it may ask them a question in Rally." });
+  });
+
+  it("makes a Sidekick with a new Canvas in the one create request, under its own id", async () => {
+    const SIDEKICK = "0190a000-0000-7000-8000-0000000000cd";
+    const upstream = api(async (request) => {
+      expect(`${request.method} ${new URL(request.url).pathname}`).toBe("POST /canvases");
+      expect(await request.json()).toEqual({ canvasId: "0190a000-0000-7000-8000-0000000000aa",
+        prompt: { text: "Build a PR dashboard", clientMessageId: "0190a000-0000-7000-8000-0000000000aa" },
+        sidekick: { sidekickId: SIDEKICK, instructions: { text: "Update it when a pull request is merged.", clientMessageId: SIDEKICK } } });
+      return Response.json({ canvasId: "0190a000-0000-7000-8000-0000000000aa", turnId: "turn-1",
+        sidekick: { sidekickId: SIDEKICK, turnId: "turn-2" } }, { status: 201 });
+    });
+    const { body } = await rpc(upstream.binding, call("create_canvas", { operationId: "0190a000-0000-7000-8000-0000000000aa",
+      prompt: "Build a PR dashboard", sidekick: { operationId: SIDEKICK, instructions: "Update it when a pull request is merged." } }));
+    const result = JSON.parse(body.result!.content[0]!.text) as { sidekick: unknown; next: string };
+    expect(result.sidekick).toEqual({ sidekickId: SIDEKICK, turnId: "turn-2" });
+    expect(result.next).toContain("It is a draft until that agent saves it");
+  });
+
   it("reports Rally's own refusal, and tells the person to reconnect when the session ended", async () => {
     const upstream = api(() => Response.json({ error: { code: "session_revoked", message: "The session is no longer active" } }, { status: 401 }));
     const { body } = await rpc(upstream.binding, call("get_canvas", { canvasId: CANVAS }));
