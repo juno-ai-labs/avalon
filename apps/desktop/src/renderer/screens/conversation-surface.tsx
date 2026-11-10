@@ -215,7 +215,7 @@ function ConversationOpeningFeed({ label, parentKind, caption = false, openingMe
         )}
         <div className="transcript-scroll">
           {openingMessage ? <div className="transcript-column conversation-opening-messages">
-            <article className="message-block human-message own-human-message" style={bubbleStyle}>
+            <article className="message-block human-message" style={bubbleStyle}>
               <div className="human-message-content">
                 <HumanMessageBody
                   attachments={openingMessage.attachments}
