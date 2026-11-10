@@ -1,7 +1,7 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "rally-engineering-mcp",
-  "main": "src/index.ts",
+  "main": "src/worker.ts",
   "compatibility_date": "2026-08-30",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
@@ -16,6 +16,10 @@
     "CLOUDFLARE_ACCOUNT_ID": "injected-by-automated-deploy"
   },
   "routes": [{ "pattern": "mcp.internal.rallywith.ai", "custom_domain": true }],
+  "durable_objects": {
+    "bindings": [{ "name": "ENGINEERING_TASKS", "class_name": "EngineeringTaskDO" }]
+  },
+  "migrations": [{ "tag": "engineering-tasks-v1", "new_sqlite_classes": ["EngineeringTaskDO"] }],
   "services": [
     {
       "binding": "GLOBAL_INSPECTION",
