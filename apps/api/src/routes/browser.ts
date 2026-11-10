@@ -1,3 +1,5 @@
+import { PasswordLoginRequestSchema } from '@rally/contracts/password-login';
+import { passwordLogin } from '../services/password-login-service';
 import { UuidV7Schema } from '@rally/contracts/telemetry';
 import { McpAuthorizationApprovalSchema, McpAuthorizationDescriptionSchema, McpAuthorizationRedirectSchema,
   McpAuthorizationRequestSchema } from "@rally/contracts/mcp-oauth";
@@ -88,6 +90,12 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     }
     await next();
     c.header("Cache-Control","no-store");
+  });
+  routes.post('/password', authBodyLimit, zValidator('json', PasswordLoginRequestSchema), async (c) => {
+    const session = await passwordLogin(c.env, c.req.valid('json'));
+    const cookie = await new BrowserSessionService(c.env).register(session);
+    writeCookie(c, cookie.credential, cookie.expiresAt);
+    return c.json(BrowserSessionSchema.parse(cookie.session));
   });
   routes.post('/signup/view', authBodyLimit, zValidator('json', z.strictObject({ flowId: UuidV7Schema })), (c) => {
     observeSignup(c.env, { flowId: c.req.valid('json').flowId, clientPlatform: 'browser' }, 'signup_viewed', 'unknown');

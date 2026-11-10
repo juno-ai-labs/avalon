@@ -76,6 +76,11 @@ retired Thread, Channel and Space families are excluded. Existing product author
 which scopes the caller may read or mutate. Message-issue submissions use this
 same adapter; [message issues](message-issues.md) owns their access and storage.
 
+`POST /browser/password` verifies an operator-provisioned credential through the
+same Global service as desktop, then registers the ordinary identity session and
+sets this adapter's cookie. JSON still contains metadata only, and the existing
+Origin and no-store policies apply. See [password sign-in](password-login.md).
+
 ## Invariants
 
 - A cookie authenticates a user; it does not grant workspace or conversation

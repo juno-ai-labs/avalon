@@ -932,6 +932,11 @@ export class AuthService {
     return this.createSession(await this.loadIdentity(userId, null));
   }
 
+  /** A password proof remains valid only while its credential generation exists. */
+  async createPasswordIdentitySession(userId: string, credentialId: string): Promise<Session> {
+    return this.createSession(await this.loadIdentity(userId, null), undefined, undefined, credentialId);
+  }
+
   /** Only a successfully consumed mailbox challenge can resume this session. */
   async resumeEmailLogin(receipt: { challengeId:string;redemptionId:string }, clientPlatform: SignupPlatform): Promise<Session> {
     const row = await this.env.DB.prepare(`SELECT user_id,session_id,session_secret_encrypted,redeemed_at,telemetry_flow_id,telemetry_client_platform,signup_created
@@ -949,14 +954,24 @@ export class AuthService {
   }
 
   private async createSession(identity: IdentityRow, prepared?: { sessionId:string;refreshToken:string;createdAt:string },
-    grant?: { mcpClientId: string }): Promise<Session> {
+    grant?: { mcpClientId: string }, passwordCredentialId?: string): Promise<Session> {
     const sessionId = prepared?.sessionId ?? newId();
     const refreshToken = prepared?.refreshToken ?? randomToken(48);
     const at = prepared?.createdAt ?? nowIso();
     const insert = this.env.DB.prepare(
-      `INSERT INTO sessions
-       (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+      passwordCredentialId
+        ? `INSERT INTO sessions
+           (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?
+           WHERE EXISTS (
+             SELECT 1 FROM user_password_credentials c
+             JOIN users u ON u.id = c.user_id
+             JOIN user_verified_emails v ON v.user_id = u.id AND v.email = u.email COLLATE NOCASE
+             WHERE c.user_id = ? AND c.credential_id = ?
+           ) ON CONFLICT(id) DO NOTHING RETURNING id`
+        : `INSERT INTO sessions
+           (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
     )
       .bind(
         sessionId,
@@ -966,8 +981,11 @@ export class AuthService {
         await sha256(refreshToken),
         new Date(Date.parse(at) + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(),
         at,
+        ...(passwordCredentialId ? [identity.user_id, passwordCredentialId] : []),
       );
-    if (grant) {
+    if (passwordCredentialId) {
+      if (!await insert.first()) throw new ApiError(401, "password_login_invalid", "The email or password is incorrect.");
+    } else if (grant) {
       await this.env.DB.batch([insert, this.env.DB.prepare(
         "INSERT INTO mcp_oauth_grants(session_id,client_id,created_at) VALUES (?,?,?)",
       ).bind(sessionId, grant.mcpClientId, at)]);
