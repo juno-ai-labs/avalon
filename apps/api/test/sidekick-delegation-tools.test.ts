@@ -21,15 +21,18 @@ function plugin(autonomous = false) {
 }
 
 describe("Sidekick delegation plugin presentations", () => {
-  it("gives authoring the delegation tools with stable wire names", () => {
+  it("gives authoring the delegation tools, then the source tools, with stable wire names", () => {
     const authoring = plugin();
     expect(authoring.modelId).toBe("rally_sidekicks");
     expect(authoring.shortWireName).toBe("sidekick");
-    expect(authoring.tools.slice(-3).map((tool) => tool.definition.name))
-      .toEqual(["my_delegations_list", "delegates_list", "set_delegation"]);
+    // Whose accounts a run may use, then whose events may start it: two sets of tools for two records.
+    expect(authoring.tools.slice(-6).map((tool) => tool.definition.name))
+      .toEqual(["my_delegations_list", "delegates_list", "set_delegation", "sources_list", "request_source", "test_source_condition"]);
     expect(authoring.systemMessage).toContain("This is available during autonomous work too");
     expect(authoring.systemMessage).toContain("sidekick_set_delegation");
     expect(authoring.systemMessage).toContain("sidekick_delegates_list");
+    expect(authoring.systemMessage).toContain("sidekick_sources_list");
+    expect(authoring.systemMessage).toContain("sidekick_request_source");
   });
 
   it("exposes delegation tools during autonomous work", () => {

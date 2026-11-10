@@ -17,6 +17,7 @@ artifact serving remain release checks.
 | `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, Google and password sign-in, session restore and workspace list. |
 | `apps/browser/src/mcp-consent.tsx` | The MCP consent page at `/app/oauth/authorize`: sign-in, then allow or deny an MCP client for one Organization ([`rally-mcp.md`](rally-mcp.md#consent)). |
 | `apps/browser/src/site-open.tsx` | The site-opening page a protected site sends a signed-out visitor to: finds the site's organization, opens it, opens the site and returns to the visitor's path. |
+| `apps/browser/src/source-decision.tsx`, `source-decision-words.ts` | The page an emailed Approve or Decline for a Sidekick source request opens: it posts the signed decision as it loads and says how the request stands. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
 | `apps/browser/src/shell.tsx` | The signed-in application's one lazy boundary: the desktop shell over the cookie session, for members and guests, and the browser's `AppSessionValue`. |
 | `apps/browser/public/sw.js` | The root service worker that shows Web Push notifications, sets the installed app's icon badge, and opens their links on this origin. |
@@ -416,6 +417,38 @@ organizations is opened, and the lookup is what finds the organization, so a
 site in such a deployment opens only once the browser has opened one of that
 deployment's organizations. The page says so.
 
+### Answering a source request from email
+
+A person asked for a Sidekick source
+([`sidekick-sources.md`](sidekick-sources.md)) who chose email for Access
+requests gets an email with an **Approve** and a **Decline** button. Each
+links to `/app/source-requests/decision` (`SOURCE_DECISION_PATH`) on this
+host, with the decision in the fragment: `region`, `workspace`, `sidekick`,
+`request`, `person`, `decision` and `token`, the signature that binds them.
+`client.tsx` draws `SourceDecision` for that path, outside the entry: the page
+needs no session and reads no cookie.
+
+Opening the link is the answer. The owner decided on 2026-11-10 that one
+click decides, with no sign-in and no second click, so unlike an email
+sign-in link the page does not wait for a Continue. As it first draws it
+reads the fragment (`sourceDecisionAsk`), drops it from the address and from
+history, and posts it once to
+`/regional/<region>/browser/source-requests/decision`, the region taken from
+the fragment as an email sign-in's is. Then it says how the request stands
+(`sourceDecisionWords`): "Approved" with what was asked, "Declined", or, when
+the link changed nothing, that the request was already answered the other way
+or was replaced by a newer one. A refusal shows Rally's own sentence
+("Connect that account first…"); an address with no decision in it says to
+open the button from the email again. The fragment is read by the page, never
+as the module loads, because every page of the client imports that module and
+an email sign-in's fragment is not its to drop.
+
+The API route is `POST /browser/source-requests/decision`
+(`decideSourceRequestByLink`). It is unauthenticated: it checks the signature
+before reading anything, then answers as the person the link was signed for.
+A `GET` answers 405, so a mail scanner that loads the link decides nothing;
+like every non-GET browser route it requires this host's Origin.
+
 ### Browser host lifecycle and content boundaries
 
 Chrome cookie-changing requests (renewal, email redemption and logout) use one
@@ -602,7 +635,15 @@ open in Safari, not in the app.
 `pnpm --filter @rally/browser test` builds assets and exercises the host in real
 workerd. `test/site-open.test.ts` covers the site-opening page's decisions:
 the code stays in the fragment, and which failure each answer shows. The page's
-React wiring has no automated test. A separate real Worker reflects forwarded requests, proving transport
+React wiring has no automated test. `test/source-decision.test.ts` covers the
+source-decision page's decisions the same way: what a fragment asks for, and
+the words for each answer and refusal. Its page was looked at in headless
+Google Chrome over the built client with the POST answered by a fixture: one
+POST per load, the fragment gone from the address, in dark and light at desktop
+and phone widths. `apps/api/test/sidekick-source-decision-link.test.ts` covers
+the route's 405, its signature refusal and its Origin check, and
+`apps/api/test-workers/sidekick-source-notices.test.ts` the signed link
+recording an answer on the real Organization object. A separate real Worker reflects forwarded requests, proving transport
 without pretending to test product authorization. Its real WebSocketPair proves
 upgrade, subprotocol and frame continuity through the service binding, along with
 same-origin enforcement and stripping unrelated credentials. Shared API adapter
@@ -644,6 +685,33 @@ must not close a healthy socket or reject pending command receipts. Identity,
 workspace, role or access-class changes replace the client and re-admit it.
 
 ## Changelog
+
+### 2026-11-10 — An emailed link answers a Sidekick source request with no sign-in
+
+**What changed:** `/app/source-requests/decision` is a page of its own,
+outside the entry. It posts the signed decision its fragment carries as it
+loads, to the unauthenticated `POST /browser/source-requests/decision`, and
+shows how the request stands.
+
+**Why:** The owner decided on 2026-11-10 that the person asked approves or
+declines from the email in one click. A sign-in first would lose most of the
+people asked: they are answering a colleague's request, often on a phone, in
+a browser that has never held a Rally session.
+
+**Considered and rejected:** A Continue button, as an email sign-in link has:
+that is the second click the decision rules out. The scanner risk it guards
+against is met by the route refusing `GET`, which is what a scanner that only
+loads the link sends. A `GET` route that records the answer and redirects: a
+link preview would approve. Routing the page through the entry, which would
+ask a signed-out person to sign in before the page could draw.
+
+**Consequences:** This is the one page on the host that acts without a
+session, and the one fragment that acts when opened. A scanner that runs the
+page's JavaScript can answer for the person; the signature limits what it can
+answer to the one decision in that link. Nothing else may be added to this
+route's authority: it decides one named request as one named person. The
+page must keep reading its fragment from the component, not at module load.
+[`sidekick-sources.md`](sidekick-sources.md) owns the link and the request.
 
 ### 2026-11-03 — A protected site's link signs you in and brings you back
 

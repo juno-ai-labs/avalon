@@ -84,7 +84,15 @@ export const ParentNoticeSchema = z.discriminatedUnion("kind", [
    * start a Sidekick. The recipient usually cannot open that Sidekick; the
    * request names it to them on purpose.
    */
-  z.strictObject({ kind: z.literal("source_request"), ...SourceNoticeAskSchema, requesterName: z.string() }),
+  z.strictObject({
+    kind: z.literal("source_request"), ...SourceNoticeAskSchema, requesterName: z.string(),
+    /**
+     * The Canvas the request was asked in, where its card is: what the notice
+     * opens, since the Sidekick itself is closed to the person until they
+     * approve. Absent when it was asked from the Sidekick's own conversation.
+     */
+    placeCanvasId: z.string().min(1).optional(),
+  }),
   /** The person the recipient asked approved. */
   z.strictObject({ kind: z.literal("source_approved"), ...SourceNoticeAskSchema, personName: z.string() }),
   /** The person the recipient asked declined. */
