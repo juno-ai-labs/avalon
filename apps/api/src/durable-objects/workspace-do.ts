@@ -748,6 +748,8 @@ import { SIDEKICK_SOURCE_NOTICE_SCHEMA_STATEMENTS } from "./sidekick-source-noti
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "sidekick_delegations", "sidekick_delegation_receipts", "sidekick_delegation_preparations", "sidekick_claim_access",
+  // Who lets events in is decided by HostedSidekick alone; no raw statement reads or writes it.
+  "sidekick_sources", "sidekick_source_requests",
   "scope_grant_directory",
   "connector_installations", "connector_installation_steps",
   ...AUTHORIZATION_STORAGE_TABLES,

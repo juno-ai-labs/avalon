@@ -7,7 +7,7 @@ import type { z } from "zod";
 import type { Env } from "../env";
 import { sourceNoticeNames } from "../durable-objects/sidekick-source-notices";
 import { workspaceDOName } from "../durable-objects/names";
-import { ApiError, asApiError } from "../lib/api-error";
+import { ApiError } from "../lib/api-error";
 import { browserOrigin } from "../lib/browser-origin";
 import { hmacSha256, timingSafeEqualText } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -58,9 +58,11 @@ const invalid = () => new ApiError(401, "sidekick_source_link_invalid", "This li
 /**
  * Record the decision a link carries, as the person it was sent to. The
  * signature is checked before anything is read, so an unsigned request
- * reaches no Organization. Opening the same link again answers the same
- * thing; a request answered the other way or replaced since is not changed,
- * and the answer says how it stands.
+ * reaches no Organization. The request is read as that person first: one
+ * still waiting is decided, and one already answered or replaced by a newer
+ * ask is not changed, and the answer says how it stands. So the same link
+ * opened again answers the same thing, and the other button opened after an
+ * answer says the answer.
  */
 export async function decideSourceRequestByLink(env: Env, input: z.input<typeof SourceDecisionLinkSchema>): Promise<SourceDecisionResult> {
   const { token, ...claim } = SourceDecisionLinkSchema.parse(input);
@@ -68,21 +70,17 @@ export async function decideSourceRequestByLink(env: Env, input: z.input<typeof 
   const workspaceId = asWorkspaceId(claim.workspaceId);
   const userId = asUserId(claim.userId);
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
-  const wanted = claim.decision === "approve" ? "approved" : "declined";
-  let view;
-  try {
-    view = await workspace.sidekickDecideSourceRequest({
-      workspaceId, automationId: claim.sidekickId, requestId: claim.requestId, userId, decision: claim.decision,
-    });
-  } catch (error) {
-    // Already answered the other way, or replaced by a newer ask: say how it stands.
-    if (asApiError(error)?.code !== "sidekick_source_request_settled") throw error;
-    const current = (await workspace.sidekickReadSourceRequests({ workspaceId, actor: { userId }, requestIds: [claim.requestId] })).requests[0];
-    if (!current) throw new ApiError(409, "sidekick_source_request_settled", SIDEKICK_SOURCE_ERRORS.sidekick_source_request_settled);
-    view = current;
+  const current = (await workspace.sidekickReadSourceRequests({ workspaceId, actor: { userId }, requestIds: [claim.requestId] })).requests[0];
+  // Gone with its Sidekick, or the person is no longer in the Organization.
+  if (!current || current.sidekickId !== claim.sidekickId) {
+    throw new ApiError(404, "sidekick_source_request_not_found", SIDEKICK_SOURCE_ERRORS.sidekick_source_request_not_found);
   }
+  const view = current.state === "pending"
+    ? await workspace.sidekickDecideSourceRequest({ workspaceId, automationId: claim.sidekickId, requestId: claim.requestId, userId, decision: claim.decision })
+    : current;
   return SourceDecisionResultSchema.parse({
-    state: view.state, applied: view.state === wanted, sidekickName: view.sidekickName, requestedByName: view.requestedByName,
+    state: view.state, applied: view.state === (claim.decision === "approve" ? "approved" : "declined"),
+    sidekickName: view.sidekickName, requestedByName: view.requestedByName,
     ...sourceNoticeNames(env, view.connectorType, view.eventTypes), condition: view.condition,
   });
 }

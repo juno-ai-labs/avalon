@@ -186,7 +186,8 @@ export function SidekickSourcesList({ data, loading, words, onDecide, deciding =
           >{withdrawing === source.connectionId ? 'Stopping…' : 'Stop allowing'}</Button>}
         </li>)}
       </ul>}
-      {data.requests.length > 0 && <ul aria-label="People asked" className="sidekick-delegates sidekick-source-requests">
+      {data.requests.length > 0 && <h3 className="sidekick-sources-asked" id="sidekick-sources-asked">Asked</h3>}
+      {data.requests.length > 0 && <ul aria-labelledby="sidekick-sources-asked" className="sidekick-delegates sidekick-source-requests">
         {data.requests.map((request) => {
           const { connector, events } = words(request);
           const answerable = request.yours && request.state === 'pending';

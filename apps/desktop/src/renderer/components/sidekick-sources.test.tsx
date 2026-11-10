@@ -183,11 +183,11 @@ describe('the Sidekick panel\'s Sources section', () => {
     expect(item('Sources', 'Maya')).toHaveTextContent('Mayamaya@rally.test · Email received, Calendar event changedUnavailable — restore Organization membership');
     // Only the viewer's own source can be withdrawn here.
     expect(within(item('Sources', 'Maya')).queryByRole('button')).toBeNull();
-    expect(item('People asked', 'Priya')).toHaveTextContent('PriyaAsked by Adam · Email received in GmailOnly when “it is about a pre-seed round”Declined');
-    expect(within(item('People asked', 'Priya')).queryByRole('button')).toBeNull();
+    expect(item('Asked', 'Priya')).toHaveTextContent('PriyaAsked by Adam · Email received in GmailOnly when “it is about a pre-seed round”Declined');
+    expect(within(item('Asked', 'Priya')).queryByRole('button')).toBeNull();
     // The viewer's own pending request is theirs to answer.
-    expect(item('People asked', 'Me')).toHaveTextContent('Asked by Adam · Message posted in Slack');
-    expect(within(item('People asked', 'Me')).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
+    expect(item('Asked', 'Me')).toHaveTextContent('Asked by Adam · Message posted in Slack');
+    expect(within(item('Asked', 'Me')).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
       .toEqual(['Decline your Slack for Deals', 'Approve your Slack for Deals']);
   });
 
@@ -218,9 +218,9 @@ describe('the Sidekick panel\'s Sources section', () => {
     mount(<SidekickSources id={SIDEKICK} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Decline your Slack for Deals' }));
     api.getSidekickSources.mockImplementation(() => new Promise(() => {}));
-    await waitFor(() => expect(item('People asked', 'Me')).toHaveTextContent('Declined'));
+    await waitFor(() => expect(item('Asked', 'Me')).toHaveTextContent('Declined'));
     expect(api.decideSidekickSourceRequest.mock.calls).toEqual([[SIDEKICK, 'r-me', 'decline']]);
-    expect(within(item('People asked', 'Me')).queryByRole('button')).toBeNull();
+    expect(within(item('Asked', 'Me')).queryByRole('button')).toBeNull();
   });
 
   it('names a refused answer in a popup: a request somebody already settled', async () => {
