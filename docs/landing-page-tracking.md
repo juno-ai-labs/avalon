@@ -68,8 +68,7 @@ Tagged links on the landing page, by `data-site-action` id:
 | `download-hero` | Hero Download the macOS app, the right and secondary button, hidden on touch-only devices | download · hero |
 | `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
 | `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
-| `demo-request` | Ask for a demo (emails Katherine and Alex) | demo_request · sidekicks |
-| `founder-contact` | Founder photos and names | founder_contact · team |
+| `demo-request` | Ask for a demo (emails Katherine and Alex), in the home page's Sidekicks band and the `/sidekicks/` hero | demo_request · sidekicks |
 | `support-contact-footer` | Footer help@ email | support_contact · footer |
 
 `web-app-hero` still reports `secondary_cta · hero`, though it is now the primary
@@ -93,15 +92,17 @@ the card or following its link keeps it away in that browser
 (`rally.site.pilot-offer-dismissed.v1` in local storage). Neither its
 appearance nor its close is reported.
 
-Not reported as site events: scrolling, section views, header nav clicks, and
-the founders' LinkedIn, GitHub and Hugging Face links.
+Not reported as site events: scrolling, section views, header nav clicks, the
+"See pricing" and product-page links. The `/canvases/` and `/sidekicks/` pages count as page
+class `landing` with their own `$pathname`; they send people to sign up
+through the header button rather than a hero button of their own.
 
 The footer is rendered from `apps/site/src/site-chrome.ts`, so its help@ link and
 its id live there, not in `index.html`. The `/compare/` pages share the header
 (`sign-in-header`) and the footer, and count as page class `landing` with
 their own `$pathname`; see [`landing-comparisons.md`](landing-comparisons.md).
 
-`/start-fast/` is a variant of the home page with its own hero; everything below
+`/start-fast/` is a variant of the home page whose hero puts the web app first and the Mac app second; everything below
 the hero is shared with `/` through `apps/site/src/landing-sections.html`. It
 uses the same link ids, so compare the two by `$pathname`, which every page view
 and click now carries. It is `noindex`, so search engines never list it beside `/`.
