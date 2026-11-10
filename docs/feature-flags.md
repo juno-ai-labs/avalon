@@ -48,9 +48,9 @@ current clients already refresh through HTTP and subscription snapshots.
 
 | Roles | Default model | Shared override |
 | --- | --- | --- |
-| `canvas`, `sidekick_run` | `openai/gpt-5.6-terra` | `OPENROUTER_PRIMARY_MODEL` |
+| `canvas`, `sidekick_run` | `openai/gpt-6.1-terra` | `OPENROUTER_PRIMARY_MODEL` |
 | `sidekick_wizard`, `memory_sweep` | `openai/gpt-6.1-sol` | `OPENROUTER_SMARTER_MODEL` |
-| `resource_naming` | `openai/gpt-5.6-terra` | `OPENROUTER_FASTER_MODEL` |
+| `resource_naming` | `openai/gpt-6.1-terra` | `OPENROUTER_FASTER_MODEL` |
 
 `OPENROUTER_FALLBACK_MODEL` overrides the default `google/gemini-3.8-flash`
 fallback. It is a comma-separated ordered list; an explicitly empty string
@@ -65,7 +65,7 @@ role's value replaces its complete route, including ordered fallbacks and
 optional `reasoningEffort` (`low`, `medium`, or `high`):
 
 ```dotenv
-AGENT_MODEL_ROUTING_JSON='{"canvas":{"model":"openai/gpt-5.6-terra","fallbackModels":[],"reasoningEffort":"low"}}'
+AGENT_MODEL_ROUTING_JSON='{"canvas":{"model":"openai/gpt-6.1-terra","fallbackModels":[],"reasoningEffort":"low"}}'
 ```
 
 Omitting `fallbackModels` in a role override means no fallbacks. Roles omitted
@@ -173,6 +173,31 @@ and add a behavioral test for its gate. A new agent role must be mapped in
 
 Entries below the 2026-11-09 local-configuration change describe the retired
 Flagship design, including the earlier entries from that same date.
+
+### 2026-11-09 — Advance primary and naming defaults to GPT-6.1 Terra
+
+**What changed:** Primary and faster defaults now use `openai/gpt-6.1-terra`.
+Canvas and Sidekick runs, plus resource naming, inherit this choice. An unpinned
+conversation with no deployment override switches on its next run.
+
+**Why:** The team selected GPT-6.1 Terra for both groups. The comparative quality,
+latency, and cost rationale for replacing GPT-5.6 Terra was not recorded here;
+this entry does not establish a benchmark advantage.
+
+**Alternatives:** GPT-5.6 Terra remains available through explicit routes and
+existing pins. The tradeoff between retaining it as the default and adopting
+GPT-6.1 Terra was not recorded.
+
+**What future changes must respect:** Explicit environment routes and
+conversation pins retain precedence. The selected model must support naming
+with reasoning disabled, sanitized tool calls, and image input without a fallback
+masking an unsupported request shape.
+
+**Validation:** Live OpenRouter calls with fallbacks disabled returned a Canvas
+title with `reasoningEffort: "none"` and completed a Bind run that identified a
+synthetic red image, invoked its sanitized tool, and returned the expected final
+answer. The tool fixture included a root union, a nullable field, and a Boolean
+enum; this is a compatibility check, not a comparative model benchmark.
 
 ### 2026-11-09 — Resolve flags locally from constants and environment overrides
 
