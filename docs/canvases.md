@@ -41,6 +41,35 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 
 ## How it works
 
+### Running helpers above the composer
+
+`canvas-agent-activity.ts` derives `runningActivity` from the existing
+version-fenced `sidekick_child_projections`. The Canvas detail and sidebar row
+carry counts of background agents rooted in its Chat and distinct attached
+Sidekicks doing work. Both the wizard (including unpublished drafts) and
+activation runs count, along with their background workers. Overlapping wizard
+and run activity still counts as one Sidekick, and it stays counted until neither
+is working. Idle, completed, failed, cancelled, archived and input-waiting
+conversations do not count. A live lifecycle alone is not execution.
+
+Child execution transitions advance the Canvas list waterline. Sidekick
+transitions also move the lists of their attached Canvases. The existing
+workspace socket sends these viewer-authorized rows, with no polling or extra
+execution registry. A Canvas outside the sidebar page refreshes its open detail
+on list changes. Desktop and web share `ComposerAgentActivity`, rendered by
+`ConversationSurface` above the input. Each count reuses the directional rolling
+number animation and shimmer, with reduced-motion and forced-colors fallbacks.
+The status announces the current counts, never the outgoing animated digits.
+Zero or unknown counts take no space;
+the current socket must have delivered its sidebar before a count is shown,
+so disk cache and reconnect gaps cannot masquerade as live work.
+
+The workerd `canvas-agent-activity.test.ts` exercises real socket pushes,
+settlement, stale deliveries, scope isolation, concurrent-run deduplication and
+reconnect. The renderer workspace-socket test covers the pushed rows reaching
+the visible labels and the disconnect/reconnect gate. Layout is verified in a
+real window, not by a DOM assertion.
+
 ### Identity
 
 A Canvas id is a conversation-parent id: the same `WorkstreamId` brand a
@@ -871,6 +900,17 @@ why the refresh lease shares the owning object's transaction.
 
 ## Changelog
 
+### 2026-11-10 — Keep delegated work visible in a Canvas
+
+The composer again shows running background-agent and Sidekick counts. The
+Thread retirement removed both consumers and their old publishers, leaving a
+Canvas looking idle while its helpers built an artifact. Counts now derive
+from the hosted children's existing projections and travel on the Canvas list;
+a second subscription or polling loop would duplicate state the Organization
+already owns. Keep authoring distinct from lifecycle: an unsaved Sidekick can
+be working, and an active one can be idle. Counts remain scoped to the Canvas,
+version-fenced and hidden until the current connection has fresh state.
+
 ### 2026-11-10 — Open an artifact as it joins the conversation
 
 **What changed:** The conversation surface follows additions in its existing live
@@ -889,6 +929,7 @@ reveals must not interrupt someone typing a follow-up.
 **Consequences:** Initial restoration, explicit
 artifact links and refreshes keep their existing behavior; only a new attachment
 in the visible conversation opens the panel again.
+
 
 ### 2026-11-10 — A Canvas holds attached Sidekicks, and its archive takes the ones it made
 
