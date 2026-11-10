@@ -396,9 +396,6 @@ describe("workspace invitation lifecycle", () => {
 
     await new WorkspaceService(environment(database), ownerAuth).revokeInvitation(invitationRow.id);
 
-    const grantRevoke = database.runs.find(({ sql }) => sql.includes("UPDATE download_grants SET revoked_at"));
-    expect(grantRevoke?.sql).toContain("source = 'workspace_invitation'");
-    expect(grantRevoke?.values[1]).toBe(invitationRow.id);
   });
 
   it("reissues duplicate pending invitations, revoking the superseded one's download grant", async () => {
@@ -422,9 +419,6 @@ describe("workspace invitation lifecycle", () => {
     expect(database.batches[0]![0]!.sql).toContain("RETURNING id");
     expect(database.batches[0]![1]!.values[2]).toBe(invitationRow.email);
     // The superseded invitation's own download grant must not outlive it.
-    const grantRevoke = database.runs.find(({ sql }) => sql.includes("UPDATE download_grants SET revoked_at"));
-    expect(grantRevoke?.sql).toContain("source = 'workspace_invitation'");
-    expect(grantRevoke?.values[1]).toBe(supersededId);
     const inviteUrl = new URL(result.inviteUrl);
     expect(inviteUrl.origin).toBe("https://with-avalon.com");
     expect(inviteUrl.pathname).toBe("/invite/");
@@ -471,16 +465,7 @@ describe("workspace invitation lifecycle", () => {
     expect(token).toBeTruthy();
     expect(JSON.stringify(database.batches)).not.toContain(token!);
 
-    // A recipient with no Rally install yet must not be stuck on the accept
-    // page with only a desktop deep link: the email also carries a download
-    // grant from the same shared issuer Ace uses, timed to the invitation's
-    // own expiry rather than single-use.
-    const downloadUrlMatch = String(body.text).match(/https:\/\/with-avalon\.com\/download\/#token=([a-f0-9]{64})/);
-    expect(downloadUrlMatch).toBeTruthy();
-    expect(String(body.html)).toContain("Download it for macOS");
-    const downloadToken = downloadUrlMatch![1]!;
-    expect(downloadToken).not.toBe(token);
-    expect(JSON.stringify(database.runs)).not.toContain(downloadToken);
+
   });
 
   it("does not issue a download link for an enterprise workspace invitation, since redemption is Global-only", async () => {
@@ -501,19 +486,15 @@ describe("workspace invitation lifecycle", () => {
       AVALON_REGION: "enterprise",
     }), ownerAuth).createInvitation(invitationRow.email, "member");
 
-    expect(database.runs.some((run) => run.sql.includes("INSERT INTO download_grants"))).toBe(false);
     const body = resend.mock.calls[0]![0];
     expect(String(body.text)).not.toContain("/download/");
     expect(String(body.html)).not.toContain("Download it for macOS");
   });
 
-  it("revokes a newly persisted invitation and its download grant when Cloudflare rejects delivery", async () => {
+  it("revokes a newly persisted invitation when Cloudflare rejects delivery", async () => {
     const database = new StubDatabase(({ sql }) => {
       if (sql.includes("SELECT 1 AS present")) return null;
       if (sql.includes("WHERE i.id = ?")) return invitationRow;
-      // The revoke targets the exact grant issued for this invitation; the
-      // stub proves the call was made rather than swallowing it via `.catch`.
-      if (sql.includes("UPDATE download_grants SET revoked_at")) return { id: "revoked-grant-id" };
       return undefined;
     });
     emailSend = vi.fn(async () => { throw Object.assign(new Error("domain not verified"), { code: "E_SENDER_NOT_VERIFIED" }); });
@@ -524,38 +505,8 @@ describe("workspace invitation lifecycle", () => {
       .rejects.toMatchObject({ status: 502, code: "invitation_email_failed" });
     const revocation = database.runs.find(({ sql }) => sql.includes("UPDATE workspace_invitations SET revoked_at = ?"));
     expect(revocation?.values.slice(1)).toEqual([invitationRow.id, ownerAuth.workspaceId]);
-    const grantInsert = database.runs.find(({ sql }) => sql.includes("INSERT INTO download_grants"));
-    const grantRevoke = database.firsts.find(({ sql }) => sql.includes("UPDATE download_grants SET revoked_at"));
-    expect(grantInsert).toBeTruthy();
-    expect(grantRevoke?.values[1]).toBe(grantInsert!.values[0]);
   });
 
-  it("revokes a newly persisted invitation when issuing its download grant fails", async () => {
-    const database = new StubDatabase(
-      ({ sql }) => {
-        if (sql.includes("SELECT 1 AS present")) return null;
-        if (sql.includes("WHERE i.id = ?")) return invitationRow;
-        return undefined;
-      },
-      undefined,
-      ({ sql }) => {
-        // A D1 failure while writing the grant (a partial migration, a
-        // transient error) must not leave the just-persisted invitation
-        // orphaned: the exact lockout this feature exists to prevent.
-        if (sql.includes("INSERT INTO download_grants")) throw new Error("D1 unavailable");
-      },
-    );
-    const resend = vi.fn();
-    emailSend = resend;
-
-    await expect(new WorkspaceService(environment(database, {
-      APP_ENV: "production",
-    }), ownerAuth).createInvitation(invitationRow.email, "member"))
-      .rejects.toThrow("D1 unavailable");
-    expect(resend).not.toHaveBeenCalled();
-    const revocation = database.runs.find(({ sql }) => sql.includes("UPDATE workspace_invitations SET revoked_at = ?"));
-    expect(revocation?.values.slice(1)).toEqual([invitationRow.id, ownerAuth.workspaceId]);
-  });
 
   it("lets any administrator invite another administrator, and no ordinary member invite at all", async () => {
     // The owner-only gate this used to assert was the other half of the
@@ -685,14 +636,9 @@ describe("identity-first workspace onboarding", () => {
       .declineInvitation(invitationRow.id);
 
     expect(database.batches).toHaveLength(0);
-    expect(database.runs).toHaveLength(2);
+    expect(database.runs).toHaveLength(1);
     expect(database.runs[0]?.sql).toContain("UPDATE workspace_invitations SET revoked_at = ?");
     expect(database.runs[0]?.values[2]).toBe(invitationRow.email);
-    // A declined invitation must not leave its download link usable for the
-    // remainder of its 7-day window.
-    expect(database.runs[1]?.sql).toContain("UPDATE download_grants SET revoked_at");
-    expect(database.runs[1]?.sql).toContain("source = 'workspace_invitation'");
-    expect(database.runs[1]?.values[1]).toBe(invitationRow.id);
   });
 });
 

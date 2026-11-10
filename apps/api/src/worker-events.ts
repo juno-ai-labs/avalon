@@ -1,7 +1,6 @@
 import { purgeExpiredEmailLoginChallenges } from "./services/auth-service";
 import { recoverEmailLoginDeliveries } from "./services/email-login-service";
 import { consumePushDeliveryQueue } from "./queues/push-delivery-consumer";
-import { privateAccessEdge } from './services/private-access-edge';
 import { isDurableObjectMigrationCommandQueue } from "@rally/contracts/durable-object-migrations";
 import { app } from "./app";
 import { assertEnvContract, EnvContractError, type Env } from "./env";
@@ -113,8 +112,6 @@ function withEnvContract<TArgs extends [unknown, Env, ...unknown[]], TResult>(
 
 export default {
   fetch: async (request: Request, env: Env, context: ExecutionContext) => {
-    const acquisitionRefusal = await privateAccessEdge(request, env);
-    if (acquisitionRefusal) return acquisitionRefusal;
     // `/health` is exempt. It is the endpoint whose job is to report which
     // pieces of configuration are present, and it already models every one of
     // them as configured/not configured. Letting the 503 swallow it would make

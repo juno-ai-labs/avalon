@@ -1,3 +1,4 @@
+import { OrganizationUsageSchema, PlanIdSchema } from "./usage";
 import { z } from "zod";
 import { deferredZodSchema } from "./deferred-zod-schema";
 
@@ -453,8 +454,17 @@ export const EngineeringD1SqlResultSchema = deferredZodSchema(() => z.strictObje
 }));
 export type EngineeringD1SqlResult = z.infer<typeof EngineeringD1SqlResultSchema>;
 
+export const InspectEngineeringUsageInputSchema = z.strictObject({ orgId: WorkspaceIdSchema });
+export const ChangeEngineeringPlanInputSchema = InspectEngineeringUsageInputSchema.extend({ plan: PlanIdSchema });
+export const EngineeringUsageResultSchema = z.strictObject({ region: RegionSchema, orgId: WorkspaceIdSchema, usage: OrganizationUsageSchema });
+export type InspectEngineeringUsageInput = z.infer<typeof InspectEngineeringUsageInputSchema>;
+export type ChangeEngineeringPlanInput = z.infer<typeof ChangeEngineeringPlanInputSchema>;
+export type EngineeringUsageResult = z.infer<typeof EngineeringUsageResultSchema>;
+
 /** The named regional WorkerEntrypoint surface bound only to the engineering MCP Worker. */
 export interface EngineeringInspectionRpcBinding {
+  inspectOrganizationUsage(input: InspectEngineeringUsageInput): Promise<EngineeringUsageResult>;
+  changeOrganizationPlan(input: ChangeEngineeringPlanInput, operator: EngineeringOperator): Promise<EngineeringUsageResult>;
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
   retireOrg(input: RetireEngineeringOrgInput, operator: EngineeringOperator): Promise<RetireEngineeringOrgResult>;

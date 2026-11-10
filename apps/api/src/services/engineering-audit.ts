@@ -8,7 +8,7 @@ export async function auditedEngineeringWrite<T>(env: Env, operator: Engineering
   // which nothing parses back into this union: rows from operations since
   // removed (`dump_thread_transcripts`, `convert_threads_to_canvases`,
   // `retire_threads`) stay readable as stored.
-  action: "create_org" | "send_message" | "pause_sidekick" | "resume_sidekick" | "retire_org";
+  action: "create_org" | "send_message" | "pause_sidekick" | "resume_sidekick" | "retire_org" | "change_usage_plan";
   orgId: string;
   /** The user an action is taken as; an Organization-wide operator operation has none and targets the Organization. */
   representedUserId?: string;

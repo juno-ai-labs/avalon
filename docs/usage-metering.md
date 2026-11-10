@@ -242,13 +242,15 @@ today.
 
 ## Operator plan changes
 
-The usage-plan UI has been removed. An operator can call
-`POST /internal/workspaces/:workspaceId/plan` on the owning regional API with
-`Authorization: Bearer <operator-token>` and JSON `{"plan":"<plan>"}`.
-The plan must be a key accepted by `WorkspacePlanChangeSchema` in
-`packages/contracts/src/usage.ts`. The regional `DEMO_OPERATORS_JSON` credential
-must map to the operator's UUID with role `demos`. The route updates the ledger
-and publishes the current organization usage through the existing service.
+The engineering MCP offers `inspect_usage_plan` and `change_usage_plan` with
+`orgId` and, for writes, `plan` (`starter` or `growth`). The MCP resolves exactly
+one owning region and the bridge calls the metering service directly. Changes
+carry the Access operator in independent audit attempt/result records, update the
+current week's allowance, preserve past weeks, and publish the current meter.
+An uncertain write may have committed: inspect before retrying.
+
+The regional `POST /internal/workspaces/:workspaceId/plan` operator API remains
+available to credentialed scripts. Both paths use the same ledger implementation.
 
 ## Changelog
 
