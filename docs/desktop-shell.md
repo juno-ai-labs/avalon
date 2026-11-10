@@ -49,6 +49,9 @@ and stretched title link. Both grids follow the available pane width, using one
 column in a narrow pane, two in a medium pane and three in a wide pane. Sidekick
 cards retain search, ownership filters, sharing and next-wake information; only
 paused Sidekicks have a lifecycle pill, while Needs input is a separate badge.
+Each attached Canvas pill shows its actual icon and colour (`canvasMark`) from
+its attachment summary, with the full title on hover and in its accessible name;
+the visible title is truncated after 30 characters.
 
 ### Electron navigation history
 
