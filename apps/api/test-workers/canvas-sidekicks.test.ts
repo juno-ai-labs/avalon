@@ -96,6 +96,9 @@ describe("a Sidekick a Canvas's Chat made", () => {
     // The other Canvas made nothing and holds nothing.
     expect((await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: OTHER_CANVAS_ID, actor: member(CREATOR) })).sidekicks)
       .toEqual([]);
+    // The Canvas list carries them too, for the home card's Sidekick facepile.
+    const listed = await workspace().canvasListFor({ workspaceId: WORKSPACE_ID, userId: PARTICIPANT, accessClass: "member" });
+    expect(listed.map((row) => [row.title, row.sidekicks])).toEqual([["Inbox", [{ id: MADE_HERE, name: "New Sidekick" }]]]);
     expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: MADE_HERE,
       actor: { ...member(CREATOR), participantOfOwningWorkstream: false } })).toMatchObject({ madeInCanvasId: CANVAS_ID });
   });
