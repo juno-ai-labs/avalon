@@ -7163,6 +7163,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-sources .sidekick-delegates li { align-items: flex-start; }
 .sidekick-sources .sidekick-delegates li > .button { flex: none; min-height: 28px; padding: 3px 10px; }
 .sidekick-sources-empty { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 10px 0 0; }
+/* The people asked sit under the people who answered yes, told apart by a label of their own. */
+.sidekick-sources-asked { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 500; margin: 16px 0 0; }
+.sidekick-sources-asked + .sidekick-delegates { margin-top: 10px; }
 .sidekick-source-requests .source-decision { margin-top: 5px; }
 
 /* Approve and Decline for a Sidekick source request: the pair is the
@@ -7190,6 +7193,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 
 /* The card an ask for a source draws in its conversation: the connection
    card's geometry, then one row per person asked. */
+/* Who asked, and who can answer, is part of what is being decided: muted, not the connection card's faintest tone. */
+.source-request-card .connector-connection-card-body > small { color: var(--av-sys-color-text-muted); }
 .source-request-people { border-top: 1px solid var(--av-sys-color-border-subtle); display: grid; gap: 8px; list-style: none; margin: 0; padding: 10px 0 0; }
 .source-request-people li { align-items: center; display: flex; gap: 10px; min-width: 0; }
 .source-request-person { align-items: baseline; display: flex; flex: 1; font-size: 13.5px; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }

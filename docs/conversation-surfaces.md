@@ -175,6 +175,19 @@ scope collapses to its newest durable row; an intervening conversation row or
 history seam starts a separate occasion. Persistence therefore never produces
 a double-stacked control.
 
+A completed `sidekick_request_source` call is the second such exception, under
+the same opt-in. It asks people for a Sidekick source
+([`sidekick-sources.md`](sidekick-sources.md)) and is answered on its card, so
+`sidekickSourceRequestCardFromToolEvent` (`lib/sidekick-source-request-card.ts`)
+keeps it out of the Sidekicks plugin row, out of the hidden-agent-work filter,
+and `MessageBlock` draws `SidekickSourceRequestCard` for it. The card needs
+only the request ids from the call's retained output and reads where each
+request stands itself ([`shared-ui.md`](shared-ui.md#sidekick-sources)). A
+call still running, a refused one, and one whose output holds no request id
+stay ordinary Sidekicks work. Repeated asks are not collapsed: each made its
+own requests, and an ask that replaced an earlier one leaves the earlier card
+reading "Replaced by a newer request".
+
 ## Message issue reports
 
 The shared action row offers **Oopsie** on sent user and assistant messages;
@@ -862,6 +875,34 @@ captured pin IDs. [Artifact annotations](artifact-annotations.md) owns the
 selection and message protocol.
 
 ## Changelog
+
+### 2026-11-10 — An ask for a Sidekick source is a card in the feed, read live
+
+**What changed:** A completed `sidekick_request_source` tool call is kept out
+of plugin-row grouping and the hidden-agent-work filter, and the main feed
+draws it as a card. The card takes only the request ids from the call's
+output and reads each request's state from the server.
+
+**Why:** A manager asks several people for a source in a conversation they
+all read, and the owner asked that the prompt be there for everyone, with
+only the person asked able to answer. Folded into the Sidekicks row, the ask
+would be machinery nobody could press, which is the Allow editing failure
+[`plugin-activity-rows.md`](plugin-activity-rows.md) records. The tool's own
+output cannot draw the card's state: it is one person's view, frozen at the
+moment of asking, in a transcript every participant reads.
+
+**Considered and rejected:** A new message type written by the server for the
+request. The tool event is already in the transcript at the right place, and
+the connection card set the precedent for drawing one as a control. Collapsing
+adjacent asks as connection cards are collapsed: two asks are two sets of
+requests, not one control presented twice.
+
+**Consequences:** The card depends on the transcript block keeping the call's
+structured output (`{ sidekickId, requests: [{ requestId }] }`), not only its
+summary sentence; a block that keeps the summary alone draws a plain tool row.
+The opt-in prop is still named `connectorConnectionCards` and now gates every
+tool row a person acts on. A host that enables it must be inside a
+collaboration session, since the card reads and writes.
 
 ### 2026-11-09 — Every human message uses the right-side bubble
 

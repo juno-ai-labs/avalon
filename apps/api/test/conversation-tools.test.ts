@@ -187,11 +187,17 @@ describe("which loops get the conversation tools", () => {
   it("gives a Sidekick's configuration every tool and its runs no attach", () => {
     expect(conversationToolAccess(configLoop())).toEqual({ actingUserId: USER_ID,
       tools: ["list", "read", "search", "post", "attach"], scope: { kind: "sidekick", automationId: SIDEKICK_ID, authoring: true } });
-    expect(conversationToolAccess(runLoop())).toEqual({ actingUserId: USER_ID,
+    expect(conversationToolAccess(runLoop())).toEqual({ actingUserId: USER_ID, runId: RUN_ID,
       tools: ["list", "read", "search", "post"], scope: { kind: "sidekick", automationId: SIDEKICK_ID } });
   });
 
-  it("gives nothing to a run child woken without its run, or to workspace authority", () => {
+  it("gives a run that acts as the Sidekick itself the same reach, with no person", () => {
+    expect(conversationToolAccess({ ...runLoop(), executionPrincipal: { type: "workspace", workspaceId: runLoop().workspaceId } }))
+      .toEqual({ actingUserId: null, runId: RUN_ID,
+        tools: ["list", "read", "search", "post"], scope: { kind: "sidekick", automationId: SIDEKICK_ID } });
+  });
+
+  it("gives nothing to a run child woken without its run, or to a turn with neither a run nor a person", () => {
     expect(conversationToolAccess(loop({ parentKind: "automation", parentId: SIDEKICK_ID, substreamId: RUN_ID as never })))
       .toBeNull();
     expect(conversationToolAccess(loop({ executionPrincipal: { type: "workspace" } as never }))).toBeNull();
