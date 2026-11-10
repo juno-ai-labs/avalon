@@ -26,15 +26,6 @@ If the local account cannot sign in, run `pnpm env:sync`, confirm `.env.local` r
 
 ## Connector installation maintenance
 
-For Ashby or Granola registration recovery and a frozen regional fleet operation,
-use [connector installation operations](connector-installation-lifecycle.md#operations).
-The repository command uses the existing regional Ace `demos` credential and
-supports preview, apply, status, resume and cancel. Preview fixes the selected
-connections before any provider mutations; inspect per-target outcomes after an
-operation completes. The route's presence does not authorize an operator run.
-Deployment order for the dedicated Ashby ingress is in
-[API Worker deployment](api-worker-deployment.md#dedicated-ashby-ingress).
-
 ## Required hosted resources
 
 - A D1 database
@@ -604,7 +595,7 @@ the Wrangler output showing both Cron Triggers and inspect Workers & Pages →
 events, unexpected `dry-run` production reports, a non-five retained set, or any
 copy/delete count that does not match the plan.
 
-### Ace internal administration
+### Forced migrations
 
 `deploy-ace.yml` validates the workspace, creates declared Queues, copies the
 migration site's Access policy, deploys Ace, installs its Queue and regional

@@ -530,7 +530,7 @@ Chrome that a real invitation arrives, email sign-in opens the conversation, and
 shared conversation can send messages and receive realtime updates. The workflow's
 public route checks compare the served shell with the built HTML, including its
 hashed assets; they do not prove mailbox delivery or authenticated collaboration.
-The workflow reuses the site deployment budget and Ace's domain propagation retries.
+The workflow reuses the site deployment budget and the shared domain propagation retries.
 If API deployment finishes first, invitation links can temporarily point to a
 host that is not ready. Disable new sharing/sign-in by removing the API browser
 origin; removing the browser route from config alone does not detach an existing

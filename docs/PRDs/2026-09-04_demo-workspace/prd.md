@@ -884,7 +884,7 @@ are retired and replaced rather than patched in place.
 The implementing changes update the owning documents for the harness, connector
 credentials and copying, multi-workspace admission, access revocation, and
 object lifecycle.
-`ace.md` (retired app) is among them: its boundary section requires a new Ace
+[`ace.md`](../../ace.md) is among them: its boundary section requires a new Ace
 page's route, environment type, credential, and component reuse to be reviewed
 as a new boundary, and the Demos page needs a credential to reach the regional
 creation and retirement API. A durable demo module document is added when the

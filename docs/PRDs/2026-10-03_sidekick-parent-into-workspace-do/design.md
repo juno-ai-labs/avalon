@@ -96,6 +96,7 @@ Each reads `sidekicks` plus pending directory rows during steps 1 and 2, then
 | Alarms | Sidekick kinds become `WorkspaceDO` entries scoped by key prefix | [`durable-object-alarms.md`](../../durable-object-alarms.md) |
 | Revocation | `automation` hop kind removed in step 3 | [`access-revocation.md`](../../access-revocation.md) |
 | Retirement | Sidekick node kind and gate removed in step 3 | [`workspace-retirement.md`](../../workspace-retirement.md) |
+| Migration tracking | `SidekickDO` and `AutomationDO` labels removed from `REPORTING_CLASSES`, the dispatcher and `MIGRATION_COMMAND_HEADS` in step 3 | [`durable-object-migration-tracking.md`](../../durable-object-migration-tracking.md) |
 | Engineering MCP | `retry_sidekick_import` added in step 1; it and `run_sidekick_sql` removed in step 3 | [`engineering-mcp.md`](../../engineering-mcp.md), [`internal-admin-mcp-server.md`](../../internal-admin-mcp-server.md) |
 | Operations | The gate query and the retry procedure | [`runbook.md`](../../runbook.md) |
 | Queue/RPC rules | Sidekick parents no longer "keep the Queue" for authorization discovery | [`choosing-queues-or-rpc.md`](../../choosing-queues-or-rpc.md) |

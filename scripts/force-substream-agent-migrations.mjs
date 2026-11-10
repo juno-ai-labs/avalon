@@ -1,10 +1,10 @@
 import { configuredRegions, regions } from "./regions.mjs";
 /**
- * Eagerly wake every stored AgentLoopDO so its constructor applies the
+ * Eagerly wake every stored object of the selected migrated class so its constructor applies the
  * currently deployed object-local SQLite schema.
  *
  * This is an operator-run transport over the same regional migration-command
- * queues as the migration tracker. It does not read or rewrite transcript
+ * queues consumed by the regional API. It does not read or rewrite transcript
  * payloads itself: each regional Worker addresses its own object by opaque ID,
  * runs the ordinary constructor migration path, and acknowledges only after
  * the RPC returns.
@@ -12,7 +12,7 @@ import { configuredRegions, regions } from "./regions.mjs";
 import { isEntryPoint } from './entry-point.mjs';
 
 const API_BASE = 'https://api.cloudflare.com/client/v4';
-const CLASS_NAME = 'AgentLoopDO';
+const MIGRATION_CLASSES = ['AgentLoopDO', 'WorkspaceDO'];
 const QUEUE_BATCH_SIZE = 100;
 const OBJECT_PAGE_SIZE = 1_000;
 const NAMESPACE_PAGE_SIZE = 1_000;
@@ -29,6 +29,8 @@ function required(environment, name) {
 function parseArguments(argv) {
   const argumentsWithoutDelimiter = argv.filter((argument) => argument !== '--');
   const apply = argumentsWithoutDelimiter.includes('--apply');
+  const className = argumentsWithoutDelimiter.find((argument) => argument.startsWith('--class='))?.slice('--class='.length) ?? 'AgentLoopDO';
+  if (!MIGRATION_CLASSES.includes(className)) throw new Error(`Unsupported migration class ${className}`);
   const regionArgument = argumentsWithoutDelimiter.find((argument) => argument.startsWith('--region='));
   const probeArgument = argumentsWithoutDelimiter.find(
     (argument) => argument.startsWith('--jurisdiction-probe-url='),
@@ -39,6 +41,7 @@ function parseArguments(argv) {
   }
   const unknown = argumentsWithoutDelimiter.filter(
     (argument) => argument !== '--apply'
+      && !argument.startsWith('--class=')
       && !argument.startsWith('--region=')
       && !argument.startsWith('--jurisdiction-probe-url='),
   );
@@ -57,6 +60,7 @@ function parseArguments(argv) {
   }
   return {
     apply,
+    className,
     jurisdictionProbeUrl,
     regions: region === 'all' ? REGIONS : [region],
   };
@@ -160,7 +164,7 @@ export async function classifyRegionalObjects(resource, objectIds, probeUrl, fet
   const response = await fetcher(probeUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ region: resource.region, objectIds }),
+    body: JSON.stringify({ region: resource.region, objectIds, className: resource.className }),
   });
   if (!response.ok) throw new Error(`${resource.region}_jurisdiction_probe_${response.status}`);
   const payload = await response.json();
@@ -191,10 +195,10 @@ export async function classifyRegionalObjects(resource, objectIds, probeUrl, fet
   };
 }
 
-function selectRegionalResources(namespaces, queues, regions) {
+function selectRegionalResources(namespaces, queues, regions, className) {
   return regions.map((region) => {
     const namespaceMatches = namespaces.filter((namespace) =>
-      namespace.class === CLASS_NAME && namespace.script === workerName(region));
+      namespace.class === className && namespace.script === workerName(region));
     if (namespaceMatches.length !== 1 || typeof namespaceMatches[0]?.id !== 'string') {
       throw new Error(`${region}_substream_agent_namespace_count_${namespaceMatches.length}`);
     }
@@ -208,6 +212,7 @@ function selectRegionalResources(namespaces, queues, regions) {
     }
     return {
       region,
+      className,
       namespaceId: namespaceMatches[0].id,
       queueId: commandMatches[0].queue_id,
       deadLetterQueueId: deadLetterMatches[0].queue_id,
@@ -236,7 +241,7 @@ async function sendCommands(credentials, resource, objectIds, runId, requestedAt
       body: {
         commandId: crypto.randomUUID(),
         runId,
-        className: CLASS_NAME,
+        className: resource.className,
         objectId,
         objectName: null,
         region: resource.region,
@@ -276,7 +281,7 @@ async function waitForDrain(credentials, resources, initialDeadLetters, fetcher,
   }
 }
 
-export async function forceSubstreamAgentMigrations({
+export async function forceAgentLoopDOMigrations({
   argv = process.argv.slice(2),
   environment = process.env,
   fetcher = fetch,
@@ -295,7 +300,7 @@ export async function forceSubstreamAgentMigrations({
     listNamespaces(credentials, fetcher),
     listQueues(credentials, fetcher),
   ]);
-  const resources = selectRegionalResources(namespaces, queues, options.regions);
+  const resources = selectRegionalResources(namespaces, queues, options.regions, options.className);
   const rawInventories = await Promise.all(resources.map(async (resource) => ({
     resource,
     objectIds: await listStoredObjects(credentials, resource.namespaceId, fetcher),
@@ -359,7 +364,7 @@ export async function forceSubstreamAgentMigrations({
 }
 
 if (isEntryPoint(import.meta.url)) {
-  forceSubstreamAgentMigrations().catch((error) => {
+  forceAgentLoopDOMigrations().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   });

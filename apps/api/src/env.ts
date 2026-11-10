@@ -32,7 +32,6 @@ import type { CrashSymbolicatorContainer } from "./crash-symbolicator-container"
 import type { ArtifactHostDO } from "./durable-objects/artifact-host-do";
 import type { AgentLoopDO } from "./durable-objects/agent-loop-do";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
-import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 import type { DocumentProcessingRpcBinding } from './services/document-processing-contract';
 import type { TerminalProviderRpcBinding } from './services/terminal/provider-rpc-contract';
@@ -127,14 +126,6 @@ export interface Env extends FeatureFlagEnvironment {
   GLOBAL_NOTION_ROUTER?: GlobalNotionRouterRpcBinding;
   GLOBAL_SLACK_ROUTER?: GlobalSlackRouterRpcBinding;
   GLOBAL_TELEMETRY_CONTROL?: GlobalTelemetryControlRpcBinding;
-  /**
-   * The regional queue that carries Durable Object migration reports to the
-   * account-wide tracker. Optional deliberately: local development and every
-   * partial test `Env` run without it, and an object's schema must never depend
-   * on the observer that watches it. See
-   * `docs/durable-object-migration-tracking.md`.
-   */
-  MIGRATION_REPORT_QUEUE?: Queue<DurableObjectMigrationReport>;
   /** Materialized into production Wrangler configs after the stream is ensured. */
   INFERENCE_LAKEHOUSE?: Pipeline;
   /** Materialized into Global production after the analytics stream is ensured. */
@@ -251,7 +242,7 @@ export interface Env extends FeatureFlagEnvironment {
   /** Per-region operator credentials for the restricted telemetry operations
    * surface. Stored as a JSON map from opaque bearer token to fixed principal. */
   TELEMETRY_OPERATORS_JSON?: string;
-  /** Per-region operator credentials for the surfaces Ace calls — workspace
+  /** Per-region operator credentials for the operator API surfaces — workspace
    * retirement, access, and connector maintenance — in the `demos` role. Both
    * names are stored ones kept from the retired demo feature
    * (`docs/rally-rebrand-inventory.md`). The same map

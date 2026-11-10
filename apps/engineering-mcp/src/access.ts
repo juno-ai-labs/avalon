@@ -1,41 +1,10 @@
-/**
- * Who is allowed to read the tracker.
- *
- * Cloudflare Access — the identity-aware proxy — stands in front of the
- * hostname. It supports Google as a login method and its policies take an
- * `email_domain` rule, which is the whole of what this site needs: the
- * operators' Google Workspace domain, and nobody else. That is why the tracker
- * does not reuse Avalon's own Google OAuth: reusing it would mean minting
- * sessions for an operator tool out of the product's user identity system, and
- * any account that can sign in to Avalon would be one authorization bug away
- * from the fleet's schema state. Access keeps the operator boundary outside the
- * product entirely, and an unauthenticated request never reaches the Worker.
- *
- * **Access owns who is allowed. This module only establishes that Access
- * spoke.** It verifies the assertion's signature against the team's JWKS, its
- * issuer, and its audience — three facts about *provenance*, not a policy. Who
- * may read the site is one rule, and it lives in the Access application, where
- * it can be changed without a deploy.
- *
- * The Worker used to re-check the signed-in email against its own domain
- * allowlist. That was a second copy of the Access policy's include rule, in a
- * different system, with no mechanism keeping the two in step — and the first
- * value it shipped with was wrong, which nothing would have caught except a
- * person failing to log in. A rule stated twice is a rule that will disagree
- * with itself. It is stated once now.
- *
- * What remains is not duplication: verifying the assertion is how this Worker
- * knows Access ran at all. Trusting the header's presence would be no
- * protection — anyone can set a header — so provenance is still checked here,
- * and it is what makes the boundary survive a route that outlives its Access
- * application.
- */
+/** Cloudflare Access owns authorization policy. This module verifies JWT
+ * provenance: signature, issuer, audience, and required principal claims. */
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from "jose";
 
 export interface AccessPrincipal {
   /**
-   * Informational only — shown in the page header so an operator can see which
-   * account they are signed in as. Nothing is authorized on it.
+   * Informational identity for audit logs; never used to authorize tools.
    */
   email: string | null;
   /** Access's stable per-user identifier, useful in a log line. */
@@ -68,8 +37,8 @@ export interface AccessEnvironment {
 /**
  * Read the Access configuration, or return null when it is incomplete.
  *
- * Null means the request is refused. A monitoring site that quietly serves
- * itself unauthenticated because a variable was not set is a worse outcome than
+ * Null means the request is refused. An MCP endpoint that quietly serves
+ * tools unauthenticated because a variable was not set is a worse outcome than
  * one that is unreachable until it is configured, and the failure is loud in
  * both the response and the log.
  */
@@ -156,9 +125,9 @@ function cookieValue(header: string | null, name: string): string | null {
 export function accessFailureMessage(reason: AccessFailure): string {
   switch (reason) {
     case "access_not_configured":
-      return "This site is not configured for Cloudflare Access yet, so it refuses every request.";
+      return "The engineering MCP is not configured for Cloudflare Access yet, so it refuses every request.";
     case "access_assertion_missing":
-      return "No Cloudflare Access assertion was presented. Reach this site through its Access application.";
+      return "No Cloudflare Access assertion was presented. Reach the engineering MCP through its Access application.";
     case "access_assertion_invalid":
       return "The Cloudflare Access assertion did not verify against this application.";
   }

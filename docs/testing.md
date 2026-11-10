@@ -216,20 +216,6 @@ through its own functions, never by asserting where a workflow calls it.
 
 ## Timeouts and waiting
 
-**Every new or edited `vi.waitFor(…)` and `expect.poll(…)` passes an explicit
-`timeout`.** The number is the author's to choose, but it has to be chosen: both
-default to one second with a 50ms interval, which is sized for nothing in
-particular. Most existing `vi.waitFor` sites still ride that default — the rule
-is binding for the code you touch, and the backlog converts as files are
-edited, not in one sweep.
-`packages/agent-harness`, `packages/connectors`, `apps/ace` and `apps/site` raise
-the `expect.poll` default in their configs; `apps/api`, `apps/desktop` and
-`packages/db` do not. No config raises `vi.waitFor` anywhere, because Vitest
-exposes `expect.poll.{timeout,interval}` and no knob at all for `vi.waitFor` —
-the call site is the only place its budget can live. The desktop renderer's
-`configure({ asyncUtilTimeout: 5_000 })` reaches @testing-library's `waitFor`
-only, and only in the `renderer` project.
-
 **The poll's budget sits comfortably below the enclosing test's.** That ordering
 is the whole reason to write a poll: it fails with `expected 1 to be +0` and a
 line number, where a harness timeout names no assertion at all. A poll budgeted

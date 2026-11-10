@@ -16,22 +16,6 @@ are in
 
 ## Where the code lives
 
-| Path | Responsibility |
-| --- | --- |
-| `packages/contracts/src/usage.ts` | The single source for plans, metered activities, the `ORGANIZATION_PAYS` payer map, `UsageEvent`, the `GET /workspace/usage` response, and the week, period and overage arithmetic (`usageWeekStart`, `usagePeriod`, `deriveOrganizationUsage`). |
-| `apps/api/src/services/usage-metering.ts` | `emitUsage` and `emitInferenceUsage` (the only producers), `applyUsageBatch` (the only D1 ledger writer), `readOrganizationUsage` (the only reader), `setWorkspacePlan`, `publishOrganizationUsage`, `pruneUsageEvents` and `USAGE_EVENTS_D1_RETENTION_DAYS`. |
-| `apps/api/src/durable-objects/workspace-do.ts` (`publishUsage`) | Sends the meter after a plan change to every subscribed member socket as `workspace_usage` (`WorkspaceUsageEventSchema`), never a guest's, and drops a meter read before the last one sent. |
-| `apps/api/src/queues/usage-consumer.ts` | The `avalon-<region>-usage` consumer: validates, rejects misrouted messages, applies the batch to D1, then sends it to the usage lakehouse, logs `usage_batch_applied`. `usageLakehouseRecord` shapes the R2 row. |
-| `apps/api/src/routes/workspace.ts` | `GET /workspace/usage`, for every member role, and `PUT /workspace/plan`, for administrators (`WorkspaceService.setPlan`). |
-| `apps/api/src/routes/workspace-operations.ts` | `POST /internal/workspaces/:id/plan`, the operator route Ace calls. |
-| `packages/db/migrations/0118_usage_quota_metering.sql` | `workspaces.plan`, in the regional `DB`. |
-| `packages/db/usage-migrations/` | `usage_events`, `usage_rollups` and `usage_plan_changes`, in `USAGE_DB` (`avalon-<region>-usage`). Applied by `pnpm --filter @rally/api db:usage:migrate` (local, part of `db:migrate`) and `db:usage:migrate:remote` (deploy). |
-| `config/usage-lakehouse.json`, `config/usage-lakehouse-stream-schema.json` | The usage lakehouse: the `USAGE_LAKEHOUSE` Pipeline into the Iceberg table `avalon.usage_events` in R2, provisioned by `scripts/ensure-cloudflare-inference-lakehouse.mjs` like the other lakehouses. |
-| `apps/ace/src/client/workspaces.tsx` | The plan control on Ace's workspaces tab. |
-| `apps/desktop/src/renderer/lib/organization-usage.ts` | The desktop's read: `useOrganizationUsage`, `useSetOrganizationPlan`, `applyPushedOrganizationUsage`, the `usage` local-cache slice, and the formatters. `lib/workspace-socket.tsx` applies the push, marks the meter stale on every subscribe answer, and relays both to the Settings window as `usage`. |
-| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Usage with its plan picker, and the account menu's meter (a full row right under Settings). |
-| `packages/ui/src/components/primitives.tsx` (`Meter`) | The shared meter primitive and its `cmp.meter.*` tokens. |
-
 Each call site emits next to where its cost is already known; searching for
 `emitInferenceUsage` lists them. The turn-disposition classifier's JEV calls
 are recorded as `turn_disposition_classifier` through the classifier
@@ -123,17 +107,6 @@ fill in the text colour and turn the warning colour below 20% left
 (`LOW_QUOTA_PERCENT`). Overage is priced at cost. All three are product
 decisions, set in `packages/contracts/src/usage.ts`.
 
-Every workspace starts on Starter. An administrator changes the plan from the
-picker at the top of Settings → Organization → Usage, and an operator from Ace;
-both reach `setWorkspacePlan`. There is no checkout behind either yet, so a
-change moves the quota and nothing is charged. `setWorkspacePlan` records the change in `usage_plan_changes` (with the plan it
-replaced) and rewrites `quota_microusd` on the current week's rollups, in one
-`USAGE_DB` transaction, so the meter re-prices the current week at once. Then it
-writes `workspaces.plan` in `DB`; if that second write fails, the caller shows
-the error and choosing again finishes it. The Settings route answers with the
-meter under the new plan, which the picker writes straight into the read and
-the cache.
-
 After the response, both routes call `publishOrganizationUsage`. It reads
 the meter, stamped with when the read started, and WorkspaceDO sends it to
 every member socket (not a guest's) as `workspace_usage`, dropping a meter
@@ -202,12 +175,6 @@ therefore keep the plan they had, even for an event that arrives late.
 
 ## Boundary
 
-This module owns the ledger, the meter's arithmetic, and the plan column. It
-exposes `emitInferenceUsage` to call sites, `GET /workspace/usage` and
-`PUT /workspace/plan` to the desktop, `POST /internal/workspaces/:id/plan`
-to Ace, and the `workspace_usage` socket event to every member after a plan
-change. The socket itself is [`realtime-sockets.md`](realtime-sockets.md)'s.
-
 It does not stop, slow or gate any work when the quota is spent: the product
 never asks permission before a tool call (`AGENTS.md`), and no run reads the
 meter. It does not charge anyone or talk to Stripe. It is not the inference
@@ -255,31 +222,6 @@ desktop meter is owned by the settings screens and
 
 ## Testing
 
-- `packages/contracts/src/usage.test.ts`: week and period boundaries,
-  month-end clamping, overage derivation, plan re-pricing.
-- `apps/api/test/usage-metering.test.ts`: the consumer, the reader and
-  `GET /workspace/usage` and `PUT /workspace/plan` against the real migrations, with the regional and
-  usage schemas on separate connections (`migratedUsageSqliteDatabase`), as in
-  production.
-- `apps/api/test-workers/usage-ledger.test.ts`: the once-only count on real D1,
-  where `changes()` inside a `batch()` is the runtime's to honour.
-- `apps/api/test-workers/queue-dispatch.test.ts`: the usage queue is
-  dispatched ahead of the maintenance fence.
-- `apps/api/test/workspace-operations.test.ts`: the plan route, its
-  credential, its refusals, the current week's re-pricing, and the push.
-- `apps/api/test-workers/durable-object-runtime.test.ts`: WorkspaceDO sends
-  `workspace_usage` to every member socket, skips a guest's, and drops a
-  stale meter.
-- `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`: the push lands in
-  the read and the `usage` slice, a subscribe answer marks the meter stale,
-  and both are relayed to the Settings window, which reads again.
-- `test/agent-inference-logging.test.ts` and
-  `test/structured-inference-deferral.test.ts`: what the emitters send.
-- `packages/agent-harness/src/embedding-cost.test.ts`: the bring-your-own-key
-  embedding cost.
-- Ace: `workspaces.test.ts` (the plan relay), `workspaces-client.test.tsx`
-  (the control) and `directory.test.ts` (a region without the column yet).
-
 A test that seeds a workspace must set `created_at`, since every week and
 period is computed from it.
 
@@ -292,20 +234,21 @@ today.
 
 ## Security and trust model
 
-A usage event carries IDs, an activity, a model ID and a cost: no prompt,
-output or tool argument. Only server call sites produce events. The read route
-sits behind member-only workspace auth, and every role may read it, since
-usage is shared by design. `PUT /workspace/plan` is for owners and
-administrators, like every other Organization-wide setting; a member gets
-`workspace_admin_required`. The operator plan route sits behind the regional
-operator credential in the `demos` role, the same one Ace uses to retire a
-workspace.
-
 ## Operations
 
 - `usage_batch_applied` (one per batch) carries applied, duplicate,
   unknown-workspace, invalid and misrouted counts and a per-activity count.
 - `usage_unpriced` and `usage_emit_failed` name what was not metered.
+
+## Operator plan changes
+
+The usage-plan UI has been removed. An operator can call
+`POST /internal/workspaces/:workspaceId/plan` on the owning regional API with
+`Authorization: Bearer <operator-token>` and JSON `{"plan":"<plan>"}`.
+The plan must be a key accepted by `WorkspacePlanChangeSchema` in
+`packages/contracts/src/usage.ts`. The regional `DEMO_OPERATORS_JSON` credential
+must map to the operator's UUID with role `demos`. The route updates the ledger
+and publishes the current organization usage through the existing service.
 
 ## Changelog
 
