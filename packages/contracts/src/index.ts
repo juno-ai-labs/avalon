@@ -1,3 +1,4 @@
+import { AGENT_MODEL_OVERRIDES } from "./runtime-config";
 export * from './artifact-picker';
 export * from "./sidekick-delegation";
 import { AnnotationsSchema, validateAnnotationAttachments } from './artifact-annotations';
@@ -222,63 +223,35 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * members share a version (`gpt-5.6-*`, `deepseek-v4-*`) and are ordered by
  * hand.
  *
- * Nothing reads position 0. An earlier note here claimed the first entry was
- * what the selector showed before anything was chosen, and that has not been
- * true since the unpinned state became a row of its own: the menu renders
- * `UNPINNED_AGENT_MODEL` above every group and labels it **Default**, on the
- * reasoning in `agent-models.ts` that the renderer cannot see which variation
- * `agent-model-workstream` served and so must not name a model for it.
+ * Nothing reads position 0.
  *
  * This is a *closed* list rather than a free-text model id on purpose: an
- * override bypasses the Flagship rollout for the work stream it is attached to,
+ * override bypasses the deployment default for the work stream it is attached to,
  * so the set of models that can be reached that way is a product decision
  * reviewed here rather than whatever string a client sends. Removing a model
  * from it stops new overrides naming it; work streams already pinned to it fall
- * back to the flag, because the API re-validates the stored value on read.
+ * back to the configured default, because the API re-validates the stored value on read.
  *
- * See `docs/feature-flags.md` for how an override composes with the flags.
+ * See `docs/feature-flags.md` for how an override composes with configuration.
  */
-export const AGENT_MODEL_OVERRIDES = [
-  "x-ai/grok-4.6",
-  "x-ai/grok-4.5",
-  "x-ai/grok-4.3",
-  "google/gemini-3.8-flash",
-  "google/gemini-3.7-flash",
-  "google/gemini-3.6-flash",
-  "google/gemini-3.5-flash",
-  "google/gemini-3-flash-preview",
-  "openai/gpt-5.6-sol",
-  "openai/gpt-5.6-terra",
-  "openai/gpt-5.6-luna",
-  "deepseek/deepseek-v4-pro",
-  "deepseek/deepseek-v4-flash-0731",
-] as const;
+export { AGENT_MODEL_OVERRIDES };
 export const AgentModelOverrideSchema = z.enum(AGENT_MODEL_OVERRIDES);
 export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
 
-/** Every distinct model-using Rally task whose route is controlled by Flagship. */
+/** Every distinct model-using Rally task with a configurable model route. */
 export const AGENT_MODEL_ROLES = [
-  "workstream",
-  "inline_child",
-  "workstream_naming",
+  "canvas",
+  "resource_naming",
   "memory_sweep",
-  "sidekick_authoring",
+  "sidekick_wizard",
+  "sidekick_run",
 ] as const;
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
-
-/** Flagship flag key per model-using task. */
-export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
-  workstream: "agent-model-workstream",
-  inline_child: "agent-model-inline-child",
-  workstream_naming: "agent-model-workstream-naming",
-  memory_sweep: "agent-model-memory-sweep",
-  sidekick_authoring: "agent-model-sidekick-authoring",
-};
 
 /** One task's primary OpenRouter model and its ordered fallback route. */
 export const AgentModelRoutingSchema = z.object({
   model: z.string().trim().min(1),
-  // Older or manually-authored Flagship values may omit the array. Treating
+  // Environment overrides may omit the array. Treating
   // that shape as no fallbacks keeps every evaluator and operator surface in
   // agreement instead of silently substituting a different checked-in route.
   fallbackModels: z.array(z.string().trim().min(1)).default([]),
@@ -452,25 +425,16 @@ export const GOOGLE_MAIL_CALENDAR_CAPABILITIES = [
 export const ClientFeatureFlagsSchema = z.object({
   /** Whether Application → Developer may be offered on this device. */
   developerSettings: z.boolean().default(false),
-  /** Whether Suggested Work surfaces are shown in Electron for this person. */
-  suggestedWorkEnabled: z.boolean().default(false),
-  /** Whether Electron offers workspace switching and plural workspace setup. */
-  multipleWorkspacesEnabled: z.boolean().default(false),
+  /** Whether desktop and web offer organization switching and plural setup. */
+  multipleWorkspacesEnabled: z.boolean().default(true),
   pushNotificationsEnabled: z.boolean().default(false),
 });
 
-/** Product flags Ace is allowed to manage and publish to connected clients. */
+/** Legacy product keys retained for the workspace socket event contract. */
 export const ProductFeatureFlagKeySchema = z.enum([
-  "suggested-work-enabled",
   "multiple-workspaces-enabled",
   "push-notifications-enabled",
 ]);
-export const ProductFeatureFlagFanoutMessageSchema = z.strictObject({
-  kind: z.literal("product_feature_flag_changed"),
-  flagKey: ProductFeatureFlagKeySchema,
-  workspaceId: IdSchema,
-});
-
 export const ParticipantSchema = z.object({
   user: UserSchema,
   participationReason: z.enum(["creator", "explicit", "message", "elicitation", "action"]),
@@ -513,8 +477,8 @@ export { MESSAGE_MAX_CHARACTERS,MESSAGE_TOO_LONG_MESSAGE } from "./message-limit
  *
  * Deliberately far below {@link MESSAGE_MAX_CHARACTERS}, because a description
  * is not a message: it is a one-line summary of the conversation, and the
- * retired `docs/workstream-descriptions.md` records (in its 2026-08-24 entry)
- * why the bound stayed here when the message ceiling was raised.
+ * retired `workstream-descriptions.md` recorded (in its 2026-08-24 entry; see
+ * `docs/canvases.md#retired-documents`) why the bound stayed here when the message ceiling was raised.
  *
  * Changing this number means changing the `length(description) <= 4000` CHECK on
  * `channels` and the producer-side bound in
@@ -538,8 +502,6 @@ export const WorkstreamSchema = z.object({
    */
   titleStatus: z.enum(["naming", "automatic", "settled"]).default("settled"),
   objective: z.string().max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
-  /** Stable inbound address. Null is transitional for pre-migration rows only. */
-  emailAddress: z.string().email().max(254).nullable().default(null),
   createdByUserId: IdSchema.nullable(),
   harnessStatus: HarnessStatusSchema,
   latestAttentionSequenceNumber: z.number().int().nonnegative(),
@@ -593,7 +555,7 @@ export const WorkstreamSchema = z.object({
    */
   systemKind: z.enum(["digest"]).nullable().default(null),
   /**
-   * The model this conversation is pinned to, ahead of `agent-model-workstream`,
+   * The model this conversation is pinned to, ahead of its configured model route,
    * or null for the ordinary unpinned case. Decided once at creation and fixed
    * for the conversation's life.
    *
@@ -1133,7 +1095,6 @@ export const WorkstreamContextSchema = z.object({
 
 export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("manual") }),
-  z.object({ type: z.literal("inbound_email") }),
   z.object({
     type: z.literal("calendar"),
     rrule: z.string().min(1),
@@ -1349,6 +1310,8 @@ export const AutomationDraftSchema = z.object({
   whenToUse: z.string().optional(),
   requiredCapabilities: z.array(z.string()).default([]),
   expectedOutputs: z.array(z.string()).default([]),
+  /** Canonical conversation_list id already in Sidekick scope; never grants access. */
+  failureNotificationConversationId: z.string().min(1).nullable().optional(),
   defaultBehavior: z.record(z.string(), z.unknown()).default({}),
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),
@@ -1565,6 +1528,7 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
     instructions: z.string().min(1),
     requiredCapabilities: z.array(z.string()),
     expectedOutputs: z.array(z.string()),
+    failureNotificationConversationId: z.string().min(1).nullable().optional(),
     defaultBehavior: z.record(z.string(), z.unknown()),
     recommendedPlugins: z.array(AutomationPluginRecommendationSchema),
     memoryTables: z.array(AutomationMemoryTableSchema),
@@ -1579,16 +1543,10 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
   coordinatorUserId: IdSchema.nullable().optional(),
   modelOverride: z.string().min(1).nullable(),
   trigger: AutomationRunTriggerV1Schema,
-  /**
-   * The content that started the run, rendered as loop input: the email for
-   * an inbound-email run, the event for an external-event run. Only an email
-   * is also a resource.
-   */
+  /** The event or conversation message that started the run, rendered as loop input. */
   opening: z.strictObject({
     textContent: z.string().min(1),
     structuredContent: z.record(z.string(), z.unknown()),
-    resourceId: IdSchema.nullable(),
-    /** Host-derived provider references from the canonical activation event. */
   }).nullable(),
   state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
 });
@@ -1609,7 +1567,6 @@ export const AutomationSummarySchema = z.object({
   id: IdSchema,
   name: z.string(),
   description: z.string(),
-  emailAddress: z.string().email().nullable().default(null),
   scope: AutomationScopeSchema,
   status: z.enum(["draft", "active", "paused"]),
   nextRunAt: TimestampSchema.nullable(),
@@ -1622,7 +1579,7 @@ export const AutomationSummarySchema = z.object({
    */
   running: z.boolean().optional(),
   pendingQuestion: z.string().nullable().optional(),
-  triggerKinds: z.array(z.enum(["manual", "schedule", "external_event", "inbound_email"])).optional(),
+  triggerKinds: z.array(z.enum(["manual", "schedule", "external_event"])).optional(),
   /**
    * The IANA zone the schedule behind `nextRunAt` reads its wall-clock time
    * in, so a client formats `nextRunAt` the way the schedule's own summary
@@ -1634,6 +1591,16 @@ export const AutomationSummarySchema = z.object({
   updatedAt: TimestampSchema,
   /** Who it is shared with; absent from a server that predates it. */
   audience: SidekickAudienceSchema.optional(),
+  /** The named recipients, excluding the author. Absent from reads that do not include the list. */
+  sharedWithUserIds: z.array(IdSchema).optional(),
+  /**
+   * The Canvases somebody attached this Sidekick to that the viewer may open,
+   * in the order they were attached: the one whose Chat made it, and any its
+   * configuration conversation attached. Not the Canvas each of its runs
+   * made, which is its output rather than where it works. The dashboard card
+   * links each. Absent from an older Worker and from reads that do not ask.
+   */
+  attachedCanvases: z.array(z.object({ id: IdSchema, title: z.string() })).optional(),
   /**
    * This viewer has not read the latest message in the Sidekick's shared
    * conversation, or marked it unread. Sidebar rows only; absent elsewhere.
@@ -1688,6 +1655,12 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   lifecycle: AutomationLifecycleStateSchema,
   authorUserId: IdSchema,
   runAsUserId: IdSchema,
+  /**
+   * The Canvas whose Chat made this Sidekick, or null for one made anywhere
+   * else. Everyone that Canvas admits may change or archive the Sidekick, and
+   * archiving the Canvas archives it. Absent from a server that predates it.
+   */
+  madeInCanvasId: IdSchema.nullable().optional(),
   delegationAttention: z.strictObject({ code: SidekickDelegationAttentionCodeSchema, message: z.string() }).nullable().optional(),
   /** The latest submitted definition, or null before the chat has submitted one. */
   currentDefinition: AutomationDraftSchema.nullable(),
@@ -1698,9 +1671,7 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   runnable: z.boolean().default(false),
   connectorBindings: z.record(z.string(), z.string()),
   recentRuns: z.array(AutomationRunSchema),
-  /** The people a `people` Sidekick is shared with, besides its author; empty for the other audiences. Absent from a server that predates it. */
-  sharedWithUserIds: z.array(IdSchema).optional(),
-  /** The Canvases this Sidekick writes that the reader may open, most recently active first. Absent from a server that predates it. */
+  /** The Canvases this Sidekick is attached to that the reader may open, most recently active first. Absent from a server that predates it. */
   canvases: z.array(CanvasSummarySchema).optional(),
 });
 
@@ -2401,9 +2372,8 @@ export const WorkspaceResourceVersionsEventSchema = z.strictObject({
 export type WorkspaceResourceVersionsEvent = z.infer<typeof WorkspaceResourceVersionsEventSchema>;
 
 /**
- * User-specific flags sent outside the workspace waterline. Two people in one
- * WorkspaceDO can match different Flagship rules, so these values must never
- * ride the common `workspace_sync` event.
+ * Legacy flag-update event accepted by clients across rolling deployments.
+ * Current configuration is delivered on workspace subscription and HTTP reads.
  */
 export const WorkspaceFeatureFlagsEventSchema = z.strictObject({
   type: z.literal("workspace_feature_flags"),
@@ -2933,7 +2903,7 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * The trigger doubles as the transcript's upper bound, which is right for a
    * run a message started and wrong for a `retry`: the failed run's trigger has
    * to stay the trigger — it is what admits a suggested-work brief or an
-   * inbound email to the model — while the replay still needs to see anything
+   * event to the model — while the replay still needs to see anything
    * said since, including a correction that started no run of its own. Resolved
    * at launch rather than at projection time so a replayed attempt reads the
    * same window. Optional rather than nullable so every existing producer keeps
@@ -3461,12 +3431,6 @@ export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((
 }).transform((manifest) => ({
   ...manifest,
   activityTypes: manifest.activityTriggers.map((trigger) => trigger.eventType),
-  // Derived rather than declared a second time: the descriptor is the single
-  // authority on digestibility, and a consumer asking "may this event type
-  // reach a digest" should not have to scan a list of descriptors to find out.
-  digestibleActivityTypes: manifest.activityTriggers
-    .filter((trigger) => trigger.digestible)
-    .map((trigger) => trigger.eventType),
 }));
 
 export type Region = z.infer<typeof RegionSchema>;
@@ -3489,7 +3453,6 @@ export type AssignableMemberRole = z.infer<typeof AssignableMemberRoleSchema>;
 export type UpdateWorkspaceMemberRoleRequest = z.infer<typeof UpdateWorkspaceMemberRoleRequestSchema>;
 export type ClientFeatureFlags = z.infer<typeof ClientFeatureFlagsSchema>;
 export type ProductFeatureFlagKey = z.infer<typeof ProductFeatureFlagKeySchema>;
-export type ProductFeatureFlagFanoutMessage = z.infer<typeof ProductFeatureFlagFanoutMessageSchema>;
 export type Workstream = z.infer<typeof WorkstreamSchema>;
 export type WorkstreamDetail = z.infer<typeof WorkstreamDetailSchema>;
 export type WorkstreamBoot = z.infer<typeof WorkstreamBootSchema>;
@@ -3830,15 +3793,8 @@ export function readStructuredFailure(error: unknown): StructuredFailureDetail |
 }
 
 /** Stored capability policy. Consumers read the persisted value, never derive it. */
-export function sidekickLoadable(definition: Pick<AutomationDraft, "triggers" | "definitionVersion">): boolean {
-  // Legacy accepted definitions include implicit email trigger configuration.
-  return definition.definitionVersion === 2 && definition.triggers.length === 0;
-}
-
-/** Legacy definitions implicitly enabled inbound email when accepted. */
-export function sidekickReceivesEmail(definition: AutomationDraft): boolean {
-  return definition.definitionVersion !== 2
-    || definition.triggers.some((trigger) => trigger.type === "inbound_email");
+export function sidekickLoadable(definition: Pick<AutomationDraft, "triggers">): boolean {
+  return definition.triggers.length === 0;
 }
 
 export const SidekickDefinitionSchema = AutomationDraftSchema;

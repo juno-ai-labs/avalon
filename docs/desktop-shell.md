@@ -22,7 +22,7 @@ routes the shell serves, or who owns the right panel.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp` and its routes: `/` (the landing), `/canvases`, `/canvases/:id`, `/sidekicks`, `/sidekicks/new`, `/sidekicks/:id`, `/automations/:id`, `/settings` (reached only in the browser; on the desktop Settings renders in its own window), `/opening`, and the redirects of the removed routes. |
+| `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp` and its routes: `/` (the landing), `/canvases`, `/canvases/:id`, `/sidekicks`, `/sidekicks/new`, `/sidekicks/:id`, `/automations/:id`, `/activity`, `/settings` (reached only in the browser; on the desktop Settings renders in its own window), `/opening`, and the redirects of the removed routes. |
 | `apps/desktop/src/renderer/screens/landing.tsx`, `lib/landing.ts` | The root route: the restorable `last-route`, else `/canvases`, once onboarding is finished. `LANDING_ROUTE`, `restorableRoute`, `RESTORED_ROUTE`, `useRestoredRouteFallback`, `useOpenLanding`. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | The shell around the routes: the sidebar, the main pane, the right slot's width, search, the dock badge, and the `last-route` and presence writes. |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
@@ -33,6 +33,7 @@ routes the shell serves, or who owns the right panel.
 | `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the rail, the account menu's trigger included. |
 | `apps/desktop/src/renderer/screens/canvases-home.tsx`, `canvas.tsx` | `/canvases` and `/canvases/:id` ([`canvases.md`](canvases.md#in-the-client)). |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx`, `automation.tsx` | `/sidekicks` and `/sidekicks/:id` ([`automation-lifecycle.md`](automation-lifecycle.md)). |
+| `apps/desktop/src/renderer/screens/activity-home.tsx` | `/activity`, with an empty state or a prompt to choose a row ([`activity.md`](activity.md)). |
 | `packages/ui/src/components/title-pill.tsx` | `TitlePill`, `TitlePillHeader`, the menu building blocks, `TitlePillAction` and `TitlePillClose`. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | One conversation: a Canvas's Chat or a Sidekick's conversation. Owns its right panel by conversation. |
 | `apps/desktop/src/renderer/lib/browser-rail-links.ts` | Routes a clicked web link to the pane it was clicked in. |
@@ -40,6 +41,14 @@ routes the shell serves, or who owns the right panel.
 | `apps/browser/src/shell.tsx` | The web app: this shell over the browser's cookie session ([`browser-client.md`](browser-client.md#the-shell)). |
 
 ## How it works
+
+### Section dashboards
+
+Canvases and Sidekicks share the dashboard grid, card shell, decorative preview
+and stretched title link. Both grids follow the available pane width, using one
+column in a narrow pane, two in a medium pane and three in a wide pane. Sidekick
+cards retain search, ownership filters, sharing and next-wake information; only
+paused Sidekicks have a lifecycle pill, while Needs input is a separate badge.
 
 ### Electron navigation history
 
@@ -84,20 +93,38 @@ It holds two columns:
   **Canvases**, a page outline (the sheet every artifact tile draws), and
   **Sidekicks**, the Tabler hexagon a Sidekick is drawn in, and **Activity**,
   the triangle outline it wore before the pivot, then the account menu at the
-  bottom, labelled Settings. Every entry, the account menu's
-  trigger included, is one `RailItem`: a 34px tile around a 22px shape, so they
-  share size, hover and the active tint, which a menu's trigger also takes
-  while its menu is open. The choice is a device preference
+  bottom, labelled Settings. Pinned Canvas shortcuts occupy the center, in
+  the same order as the Canvases list; both surfaces accept drag pinning and
+  reordering ([`pinning.md`](pinning.md)). The rail uses equal outer tracks
+  around its pins and scrolls a long pin group. The phone sheet uses the full
+  Pinned list instead of duplicate shortcuts. Every entry, the account menu's
+  trigger included, is one `RailItem`: section and account entries use a 34px
+  tile around a 22px shape, with a shared hover and active tint. Canvas
+  shortcuts fill the tile with a circle in the Canvas colour and distinguish
+  the open Canvas with a separated ring and heavier label. Its tooltip is
+  title-only; its accessible name also announces unread state. An empty rail
+  shows a pin drop hint, highlighted throughout a Canvas drag. The choice is a device preference
   (`rally.sidebar-section`, default `canvases`); a value stored before the
   cutover (`channels`, `threads`, `pinned`, `artifacts`) reads as the default,
   and `activity` opens Activity again. Arriving at a Canvas or a Sidekick moves
   the rail to its section (Activity excepted: once open, only a rail pick
   leaves it, whatever the pane opens and however, a row, a link inside the
   pane, a push or a deep link, and closing the phone sheet over it keeps it).
+  For members, clicking **Sidekicks** always opens `/sidekicks`, including when
+  its list or an individual Sidekick is already open. Repeated clicks at the
+  dashboard add no history entries, and the phone sheet closes to reveal the
+  dashboard. A guest only changes the list, keeping the shared pane open
+  because guests have no dashboard directory.
   The window's landing is its
   first route that belongs to a section, so a launch's redirect from `/` to
-  `/canvases` is the landing and not a navigation; landing on a section home
-  keeps the stored choice, and only a later navigation to a home moves it.
+  `/canvases` is the landing and not a navigation. Landing on a dashboard
+  keeps the stored choice. Landing on `/activity` selects Activity.
+  Clicking **Canvases** always opens `/canvases`, including when a Canvas is
+  already open and its rail entry is selected. The list header's **Canvas
+  dashboard** home icon, immediately before New Canvas, uses the same action.
+  Both select the Canvases list and close the phone sheet to reveal the dashboard.
+  Repeated dashboard picks replace the current entry, preserving one Back step
+  to the previously open Canvas.
   Entering Activity opens its top row (the first the list draws) in the pane,
   as a mail client opens a folder's first message, and draws that row open:
   the rail's button pushes the row's route, so Back returns to what was open;
@@ -108,13 +135,13 @@ It holds two columns:
   navigated to before the list arrived; a link that names Activity
   (`rallywithai://activity`) selects the section, which then opens the row the
   same way; after an Organization change it first gives the pane the Canvases
-  home in place of `/opening`, which the top row then replaces. The first list
-  after entering decides: an
-  empty feed opens nothing, a navigation made before it arrived stands, and
-  rows arriving, Mark all seen and other clicks never move the pane until the
-  section is left and entered again. In the phone sheet the
-  sheet stays open over the row it opened (`sheetAfterNavigation`), since the
-  list is what was picked.
+  home in place of `/opening`, which the Activity destination then replaces.
+  The first list after entering decides where to go. Picking the Activity
+  rail button again uses the same rule. An empty feed opens `/activity` in
+  the same history step the top row would take. A navigation made before
+  the list arrives stands, and later list updates leave the pane where it is.
+  On a phone the sheet stays open over a top row (`sheetAfterNavigation`)
+  and closes to reveal the empty page, including when it is already open.
   Each section carries a red count (`RailBadge`, 15px in the danger red
   design.html draws; nothing at zero, `99+` past two digits), which the
   button's accessible name reads after the section ("Canvases, 10 unread",
@@ -133,16 +160,21 @@ It holds two columns:
   tile and its badge do not touch the tab's edge. Keyboard focus rings the
   34px tile in its own radius, not the whole button, and the account tile's
   avatar is the design's 28px. A section home names the window
-  ("Canvases · Rally", "Sidekicks · Rally"), as Settings does ("Settings ·
+  ("Canvases · Rally", "Sidekicks · Rally", "Activity · Rally"), as Settings does ("Settings ·
   Rally"), and so do a missing Canvas ("Canvas not found · Rally") and an
   unknown route ("Nothing here · Rally").
 - **One list**, titled with the section's name. **Canvases** is a Pinned
-  group, then every Canvas by recent activity; its action is **New Canvas**
+  group, then every Canvas by recent activity; its actions are **Canvas dashboard**
+  and **New Canvas**
   (`POST /canvases`, then the new Canvas's route). **Sidekicks** is **Needs
   input**, then Pinned, then every Sidekick by what it last did, or by name
   from the heading's **Recent** control (the same `DropdownSelect` and ⇵
   glyph as the Canvases list's); its action is **New Sidekick**
-  (`/sidekicks/new`). A guest gets neither New action. **Activity** lists the
+  (`/sidekicks/new`), preceded by **Sidekicks home** (`/sidekicks`) to return
+  to the dashboard from any Sidekick. Home also dismisses the phone sheet
+  when its destination is already open, and gives a direct shortcut when the
+  rail is hidden on a phone. A guest gets neither New action nor Home.
+  **Activity** lists the
   person's mentions, adds and Sidekick run notices newest first, each a kind
   glyph, who did what where, the preview, a time and an unseen dot, opening
   the Canvas or the Sidekick's conversation, the rows about what the route has
@@ -179,7 +211,7 @@ reappearing there; [`list-motion.md`](list-motion.md) owns the motion.
 
 `/` is the landing (`LandingScreen`). It reopens the route this person last had
 open on this device, `rally.desktop-layout:<organization>:<user>:last-route`,
-when that is a Canvas, a Sidekick or either home (`restorableRoute`), and
+when that is a Canvas, a Sidekick or a section home (`restorableRoute`), and
 otherwise opens `/canvases`. The app shell writes `last-route` on every
 navigation to such a route. A screen that leaves because what it showed is gone
 uses `useOpenLanding`, which replaces the entry so Back cannot return to it.
@@ -201,13 +233,12 @@ restored route on a Canvas they may ask into stays on its Request access pane
 ([`canvases.md`](canvases.md)).
 
 The removed surfaces' routes, `/channels/*`, `/spaces/*`, `/workstreams/*`,
-`/projects/*`, `/activity` and `/artifacts`, redirect to `/canvases`, so a
+`/projects/*` and `/artifacts`, redirect to `/canvases`, so a
 stored route, a bookmark or an old link opens the Canvases home rather than a
-dead screen. Activity has no route of its own: it is a rail section, and a deep
-link that names it opens that section, which opens its top row in the pane;
-a launch with Activity stored that lands on the Canvases home gives way to
-the top row the same way, while a restored Canvas or Sidekick route is kept
-(the rail section above).
+dead screen. `/activity` opens the Activity home and selects its list. A
+direct visit or a return through history keeps the page open. On launch, a
+saved Activity home opens the top row if the first list has one. An Activity
+deep link selects the rail section, which uses the entry rule above.
 `/opening` is inert: a deep link that changes organization parks the pane there
 while its destination resolves. Settings opens in its own window on the desktop
 and as `/settings` in the browser.
@@ -239,14 +270,14 @@ stays open after one of its rows is opened, stays when the sheet closed for
 that navigation. Landing on a section home by a link or a restored route, the
 shut sheet's bar names that home and carries its actions, whichever list is
 stored; the list itself, once the sheet opens, is the stored one. A pane
-header's folded "More" button sits after the pane's own controls, so a
-Canvas's header reads Share then "⋯" as it does at desktop width. Opening the sheet
-from a pane header moves focus to its close button; closing hands focus back
+header's folded "More" button sits after the pane's own controls. The Canvas's
+header keeps Share at the right and its actions in the centred pill's menu.
+Opening the sheet from a pane header moves focus to its close button; closing hands focus back
 to the opener, or to the visible menu button when the opener is gone
 (`useSheetOpener`). Opening anything from it closes it, as do Escape and
-widening past 640px; switching sections does not navigate, so the sheet stays
-open on the list just picked. An open menu, dialog or error popup takes Escape
-before the sheet does. Code that navigates and wants the sheet open afterwards
+widening past 640px. Section changes follow [the sidebar rules](#the-sidebar).
+An open menu, dialog or error popup takes Escape before the sheet does.
+Code that navigates and wants the sheet open afterwards
 sets `sheetAfterNavigation` instead of `sidebarOpen`: the sidebar's reset on
 mount and route change reads it and opens the sheet once.
 
@@ -273,6 +304,15 @@ level in place (`useTitleMenuNav`), the title, Escape or the left arrow step
 back to the root, and `TitleMenuMorph` travels the popout's size between
 levels; reduced motion turns that off.
 
+- **Canvas menu** (`screens/canvas.tsx`): the four action tiles, Rename… and
+  Change appearance, then a **Sidekicks** section when the Canvas has any
+  attached (`CanvasSidekicksSection`), then Archive canvas for a manager. A
+  Sidekick's row is its hexagon, name and state (Draft, Active, Paused). It
+  opens the Sidekick's page only for someone whose own Sidekicks list holds
+  it; for anyone else it stays focusable, opens nothing, and its tooltip says
+  to ask in the Canvas's chat. The menu archives no Sidekick: one the
+  Canvas made is archived by asking its chat, or with the Canvas.
+  [`canvases.md`](canvases.md#in-the-client) owns the rest of that menu.
 - **Artifact menu** (`InspectorRail`, shared by the side panel, expanded panel,
   and detached artifact windows): the root offers Download for available files,
   Rename and Copy link as tiles, plus More when archiving is available.
@@ -401,6 +441,59 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-09 — Give an empty Activity feed its own page
+
+**What changed:** Entering Activity with an empty feed opens `/activity`.
+
+**Why:** Skipping navigation left the previous Chat and its artifact visible
+beside an empty list. A separate route lets the conversation release both
+panes and keeps the original address, including the artifact, one Back away.
+
+**Consequences:** Later feed updates change the message on the Activity home.
+The person can choose a newly arrived row or pick Activity again to open the
+newest one. The same entry rule applies when launch restores the Activity home.
+
+### 2026-11-09 — The Sidekicks rail button opens the dashboard
+
+**What changed:** For members, both the Sidekicks rail button and the new Home
+action open `/sidekicks` and dismiss the phone sheet, including when the home
+is already open. Repeated visits add no duplicate history entry. Guests keep
+their current pane when selecting Sidekicks and have no Home action, because
+they have no dashboard directory.
+
+**Why:** Merely selecting the list left the member dashboard unreachable
+through its section button. Explicit navigation makes the overview one click
+away while preserving a useful Back history and the guest's shared pane.
+
+**Considered and rejected:** Home alone would leave the section button unable
+to open the overview. Removing Home would lose the phone's direct shortcut
+while its rail is hidden. Changing Canvas rail navigation is outside this
+request and its existing behavior is retained.
+
+**Consequences:** Both member shortcuts must close the sheet even at the same
+URL, clear any run query, and preserve one Back step to the preceding pane.
+The guest's section picker must not lead to an unavailable dashboard.
+
+Shipped in [#1505](https://github.com/juno-ai-labs/avalon/pull/1505).
+
+### 2026-11-09 — Return to the Canvas dashboard from the sidebar
+
+**What changed:** The Canvases rail entry and a home icon before New Canvas
+share one dashboard action, including while a Canvas is open. Repeated picks
+replace the current dashboard history entry.
+
+**Why:** The rail previously only selected its list, leaving the conversation
+open and making the dashboard hard to return to. Pushing the dashboard again
+when already there adds Back presses that appear to do nothing.
+
+**Considered and rejected:** Removing the home icon as redundant with the
+rail. The requested UI explicitly includes both shortcuts on desktop and phone.
+
+**Consequences:** Dashboard picks close the phone sheet to reveal the page.
+Sidekicks keeps its list-only behavior, and guests retain both dashboard shortcuts.
+
+Shipped in #1504.
 
 ### 2026-11-09 — The shell is Canvases, Sidekicks and Activity; Channels, Threads and Breakouts are deleted
 
@@ -1234,14 +1327,6 @@ create-space form open while the window crosses 640px closes.
 Shipped in [#1148](https://github.com/juno-ai-labs/avalon/pull/1148).
 
 ### 2026-10-07 — Add people invites guests; Share and the Space header leave the title menu
-
-**What changed:** The People level's search takes email addresses. Enter adds
-anyone already in the Organization and invites any other address as a guest
-of that Channel or Breakout, without closing the menu, and pending invitations
-list beside the participants with **Cancel invite**. The **Share** tile, the
-scope row with **Change**, the Channel menu's **In space** header and **Copy
-channel email address** are gone. The Channel's More gains **Icon and
-color**, as the Breakout's has.
 
 **Why:** Share and Add people were two doors to one job, inviting someone in,
 and Share's dialog closed after each send. Folding the guest invite into the

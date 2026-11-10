@@ -214,6 +214,7 @@ const bridge: RallyDesktopBridge = {
   createDesktopAuthAttempt: (input) => ipcRenderer.invoke('auth:create-desktop-attempt', input) as Promise<DesktopAuthAttempt>,
   cancelDesktopAuthAttempt: (attemptId) => ipcRenderer.invoke('auth:cancel-desktop-attempt', attemptId) as Promise<void>,
   exchangeDesktopTicket: (input) => ipcRenderer.invoke('auth:exchange-desktop-ticket', input) as Promise<DesktopSession>,
+  signInWithPassword: (input) => ipcRenderer.invoke('auth:password', input) as Promise<DesktopSession>,
   createDevelopmentSession: (apiBaseUrl, workspaceName) => ipcRenderer.invoke('auth:create-development-session', { apiBaseUrl, workspaceName }) as Promise<DesktopSession>,
   getAccountOnboarding: () => ipcRenderer.invoke('onboarding:get-account') as Promise<AccountOnboarding>,
   updateAccountOnboarding: (input) => ipcRenderer.invoke('onboarding:update-account', input) as Promise<AccountOnboarding>,

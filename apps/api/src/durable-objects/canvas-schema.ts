@@ -181,3 +181,58 @@ export const UNTITLED_CANVAS = "Untitled Canvas";
 
 /** The alarm kind that titles a Canvas made with no title from its opening message. */
 export const CANVAS_NAMING_ALARM_KIND = "canvas_naming";
+
+/** WorkspaceDO migration 142: retain archived Canvases without admitting or listing them. */
+export const CANVAS_ARCHIVE_STATEMENTS: readonly string[] = [
+  `ALTER TABLE canvas_directory ADD COLUMN archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0)`,
+  `ALTER TABLE resources ADD COLUMN publication_parent_id TEXT`,
+  `UPDATE resources SET publication_parent_id =
+     (SELECT canvas_id FROM canvas_artifacts WHERE resource_id = resources.id LIMIT 1)
+   WHERE EXISTS (SELECT 1 FROM canvas_artifacts WHERE resource_id = resources.id)`,
+  // Generated-artifact authorship no longer grants an independent search audience.
+  `INSERT INTO resource_search_versions(resource_id, revision, pending, not_before)
+   SELECT id, 1, 1, 0 FROM resources WHERE provider = 'avalon_generated'
+   ON CONFLICT(resource_id) DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0`,
+  `CREATE TRIGGER canvas_publication_insert BEFORE INSERT ON resources
+   WHEN EXISTS (SELECT 1 FROM canvas_directory WHERE canvas_id = NEW.publication_parent_id AND archived_at IS NOT NULL)
+   BEGIN SELECT RAISE(ABORT, 'canvas_archived'); END`,
+  `CREATE TRIGGER canvas_publication_update BEFORE UPDATE OF title, mime_type, content_ref, content_sha256, metadata_json, publication_parent_id ON resources
+   WHEN EXISTS (SELECT 1 FROM canvas_directory WHERE canvas_id = NEW.publication_parent_id AND archived_at IS NOT NULL)
+   BEGIN SELECT RAISE(ABORT, 'canvas_archived'); END`,
+  `CREATE TRIGGER canvas_artifact_registry_insert BEFORE INSERT ON artifact_registry
+   WHEN EXISTS (SELECT 1 FROM canvas_directory WHERE canvas_id = NEW.workstream_id AND archived_at IS NOT NULL)
+   BEGIN SELECT RAISE(ABORT, 'canvas_archived'); END`,
+  `CREATE TRIGGER canvas_artifact_registry_update BEFORE UPDATE ON artifact_registry
+   WHEN EXISTS (SELECT 1 FROM canvas_directory WHERE canvas_id = NEW.workstream_id AND archived_at IS NOT NULL)
+   BEGIN SELECT RAISE(ABORT, 'canvas_archived'); END`,
+];
+
+
+/** Durable archive fan-out entries share the existing per-object alarm store. */
+export const CANVAS_ARCHIVE_CONVERSATION_ALARM = "canvas_archive_conversation";
+export const CANVAS_ARCHIVE_ARTIFACT_ALARM = "canvas_archive_artifact";
+
+/**
+ * WorkspaceDO migration 144: a Sidekick's Canvas attachment is the one record
+ * of which Canvases it works on.
+ *
+ *  * `made_here` marks the attachment a Canvas's own Chat wrote when it made
+ *    the Sidekick. It is the whole of what ties such a Sidekick to its
+ *    Canvas: everyone the Canvas admits may change or archive it, and
+ *    archiving the Canvas archives it. Who may open the Sidekick is unchanged.
+ *  * The index serves the Canvas-side read ("the Sidekicks attached to this
+ *    Canvas"); the primary key leads with the Sidekick.
+ *  * Every Canvas a run made is attached to its writer Sidekick, so the
+ *    publish gate reads attachments alone. `writer_sidekick_id` keeps its
+ *    other meaning: whose audience such a Canvas admits.
+ */
+export const SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS: readonly string[] = [
+  `ALTER TABLE sidekick_conversation_attachments
+     ADD COLUMN made_here INTEGER NOT NULL DEFAULT 0 CHECK (made_here IN (0, 1))`,
+  `CREATE INDEX sidekick_conversation_attachments_parent_idx
+     ON sidekick_conversation_attachments(parent_kind, parent_id)`,
+  `INSERT OR IGNORE INTO sidekick_conversation_attachments
+     (automation_id, parent_kind, parent_id, substream_id, attached_by_user_id, attached_at)
+   SELECT writer_sidekick_id, 'canvas', canvas_id, '0', created_by_user_id, created_at
+     FROM canvas_directory WHERE writer_sidekick_id IS NOT NULL`,
+];

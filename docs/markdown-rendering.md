@@ -811,7 +811,7 @@ from is [`agent-harness.md`](agent-harness.md), and a published document's is
 screen either, and has an opinion only about the part of it that is markdown.
 
 It renders untrusted text: everything it is given was written by a model, a
-person, a connector's provider, or an inbound email. `react-markdown` does not evaluate HTML
+person, a connector's provider,. `react-markdown` does not evaluate HTML
 in its input and no `rehype-raw` is configured, so markup in the source is text.
 The first closed exception is a bare `<br>` / `<br/>` / `<br />`, rewritten to
 a real line break; that is not HTML parsing, and a tagged `<br class="…">` or

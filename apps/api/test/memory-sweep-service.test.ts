@@ -128,7 +128,8 @@ function fixture(options: {
     LOG_LEVEL: "error",
     OPENROUTER_API_KEY: "test-key",
     OPENROUTER_PRIMARY_MODEL: "test/primary",
-    OPENROUTER_FALLBACK_MODELS: "",
+    OPENROUTER_SMARTER_MODEL: "test/smarter",
+    OPENROUTER_FALLBACK_MODEL: "",
     PUBLIC_API_BASE_URL: "https://api.example.com",
   });
   return { objectStore, env, sent, candidates, applied, prompts };
@@ -278,7 +279,7 @@ describe("the sweep attempt at settlement", () => {
     expect(sent).toEqual([expect.objectContaining({ fromSeq: 3, toSeq: 7 })]);
   });
 
-  it("never sweeps a Channel's own feed in this release", async () => {
+  it("never sweeps a retired Space parent's feed", async () => {
     const { env, sent } = fixture();
     expect(await attemptMemorySweep(env, { ...target, parentKind: "space" })).toEqual({ status: "skipped", reason: "space_parent" });
     expect(sent).toEqual([]);
@@ -337,7 +338,7 @@ describe("the sweep run in the consumer", () => {
     expect(prompts[0]!.user).toContain("Decision 4");
     // Only the coherent operation reached the store, with its horizon as an instant.
     expect(applied).toHaveBeenCalledWith(expect.objectContaining({
-      fromSeq: 0, toSeq: 5, model: "test/primary",
+      fromSeq: 0, toSeq: 5, model: "test/smarter",
       operations: [expect.objectContaining({ op: "add", subjectKind: "thread", validUntil: Date.parse("2026-10-30T23:59:59.000Z") })],
       factIds: [expect.any(String)],
       // The store is told who spoke and which candidates the model saw, and fences to both.

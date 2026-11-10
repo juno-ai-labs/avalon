@@ -20,10 +20,22 @@ export function isDraftUpload(row: ResourceReadRow): boolean {
 /**
  * Whether reading needs a readable conversation the resource is attached to.
  * An upload or a generated artifact needs one for everyone but its uploader;
- * an inbound email needs one for everyone. Every other provider is readable by
+ * a historical mail resource needs one for everyone. Every other provider is readable by
  * every member without one.
  */
 export function requiresAttachment(row: ResourceReadRow, owned: boolean): boolean {
   return ((row.provider === 'avalon_upload' || row.provider === 'avalon_generated') && !owned)
     || (row.provider === 'resend' && row.resource_type === 'email');
+}
+
+/** Canvas ownership and archive are local facts, shared by direct reads and search. */
+export function resourceCanvasState(sql: SqlStorage, resourceId: string, publicationParentId: string | null): {
+  ownedByCanvas: boolean; archived: boolean;
+} {
+  const row = sql.exec<{ archived: number | null }>(
+    `SELECT MAX(archived_at IS NOT NULL) AS archived FROM canvas_directory
+      WHERE canvas_id IN (SELECT ? UNION SELECT canvas_id FROM canvas_artifacts WHERE resource_id = ? AND ? IS NULL)`,
+    publicationParentId, resourceId, publicationParentId,
+  ).one();
+  return { ownedByCanvas: row.archived !== null, archived: row.archived === 1 };
 }

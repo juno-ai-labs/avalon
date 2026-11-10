@@ -120,8 +120,7 @@ The module owns the comparison pages, their social cards, the landing page's
 comparison section, and the footer on those pages. The Trust Center pages
 use this footer through the same marker; their own styling is `trust.css`,
 which loads after `landing.css`. It does not own the
-home page's social card (`scripts/generate-brand-assets.py`), or the
-access-copy headline, which [`private-access.md`](private-access.md) owns.
+home page's social card (`scripts/generate-brand-assets.py`).
 What the pages report to PostHog is in
 [`landing-page-tracking.md`](landing-page-tracking.md).
 

@@ -65,6 +65,44 @@ afterEach(() => {
   while (openDatabases.length > 0) openDatabases.pop()?.close();
 });
 
+describe("WorkspaceDO migration 142", () => {
+  it("fences publications created before the archive migration", () => {
+    const database = openDatabase();
+    apply(database, 141);
+    database.exec(`INSERT INTO canvas_directory (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at,
+      visibility, authority_generation) VALUES ('canvas-old', 'workspace', 'Plan', 'creator', 1, 1, 'creator', 1)`);
+    database.exec(`INSERT INTO workspace_identity (id, workspace_id, region, placement_affinity, created_at, updated_at)
+      VALUES (1, 'workspace', 'global', 'wnam', 1, 1)`);
+    database.exec(`INSERT INTO resources (id, workspace_id, provider, resource_type, title, metadata_json, created_at, updated_at)
+      VALUES ('resource-old', 'workspace', 'avalon_generated', 'generated_file', 'Original plan', '{}', '2026-11-09', '2026-11-09')`);
+    database.exec(`INSERT INTO canvas_artifacts VALUES ('canvas-old', 'resource-old', 1)`);
+    database.exec("UPDATE resource_search_versions SET revision = 10, pending = 0, not_before = 99 WHERE resource_id = 'resource-old'");
+    apply(database, 142, 141);
+    expect(all(database, "SELECT revision, pending, not_before FROM resource_search_versions WHERE resource_id = 'resource-old'"))
+      .toEqual([{ revision: 11, pending: 1, not_before: 0 }]);
+    expect(all(database, "SELECT title, publication_parent_id FROM resources WHERE id = 'resource-old'"))
+      .toEqual([{ title: 'Original plan', publication_parent_id: 'canvas-old' }]);
+    database.exec("UPDATE canvas_directory SET archived_at = 10 WHERE canvas_id = 'canvas-old'");
+    expect(() => database.exec("UPDATE resources SET title = 'Late write' WHERE id = 'resource-old'"))
+      .toThrow(/canvas_archived/u);
+    expect(all(database, "SELECT title FROM resources WHERE id = 'resource-old'"))
+      .toEqual([{ title: 'Original plan' }]);
+  });
+
+  it("keeps existing Canvases and participants active when adding the archive tombstone", () => {
+    const database = openDatabase();
+    apply(database, 141);
+    database.exec(`INSERT INTO canvas_directory (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at,
+      visibility, authority_generation) VALUES ('canvas-one', 'workspace', 'Plan', 'creator', 1, 1, 'participants', 1)`);
+    insertParticipant(database, 'participant', 'added');
+    apply(database, 142, 141);
+    expect(all(database, "SELECT canvas_id, title, archived_at FROM canvas_directory"))
+      .toEqual([{ canvas_id: 'canvas-one', title: 'Plan', archived_at: null }]);
+    expect(all(database, "SELECT user_id FROM canvas_participants")).toEqual([{ user_id: 'participant' }]);
+    expect(() => database.exec("UPDATE canvas_directory SET archived_at = -1")).toThrow(/CHECK constraint failed/u);
+  });
+});
+
 describe("WorkspaceDO migration 137", () => {
   it("keeps every row of the tables it copies, with their indexes and triggers, and admits a Canvas in each", () => {
     const database = openDatabase();

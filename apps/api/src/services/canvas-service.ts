@@ -1,9 +1,10 @@
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasUpdateRequest, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
+import type { AddCanvasSidekickRequest, AddedCanvasSidekick, CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasSidebarRow, CanvasUpdateRequest, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { createAutomation } from "./automation-service";
 import { ConversationService } from "./conversation-service";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -58,8 +59,6 @@ export async function createCanvas(env: Env, input: {
     participantUserIds: [input.creatorUserId],
     harnessStatus: "idle",
     titleStatus: "settled",
-    emailAddress: null,
-    emailRouteStatus: null,
     systemKind: null,
     modelOverride: null,
     now: Date.now(),
@@ -100,17 +99,60 @@ export class CanvasService {
       ...(request.canvasId ? { canvasId: request.canvasId, anchored } : {}),
       ...(request.title ? { title: request.title } : {}),
     });
-    if (!request.prompt) return { canvasId: asWorkstreamId(canvasId), turnId: null };
-    const client = await new ConversationService(this.env, this.auth).writableClient(canvasId, "0");
-    const receipt = await client.createMessage({
-      text: request.prompt.text, clientMessageId: request.prompt.clientMessageId,
-      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+    let turnId: string | null = null;
+    if (request.prompt) {
+      const client = await new ConversationService(this.env, this.auth).writableClient(canvasId, "0");
+      turnId = (await client.createMessage({
+        text: request.prompt.text, clientMessageId: request.prompt.clientMessageId,
+        mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+      })).turn.turnId;
+    }
+    // After the Canvas and its prompt, so a failure here leaves a Canvas a
+    // retry with the same ids completes rather than a Sidekick with no Canvas.
+    const sidekick = request.sidekick ? await this.addSidekick(canvasId, request.sidekick) : undefined;
+    return { canvasId: asWorkstreamId(canvasId), turnId, ...(sidekick ? { sidekick } : {}) };
+  }
+
+  /**
+   * Make a Sidekick for a Canvas, for a client that is not the Canvas's Chat
+   * (the MCP server, or any other): what the Chat's `create_sidekick` and its
+   * setup message do, as one request. The Sidekick is made attached to the
+   * Canvas, which refuses a Canvas this person cannot open, and the
+   * instructions go to its wizard as this person's edit. A guest makes none,
+   * as a guest makes no Canvas.
+   */
+  async addSidekick(canvasId: string, request: AddCanvasSidekickRequest): Promise<AddedCanvasSidekick> {
+    if (this.auth.role === null) throw new ApiError(403, "canvas_sidekick_member_required", "Only a member of the Organization can make a Sidekick");
+    const { automationId } = await createAutomation(this.env, {
+      workspaceId: this.auth.workspaceId, authorUserId: this.auth.userId, scope: "personal", madeInCanvasId: canvasId,
+      ...(request.sidekickId ? { automationId: request.sidekickId } : {}),
     });
-    return { canvasId: asWorkstreamId(canvasId), turnId: receipt.turn.turnId };
+    // Its own service, not the caller's: an MCP client's reach stops at
+    // Canvases, and this is the one Sidekick conversation the request made.
+    const client = await new ConversationService(this.env, this.auth).writableClient(automationId, "0");
+    const receipt = await client.createMessage({
+      text: request.instructions.text, clientMessageId: request.instructions.clientMessageId,
+      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [], intent: "edit_sidekick",
+    });
+    return { sidekickId: automationId, turnId: receipt.turn.turnId };
+  }
+
+  /**
+   * The Canvases this person may open, most recently active first, as their
+   * sidebar lists them; with `titleQuery`, only those whose title contains it,
+   * found among all of them rather than the sidebar's first page.
+   */
+  async list(titleQuery?: string): Promise<CanvasSidebarRow[]> {
+    return (await this.workspace()).canvasListFor({ workspaceId: this.auth.workspaceId, userId: this.auth.userId,
+      accessClass: this.auth.role === null ? "guest" : "member", ...(titleQuery ? { titleQuery } : {}) });
   }
 
   async detail(canvasId: string): Promise<CanvasDetail> {
     return (await this.workspace()).canvasDetail({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor() });
+  }
+
+  async archive(canvasId: string): Promise<void> {
+    await (await this.workspace()).canvasArchive({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor() });
   }
 
   async setAudience(canvasId: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {

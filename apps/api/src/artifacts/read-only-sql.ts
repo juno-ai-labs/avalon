@@ -1,5 +1,6 @@
 /**
- * What `query_artifact_data` is allowed to run against an artifact's database.
+ * What `query_artifact_data` and `write_artifact_data` are allowed to run
+ * against an artifact's database.
  *
  * **Read-only is enforced on the statement, not by the transaction.** An
  * always-rollback transaction is not an authorization boundary: caller-supplied
@@ -20,6 +21,9 @@
  * gates the artifact deploy exists to answer exactly that question. Until then
  * this is the boundary, so it is written to be over-strict: a legitimate query
  * this refuses costs the model one rewrite, and the error says how.
+ *
+ * `write_artifact_data` is admitted the same way by `admitDataWriteStatement`:
+ * one statement that changes rows, never one that changes the schema.
  *
  * See `docs/live-web-artifacts.md`.
  */
@@ -92,6 +96,25 @@ const SELECT = /^\s*select\b/iu;
 const WITH = /^\s*with\b/iu;
 
 /**
+ * The one statement a caller sent, with literals and comments blanked, or the
+ * refusal for none or more than one.
+ *
+ * Shared by the read and the write admission so there is one scanner and one
+ * definition of "one statement": a trailing semicolon is ordinary and is not a
+ * second statement; anything after it is.
+ */
+function singleStatement(
+  sql: string,
+  refusals: { empty: string; several: string },
+): { statement: string } | { refused: string } {
+  const trimmed = blankLiteralsAndComments(sql).trim();
+  if (trimmed.length === 0) return { refused: refusals.empty };
+  const withoutTrailing = trimmed.replace(/;\s*$/u, "");
+  if (withoutTrailing.includes(";")) return { refused: refusals.several };
+  return { statement: withoutTrailing };
+}
+
+/**
  * Decide whether one caller-supplied statement may run.
  *
  * The returned `sql` is the caller's original text, not the blanked copy: the
@@ -99,20 +122,12 @@ const WITH = /^\s*with\b/iu;
  * literals replaced by spaces.
  */
 export function admitReadOnlyStatement(sql: string): SqlAdmission {
-  const structure = blankLiteralsAndComments(sql);
-  const trimmed = structure.trim();
-  if (trimmed.length === 0) {
-    return { admitted: false, reason: "The query is empty. Describe the data first, then write one SELECT." };
-  }
-  // One statement. A trailing semicolon is ordinary and is not a second
-  // statement; anything after it is.
-  const withoutTrailing = trimmed.replace(/;\s*$/u, "");
-  if (withoutTrailing.includes(";")) {
-    return {
-      admitted: false,
-      reason: "Only one statement is allowed. Send a single SELECT, without a second statement after it.",
-    };
-  }
+  const single = singleStatement(sql, {
+    empty: "The query is empty. Describe the data first, then write one SELECT.",
+    several: "Only one statement is allowed. Send a single SELECT, without a second statement after it.",
+  });
+  if ("refused" in single) return { admitted: false, reason: single.refused };
+  const withoutTrailing = single.statement;
   if (SELECT.test(withoutTrailing)) return { admitted: true, sql };
   if (WITH.test(withoutTrailing)) {
     // A CTE's body is what actually runs. Find the keyword that follows the
@@ -128,6 +143,52 @@ export function admitReadOnlyStatement(sql: string): SqlAdmission {
   return {
     admitted: false,
     reason: "Only SELECT statements are allowed here. Describe the data first, then rebuild the statement as a read.",
+  };
+}
+
+/**
+ * Keywords that open a statement changing rows and nothing else. `INSERT`
+ * covers `INSERT OR REPLACE` and `INSERT … ON CONFLICT`, since both are
+ * clauses of the one statement.
+ */
+const DATA_WRITE = /^\s*(?:insert|update|delete|replace)\b/iu;
+
+/**
+ * Decide whether one caller-supplied statement may run as a row write
+ * (`write_artifact_data`).
+ *
+ * The same positive admission as the read, over the same scanner: exactly one
+ * statement, opening with INSERT, UPDATE, DELETE or REPLACE, or a `WITH`
+ * whose *body* does. Everything else is refused, which is what keeps the
+ * site's schema its own code's: CREATE, ALTER, DROP, PRAGMA, ATTACH, VACUUM
+ * and transaction control are not on the list, so no list of them has to be
+ * complete. A SELECT is refused too and pointed at the read tool, so a read
+ * never rides the write tool's receipt.
+ */
+export function admitDataWriteStatement(sql: string): SqlAdmission {
+  const single = singleStatement(sql, {
+    empty: "The statement is empty. Describe the data first, then write one INSERT, UPDATE, DELETE or REPLACE.",
+    several: "Only one statement is allowed. Send a single INSERT, UPDATE, DELETE or REPLACE, and call again for the next one.",
+  });
+  if ("refused" in single) return { admitted: false, reason: single.refused };
+  const statement = single.statement;
+  if (DATA_WRITE.test(statement)) return { admitted: true, sql };
+  const reads = "This tool changes rows. Run a SELECT with query_artifact_data instead.";
+  if (SELECT.test(statement)) return { admitted: false, reason: reads };
+  if (WITH.test(statement)) {
+    const body = cteBody(statement);
+    if (body !== null && DATA_WRITE.test(body)) return { admitted: true, sql };
+    return {
+      admitted: false,
+      reason: body !== null && SELECT.test(body)
+        ? reads
+        : "A WITH clause is allowed only when it ends in an INSERT, UPDATE, DELETE or REPLACE.",
+    };
+  }
+  return {
+    admitted: false,
+    reason: "Only INSERT, UPDATE, DELETE and REPLACE statements are allowed here. "
+      + "The site's own code owns its tables and columns: to change them, revise the site and publish it again.",
   };
 }
 

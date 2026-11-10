@@ -10,7 +10,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { createExecutionContext, createMessageBatch, getQueueResult, reset, runInDurableObject } from "cloudflare:test";
+import { createExecutionContext, createMessageBatch, getQueueResult, reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, type AutomationDraft } from "@rally/contracts";
@@ -73,7 +73,7 @@ async function openFeed(parentId: string, userId: string): Promise<{ socket: Web
 }
 
 /** Every access-revocation message published while `run` ran. */
-async function publishedRevocations(run: () => Promise<unknown>): Promise<unknown[]> {
+async function publishedRevocations(run: () => Promise<unknown>, delivered?: (bodies: unknown[]) => boolean): Promise<unknown[]> {
   const bodies: unknown[] = [];
   const queue = env.ACCESS_REVOCATION_QUEUE;
   // Accepted, as a Queue with room answers: the consumer below is the delivery.
@@ -94,6 +94,7 @@ async function publishedRevocations(run: () => Promise<unknown>): Promise<unknow
     return accepted;
   });
   await run();
+  if (delivered) await expect.poll(() => delivered(bodies)).toBe(true);
   return bodies;
 }
 
@@ -144,15 +145,61 @@ beforeEach(async () => {
       source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL)`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
   ]);
 });
 afterEach(() => vi.restoreAllMocks());
 
 describe("narrowing a conversation's audience", () => {
+  it("closes every open Chat feed when its Canvas is archived", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: OWNER, title: "Launch plan" });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId,
+      actor: { userId: OWNER, actorRole: "member" }, update: { visibility: "participants", userIds: [REMOVED, KEPT] } });
+    const owner = await openFeed(canvasId, OWNER);
+    const participant = await openFeed(canvasId, REMOVED);
+    const hops = await publishedRevocations(async () => {
+      await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: OWNER, actorRole: "member" } });
+      await runDurableObjectAlarm(workspace());
+    }, (bodies) => bodies.length > 0);
+    expect(hops).toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId: OWNER, target: { scope: "substream", workstreamId: canvasId, substreamId: "0" } }),
+      expect.objectContaining({ userId: REMOVED, target: { scope: "substream", workstreamId: canvasId, substreamId: "0" } }),
+    ]));
+    await drain(hops);
+    // An automatically firing alarm may have won runDurableObjectAlarm's
+    // race. Wait for its durable completion before reset tears the object down.
+    await expect.poll(() => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `SELECT 1 FROM _internal_durable_alarms WHERE kind = 'canvas_archive_conversation'`).toArray().length)).toBe(0);
+    expect((await owner.closed).code).toBe(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE);
+    expect((await participant.closed).code).toBe(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE);
+    expect(await heldBy(canvasId)).toEqual([]);
+  });
+
+  it("retries failed archive revocations from the committed audience after an archive replay", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: OWNER, title: "Plan" });
+    const owner = await openFeed(canvasId, OWNER);
+    vi.spyOn(env.ACCESS_REVOCATION_QUEUE, "send").mockRejectedValue(new Error("queue_unavailable"));
+    await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: OWNER, actorRole: "member" } });
+    await runDurableObjectAlarm(workspace());
+    await expect.poll(() => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ attempt: number }>(
+      `SELECT attempt FROM _internal_durable_alarms WHERE kind = 'canvas_archive_conversation'`).toArray()[0]?.attempt)).toBeGreaterThan(0);
+    // Admission is already closed; replay must retain the original delivery.
+    await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: OWNER, actorRole: "member" } });
+    const hops = await publishedRevocations(async () => {
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec(`UPDATE _internal_durable_alarms SET retry_at = 0 WHERE kind = 'canvas_archive_conversation'`);
+      });
+      await runDurableObjectAlarm(workspace());
+    }, (bodies) => bodies.length > 0);
+    expect(hops).toContainEqual(expect.objectContaining({ userId: OWNER,
+      target: { scope: "substream", workstreamId: canvasId, substreamId: "0" } }));
+    await drain(hops);
+    // An automatically firing alarm may have won runDurableObjectAlarm's
+    // race. Wait for its durable completion before reset tears the object down.
+    await expect.poll(() => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `SELECT 1 FROM _internal_durable_alarms WHERE kind = 'canvas_archive_conversation'`).toArray().length)).toBe(0);
+    expect((await owner.closed).code).toBe(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE);
+  });
+
   it("closes the open Chat feed of a person a Canvas stopped admitting, and keeps the rest", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: OWNER, title: "Launch plan" });
     const share = (userIds: string[]) => workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId,

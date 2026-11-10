@@ -6,14 +6,16 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   plugins: [
     {
-      // A `.py` import is the file's text, as the Worker's `rules` (Text
-      // modules) in `wrangler.global.jsonc` make it, so the vendored applier
-      // under `src/services/terminal/vendor/` is one file that the runtime
-      // imports as a string and a test reads back from disk.
+      // A `.py` or `.sandbox.mjs` import is the file's text, as the Worker's
+      // `rules` (Text modules) in `wrangler.global.jsonc` make it, so a script
+      // Rally ships into a sandbox (the vendored patch applier, the Canvas
+      // build) is one file that the runtime imports as a string and a test
+      // reads back from disk.
       name: "rally:text-modules",
       enforce: "pre",
       async load(id) {
-        if (!id.split("?")[0]!.endsWith(".py")) return null;
+        const path = id.split("?")[0]!;
+        if (!path.endsWith(".py") && !path.endsWith(".sandbox.mjs")) return null;
         return { code: `export default ${JSON.stringify(await readFile(id.split("?")[0]!, "utf8"))};`, map: null };
       },
     },

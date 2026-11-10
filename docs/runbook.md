@@ -26,15 +26,6 @@ If the local account cannot sign in, run `pnpm env:sync`, confirm `.env.local` r
 
 ## Connector installation maintenance
 
-For Ashby or Granola registration recovery and a frozen regional fleet operation,
-use [connector installation operations](connector-installation-lifecycle.md#operations).
-The repository command uses the existing regional Ace `demos` credential and
-supports preview, apply, status, resume and cancel. Preview fixes the selected
-connections before any provider mutations; inspect per-target outcomes after an
-operation completes. The route's presence does not authorize an operator run.
-Deployment order for the dedicated Ashby ingress is in
-[API Worker deployment](api-worker-deployment.md#dedicated-ashby-ingress).
-
 ## Required hosted resources
 
 - A D1 database
@@ -44,23 +35,10 @@ Deployment order for the dedicated Ashby ingress is in
 - The Worker, Durable Object namespaces, Workflows, and `CRASH_SYMBOLICATOR`
   Container declared in the regional Wrangler file
 
-One account-wide Flagship app, `avalon-api`, holds the agent model-routing and
-client product flags and is bound by configured regional Workers; it is not a
-per-region resource because a flag holds configuration rather than workspace
-data. Configured deployments do send it an evaluation context carrying workspace,
-conversation, and user *attributes* — slugs, counts, ages, roles, origins, email
-domains — bounded by the rules in
-[`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
-
-`avalon-api` and its per-agent flags are provisioned, and both regional Wrangler
-files carry the `app_id`; [the feature-flag
-document](feature-flags.md#provisioning) has the commands for rebuilding them in
-a fresh account. Each model flag is seeded with the ids already in the
-`OPENROUTER_*` variables. Ace automatically ensures the
-`meeting-recording-enabled`, `suggested-work-enabled`, and
-`multiple-workspaces-enabled` flags exist with an off default on
-every merge that deploys it. Changing their targeting happens in Ace rather
-than the Flagship dashboard so connected clients receive the Queue push.
+Feature flags and agent model routing use centralized constants and optional
+Worker environment overrides. No hosted feature flag service or flag-change
+Queue is required. See [`feature-flags.md`](feature-flags.md) for variable names
+and model pin precedence.
 
 Set these shared Worker secrets separately in each regional deployment:
 
@@ -77,8 +55,6 @@ Set these shared Worker secrets separately in each regional deployment:
 - `AZURE_OPENAI_REALTIME_DEPLOYMENT`
 
 - `FIRECRAWL_API_KEY`
-
-- `RESEND_API_KEY`
 
 - `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID`
 
@@ -118,7 +94,7 @@ credentials, query parameters, or a fragment; invalid values fail Worker
 startup. The key remains a Worker secret. Rally's checked-in bindings currently map canonical `x-ai/grok-4.3`,
 `x-ai/grok-4.6`, and `openai/gpt-5.6-sol` to their Monad production deployment
 names. Grok tries Azure before OpenRouter for the same model; Sol is Azure-only
-and never traverses to OpenRouter. Model Flagship values stay canonical and must
+and never traverses to OpenRouter. Model configuration values stay canonical and must
 never contain an Azure deployment name.
 
 The live Monad production endpoint is
@@ -351,28 +327,34 @@ it.
 
 Set `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` only on the Global Worker. They belong exclusively to the platform login client and are never used by Google service connectors.
 
-Set `RESEND_WEBHOOK_SIGNING_SECRET` and `WORKSTREAM_EMAIL_ADDRESS_KEY` only on the
-Global Worker. `RESEND_API_KEY` is required in configured deployments with Resend's
-**Full access** permission because each owning region retrieves its own full
-message after the Global ingress has routed only signed metadata. An optional
-`RESEND_RECEIVING_API_KEY` can override it later if Rally returns to separate
-sending and receiving credentials. All non-Global conversation and automation
-email-name reservations use
-the Global `WorkstreamEmailRoutingBridge`; there is no regional allocator key or
-regional fallback registry.
-
 Production email guest sign-in is configured through checked-in Global vars:
 `BROWSER_APP_ORIGIN=https://app.rallywith.ai` and `EMAIL_LOGIN_POLICY_JSON`.
 Do not duplicate these as Worker secrets. The policy is six digits, ten-minute
 expiry and five failed redemption attempts. The team explicitly chose to launch
 without issuance limits; see [email sign-in](email-login.md). Existing signing,
-encryption and transactional email credentials remain required. Both API and
+encryption keys and the native transactional email binding remain required. Both API and
 browser deployments must succeed before invitation recipients can sign in.
 Sharing validates origin/keys before participant-authority handoff.
 
-`RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. There are two checked-in senders, both `vars` in each region's Wrangler config: `RESEND_FROM_EMAIL` (`Rally <invites@rallywith.ai>`) for transactional mail, and `RESEND_NOTIFICATION_FROM_EMAIL` (`Rally <notifications@rallywith.ai>`) for mail Rally generates — Sidekick results and notifications. Resend verifies the domain rather than the address, so the second rides the same verification; keep both `rallywith.ai` and `with-avalon.com` verified with their own DKIM/SPF records — Resend verifies the sending domain, so the Rally senders do not inherit the Rally verification and mail from them is rejected until the Rally records are live. An unset notification sender does not fail: `sendResendEmail` falls back to the transactional one silently, which is why `GET /health` reports `resendNotificationSender` separately — check it after a deploy that touches either var. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
+Transactional mail uses Cloudflare Email Service through the Global Worker's
+`send_email` binding named `EMAIL`. `EMAIL_FROM` is `Rally <invites@rallywith.ai>`;
+`EMAIL_NOTIFICATION_FROM` is `Rally <notifications@rallywith.ai>`. Authored access
+acknowledgements retain their frozen `hi@rallywith.ai` sender. An unset notification
+sender falls back to the transactional one; `/health` reports `email` and
+`emailNotificationSender`. Acceptance means queued by Cloudflare, not delivered
+to an inbox. A provider failure still revokes a newly created invitation.
 
-Inbound conversation and automation mail uses the dedicated catch-all subdomain `automation.rallywith.ai`. Create it with Resend Receiving enabled, install the exact MX record returned by Resend in Cloudflare DNS, and create one `email.received` webhook pointing to `https://api.rallywith.ai/ingest/resend`. **Keep `automation.with-avalon.com` receiving, with its own MX record and webhook, for as long as any address on it exists.** Addresses are stored per conversation rather than derived, so every address issued before the rename still carries that domain, is printed in the sender's mail client, and is what mail rules forward to; the Worker accepts either domain and resolves the full recipient address in the Global registry. See [`domain-migration.md`](domain-migration.md). Store its `whsec_...` value as the Global `RESEND_WEBHOOK_SIGNING_SECRET`. Ensure the reused `RESEND_API_KEY` has Full access in configured deployments because the regional Worker retrieves the full received message after routing. Store one stable 32+ byte `WORKSTREAM_EMAIL_ADDRESS_KEY` in the Global Worker. Do not log any of these values. Existing deployments using `RESEND_WEBHOOK_SECRET` remain compatible during migration.
+To configure outbound delivery, enable Email Sending and verify `rallywith.ai`
+in Cloudflare. Preserve its provider bounce MX, SPF and DKIM records and its
+Google Workspace apex MX. Apply migration 0127 before promoting a Worker with
+the `EMAIL` binding and sender vars. Cloudflare credentials belong only in the
+deployment environment.
+
+The native send API has no idempotency-key parameter. Completed receipts suppress
+repeat sends. Login and invitations park uncertain attempts for reconciliation;
+notification retries can duplicate a send after provider acceptance. Inspect the
+receipt's delivery key, attempt token, state and diagnostic code alongside
+provider evidence before resolving uncertainty. See [email delivery](email-delivery.md).
 
 For non-interactive Wrangler commands, prefer `CLOUDFLARE_API_TOKEN`. The older global-key method requires both `CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` in `.env.local`; an API key by itself cannot authenticate a deployment.
 
@@ -391,11 +373,6 @@ Use a custom token restricted to the Rally Cloudflare account and the `rallywith
 - Account: Queues Write/Edit — to attach a consumer on deploy and for the
   preflight to create a declared queue. A token that can only list queues fails
   the create with `Authentication error [code: 10000]`.
-- Account: Flagship Write/Edit — the permission is still in open beta and is
-  absent from the published permissions reference; find it by searching
-  `Flagship` in the dashboard's API-token editor. Read access alone lists apps
-  but fails `wrangler flagship apps create` with `Authentication error [code:
-  10000]`, and automatic provisioning on deploy fails the same way.
 - Account: Access Apps and Policies Write/Edit — Ace's deployment creates or
   updates its Access application and copies the migration site's current policy
   and identity-provider settings on every merge.
@@ -618,261 +595,11 @@ the Wrangler output showing both Cron Triggers and inspect Workers & Pages →
 events, unexpected `dry-run` production reports, a non-five retained set, or any
 copy/delete count that does not match the plan.
 
-### Ace internal administration
+### Forced migrations
 
-`deploy-ace.yml` is the complete Ace release. A matching merge to `main`
-validates the workspace, creates every declared Queue, clones the migration
-site's current Cloudflare Access policy into an Ace-specific application,
-ensures the two Enabled-named product flags exist off by default, deploys the
-Hono Worker and Vite assets at `ace.internal.rallywith.ai`, installs the
-Flagship-only credential as an encrypted secret, and verifies that an
-unauthenticated request enters Access. No dashboard or laptop step follows the
-merge.
-
-The API and desktop sides deploy from their existing workflows on the same
-merge: `packages/contracts/**` triggers both, `apps/api/**` triggers both
-regional Workers, and `apps/desktop/**` triggers the signed macOS release. The
-three workflows intentionally do not wait on one another. Queues retain an Ace
-change until a regional consumer is deployed, and both product flags remain off
-until every layer receives an explicit true.
-
-An Ace deployment that fails before Worker upload leaves the previous Ace
-version in place. If it created one of the flags first, that flag is still off
-and has no rules. If upload succeeds but the final Access probe fails, inspect
-the Ace Access application and `avalon-ace` Worker before retrying the workflow;
-the deploy script is idempotent. [`ace.md`](ace.md) owns the runtime recovery
-sequence and the rule that managed product flags are not edited directly in the
-Flagship dashboard.
-
-### The Durable Object migration tracker
-
-`avalon-migration-tracker` in `apps/migration-tracker` serves the operator site
-at `migrations.internal.rallywith.ai`, receives a migration report from every
-Durable Object in both API Workers, and can send a forced-migration command back
-to any of them.
-[`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)
-owns the design; this is the provisioning and deployment procedure.
-
-Reports travel on a Queue rather than a service binding, so **there is no
-deploy-order dependency between the tracker and either API Worker** — a queue is
-a resource both sides bind to. What both sides do require is that the queues
-exist first, which each deployment now ensures for itself (below). The producer
-binding is optional at runtime, so an API Worker deployed before the tracker
-existed keeps working and simply reports nothing.
-
-The queue's *configuration* — name, batch size, batch timeout, retries, and its
-dead-letter queue — lives in the Wrangler files and is applied on every deploy,
-so it is not something to set by hand anywhere. What Wrangler does not do is
-create the queue a producer binding names; that fails the deploy. So every
-deployment provisions its own queues as a preflight:
-
-```text
-pnpm cloudflare:resources:check
-```
-
-Locally that is read-only: it reads all three Wrangler files and reports any
-queue they declare that the account does not hold. Both the API and the tracker
-deployment run the same script without `--check` —
-`scripts/ensure-cloudflare-queues.mjs`, making the same `POST …/queues` call
-`wrangler queues create` makes — before anything is deployed, so a release that
-adds a binding ships its queue with it and no queue is created by hand.
-`pnpm cloudflare:queues:ensure` is the break-glass form of the same create from
-a laptop. The script refuses a queue that only a producer or only a consumer
-names anywhere across the three files, because that is a misspelling and the
-deploy that attached it would go green with nothing draining the queue. It
-never deletes: retiring a queue is a deliberate operator action. A dead-letter
-queue needs no action either way, because Cloudflare creates one named in a
-consumer's `dead_letter_queue` on first deploy. The create needs **Queues
-Edit** on the token, as the permission list above records; a token that can
-only list queues gets `Authentication error [code: 10000]` on the create, and
-the script names the permission.
-
-There is one report queue for configured deployments, not one per region as with the
-activity queues: every report converges on the single registry object regardless
-of where it came from, so splitting the transport would isolate nothing. The
-region travels in the message body.
-
-Deploy order still does not matter. The tracker's producer bindings are optional
-at runtime, so a tracker deployed before the API Workers have their consumers
-reports the region as unreachable on its page rather than dispatching into
-nothing.
-
-Deploy in any order:
-
-Ordinarily none of that is run by hand. `.github/workflows/deploy-migration-tracker.yml`
-deploys the tracker on a merge to `main` that touches `apps/migration-tracker/`
-or the shared report contract, and `deploy-api.yml` deploys the two API Workers
-on a merge that touches theirs. They are separate workflows with separate path
-filters for the same reason the transport is a queue: neither side's release
-should wait on the other's. The commands above are the manual path, for a first
-deployment or a rollback.
-
-The tracker workflow runs against the same **`api-production`** environment as
-the API deploy, and uses the same `CLOUDFLARE_API_TOKEN` secret and
-`CLOUDFLARE_ACCOUNT_ID` variable. It needs no permission the API deploy does not
-already have: Workers Scripts to upload, and Queues to attach a consumer and to
-create a declared queue, which the API deploy uses for its own queues. A separate environment would be
-a second copy of the same credential to rotate and would isolate nothing, since
-a token that can deploy `avalon-api-global` can already deploy anything in the
-account. Note this is the *deployment* token, and a different one from the
-read-only runtime token in step 3 below, which the Worker uses for the sweep.
-
-After deploying, the workflow proves the deployment rather than trusting the
-upload:
-
-```text
-node scripts/check-migration-tracker-health.mjs
-```
-
-That asserts the Worker actually became a consumer of `avalon-migration-reports`
-with the batch settings `wrangler.jsonc` declares, and that the site refuses a
-request carrying no Access assertion. The first is the failure worth catching: a
-tracker that deploys without attaching looks healthy everywhere while reports
-pile up unread until they age out of the queue. The second turns the fail-closed
-design into a checked invariant — from a runner with no Access cookie, a `2xx`
-would mean the fleet's schema state is being served to anyone who asks.
-
-The tracker needs no D1 database and no R2 bucket: its entire store is the
-`MIGRATION_REGISTRY` Durable Object namespace, which the deploy creates. Three
-further one-time steps are required outside the repository.
-
-**Attach `downloads.rallywith.ai` to the releases bucket before the next
-desktop release.** `electron-builder.yml`, `updater.ts`, `mac-signature-policy.mjs`,
-and the release workflow all publish and poll there now, but the R2 bucket
-(`avalon-desktop-releases`) is unchanged — the hostname is a new R2 custom domain
-on the Rally zone and nothing creates it automatically. Already-shipped DMGs keep
-polling `downloads.with-avalon.com`, correctly and permanently, so this blocks
-the next release rather than the Worker deploy.
-
-**1. The hostname.** `migrations.internal.rallywith.ai` is declared as a custom domain in
-`wrangler.jsonc`, and the deploy provisions the route on the `rallywith.ai` zone.
-
-It is two labels deep, which the zone's Universal SSL **does not cover**. A
-Universal pack covers `rallywith.ai` and `*.rallywith.ai`, and a wildcard matches
-exactly one label — so `migrations.internal.rallywith.ai` is not in it, and
-without a further certificate the hostname serves a certificate error rather
-than the site.
-
-The certificate is therefore an **Advanced Certificate Manager** pack on the
-`rallywith.ai` zone, a paid per-zone add-on, covering `*.internal.rallywith.ai`.
-The wildcard rather than the exact hostname so the next internal tool needs no
-new certificate order; a pack takes up to 50 hostnames. Issue it from
-**Google Trust Services** — DigiCert is being deprecated as a CA, and the zone's
-Universal pack is already Google-issued, so one CA covers the zone. TXT
-validation completes on its own because Cloudflare is authoritative for the
-zone, and the pack takes roughly fifteen minutes to go active.
-
-**Order the certificate before the first deploy.** Wrangler will create the
-route and the DNS record regardless, and the hostname will fail TLS until the
-pack is active — which reads as an outage rather than as a missing certificate.
-`scripts/check-migration-tracker-health.mjs` catches exactly this: an
-unreachable hostname fails the deployment verification.
-
-The `internal.` label buys naming, not security — the site is protected by
-Cloudflare Access, not by being hard to guess. It is the one Rally hostname
-that is not single-level, and it is the reason this zone carries ACM at all.
-
-**2. Cloudflare Access.** Zero Trust is enabled on the account with the team
-name **`juno-labs`**, so the team domain is `juno-labs.cloudflareaccess.com` and
-that is what `ACCESS_TEAM_DOMAIN` carries. It is an account setting, not derived
-from the web domain, and it does not follow a rebrand of the site — the site
-moved from `with-avalon.com` to `rallywith.ai` and the team domain would not
-have moved with it.
-
-Renaming the team later is not free: the name is the JWKS URL the Worker fetches
-keys from, the `iss` claim on every assertion, and the URL people log in at, so a
-rename invalidates outstanding sessions and needs the identity providers updated
-as well as a redeploy.
-
-Then add **Google** as a login method and create a self-hosted application for
-the hostname, with an Allow policy whose include rule is `Emails ending in
-@juno-labs.com` — the domain people sign in with, which is **not** the domain
-the site is served from. Copy the application's **Application Audience (AUD)
-tag** into `ACCESS_APPLICATION_AUD`.
-
-**That policy is the only place who-may-read is written.** The Worker verifies
-the assertion — signature against the team's JWKS, issuer, audience — but it
-does not re-check the address, so widening or narrowing access is a policy
-change in Zero Trust and nothing else: no variable to update, no deploy. The
-Worker held a second domain allowlist once and it was deleted for the usual
-reason a duplicated rule gets deleted — the two copies disagreed, and the
-disagreement was invisible until somebody could not log in.
-
-The Worker still fails closed. Until both `ACCESS_TEAM_DOMAIN` and
-`ACCESS_APPLICATION_AUD` are set it refuses every request, so an unconfigured
-deployment is unreachable rather than open.
-
-**3. A read-only Cloudflare API token.** The hourly sweep enumerates Durable
-Object namespaces and object IDs. `CLOUDFLARE_ACCOUNT_ID` is set in
-`wrangler.jsonc` — an identifier, not a credential — and the token is a secret:
-
-```text
-pnpm --filter @rally/migration-tracker exec wrangler secret put CLOUDFLARE_API_TOKEN --config wrangler.jsonc
-```
-
-Grant it **Account · Workers Scripts · Read** and nothing else. Note that the
-resulting token can still *list* zones and queues: those endpoints answer any
-account-scoped token, which is Cloudflare's behaviour rather than a wider grant.
-It cannot write anything.
-
-Run that command signed in as yourself. It resolves the account through
-`User · Memberships · Read`, which the deployment token deliberately does not
-carry, so authenticating it with `CLOUDFLARE_API_TOKEN` from `.env.local` fails
-with "Unable to get membership roles" — which reads like a problem with the
-secret rather than with the credential being used to set it.
-
-**Both halves are required.** With either missing the sweep logs
-`migration_inventory_sweep_skipped` and returns, so the tracker only ever learns
-about an object that has woken and reported — and the site cannot distinguish a
-class with no objects from one whose objects are all dormant. That is the exact
-blind spot the sweep exists to close, so a tracker without it is showing far less
-than it appears to.
-
-Before deploying a change, run:
-
-```text
-pnpm --filter @rally/migration-tracker test
-pnpm --filter @rally/migration-tracker typecheck
-pnpm --filter @rally/migration-tracker build
-```
-
-Locally, `pnpm dev:migrations` serves the site on port 8790 from
-`wrangler.dev.jsonc`, the one configuration that sets `APP_ENV=development` and
-`MIGRATION_TRACKER_DEV_AUTH=true`. Cloudflare Access does not stand in front of
-a local Wrangler, and the bypass is honoured in no other environment.
-
-After deployment, watch `migration_inventory_sweep_completed` for a `partial`
-status — it names the namespaces whose listing was truncated or failed — and
-`migration_reports_recorded` at `error` level, whose `failed_objects` field names
-each Durable Object whose migration threw and which the site lists under **Open
-failures**.
-
-Check `avalon-migration-reports-dead-letter` when reports stop arriving. A
-message reaches it only after five failed attempts to write it to the registry, so a non-empty
-dead-letter queue means the registry object itself was failing, not that a
-migration did. `migration_report_rejected` is the other direction: a message the
-consumer refused because it did not match the contract, which means a producer
-was changed without the shared contract in `packages/contracts` being changed
-with it.
-
-For a one-off repair, set `RETENTION_DRY_RUN` to `true` in the checked-in Worker
-configuration, deploy, and inspect one scheduled plan before authorizing live
-mode. Do not run ad hoc deletion commands while the scheduled Worker is enabled.
-If manual copying is unavoidable, preserve metadata and explicitly set
-`InfrequentAccess`, verify the exact objects as described above, and disable the
-Cron Triggers for the whole maintenance window.
-
-R2 aggregate object-count and bucket-size counters can lag object operations.
-Use successful object-list, HEAD, and GET checks as the completion authority;
-do not repeat a migration merely because `wrangler r2 bucket info` has stale
-totals.
-
-To restore an archived release, copy its five objects back to the public bucket
-as `Standard` storage while preserving metadata, then repeat the key, size,
-ETag/hash, and public HEAD verification. Restoring immutable objects does not
-change the update channel. Change `latest-mac.yml` or `Rally.dmg` only as a
-separate, explicitly approved release rollback using the normal publisher's
-ordering and cache-purge safeguards.
+Use the [forced migration CLI](forced-migrations.md#operations) to wake dormant
+WorkspaceDO or AgentLoopDO instances after deployment. The administration and
+fleet registry sites are retired; their hosted resources require separate cleanup.
 
 ### Desktop icon release gate
 
@@ -914,7 +641,7 @@ For ordinary releases after both entrypoints exist:
    required secret answers `503` here and names the keys, rather than reporting
    healthy while every other route returns `service_misconfigured`.
 
-8. Send a workspace invitation to a real test inbox, confirm Resend accepts it, and complete the one-time email-bound acceptance flow.
+8. Send a workspace invitation to a real test inbox, confirm Cloudflare accepts it, and complete the one-time email-bound acceptance flow.
 
 9. Complete one Google identity login in a provider test account.
 
@@ -957,65 +684,6 @@ Its conversations are
 [`automation-lifecycle.md`](automation-lifecycle.md) owns the object; this is
 where to look when one misbehaves.
 
-- **"I can't find my automation."** The sidebar lists what
-  `listAutomationDirectory` returns: `workspace` automations and the viewer's
-  own `personal` ones, never a room's. A room's automation is in that room's
-  rail. `GET /automations/:id` reads the object and answers 404 for a deleted
-  one or a viewer the object refuses.
-- **The sidebar row is stale.** The row is written in the Sidekick's own
-  change, in `WorkspaceDO`, and the same call bumps the `automations` sidebar
-  waterline and republishes the list. Read the row with `run_workspace_sql`;
-  if it is right and the client still shows the old one, the client missed
-  the push and a reconnect or reopen will fetch the list again.
-- **Apply refuses.** The code is the answer: `sidekick_definition_not_ready`
-  (the chat has not submitted a ready draft), `sidekick_plugin_unavailable`
-  and its binding siblings (the workspace no longer has the connection the draft
-  named), `sidekick_timezone_invalid`, `sidekick_recurrence_has_no_future`.
-  A 500 from `POST /automations/:id/accept` is a fault, not a refusal.
-- **The wizard never reviewed it.** `automation_directory.runs_since_review`
-  is how many finishes under the accepted revision have counted since the
-  last review or revision; `reviewed_at` is the last request. Below ten, or
-  within three days of `reviewed_at`, nothing is owed. Otherwise look for the
-  `<sidekickId>:review` entry in `_internal_durable_alarms` and the
-  `sidekick_review_skipped` log line, whose `no_managing_delegate` means no
-  eligible delegate may also manage the Sidekick. A `sidekick_reviews` row with
-  `delivered_at` null is a notice the Queue still owes the wizard; the
-  consumer's `sidekick_review_delivery_retry` line carries the refusal code.
-  What reviews changed: `sidekick_revisions` rows whose `review_id` is not
-  null, each the revision a review submitted, joined to `sidekick_reviews`
-  for when; the `sidekick_review_revised` log line counts them.
-  [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)
-  owns the review.
-- **A scheduled run did not fire.** Inspect the object's `schedules`
-  (`next_due_at` null means the rule has no future occurrence) and
-  `_internal_durable_alarms` (an `automation_schedule` entry behind its retry
-  gate). Sidekicks are hosted in `WorkspaceDO`, so
-  `workspace_scheduled_alarm_failed` and `workspace_scheduled_alarm_stalled`
-  name the entry and the handler's code.
-  A paused automation fires nothing and does not catch up on resume.
-- **An event did not start a run.** `external_event_delivery_terminal` records
-  the admission outcome per registration: `sidekick_paused`,
-  `sidekick_event_before_activation_boundary` (the event's sequence is at or
-  below `effective_after_event_sequence`, so it predates the apply that
-  registered the rule), or `sidekick_occurrence_replayed` (a redelivery). No
-  delivery at all means the matcher found no active registration, which
-  `WorkspaceDO.workspace_external_event_registrations` will show.
-- **Mail did not start a run.** `WorkspaceDO.sidekick_email_receipts` holds
-  one row per Sidekick and Resend email id with the refusal code
-  (`sidekick_not_active`, `sidekick_email_route_mismatch`,
-  `email_sender_not_authorized`) or the run it admitted.
-- **A run stopped early.** `runs.state` on the object is what its child
-  conversation last reported; `stopped` with the automation `paused` or
-  `deleted` is a pause or delete after admission, and the run's provider writes
-  were refused with "This automation run is no longer running". A run that
-  never left `pending` has an `automation_run` alarm entry behind its gate.
-- **A result never reached the room.** Only the run posts, with
-  `conversation_post`; look for `conversation_archived`,
-  `conversation_access_denied`, `conversation_not_in_scope` or
-  `conversation_post_refused:<code>` in the run's tool results, and check the
-  Sidekick's home (`automation_directory.owning_substream_id`). Nothing posts
-  after the run.
-
 Inspect the object through the engineering MCP's raw SQL per
 [`engineering-mcp.md`](engineering-mcp.md); the automation's tables are listed
 in [`workstream-durable-object.md`](workstream-durable-object.md#hosted-sidekicks).
@@ -1026,6 +694,12 @@ The symbolicator image is the one expensive thing either workflow builds, in the
 #### Releasing the desktop app
 
 **Nobody bumps a version by hand.** Merge a change that affects the desktop app and it ships: the pipeline picks the next minor, stamps it onto `package.json` and `apps/desktop/package.json`, commits that bump, and builds it. There is nothing to remember and nothing to prepare.
+
+The macOS build step reads `RALLY_DESKTOP_SESSION_KEY` from the
+`desktop-release` GitHub Actions environment. Packaging checks the key against
+the fingerprint of the key used by existing installs to preserve saved sign-ins.
+See the [local packaging setup](../README.md#desktop-builds-and-releases) for
+building outside Actions.
 
 Two things decide a release, in order. The workflow's **`paths:` filter** is a cheap admission filter: `apps/desktop/**`, all of `packages/contracts/**`, the root manifests and lockfile, `tsconfig.base.json`, and the release workflow itself. A docs, Worker, landing-site, agent-harness, connector, or database-only merge starts no run. Every contracts change does start the Ubuntu planner, because a broad trigger cannot miss a new file or rename.
 
@@ -1185,40 +859,13 @@ Migrations `0090_drop_legacy_product_tables.sql`,
 `0097_email_routes_use_full_address.sql`, `0106_configurable_regions.sql`,
 `0113_drop_legacy_observability_tables.sql`,
 `0115_drop_workspace_product_authority_ledger.sql`, and
-`0125_drop_demo_tables.sql` are deliberate reverse-order exceptions. These change schemas or deployment identifiers the previous Worker
+`0125_drop_demo_tables.sql` and `0128_drop_inbound_email.sql` are deliberate reverse-order exceptions. These change schemas or deployment identifiers the previous Worker
 still expects, so applying them first can break live requests until deployment finished — or
 indefinitely if deployment failed. The deployment workflow reads each remote
 pending-migration ledger; when one configured Worker-first migration is the sole
 pending entry in a region, it deploys the replacement Workers first and applies
 that migration afterward. If it has any companion migration, deployment fails
 closed instead of silently moving an ordinary migration across the Worker.
-
-For 0090, the replacement Worker probes the regional `workstreams` shape when
-reserving an identity anchor and can write both the through-0089 required-column
-shape and the final three-column shape. For 0094, the replacement Worker no
-longer reads `workspaces.log_agent_inference` or
-`agent_inference_payload_logs`, while it remains compatible with a database that
-still has them. For 0097, the replacement Worker probes
-`workstream_email_routes`: before the migration it reserves and resolves by the
-legacy `local_part`; afterward it writes and resolves the full `email_address`.
-Its owner-reconciliation path preserves the regional full address in both shapes.
-For 0106, deploy support for configured deployment identifiers before rebuilding
-region-constrained tables. For 0113, stop querying legacy regional observability
-tables before dropping them; the dedicated telemetry and audit stores already
-serve all producers. The pre-retirement Global health check must pass before the
-drop. Rolling back to the old reaper afterward stops telemetry delivery because
-its first query names a removed table; roll forward with compatible code instead.
-For 0125, the replacement Worker no longer reads `demo_operations` (the old one
-reads it on every regional discovery), so the demo tables are dropped only after
-it is promoted.
-A manual deploy with migrations disabled postpones the drop and leaves inactive
-legacy rows unreaped until a migration-enabled deploy completes the cleanup.
-Therefore a failed Worker deploy leaves the old schema untouched,
-while a failed migration leaves the compatible Worker serving the old schema.
-Detection comes from the remote ledger, not the triggering Git diff, so a
-superseded workflow or later regional retry retains the barrier. Once no
-Worker-first migration is pending, the workflow automatically returns to the
-ordinary migration-first order.
 
 Twenty seconds is the happy path, and it is the figure that makes this rule feel safe to skip. A failed deployment leaves the migrations applied, as the paragraph above says, so a deploy that breaks after the migration step leaves the previous Worker writing through the new default until a fix-forward lands — minutes or hours, not seconds, and every row written in that time takes the default.
 
@@ -1347,18 +994,17 @@ live conversation-to-object directory: creation writes it, and regional effect
 delivery fences on its `state`/`generation`.
 
 For a missing or stale product fact, inspect the source child's `durable_outbox`
-and the parent's outbox and receipts first: `parent_outbox` and
-`parent_child_receipts` in `WorkspaceDO` for a Canvas (see
-[`hosted-conversation-parents.md`](hosted-conversation-parents.md)), or
-`sidekick_child_receipts` in `WorkspaceDO` for a Sidekick.
+and the parent's receipts first: `sidekick_child_receipts` in `WorkspaceDO`,
+which a Canvas and a Sidekick share (see
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md)).
 For a missing push, Slack mention, or email notification from a Canvas's
 Chat or a Sidekick's conversation, inspect `WorkspaceDO.sidekick_child_receipts`
 (keyed by the parent id in `sidekick_id`, the substream and the message id)
 and `WorkspaceDO.workstream_notification_intents` (its `state` and
 `last_error_code`): the parent commits a mention's receipt in the transaction
 that records its intent, so a receipt with no intent row means the effect was
-not a mention. `WorkspaceDO.workspace_workstream_effect_receipts` is
-unwritten since 2026-11-07, dropped with the Thread-era tables. A receiver
+not a mention. `WorkspaceDO.workspace_workstream_effect_receipts`, the
+Thread host's inbox, was dropped by WorkspaceDO migration 141. A receiver
 receipt with no sender outbox row is the normal end state: the sender deleted
 its row when the Queue accepted the message, and the receiver committed the
 effect with its receipt. A sender outbox row that persists means the Queue is

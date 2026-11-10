@@ -7,7 +7,6 @@
 > scope; the PRD's own Open questions are the decisions still live for
 > V1.
 
-
 Three threads survive this PRD's scope decisions. The storage design
 space this section once held was resolved when the team chose to ship
 facet storage in V1 (non-goal 11 records what was rejected with it);

@@ -1,3 +1,4 @@
+import type { PasswordLoginRequest } from '@rally/contracts/password-login';
 import type { ArtifactWindowAction } from './artifact-window-actions';
 import type { AnnotationCommentPins, AnnotationCommentAction, AnnotationSelection, Annotation, ArtifactPickerPin } from "@rally/contracts";
 import type { ClientSession } from "@rally/contracts/client-session";
@@ -231,7 +232,7 @@ export type DesktopTelemetryProductIntent =
   }
   | {
     kind: 'content_copied';
-    contentType: 'workstream_link' | 'workstream_email' | 'workstream_id' | 'message_response' | 'code_block'
+    contentType: 'workstream_link' | 'workstream_id' | 'message_response' | 'code_block'
       | 'note_summary' | 'note_transcript' | 'note_id' | 'automation_email' | 'automation_id';
     resourceType: 'workstream' | 'message' | 'note' | 'automation';
     resourceId: string;
@@ -472,6 +473,7 @@ export interface RallyDesktopBridge {
     ticket: string;
     attemptId: string;
   }) => Promise<DesktopSession>;
+  signInWithPassword: (input: PasswordLoginRequest) => Promise<DesktopSession>;
   createDevelopmentSession: (apiBaseUrl: string, workspaceName: string) => Promise<DesktopSession>;
   getAccountOnboarding: () => Promise<AccountOnboarding>;
   updateAccountOnboarding: (input: UpdateAccountOnboarding) => Promise<AccountOnboarding>;

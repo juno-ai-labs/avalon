@@ -12,7 +12,8 @@ import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import type { CanvasArtifactKind } from "@rally/contracts";
 import { uuidToBase58 } from "@rally/contracts/uuid-base58";
 
 import { canvasSidebarRows } from "../src/durable-objects/hosted-canvas";
@@ -31,12 +32,13 @@ import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-
 import { bootstrapWorkstreamRuntimeEnvironment } from "../src/services/workstream-runtime-database";
 import { createTranscriptObjectPort } from "../src/runtime/transcript-port";
 import { CANVAS_NAMING_ALARM_KIND } from "../src/durable-objects/canvas-schema";
+import { __integrationTesting } from "../src/services/integrations";
 import { ConversationService } from "../src/services/conversation-service";
 import { verifySocketTicket } from "../src/services/socket-service";
-import { deliverChildEffects } from "./helpers/conversation-effects";
+import { consumeEffectBodies, deliverChildEffects, pendingChildEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { memberInputs, useOpenRouterDouble } from "./helpers/openrouter-double";
-import { responsesEvents } from "@rally/agent-harness/test-support/responses-stream";
+import { responsesEvents, responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { startWaitBudget, waitBudget } from "./helpers/wait-budget";
@@ -58,12 +60,12 @@ function namingCall(call: { stream: boolean; body: Record<string, unknown> }): b
  * leaves it unset, so every other case here makes no naming call.
  */
 async function withNamingModel<T>(run: () => Promise<T>): Promise<T> {
-  const mutable = env as { OPENROUTER_CLASSIFIER_MODEL?: string };
-  mutable.OPENROUTER_CLASSIFIER_MODEL = "double/naming";
+  const mutable = env as { OPENROUTER_FASTER_MODEL?: string };
+  mutable.OPENROUTER_FASTER_MODEL = "double/naming";
   try {
     return await run();
   } finally {
-    delete mutable.OPENROUTER_CLASSIFIER_MODEL;
+    delete mutable.OPENROUTER_FASTER_MODEL;
   }
 }
 /**
@@ -71,6 +73,8 @@ async function withNamingModel<T>(run: () => Promise<T>): Promise<T> {
  * the stand-in for a long reply a person stops halfway through.
  */
 const LONG_REPLY_PROMPT = "Tell me a long story.";
+const INTERIM_REPLY_PROMPT = "Help me choose an option.";
+const INTERIM_REPLY = "I can help narrow it down.";
 /**
  * Plain flags rather than promises: the reply's stream is read inside the
  * conversation object, and a promise settled across the test and the object
@@ -122,6 +126,12 @@ function heldReply(signal: AbortSignal | undefined): Response {
 const provider = useOpenRouterDouble((call) => namingCall(call)
   ? { say: JSON.stringify({ title: "December pricing launch" }) }
   : call.stream && JSON.stringify(memberInputs(call)).includes(LONG_REPLY_PROMPT) ? { raw: heldReply(call.signal) }
+    : call.stream && JSON.stringify(memberInputs(call)).includes(INTERIM_REPLY_PROMPT) ? { raw: responsesStreamResponse([
+      { choices: [{ delta: { content: INTERIM_REPLY }, finish_reason: null }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: "recent-question", type: "function", function: {
+        name: "request_elicitation", arguments: JSON.stringify({ prompt: "Which option?", responseType: "text" }),
+      } }] }, finish_reason: "tool_calls" }] },
+    ]) }
     : { say: "Here is the plan." });
 useSelectedModel();
 
@@ -132,6 +142,26 @@ function auth(userId: string): AuthContext {
 
 function workspace(): DurableObjectStub<WorkspaceDO> {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName(env.AVALON_REGION, WORKSPACE_ID)));
+}
+
+/** The development seed writes canonical turns with a supplied timestamp. */
+async function seedChatMessage(transcript: ReturnType<typeof createTranscriptObjectPort>, expectedTranscriptSequence: number,
+  actor: "human" | "assistant", text: string, createdAtUtc: string): Promise<void> {
+  const mutable = env as { APP_ENV?: string };
+  const appEnv = mutable.APP_ENV;
+  mutable.APP_ENV = "development";
+  try {
+    await transcript.seedDevelopmentConversationTurn({
+      turnId: crypto.randomUUID(), clientMessageId: actor === "human" ? crypto.randomUUID() : null, actor,
+      authorUserId: actor === "human" ? CREATOR : null,
+      authorSnapshot: actor === "human" ? { displayName: "Creator", avatarUrl: null } : null,
+      externalActorJson: null, messageType: "text", text, structuredContentJson: null, producedByRunId: null,
+      expectedTranscriptSequence, createdAtUtc,
+    });
+  } finally {
+    if (appEnv === undefined) delete mutable.APP_ENV;
+    else mutable.APP_ENV = appEnv;
+  }
 }
 
 async function opens(userId: string, canvasId: string): Promise<boolean> {
@@ -168,10 +198,6 @@ beforeEach(async () => {
       source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL)`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
   ]);
   startWaitBudget();
 });
@@ -244,6 +270,29 @@ describe("a Canvas's Chat", () => {
     await env.DB.prepare(`INSERT INTO workstreams (id, workspace_id) VALUES (?, ?)`).bind(threadId, WORKSPACE_ID).run();
     await expect(new CanvasService(TEST_ENV, auth(CREATOR)).create({ canvasId: threadId }))
       .rejects.toMatchObject({ code: "canvas_id_unavailable" });
+  });
+
+  it("makes a Sidekick for a Canvas on request: attached to it, its instructions sent to its wizard once, and only for a Canvas the person can open", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const sidekickId = crypto.randomUUID();
+    const request = { sidekickId, instructions: { text: "On every new email, add a row.", clientMessageId: "canvas-sidekick-1" } };
+    const first = await new CanvasService(TEST_ENV, auth(CREATOR)).addSidekick(canvasId, request);
+    const retried = await new CanvasService(TEST_ENV, auth(CREATOR)).addSidekick(canvasId, request);
+    expect(retried).toEqual(first);
+    expect(first.sidekickId).toBe(sidekickId);
+    expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).sidekicks)
+      .toEqual([{ id: sidekickId, name: "New Sidekick", status: "draft", madeHere: true, canOpen: true }]);
+    // The instructions are the author's message in the Sidekick's own conversation, once.
+    const wizard = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, sidekickId)));
+    expect(await runInDurableObject(wizard, (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM canonical_conversation_turn_details WHERE client_message_id = ?`, "canvas-sidekick-1").one().n)).toBe(1);
+    // Someone who cannot open the Canvas makes none for it, and the id stays the first author's.
+    await expect(new CanvasService(TEST_ENV, auth(MEMBER)).addSidekick(canvasId, { ...request, sidekickId: crypto.randomUUID() }))
+      .rejects.toMatchObject({ code: "canvas_not_found" });
+    const { canvasId: other } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    await expect(new CanvasService(TEST_ENV, auth(CREATOR)).addSidekick(other, request))
+      .rejects.toMatchObject({ code: "sidekick_id_unavailable" });
+    expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(other)).sidekicks).toEqual([]);
   });
 
   it("issues a socket ticket naming the canvas kind", async () => {
@@ -338,7 +387,7 @@ async function connect(userId: string): Promise<{ socket: WebSocket; frames: Arr
   return { socket, frames };
 }
 
-type Row = { id: string; title: string; updatedAt: string; appearance?: { icon: string | null; color: string | null }; unread: boolean; sharedWithMe: boolean; presentUserIds: string[]; pinnedPosition: number | null };
+type Row = { id: string; title: string; updatedAt: string; appearance?: { icon: string | null; color: string | null }; unread: boolean; sharedWithMe: boolean; presentUserIds: string[]; pinnedPosition: number | null; hasStoredData?: boolean; artifactKind?: CanvasArtifactKind | null };
 
 /** The Canvas rows a socket was last told: the newest list push, else its subscribe payload. */
 function canvasRows(frames: Array<Record<string, unknown>>): Row[] {
@@ -366,6 +415,74 @@ function clientCanvasRows(frames: Array<Record<string, unknown>>): Row[] {
 }
 
 describe("the Canvas list", () => {
+  it("uses a saved Rally message for recency when it has no unread ordinal", async () => {
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    const { canvasId } = await service.create({ title: "Decision", prompt: { text: INTERIM_REPLY_PROMPT, clientMessageId: "canvas-recent-rally" } });
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    const savedMessages = () => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ created_at: number }>(
+      `SELECT created_at FROM canonical_conversation_turn_details
+        WHERE (author_type = 'member' AND content = ?) OR (author_type = 'agent' AND content = ?)
+        ORDER BY sequence_number`, INTERIM_REPLY_PROMPT, INTERIM_REPLY).toArray());
+    await expect.poll(savedMessages, { timeout: waitBudget() }).toHaveLength(2);
+    const projections = await pendingChildEffects(chat);
+    // Deliver the person's message and the saved reply before the structured question that follows them.
+    for (const message of await savedMessages()) {
+      const messageAt = new Date(message.created_at).toISOString();
+      const projection = projections.find(({ effect }) =>
+        effect.kind === "directory_common" && effect.latestAttentionOrdinal === 1 && effect.lastMessageAt === messageAt);
+      expect(projection).toBeDefined();
+      expect(await consumeEffectBodies(TEST_ENV, [projection])).toEqual({ acked: 1, retried: 0 });
+      expect((await service.detail(canvasId)).updatedAt).toBe(messageAt);
+    }
+  });
+
+  it("keeps the date and order when opening a converted Canvas with historical Chat activity", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Older Canvas" });
+    const { canvasId: newerId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Newer Canvas" });
+    for (const id of [canvasId, newerId]) {
+      await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: id,
+        actor: { userId: CREATOR, actorRole: "member" }, update: { visibility: "workspace", userIds: [] } });
+    }
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    const routed = await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, canvasId, "canvas");
+    await seedChatMessage(createTranscriptObjectPort(routed, WORKSPACE_ID, canvasId), 1, "human", "A saved message from before conversion.",
+      "2026-10-18T18:39:04.461Z");
+    await deliverChildEffects(TEST_ENV, chat);
+    // The converted directory can lag the Chat. Opening must not catch up the date or reorder the list.
+    const olderActivity = "2026-10-17T18:00:00.000Z";
+    const newerActivity = "2026-10-18T18:00:00.000Z";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (const [id, activity] of [[canvasId, olderActivity], [newerId, newerActivity]] as const) {
+        state.storage.sql.exec("UPDATE canvas_directory SET created_at = ?, updated_at = ? WHERE canvas_id = ?",
+          Date.parse(activity), Date.parse(activity), id);
+      }
+      state.storage.sql.exec("DELETE FROM sidekick_child_projections WHERE sidekick_id = ?", canvasId);
+    });
+    const { frames } = await connect(MEMBER);
+    const newer = { id: newerId, updatedAt: newerActivity };
+    const older = { id: canvasId, updatedAt: olderActivity };
+    expect(clientCanvasRows(frames)).toMatchObject([newer, { ...older, unread: true }]);
+
+    await new ConversationService(TEST_ENV, auth(MEMBER)).socketTicket(canvasId);
+    await deliverChildEffects(TEST_ENV, chat);
+
+    const after = await connect(MEMBER);
+    expect(clientCanvasRows(after.frames)).toMatchObject([newer, { ...older, unread: false }]);
+  });
+
+  it("pushes an archived Canvas off every reader's active list", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId,
+      actor: { userId: CREATOR, actorRole: "member" }, update: { visibility: "participants", userIds: [MEMBER] } });
+    const creator = await connect(CREATOR);
+    const member = await connect(MEMBER);
+    expect(clientCanvasRows(creator.frames).map((row) => row.id)).toContain(canvasId);
+    expect(clientCanvasRows(member.frames).map((row) => row.id)).toContain(canvasId);
+    await new CanvasService(TEST_ENV, auth(CREATOR)).archive(canvasId);
+    await expect.poll(() => clientCanvasRows(creator.frames).map((row) => row.id), { timeout: waitBudget() }).toEqual([]);
+    await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id), { timeout: waitBudget() }).toEqual([]);
+  });
+
   it("lists a Canvas to whoever may open it, unread to a participant who has not opened it", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
     const creator = await connect(CREATOR);
@@ -461,13 +578,17 @@ describe("the Canvas list", () => {
 describe("a Canvas's title and pin order", () => {
   it("retitles a Canvas for anyone it admits, on every open list, and tells anyone else it does not exist", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE canvas_directory SET updated_at = ? WHERE canvas_id = ?", Date.parse(NOW), canvasId);
+    });
     await expect(new CanvasService(TEST_ENV, auth(MEMBER)).update(canvasId, { title: "Taken over" }))
       .rejects.toMatchObject({ code: "canvas_not_found" });
-    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
+    const shared = await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
       update: { visibility: "participants", userIds: [MEMBER] } });
+    expect(shared.updatedAt).toBe(NOW);
     const creator = await connect(CREATOR);
     const renamed = await new CanvasService(TEST_ENV, auth(MEMBER)).update(canvasId, { title: "  Launch plan, v2 " });
-    expect(renamed.title).toBe("Launch plan, v2");
+    expect(renamed).toMatchObject({ title: "Launch plan, v2", updatedAt: NOW });
     expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).title).toBe("Launch plan, v2");
     await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.title, { timeout: waitBudget() }).toBe("Launch plan, v2");
     creator.socket.close(1000, "done");
@@ -547,6 +668,55 @@ describe("a Canvas's title and pin order", () => {
     }
   });
 
+  it("archives a streaming Chat, fences its member run, and stops the active loop", async () => {
+    held.firstPartSent = false;
+    held.released = false;
+    held.finished = false;
+    try {
+      const { canvasId } = await new CanvasService(TEST_ENV, auth(CREATOR)).create({ title: "Story",
+        prompt: { text: LONG_REPLY_PROMPT, clientMessageId: "canvas-archive-stream" } });
+      const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+      await expect.poll(() => held.firstPartSent, { timeout: waitBudget() }).toBe(true);
+      await runInDurableObject(chat, (_instance, state) => { state.storage.sql.exec(
+        `INSERT INTO workstream_wakeups (wakeup_id, execution_principal_json, prompt, due_at, status,
+          idempotency_key, version, created_at, updated_at) VALUES ('archive-timer', ?, 'Wake later', ?, 'pending', 'archive-timer', 1, 1, 1)`,
+        JSON.stringify({ type: "user", userId: CREATOR }), Date.now() + 60_000); });
+      // Hold the durable hand-off so the run-authority check must observe the
+      // parent tombstone, before the child receives its local archive fence.
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec(`CREATE TRIGGER hold_canvas_archive_delivery AFTER INSERT ON _internal_durable_alarms
+          WHEN NEW.kind = 'canvas_archive_conversation' BEGIN
+          UPDATE _internal_durable_alarms SET retry_at = ${Date.now() + 60_000}
+           WHERE kind = NEW.kind AND alarm_key = NEW.alarm_key; END`);
+      });
+      await new CanvasService(TEST_ENV, auth(CREATOR)).archive(canvasId);
+      expect(await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+        "SELECT archived_at FROM workstream WHERE id = 1").one().archived_at)).toBeNull();
+      await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, {
+        region: "global", workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: canvasId,
+        loopId: `workstream:${canvasId}:substream:0:loop`, harnessRunId: asHarnessRunId(crypto.randomUUID()), triggerMessageId: null,
+        activityId: null, executionPrincipal: { type: "user", userId: CREATOR }, reason: "human_message",
+      })).rejects.toThrow(/no longer active/u);
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec("DROP TRIGGER hold_canvas_archive_delivery");
+        state.storage.sql.exec("UPDATE _internal_durable_alarms SET retry_at = 0 WHERE kind = 'canvas_archive_conversation'");
+      });
+      await runDurableObjectAlarm(workspace());
+      await expect.poll(() => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+        "SELECT archived_at FROM workstream WHERE id = 1").one().archived_at), { timeout: waitBudget() }).not.toBeNull();
+      expect(await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ status: string }>(
+        "SELECT status FROM workstream_wakeups WHERE wakeup_id = 'archive-timer'").one().status)).toBe("cancelled");
+      held.released = true;
+      await expect.poll(() => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ status: string }>(
+        "SELECT status FROM substream_loops WHERE id = 1").one().status), { timeout: waitBudget() }).toBe("idle");
+      const transcript = await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ payload_json: string }>(
+        "SELECT payload_json FROM transcript_payloads").toArray().map((row) => row.payload_json).join("\n"));
+      expect(transcript).toContain("assistant_turn_stopped");
+      expect(transcript).not.toContain("THE END");
+      expect(await workspace().canvasContext({ workspaceId: WORKSPACE_ID, canvasId })).toBeNull();
+    } finally { held.released = true; held.finished = true; }
+  });
+
   it("titles a Canvas made with no title from its opening message, on every open list", () => withNamingModel(async () => {
     const creator = await connect(CREATOR);
     const { canvasId } = await new CanvasService(TEST_ENV, auth(CREATOR)).create({
@@ -577,23 +747,7 @@ describe("a Canvas's title and pin order", () => {
     const say = async (actor: "human" | "assistant", text: string) => {
       const sequence = await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ next: number }>(
         `SELECT next_transcript_sequence AS next FROM transcript_counters WHERE id = 1`).one().next);
-      // The seed operation is the one way to write a turn exactly as stored
-      // (an empty text, a reply with no run) and answers only in development.
-      const mutable = env as { APP_ENV?: string };
-      const appEnv = mutable.APP_ENV;
-      mutable.APP_ENV = "development";
-      try {
-        await transcript.seedDevelopmentConversationTurn({
-          turnId: crypto.randomUUID(), clientMessageId: actor === "human" ? crypto.randomUUID() : null, actor,
-          authorUserId: actor === "human" ? CREATOR : null,
-          authorSnapshot: actor === "human" ? { displayName: "Creator", avatarUrl: null } : null,
-          externalActorJson: null, messageType: "text", text, structuredContentJson: null, producedByRunId: null,
-          expectedTranscriptSequence: sequence, createdAtUtc: new Date().toISOString(),
-        });
-      } finally {
-        if (appEnv === undefined) delete mutable.APP_ENV;
-        else mutable.APP_ENV = appEnv;
-      }
+      await seedChatMessage(transcript, sequence, actor, text, new Date().toISOString());
     };
     /** Run the naming entry, as the Chat's next message would arm it, and wait for it to be done. */
     const name = async () => {
@@ -720,6 +874,50 @@ describe("a Canvas's artifacts", () => {
     return canvasBridge(canvasId).publishResource(toolContext(canvasId), { filePath }, new TextEncoder().encode(text));
   }
 
+  it("pushes stored-data status from listed database-backed artifacts, independently of the newest artifact or presence", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const { canvasId: otherCanvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const creator = await connect(CREATOR);
+    const status = () => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)!;
+    expect(status().hasStoredData).toBe(false);
+
+    const resourceId = crypto.randomUUID();
+    const otherResourceId = crypto.randomUUID();
+    // Registry rows live beside Canvas links in WorkspaceDO. These fixtures
+    // distinguish a static site here from a database-backed site elsewhere.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (const [id, parentId, stateful] of [[resourceId, canvasId, 0], [otherResourceId, otherCanvasId, 1]] as const) {
+        state.storage.sql.exec(`INSERT INTO resources
+          (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+          VALUES (?, ?, 'generated_site', 'avalon_generated', 'Tracker', '{}', 'attached', ?, ?)`, id, WORKSPACE_ID, NOW, NOW);
+        state.storage.sql.exec(`INSERT INTO artifact_registry
+          (artifact_id, workspace_id, workstream_id, resource_id, mode, stateful, current_version, manifest_ref, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 'active', ?, 1, 'fixture-manifest', 1, 1)`, crypto.randomUUID(), WORKSPACE_ID, parentId, id, stateful);
+      }
+    });
+    const note = (id: string, parentId = canvasId) => workspace().canvasNoteArtifact({
+      workspaceId: WORKSPACE_ID, canvasId: parentId, resourceId: id, editor: { kind: "rally", id: null },
+    });
+    await note(otherResourceId, otherCanvasId);
+    await note(resourceId);
+    await expect.poll(() => status(), { timeout: waitBudget() }).toMatchObject({ artifactKind: "site", hasStoredData: false });
+
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE artifact_registry SET stateful = 1 WHERE resource_id = ?`, resourceId);
+    });
+    await note(resourceId);
+    await expect.poll(() => status().hasStoredData, { timeout: waitBudget() }).toBe(true);
+    await publish(canvasId, "notes.md", "# Tracker notes");
+    await expect.poll(() => status(), { timeout: waitBudget() }).toMatchObject({ artifactKind: "file", hasStoredData: true, presentUserIds: [] });
+
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE resources SET metadata_json = ? WHERE id = ?`, JSON.stringify({ listing: "unlisted" }), resourceId);
+    });
+    await note(resourceId);
+    await expect.poll(() => status().hasStoredData, { timeout: waitBudget() }).toBe(false);
+    creator.socket.close(1000, "done");
+  });
+
   it("notes a publish recovered after its attempt died before the note", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     const attemptStartedAt = Date.now() - 1_000;
@@ -826,6 +1024,17 @@ describe("a Canvas's artifacts", () => {
       .rejects.toMatchObject({ code: "canvas_argument_unsupported" });
   });
 
+  it("refuses an archived Sidekick publication home for both explicit and implicit selection", async () => {
+    const sidekickId = crypto.randomUUID();
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
+    const run = { workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId: sidekickId,
+      substreamId: asSubstreamId(crypto.randomUUID()), executionPrincipal: { type: "user" as const, userId: CREATOR } };
+    const home = await resolveTerminalPublicationHome(TEST_ENV, run);
+    await new CanvasService(TEST_ENV, auth(CREATOR)).archive(home!.parentId);
+    await expect(resolveTerminalPublicationHome(TEST_ENV, run)).rejects.toMatchObject({ code: "canvas_archived" });
+    await expect(resolveTerminalPublicationHome(TEST_ENV, run, { canvas: home!.parentId })).rejects.toMatchObject({ code: "canvas_archived" });
+  });
+
   it("publishes a Sidekick run into a Canvas it makes, open to whoever the Sidekick is shared with", async () => {
     const sidekickId = crypto.randomUUID();
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
@@ -860,10 +1069,13 @@ describe("a Canvas's artifacts", () => {
       workspaceId: WORKSPACE_ID, automationId: sidekickId,
       actor: { userId: CREATOR, actorRole: "member", participantOfOwningWorkstream: false } }));
     expect(sidekick.canvases).toMatchObject([{ id: canvasId }]);
-    // A Canvas another Sidekick never wrote cannot be named.
+    // A Canvas not attached to the Sidekick cannot be named; once its
+    // configuration conversation attaches it, a person's own Canvas can.
     const { canvasId: elsewhere } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     await expect(resolveTerminalPublicationHome(TEST_ENV, run, { canvas: elsewhere }))
-      .rejects.toMatchObject({ code: "canvas_not_written_by_sidekick" });
+      .rejects.toMatchObject({ code: "canvas_not_attached_to_sidekick" });
+    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: sidekickId, userId: CREATOR, reference: elsewhere });
+    expect(await resolveTerminalPublicationHome(TEST_ENV, run, { canvas: elsewhere })).toEqual({ parentId: elsewhere, substreamId: "0" });
   });
 
   it("still pushes a writer Sidekick's Canvas when an audience change rolled back once and then committed", async () => {

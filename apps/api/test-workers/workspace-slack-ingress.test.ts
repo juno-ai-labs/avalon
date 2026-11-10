@@ -119,7 +119,6 @@ beforeEach(async () => {
   await runInDurableObject(workspace(), (_instance, state) => {
     state.storage.sql.exec(`DELETE FROM slack_agent_pending_prompts`);
     state.storage.sql.exec(`DELETE FROM slack_agent_thread_claims`);
-    state.storage.sql.exec(`DELETE FROM slack_agent_feedback`);
     state.storage.sql.exec(`DELETE FROM slack_agent_contexts`);
     state.storage.sql.exec(`DELETE FROM external_conversation_bindings`);
     state.storage.sql.exec(`DELETE FROM slack_link_challenges`);

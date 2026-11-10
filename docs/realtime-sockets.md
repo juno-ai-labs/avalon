@@ -2398,22 +2398,6 @@ producers write these cache entries — the batch and the push — and
 [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) asks every pushed
 payload to carry its authority's ordering so that the guard survives a third.
 
-**Consequences:** A user action that writes the table more than once sends the
-list more than once — resuming an automation writes the subscription and then
-its email route, and a real window shows two identical `workspace_sidebar_list`
-frames. Each carries the same whole list, so the extra one is idempotent, and
-deduplicating across separate RPC calls would mean debouncing a push nobody has
-measured a cost for. Invalidating `['automations']` or `['notes']` on the desktop
-now does nothing, by design — the socket is the sole writer, and the shell
-reads them through `useSocketOwnedList`, whose fetcher throws rather than
-returning an empty list if anything ever enables it. A new writer of these
-tables gets the push for free as long as it goes through the workspace runtime
-database; one that reaches the tables another way would not, and there is no
-such writer today. `AutomationService.list` keeps its email-route
-reconciliation and keeps a caller: the pause/resume path defers a failed Global
-transition to it by name, so the desktop retains one deliberate repair query
-that feeds nothing the sidebar renders.
-
 ### 2026-08-21 — The sidebar opens on one answer instead of three
 
 **What changed:** A `list_sidebar` command and its `workspace_sidebar_page`
@@ -2437,15 +2421,6 @@ commands, which is three correlated requests instead of one and still fills the
 sidebar in stages; and making the batch the refresh path too, which would let a
 directory invalidation overwrite an automations list a REST refresh had just
 written.
-
-**Consequences:** The workspace protocol now carries a second correlated
-directory shape, and a caller must match a reply's kind to the request that
-asked for it — resolving a batch into a page's shape would hand an array where
-an object is unpacked. The automation email route in the batch is whatever is
-stored, since reconciling it is a Global-registry call that cannot run on the
-object's socket thread; the REST refresh remains the only path that reconciles.
-Both lists are bounded at 250 and truncate rather than reject. A future list
-that belongs to the sidebar should join this batch rather than add a transport.
 
 ### 2026-08-21 — A subscribed viewer can ask the room to re-send canonical state
 

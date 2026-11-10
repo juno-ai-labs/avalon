@@ -43,8 +43,9 @@ import { encryptString } from "../src/lib/crypto";
 import { attachWorkstreamRuntimeResource } from "../src/services/workstream-object-client";
 
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { consumeEffectBodies, pendingChildEffects } from "./helpers/conversation-effects";
 import { hostedParentStub } from "./helpers/hosted-parent";
-import { memberInputs, useOpenRouterDouble, type ProviderCall, type ProviderReply } from "./helpers/openrouter-double";
+import { memberInputs, useOpenRouterDouble, withSuccessfulSidekickOutcome, type ProviderCall, type ProviderReply } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { runSidekickAlarms, sidekickWorkspace } from "./helpers/sidekick";
@@ -115,7 +116,7 @@ function explicitReply(call: ProviderCall, text: string): ProviderReply {
   if (!load) throw new Error("agent_plugin_loader_missing");
   return { callTool: { name: load, arguments: { pluginId: "rally_agents" } } };
 }
-const provider = useOpenRouterDouble(async (call) => {
+const provider = useOpenRouterDouble(withSuccessfulSidekickOutcome(async (call) => {
   const latestInput = memberInputs(call).at(-1);
   if (sidekickChangeRequest) {
     const latest = JSON.stringify(latestInput?.content ?? "");
@@ -165,7 +166,7 @@ const provider = useOpenRouterDouble(async (call) => {
       return { callTool: { name: list, arguments: {} } };
     }
     const submit = call.toolNames.find((name) => name.endsWith("submit_draft"));
-    if (!submit) throw new Error("sidekick_authoring_tool_missing");
+    if (!submit) throw new Error("sidekick_wizard_tool_missing");
     const revised = JSON.stringify(latestInput?.content ?? "").includes("REVISE");
     return { callTool: { name: submit, arguments: { ...DEFINITION, sidekickId: null, icon: "file-text", color: "blue",
       name: revised ? "Revised research guide" : "Research guide", triggers: [],
@@ -179,7 +180,7 @@ const provider = useOpenRouterDouble(async (call) => {
   // Names the home: a post that names nothing lands in the Sidekick's own conversation.
   if (tool && !toolAnswered) return { callTool: { name: tool, arguments: { conversation: ROOM_ID, text: RESULT_TEXT } } };
   return { say: tool ? "Posted the count." : "Acknowledged." };
-});
+}));
 useSelectedModel();
 useHeldEffectQueue();
 
@@ -238,17 +239,6 @@ async function seedRegionalDatabase(): Promise<void> {
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL
     )`),
-    // The legacy-shaped Global email registry with this automation's address
-    // already reserved, which is what `apply` reads back.
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    )`),
-    env.DB.prepare(`INSERT OR REPLACE INTO workstream_email_routes
-        (local_part, region, workspace_id, workstream_id, automation_subscription_id, created_at, updated_at)
-      VALUES (?, 'global', ?, NULL, ?, ?, ?)`)
-      .bind(`counter-${ordinal}`, WORKSPACE_ID, AUTOMATION_ID, NOW, NOW),
   ]);
 }
 
@@ -1161,15 +1151,23 @@ describe("a room Sidekick's run and the room's agents", () => {
     // The model reads a Sidekick's id as `sidekick/…`; storage keeps `automation/…`.
     expect(JSON.stringify(asked!.messages)).toContain(`Message from agent sidekick/${AUTOMATION_ID}/0.`);
     expect(JSON.stringify(asked!.messages)).toContain(messageId);
-    await runInDurableObject(roomConversation(), (_instance, state) => {
-      expect(state.storage.sql.exec<{ n: number }>(
-        "SELECT COUNT(*) AS n FROM canonical_conversation_turn_details WHERE client_message_id = ?", request.clientMessageId,
-      ).one().n).toBe(1);
+    const postedAt = await runInDurableObject(roomConversation(), (_instance, state) => {
+      const post = state.storage.sql.exec<{ created_at: number }>(
+        "SELECT created_at FROM canonical_conversation_turn_details WHERE client_message_id = ?", request.clientMessageId,
+      ).one();
       const context = state.storage.sql.exec<{ execution_context_json: string }>(
         "SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id,
       ).one();
       expect(JSON.parse(context.execution_context_json).agentExchange).toEqual(request.agentExchange);
+      return new Date(post.created_at).toISOString();
     });
+    const projection = (await pendingChildEffects(roomConversation())).find(({ effect }) =>
+      effect.kind === "directory_common" && effect.lastMessageAt === postedAt);
+    expect(projection).toBeDefined();
+    expect(await consumeEffectBodies(TEST_ENV, [projection])).toEqual({ acked: 1, retried: 0 });
+    const canvas = await workspaceStub().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: ROOM_ID,
+      actor: { userId: AUTHOR_ID, actorRole: "member" } });
+    expect(canvas.updatedAt).toBe(postedAt);
   });
 
   it("keeps the receiver's inherited principal when another principal sends a continuation", async () => {

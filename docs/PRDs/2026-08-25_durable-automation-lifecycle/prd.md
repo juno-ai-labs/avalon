@@ -11,7 +11,6 @@
 > [`workstream-durable-object.md`](../../workstream-durable-object.md),
 > [`durable-object-alarms.md`](../../durable-object-alarms.md),
 > [`data-model.md`](../../data-model.md), and
-> [`workstream-email-addresses.md`](../../workstream-email-addresses.md).
 > Transcript dependency:
 > [ordered, range-addressable work-stream turns](../2026-08-26_ordered-workstream-turn-transcripts/prd.md).
 
@@ -223,7 +222,7 @@ tables, and let the post-merge system have exactly one canonical writer.
     Bind/SQLite capabilities required by SubstreamAgent and AutomationAgent.
     BlockDashboardAgent remains unchanged in this cutover.
 11. Preserve personal-draft privacy, generated-run privacy, regional residency,
-   inbound-email defenses, and content-free product telemetry.
+   and content-free product telemetry.
 12. Migrate every visible accepted automation without changing its ID,
     schedule, permanent email address, frozen effective definition, run history, or effective
     user settings and without admitting a trigger twice. Preserve `active` and
@@ -253,7 +252,7 @@ tables, and let the post-merge system have exactly one canonical writer.
     retaining separate Workstream and AutomationAgent data and lifecycle
     adapters.
 18. Preserve every accepted automation's effective execution context, complete
-    memory contents, inbound-email defenses, and telemetry attribution after the
+    memory contents, and telemetry attribution after the
     legacy WorkspaceDO joins and tables are gone.
 
 ## Non-goals
@@ -445,15 +444,13 @@ The AutomationAgent claims acceptance once. It freezes the accepted definition
 and moves to `activating`. While activating:
 
 - no compiler turn may rewrite the definition;
-- no manual, scheduled, activity, or inbound-email trigger may start a run;
+- no manual, scheduled, activity trigger may start a run;
 - calendar and interval schedule records are made durable in the object, but
   their `_internal_durable_alarms` entries are installed only by the final
   `active` commit;
 - the WorkspaceDO sidebar projection and complete external-event evaluator
   snapshot are installed and acknowledged with their evaluator generation and
   `effectiveAfterEventSequence` boundary;
-- the automation's permanent inbound email address is claimed in the Global
-  registry; and
 - every required registration records an idempotent receipt that can be
   reconciled after a partial failure.
 
@@ -543,11 +540,6 @@ none may be promoted by a later resume.
   until that routing boundary is acknowledged and stored. Multiple evaluator
   registrations matching one canonical event converge on the unique occurrence
   key `(automationId, workspaceEventId)`, so one event creates at most one run.
-- **Inbound email:** the Global ledger resolves the permanent address to region,
-  workspace, and automation ID. The regional AutomationAgent rechecks active
-  state, sender eligibility, receipt idempotency, the existing per-automation
-  rate window and receipt lease, and the restricted tool policy before it admits
-  a run. The logical occurrence key is `(automationId, resendEmailId)`.
 
 Admission creates or resolves one `automation_run` identity, then provisions
 one generated work stream. The admission transaction also writes a stored
@@ -630,8 +622,7 @@ terminally stale; current-generation deliveries later than the new boundary
 are held while resume is activating. Deletion writes a durable
 tombstone, removes every automation-owned alarm entry and live workspace
 projection, deletes the generated run work streams after an explicit destructive
-confirmation, and keeps permanent Global email claims tombstoned as they are
-today. The dialog no longer promises that past runs remain. Queue timing may
+confirmation. The dialog no longer promises that past runs remain. Queue timing may
 decide whether an event already in flight was admitted immediately before the
 pause commit; the activation event-sequence guarantee above is not claimed for
 pause.
@@ -1797,7 +1788,7 @@ AutomationAgent remains durable and returnable from its first admitted turn.
 
 9. **AutomationAgent extends `ScheduledDurableObject`; it does not implement an
    alarm loop.** Canonical automation schedules,
-   activation/projection retry, `run_provisioning`, inbound-email lease recovery,
+   activation/projection retry, `run_provisioning`,
    and any other lane that can fail or legitimately decline are stored alarm
    entries. Derived candidates are limited to pure instants whose handler always
    makes progress and therefore needs no stall gate. The base takes the earliest effective
@@ -1912,10 +1903,10 @@ authority split is fixed by this PRD:
 
 | Authority | Canonical records |
 | --- | --- |
-| AutomationAgent SQLite | Immutable automation identity and workspace/region fence; lifecycle plus orthogonal safe attention/error state; draft canonical facts plus author-visible `transcript_sequence` and restricted `loop_sequence` projections; attachments, checkpoints, activities, event fences, compiled and accepted revisions, separate pending elicitation, and the local Bind ledger; canonical schedules and `_internal_durable_alarms`, including `run_provisioning` and inbound-email lease recovery; evaluator snapshots, activation boundaries, trigger receipts, unique occurrences, immutable `AutomationRunContextV1`, and content-free child projections; the complete automation memory scope including items, mutations, table definitions, columns, rows, cells, and index receipts; inbound-email rate windows and receipt leases; resources, connectors, delivery targets/receipts, projection outbox, and tombstone. |
+| AutomationAgent SQLite | Immutable automation identity and workspace/region fence; lifecycle plus orthogonal safe attention/error state; draft canonical facts plus author-visible `transcript_sequence` and restricted `loop_sequence` projections; attachments, checkpoints, activities, event fences, compiled and accepted revisions, separate pending elicitation, and the local Bind ledger; canonical schedules and `_internal_durable_alarms`, including `run_provisioning`; evaluator snapshots, activation boundaries, trigger receipts, unique occurrences, immutable `AutomationRunContextV1`, and content-free child projections; the complete automation memory scope including items, mutations, table definitions, columns, rows, cells, and index receipts; resources, connectors, delivery targets/receipts, projection outbox, and tombstone. |
 | WorkspaceDO SQLite | First-prompt creation-key claims; automation directory and viewer projections; hidden generated-child reader projections and automation attention; validated automation evaluators and watched-resource registrations in one exact candidate index; evaluator generations and activation boundaries; canonical normalized events sequenced at acceptance, closed evaluation contexts, and delivery receipts; shared template catalog, connectors, resources, and membership routing; per-workspace automation-cutover fence, cursor, audit, and completion receipt. |
 | Generated SubstreamAgent SQLite | Ordered-turn canonical facts, participant transcript and restricted Bind-loop projections; participants and reader audience; run scope; Bind execution, tools, activity/checkpoints and output; authoritative work-stream resource links/watch flags and memory provenance; idempotent connected-activity message receipts; content-free automation-run and resource-link projection outbox. |
-| Global control-plane D1 | Permanent inbound-email address route and tombstone, plus the existing region/workspace routing facts needed before a regional object can be selected. |
+| Global control-plane D1 | The existing region/workspace routing facts needed before a regional object can be selected. |
 
 Object identity is derived from the existing automation subscription ID, so a
 migrated automation keeps its public ID. References across objects are opaque
@@ -1951,11 +1942,9 @@ gate from `ScheduledDurableObject`'s base.
 Every WorkspaceDO subscription with `lifecycle_state = 'visible'` and status
 `active`, `paused`, or `error` is an accepted automation for cutover purposes.
 It is imported into the named AutomationAgent with its current definition,
-lifecycle, authority generation, schedule and next-occurrence cursor, permanent
-email route, delivery configuration, complete memory items/table contents and
+lifecycle, authority generation, schedule and next-occurrence cursor, delivery configuration, complete memory items/table contents and
 mutation receipts, connector and resource references, resolved effective model
-and settings, run identities and history, inbound-email rate windows and receipt
-leases, and deduplication and delivery receipts. Legacy `active` and `paused` remain active
+and settings, run identities and history, and deduplication and delivery receipts. Legacy `active` and `paused` remain active
 and paused. Legacy `error` becomes non-runnable `paused` with a runtime-error
 attention record carrying the safe legacy error; `error` does not become a new
 AutomationAgent lifecycle state. The import preserves the existing subscription
@@ -1976,19 +1965,14 @@ condition. The pre-cutover audit reports every such row.
 Legacy rows with status `draft` are not imported, regardless of visibility.
 The cutover deletes those subscriptions, their compiler conversation, and any
 private template versions, memory scopes, resources, or other rows reachable
-only from those drafts. Drafts are not supposed to hold permanent addresses;
-the audit records zero. If an invariant-violating route is nevertheless found,
-cleanup fail-safely converts it to a Global tombstone rather than making the
-address reusable. Archived and deleted
+only from those drafts. Archived and deleted
 legacy subscriptions are not runnable imports: the campaign deletes their
 generated children and memory descendants under the same destructive policy,
-records a minimal migration tombstone for provenance, and retains the permanent
-inbound-email tombstone in its existing Global control-plane authority.
+records a minimal migration tombstone for provenance.
 
 After all accepted imports have receipts, the same merge-triggered workflow
 removes WorkspaceDO's former lifecycle tables: `automation_subscriptions`,
-`automation_runs`, `automation_delivery_targets`,
-`automation_email_receipts`, `automation_email_rate_windows`, and
+`automation_runs`, `automation_delivery_targets`, and
 `automation_resources`. It rebuilds the shared `schedules` table without its
 automation-subscription branch while retaining connector and digest schedules.
 The generic memory tables remain because other products use them, but no
@@ -2309,8 +2293,7 @@ branches, copies only those rows, and recreates every index, constraint, and
 both `schedules_workspace_identity_{insert,update}` triggers before validating
 foreign keys. Fresh and migrated objects therefore have one final schedule
 shape. It deletes source rows in child-first order before dropping tables in
-the same order: `automation_email_receipts`,
-`automation_email_rate_windows`, `automation_resources`,
+the same order: `automation_resources`,
 `automation_delivery_targets`, `automation_runs`, and finally
 `automation_subscriptions`. This satisfies the receipt and rate-window
 `ON DELETE RESTRICT` edges rather than relying only on drop order. Automation-
@@ -2397,12 +2380,6 @@ hide a broken object-local transaction or port adapter.
 
 ## Regional impact
 
-The Global inbound-email registry remains the sole cross-region authority. It
-stores only the permanent address and opaque owner route needed to select the
-regional object, not lifecycle, conversation, definition, or run content. A
-draft receives no address. Activation and deletion preserve the existing
-never-reuse/tombstone rules.
-
 ## Security and trust model
 
 - The session fixes region and workspace before an AutomationAgent is resolved.
@@ -2419,7 +2396,7 @@ never-reuse/tombstone rules.
   never turns them into authority. Every tool call rechecks current ownership,
   workspace, lifecycle, grants, and resource inventory revision. Credentials
   remain in their connector authority and are not copied into AutomationAgent.
-- User messages, connector/provider results, attachments, inbound email, and
+- User messages, connector/provider results, attachments, and
   model output remain untrusted content. They do not become system instructions
   because the object stores them durably.
 - Tool receipts preserve the existing read/write classification,
@@ -2462,9 +2439,6 @@ never-reuse/tombstone rules.
 - External-event Queue messages contain identifiers and hashes, not provider or
   work-stream content. The consumer loads the bounded event projection from the
   regional WorkspaceDO only after it claims the stored destination receipt.
-- Inbound-email runs retain sender validation and the restricted connector/web
-  tool policy. Moving admission into AutomationAgent does not broaden what
-  untrusted mail can invoke.
 - Telemetry records lifecycle, latency, result class, turn bucket, trigger
   class, reconnect/resume outcome, and recovery counts without recording
   conversation text, prompts, questions, answers, compiler output, attachment
@@ -2570,7 +2544,7 @@ deleted code—after the workspace completion receipt.
    every legacy writer of `automation_subscriptions` and its descendants,
    including create/save/promote, patch, pause/resume, archive, share,
    template-version adoption, manual/scheduled/activity run admission, and
-   inbound-email receipt claims. Generic and typed WorkspaceDO mutation ports
+   mutation receipt claims. Generic and typed WorkspaceDO mutation ports
    refuse writes to those tables after the fence, so a caller that read old
    state before an `await` cannot commit late. No Global address claim begins
    for a fenced workspace. The transaction disables automation schedule rows
@@ -2582,7 +2556,7 @@ deleted code—after the workspace completion receipt.
    subscription. AutomationAgent imports idempotently and returns canonical
    hashes and registration receipts. Import preserves IDs, lifecycle, resolved
    effective settings, schedules/cursors, routes, delivery, full memory contents
-   and mutation receipts, resources, run history, email rate/lease state, and
+   and mutation receipts, resources, run history, and
    deduplication receipts. Unrepresentable triggers become paused attention,
    never broadened. Drafts are not imported; their audited IDs and any permanent
    address tombstones are recorded before deletion.
@@ -2595,7 +2569,7 @@ deleted code—after the workspace completion receipt.
    cleanup.
 
 7. The step activates final AutomationAgent routing, reconciles timers,
-   evaluators, watches, email routes, occurrence keys, attention, reader and
+   evaluators, watches, occurrence keys, attention, reader and
    directory projections, then replays deferred trigger evidence through the
    new authority. It verifies configured deployments and only then runs the normal health
    check. A legacy draft cannot reappear because its rows are gone and the
@@ -2658,7 +2632,7 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
    failure returns it to `paused` with the last working definition and run
    history, never delete-only.
 
-7. Exercise calendar, interval, manual, activity, and inbound-email triggers
+7. Exercise calendar, interval, manual, activity triggers
    through alarm retry, object eviction, Queue/provider redelivery, pause,
    resume, and deletion. Each logical trigger resolves to exactly one run and
    one generated work stream. Crash after occurrence admission but before child
@@ -2670,7 +2644,7 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
    failure behind its own gate, survives cancellation between pre-work and
    post-work arms, reconciles recurring schedules after they advance, and
    removes the native alarm when no wake reason remains. Include stored
-   `run_provisioning` and inbound-email lease recovery. Prove each stored lane
+   `run_provisioning`. Prove each stored lane
    that can fail or decline is independently stall-gated. Prove Bind dispatch
    derives from durable dispatch rows, that an in-flight
    compiler dispatch is not reclaimed by the same alarm drain and that a
@@ -2815,7 +2789,7 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
 27. Inspect each migrated WorkspaceDO after explicit cleanup and one WorkspaceDO
     first created by the new build through the current-schema bootstrap. The former
     subscription,
-    run, delivery, email-receipt/rate-window, and automation-resource tables do
+    run, delivery, and automation-resource tables do
     not exist; `schedules` has no automation-subscription branch; imported or
     discarded automation-owned memory rows are absent; connector and digest
     schedules still work; foreign-key check passes; child tables were removed
@@ -2886,7 +2860,7 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
 32. Delete an active automation with generated runs. The confirmation explicitly
     says those run work streams are deleted; the parent tombstone, child
     deletions, hidden reader projections, attention items, alarms, evaluator
-    routes, and Global email tombstone converge without leaving an inspector or
+    routes converge without leaving an inspector or
     sidebar link to an orphan. A generated child's immutable origin projection
     provides automation name/scope/trigger provenance while the parent exists.
 33. Layer migration verification honestly: real-workerd tests cover per-object

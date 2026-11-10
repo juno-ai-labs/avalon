@@ -40,6 +40,7 @@ export type TerminalUtilityOperation =
   | "resource.import.stage"
   | "resource.import.finalize"
   | "repository.bootstrap"
+  | "repository.credentials.clear"
   | "repository.publish.status"
   | "repository.publish.branch"
   | "repository.publish.head"
@@ -48,7 +49,10 @@ export type TerminalUtilityOperation =
   | "repository.publish.push"
   | "lifecycle.final_diff"
   | "lifecycle.backup"
-  | "lifecycle.backup_cleanup";
+  | "lifecycle.backup_cleanup"
+  | "canvas.build.run"
+  | "canvas.build.inspect"
+  | "canvas.build.cleanup";
 
 export interface TerminalProviderRequestMeasurement {
   operation: TerminalProviderRequestOperation;

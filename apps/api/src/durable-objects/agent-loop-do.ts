@@ -111,7 +111,7 @@ import {
   type PerfFlow,
   type TracedSpan,
 } from "../observability/tracing";
-import { latestMigrationVersion } from "./migration-reporting";
+import { latestMigrationVersion } from "./migratable-durable-object";
 import {
   type AttemptLease,
   claimHarnessAttempt,
@@ -168,8 +168,6 @@ import { HostedConversationParentKindSchema, WorkstreamObjectStore } from "./wor
 import type { SequencedSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
 import { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
-import { WorkstreamDesktopActionStorage } from "./workstream-desktop-action-storage";
-import type { DesktopAction, DesktopActionOutcome } from "@rally/contracts/desktop-actions";
 import {
   type ToolReceiptOperationRequest,
   ToolReceiptOperationRequestSchema,
@@ -552,8 +550,7 @@ const RoomIdentitySchema = z.object({ workspaceId: WorkspaceIdSchema, workstream
 export type SubstreamProductRequest = z.infer<typeof ProductRequestSchema>;
 /**
  * What a caller puts on the wire, where `parentKind` may be absent because the
- * parse supplies `workstream`. Every existing caller means a Channel and says
- * nothing; the Space authority is the one that has to say so.
+ * parse supplies the default.
  */
 export type SubstreamProductRequestInput = z.input<typeof ProductRequestSchema>;
 export type SubstreamRuntimeResourceRequest = z.infer<typeof RuntimeResourceRequestSchema>;
@@ -936,17 +933,6 @@ export function planSocketReplay(
   return { type: "replay", events };
 }
 
-/** One `workstream_resource_links` row, as the Thread conversion carries it from a Breakout to the Chat. */
-export interface ConversionAttachmentLink {
-  resource_id: string;
-  attached_by_user_id: string | null;
-  watch_enabled: number;
-  relationship_type: string;
-  resource_json: string;
-  attached_at: number;
-  updated_at: number;
-}
-
 /**
  * The hibernating realtime, loop, and storage authority for one substream.
  *
@@ -1030,13 +1016,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   private resources!: WorkstreamResourceStorage;
   private identityRows!: WorkstreamIdentityStorage;
   private harnessRuns!: WorkstreamHarnessRunStorage;
-  private desktopActions!: WorkstreamDesktopActionStorage;
-  /**
-   * The tools in this isolate waiting on a desktop, by action id. Memory only:
-   * the action and its answer are durable rows, and a tool re-entered after
-   * eviction reads its answer there rather than from a waiter that is gone.
-   */
-  private readonly desktopActionWaiters = new Map<string, (outcome: DesktopActionOutcome) => void>();
   /** Schema, repositories, and identity required to admit and snapshot a feed. */
   private readonly storageReady: Promise<void>;
   private runtimeRecovery: Promise<void> | null = null;
@@ -1149,7 +1128,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       this.resources = new WorkstreamResourceStorage(state.storage);
       this.identityRows = new WorkstreamIdentityStorage(state.storage);
       this.harnessRuns = new WorkstreamHarnessRunStorage(state.storage);
-      this.desktopActions = new WorkstreamDesktopActionStorage(state.storage);
       await this.objectStore.waitUntilReady();
       this.semanticRealtimePending = this.objectStore.nextSemanticRealtimeDueAt() !== null;
       // Existing one-room-per-workstream objects become the main child during
@@ -1295,10 +1273,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * What a hosted conversation's object does once on construction, and what
-   * `convertParentKind` does for a Thread's that becomes a Canvas's: its
+   * What a hosted conversation's object does once on construction: its
    * substream identity and its persistent loop. A retired parent's object
-   * skips this, so a converted one has to be bound when it converts.
+   * skips this.
    */
   private async bindHostedConversation(identity: { workspaceId: string; parentId: string }): Promise<void> {
     const persistedSubstream = this.state.storage.sql.exec<{
@@ -2225,6 +2202,21 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       "INSERT OR IGNORE INTO background_agent (id, execution_principal_json, root_substream_id) VALUES (1, ?, ?)",
       JSON.stringify(principal), input.rootSubstreamId,
     );
+  }
+
+  /** Durable fan-out from WorkspaceDO after the Canvas tombstone committed. */
+  async archiveFromParent(input: { workspaceId: string; canvasId: string }): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, canvasId: IdSchema }), input, "canvas_archive_conversation");
+    const identity = this.objectStore.identity();
+    if (!identity) return;
+    if (identity.workspaceId !== request.workspaceId || identity.parentId !== request.canvasId || identity.parentKind !== "canvas") {
+      throw new Error("canvas_archive_conversation_identity_mismatch");
+    }
+    this.product.archiveFromParent();
+    this.syncAgentTimerAlarms();
+    // The active loop owns its platform alarm until it settles the stop.
+    // Re-arming here can cancel that very invocation (as for product.update).
   }
 
   /** Ownership is resolved by the host's workspace team authority before this RPC. */
@@ -3162,6 +3154,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * a row whose listing projection is a second commit can be created and never
    * shown. The reads do not, for the reason every other authority's reads do
    * not — there is nothing to publish.
+   * Canvas admission reports viewer read state alone. A common projection
+   * could advance recency just because someone opened the Canvas.
    *
    * This replaces a bespoke `provisionRuntime` RPC that validated its own body
    * and re-checked identity inside the product service. Both checks are what
@@ -3177,10 +3171,12 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     const refusal = this.objectPortRefusal(parsed.data, "workstream_identity_mismatch");
     if (refusal) return refusal;
     const method = this.identityRows[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const directory = parsed.data.operation === "admitParticipant" && this.objectStore.identity()?.parentKind === "canvas"
+      ? "viewers" : true;
     const value = mutatesIdentity(parsed.data.operation)
       ? await this.product.commitRuntimeMutation(
         () => method.apply(this.identityRows, parsed.data.args),
-        true,
+        directory,
       )
       : method.apply(this.identityRows, parsed.data.args);
     return { status: 200, payload: { ok: true, value: value ?? null } };
@@ -3256,18 +3252,14 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   ): Promise<Response> {
     // The parent kind first, before the session read and before any other
     // object is addressed. A conversation is reached by *id*, so this is the
-    // only place that can tell a Channel's main conversation from a Space's
-    // hidden one — and a Space's has no product surface to offer: no feed, no
-    // transcript, no archive, no scope. Every member holds every Space id off
-    // the workspace socket, so without this `PATCH /workstreams/<spaceId>`
-    // archives General or makes it personal behind the Space authority's back.
+    // only place that can tell a Canvas's conversation from a Sidekick's, and a
+    // request naming the wrong kind must not act on the other's.
     //
     // Ahead of authentication deliberately. This is a statement about the
     // address rather than about the caller — the answer is the same for
     // everybody — and running it first keeps a misaddressed request from
     // costing a D1 round trip. `not found` rather than a refusal that confirms
-    // the id: the caller asked a question about a Channel, and there is no
-    // Channel here.
+    // the id: there is no conversation of the asked kind here.
     const identity = this.objectStore.identity();
     if (identity && identity.parentKind !== request.parentKind) {
       span.setError("conversation_parent_kind_mismatch");
@@ -5215,12 +5207,16 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
           executionEpoch: execution.executionEpoch,
           leaseOwner: execution.leaseOwner,
           expectedBindStateRevision: current.bind_state_revision,
-        }, (effects) => this.product.enqueueRegionalEffectsInTransaction(effects), () => {
-          if (transition.kind === "protocol_user_appended"
-            && transition.provenance.sourceKind === "completion_verification"
-            && readCompletionVerificationSnapshot(this.state.storage, execution.runId, null).lifecycle === "cancelled") {
-            throw new Error("completion_verification_stopped");
-          }
+        }, {
+          enqueueRegionalEffects: (effects) => this.product.enqueueRegionalEffectsInTransaction(effects),
+          enqueueAssistantText: () => this.product.enqueueCanvasAssistantTextInTransaction(),
+          assertAdmission: () => {
+            if (transition.kind === "protocol_user_appended"
+              && transition.provenance.sourceKind === "completion_verification"
+              && readCompletionVerificationSnapshot(this.state.storage, execution.runId, null).lifecycle === "cancelled") {
+              throw new Error("completion_verification_stopped");
+            }
+          },
         });
         await this.flushSemanticRealtimeOutboxBestEffort();
       },
@@ -5659,7 +5655,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       transcript: resident((body) => this.transcriptOperationOutcome(body)),
       toolReceipt: resident((body) => this.toolReceiptOperationOutcome(body)),
       residentContext: resident((body) => this.residentContextOperationOutcome(body)),
-      desktopAction: (request) => this.requestDesktopAction(request),
       terminal: (operation, args) => this.runTerminalOperation({
         workspaceId,
         workstreamId,
@@ -6228,114 +6223,16 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       return;
     }
     if (parsed.data.type === "answer_desktop_action") {
-      this.answerDesktopAction(socket, attachment, parsed.data.actionId, parsed.data.outcome);
+      // The desktop-action protocol is retired: no conversation asks for one,
+      // so an answer from a desktop still carrying it has nothing to settle.
+      logInfo(this.env, "desktop_action_answer_dropped", {
+        workstream_id: attachment.workstreamId,
+        substream_id: attachment.substreamId,
+        action_id: parsed.data.actionId,
+      });
       return;
     }
     await this.mutateSocketSubstream(socket, attachment, parsed.data);
-  }
-
-  /**
-   * Who may answer this conversation's desktop actions: the person it was
-   * created for. A desktop action runs in that person's own browser session,
-   * so an answer from anyone else is not theirs to give.
-   */
-  private answersDesktopActions(userId: string): boolean {
-    const creator = this.identityRows.identity()?.created_by_user_id ?? null;
-    return creator !== null && creator === userId;
-  }
-
-  /**
-   * Record a tool's desktop action, publish it, and wait for the answer.
-   *
-   * The row is written before the request is published, so an answer can
-   * never arrive for an action this object has no record of. A call whose
-   * earlier attempt was already answered returns that answer without asking
-   * again; one still pending is published again, because the desktop that
-   * received it before may have gone.
-   */
-  private async requestDesktopAction(input: {
-    runId: string;
-    toolCallId: string;
-    action: DesktopAction;
-    signal: AbortSignal;
-  }): Promise<DesktopActionOutcome> {
-    input.signal.throwIfAborted();
-    const recorded = this.desktopActions.request({
-      id: uuidV7(Date.now()),
-      runId: input.runId,
-      toolCallId: input.toolCallId,
-      action: input.action,
-      now: Date.now(),
-    });
-    if (recorded.status === "answered") return recorded.outcome;
-    const { request } = recorded;
-    return await new Promise<DesktopActionOutcome>((resolve, reject) => {
-      const stopWaiting = () => {
-        this.desktopActionWaiters.delete(request.id);
-        this.desktopActions.abandon(request.id);
-        reject(input.signal.reason instanceof Error ? input.signal.reason : new Error("desktop_action_abandoned"));
-      };
-      input.signal.addEventListener("abort", stopWaiting, { once: true });
-      this.desktopActionWaiters.set(request.id, (outcome) => {
-        input.signal.removeEventListener("abort", stopWaiting);
-        this.desktopActionWaiters.delete(request.id);
-        resolve(outcome);
-      });
-      // Published after the waiter exists, so an answer that comes back before
-      // this call returns still finds it.
-      void this.publishAgentRuntimeEvent({ type: "desktop_action_requested", request }).catch((error: unknown) => {
-        // The row is pending and is offered again to the next subscriber, so a
-        // lost publication delays the action rather than losing it.
-        logWarn(this.env, "desktop_action_publication_failed", {
-          workstream_id: this.objectStore.identity()?.parentId ?? null,
-          substream_id: this.externalSubstreamId(),
-          action_id: request.id,
-          reason: diagnosticErrorCode(error, "desktop_action_publication_failed"),
-        });
-      });
-    });
-  }
-
-  private answerDesktopAction(
-    socket: WebSocket,
-    attachment: SocketAttachment,
-    actionId: string,
-    answered: DesktopActionOutcome,
-  ): void {
-    if (!this.answersDesktopActions(attachment.userId)) {
-      this.sendError(socket, "desktop_action_forbidden", "Only the person this conversation works for can answer its desktop actions.");
-      return;
-    }
-    // Every answer is recorded before it is used; one the row cannot hold is
-    // recorded as a failure the model can act on rather than a write that throws.
-    const result = this.desktopActions.answer({
-      id: actionId,
-      outcome: answered,
-      answeredByUserId: attachment.userId,
-      now: Date.now(),
-    });
-    if (result.status === "unknown") {
-      this.sendError(socket, "desktop_action_not_found", "No desktop action has that id.");
-      return;
-    }
-    if (result.status === "answered") this.desktopActionWaiters.get(actionId)?.(result.outcome);
-  }
-
-  /**
-   * Offer a subscriber the actions still waiting on a desktop. Not sequenced
-   * events: each is a re-send of one already published, so it carries the
-   * subscriber's delivered sequence and a desktop acts on it by id.
-   */
-  private offerPendingDesktopActions(socket: WebSocket, userId: string, deliveredThrough: number): void {
-    if (!this.answersDesktopActions(userId)) return;
-    const occurredAt = new Date().toISOString();
-    const unreadable = (id: string, code: string, outcome: DesktopActionOutcome) => {
-      logWarn(this.env, "desktop_action_unreadable", { action_id: id, error_code: code });
-      this.desktopActionWaiters.get(id)?.(outcome);
-    };
-    for (const request of this.desktopActions.pending(unreadable)) {
-      socket.send(JSON.stringify({ type: "desktop_action_requested", request, sequence: deliveredThrough, occurredAt }));
-    }
   }
 
   private async mutateSocketSubstream(
@@ -7045,134 +6942,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     return admission.auth;
   }
 
-  /**
-   * The whole committed transcript as room-visible text, for an operator, with
-   * the identity this object holds so the caller can confirm it read the
-   * conversation it addressed. The same `conversationAsText` the transcript
-   * range reader formats with, over every committed turn; no viewer and no
-   * authorization, because the only caller is the operator dump that runs
-   * before a Thread is retired (`services/thread-retirement-service.ts`). An
-   * object with no identity row never held a conversation and answers empty.
-   */
-  async conversationTranscriptText(): Promise<{
-    identity: { workspaceId: string; parentKind: string; parentId: string; substreamId: string } | null;
-    throughSequence: number;
-    text: string;
-  }> {
-    await this.storageReady;
-    const identity = this.objectStore.identityForRetirement();
-    const throughSequence = this.transcript.transcriptThrough();
-    const range = this.transcript.range(
-      { snapshotId: "operator-dump", snapshotThrough: throughSequence, snapshotAtUtc: new Date().toISOString() },
-      { startInclusive: 1, endExclusive: throughSequence + 1 }, "requested", false,
-    );
-    return {
-      identity: identity ? {
-        workspaceId: identity.workspaceId, parentKind: identity.parentKind, parentId: identity.parentId,
-        substreamId: this.externalSubstreamId(),
-      } : null,
-      throughSequence,
-      text: conversationAsText(range.turns),
-    };
-  }
-
-  /**
-   * Rewrite this conversation's stored parent kind, for the operator
-   * conversion of a Thread that has artifacts into a Canvas in place
-   * (`services/thread-conversion-service.ts`); only `workstream` to `canvas`
-   * is admitted (`WorkstreamObjectStore.convertParentKind`). The object then
-   * does what a hosted conversation's does on construction, which a retired
-   * Thread's skipped, and arms its alarm: the Thread's alarm was cleared on
-   * every firing (see `alarm`), so the effects and wake reasons it holds wait
-   * for this. Idempotent: an object already `canvas` answers
-   * `converted: false` and is bound again, which changes nothing.
-   */
-  async convertParentKind(input: { workspaceId: string; parentId: string; from: string; to: string }): Promise<{ converted: boolean }> {
-    await this.storageReady;
-    const request = parseRpcInput(z.strictObject({
-      workspaceId: z.string().min(1), parentId: z.string().min(1), from: z.string().min(1), to: z.string().min(1),
-    }), input, "convert_parent_kind");
-    const result = this.objectStore.convertParentKind(request);
-    await this.bindHostedConversation(request);
-    this.syncAgentTimerAlarms();
-    await this.armNextAlarm();
-    return result;
-  }
-
-  /**
-   * The resources this conversation has attached, as stored, for the Thread
-   * conversion to carry a Breakout's into the Canvas's Chat before the
-   * Breakout is retired (`services/thread-conversion-service.ts`). Read
-   * through `identityForRetirement`, as the transcript dump is, because a
-   * Thread's object refuses every product read by its kind.
-   */
-  async attachmentsForConversion(): Promise<{
-    identity: { workspaceId: string; parentId: string } | null;
-    links: ConversionAttachmentLink[];
-  }> {
-    await this.storageReady;
-    const identity = this.objectStore.identityForRetirement();
-    return {
-      identity: identity ? { workspaceId: identity.workspaceId, parentId: identity.parentId } : null,
-      links: this.state.storage.sql.exec<ConversionAttachmentLink & Record<string, SqlStorageValue>>(
-        `SELECT resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at
-           FROM workstream_resource_links ORDER BY resource_id`,
-      ).toArray().map((row) => ({ ...row })),
-    };
-  }
-
-  /**
-   * Attach what a Thread's Breakouts had attached to this conversation, the
-   * converted Thread's Main and now its Canvas's Chat, so the Canvas's readers
-   * open those artifacts through it (`AuthorizationService.resource` needs a
-   * conversation they can read that holds the attachment). Only a `canvas`
-   * conversation of this parent takes them, after `convertParentKind`. An
-   * attachment already here is kept as it is; the inventory revision moves
-   * only when one is added, and the insert's own trigger queues the
-   * authorization projection. Each row is copied as stored, `watch_enabled`
-   * included: the watch is the attacher's choice about that resource, and the
-   * Chat is the same Thread's conversation. Answers how many it added.
-   */
-  async adoptAttachmentsForConversion(input: {
-    workspaceId: string; parentId: string; links: ConversionAttachmentLink[];
-  }): Promise<{ adopted: number }> {
-    await this.storageReady;
-    const request = parseRpcInput(z.strictObject({
-      workspaceId: z.string().min(1), parentId: z.string().min(1),
-      links: z.array(z.strictObject({
-        resource_id: z.string().min(1), attached_by_user_id: z.string().nullable(),
-        watch_enabled: z.number().int(), relationship_type: z.string().min(1), resource_json: z.string(),
-        attached_at: z.number().int(), updated_at: z.number().int(),
-      })),
-    }), input, "adopt_attachments_for_conversion");
-    const identity = this.objectStore.identityForRetirement();
-    if (!identity) throw new Error("conversation_attachment_adoption_identity_missing");
-    if (identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId) {
-      throw new Error("conversation_attachment_adoption_identity_mismatch");
-    }
-    if (identity.parentKind !== "canvas") throw new Error(`conversation_attachment_adoption_parent_kind:${identity.parentKind}`);
-    const sql = this.state.storage.sql;
-    return this.state.storage.transactionSync(() => {
-      let adopted = 0;
-      for (const link of request.links) {
-        adopted += sql.exec(
-          `INSERT INTO workstream_resource_links
-             (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(resource_id) DO NOTHING RETURNING resource_id`,
-          link.resource_id, link.attached_by_user_id, link.watch_enabled, link.relationship_type,
-          link.resource_json, link.attached_at, link.updated_at,
-        ).toArray().length;
-      }
-      if (adopted > 0) {
-        sql.exec(
-          `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
-           ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`, Date.now(),
-        );
-      }
-      return { adopted };
-    });
-  }
-
   /** Content-free operator inventory, including retired conversations. */
   async meetingRetirementInventory(resourceIds: string[] = []) {
     await this.storageReady;
@@ -7222,9 +6991,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * An object whose parent was retired runs nothing on its alarm: every lane
    * reads the hosted identity, which refuses that kind, so a due wake reason
    * left in a Thread's object (a memory sweep retry, an outbox row, an agent
-   * timer) would otherwise throw on every pass until `retire_threads` closes
-   * the object. It is logged once per firing and the slot is cleared;
-   * the rows stay for the retirement to discard.
+   * timer) would otherwise throw on every pass. It is logged once per firing
+   * and the slot is cleared; the rows stay unread.
    */
   override async alarm(): Promise<void> {
     await this.storageReady;
@@ -8383,7 +8151,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       subscribed: true,
     } satisfies SocketAttachment);
     if (preparedTicketId) this.deletePreparedSocketAdmission(preparedTicketId);
-    this.offerPendingDesktopActions(socket, attachment.userId, deliveredThrough);
     return true;
   }
 

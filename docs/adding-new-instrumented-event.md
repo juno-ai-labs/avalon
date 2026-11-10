@@ -162,5 +162,4 @@ pnpm test
 
 - Verify opt-out, retention, and prohibited-data behavior before shipping.
 
-
 ## 5. Finish the change

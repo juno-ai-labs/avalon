@@ -1,6 +1,4 @@
 import { z } from 'zod';
-import type { DesktopActionResult } from '@rally/contracts/desktop-actions';
-import type { StoredItem } from './desktop-actions/store';
 
 /** The local, user-owned browser surface and command protocol. */
 export interface EmbeddedBrowserTab {
@@ -27,55 +25,18 @@ export interface EmbeddedBrowserBounds {
 }
 
 /**
- * One response a tab's page received since it last navigated, as the network
- * recorder saw it. `cached` says whether its body was kept: fetch and XHR
- * responses are copied as they finish, so they read back after Chromium
- * itself has let them go.
- */
-export interface EmbeddedBrowserNetworkResponse {
-  requestId: string;
-  url: string;
-  method: string;
-  status: number;
-  mimeType: string;
-  /** Chromium's resource type: Document, Fetch, XHR, Script, Image, … */
-  resourceType: string;
-  /** Bytes received over the network, or null while the response is still loading. */
-  size: number | null;
-  cached: boolean;
-}
-
-/**
  * The browser executes commands in its own Chromium contents. No command
  * evaluates code in Electron's main process or receives Rally's preload.
  */
 export type EmbeddedBrowserCommand =
-  | { action: 'script'; tabId: string; runtimeId: string; code: string }
-  | { action: 'script_reset'; tabId: string; runtimeId: string }
   | { action: 'open'; url?: string }
   | { action: 'close'; tabId: string }
   | { action: 'select'; tabId: string }
   | { action: 'move'; tabId: string; index: number }
   | { action: 'navigate'; tabId?: string; url: string }
-  | { action: 'back' | 'forward' | 'reload' | 'stop'; tabId?: string }
-  | { action: 'snapshot' | 'screenshot'; tabId?: string }
-  | { action: 'click'; tabId?: string; x: number; y: number }
-  | { action: 'scroll'; tabId?: string; x: number; y: number; deltaX: number; deltaY: number }
-  | { action: 'type'; tabId?: string; text: string }
-  | { action: 'key'; tabId?: string; key: string }
-  | { action: 'evaluate'; tabId?: string; expression: string }
-  | { action: 'cdp'; tabId?: string; method: string; params?: Record<string, unknown> }
-  | { action: 'network'; tabId?: string }
-  | { action: 'response_body'; tabId?: string; requestId: string };
+  | { action: 'back' | 'forward' | 'reload' | 'stop'; tabId?: string };
 
-export type EmbeddedBrowserResult =
-  | { kind: 'script'; result: DesktopActionResult<'browser.script'>; stored: StoredItem[] }
-  | { kind: 'state'; state: EmbeddedBrowserState }
-  | { kind: 'snapshot'; url: string; title: string; tree: unknown }
-  | { kind: 'screenshot'; mimeType: 'image/jpeg'; data: string; width: number; height: number }
-  | { kind: 'value'; value: unknown }
-  | { kind: 'network'; responses: EmbeddedBrowserNetworkResponse[] }
-  | { kind: 'response_body'; body: string; base64Encoded: boolean };
+export type EmbeddedBrowserResult = { kind: 'state'; state: EmbeddedBrowserState };
 
 const tabId = z.string().uuid();
 const target = { tabId: tabId.optional() };
@@ -84,22 +45,12 @@ export const EmbeddedBrowserBoundsSchema = z.strictObject({
   x: coordinate, y: coordinate, width: coordinate, height: coordinate,
 });
 export const EmbeddedBrowserCommandSchema = z.discriminatedUnion('action', [
-  z.strictObject({ action: z.literal('script'), tabId, runtimeId: z.string().uuid(), code: z.string().min(1) }),
-  z.strictObject({ action: z.literal('script_reset'), tabId, runtimeId: z.string().uuid() }),
   z.strictObject({ action: z.literal('open'), url: z.string().optional() }),
   z.strictObject({ action: z.literal('close'), tabId }),
   z.strictObject({ action: z.literal('select'), tabId }),
   z.strictObject({ action: z.literal('move'), tabId, index: z.number().int().nonnegative() }),
   z.strictObject({ action: z.literal('navigate'), ...target, url: z.string() }),
-  z.strictObject({ action: z.enum(['back', 'forward', 'reload', 'stop', 'snapshot', 'screenshot']), ...target }),
-  z.strictObject({ action: z.literal('click'), ...target, x: coordinate, y: coordinate }),
-  z.strictObject({ action: z.literal('scroll'), ...target, x: coordinate, y: coordinate, deltaX: coordinate, deltaY: coordinate }),
-  z.strictObject({ action: z.literal('type'), ...target, text: z.string() }),
-  z.strictObject({ action: z.literal('key'), ...target, key: z.string() }),
-  z.strictObject({ action: z.literal('evaluate'), ...target, expression: z.string() }),
-  z.strictObject({ action: z.literal('cdp'), ...target, method: z.string(), params: z.record(z.string(), z.unknown()).optional() }),
-  z.strictObject({ action: z.literal('network'), ...target }),
-  z.strictObject({ action: z.literal('response_body'), ...target, requestId: z.string().min(1) }),
+  z.strictObject({ action: z.enum(['back', 'forward', 'reload', 'stop']), ...target }),
 ]);
 
 export function embeddedBrowserUrl(raw: string): string | null {

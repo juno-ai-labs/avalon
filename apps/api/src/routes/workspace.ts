@@ -32,12 +32,10 @@ import {
   SupportAccessSchema,
 } from "@rally/contracts";
 import { z } from "zod";
-import { SidebarPinOrderRequestSchema } from "@rally/contracts/canvases";
 import type { HonoAppEnv } from "../env";
 import { requireCurrentClientContract } from "../lib/client-contract";
 import { requestDeferral } from "../lib/defer";
 import { getAuth, getWorkspaceAuth } from "../middleware/auth";
-import { CanvasService } from "../services/canvas-service";
 import { readUserTimezone, reportDeviceTimezone, WorkspaceService } from "../services/workspace-service";
 import { SupportAccessService } from "../services/support-access";
 import { workspaceAttention } from "../services/workspace-attention-service";
@@ -48,6 +46,8 @@ import { issueWorkspaceSocketTicket } from "../services/socket-service";
 import { OrganizationUsageSchema, WorkspacePlanChangeSchema } from "@rally/contracts/usage";
 import { publishOrganizationUsage, readOrganizationUsage } from "../services/usage-metering";
 import { ApiError } from "../lib/api-error";
+import { ConnectedMcpAppsSchema } from "@rally/contracts/mcp-oauth";
+import { McpOAuthService } from "../services/mcp-oauth-service";
 
 const invitationParam = z.object({ id: IdSchema });
 const memberParam = z.object({ userId: IdSchema });
@@ -125,6 +125,22 @@ deviceTimezoneRoutes.put("/", zValidator("json", DeviceTimezoneRequestSchema), a
   c.json(UserTimezoneSchema.parse(
     await reportDeviceTimezone(c.env, getWorkspaceAuth(c).userId, c.req.valid("json").timezone))));
 
+/**
+ * The MCP apps this person connected (Claude, ChatGPT and others), and
+ * disconnecting one: Settings › Account, for members and guests alike, since
+ * either can connect one. Mounted beside the profile with a support session
+ * refused: the list spans the person's other Organizations, which a grant
+ * to one of them does not open to Rally staff. Not in `MCP_ROUTES`, so an
+ * MCP client cannot list or end another client's grant. `docs/rally-mcp.md`.
+ */
+export const connectedAppRoutes = new Hono<HonoAppEnv>();
+connectedAppRoutes.get("/", async (c) =>
+  c.json(ConnectedMcpAppsSchema.parse({ apps: await new McpOAuthService(c.env).connectedApps(getWorkspaceAuth(c).userId) })));
+connectedAppRoutes.delete("/:id", zValidator("param", z.object({ id: z.string().min(1) })), async (c) => {
+  await new McpOAuthService(c.env).disconnect(getWorkspaceAuth(c).userId, c.req.valid("param").id);
+  return c.body(null, 204);
+});
+
 workspaceRoutes.get("/attention", async (c) =>
   c.json(WorkspaceAttentionSchema.parse(await workspaceAttention(c.env, getAuth(c)))));
 // The usage meter. Every member role may read it: usage is shared by design.
@@ -196,16 +212,6 @@ workspaceRoutes.delete("/memory/:factId", zValidator("param", memoryFactParam), 
   c.json(MemoryForgetResponseSchema.parse(
     await new WorkspaceService(c.env, getAuth(c)).forgetOrganizationMemory(c.req.valid("param").factId))),
 );
-/**
- * One person's order for the Pinned group of their Canvases or Sidekicks
- * list. The list itself arrives on the workspace socket, which this write
- * republishes to every session this person has open.
- */
-workspaceRoutes.put("/pinned-order", zValidator("json", SidebarPinOrderRequestSchema), async (c) => {
-  const body = c.req.valid("json");
-  await new CanvasService(c.env, getWorkspaceAuth(c)).reorderPins(body.kind, body.itemIds);
-  return c.body(null, 204);
-});
 workspaceRoutes.get("/terminal", async (c) =>
   c.json(TerminalWorkspaceSettingsSchema.parse(await withTerminalSettingsService(c, (service) => service.get()))),
 );

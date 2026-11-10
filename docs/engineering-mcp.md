@@ -5,8 +5,7 @@ SQLite database inside a workspace, a Canvas's or Sidekick's conversation, or
 a live web artifact Durable Object, and to each region's D1 databases.
 It recreates the useful part of Cloudflare's dashboard database console through
 standard MCP tools at `https://mcp.internal.rallywith.ai/mcp`, including deliberate
-repair writes. It also reads and changes the feature flags and agent model
-routes that Ace manages, through Ace, and runs read-only queries against the
+repair writes. It also runs read-only queries against the
 Global analytical lakehouses and the account's Workers Logs and Traces. Product tools create and retire Organizations, send messages
 to a Canvas's Chat or a Sidekick's shared conversation, and read their
 participant-visible text as a selected user, through the same services as the app. It is not a product API and it is never
@@ -16,6 +15,10 @@ available to Rally users by virtue of product membership.
 
 - `apps/engineering-mcp/` is the public MCP Worker, Cloudflare Access verifier,
   tool registry, deployment provisioner, and its tests.
+- `apps/engineering-mcp/src/tasks.ts` owns task negotiation, the wire schemas,
+  and the authenticated task methods. `src/task-do.ts` owns each task's durable
+  execution, result, cancellation fence and expiry. `src/worker.ts` exports
+  the Worker and its `EngineeringTaskDO` binding.
 - `apps/api/src/engineering-inspection-bridge.ts` is the private named
   `WorkerEntrypoint` exported by each regional API Worker.
 - `apps/api/src/services/engineering-creation.ts` adapts operator Organization
@@ -37,9 +40,6 @@ available to Rally users by virtue of product membership.
   routes all four.
 - `packages/contracts/src/engineering-inspection.ts` is the runtime-validated
   RPC vocabulary shared by both Workers.
-- `apps/ace/src/flag-administration.ts` is the private named `WorkerEntrypoint`
-  Ace exports for the flag tools. Its interface and input schemas live in
-  `apps/ace/src/protocol.ts`, which this Worker compiles.
 - `apps/engineering-mcp/src/lakehouse.ts` is the Basin SQL client behind
   `query_data_lake`. It takes bucket and table names from the checked-in
   `config/*-lakehouse.json` manifests.
@@ -67,7 +67,8 @@ origins. The MCP transport admits those same hosted request origins after
 authentication. The origin independently verifies the signed
 `Cf-Access-Jwt-Assertion`, including issuer and this application's dedicated
 audience. A verified request reaches the stateless MCP handler; every other
-request fails closed.
+request fails closed. Task execution lives outside that handler in its own
+Durable Object, so a new HTTP request can retrieve an earlier result.
 
 The regional bridge uses D1 only for identity and routing:
 
@@ -76,10 +77,7 @@ The regional bridge uses D1 only for identity and routing:
 | `create_org` | Caller names the region | Regional onboarding commits the owner and initial members together, then performs ordinary member seating |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause or resume, which call HostedSidekick in WorkspaceDO |
-| `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, Ace's retirement door: the D1 fence, then the graph walk over every object |
-| `dump_thread_transcripts` | Resolve the Organization in exactly one region | `thread-retirement-service.ts`: WorkspaceDO's Thread inventory, each conversation's AgentLoopDO, and R2 `PAYLOADS` |
-| `retire_threads` | Resolve the Organization in exactly one region | `thread-retirement-service.ts`: the dump receipts in R2, `retireObject` on each conversation's AgentLoopDO, and WorkspaceDO's row deletion |
-| `convert_threads_to_canvases` | Resolve the Organization in exactly one region | `thread-conversion-service.ts`: WorkspaceDO's conversion inventory and Canvas rows, the dump receipts in R2, `convertParentKind` on each Thread's Main and `retireObject` on its Breakouts, and WorkspaceDO's row deletion |
+| `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, the regional retirement service: the D1 fence, then the graph walk over every object |
 | `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
 | `list_orgs`, `search_orgs` | None | D1 `workspaces` and `workspace_members` in every region, filtered there and ordered here |
@@ -88,7 +86,7 @@ The regional bridge uses D1 only for identity and routing:
 | `list_sidekicks` | Regional workspace identity at the open authority generation | `automation_directory` in WorkspaceDO, every lifecycle |
 | `list_artifacts` | Regional workspace identity at the open authority generation | `artifact_registry` in WorkspaceDO |
 | `run_workspace_sql` | Resolve, select one region, then revalidate the open workspace authority generation | WorkspaceDO SQLite |
-| `run_canvas_sql` | Resolve the parent's active route and, for a child, its registration (the Organization's parent tables, or a Sidekick's own registry), select one region, then revalidate | AgentLoopDO SQLite |
+| `run_canvas_sql` | Resolve the parent's active route and, for a child, its registration (the hosted conversation registry a Canvas and a Sidekick share in the Organization object), select one region, then revalidate | AgentLoopDO SQLite |
 | `run_artifact_sql` | Resolve the regional workspace identity and `artifact_registry` membership, select one region, then revalidate | ArtifactHostDO SQLite, the supervisor's own |
 | `run_d1_sql` | None: the caller names the region and the binding | The named D1 database in that region |
 
@@ -118,8 +116,9 @@ share `src/paging.ts`, which orders the merged set and pages it.
 (`conversationId`): the conversation object is named by that id, which is a
 `workstream` id in storage, and its main conversation, substream `0`. An
 optional `substreamId` reaches a registered child instead: a Sidekick run's
-conversation through the Sidekick's `sidekick_children`, or a background
-agent's through the parent tables, both in the Organization object. An
+conversation or a background agent's, through the parent's
+`sidekick_children` and `sidekick_child_projections` in the Organization
+object, which a Canvas and a Sidekick share. An
 unregistered child is not found rather than materialized. `list_canvases` and
 `list_sidekicks` return the workspace and parent IDs together.
 
@@ -144,14 +143,93 @@ only through the product's own read-only admitted query path
 console arbitrary SQL there would mean changing the facet host module every
 stateful artifact runs. See [`live-web-artifacts.md`](live-web-artifacts.md).
 
+### Deferred engineering tasks
+
+`query_data_lake` and `retire_org` support the
+[MCP Tasks extension, revision 2026-07-28](https://tasks.extensions.modelcontextprotocol.io/specification/2026-07-28/tasks).
+`server/discover` advertises `io.modelcontextprotocol/tasks`. Only a request
+whose per-request client capabilities include that extension gets a task;
+legacy clients and modern clients without it retain synchronous results. Other
+tools remain synchronous. This is the current extension, not the older
+`execution.taskSupport` / `tasks/result` protocol.
+
+The SDK validates arguments, headers (including encoded `Mcp-Name` values),
+and Origins. Task creation returns JSON; other calls retain the transport's
+normal automatic response mode. `tasks/get` returns state and the final
+`CallToolResult`; `tasks/update` acknowledges unknown input-response keys
+because neither operation requests mid-flight input.
+The HTTP adapter rewrites only responses whose request actually created a task;
+synchronous tool results and polls pass through without buffering or parsing.
+
+Creation commits the input, trusted Access principal, state and execution alarm
+before returning a handle. Lakehouse reads can repeat after an interrupted
+execution and incur another scan charge. Retirement resumes its existing journal.
+`task-schema.ts` uses the shared SQLite migration runner during blocked object
+initialization. Versioned, strict tables hold task state and ordered payload
+segments; state transitions use synchronous transactions. Alarm writes follow
+without an intervening await so they share the platform's atomic write commit.
+The regional walk attempts every node in one pass: an incomplete receipt means
+failed work, not pagination or expected progress. Cloudflare's native alarm
+backoff retries those failures up to six times; this is the published platform
+budget, not an elapsed-time deadline. Exhaustion returns the partial receipt as
+an `isError: true` result, and a new `retire_org` call can resume it.
+
+Malformed stored inputs complete with a named tool error, erase their input
+fragments and schedule retention cleanup. Other catchable alarm failures use the
+native retry budget and attempt the same terminal transition on exhaustion.
+A provider or regional refusal is also a completed tool error, not a JSON-RPC
+`failed` task or proof that no side effect happened. Repeated isolate termination
+or unavailable storage can prevent even that terminal write. Such a task can
+remain `working` with retained input after platform retries stop; it requires
+operator recovery. Seven-day retention begins only once termination is committed.
+
+Every task read, update and cancellation checks both the current Access subject
+and application audience against the stored principal. Unknown, expired and
+another operator's tasks have the same `task_not_found` response. A task id is
+not an authorization credential. No task enumeration endpoint is provided.
+Assertions without a stable Access subject retain synchronous execution so
+unidentified service callers cannot share ownership of stored results.
+
+Query cancellation makes the task terminal immediately. An already issued
+provider read may finish, but its late result cannot overwrite cancellation.
+Retirement cancellation acknowledges intent and lets the irreversible operation
+continue; it does not strand an Organization halfway through retirement or
+promise rollback. Cancellation is cooperative under the extension.
+
+The team selected **seven days after completion** on 2026-11-10. Terminal tasks
+retain their result and operator metadata until then. Input arguments are erased
+on completion or cancellation. An expiry alarm erases all task storage, and
+reads refuse expired tasks even if alarm delivery is delayed. `ttlMs` is null
+while working and becomes the total lifetime from creation through expiry when
+terminal, as the protocol requires. Results use ordered SQLite text segments,
+preserving Unicode boundaries and avoiding the platform's per-row limit without
+truncation. Expiry erases task rows and payloads; only the schema and migration
+receipts remain. The task stores no provider
+credentials and does not log SQL, returned rows, or raw errors.
+
+This object's sole alarm has two mutually exclusive purposes: executing its
+one task, then expiring it. It is separate from the regional product objects'
+multi-purpose scheduled-alarm coordinator. There is no additional queue,
+Workflow, or application retry scheduler. It uses KV storage without an
+application SQL migration history.
+
+### Password credentials
+
+`provision_user_password` and `revoke_user_password` administer credentials for
+existing Global identities through the audited private bridge. Password sign-in
+requires the account’s primary email to have been verified independently.
+[Password sign-in](password-login.md) owns secret delivery, rotation, revocation,
+storage and attempt limits.
+
 ### Product creation
 
 The tools use today's product names: `orgId` is a stored workspace ID, a
 Canvas ID or Sidekick ID names its conversation (a stored workstream ID), and
 `creatorUserId` (creation) or `userId` (send/read) selects an existing regional
-Rally user. The Access identity remains the audited operator. No tool issues a
-login credential, promotes a guest, or bypasses the selected user's ordinary
-product permissions. Guests can be selected; actions the app refuses for them
+Rally user. The Access identity remains the audited operator. These product tools
+issue no login credential, promote no guest, and never bypass the selected user’s
+ordinary product permissions. Password credential administration is the separate
+operator capability above. Guests can be selected; actions the app refuses for them
 are refused here too.
 
 Creation takes a fresh UUID `operationId`, reused with the original arguments
@@ -237,67 +315,27 @@ to pair the attempt and result audit rows.
 
 ### Retiring an Organization
 
-`retire_org` calls `retireWorkspaceForOperator`, the same function behind Ace's
-Retire button, through a bridge method, `retireOrg`. So the region check,
+`retire_org` calls `retireWorkspaceForOperator`, the regional retirement service, through a bridge method, `retireOrg`. So the region check,
 `workspaces.abandoned_at`, the tombstones and the resumable walk are all
 [`workspace-retirement.md`](workspace-retirement.md)'s, unchanged. The Access
 subject goes into the pass as its operator id, so the region's
 `workspace_retirement_pass` log names who closed it, and the audit pair targets
 the Organization rather than a represented user, since no user acts.
 
-It takes no typed confirmation. In Ace that is a page ceremony for a person;
-here the caller is a client that would fill both fields from the same value,
-and the tool's destructive annotation is what asks the client to check first.
-A receipt with `complete: false` means parts are still open; calling again
-resumes the walk.
+It takes no typed confirmation; its caller supplies the resolved Organization ID.
+A synchronous receipt with `complete: false` means parts are still open; calling
+again resumes the walk. A task-enabled request resumes incomplete passes through
+native alarm retries and reports partial progress through `tasks/get`.
 
 ### Retiring Threads
 
-`dump_thread_transcripts` and `retire_threads` are the two operator operations
-that retire an Organization's Threads, Breakouts and Channels, run in that
-order, in every Organization, immediately after the release that removes
-Threads deploys: they ship in that release, so they cannot run before it
-([`workspace-retirement.md`](workspace-retirement.md#the-deploy-order) has the
-deploy order, and what fails by design until they have run). The dump writes each of their
-conversations to R2 as text and reports `conversations`, `dumped`, `skipped`
-(already in R2) and `failed`, a stable code per conversation. The retirement
-is refused (`engineering_operation_failed:thread_retirement_conversion_pending`)
-while `convert_threads_to_canvases` below still has a Thread to convert, and
-(`engineering_operation_failed:thread_retirement_dump_incomplete`) until every
-conversation has its dump, then retires the conversation objects
-and deletes their rows, and reports `parents`, `conversations`,
-`retiredParents`, `retiredConversations`, `retainedOutbox` and `failed`; a
-rerun over a finished Organization reports zeros. It is annotated destructive.
-Both take `orgId` and `confirm`, which must equal `orgId`: the MCP refuses `thread_retirement_unconfirmed` before asking any
-region, and the regional bridge checks it again, then refuses
-`workspace_not_found` for an Organization the region does not hold. Being
-Organization-wide, they represent no user: its audit rows target the
-Organization (`target_type = 'workspace'`). The walk, its receipts and its
-failure codes are
-[`workspace-retirement.md`](workspace-retirement.md#retiring-threads-breakouts-and-channels)'s.
-
-`convert_threads_to_canvases` runs between the two: every Thread that made or
-linked an artifact becomes a Canvas with the same id, its Main the Canvas's
-Chat, and its Breakouts are retired. It takes `orgId`, `dryRun` (default
-`true`: list the candidates, each with its artifact, linked-artifact,
-participant, conversation and undumped counts, and change nothing) and
-`confirm`, which must equal `orgId` when `dryRun` is `false`. An apply is
-refused with `thread_retirement_dump_incomplete` as the retirement is, and
-reports `converted`, `alreadyConverted` (finished from an interrupted pass),
-`failed` with a code per Thread, and `artifactsWithoutThread`. It is annotated
-destructive and writes its audit rows on the same path; a dry run writes none.
-[`workspace-retirement.md`](workspace-retirement.md#converting-threads-that-have-artifacts)
-owns the mechanism. The order for an Organization is dump, convert, retire.
-
-**Who may call them.** These three tools sit behind the `confirm === orgId` gate
-and nothing else, with the same standing as `run_workspace_sql`: this server
-has no roles, and every principal its Access application admits is an
-operator who could already delete the same rows by hand. The confirmation is a
-consistency check on the request, not an authorization. So an agent-driven
-caller — a scheduled agent, a bot, or any MCP client acting without an operator
-reading each call — must not be given this server with these tools enabled; the
-decision was the reviewing engineer's on 2026-11-07, and a role split is the
-change to make if that ever has to differ.
+`dump_thread_transcripts`, `convert_threads_to_canvases` and `retire_threads`
+retired every Organization's Threads, Breakouts and Channels after the pivot,
+and were removed once the operator had run them in every Organization on
+2026-11-09 ([`workspace-retirement.md`](workspace-retirement.md#retiring-threads-breakouts-and-channels)).
+Their audit rows in `AUDIT_DB` (`engineering.dump_thread_transcripts.*`,
+`engineering.convert_threads_to_canvases.*`, `engineering.retire_threads.*`)
+stay as written; nothing parses the action names back.
 
 ### D1
 
@@ -325,28 +363,11 @@ and counters, so `rowsWritten` misses an earlier statement's writes. D1 returns
 a BLOB as an array of bytes, which the bridge turns into `{ type: "blob",
 base64 }`, and refuses `BEGIN` and `SAVEPOINT`.
 
-### Feature and model flags
+### Feature and model configuration
 
-The four flag tools call Ace's `FlagAdministration` entrypoint over the
-`FLAG_ADMINISTRATION` Service Binding. They hold no Flagship credential and
-write nothing themselves:
-
-| Tool | Ace method | Effect |
-| --- | --- | --- |
-| `list_feature_flags` | `listProductFlags` | Each managed product flag's catalog entry and live Flagship definition, `null` if not provisioned |
-| `update_feature_flag` | `updateProductFlag` | Replaces the flag's whole definition, then queues the key-only client notification |
-| `list_model_flags` | `listModelFlags` | Each agent role's catalog entry, checked-in default route, and live Flagship definition |
-| `update_model_flag` | `updateModelRouting` | Checks every model id against OpenRouter, then replaces the default variation's route plan, keeping rules and other variations |
-
-These are the same catalogs, schemas and write functions the Ace pages use, so
-an MCP write is validated, fanned out to connected clients, and limited to the
-managed keys exactly as an Ace save is. See [`ace.md`](ace.md) for what each
-write does in Flagship and [`feature-flags.md`](feature-flags.md) for what
-each flag controls.
-
-`update_feature_flag` is a whole replacement because Flagship's API is: rules
-left out of the call are deleted. The tool description tells the client to read
-the flag first and send it back with its change.
+Feature flags and model routes live in centralized API constants with optional
+deployment environment overrides. The former four remote flag administration
+tools and Ace Service Binding are retired. See [`feature-flags.md`](feature-flags.md).
 
 ### Lakehouses
 
@@ -423,8 +444,8 @@ names the view only; filter values and the needle can quote product data.
   half-finished publish.
 - The origin verifies Access JWT provenance. A header's presence alone is not
   authentication.
-- The Access application is separate from Ace and has its own audience, while
-  its policy and allowed identity providers are copied from Ace at deployment.
+- The Access application has its own audience, policy, and identity providers,
+  all preserved at deployment.
 - SQL tools are annotated non-read-only, destructive, and non-idempotent. The
   list tools are read-only.
 - The SQL text, bindings, returned rows, and error message never enter Worker
@@ -439,11 +460,6 @@ names the view only; filter values and the needle can quote product data.
   it. Adding the next object kind's id as a required field breaks every existing
   SQL tool for the length of the deployment window.
 
-- Flag tools reach Flagship only through Ace. A direct Flagship write from this
-  Worker would skip the client notification and the managed-key allowlist, and
-  would put a second Flagship token on a second Worker.
-- Ace records `actor_subject` and `via: "engineering_mcp"` on every flag write
-  it makes for this Worker, beside this Worker's own audit event.
 - The lakehouse token reaches only Basin SQL, from inside this Worker. It never
   crosses to a client, and its permissions are scoped to the three lakehouse
   buckets, not the account.
@@ -475,17 +491,20 @@ A Canvas's parent state lives in WorkspaceDO, in `canvas_directory` and the
 included: listing is operator inspection, like `run_workspace_sql`. Reading a
 Chat is still the selected user's, through ordinary admission.
 
-`run_canvas_sql` checks the parent's route, not its kind: until
-`retire_threads` has run for an Organization, a Thread's id still resolves
-there, and nothing else in this MCP names one.
+`run_canvas_sql` checks the parent's route, not its kind: a retired Thread's
+id still resolves there, since its D1 anchor stays, and reaches its
+tombstoned Main through the permitted inspection door; nothing else in this
+MCP names one.
 
 A stateful artifact's facet database is outside this MCP for the reason above:
 its contents are reachable only through the product's admitted read path.
 
 `MigrationProbeDO` holds no product state by design.
 
-The Worker does not retain query history, cache results, copy databases, or
-provide a D1 fallback. Creation explicitly names the Rally identity to act as;
+Synchronous calls retain no query history or results. Deferred tasks retain
+their inputs while working and their results for seven days after completion;
+these are private execution receipts, not a reusable query cache or a database
+copy. The Worker provides no D1 fallback. Creation explicitly names the Rally identity to act as;
 Access identity is never silently mapped to a product user.
 
 ## Failure modes and limits
@@ -507,7 +526,48 @@ Access identity is never silently mapped to a product user.
 - `query_worker_observability` fails as `observability_token_unconfigured`
   until its secret is installed.
 
+## Operations tools
+
+| Tool | Behavior |
+| --- | --- |
+| `inspect_queues` | Lists account queue backlog metrics and active dead-letter relationships; `deadLettersOnly` restricts the result. |
+| `inspect_dead_letters` | Non-consuming peek of a queue ID returned by the queue list, after revalidating that a live consumer names it as a dead-letter queue. No acknowledge, pull, replay, or delete operation is exposed. |
+| `inspect_usage_plan` | Resolves an Organization to exactly one region and reads its authoritative plan, quota remaining, reset, and overage. |
+| `change_usage_plan` | Uses the regional metering service, updates this week's quota and plan history, and publishes the new meter to connected clients. |
+| `inspect_migration_progress` | Queries regional Worker logs for forced-migration outcomes, failures, invalid/deleted/misrouted commands, with optional run and object filters and provider pagination. |
+
+Queue inspection uses `apps/engineering-mcp/src/queues.ts`. Set the deployment
+secret `ENGINEERING_MCP_QUEUES_API_TOKEN` to a dedicated account Queue API token
+with permissions for queue inventory, metrics, and message peek (Cloudflare
+Queues Edit for the peek endpoint). Deployment installs it as the runtime secret
+`QUEUES_API_TOKEN`. It is separate from deployment credentials. Until configured,
+queue tools refuse with `queues_token_unconfigured`; other tools remain available.
+Queue messages can contain customer payloads and are visible only behind the
+existing engineering Access boundary. Neither payloads nor token values enter
+MCP audit metadata. Queue metrics are fetched independently; a failed queue
+returns `metrics: null` and a named `metricsError` while other queues remain visible.
+
+Usage methods are part of `EngineeringInspectionBridge` and its shared contracts.
+Plan changes record an independent audit attempt and result with the authenticated
+Access actor. The receipt records the requested plan even if another change
+lands before the current-state snapshot is read. The service updates the usage ledger and regional workspace record;
+a cross-authority failure can follow a committed change, so inspect the plan
+before retrying an uncertain response. Publication is post-commit and best effort.
+
+Migration inspection uses the existing Workers Observability runtime credential.
+It returns logged outcomes and schema-versus-expected-version fields, not a fleet
+inventory or proof that every dormant object is current. Logs expire after seven
+days. Pair a run-filtered query with command backlog and dead-letter inspection;
+use the [CLI](forced-migrations.md) to execute a migration pass.
+
 ## Testing
+
+`apps/api/test-workers/engineering-mcp-tasks.test.ts` covers HTTP negotiation,
+encoded headers, real task storage/alarms, eviction, damaged input, cancellation,
+expiry, and real retirement/auditing. Basin HTTP is the only provider double.
+The test wrapper imports the engineering Worker into the API runtime suite to
+exercise real regional authorities. Its explicit API export list has a type
+check for drift; the Node transport suite covers legacy synchronous clients.
 
 `apps/api/test-workers/engineering-creation.test.ts` drives the regional bridge
 against real D1 and Durable Objects: Organization creation with its initial
@@ -566,16 +626,13 @@ MCP handler, tool discovery, cross-region aggregation, destructive annotations,
 single-region SQL execution, and proof that a duplicate-region resolution makes
 no SQL call. `apps/api/test/engineering-inspection-routes.test.ts` exercises the
 checked-in regional D1 schema and proves that lifecycle, serving-contract, and
-generation fences admit only the current active authority. Existing Access tests own JWT
-signature, issuer, audience, cookie, and header verification because this
-Worker imports that one verifier rather than forking it.
+generation fences admit only the current active authority. `apps/engineering-mcp/test/access.test.ts` owns JWT signature, issuer,
+audience, cookie, header, and fail-closed configuration verification against
+the local verifier.
 
 `apps/api/test-workers/engineering-d1-inspection.test.ts` writes and reads a
 D1 database through `runD1Sql`, BLOBs included, and proves the call reached
 the named binding and not another.
-
-`apps/ace/test/flag-administration.test.ts` drives the entrypoint against
-Flagship and OpenRouter doubles, the two APIs that cannot run here.
 
 The deployment workflow dry-runs the MCP bundle during verification and, after
 deployment, requires a non-browser `401` carrying an OAuth protected-resource
@@ -588,13 +645,6 @@ Durable Objects. The shared Worker never receives a database handle or a copy of
 the SQLite file, only the requested result.
 
 ## Security and trust model
-
-Cloudflare Access is the identity and policy authority. Managed OAuth supplies
-standards-based authorization and Dynamic Client Registration for remote MCP
-clients; the deployment enables loopback redirect registration for installed
-clients. Access reuses the same configured identity provider and admission
-policy as Ace, but the distinct application/audience prevents an Ace token from
-being replayed at the MCP origin.
 
 The SQL capability is production-destructive by design. Access membership is
 therefore equivalent to database-console access across both Rally regions.
@@ -611,7 +661,7 @@ means message text ([`runbook.md`](runbook.md#log-shape)).
 Policy changes, identity-provider changes, and client approval belong in the
 Cloudflare Access application, not in application code.
 
-`BASIN_SQL_API_TOKEN` is a runtime credential, like Ace's Flagship token, not
+`BASIN_SQL_API_TOKEN` is a runtime credential, not
 the deployment token. Basin SQL requires R2 storage read/write on the buckets it
 reads, so create it as an R2 API token restricted to the three lakehouse
 buckets with Basin SQL Read, Basin Catalog Read, and R2 Storage Write. Never
@@ -628,17 +678,6 @@ Operator connection instructions for Codex, Claude Code, and Cursor Desktop,
 including the first safe schema query and OAuth troubleshooting, live in
 [`internal-admin-mcp-server.md`](internal-admin-mcp-server.md).
 
-The provisioner requires `CLOUDFLARE_ACCOUNT_ID` and
-`CLOUDFLARE_API_TOKEN`. It requires the existing Ace Access application as the
-policy, identity-provider, and session-duration source; missing source state is
-a deployment failure, not permission to create a broader policy. Generated
-configuration contains the Access audience, is owner-readable, and is removed
-after Wrangler exits. Redeployment preserves an existing Managed OAuth grant
-configuration and administrator-added HTTPS redirect allowlist entries. It also
-ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
-Changing that managed provider list remains an explicit Access administration
-decision.
-
 The provisioner also injects the account ID as a Worker variable and, when the
 `ENGINEERING_MCP_BASIN_SQL_API_TOKEN` and
 `ENGINEERING_MCP_WORKERS_OBSERVABILITY_API_TOKEN` GitHub secrets are set in the
@@ -648,13 +687,101 @@ token the Worker already has, and its tool fails as
 `lakehouse_token_unconfigured` or `observability_token_unconfigured` if it has
 none: the MCP deploys inside the API release, and a missing read credential
 should not turn that release red.
+## Access provisioning
 
-Model routes support optional `routing.reasoningEffort` (`low`, `medium`, or
-`high`) through `list_model_flags` and `update_model_flag`. Omission restores
-each selected model's configured default; an explicit value applies to the
-primary and fallbacks. Ace owns validation and the atomic write.
+Before the first deployment, create a **Self-hosted** application in Cloudflare
+Zero Trust → Access → Applications for `mcp.internal.rallywith.ai` in the deployment
+account. Select the approved organization identity provider, configure the team's
+session duration, and add an Allow policy restricted to the authorized engineering
+operators. Do not use an Allow Everyone or Bypass policy: membership grants
+production database write access. Verify the intended operator can authenticate
+and an unauthorized identity is refused before deploying.
+
+The deployment token needs Access application read/edit permissions as well as
+Worker deployment permissions. The deploy script requires this app and a nonempty
+policy list, preserves its session duration and identity providers, enables the
+hosted-client OAuth redirect configuration, and injects the app's audience into
+the Worker. It does not create an Access app or import another app's policy.
+
 
 ## Changelog
+
+### 2026-11-10 — Defer lakehouse queries and Organization retirement
+
+**What changed:** The two tools return durable MCP task handles to clients that
+advertise the current extension. Each task persists its operator, progress and
+result in versioned SQLite tables, supports authenticated polling and cooperative cancellation, and erases
+terminal data after the team's chosen seven days. Existing clients retain the
+synchronous contract.
+
+**Why:** Lakehouse scans should survive a client disconnect, and retirement's
+existing resumable journal should be driven without asking the caller to issue
+the same operation repeatedly after a partial pass.
+
+**Considered and rejected:** Making every tool asynchronous adds latency to
+ordinary reads. An in-memory task map or `waitUntil` cannot provide durable
+results after the request ends. A separate queue or Workflow adds another
+execution lifecycle to these two operations. One native alarm and the task's
+own storage are sufficient; retirement already owns its durable progress.
+
+**Consequences:** Task results add a short-lived, operator-private copy of
+production data. Read-only queries may repeat on platform redelivery; retirement
+reuses its journal. Cancellation never rolls back retirement. SDK upgrades must
+preserve the actual `resultType: "task"` wire response and remove the carrier
+adapter when the SDK can emit it directly.
+
+### 2026-11-10 — Retire administration apps
+
+Added queue/dead-letter inspection, typed usage-plan operations with regional
+audit records, and migration-log inspection to retain useful operator actions
+without another site. Removed private-access management completely at the
+product owner's request, including invitation grant links. Removed the unused
+workspace HTTP write routes so retirement and operator plan changes use the
+audited MCP surface. Queue inspection preserves partial results and named
+failures; plan receipts retain the caller's requested plan under concurrency.
+
+The engineering MCP retains the Access verifier and its authentication tests
+after the tracker was deleted. Deployment preserves its own Access application
+and policy rather than depending on another app's provisioner.
+
+### 2026-11-09 — Retire remote flag administration tools
+
+**What changed:** Removed the four feature/model flag tools and the Ace flag
+administration binding.
+
+**Why:** Runtime flags now resolve from code and deployment variables. Remote
+writes would no longer affect the configuration agents or clients receive.
+
+**Considered and rejected:** Retaining the old tools would advertise controls
+whose writes have no product effect.
+
+**What future changes must respect:** Edit the API's centralized defaults or
+optional deployment overrides; retain its complete-route and pin semantics.
+### 2026-11-09 — Remove the Thread operations
+
+**What changed:** `dump_thread_transcripts`, `convert_threads_to_canvases` and
+`retire_threads` are gone from the MCP, the regional bridge
+(`dumpThreadTranscripts`, `convertThreadsToCanvases`, `retireThreads`) and the
+contracts, with the `confirm` check only they used
+(`thread_retirement_unconfirmed`). The audit helper's action union loses their
+names. `run_canvas_sql` finds a child conversation in the hosted conversation
+registry alone, since no Thread parent tables are left to read.
+
+**Why:** The operator ran all three in every live Organization on 2026-11-09,
+and WorkspaceDO migration 141 drops the tables they read, so each would fail
+with `no such table` if called again.
+
+**Considered and rejected:** Keeping them as no-ops that report nothing to do:
+a tool that can only answer zero is surface an operator has to reason about.
+Keeping the action names in a read-side schema: `audit_events.action` is free
+text that nothing parses back into the union, so the stored rows stay readable
+without one.
+
+**Consequences:** Retiring Threads again would need new code; the dumps under
+`retired-conversations/` in `PAYLOADS` are the record of what was retired.
+
+Shipped in juno-ai-labs/avalon#1494. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/plan.md`.
 
 ### 2026-11-09 — Retire an Organization
 

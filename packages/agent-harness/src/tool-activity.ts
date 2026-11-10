@@ -100,6 +100,11 @@ const AGENT_PROSE: Record<string, ToolProse> = {
     settled: "Created a Sidekick",
     failed: "Could not create a Sidekick",
   },
+  archive_sidekick: {
+    started: "Archiving a Sidekick",
+    settled: "Archived a Sidekick",
+    failed: "Could not archive a Sidekick",
+  },
   start_agent: {
     started: "Delegating to a background agent",
     settled: "Delegated to a background agent",
@@ -159,6 +164,11 @@ const WORKSTREAM_PROSE: Record<string, ToolProse> = {
     started: "Reading a table of the site's data",
     settled: "Read a table of the site's data",
     failed: "Could not read a table of the site's data",
+  },
+  write_artifact_data: {
+    started: "Updating the site's data",
+    settled: "Updated the site's data",
+    failed: "Could not update the site's data",
   },
   search_resource: {
     started: "Searching an attached resource",
@@ -308,8 +318,6 @@ const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   browser_load: { started: "Downloading a file", settled: "Downloaded a file", failed: "Could not download a file" },
   browser_network_list: { started: "Checking what the page loaded", settled: "Checked what the page loaded", failed: "Could not check what the page loaded" },
   browser_network_read: { started: "Reading data the page loaded", settled: "Read data the page loaded", failed: "Could not read data the page loaded" },
-  import_finish: { started: "Saving the conversation to Rally", settled: "Saved the conversation to Rally", failed: "Could not save the conversation to Rally" },
-  import_fail: { started: "Stopping the import run", settled: "Stopped the import run", failed: "Could not stop the import run" },
   load_skill: { started: "Loading instructions", settled: "Loaded instructions", failed: "Could not load instructions" },
   read_skill_resource: { started: "Reading instructions", settled: "Read instructions", failed: "Could not read instructions" },
   memory_recall: {
@@ -430,6 +438,11 @@ const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   agents_reply: AGENT_PROSE.reply_to_message!,
   post_result: SIDEKICK_POST_RESULT_PROSE,
   sidekick_post_result: SIDEKICK_POST_RESULT_PROSE,
+  sidekick_report_outcome: {
+    started: "Recording task outcome",
+    settled: "Recorded task outcome",
+    failed: "Could not record task outcome",
+  },
   ...CONVERSATION_PROSE,
 };
 

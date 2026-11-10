@@ -54,6 +54,53 @@ function bootstrapEntries(database: DatabaseSync): { alarm_key: string; due_at: 
 }
 
 describe("the WorkspaceDO alarm migrations", () => {
+  it("retires receiving while keeping accepted Sidekick instructions and supported triggers", () => {
+    const database = new DatabaseSync(":memory:");
+    try {
+      apply(database, 142);
+      seedIdentity(database);
+      for (const [id, definition, loadable] of [
+        ["instructions", { definitionVersion: 2, triggers: [] }, 1],
+        ["legacy", { triggers: [] }, 0],
+        ["mail-only", { definitionVersion: 2, triggers: [{ type: "inbound_email" }] }, 0],
+        ["mixed", { definitionVersion: 2, triggers: [{ type: "manual" }, { type: "inbound_email" }] }, 0],
+      ] as const) {
+        database.prepare(`INSERT INTO automation_directory
+          (automation_id,workspace_id,author_user_id,source_version,payload_hash,lifecycle,scope,title,description,projected_at,
+           accepted_definition_revision, email_address, loadable)
+          VALUES (?,?,'author',1,'fixture','active','personal','Helper','Help',1,1,'helper@example.test',?)`)
+          .run(id, WORKSPACE_ID, loadable);
+        database.prepare(`INSERT INTO sidekick_revisions
+          (sidekick_id,definition_revision,definition_json,definition_hash,ready,created_at)
+          VALUES (?,1,?,'fixture',1,0)`).run(id, JSON.stringify({ instructions: "Keep these instructions.", ...definition }));
+      }
+      database.prepare(`INSERT INTO sidekick_runs
+        (sidekick_id,run_id,occurrence_key,trigger_json,definition_revision,harness_run_id,state,opening_json,created_at,updated_at)
+        VALUES ('mail-only','past-run','past-message',?,1,'past-harness','completed',?,0,1)`)
+        .run(JSON.stringify({ kind: "inbound_email", receiptId: "00000000-0000-7000-8000-0000000000a5", occurredAt: 0 }),
+          JSON.stringify({ textContent: "Historical evidence", structuredContent: { kind: "inbound_email" }, resourceId: "past-resource" }));
+      apply(database, 143, 142);
+      expect(database.prepare(`SELECT automation_id, loadable FROM automation_directory ORDER BY automation_id`).all())
+        .toEqual([{ automation_id: "instructions", loadable: 1 }, { automation_id: "legacy", loadable: 0 },
+          { automation_id: "mail-only", loadable: 0 }, { automation_id: "mixed", loadable: 0 }]);
+      const definitions = database.prepare(`SELECT definition_json FROM sidekick_revisions ORDER BY sidekick_id`).all() as { definition_json: string }[];
+      expect(definitions.map((row) => JSON.parse(row.definition_json))).toEqual([
+        { instructions: "Keep these instructions.", definitionVersion: 2, triggers: [] },
+        { instructions: "Keep these instructions.", triggers: [] },
+        { instructions: "Keep these instructions.", definitionVersion: 2, triggers: [] },
+        { instructions: "Keep these instructions.", definitionVersion: 2, triggers: [{ type: "manual" }] },
+      ]);
+      const history = database.prepare("SELECT trigger_json, opening_json FROM sidekick_runs WHERE run_id = 'past-run'").get() as
+        { trigger_json: string; opening_json: string };
+      expect(JSON.parse(history.trigger_json)).toEqual({ kind: "inbound_email", receiptId: "00000000-0000-7000-8000-0000000000a5", occurredAt: 0 });
+      expect(JSON.parse(history.opening_json)).toEqual({ textContent: "Historical evidence", structuredContent: { kind: "inbound_email" } });
+      expect(() => database.prepare("SELECT email_address FROM automation_directory")).toThrow(/no such column/);
+      expect(() => database.prepare("SELECT * FROM sidekick_email_receipts")).toThrow(/no such table/);
+      expect(() => database.prepare("SELECT * FROM automation_email_rate_windows")).toThrow(/no such table/);
+      expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally { database.close(); }
+  });
+
   it("wakes only existing active configured Sidekicks when delegated source reconciliation is installed", () => {
     const database = new DatabaseSync(":memory:");
     try {
@@ -977,12 +1024,12 @@ describe("the WorkspaceDO hosted-Sidekick migration", () => {
 });
 
 describe("the WorkspaceDO migration ledger", () => {
-  // Version 135 is the last one main shipped (2026-11-09, a47746dbc); every
-  // Organization object already holds a receipt for each of these, so none
-  // may change. Versions above it are unshipped until this branch deploys.
-  it("keeps every shipped migration fingerprint through v135 immutable", () => {
+  // Version 140 is the last one main shipped (2026-11-09, efb0cb70a, #1490);
+  // every Organization object already holds a receipt for each of these, so
+  // none may change. Versions above it are unshipped until this branch deploys.
+  it("keeps every shipped migration fingerprint through v140 immutable", () => {
     expect(WORKSPACE_DO_SCHEMA_MIGRATIONS
-      .filter((migration) => migration.version <= 135)
+      .filter((migration) => migration.version <= 140)
       .map((migration) => [migration.version, durableObjectMigrationHash(migration)]))
       .toEqual([
         [1, "fnv1a64:e9ab4e8aef8cdca6"], [2, "fnv1a64:3e3fba9e408f99fe"], [3, "fnv1a64:afd5eb5841d15b82"],
@@ -1030,7 +1077,9 @@ describe("the WorkspaceDO migration ledger", () => {
         [127, "fnv1a64:9f3ad595ab1fc371"], [128, "fnv1a64:35b8f81a850d140d"], [129, "fnv1a64:00c6839e8f9b941e"],
         [130, "fnv1a64:4fa6093296666607"], [131, "fnv1a64:a18c87740266b6dc"], [132, "fnv1a64:9444eeec188cccbb"],
         [133, "fnv1a64:2cfaa8d846ead288"], [134, "fnv1a64:a194ecef7441448b"],
-        [135, "fnv1a64:b86ab74741d1ec2c"],
+        [135, "fnv1a64:b86ab74741d1ec2c"], [136, "fnv1a64:004749e6fba5c090"],
+        [137, "fnv1a64:c285b65be2d86e3d"], [138, "fnv1a64:a67c499d6b02c2d7"], [139, "fnv1a64:865b394df846a776"],
+        [140, "fnv1a64:52f4155b2488d934"],
       ]);
   });
 

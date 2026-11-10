@@ -28,7 +28,8 @@ the Canvas or Sidekick row stops being unread.
 | `apps/api/src/durable-objects/conversation-reply-batch.ts` | The `reply_batch` alarm entry: a conversation's replies batched, then one `new_message` intent and row per recipient. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `noteActivityMoved`, `noteActivityReadMoved`, `publishActivityList`, the `activity` page in `sidebarPayload`, and the `activity_mark_all_seen` command. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Applies the page and the push through the versioned sidebar-list receiver; sends Mark all seen. |
-| `apps/desktop/src/renderer/components/activity-sidebar-section.tsx` | The rail section: rows, the unseen count, the empty state and Mark all seen. |
+| `apps/desktop/src/renderer/components/activity-sidebar-section.tsx` | The Activity list and its rows. |
+| `apps/desktop/src/renderer/screens/activity-home.tsx` | The Activity home shown when there is no item to open. |
 
 ## How it works
 
@@ -289,8 +290,9 @@ Activity section open, and so does anything else the pane opens: only a rail
 pick leaves it. Entering the section opens its top row in the pane, the row
 drawn open and its conversation reporting the read as a click would (pushed
 from the rail, replacing a Canvases-home landing at a launch with Activity stored;
-[`desktop-shell.md`](desktop-shell.md) has the navigation rule); an empty
-feed opens nothing, and nothing the feed does afterwards moves the pane. The rail badge is `unseenCount` ("3 unseen"). The dock
+[`desktop-shell.md`](desktop-shell.md) has the navigation rule). An empty
+feed opens `/activity`, which explains what will appear in the list. If items
+arrive while that page is open, it prompts the viewer to choose one. The rail badge is `unseenCount` ("3 unseen"). The dock
 badge, and an installed browser app's icon badge, is the same `unseenCount`
 while Rally is open (`dockBadgeCount`), the count a push sets on the icon
 while it is closed ([`push-notifications.md`](push-notifications.md)); the
@@ -378,7 +380,15 @@ them. The menu bar does not read it; the dock badge, and the push badge, count i
 - **A desktop from before the pivot** is refused the workspace socket ticket
   (`MINIMUM_SERVED_CLIENT_CONTRACT`), so it is sent no Activity at all.
 
+Canvas archive excludes every row about that Canvas from both the page and the
+unseen count, including a denial notice. Denials remain visible for inaccessible
+active Canvases; archive removes the target altogether. The archive transaction
+notes every stored recipient so the change reaches already-open workspace sockets.
+
 ## Testing
+
+`test-workers/workspace-activity.test.ts` covers archive removing a mention
+and its unseen count from an open recipient socket and a fresh subscribe.
 
 `apps/api/test-workers/workspace-activity.test.ts`, on real workerd
 (`pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts
@@ -421,6 +431,13 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 | `workspace_sidebar_list_state` | `list` | Row `activity`: the list's waterline. |
 
 ## Changelog
+
+### 2026-11-09 — Remove archived Canvas Activity atomically
+
+Archive must remove the content and attention attached to a Canvas, not merely
+its sidebar row. The page and count share the archive predicate, and the archive
+transaction advances recipient waterlines so an open feed does not retain stale
+previews until reconnect.
 
 ### 2026-11-09 — Document created: Activity is a per-person feed written with the push it mirrors
 

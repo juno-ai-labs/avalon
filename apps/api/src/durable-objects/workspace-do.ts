@@ -21,6 +21,7 @@ import {
   WORKSPACE_ACTIVITY_READS_MIGRATION,
   WORKSPACE_PEOPLE_RANKING_MIGRATION,
   WORKSPACE_REPLY_ALERT_MIGRATION,
+  THREAD_ERA_PARENTS_DROP_MIGRATION,
   THREAD_ERA_TABLES_DROP_MIGRATION,
 } from "./retired-workspace-schema";
 import {
@@ -62,9 +63,9 @@ import type {
 
 /**
  * One object the retirement walk has to close before this workspace can report
- * complete: a Canvas, a Sidekick, or a Thread or Channel still awaiting the
- * Thread retirement operation. `workspace_retirement_graph`'s CHECK admits all
- * four kinds from migration 137.
+ * complete: a Canvas or a Sidekick. `workspace_retirement_graph`'s CHECK also
+ * admits the Thread and Channel kinds, which a graph recorded before migration
+ * 141 can still hold.
  */
 interface RetirementGraphNode {
   parentKind: RetirementParentKind;
@@ -103,7 +104,7 @@ import {
   type InstallationRotationPrepare,
 } from './connector-installation-protocol';
 import { createInstallation, readInstallation, readInstallations, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
-import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, purgeRetiredMeetingObjects, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
+import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
 import { AgentIdSchema, type AgentId, type RetirementParentKind } from "@rally/contracts";
 import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
@@ -120,6 +121,7 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
+  asArtifactId,
   IdSchema,
   UserIdSchema,
   SubstreamIdSchema,
@@ -135,7 +137,6 @@ import {
   WorkspaceActivityListEventSchema,
   WorkspaceSidebarSchema,
   WorkspaceSocketClientEventSchema,
-  WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
   type ResourceHead,
   type WorkspaceResourceVersionsEvent,
@@ -147,8 +148,6 @@ import {
   type WorkspaceSidebar,
   type WorkspaceSocketSyncEvent,
   type WorkspaceSyncTopic,
-  ProductFeatureFlagKeySchema,
-  type ProductFeatureFlagKey,
   UpdateOnboardingJourneySchema,
   type OnboardingJourney,
   type UpdateOnboardingJourney,
@@ -173,7 +172,7 @@ import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_ST
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, RESOURCE_SEARCH_AUDIENCE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch, type ResourceSearchPace } from './resource-search-projection';
-import { isDraftUpload, requiresAttachment } from '../services/resource-read-rules';
+import { isDraftUpload, requiresAttachment, resourceCanvasState } from '../services/resource-read-rules';
 import { searchAudienceGroup, searchAudienceGroupIds } from '../services/search-audience';
 import { MEMORY_SEARCH_KEY_PURGE_MIGRATION, SEARCH_AUTHORIZATION_PUSH_MIGRATION } from './search-authorization-projection';
 import { observeSqlWrites } from './sql-write-observer';
@@ -186,6 +185,8 @@ import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import { ApiError } from "../lib/api-error";
 import {
   assertDurableObjectJurisdiction,
+  durableObjectStubForWorkspace,
+  durableObjectStubForArtifact,
   isWorkspacePlacementAffinityForRegion,
   workspacePlacementAffinity,
   type WorkspacePlacementAffinity,
@@ -228,7 +229,7 @@ import {
 } from "../services/workstream-authority";
 
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
-import { workspaceDOName } from "./names";
+import { artifactHostDOName, conversationObjectName, workspaceDOName } from "./names";
 import {
   OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
   applyRetirementGate,
@@ -250,10 +251,7 @@ import {
   type ScheduledAlarm,
   type ScheduledAlarmOutcome,
 } from "./scheduled-alarms";
-import {
-  applyDurableObjectSqliteMigrations,
-  type DurableObjectSqliteMigration,
-} from "./sqlite-migrations";
+import type { DurableObjectSqliteMigration } from "./sqlite-migrations";
 import {
   observableWorkspaceScheduledAlarmKind,
   WorkspaceAlarmInstrumentation,
@@ -416,8 +414,8 @@ import {
   MemoryDigestSyncMessageSchema,
   MemoryDigestSyncWorkSchema,
   completeMemoryDigestSync,
-  markMemoryDigestHolders,
   memoryDigestSyncWork,
+  MEMORY_DIGEST_CANVAS_ARCHIVE_TRIGGER,
   nextMemoryDigestSyncAt,
   publishMemoryDigestSync,
   releaseMemoryDigestSync,
@@ -458,6 +456,7 @@ import {
   WORKSPACE_PINS_MIGRATION,
 } from "./workspace-pin-storage";
 import {
+  advanceCanvasArtifactRecency,
   drainResourceVersionChanges,
   readResourceHeads,
   resourceVersionLedgerReady,
@@ -488,7 +487,7 @@ import {
   type MemberPreferencesReadRequest,
   type MemberPreferencesWriteRequest,
 } from "./member-preferences";
-import { CANVAS_SHARE_TABLES, HOSTED_PARENT_SCHEMA_STATEMENTS, HOSTED_PARENT_STATE_TABLES } from "./hosted-parent-schema";
+import { HOSTED_PARENT_SCHEMA_STATEMENTS } from "./hosted-parent-schema";
 import { ReceiveChildEffectsRequestSchema, type ReceiveChildEffectsRequest } from "./conversation-parent-object";
 import type { HostedConversation } from "./hosted-conversation";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
@@ -501,7 +500,6 @@ import {
   WorkspaceConnectorResourceResolveRequestSchema,
   WorkspaceDiscoveredResourcesRequestSchema,
   WorkspaceExpiredDraftReapRequestSchema,
-  WorkspaceInboundEmailResourceRequestSchema,
   WorkspaceReapableResourceObjectListRequestSchema,
   WorkspaceResourceDescriptorsRequestSchema,
   WorkspaceResourceExistsRequestSchema,
@@ -522,8 +520,6 @@ import {
   type WorkspaceDiscoveredResourcesRequest,
   type WorkspaceExpiredDraftReapRequest,
   type WorkspaceExpiredDraftReapResult,
-  type WorkspaceInboundEmailResourceRequest,
-  type WorkspaceInboundEmailResourceResult,
   type WorkspaceReapableResourceObjectList,
   type WorkspaceReapableResourceObjectListRequest,
   type WorkspaceResourceDescriptorList,
@@ -570,7 +566,6 @@ import {
   resolveWorkspaceConnectorResource,
   retireWorkspaceResourceObjectStaging,
   upsertWorkspaceDiscoveredResources,
-  upsertWorkspaceInboundEmailResource,
   workspaceResourceDescriptors,
   workspaceResourceExists,
 } from "./workspace-resources-storage";
@@ -712,14 +707,14 @@ import {
 import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-batch";
 import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
 import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
-import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
-import { canvasAppearanceReporter, canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
+import { CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_STATEMENTS, CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
+import { canvasReaderAllows, sidekickAttachedToCanvas, sidekickReaderAllows, writerSidekickAdmits } from "./canvas-sidekick-admission";
+import { canvasAppearanceReporter, canvasesAttachedTo, canvasesWrittenBy, canvasSidebarRows, HostedCanvas, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS, SIDEKICK_RUN_SEED_DROP_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
   HOSTED_SIDEKICK_ALARM_KINDS,
   hostedSidekickAlarmTarget,
-  sidekickReaderAllows,
   skillSource,
   skillSummary,
   type HostedSidekickRow,
@@ -744,6 +739,7 @@ import {
   type ConversationToolResolveResult,
   type ConversationToolScopeResult,
 } from "./workspace-conversation-tool-protocol";
+import { ArtifactDataWriteFactsRequestSchema, artifactDataWriteFacts, type ArtifactDataWriteFacts } from "./workspace-artifact-data-write";
 
 import { SIDEKICK_DELEGATION_SCHEMA_STATEMENTS, SidekickDelegationStorage } from "./sidekick-delegation-storage";
 
@@ -770,7 +766,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "automation_directory",
   "sidekick_conversation_attachments",
   // A hosted Sidekick's own rows: `HostedSidekick` is their only writer.
-  "sidekick_revisions", "sidekick_schedules", "sidekick_runs", "sidekick_email_receipts",
+  "sidekick_revisions", "sidekick_schedules", "sidekick_runs",
   "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts", "sidekick_reviews",
   "sidekick_audience", "sidekick_viewer_reads",
   // A hosted Canvas's own rows: `HostedCanvas` is their only writer.
@@ -783,9 +779,8 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",
-  // Claims live on `claimWebhookReceipt`; the only generic statements left
-  // naming this table are the connection service's pre-cutover branches, which
-  // run only when WORKSPACE_DOS is unbound and so never reach this object.
+  // Claims live on `claimWebhookReceipt`; no generic statement names this
+  // table any more.
   // `connector_oauth_attempts` is deliberately absent: the attempt-bind
   // statement batched with a connection mutation in
   // `persistConnectionMutation` still arrives generically, and refusing the
@@ -804,15 +799,14 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "memory_table_rows_fts",
   "memory_table_cells",
   "memory_table_mutations",
-  // The Slack agent session, context, and feedback tables are typed methods
-  // now. `slack_link_challenges`, `slack_agent_thread_claims`,
+  // The Slack agent context table is a typed method now; migration 141
+  // dropped the session and feedback tables beside it.
+  // `slack_link_challenges`, `slack_agent_thread_claims`,
   // `slack_agent_pending_prompts`, and `slack_ingress_jobs` are deliberately
   // absent: the schedule's alarm-target derivation reads their due times
   // generically through this object's local executor, alongside the other
   // alarm sources.
-  "slack_agent_sessions",
   "slack_agent_contexts",
-  "slack_agent_feedback",
   // Bindings are typed methods from their first version.
   "external_conversation_bindings",
 ] as const;
@@ -1027,7 +1021,7 @@ const RETIRED_ALARM_KINDS: ReadonlySet<string> = new Set([
  */
 const WORKSPACE_DISPATCHED_ALARM_KINDS: ReadonlySet<string> = new Set([
   ...HOSTED_SIDEKICK_ALARM_KINDS, ...RETIRED_ALARM_KINDS, ...WORKSPACE_SCHEDULE_ALARM_KINDS,
-  SCOPE_INVITATION_INDEX_ALARM, SCOPE_INVITATION_DELIVERY_ALARM, SCHEDULE_BOOTSTRAP_ALARM_KIND, CANVAS_NAMING_ALARM_KIND,
+  SCOPE_INVITATION_INDEX_ALARM, SCOPE_INVITATION_DELIVERY_ALARM, SCHEDULE_BOOTSTRAP_ALARM_KIND, CANVAS_NAMING_ALARM_KIND, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM,
   REPLY_BATCH_ALARM_KIND,
 ]);
 
@@ -1246,6 +1240,15 @@ const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V121 = [
 const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V62 = [
   ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55,
 ] as const;
+
+/**
+ * The tables that reference `connector_connections` now: v121's, less the
+ * Slack agent sessions and feedback migration 141 dropped. A later rebuild of
+ * the parent holds these; `connector-connection-dependents.test.ts` checks the
+ * list against the schema.
+ */
+export const CONNECTOR_CONNECTION_DEPENDENTS = CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V121
+  .filter((table) => table !== "slack_agent_feedback" && table !== "slack_agent_sessions");
 
 /**
  * The version-capture triggers as migration 112 left them, named so migration
@@ -3867,7 +3870,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 94,
   description: "make every private Space Organization-wide",
   // Every Space is Organization-wide. A Space grants no reader to its
-  // Channels, so no Channel changes; see docs/spaces.md#every-space-is-organization-wide.
+  // Channels, so no Channel changes; see docs/architecture.md#spaces-space-access-sources-and-projects.
   statements: SPACE_PUBLIC_ONLY_MIGRATION,
 }, {
   version: 95,
@@ -3886,7 +3889,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 98,
   description: "a Channel's unread waterline and each person's read position in it",
   // Breakout-identical columns, advanced only by placing a thread; see
-  // workspace-channel-read-storage.ts and docs/spaces.md#channel-read-state.
+  // workspace-channel-read-storage.ts and docs/architecture.md#spaces-space-access-sources-and-projects.
   statements: WORKSPACE_CHANNEL_READS_MIGRATION,
 }, {
   version: 99,
@@ -3907,7 +3910,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 102,
   description: "a Space may be individual: each member's Personal Channel",
   // A rebuild, because SQLite cannot widen a CHECK; see
-  // SPACE_INDIVIDUAL_SCOPE_MIGRATION and docs/spaces.md#the-personal-channel.
+  // SPACE_INDIVIDUAL_SCOPE_MIGRATION and docs/architecture.md#spaces-space-access-sources-and-projects.
   statements: SPACE_INDIVIDUAL_SCOPE_MIGRATION,
 }, {
   version: 103,
@@ -3925,7 +3928,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 104,
   description: "messages in a Channel itself, outside any thread",
   // Existing Generals get what General opens with from migration 103's pass; see
-  // SPACE_MESSAGES_MIGRATION and docs/spaces.md#channel-messages.
+  // SPACE_MESSAGES_MIGRATION and docs/architecture.md#spaces-space-access-sources-and-projects.
   statements: SPACE_MESSAGES_MIGRATION,
 }, {
   version: 105,
@@ -3969,7 +3972,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 109,
   description: "a Channel message can be a thread's merged result and Channel news",
-  // See SPACE_MESSAGE_MERGES_MIGRATION and docs/conversation-merge.md.
+  // See SPACE_MESSAGE_MERGES_MIGRATION and docs/architecture.md#retired-documents.
   statements: SPACE_MESSAGE_MERGES_MIGRATION,
 }, {
   version: 110,
@@ -4036,7 +4039,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 115,
   description: "every open thread listed for the suggestion backfill",
-  // See SUGGESTION_BACKFILL_MIGRATION and docs/conversation-suggestions.md.
+  // See SUGGESTION_BACKFILL_MIGRATION and docs/workstream-durable-object.md#retired-documents.
   statements: SUGGESTION_BACKFILL_MIGRATION,
 }, {
   version: 116,
@@ -4056,7 +4059,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 119,
   description: "a watch on every conversation import's reservation, archiving one whose thread has not opened an hour on",
-  // See IMPORT_RESERVATION_RECLAIM_MIGRATION and docs/session-import.md.
+  // See IMPORT_RESERVATION_RECLAIM_MIGRATION and docs/workstream-durable-object.md#retired-documents.
   statements: IMPORT_RESERVATION_RECLAIM_MIGRATION,
 }, {
   version: 120,
@@ -4392,6 +4395,39 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "record each person's Activity: one row per notice they were sent",
   // See WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS and docs/activity.md.
   statements: WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS,
+}, {
+  version: 141,
+  description: "drop the Thread, Breakout and Channel tables the Thread operations kept, and digest schedules",
+  // See THREAD_ERA_PARENTS_DROP_MIGRATION and docs/workspace-retirement.md.
+  statements: THREAD_ERA_PARENTS_DROP_MIGRATION,
+}, {
+  version: 142,
+  description: "retain a Canvas archive tombstone and remove archived Canvases from active admission",
+  statements: [...CANVAS_ARCHIVE_STATEMENTS, ...MEMORY_DIGEST_CANVAS_ARCHIVE_TRIGGER],
+}, {
+  version: 143,
+  description: "retire email admission and addresses while preserving Sidekick definitions and conversations",
+  statements: [
+    `UPDATE sidekick_revisions SET definition_json = json_set(definition_json, '$.triggers',
+       json(COALESCE((SELECT json_group_array(json(value)) FROM json_each(definition_json, '$.triggers')
+         WHERE json_extract(value, '$.type') <> 'inbound_email'), '[]')))
+      WHERE EXISTS (SELECT 1 FROM json_each(definition_json, '$.triggers')
+        WHERE json_extract(value, '$.type') = 'inbound_email')`,
+    // Keep the accepted loading decision: retiring a trigger must not expose
+    // its instructions to conversations. Only an explicit publication or
+    // manager reconciliation may change that capability.
+    `UPDATE sidekick_runs SET opening_json = json_remove(opening_json, '$.resourceId') WHERE opening_json IS NOT NULL`,
+    `ALTER TABLE automation_directory DROP COLUMN email_address`,
+    `DROP TABLE sidekick_email_receipts`,
+    `DROP TABLE IF EXISTS automation_email_receipts`,
+    `DROP TABLE IF EXISTS automation_email_rate_windows`,
+    `DROP TABLE IF EXISTS workstream_email_receipts`,
+  ],
+}, {
+  version: 144,
+  description: "a Sidekick's Canvas attachments become the one record of which Canvases it works on, and mark the one a Canvas's Chat made",
+  // See SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS and docs/automation-lifecycle.md#attached-conversations.
+  statements: SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4423,8 +4459,11 @@ const ReorderSidebarPinsRequestSchema = SidebarPinOrderRequestSchema.extend({
   workspaceId: WorkspaceIdSchema, userId: UserIdSchema,
 });
 const CanvasContextRequestSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, canvasId: IdSchema });
+const SidekickCanvasContextRequestSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, sidekickId: IdSchema, userId: UserIdSchema });
 const CanvasForSidekickRunRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, sidekickId: IdSchema, runId: IdSchema, canvasId: IdSchema.nullable(),
+  /** The person the run acts as, who must be able to open a Canvas it names. */
+  userId: UserIdSchema,
 });
 
 /** Send a sidebar list push; a socket closing as it is sent is not a failure, since a reconnect receives the whole list. */
@@ -4802,8 +4841,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         try {
           // A new version of any resource, from whichever producer wrote it:
           // every open preview of it moves to the new head.
-          const changes = drainResourceVersionChanges(this.state.storage.sql);
+          const changes = this.state.storage.transactionSync(() => {
+            const sql = this.state.storage.sql;
+            const drained = drainResourceVersionChanges(sql);
+            if (advanceCanvasArtifactRecency(sql, drained)) this.noteCanvasDirectoryMoved();
+            return drained;
+          });
           if (changes.length > 0) {
+            this.publishCanvasList();
             this.publishResourceVersions(readResourceHeads(this.state.storage.sql,
               changes.map((change) => change.resourceId)));
           }
@@ -4840,6 +4885,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
       }));
+      // Held at 57 is terminal now: the operator RPCs that cleared the hold
+      // are gone, so an object here misses every later migration. Say so on
+      // every wake rather than fail quietly.
+      if (state.storage.sql.exec<{ version: number }>(
+        "SELECT COALESCE(MAX(version), 0) AS version FROM _sql_schema_migrations",
+      ).one().version === 57) {
+        logError(env, "workspace_meeting_retirement_held", { workspace_id: this.workspaceId() });
+      }
       this.detectUnheardLedger();
       await this.armNextAlarm();
     });
@@ -5101,280 +5154,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Every Thread and Channel this Organization still holds, with each
-   * conversation under it, for the Thread retirement walk
-   * (`services/thread-retirement-service.ts`).
-   *
-   * A Thread is a `channels` row and a Channel is a `spaces` row; either can
-   * also survive as parent state alone, so `parent_metadata` is read too. Its
-   * conversations are Main `0` (always named, as `childRegistry` names it,
-   * because a Space created before 2026-09-26 has a hidden one) and every
-   * child the parent registry, its projections or the Breakout directory
-   * knows. Canvases and Sidekicks are other parents, in other tables, and are
-   * never named here: nor is a Thread a conversion made a Canvas of, whose
-   * `channels` row a partly failed conversion leaves beside the Canvas row of
-   * the same id. Its Main is the Canvas's Chat now; retiring it would
-   * tombstone a live Canvas.
-   */
-  async threadRetirementInventory(): Promise<{
-    parents: { parentKind: "workstream" | "space"; parentId: string; substreamIds: string[] }[];
-  }> {
-    await this.initialized;
-    const sql = this.state.storage.sql;
-    const parents = sql.exec<{ parent_kind: "workstream" | "space"; parent_id: string }>(
-      `SELECT 'workstream' AS parent_kind, workstream_id AS parent_id FROM channels
-       UNION SELECT 'space', space_id FROM spaces
-       UNION SELECT parent_kind, parent_id FROM parent_metadata
-       EXCEPT SELECT 'workstream', canvas_id FROM canvas_directory
-       ORDER BY parent_kind DESC, parent_id`,
-    ).toArray();
-    return {
-      parents: parents.map((parent) => ({
-        parentKind: parent.parent_kind,
-        parentId: parent.parent_id,
-        substreamIds: this.retiredParentSubstreamIds(parent.parent_id),
-      })),
-    };
-  }
-
-  /** A Thread's or Channel's conversations, as `threadRetirementInventory` names them. */
-  private retiredParentSubstreamIds(parentId: string): string[] {
-    return this.state.storage.sql.exec<{ substream_id: string }>(
-      `SELECT '0' AS substream_id
-       UNION SELECT substream_id FROM parent_children WHERE parent_id = ?
-       UNION SELECT substream_id FROM parent_child_projections WHERE parent_id = ?
-       UNION SELECT substream_id FROM breakouts WHERE workstream_id = ?
-       ORDER BY substream_id`,
-      parentId, parentId, parentId,
-    ).toArray().map((row) => row.substream_id);
-  }
-
-  /**
-   * The Threads that become Canvases (`services/thread-conversion-service.ts`):
-   * every `channels` row whose id made an artifact (`artifact_registry`) or
-   * links one through `workspace_workstream_resource_links`. A Channel
-   * (`spaces`) is never one. With each, what the conversion keeps and the
-   * conversations under it; and the artifacts whose conversation names no
-   * Thread, Canvas or Sidekick and that no Canvas holds, which nothing
-   * converts.
-   */
-  async threadConversionInventory(): Promise<{
-    candidates: {
-      threadId: string; title: string; artifactCount: number; linkedArtifactCount: number;
-      participantCount: number; substreamIds: string[];
-    }[];
-    artifactsWithoutThread: number;
-  }> {
-    await this.initialized;
-    const sql = this.state.storage.sql;
-    const linked = `(SELECT COUNT(DISTINCT link.resource_id) FROM workspace_workstream_resource_links link
-           JOIN artifact_registry artifact ON artifact.resource_id = link.resource_id
-          WHERE link.workstream_id = thread.workstream_id AND artifact.workstream_id <> thread.workstream_id)`;
-    const rows = sql.exec<{
-      workstream_id: string; title: string; artifact_count: number; linked_count: number; participant_count: number;
-    }>(
-      `SELECT * FROM (SELECT thread.workstream_id, thread.title,
-              (SELECT COUNT(*) FROM artifact_registry artifact WHERE artifact.workstream_id = thread.workstream_id) AS artifact_count,
-              ${linked} AS linked_count,
-              (SELECT COUNT(*) FROM channel_viewers viewer WHERE viewer.workstream_id = thread.workstream_id
-                 AND (thread.scope = 'personal' OR viewer.is_participant = 1)) AS participant_count
-         FROM channels thread)
-        WHERE artifact_count > 0 OR linked_count > 0
-        ORDER BY workstream_id`,
-    ).toArray();
-    return {
-      candidates: rows.map((row) => ({
-        threadId: row.workstream_id, title: row.title, artifactCount: row.artifact_count,
-        linkedArtifactCount: row.linked_count, participantCount: row.participant_count,
-        substreamIds: this.retiredParentSubstreamIds(row.workstream_id),
-      })),
-      artifactsWithoutThread: sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM artifact_registry
-          WHERE workstream_id NOT IN (SELECT workstream_id FROM channels)
-            AND workstream_id NOT IN (SELECT canvas_id FROM canvas_directory)
-            AND workstream_id NOT IN (SELECT automation_id FROM automation_directory)
-            AND resource_id NOT IN (SELECT resource_id FROM canvas_artifacts)`,
-      ).one().count,
-    };
-  }
-
-  /**
-   * Make the Canvas of the same id from one Thread's rows, the first step of
-   * converting it (`services/thread-conversion-service.ts`), and carry over
-   * what other tables here key on the Thread's Main as a Thread's:
-   *
-   * - its directory row: the Thread's title, creator (`channels`, else the
-   *   earliest viewer, else refused `thread_conversion_no_creator`), creation
-   *   time, last activity and authority generation (the conversation's own,
-   *   which the directory row projected); a Workspace-scoped Thread is open
-   *   to the Organization and a personal one to its participants;
-   * - as participants, every viewer of a personal Thread and the viewers
-   *   marked participants of a Workspace-scoped one; every artifact it made
-   *   or linked;
-   * - the memory facts learned in its Main, whose source names a Thread
-   *   (`<id>`) and so opens to nobody, renamed to the Canvas's
-   *   (`canvas:<id>`), with the sweep receipt the next sweep continues from;
-   * - the resource locations in its Main, which decide who reads the
-   *   artifacts in it, and a Sidekick's attachment to its Main.
-   *
-   * Answers the Canvas's artifacts too, so the conversion carries those a
-   * Breakout attached into the Chat before it retires the Breakout.
-   *
-   * Just before the Canvas's row is made, the Thread's own share rows
-   * (`CANVAS_SHARE_TABLES`: its invitations and grants) are deleted, since the
-   * Canvas keys its own by the same id and the conversion's sweep leaves those
-   * tables to it.
-   *
-   * The Canvas's row is the resume marker: one already there is left as it
-   * is (`created: false`). The carry-over is idempotent and runs every pass,
-   * so a pass interrupted between the two finishes it.
-   */
-  async convertThreadToCanvas(input: { workspaceId: string; threadId: string; title: string }): Promise<{
-    created: boolean; artifactResourceIds: string[];
-  }> {
-    const canvas = await this.hostedCanvas(input.threadId, input.workspaceId);
-    return this.canvasWrite(() => {
-      const sql = this.state.storage.sql;
-      const thread = sql.exec<{
-        title: string; scope: "personal" | "workspace"; created_by_user_id: string | null;
-        source_created_at: number; last_activity_at: number; authority_generation: number;
-      }>(
-        `SELECT title, scope, created_by_user_id, source_created_at, last_activity_at, authority_generation
-           FROM channels WHERE workstream_id = ?`, input.threadId,
-      ).toArray()[0];
-      let created = false;
-      if (thread) {
-        const viewers = sql.exec<{ user_id: string; added_at: number; is_participant: number }>(
-          `SELECT user_id, COALESCE(participant_added_at, projected_at) AS added_at, is_participant FROM channel_viewers
-            WHERE workstream_id = ? ORDER BY added_at, user_id`, input.threadId,
-        ).toArray();
-        const creator = thread.created_by_user_id ?? viewers[0]?.user_id ?? null;
-        // A personal Thread's viewer row is what admitted them, so every one
-        // is kept; a Workspace-scoped Thread's admits the Organization, and a
-        // participant row for someone who only listed it would outlive a
-        // later narrowing, so only its participants are.
-        const participants = thread.scope === "personal" ? viewers : viewers.filter((viewer) => viewer.is_participant === 1);
-        if (creator === null) {
-          throw new ApiError(409, "thread_conversion_no_creator", "This Thread names no creator and has no viewers",
-            undefined, "thread_conversion_no_creator");
-        }
-        const artifacts = sql.exec<{ resource_id: string; added_at: number }>(
-          `SELECT resource_id, MIN(added_at) AS added_at FROM (
-             SELECT resource_id, created_at AS added_at FROM artifact_registry WHERE workstream_id = ?1
-             UNION ALL SELECT link.resource_id, link.projected_at
-               FROM workspace_workstream_resource_links link
-               JOIN artifact_registry artifact ON artifact.resource_id = link.resource_id
-              WHERE link.workstream_id = ?1
-           ) GROUP BY resource_id ORDER BY resource_id`, input.threadId,
-        ).toArray();
-        created = canvas.row() ? false : this.state.storage.transactionSync(() => {
-          // The Thread's shares, deleted before the Canvas of the same id
-          // exists, so whatever these tables hold for the id afterwards is the
-          // Canvas's and the sweep below leaves it.
-          for (const table of CANVAS_SHARE_TABLES) sql.exec(`DELETE FROM "${table}" WHERE parent_id = ?`, input.threadId);
-          return canvas.createFromThread({
-          workspaceId: input.workspaceId, canvasId: input.threadId, title: input.title, createdByUserId: creator,
-          createdAt: thread.source_created_at, updatedAt: thread.last_activity_at,
-          visibility: thread.scope === "workspace" ? "workspace" : "participants",
-          authorityGeneration: thread.authority_generation,
-          participants: participants.map((viewer) => ({ userId: viewer.user_id, addedAt: viewer.added_at })),
-          artifacts: artifacts.map((artifact) => ({ resourceId: artifact.resource_id, addedAt: artifact.added_at })),
-          }).created;
-        });
-      } else if (!canvas.row()) {
-        throw new ApiError(404, "thread_conversion_thread_not_found", "No Thread or Canvas has this id",
-          undefined, "thread_conversion_thread_not_found");
-      }
-      const threadSource = input.threadId;
-      const canvasSource = `canvas:${input.threadId}`;
-      this.state.storage.transactionSync(() => {
-        const facts = sql.exec(
-          `UPDATE memory_facts SET source_conversations_json = (
-             SELECT json_group_array(CASE WHEN value = ?1 THEN ?2 ELSE value END)
-               FROM json_each(memory_facts.source_conversations_json))
-            WHERE EXISTS (SELECT 1 FROM json_each(memory_facts.source_conversations_json) WHERE value = ?1)`,
-          threadSource, canvasSource,
-        ).rowsWritten;
-        sql.exec(`UPDATE OR IGNORE memory_sweep_receipts SET conversation = ? WHERE conversation = ?`, canvasSource, threadSource);
-        // A copy elsewhere may now show what the Canvas's readers can read.
-        if (facts > 0) markMemoryDigestHolders(sql);
-        sql.exec(
-          `UPDATE OR IGNORE authorization_locations SET parent_kind = 'canvas'
-            WHERE parent_id = ? AND substream_id = '0' AND parent_kind = 'workstream'`, input.threadId,
-        );
-        sql.exec(
-          `UPDATE OR IGNORE sidekick_conversation_attachments SET parent_kind = 'canvas'
-            WHERE parent_kind = 'workstream' AND parent_id = ? AND substream_id = '0'`, input.threadId,
-        );
-      });
-      const artifactResourceIds = sql.exec<{ resource_id: string }>(
-        "SELECT resource_id FROM canvas_artifacts WHERE canvas_id = ? ORDER BY resource_id", input.threadId,
-      ).toArray().map((row) => row.resource_id);
-      return { created, artifactResourceIds };
-    });
-  }
-
-  /**
-   * Delete one Thread's or Channel's rows once every conversation under it is
-   * retired: its directory row and viewer rows (and a Thread's Breakout
-   * directory), and its parent state in every table
-   * `HOSTED_PARENT_STATE_TABLES` names that the schema still holds, so a table
-   * phase C drops first is skipped. A Thread's resource links, which 139
-   * keeps for the Thread conversion, and a Sidekick's attachment to one of
-   * its conversations go with it; the pin and access tables 139 dropped no
-   * longer reference them. Idempotent: a second call finds nothing to
-   * delete.
-   *
-   * `convertedToCanvas`, the conversion's sweep, leaves `CANVAS_SHARE_TABLES`
-   * alone: the Canvas of the same id is live by then and its invitations and
-   * grants are there, while the Thread's were deleted before it was made.
-   */
-  async deleteRetiredThreadParent(input: {
-    parentKind: "workstream" | "space"; parentId: string; convertedToCanvas?: boolean;
-  }): Promise<void> {
-    await this.initialized;
-    const sql = this.state.storage.sql;
-    const present = new Set(sql.exec<{ name: string }>(
-      "SELECT name FROM sqlite_schema WHERE type = 'table'",
-    ).toArray().map((row) => row.name));
-    const parentTables = HOSTED_PARENT_STATE_TABLES.filter((table) => present.has(table)
-      && !(input.convertedToCanvas && CANVAS_SHARE_TABLES.includes(table)));
-    const resourceLinks = present.has("workspace_workstream_resource_links");
-    this.state.storage.transactionSync(() => {
-      // Checked at commit, when every referencing row is gone too, so the
-      // delete order among the parent tables does not matter: definition
-      // order deletes `parent_invitation_operations` before the
-      // `parent_invitations` rows whose foreign key names it with no ON
-      // DELETE, which an immediate check refuses. The nuance: inside
-      // `transactionSync` a deferred violation is not raised here but at the
-      // commit of the whole event, after this method returns, so it would
-      // surface as this RPC failing rather than inside the service's
-      // try/catch. Only a row this sweep does not delete can cause one, and
-      // every referencing table is in the list.
-      sql.exec("PRAGMA defer_foreign_keys = ON");
-      // First: while a participant migration row stands, a Breakout's member
-      // rows refuse deletion (`parent_breakout_members_freeze_delete`).
-      if (parentTables.includes("parent_participant_migrations")) {
-        sql.exec("DELETE FROM parent_participant_migrations WHERE parent_id = ?", input.parentId);
-      }
-      for (const table of parentTables) sql.exec(`DELETE FROM "${table}" WHERE parent_id = ?`, input.parentId);
-      if (input.parentKind === "workstream") {
-        // A Sidekick's attachment to one of its conversations; a converted
-        // Thread's Main was renamed to the Canvas's first.
-        sql.exec("DELETE FROM sidekick_conversation_attachments WHERE parent_kind = 'workstream' AND parent_id = ?", input.parentId);
-        if (resourceLinks) sql.exec("DELETE FROM workspace_workstream_resource_links WHERE workstream_id = ?", input.parentId);
-        sql.exec("DELETE FROM breakout_viewers WHERE workstream_id = ?", input.parentId);
-        sql.exec("DELETE FROM breakouts WHERE workstream_id = ?", input.parentId);
-        sql.exec("DELETE FROM channel_viewers WHERE workstream_id = ?", input.parentId);
-        sql.exec("DELETE FROM channels WHERE workstream_id = ?", input.parentId);
-      } else {
-        sql.exec("DELETE FROM space_viewers WHERE space_id = ?", input.parentId);
-        sql.exec("DELETE FROM spaces WHERE space_id = ?", input.parentId);
-      }
-    });
-  }
-
-  /**
    * The parent step of a conversation's effects, delivered by the activity
    * Queue consumer. The directory step lands in the same transaction. The
    * people the effects name are learned before it, so the transaction does
@@ -5471,6 +5250,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * would hide the same change when it does.
    */
   private readonly writerSidekickReaders = new Map<string, string>();
+  /** What each attached Sidekick's Canvases showed of it when this instance last saw its row; see `noteAttachedSidekickFace`. In memory, as above. */
+  private readonly attachedSidekickFaces = new Map<string, string>();
   /** Set by a hosted Canvas write that moved a directory row; the Canvas list is published after it. */
   private canvasDirectoryMoved = false;
   /** Readers whose read of a Canvas's Chat moved; see `publishCanvasList`. */
@@ -5497,9 +5278,40 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.canvasReadersMoved.add(userId);
       },
       noteCanvasDirectoryChanged: () => this.noteCanvasDirectoryMoved(),
+      noteAttachedCanvasChanged: (canvasId) => this.noteAttachedCanvasMoved(canvasId),
+      archiveMadeSidekicks: (canvasId, now) => {
+        const host = this.hostedSidekickHost();
+        for (const sidekickId of this.madeSidekickIds(canvasId)) {
+          if (new HostedSidekick(host, sidekickId).archiveWithCanvas(now)) this.madeSidekicksArchived.push(sidekickId);
+        }
+      },
       noteActivityChanged: (userId) => this.noteActivityMoved(userId),
       noteActivityReadMoved: (userId, parentId) => this.noteActivityReadMoved(userId, parentId),
     };
+  }
+
+  /** A Canvas some Sidekick is attached to changed what that Sidekick's card says of it: the Sidekick list moves. One indexed probe. */
+  private noteAttachedCanvasMoved(canvasId: string): void {
+    const sql = this.state.storage.sql;
+    if (sql.exec(`SELECT 1 FROM sidekick_conversation_attachments WHERE parent_kind = 'canvas' AND parent_id = ? LIMIT 1`, canvasId)
+      .toArray().length === 0) return;
+    sql.exec(`UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`);
+    this.sidekickDirectoryMoved = true;
+  }
+
+  /** Sidekicks a Canvas archive archived in its transaction, owed `afterSidekickRegistrations` once it commits. */
+  private madeSidekicksArchived: string[] = [];
+
+  /** The Sidekicks a Canvas's Chat made that are not archived (the `made_here` attachments). */
+  private madeSidekickIds(canvasId: string): string[] {
+    return this.state.storage.sql.exec<{ automation_id: string }>(
+      `SELECT attachment.automation_id FROM sidekick_conversation_attachments attachment
+         JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
+        WHERE attachment.parent_kind = 'canvas' AND attachment.parent_id = ? AND attachment.substream_id = '0'
+          AND attachment.made_here = 1 AND directory.lifecycle <> 'deleted'
+        ORDER BY attachment.automation_id`,
+      canvasId,
+    ).toArray().map((row) => row.automation_id);
   }
 
   /**
@@ -5533,6 +5345,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     try {
       return await run();
     } finally {
+      // A no-op unless the write archived a Sidekick the Canvas made.
+      this.publishSidekickList();
       this.publishCanvasList();
       this.publishActivityList();
       await this.afterHostedWrite();
@@ -5550,6 +5364,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return (await this.hostedCanvas(input.canvasId, input.workspaceId)).detail(input);
   }
 
+  /** Archive for everyone and close the conversations it no longer admits. */
+  async canvasArchive(input: Parameters<HostedCanvas["archive"]>[0]): Promise<void> {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    await this.canvasWrite(async () => {
+      this.madeSidekicksArchived = [];
+      canvas.archive(input);
+      this.broadcastPresence();
+      // A Sidekick attached to it names it on its dashboard card.
+      this.noteAttachedCanvasMoved(input.canvasId);
+      // What `HostedSidekick.remove` owes after its own archive commits: the
+      // Sidekicks this archive took with it stop matching connector events.
+      const archived = this.madeSidekicksArchived;
+      this.madeSidekicksArchived = [];
+      for (const sidekickId of archived) await this.afterSidekickRegistrations(sidekickId, null, []);
+    });
+  }
+
   /** Record an artifact a publish attached to a Canvas; `noted: false` for an id that is no Canvas. See `HostedCanvas.noteArtifact`. */
   async canvasNoteArtifact(input: Parameters<HostedCanvas["noteArtifact"]>[0]) {
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
@@ -5559,25 +5390,48 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * Which Canvas a Sidekick run publishes into: the one named, which must be
-   * one this Sidekick writes, or the one this run already made; `null` when
-   * the run has made none yet, and its caller creates it.
+   * attached to this Sidekick, or the one this run already made; `null` when
+   * the run has made none yet, and its caller creates it. A run's own Canvas
+   * is attached as it is made, so the attachment is the one publish grant.
    */
-  async canvasForSidekickRun(rawInput: { workspaceId: string; sidekickId: string; runId: string; canvasId: string | null }): Promise<{ canvasId: string | null }> {
+  async canvasForSidekickRun(rawInput: { workspaceId: string; sidekickId: string; runId: string; canvasId: string | null; userId: string }): Promise<{ canvasId: string | null }> {
     await this.initialized;
     const input = parseRpcInput(CanvasForSidekickRunRequestSchema, rawInput, "canvas_for_sidekick_run");
     this.assertWorkspace(input.workspaceId);
     if (input.canvasId !== null) {
-      const row = this.state.storage.sql.exec<{ writer_sidekick_id: string | null }>(
-        `SELECT writer_sidekick_id FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, input.canvasId, input.workspaceId,
+      const sql = this.state.storage.sql;
+      const row = sql.exec<CanvasRow>(
+        `SELECT * FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, input.canvasId, input.workspaceId,
       ).toArray()[0];
-      if (row?.writer_sidekick_id !== input.sidekickId) {
-        throw new ApiError(404, "canvas_not_written_by_sidekick", "This Sidekick does not write that Canvas");
+      if (!row || !sidekickAttachedToCanvas(sql, input.sidekickId, input.canvasId)) {
+        throw new ApiError(404, "canvas_not_attached_to_sidekick", "This Sidekick is not attached to that Canvas");
+      }
+      if (row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
+      // The attachment says where the Sidekick may write; the person it acts
+      // as must still be able to open the Canvas, as every post there asks.
+      const relationship = await this.readRelationship(input.workspaceId, input.userId);
+      const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
+      if (relationship?.status !== "active" || !canvasReaderAllows(row, { userId: input.userId, actorRole }, sql)) {
+        throw new ApiError(403, "canvas_access_denied", "The person this run acts as cannot open that Canvas");
       }
       return { canvasId: input.canvasId };
     }
-    return { canvasId: this.state.storage.sql.exec<{ canvas_id: string }>(
-      `SELECT canvas_id FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`, input.sidekickId, input.runId,
-    ).toArray()[0]?.canvas_id ?? null };
+    const row = this.state.storage.sql.exec<{ canvas_id: string; archived_at: number | null }>(
+      `SELECT canvas_id, archived_at FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`, input.sidekickId, input.runId,
+    ).toArray()[0];
+    if (row && row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
+    return { canvasId: row?.canvas_id ?? null };
+  }
+
+  /**
+   * The Canvas list one person sees, as their sidebar socket would send it,
+   * for a client that holds no socket (`GET /canvases`, the MCP server).
+   */
+  async canvasListFor(input: { workspaceId: string; userId: string; accessClass: "member" | "guest"; titleQuery?: string }) {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    return canvasSidebarRows(this.state.storage.sql, { userId: input.userId, member: input.accessClass === "member" },
+      this.presentByCanvas(), SIDEBAR_LIST_LIMIT, canvasAppearanceReporter(this.env), input.titleQuery ?? null);
   }
 
   /** The Canvases a Sidekick writes that this viewer may open; see `canvasesWrittenBy`. */
@@ -5597,8 +5451,39 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const input = parseRpcInput(CanvasContextRequestSchema, rawInput, "canvas_context");
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
     const row = canvas?.row();
-    if (!canvas || !row || row.workspace_id !== input.workspaceId) return null;
-    return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.artifacts() };
+    if (!canvas || !row || row.archived_at !== null || row.workspace_id !== input.workspaceId) return null;
+    return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.agentArtifacts(), sidekicks: canvas.sidekicks() };
+  }
+
+  /**
+   * What a Sidekick's run is told about the Canvases it was attached to: each
+   * one's title and artifacts, as `canvasContext` gives a Canvas's own Chat.
+   * Only Canvases somebody attached it to (the one it was made in, and any its
+   * wizard attached), never the Canvas each of its own runs made, which would
+   * grow by one per run; and only those the acting person may open now.
+   */
+  async sidekickCanvasContext(rawInput: { workspaceId: string; sidekickId: string; userId: string }) {
+    await this.initialized;
+    const input = parseRpcInput(SidekickCanvasContextRequestSchema, rawInput, "sidekick_canvas_context");
+    this.assertWorkspace(input.workspaceId);
+    const sql = this.state.storage.sql;
+    const attached = sql.exec<CanvasRow>(
+      `SELECT canvas.* FROM sidekick_conversation_attachments attachment
+         JOIN canvas_directory canvas ON canvas.canvas_id = attachment.parent_id
+        WHERE attachment.automation_id = ?1 AND attachment.parent_kind = 'canvas' AND attachment.substream_id = '0'
+          AND canvas.workspace_id = ?2 AND canvas.archived_at IS NULL
+          AND (canvas.writer_sidekick_id IS NULL OR canvas.writer_sidekick_id <> ?1)
+        ORDER BY attachment.attached_at, attachment.parent_id`,
+      input.sidekickId, input.workspaceId,
+    ).toArray();
+    if (attached.length === 0) return [];
+    const relationship = await this.readRelationship(input.workspaceId, input.userId);
+    if (relationship?.status !== "active") return [];
+    const actorRole = relationship.accessClass === "member" ? relationship.role ?? "member" : null;
+    const host = this.hostedCanvasHost();
+    return attached.filter((row) => canvasReaderAllows(row, { userId: input.userId, actorRole }, sql)).map((row) => ({
+      canvasId: row.canvas_id, title: row.title, artifacts: new HostedCanvas(host, row.canvas_id).agentArtifacts(),
+    }));
   }
 
   /** Retitle a Canvas or choose its appearance; see `HostedCanvas.update`. */
@@ -5899,6 +5784,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private hostedSidekickHost(): HostedSidekickHost {
     return {
+      resolveConversationToolTarget: (input) => this.resolveConversationToolTarget(input),
       env: this.env,
       storage: this.state.storage,
       alarms: this.scheduledAlarms,
@@ -5926,6 +5812,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.sidekickReadersMoved.add(userId);
       },
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
+      noteMadeInCanvasChanged: () => this.noteCanvasDirectoryMoved(),
+      noteAttachedSidekickFace: (sidekickId, face) => {
+        if (this.attachedSidekickFaces.get(sidekickId) === face) return;
+        this.attachedSidekickFaces.set(sidekickId, face);
+        this.noteCanvasDirectoryMoved();
+      },
       noteWriterReaders: (sidekickId, readers) => {
         if (this.writerSidekickReaders.get(sidekickId) === readers) return;
         this.writerSidekickReaders.set(sidekickId, readers);
@@ -6089,6 +5981,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // Canvas readers; forget them, so the same change committed later is
       // still pushed (once, at worst, too many).
       this.writerSidekickReaders.delete(automationId);
+      this.attachedSidekickFaces.delete(automationId);
       throw error;
     } finally {
       this.publishSidekickList();
@@ -6110,17 +6003,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * The Sidekicks a batch read covers, each with its accepted revision, in one
-   * statement: the ids asked for, plus every one a Channel recommends or owns
-   * when `channelId` is given, plus every active loadable one when
-   * `allLoadable` is set. Order is the caller's, then the Channel's
-   * recommendations, then what it owns, then the Organization's, with no
-   * repeats; an id that names no Sidekick is skipped, and `onlyScope` keeps
+   * statement: the ids asked for, plus every active loadable one when
+   * `allLoadable` is set. Order is the caller's, then the Organization's, with
+   * no repeats; an id that names no Sidekick is skipped, and `onlyScope` keeps
    * one scope.
    */
   private selectSidekickRows(selection: {
     workspaceId: string;
     automationIds?: readonly string[] | undefined;
-    channelId?: string | undefined;
     allLoadable?: boolean | undefined;
     onlyScope?: string | undefined;
   }): (HostedSidekickRow & { accepted_definition_json: string | null })[] {
@@ -6128,11 +6018,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `WITH requested(automation_id, tier, position) AS (
          SELECT value, 0, key FROM json_each(?1)
          UNION ALL
-         SELECT sidekick_id, 1, ROW_NUMBER() OVER (ORDER BY attached_at, sidekick_id)
-           FROM parent_sidekicks WHERE ?2 IS NOT NULL AND parent_id = ?2
-         UNION ALL
-         SELECT automation_id, 3, ROW_NUMBER() OVER (ORDER BY automation_id)
-           FROM automation_directory WHERE ?3 = 1 AND workspace_id = ?4 AND lifecycle = 'active' AND loadable = 1
+         SELECT automation_id, 1, ROW_NUMBER() OVER (ORDER BY automation_id)
+           FROM automation_directory WHERE ?2 = 1 AND workspace_id = ?3 AND lifecycle = 'active' AND loadable = 1
        ), ranked AS (
          SELECT automation_id, ROW_NUMBER() OVER (ORDER BY tier, position) AS rank
            FROM (
@@ -6146,14 +6033,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          FROM ranked
          JOIN automation_directory directory
            ON directory.automation_id = ranked.automation_id
-          AND directory.workspace_id = ?4 AND directory.region IS NOT NULL
+          AND directory.workspace_id = ?3 AND directory.region IS NOT NULL
          LEFT JOIN sidekick_revisions accepted
            ON accepted.sidekick_id = directory.automation_id
           AND accepted.definition_revision = directory.accepted_definition_revision
-        WHERE ?5 IS NULL OR directory.scope = ?5
+        WHERE ?4 IS NULL OR directory.scope = ?4
         ORDER BY ranked.rank`,
       JSON.stringify(selection.automationIds ?? []),
-      selection.channelId ?? null,
       selection.allLoadable ? 1 : 0,
       selection.workspaceId,
       selection.onlyScope ?? null,
@@ -6164,8 +6050,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Replace a hosted Sidekick's connector registrations inside the caller's
    * transaction, and return the event sequence they take effect after. No
    * generation fence: the Sidekick's own transaction orders its writes.
-   * `external_registration_generations` held the retired projection RPC's
-   * fence and is no longer read or written.
    */
   private writeSidekickRegistrations(automationId: string, evaluators: readonly unknown[]): number {
     const workspaceId = this.workspaceId();
@@ -6343,10 +6227,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.admitExternalEvent(input));
   }
 
-  async sidekickAdmitInboundEmail(input: Parameters<HostedSidekick["admitInboundEmail"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.admitInboundEmail(input));
-  }
-
   async sidekickReadSkillSource(input: Parameters<HostedSidekick["readSkillSource"]>[0]) {
     return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readSkillSource(input));
   }
@@ -6404,18 +6284,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Rail metadata for each selected Sidekick the audience may see, optionally only Organization ones. */
   async sidekickReadSkillSummaries(input: SidekickBatchSkillReadRequest): Promise<SidekickAttachment[]> {
     await this.initialized;
-    const { automationIds, channelId, allLoadable, onlyScope, ...request } = SidekickBatchSkillReadRequestSchema.parse(input);
+    const { automationIds, allLoadable, onlyScope, ...request } = SidekickBatchSkillReadRequestSchema.parse(input);
     await this.ensureParentWorkspace(request.workspaceId);
-    return this.selectSidekickRows({ workspaceId: request.workspaceId, automationIds, channelId, allLoadable, onlyScope })
+    return this.selectSidekickRows({ workspaceId: request.workspaceId, automationIds, allLoadable, onlyScope })
       .flatMap((row) => skillSummary(row, request) ?? []);
   }
 
   /** What each selected Sidekick lends a run as a skill; one entry per Sidekick that lends one. */
   async sidekickReadSkillSources(input: SidekickBatchSkillReadRequest): Promise<SidekickSkillSource[]> {
     await this.initialized;
-    const { automationIds, channelId, allLoadable, onlyScope, ...request } = SidekickBatchSkillReadRequestSchema.parse(input);
+    const { automationIds, allLoadable, onlyScope, ...request } = SidekickBatchSkillReadRequestSchema.parse(input);
     await this.ensureParentWorkspace(request.workspaceId);
-    return this.selectSidekickRows({ workspaceId: request.workspaceId, automationIds, channelId, allLoadable, onlyScope })
+    return this.selectSidekickRows({ workspaceId: request.workspaceId, automationIds, allLoadable, onlyScope })
       .flatMap((row) => skillSource(row, request) ?? []);
   }
 
@@ -7157,8 +7037,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // Thread and Channel parents' own alarms are gone (plan step C-2); an
         // entry an object armed before that deploy has nothing left to do.
         if (RETIRED_ALARM_KINDS.has(alarm.kind)) return;
-        // A Canvas's share deliveries and lookup rows. One a retired Thread or
-        // Channel armed has no parent left to deliver for.
+        // Archive deliveries commit with the tombstone and retry independently.
+        if (alarm.kind === CANVAS_ARCHIVE_CONVERSATION_ALARM) {
+          const delivery = parseRpcInput(z.strictObject({ canvasId: IdSchema, substreamId: SubstreamIdSchema,
+            users: z.array(UserIdSchema) }), JSON.parse(alarm.payload ?? "null"), "canvas_archive_conversation");
+          const child = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
+            asWorkspaceId(workspaceId), conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), delivery.canvasId, delivery.substreamId));
+          await child.archiveFromParent({ workspaceId, canvasId: delivery.canvasId });
+          const sent = await Promise.all(delivery.users.map((userId) => publishAccessRevocation(this.env, {
+            reason: "workstream_participant_removed", workspaceId: asWorkspaceId(workspaceId), userId, sessionId: null,
+            target: { scope: "substream", workstreamId: delivery.canvasId, substreamId: delivery.substreamId },
+          })));
+          if (sent.some((accepted) => !accepted)) throw new Error("canvas_archive_revocation_deferred");
+          return;
+        }
+        if (alarm.kind === CANVAS_ARCHIVE_ARTIFACT_ALARM) {
+          const delivery = parseRpcInput(z.strictObject({ canvasId: IdSchema }), JSON.parse(alarm.payload ?? "null"), "canvas_archive_artifact");
+          const host = durableObjectStubForArtifact(this.env, this.env.ARTIFACT_HOSTS,
+            artifactHostDOName(this.env.AVALON_REGION, asArtifactId(alarm.key)), this.placementAffinity() ?? undefined);
+          await host.archiveCanvas({ workspaceId, canvasId: delivery.canvasId });
+          return;
+        }
         // A Canvas made with no title, titled from its opening message.
         if (alarm.kind === CANVAS_NAMING_ALARM_KIND) {
           await this.canvasWrite(async () => (await this.canvasParent(alarm.key))?.nameFromOpening());
@@ -7576,49 +7475,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Re-evaluate one product flag for every connected person and send the full
-   * client contract privately to each socket. The Queue/RPC wake-up carries no
-   * value: Flagship remains authoritative, and two members of this workspace
-   * may match different targeting rules.
-   */
-  async notifyProductFeatureFlagChanged(
-    flagKey: ProductFeatureFlagKey,
-    workspaceId: string,
-    placementAffinity: WorkspacePlacementAffinity,
-  ): Promise<number> {
-    await this.initialized;
-    this.ensureIdentity(workspaceId, placementAffinity);
-    const changedFlag = ProductFeatureFlagKeySchema.parse(flagKey);
-    const socketsByUser = new Map<string, WebSocket[]>();
-    for (const socket of this.state.getWebSockets()) {
-      const attachment = readAttachment(socket);
-      if (!attachment?.subscribed) continue;
-      socketsByUser.set(attachment.userId, [
-        ...(socketsByUser.get(attachment.userId) ?? []),
-        socket,
-      ]);
-    }
-    let sent = 0;
-    await Promise.all([...socketsByUser].map(async ([userId, sockets]) => {
-      const payload = JSON.stringify(WorkspaceFeatureFlagsEventSchema.parse({
-        type: "workspace_feature_flags",
-        occurredAt: new Date().toISOString(),
-        changedFlag,
-        flags: await resolveClientFeatureFlagsForSubject(this.env, { userId, workspaceId }),
-      }));
-      for (const socket of sockets) {
-        try {
-          socket.send(payload);
-          sent += 1;
-        } catch {
-          // Hibernation owns cleanup; a reconnect gets a fresh evaluation.
-        }
-      }
-    }));
-    return sent;
-  }
-
-  /**
    * Drop every socket this object holds for a person whose access ended, and
    * carry the same revocation to the work streams they could be reading.
    *
@@ -7879,13 +7735,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.pendingSyncFollowUps.push(this.recordSyncFollowUp({
         workspaceId: request.workspaceId, syncTopics: ["automations"],
       }));
+      // The Canvas's card and detail name its Sidekicks, and the Sidekick's
+      // card names its Canvases: both lists moved.
+      if (!result.alreadyAttached) {
+        this.noteCanvasDirectoryMoved();
+        sql.exec(`UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`);
+        this.sidekickDirectoryMoved = true;
+      }
       return result;
     });
     if (!attached) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
+    this.publishSidekickList();
+    this.publishCanvasList();
     // A notification failure must not turn a committed attachment into a
     // failed tool call. The normal post-commit lane retries the signal.
     await this.afterHostedWrite();
     return { ok: true, alreadyAttached: attached.alreadyAttached, conversation: conversationToolEntry(target) };
+  }
+
+  /**
+   * What `write_artifact_data` needs to gate a row write: the artifact a
+   * resource is, its Canvas, and whether that Canvas is open and attached to
+   * the Sidekick named. One local read; it admits nobody by itself
+   * (`workspace-artifact-data-write.ts`).
+   */
+  async artifactDataWriteFacts(input: unknown): Promise<ArtifactDataWriteFacts | null> {
+    await this.initialized;
+    const request = parseRpcInput(ArtifactDataWriteFactsRequestSchema, input, "artifact_data_write_facts");
+    this.assertWorkspace(request.workspaceId);
+    const sql = this.state.storage.sql;
+    const relationship = await this.readRelationship(request.workspaceId, request.userId);
+    const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
+    const facts = artifactDataWriteFacts(sql, request);
+    if (!facts) return null;
+    const canvas = sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, facts.canvasId).toArray()[0];
+    return { ...facts, actorAdmitted: relationship?.status === "active" && canvas !== undefined
+      && canvasReaderAllows(canvas, { userId: request.userId, actorRole }, sql) };
   }
 
   /**
@@ -7942,7 +7827,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & {
       author_user_id: string; run_as_user_id: string | null; owning_substream_id: string; workspace_id: string; last_run_at: number | null;
-      shared_count: number; shared: number;
+      shared_with_user_ids: string; shared: number;
     }>(
       `SELECT directory.*, ${AUTOMATION_AUDIENCE_SQL},
               EXISTS (SELECT 1 FROM sidekick_audience audience
@@ -7974,7 +7859,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     const report = this.invalidAppearanceReporter(request.workspaceId);
-    return { items: admitted.map((row) => automationSummary(row, report)) };
+    // The sidebar's rule: a member's own reach, without an owner's into every Canvas.
+    const canvases = canvasesAttachedTo(this.state.storage.sql,
+      { userId: request.userId, actorRole: request.accessClass === "guest" ? null : "member" }, admitted.map((row) => row.automation_id));
+    return { items: admitted.map((row) => ({ ...automationSummary(row, report), attachedCanvases: canvases.get(row.automation_id) ?? [] })) };
   }
 
   /**
@@ -9713,76 +9601,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }));
   }
 
-  /** Operator-only RPC, including closed workspaces; no product route exposes it. */
-  async purgeMeetingNoteObjects(resourceId?: string) {
-    await this.initialized;
-    const workspaceId = this.workspaceId();
-    if (!workspaceId) throw new Error("workspace_object_identity_missing");
-    return purgeRetiredMeetingObjects(this.state.storage, this.env.PAYLOADS, this.env.AVALON_REGION, workspaceId, resourceId === undefined ? undefined : IdSchema.parse(resourceId));
-  }
-
-  /** Delete only decisions whose canonical resource has verified meeting provenance. */
-  async purgeMeetingSearchAuthorization() {
-    await this.initialized;
-    const sql = this.state.storage.sql;
-    const keys = sql.exec<{ cache_key: string }>(`SELECT cache_key FROM search_authorization_keys
-      WHERE resource_id IN (SELECT resource_id FROM retired_meeting_resources)`).toArray();
-    for (const { cache_key: key } of keys) {
-      // The retirement check rejects new registrations and publications. Drain an
-      // already admitted KV write before deleting its external copy.
-      await this.searchPublications.get(key)?.catch(() => {});
-      if (this.env.AUTHORIZATION_CACHE) await this.env.AUTHORIZATION_CACHE.delete(key);
-      this.state.storage.transactionSync(() => {
-        sql.exec('DELETE FROM search_authorization_dependencies WHERE cache_key = ?', key);
-        sql.exec('DELETE FROM authorization_snapshots WHERE cache_key = ?', key);
-        sql.exec('DELETE FROM search_authorization_keys WHERE cache_key = ?', key);
-      });
-    }
-    sql.exec(`DELETE FROM search_authorization_push WHERE kind = 'resource'
-      AND target_id IN (SELECT resource_id FROM retired_meeting_resources)`);
-    return { deletedKeys: keys.length };
-  }
-
-  /** Operator calls after verifying external cleanup; pending cleanup is an error. */
-  async finalizeMeetingRetirement() {
-    await this.initialized;
-    await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
-      storage: this.state.storage,
-      migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
-      component: MIGRATION_COMPONENT,
-      workerVersionId: this.env.APP_VERSION ?? "unknown",
-    }));
-    this.detectUnheardLedger();
-    return { schemaVersion: 58 };
-  }
-
   private isRetiredMeetingResource(resource: z.infer<typeof AuthorizationResourceSchema>): boolean {
     return resource.kind === 'resource' && this.state.storage.sql.exec(
       'SELECT 1 FROM retired_meeting_resources WHERE resource_id = ?', resource.resourceId).toArray().length > 0;
-  }
-
-  async retiredMeetingInventory() {
-    await this.initialized;
-    const sql = this.state.storage.sql;
-    const tables = sql.exec<{ name: string }>("SELECT name FROM sqlite_schema WHERE type = 'table'").toArray();
-    const references: Array<{ table: string; count: number }> = [];
-    for (const { name } of tables) {
-      // Cloudflare's hidden KV tables are not accessible through SQL.
-      if (name === 'retired_meeting_resources' || /^(?:_+cf_|sqlite_)/.test(name)) continue;
-      const quoted = '"' + name.replaceAll('"', '""') + '"';
-      if (!sql.exec<{ name: string }>(`PRAGMA table_info(${quoted})`).toArray().some(column => column.name === 'resource_id')) continue;
-      const count = sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM ${quoted} WHERE resource_id IN (SELECT resource_id FROM retired_meeting_resources)`).one().count;
-      if (count) references.push({ table: name, count });
-    }
-    return {
-      workspaceId: this.workspaceId(),
-      schemaVersion: sql.exec<{ version: number }>('SELECT MAX(version) AS version FROM _sql_schema_migrations').one().version,
-      featureTables: tables.map(row => row.name).filter(name => ['notes', 'note_transcript_segments', 'note_privacy_change_outbox', 'note_resource_deletion_outbox', 'workspace_batch_dispatch_note_targets'].includes(name)),
-      references,
-      resources: sql.exec<{
-        resource_id: string; note_id: string | null; objects_deleted: number;
-      }>('SELECT resource_id, note_id, objects_deleted FROM retired_meeting_resources ORDER BY resource_id').toArray(),
-    };
   }
 
   async createConnectorInstallation(input: InstallationCreate) {
@@ -10283,21 +10104,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceResourceSlugBacklogRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return listWorkspaceResourcesAwaitingSlug(this.state.storage, request.workspaceId);
-  }
-
-  /**
-   * The resource for one inbound email, created or refreshed in one critical
-   * section — a fresh insert deliberately skips the follow-up refresh, which
-   * used to fire the semantic-version trigger and record a phantom second
-   * version of every newly ingested email.
-   */
-  async upsertInboundEmailResource(
-    input: WorkspaceInboundEmailResourceRequest,
-  ): Promise<WorkspaceInboundEmailResourceResult> {
-    await this.initialized;
-    const request = WorkspaceInboundEmailResourceRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return upsertWorkspaceInboundEmailResource(this.state.storage, request);
   }
 
   /** Register the resources a provider webhook mentioned for one connection. */
@@ -10872,7 +10678,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return WorkspaceDirectoryNotificationStateSchema.parse({
         authorityGeneration: canvas.authority_generation,
         listable: canvasReaderAllows(canvas, { userId: request.userId, actorRole }, sql),
-        title: canvas.title, emailAddress: null,
+        title: canvas.title,
       });
     }
     const sidekick = sql.exec<{ automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null;
@@ -10884,7 +10690,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceDirectoryNotificationStateSchema.parse({
       authorityGeneration: sidekick.authority_generation,
       listable: sidekickReaderAllows(sidekick, { userId: request.userId, actorRole }, sql),
-      title: sidekick.title, emailAddress: null,
+      title: sidekick.title,
     });
   }
 
@@ -11128,9 +10934,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
     const queued = this.state.storage.transactionSync(() => {
       let queued = 0;
-      const parents = this.state.storage.sql.exec<{ parent_id: string; parent_kind: 'workstream' | 'automation' }>(
-        `SELECT workstream_id AS parent_id, 'workstream' AS parent_kind FROM channels
-         UNION SELECT automation_id AS parent_id, 'automation' AS parent_kind FROM automation_directory`,
+      const parents = this.state.storage.sql.exec<{ parent_id: string; parent_kind: 'automation' }>(
+        `SELECT automation_id AS parent_id, 'automation' AS parent_kind FROM automation_directory`,
       ).toArray();
       const workspaceId = asWorkspaceId(input.workspaceId);
       for (const parent of parents) {
@@ -11183,41 +10988,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Discovery for one parent or one conversation.
-   *
-   * A parent job for a Channel hosted here is answered in place: its children
-   * are `parent_children` rows in this database, so registering them is a few
-   * statements in the caller's transaction rather than a Queue hop to a Worker
-   * that would call straight back into this object for the list and the
-   * registration. A conversation job and a Sidekick parent (its children are
-   * `sidekick_children` rows, which this path does not read) still go through
-   * the Queue.
+   * Discovery for one parent or one conversation, queued for the
+   * authorization projection Queue.
    *
    * Returns how many `authorization_delivery` rows it wrote, from the rows the
    * write returned: the caller's only reason to re-arm the alarm.
    */
   private enqueueAuthorizationDiscovery(job: AuthorizationProjectionJob): number {
-    if (job.substreamId === undefined) {
-      const hostedChannel = this.state.storage.sql.exec(
-        `SELECT 1 FROM parent_metadata parent
-          WHERE parent.parent_id = ? AND parent.parent_kind = 'workstream'`,
-        job.parentId,
-      ).toArray().length > 0;
-      if (hostedChannel) {
-        this.state.storage.sql.exec('DELETE FROM authorization_delivery WHERE job_key = ?',
-          JSON.stringify([job.parentId, null]));
-        return this.registerAuthorizationChildrenInPlace({
-          workspaceId: job.workspaceId, parentId: job.parentId,
-          // The same rows `HostedParent.listAuthorizationChildren` answers.
-          substreamIds: this.state.storage.sql.exec<{ substream_id: string }>(
-            `SELECT substream_id FROM parent_children WHERE parent_id = ? AND (kind = 'main' OR status = 'ready')
-              ORDER BY substream_id`,
-            job.parentId,
-          ).toArray().map((row) => SubstreamIdSchema.parse(row.substream_id)),
-          ...(job.mutationAt === undefined ? {} : { mutationAt: job.mutationAt }),
-        });
-      }
-    }
     return this.state.storage.sql.exec(`INSERT INTO authorization_delivery(job_key, payload_json, not_before) VALUES (?, ?, 0)
       ON CONFLICT(job_key) DO UPDATE SET payload_json = CASE
         WHEN json_extract(authorization_delivery.payload_json, '$.mutationAt') IS NULL THEN excluded.payload_json
@@ -11289,8 +11066,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const parents = this.state.storage.sql.exec<{ pending: number }>('SELECT COUNT(*) AS pending FROM authorization_backfill WHERE completed = 0').one().pending;
     const children = this.state.storage.sql.exec<{ pending: number }>('SELECT COUNT(*) AS pending FROM authorization_backfill_children WHERE completed = 0').one().pending;
     const undiscovered = this.state.storage.sql.exec<{ pending: number }>(`SELECT COUNT(*) AS pending FROM (
-      SELECT workstream_id AS parent_id FROM channels
-      UNION SELECT automation_id AS parent_id FROM automation_directory
+      SELECT automation_id AS parent_id FROM automation_directory
     ) directory LEFT JOIN authorization_backfill tracked USING(parent_id) WHERE tracked.parent_id IS NULL`).one().pending;
     return { pendingParents: parents + undiscovered, pendingChildren: children,
       complete: parents === 0 && children === 0 && undiscovered === 0 };
@@ -11406,10 +11182,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return request.resourceIds.map((resourceId) => {
       const row = this.state.storage.sql.exec<{
         provider: string; resource_type: string; uploaded_by_user_id: string | null;
-        attachment_status: string | null; updated_at: string; connection_id: string | null;
-      }>('SELECT provider, resource_type, uploaded_by_user_id, attachment_status, updated_at, connection_id FROM resources WHERE id = ? AND workspace_id = ?',
+        attachment_status: string | null; updated_at: string; connection_id: string | null; publication_parent_id: string | null;
+      }>('SELECT provider, resource_type, uploaded_by_user_id, attachment_status, updated_at, connection_id, publication_parent_id FROM resources WHERE id = ? AND workspace_id = ?',
       resourceId, request.workspaceId).toArray()[0];
-      if (!row) return { resourceId, exists: false as const, validatedAt: Date.now() };
+      if (!row || (row.provider === 'avalon_generated'
+        && resourceCanvasState(this.state.storage.sql, resourceId, row.publication_parent_id).archived)) {
+        return { resourceId, exists: false as const, validatedAt: Date.now() };
+      }
       const connection = row.connection_id ? this.state.storage.sql.exec<{ scope: string; owner_user_id: string | null; status: string }>(
         'SELECT scope, owner_user_id, status FROM connector_connections WHERE id = ?', row.connection_id,
       ).toArray()[0] : null;
@@ -11560,7 +11339,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
     // The viewer's own Sidekicks, the Organization's, and those shared with
     // them, each with what they have not read in its shared conversation.
-    return this.state.storage.sql.exec<AutomationDirectoryRow & { shared_count: number; unread: number; needs_input: number;
+    const rows = this.state.storage.sql.exec<AutomationDirectoryRow & { shared_with_user_ids: string; unread: number; needs_input: number;
       run_state: "working" | "needs_input" | null; pending_question: string | null; running: number; last_run_at: number | null;
       trigger_kinds: string | null; schedule_time_zone: string | null;
       pinned_position: number | null }>(
@@ -11583,8 +11362,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       userId,
       workspaceId,
       limit,
-    ).toArray().map((row) => ({ ...automationSummary(row, this.invalidAppearanceReporter(workspaceId)),
-      pinnedPosition: row.pinned_position }));
+    ).toArray();
+    // Only a member is sent this list. Their role is not read: an owner's
+    // reach into every Canvas is for managing one, not for listing it here.
+    const canvases = canvasesAttachedTo(this.state.storage.sql, { userId, actorRole: "member" }, rows.map((row) => row.automation_id));
+    return rows.map((row) => ({ ...automationSummary(row, this.invalidAppearanceReporter(workspaceId)),
+      pinnedPosition: row.pinned_position, attachedCanvases: canvases.get(row.automation_id) ?? [] }));
   }
 
   /**
@@ -12002,17 +11785,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // its receipt, so resuming never un-retires what the last pass finished.
     this.state.storage.transactionSync(() => {
       const now = Date.now();
-      for (const row of sql.exec<{ workstream_id: string }>(
-        "SELECT workstream_id FROM channels",
-      ).toArray()) {
-        sql.exec(
-          `INSERT OR IGNORE INTO workspace_retirement_graph
-             (parent_kind, parent_id, recorded_at, retired_at)
-           VALUES ('workstream', ?, ?, NULL)`,
-          row.workstream_id,
-          now,
-        );
-      }
       // A Canvas's Chat is its own conversation object, closed with its Canvas.
       for (const { canvas_id: canvasId } of sql.exec<{ canvas_id: string }>("SELECT canvas_id FROM canvas_directory").toArray()) {
         sql.exec(
@@ -12031,21 +11803,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
              (parent_kind, parent_id, recorded_at, retired_at)
            VALUES ('automation', ?, ?, NULL)`,
           row.automation_id,
-          now,
-        );
-      }
-      // Archived Spaces too. What is being closed is an object, not a product
-      // surface: a Space created before 2026-09-26 still has a hidden main
-      // conversation, and a graph that skipped it would report the
-      // Organization retired with one of its objects still open. The walk
-      // retires child `0` before the Space, the way it does for a Channel; for
-      // a newer Space that object never existed and holds only the tombstone.
-      for (const { space_id: spaceId } of sql.exec<{ space_id: string }>("SELECT space_id FROM spaces").toArray()) {
-        sql.exec(
-          `INSERT OR IGNORE INTO workspace_retirement_graph
-             (parent_kind, parent_id, recorded_at, retired_at)
-           VALUES ('space', ?, ?, NULL)`,
-          spaceId,
           now,
         );
       }
@@ -12161,10 +11918,6 @@ applyRetirementGate(WorkspaceDO, {
     // report that it had reached them.
     // Only the entry points. A permit carries the whole call beneath it, so the
     // private helpers these reach need no entry of their own.
-    "purgeMeetingNoteObjects",
-    "purgeMeetingSearchAuthorization",
-    "finalizeMeetingRetirement",
-    "retiredMeetingInventory",
     "beginWorkspaceRetirement",
     "recordRetiredNode",
     "recordRetiredChild",

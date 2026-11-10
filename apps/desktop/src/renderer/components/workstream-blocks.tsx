@@ -2110,7 +2110,7 @@ export function HumanMessageBody({
  *
  * Most are a sentence — a scheduled wake-up, a delivery confirmation. A few are
  * the entire input a run was launched with: a digest brief, an automation's
- * opening prompt, an inbound email. Those arrive thousands of words long and
+ * opening prompt. Those arrive thousands of words long and
  * used to be laid out in full, burying the conversation they preface under a
  * screen or more of scrolling. Every system row is clamped to the five lines
  * that `--system-message-lines` sets, and the reader opens the rest; the short
@@ -2831,9 +2831,8 @@ export function MessageBlock({
     // by hand, had already drifted from it, and could not survive the accent set
     // changing. The accent *is* a palette colour now, so there is nothing left
     // to indirect through.
-    // The bubble is the person's pastel pair (`markColors`), themed per
-    // appearance, as design.html §2 and §5 draw the reader's own turn: the
-    // saturated hue under white ink read 3.58:1 on rose.
+    // The bubble uses the sender's pastel pair (`markColors`), themed per
+    // appearance. Saturated rose under white ink read 3.58:1.
     ...(profile ? {
       '--person-dot': personalColor(profile.color),
       '--person-ink': personalColorInk(profile.color),
@@ -2926,10 +2925,7 @@ export function MessageBlock({
       const response = (
         <article
           aria-label={ownHumanResponse ? 'Your elicitation response' : `Response from ${responseAuthor}`}
-          className={clsx(
-            'message-block human-message elicitation-response-message',
-            ownHumanResponse ? 'own-human-message' : 'coworker-message',
-          )}
+          className="message-block human-message elicitation-response-message"
           id={prompt ? undefined : `message-${message.id}`}
           data-profile-color={profile?.color}
           style={personStyle}
@@ -2937,7 +2933,7 @@ export function MessageBlock({
           {/* The same identity line every human turn carries, the reader's own
               included — see the header on the ordinary authored row below. */}
           <MessageByline
-            align={ownHumanResponse ? 'end' : 'start'}
+            align="end"
             author={responseAuthor}
             createdAt={message.createdAt}
             dot={false}
@@ -3022,7 +3018,6 @@ export function MessageBlock({
       className={clsx(
         'message-block',
         human ? 'human-message' : 'agent-message',
-        human && (ownHumanMessage ? 'own-human-message' : 'coworker-message'),
         message.streaming && 'is-streaming',
         sending && 'is-sending',
         pending && 'is-pending-delivery',
@@ -3038,9 +3033,7 @@ export function MessageBlock({
           turn that answers it only for other people makes the reader's own
           messages the one thing on screen with no time against it. */}
       <MessageByline
-        // design.html §2: only the reader's own turn sits on the trailing edge;
-        // a colleague's and Rally's lead with their avatar.
-        align={ownHumanMessage ? 'end' : 'start'}
+        align={human ? 'end' : 'start'}
         initial={ownHumanMessage ? undefined : human ? initialOf(humanAuthorName) : automation || message.importProvenance ? undefined : 'R'}
         author={human ? humanAuthorName : message.importProvenance ? importedProvider : automation ? automationAuthor : 'Rally'}
         importedBy={message.importProvenance?.importedByName}

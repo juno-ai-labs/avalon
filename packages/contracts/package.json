@@ -12,6 +12,8 @@
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
     "./conversation-parent": "./src/conversation-parent.ts",
     "./canvases": "./src/canvases.ts",
+    "./mcp-oauth": "./src/mcp-oauth.ts",
+    "./canvas-build": "./src/canvas-build.ts",
     "./conversation-view": "./src/conversation-view.ts",
     "./conversation-attention": "./src/conversation-attention.ts",
     "./scope-grants": "./src/scope-grants.ts",
@@ -36,16 +38,15 @@
     "./search": "./src/search.ts",
     "./tool-pagination": "./src/tool-pagination.ts",
     "./push-notifications": "./src/push-notifications.ts",
-    "./private-access": "./src/private-access.ts",
     "./regions": "./src/regions.ts",
     "./zod-diagnostics": "./src/zod-diagnostics.ts",
     "./platform-diagnostics": "./src/platform-diagnostics.ts",
+    "./password-login": "./src/password-login.ts",
     "./browser-session": "./src/browser-session.ts",
     "./client-session": "./src/client-session.ts",
-    "./desktop-actions": "./src/desktop-actions.ts",
-    "./browser-runtime": "./src/browser-runtime.ts",
     "./usage": "./src/usage.ts",
-    "./message-issues": "./src/message-issues.ts"
+    "./message-issues": "./src/message-issues.ts",
+    "./runtime-config": "./src/runtime-config.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

@@ -36,6 +36,8 @@ export async function createAutomation(env: Env, input: {
   authorUserId: string;
   scope: AutomationScope;
   automationId?: string;
+  /** The Canvas whose Chat is making it; see `AutomationCreateRequestSchema.madeInCanvasId`. */
+  madeInCanvasId?: string;
 }): Promise<{ automationId: string; created: boolean }> {
   const workspaceId = asWorkspaceId(input.workspaceId);
   const automationId = asAutomationId(input.automationId ?? uuidV7());
@@ -48,6 +50,7 @@ export async function createAutomation(env: Env, input: {
     authorUserId: asUserId(input.authorUserId),
     scope: input.scope,
     authorityGeneration: authority.generation,
+    ...(input.madeInCanvasId ? { madeInCanvasId: input.madeInCanvasId } : {}),
   });
   // Both steps run on a replay too. The object's row commits first, and a
   // first call that died after it answered `created: false` forever after,
@@ -65,8 +68,6 @@ export async function createAutomation(env: Env, input: {
     participantUserIds: [input.authorUserId],
     harnessStatus: "idle",
     titleStatus: "settled",
-    emailAddress: null,
-    emailRouteStatus: null,
     systemKind: null,
     modelOverride: null,
     now: Date.now(),

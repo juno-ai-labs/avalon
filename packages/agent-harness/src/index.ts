@@ -1,3 +1,4 @@
+import { ADDRESSING_FALLBACK_MODEL, TYPESAFE_ADDRESSING_MODEL, MODEL_IDS } from "@rally/contracts/runtime-config";
 import type { RallyCheckpointPort } from "./evaluation";
 import type { ToolPaginationResult } from "@rally/contracts/tool-pagination";
 export { runRallyEvaluation, parseRallyCheckpoint, type RallyCheckpoint, type RallyCheckpointPort } from "./evaluation";
@@ -34,7 +35,6 @@ import {
   jevChoiceQuestion,
   jevSingleChoiceAnswers,
   runConfidenceCascade,
-  JEV_LATEST_MODEL,
 } from "./jev";
 import { createInferenceDelayObserver, INFERENCE_TTFT_TIMEOUT_MS } from "./inference-delay";
 import { createInferenceStreamWatchdog } from "./inference-stream-watchdog";
@@ -131,12 +131,6 @@ export {
 } from "./built-in-skills";
 export { CREATING_AN_APP_SKILL, REPORTING_ON_DATA_SKILL, TASK_SKILLS } from "./task-skills";
 export {
-  READING_AI_CHATS_SKILLS,
-  READING_AN_AI_CHAT_SKILL,
-  READING_CHATGPT_CONVERSATIONS_SKILL,
-  READING_CLAUDE_CONVERSATIONS_SKILL,
-} from "./reading-ai-chats-skills";
-export {
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILLS_SYSTEM_MESSAGE,
   AVALON_SKILL_TOOL_DEFINITIONS,
@@ -223,7 +217,7 @@ export interface AzureModelPricing extends AzureModelTokenRates {
 
 export interface OpenRouterTraceContext {
   source: string;
-  /** Flagship model-routing key for this inference category. */
+  /** Stable model-routing label for this inference category. */
   feature: string;
   workspaceId?: string;
   workstreamId?: string;
@@ -2378,7 +2372,7 @@ const addressingJsonSchema = {
   required: ["classification", "confidence", "rationaleCode"]
 };
 
-export const TYPESAFE_ADDRESSING_MODEL = JEV_LATEST_MODEL;
+export { TYPESAFE_ADDRESSING_MODEL };
 export const TYPESAFE_ADDRESSING_CONFIDENCE_THRESHOLD = 0.5;
 // The measured JEV p95 is about 350 ms. Three times that tail keeps ordinary
 // variation on the primary while bounding message admission tightly enough for
@@ -2388,7 +2382,7 @@ export const TYPESAFE_ADDRESSING_TIMEOUT_MS = 1_000;
 // seconds preserves that observed tail while keeping the terminal local floor
 // reachable during a stalled connection.
 export const ADDRESSING_FALLBACK_TIMEOUT_MS = 15_000;
-export const ADDRESSING_FALLBACK_MODEL = "deepseek/deepseek-v4-flash-0731";
+export { ADDRESSING_FALLBACK_MODEL };
 export const ADDRESSING_FALLBACK_PROVIDER = "wafer/fast";
 
 const ADDRESSING_CHOICES = [
@@ -2689,7 +2683,7 @@ function addressingProviderRouting(model: string): OpenRouterProviderPreferences
       requireParameters: true,
     };
   }
-  if (model !== "deepseek/deepseek-v4.1-flash") return undefined;
+  if (model !== MODEL_IDS.DEEPSEEK_V4_1_FLASH) return undefined;
   return {
     order: ["modal", "together"],
     allowFallbacks: false,
@@ -2753,8 +2747,8 @@ const automationDraftSubmissionJsonSchema = {
         properties: {
           type: {
             type: "string",
-            enum: ["manual", "inbound_email", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook"],
-            description: "What starts a run: `manual` when a person asks, `inbound_email` on mail to the Sidekick's address, `calendar` on a recurrence rule, `interval` every so many seconds, `connector_activity` on a connector event matched by deterministic filters, `semantic_activity` on a connector event that also passes a written condition, `webhook` on an inbound HTTP call. Legacy `resource_watch` does not start Sidekick runs; use declared events or polling instead."
+            enum: ["manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook"],
+            description: "What starts a run: `manual` when a person asks, `calendar` on a recurrence rule, `interval` every so many seconds, `connector_activity` on a connector event matched by deterministic filters, `semantic_activity` on a connector event that also passes a written condition, `webhook` on an inbound HTTP call. Legacy `resource_watch` does not start Sidekick runs; use declared events or polling instead."
           },
           rrule: { type: ["string", "null"], description: "For a `calendar` trigger, the recurrence as an iCalendar RRULE, for example `FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0`. Null for every other type." },
           timezone: {
@@ -2804,6 +2798,10 @@ const automationDraftSubmissionJsonSchema = {
       type: "array",
       items: { type: "string" },
       description: "Observable results of using these instructions, one entry per output; use [] when none are needed. For triggered work, describe what each run produces, for example [\"A summary of the week's merged pull requests in each run's reply\"]. Write results rather than steps.",
+    },
+    failureNotificationConversationId: {
+      type: ["string", "null"],
+      description: "Canonical conversation_list id for an additional failure notice, or null when the shared Sidekick reply is sufficient. Use the Sidekick conversation, a written Canvas, or a Canvas attached with conversation_attach; an id in instructions grants no access.",
     },
     defaultBehavior: {
       type: "string",

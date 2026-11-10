@@ -11,7 +11,6 @@ import { workspaceDOName } from '../src/durable-objects/names';
 import { deliverPush, consumePushDeliveryQueue } from '../src/queues/push-delivery-consumer';
 import { splitSqlStatements } from '../src/lib/sql-statements';
 import { registerPushDevice } from '../src/services/push-device-service';
-import { clearFlagTargetingAttributeCache } from '../src/services/flag-targeting-attributes';
 import { createTestEnv } from '../test/helpers/cloudflare-test';
 import type { ApnsOutcome } from '../src/services/push/apns-transport';
 import type { PushPayloads } from '../src/services/push/push-payload';
@@ -26,8 +25,7 @@ const workstreamId = asWorkstreamId('00000000-0000-7000-8000-00000000f102');
 const userId = asUserId('00000000-0000-7000-8000-00000000f103');
 const actorId = asUserId('00000000-0000-7000-8000-00000000f104');
 const workspace = () => env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName('global', workspaceId)));
-const flags = createTestEnv({ FLAGS: { getBooleanDetails: async () => ({ value: true, reason: 'TARGETING_MATCH' }) } }).FLAGS!;
-const pushEnv = () => ({ ...env, FLAGS: flags });
+const pushEnv = () => ({ ...env, FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED: "true" });
 const memberAuth = { userId, workspaceId, sessionId: 'session', region: 'global', role: 'member' } as const;
 const webEndpoint = 'https://fcm.googleapis.com/fcm/send/browser';
 async function registerWebDevice(keys = { p256dh: `B${'A'.repeat(86)}`, auth: 'A'.repeat(22) }) {
@@ -48,7 +46,7 @@ async function addIntent(intentId: string, messageText = 'Hello') {
   });
 }
 beforeEach(async () => {
-  await reset(); clearFlagTargetingAttributeCache();
+  await reset();
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT, region TEXT, abandoned_at TEXT, placement_affinity TEXT NOT NULL DEFAULT 'wnam')`),
     env.DB.prepare(`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, name TEXT)`),

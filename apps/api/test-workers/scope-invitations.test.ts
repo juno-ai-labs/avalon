@@ -16,7 +16,7 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
@@ -26,8 +26,14 @@ import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
 import { SCOPE_INVITATION_INDEX_ALARM } from "../src/durable-objects/scope-invitation-storage";
+import { ScopeInvitationStorage, SCOPE_INVITATION_DELIVERY_ALARM, scopeInvitationAlarmKey } from "../src/durable-objects/scope-invitation-storage";
+import { ScopeInvitationService } from "../src/durable-objects/scope-invitation-service";
+import { encryptString } from "../src/lib/crypto";
+import { EMAIL_DELIVERY_TABLE } from "./helpers/email-delivery-tables";
 import { openEmailLoginSecret } from "../src/services/email-login-service";
 import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
+import { provisionUserPassword } from "../src/services/password-login-service";
+import passwordMigration from "../../../packages/db/migrations/0129_password_login.sql?raw";
 import { claimScopeInvitations } from "../src/services/scope-invitation-claims";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 
@@ -101,7 +107,7 @@ async function prepareBrowserSignIn(): Promise<Env> {
     env.DB.prepare("CREATE TABLE browser_sessions(session_id TEXT PRIMARY KEY,credential_hash TEXT UNIQUE)"),
     env.DB.prepare("CREATE TABLE browser_workspace_sessions(browser_session_id TEXT,workspace_id TEXT,session_id TEXT UNIQUE,PRIMARY KEY(browser_session_id,workspace_id))"),
   ]);
-  return { ...env, RESEND_FROM_EMAIL: "Rally <login@example.test>",
+  return { ...env, EMAIL_FROM: "Rally <login@example.test>",
     EMAIL_LOGIN_POLICY_JSON: JSON.stringify({ otpDigits: 6, ttlSeconds: 600, maxFailedAttempts: 3 }) };
 }
 
@@ -133,6 +139,7 @@ beforeEach(async () => {
   WORKSPACE_ID = asWorkspaceId(crypto.randomUUID());
   CANVAS_ID = asWorkstreamId(crypto.randomUUID());
   await env.DB.batch([
+    env.DB.prepare(EMAIL_DELIVERY_TABLE),
     env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT, abandoned_at TEXT, region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam', analytics_workspace_id TEXT)"),
     env.DB.prepare("INSERT INTO workspaces (id, name) VALUES (?, 'Canvas workspace')").bind(WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE workspace_members (workspace_id TEXT,user_id TEXT,access_class TEXT,
@@ -151,6 +158,59 @@ beforeEach(async () => {
 });
 
 describe("sharing a Canvas by email address", () => {
+  it("does not admit an unverified password account to a pending Canvas share", async () => {
+    expect(await share([NEWCOMER_EMAIL])).toMatchObject({ status: "pending", acceptedByUserId: null });
+    const apiEnv = await prepareBrowserSignIn();
+    await env.DB.batch(passwordMigration.split(';').filter((sql) => sql.trim()).map((sql) => env.DB.prepare(sql)));
+    const at = new Date().toISOString();
+    await env.DB.prepare("INSERT INTO users (id, email, name, created_at, updated_at) VALUES (?, ?, 'Reviewer', ?, ?)")
+      .bind(NEWCOMER, NEWCOMER_EMAIL, at, at).run();
+    const { password } = await provisionUserPassword(apiEnv, NEWCOMER);
+    const app = createApp();
+    const login = () => app.request("/browser/password", { method: "POST", headers: originHeaders,
+      body: JSON.stringify({ email: NEWCOMER_EMAIL, password }) }, apiEnv);
+    const refused = await login();
+    expect(refused.status, await refused.clone().text()).toBe(401);
+    await refused.arrayBuffer();
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM sessions").first()).toEqual({ n: 0 });
+    expect(await env.DB.prepare("SELECT user_id FROM workspace_members WHERE workspace_id = ? AND user_id = ?")
+      .bind(WORKSPACE_ID, NEWCOMER).first()).toBeNull();
+    expect(await routes(NEWCOMER_EMAIL)).toEqual([{ workspace_id: WORKSPACE_ID, parent_id: CANVAS_ID }]);
+    const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID,
+      actor: { userId: CREATOR, actorRole: "member" } });
+    expect(detail.participantUserIds).not.toContain(NEWCOMER);
+
+    // The mailbox proof must exist independently; password provisioning did not create it.
+    await env.DB.prepare("INSERT INTO user_verified_emails (email, user_id, verified_at) VALUES (?, ?, ?)")
+      .bind(NEWCOMER_EMAIL, NEWCOMER, at).run();
+    const admitted = await login();
+    expect(admitted.status, await admitted.clone().text()).toBe(200);
+    expect(await admitted.json()).toMatchObject({ user: { id: NEWCOMER } });
+  });
+
+  it("parks an uncertain invitation delivery without acknowledging it or sending again", async () => {
+    const send = vi.fn(async () => { throw new Error("provider acceptance unknown"); });
+    const id = crypto.randomUUID();
+    const production: Env = { ...env, APP_ENV: "production", EMAIL_FROM: "Rally <invite@example.test>", EMAIL: { send } };
+    const encrypted = JSON.stringify(await encryptString(JSON.stringify({ recipientEmail: NEWCOMER_EMAIL, text: "An invitation" }),
+      production.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`));
+    await runInDurableObject(workspace(), async (_instance, state) => {
+      const store = new ScopeInvitationStorage(state.storage, CANVAS_ID);
+      store.create({ operationId: crypto.randomUUID(), workspaceId: WORKSPACE_ID, parentId: CANVAS_ID,
+        actorUserId: CREATOR, emails: [NEWCOMER_EMAIL],
+        targets: [{ kind: "workstream", workspaceId: WORKSPACE_ID, parentId: CANVAS_ID }], expiresAt: null,
+      }, "creator-incarnation", [{ id, email: NEWCOMER_EMAIL, deliveryEncrypted: encrypted, grantOperationIds: [crypto.randomUUID()] }]);
+      new ScheduledAlarmStore(state.storage.sql).cancel(SCOPE_INVITATION_DELIVERY_ALARM, scopeInvitationAlarmKey(CANVAS_ID, id));
+      const service = new ScopeInvitationService(production, state.storage, CANVAS_ID,
+        () => { throw new Error("delivery must not resolve grants"); }, () => true, () => {}, async () => null, () => {},
+        { targetsReady: () => true, title: () => "Launch plan" });
+      await service.deliver(id);
+      await service.deliver(id);
+      expect(store.read(id)?.deliveredAt).toBeNull();
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await env.DB.prepare("SELECT state FROM email_delivery_receipts").all()).toMatchObject({ results: [{ state: "review_required" }] });
+  });
   it("holds a share for a newcomer and admits them on a real browser sign-in by code", async () => {
     expect(await share([NEWCOMER_EMAIL])).toMatchObject({ status: "pending", acceptedByUserId: null });
     expect(await routes(NEWCOMER_EMAIL)).toEqual([{ workspace_id: WORKSPACE_ID, parent_id: CANVAS_ID }]);

@@ -30,6 +30,7 @@ import {
   testSubstreamAgentsBinding,
   seedToolReceipt,
   seedWorkstreamObjectParticipant,
+  testTerminalPortFactory,
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -445,6 +446,16 @@ describe("Terminal repository publication", () => {
       executionPrincipal: { type: "user", userId: U },
     }, new Date(Date.now() - 1_000));
     const publisher = createTerminalRepositoryPublisher(env, gateway);
+    // The write token stays mounted after the publish, so the sandbox records
+    // whose it is before mounting it: the next person's operation clears it.
+    await testTerminalPortFactory(objectStore)(W, S).reserveFirstGeneration({
+      stableName: "sandbox", authorityFingerprint: "authority", networkRevision: 1, runId: R,
+      operationLeaseExpiresAt: 0, idleExpiresAt: 0, archiveDueAt: 0, expireDueAt: 0, now: 0,
+    });
+    const holderAtMount: unknown[] = [];
+    vi.mocked(provider.configureGitHubReadAccess).mockImplementation(async () => {
+      holderAtMount.push(workstreamObjectGet(objectStore, "SELECT credential_principal_key FROM terminal_workspace WHERE id = 1"));
+    });
 
     await expect(publisher.publishBranchAndPr(context, { title: "Ship it", body: "Automated change" }, {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
@@ -468,6 +479,7 @@ describe("Terminal repository publication", () => {
       gitBasicCredential: btoa("x-access-token:write-token"),
       ghToken: "write-token",
     });
+    expect(holderAtMount).toEqual([{ credential_principal_key: `user:${U}` }]);
     const pushCallIndex = vi.mocked(provider.runUtilityCommand).mock.calls.findIndex(
       ([, operation]) => operation.operation === "repository.publish.push",
     );

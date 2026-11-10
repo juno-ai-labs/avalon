@@ -405,7 +405,7 @@ instead of guessing a member.
 
 ### Delivering to a person
 
-A connector that can deliver to a specific person declares `userDelivery` in its manifest: a `targetType`, the label and one-line description a destination choice shows, and `requiresPersonalIdentityLink`. The connections endpoint resolves it per requesting user through `apps/api/src/services/user-delivery.ts`, so a disabled connection, an unlinked installation, or a connector Rally does not register in this region carries no `userDelivery`. A connection merely marked `needs_reconnect` keeps it: the send is what discovers whether the credential still works. The scheduled digest that consumed it is retired (its tables survive in `workspace-domain-schema.ts`), so nothing in the product offers these destinations today; `resolveFrozenDeliveryIdentity`, which saved one, has no caller.
+A connector that can deliver to a specific person declares `userDelivery` in its manifest: a `targetType`, the label and one-line description a destination choice shows, and `requiresPersonalIdentityLink`. The connections endpoint resolves it per requesting user through `apps/api/src/services/user-delivery.ts`, so a disabled connection, an unlinked installation, or a connector Rally does not register in this region carries no `userDelivery`. A connection merely marked `needs_reconnect` keeps it: the send is what discovers whether the credential still works. The scheduled digest that consumed it is retired (its tables survive in `workspace-domain-schema.ts`), so nothing in the product offers these destinations today; `resolveFrozenDeliveryIdentity`, which saved one, was deleted with no caller.
 
 `requiresPersonalIdentityLink` marks the providers whose installation is workspace-wide. A team-wide bot addresses nobody on its own, so such a connection is a destination only for a user who has linked their own provider identity to it. `user-delivery.ts` maps each delivery target type to the table recording "this Rally user is this provider user on this connection" — `slack_user_links` for `slack_agent_dm` — and is the one place a new linked provider is registered. Slack declares `slack_agent_dm` with a required identity link; the type is registered in `AutomationDeliveryTargetTypeSchema`.
 
@@ -419,7 +419,7 @@ Two things every connector owes a run, both settled on the descriptor rather tha
 
 ### Agent activation acknowledgement
 
-Messaging-agent and native-agent adapters share `ConnectorAgentAdapter`. An adapter may implement `activationAcknowledgement(invocation)` to produce a fixed provider command; `acknowledgeConnectorAgentActivation` executes that command through the adapter after durable admission and authorization, before the admitted input reaches a model call or tool. This is host control-plane behavior and is never left to model output. A retry must converge on the same provider state.
+Messaging-agent and native-agent adapters share `ConnectorAgentAdapter`. An adapter may implement `activationAcknowledgement(invocation)` to produce a fixed provider command, which the host executes through the adapter's own `execute` after durable admission and authorization, before the admitted input reaches a model call or tool. This is host control-plane behavior and is never left to model output. A retry must converge on the same provider state.
 
 The hook is deliberately optional. Slack builds the same two steps itself (it needs the installation's configured reaction set), placing an `eyes` reaction on a reply admitted into a Sidekick run's bound thread, and treats Slack's `already_reacted` result as success. Its operational host logs provider-side reaction failures and continues the admitted request so a supplemental acknowledgement cannot discard user work. Linear uses a `👀` reaction only when the current activation includes a source comment. A future message-oriented Teams, Discord, or GitHub agent can opt in when it has an unambiguous source object and a lightweight reaction API. Email, file, calendar, database, and ordinary resource-webhook connectors should not acknowledge activation: they have no conversational source message, and manufacturing a reply or mutation would be noisy or misleading.
 
@@ -1615,8 +1615,8 @@ relevance". A future router over connector activity starts from those three.
 activity type, answering "would a person who was away for a day want this
 read back to them?" with the reason. Nothing reads the answer any more: the
 digest it was written for is deleted, `activityIsDigestible` went with it,
-and the manifest summary's `digestibleActivityTypes`
-(`packages/contracts/src/index.ts`) has no consumer; the one reader of the
+and the manifest summary's `digestibleActivityTypes` was deleted with no
+consumer; the one reader of the
 document, `packages/connectors/src/digestibility-doc.test.ts`, was deleted
 with it. What survives is the declaration, still required: each manifest's
 `{ digestible, operational }` partition, refused by
@@ -1629,6 +1629,31 @@ surface that tells somebody about connector activity reads
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ## Changelog
+
+### 2026-11-09 — Provider webhooks run only on WorkspaceDO authority
+
+**What changed:** `ProviderWebhookService` lost its regional-authority path
+(activity and resource inserts fenced on the receipt, the legacy connection
+query, its own receipt finish), and `ConnectionService` lost its
+`!WORKSPACE_DOS` route and route-sync branches. `acknowledgeConnectorAgentActivation`,
+`resolveFrozenDeliveryIdentity`, `persistPolledActivity` and the manifest's
+`digestibleActivityTypes` were deleted with no production caller. The provider
+webhook tests now run on a migrated regional database and a real WorkspaceDO
+per Organization.
+
+**Why:** `WORKSPACE_DOS` is a required binding, so production never took those
+branches; only tests did, through a hand-written fake database, so the suite
+proved a path nothing ran (the dead-code PRD, phase 3).
+
+**Considered and rejected:** keeping the fake and adding a WorkspaceDO case
+beside it, which would have left two answers to what a delivery writes.
+
+**Consequences:** a webhook test asserts on the stores production writes:
+receipts and ingress routes in D1, connections and resources in the object,
+activities on the queue. `withWorkspaceRuntimeDatabase` keeps its no-binding
+fallback as a declared test seam (the PRD's decision log says why).
+
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-10-22 — Report shortened Sheets cell text
 

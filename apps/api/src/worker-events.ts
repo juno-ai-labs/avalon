@@ -1,7 +1,7 @@
+import { purgeExpiredPasswordLoginAttempts } from './services/password-login-service';
 import { purgeExpiredEmailLoginChallenges } from "./services/auth-service";
 import { recoverEmailLoginDeliveries } from "./services/email-login-service";
 import { consumePushDeliveryQueue } from "./queues/push-delivery-consumer";
-import { privateAccessEdge } from './services/private-access-edge';
 import { isDurableObjectMigrationCommandQueue } from "@rally/contracts/durable-object-migrations";
 import { app } from "./app";
 import { assertEnvContract, EnvContractError, type Env } from "./env";
@@ -16,10 +16,6 @@ import {
 import { consumeMigrationCommandQueue } from "./queues/migration-command-consumer";
 import { consumeUsageQueue, isUsageQueue } from "./queues/usage-consumer";
 import { pruneUsageEvents } from "./services/usage-metering";
-import {
-  consumeProductFeatureFlagQueue,
-  isProductFeatureFlagQueue,
-} from "./queues/product-feature-flag-consumer";
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { dispatchWorkspaceRelationshipChanges } from "./services/workspace-relationship-delivery";
 import { consumeActivityQueue } from "./queues/activity-consumer";
@@ -117,8 +113,6 @@ function withEnvContract<TArgs extends [unknown, Env, ...unknown[]], TResult>(
 
 export default {
   fetch: async (request: Request, env: Env, context: ExecutionContext) => {
-    const acquisitionRefusal = await privateAccessEdge(request, env);
-    if (acquisitionRefusal) return acquisitionRefusal;
     // `/health` is exempt. It is the endpoint whose job is to report which
     // pieces of configuration are present, and it already models every one of
     // them as configured/not configured. Letting the 503 swallow it would make
@@ -156,11 +150,6 @@ export default {
     // accepted records into a regional dead-letter backlog.
     if (isInferenceLakehouseQueue(batch.queue)) {
       return consumeInferenceLakehouseQueue(batch, env);
-    }
-    // Flag changes describe configuration already committed in Flagship. They
-    // must still reach open sockets while product mutations are paused.
-    if (isProductFeatureFlagQueue(batch.queue)) {
-      return consumeProductFeatureFlagQueue(batch, env);
     }
     // Accepted analytics is also a projection, so it drains through product
     // maintenance rather than converting an operational cutover into a DLQ.
@@ -205,6 +194,7 @@ export default {
         dispatchWorkspaceRelationshipChanges(env),
         recoverEmailLoginDeliveries(env),
         purgeExpiredEmailLoginChallenges(env),
+        purgeExpiredPasswordLoginAttempts(env),
         pruneUsageEvents(env, Date.now()),
         processTelemetry(env),
       ]);

@@ -19,9 +19,7 @@ apps/desktop            Electron main/preload and the React renderer both client
 apps/browser            Browser host for the shared renderer
 apps/api                Global and regional Hono Worker, its Durable Objects and runtime components
 apps/site               Public site: landing page, help centre, blog, compare and trust pages
-apps/ace                Internal administration Worker
 apps/engineering-mcp    Internal engineering MCP server
-apps/migration-tracker  Durable Object migration reporting site
 apps/release-retention  Scheduled R2 desktop-release archival Worker
 packages/contracts      Shared Zod contracts
 packages/db             D1 migrations, repositories, and the explicit local seed
@@ -57,6 +55,11 @@ pnpm docs:check
 ```
 
 ## Desktop builds and releases
+
+Before packaging locally, get the existing `RALLY_DESKTOP_SESSION_KEY` from a
+desktop release maintainer and set it in the ignored `.env.local`. Both
+packaging commands read this file and verify that the key matches existing
+installs so the packaged app can open their saved sessions.
 
 ```text
 pnpm package:desktop

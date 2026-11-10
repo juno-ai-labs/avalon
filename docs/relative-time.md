@@ -17,7 +17,7 @@ the render that produced it.
 | `packages/ui/src/lib/clock.ts` (re-exported by `apps/desktop/src/renderer/lib/clock.ts`) | The one clock. `useNow()` subscribes to a single interval shared by every label on screen; `RELATIVE_TIME_REFRESH_MS` is how often it advances. It lives in `@rally/ui` so a shared component (a remembered fact's horizon in `memory-fact-rows.tsx`) ticks on the same interval. |
 | `apps/desktop/src/renderer/components/relative-time.tsx` | `RelativeTime` — the only component that renders a relative label, and the only caller of `formatRelative`. Carries the absolute-time tooltip. |
 | `apps/desktop/src/renderer/components/message-byline.tsx` | `MessageByline` — the identity line over a turn: who, when, and the optional labels between them. |
-| `apps/desktop/src/renderer/lib/format.ts` | The vocabularies. `formatRelative` is the default; `formatDateTime` is what the tooltip says; `formatSidebarActivityTime` is the calendar one the sidebar's hover preview passes in. |
+| `apps/desktop/src/renderer/lib/format.ts` | The vocabularies. `formatRelative` is the default; `formatMessageTime` is the message byline's local calendar time; `formatDateTime` is what the tooltip says; `formatSidebarActivityTime` is the calendar one the sidebar's hover preview passes in. |
 | `packages/ui/src/styles/app.css` | `.message-author`, `.message-block time` and the shared `.message-block > header` — one set of type and colour for the byline, not one per speaker. |
 | `config/design-tokens/base.json` | `cmp.feed.byline.font-size`, `cmp.feed.byline.author-weight` and `cmp.feed.byline.time-weight` — one size for the line, and the two weights that separate who from when. |
 
@@ -46,16 +46,21 @@ weekday) passes its own function and still ticks. It brings its own
 `Tooltip.Provider` rather than requiring one from the host.
 
 `MessageByline` lays down the name, the optional context label, the time and a
-settled response's total. Its time is the clock time (`formatTime`), and the
-feed (`MessageFeed`) draws a day divider over the first turn of each local day
-("Today", "Yesterday", a weekday, a date, through `formatDayLabel`), as
-design.html §2 draws a transcript: a full date only where a day changes. It reads outward from the edge the turn is aligned to:
+settled response's total. The feed (`MessageFeed`) also draws a day divider over
+the first turn of each local day ("Today", "Yesterday", a weekday, a date,
+through `formatDayLabel`). The byline reads outward from the edge the turn is
+aligned to:
 name first on the leading edge, name last on the trailing one, done by reversing
 the parts in the markup rather than with CSS ordering, so a screen reader
 announces what a sighted reader sees. The avatar (`initial`: Rally's "R", a
 colleague's first letter) or the person-accent dot sits inside the name
 element, so the two travel together whichever way the line reads, and the name
 is its own box so a long one ellipsizes.
+
+The byline passes `formatMessageTime`: through twelve hours old it reads
+`3:48PM`, then `Oct 19 · 3:48PM`, with the year added for a prior local calendar
+year (`Oct 19 2025 · 3:48PM`). It follows the same clock, so a message left open
+acquires its date after crossing twelve hours. The exact-time tooltip is unchanged.
 
 ## Invariants
 
@@ -95,6 +100,10 @@ formatted where they are produced.
 
 ## Failure modes and limits
 
+- **Message bylines use compact English month names and AM/PM labels.** This
+  follows the requested `Oct 19 · 3:48PM` presentation even for readers whose
+  locale uses another language or a 24-hour clock. The timezone is still local;
+  tooltips and other surfaces continue to follow the reader's locale.
 - **An unparseable instant renders "Unknown time"** rather than throwing, in both
   the label and the tooltip.
 - **A hidden window's labels stop at their last tick** until the window is shown
@@ -133,6 +142,7 @@ formatted where they are produced.
 
 ```bash
 pnpm --filter @rally/desktop exec vitest run \
+  src/renderer/lib/format.test.ts \
   src/renderer/lib/clock.test.tsx \
   src/renderer/components/relative-time.test.tsx \
   src/renderer/components/message-byline.test.tsx
@@ -144,7 +154,33 @@ component was rendered with rather than the one it settled on, because
 subscribing re-reads the clock and an assertion on the final value passes
 whether or not the first frame was stale.
 
+`format.test.ts` covers the twelve-hour boundary and prior-year message labels;
+`message-byline.test.tsx` covers the open message crossing that boundary on the
+shared clock.
+
 ## Changelog
+
+### 2026-11-09 — Calendar context for older messages
+
+**What changed:** Message bylines show compact local clock times, adding a date
+after twelve hours and the year for prior years through the existing formatter
+seam and shared clock.
+
+**Why:** A time alone makes older turns ambiguous. The requested presentation
+puts calendar context in the byline so readers need not hover to distinguish
+when older messages happened.
+
+**Considered and rejected:** A calendar-day cutoff would omit the date for a
+message over twelve hours old earlier today. Using the reader's default locale
+would change the requested English month and compact AM/PM format. Both would
+depart from the requested display contract.
+
+**Consequences:** Future changes must preserve the elapsed twelve-hour cutoff,
+local calendar year comparison, and updates through the shared clock. The
+English labels can differ from the locale-aware tooltip; adding a date must not
+introduce a timer per message.
+
+Implemented in [#1503](https://github.com/juno-ai-labs/avalon/pull/1503).
 
 ### 2026-09-10 — One byline, one clock, one relative label
 

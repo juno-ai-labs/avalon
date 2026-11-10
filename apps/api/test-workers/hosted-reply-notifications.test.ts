@@ -26,7 +26,6 @@ import { splitSqlStatements } from "../src/lib/sql-statements";
 import { deliverPush } from "../src/queues/push-delivery-consumer";
 import { createCanvas } from "../src/services/canvas-service";
 import { ConversationService } from "../src/services/conversation-service";
-import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import { registerPushDevice } from "../src/services/push-device-service";
 import type { ApnsOutcome } from "../src/services/push/apns-transport";
 import type { PushPayloads } from "../src/services/push/push-payload";
@@ -47,10 +46,9 @@ useHeldEffectQueue();
 useOpenRouterDouble(() => ({ say: "Noted." }));
 useSelectedModel();
 
-const flags = createTestEnv({ FLAGS: { getBooleanDetails: async () => ({ value: true, reason: "TARGETING_MATCH" }) } }).FLAGS!;
 /** An environment that may send push, as `hosted-mention-notifications.test.ts` builds it. */
 const pushEnv = () => ({
-  ...env, FLAGS: flags, APP_ENV: "staging" as const, APNS_AUTH_KEY: "configured", APNS_KEY_ID: "configured",
+  ...env, FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED: "true", APP_ENV: "staging" as const, APNS_AUTH_KEY: "configured", APNS_KEY_ID: "configured",
   WORKSPACE_DOS: createTestEnv({ WORKSPACE_DOS: { jurisdiction: () => env.WORKSPACE_DOS } }).WORKSPACE_DOS,
 });
 
@@ -159,7 +157,7 @@ async function sharedCanvas(): Promise<string> {
 
 beforeEach(async () => {
   await reset();
-  clearFlagTargetingAttributeCache();
+
   WORKSPACE_ID = asWorkspaceId(crypto.randomUUID());
   await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: AUTHOR, sessionId: `session-${AUTHOR}` });
   await env.DB.batch([
@@ -189,10 +187,6 @@ beforeEach(async () => {
       source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL)`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
     ...[migration, webPushMigration].flatMap(splitSqlStatements).map((sql) => env.DB.prepare(sql)),
   ]);
   await registerPushDevice(pushEnv(), auth(RECIPIENT), "rr", {

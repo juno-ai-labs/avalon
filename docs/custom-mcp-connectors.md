@@ -322,7 +322,6 @@ on live and canonical paths, and explicit connector identity. Model catalogs
 remain static; any future named discovery must frame those labels as untrusted
 data. The fallback comes from the adapter's manifest name.
 
-
 ### 2026-09-03 — Rally connects MCP servers it does not ship
 
 **What changed:** A `custom_mcp` connector type, with per-connection endpoints,

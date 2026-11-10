@@ -39,6 +39,15 @@ local-cache wipes, with a shared storage generation fencing image saves in
 other browser tabs. A 403/404 response removes the saved image bytes. Persisted
 bytes never serve as a permission lease.
 
+## Password authentication
+
+[Password sign-in](password-login.md) adds an optional credential to an existing
+Global identity. Only engineering MCP provisions or revokes it. The native form
+passes the proof through trusted IPC; main chooses the endpoint and retains the
+ordinary encrypted session. Web receives only an HttpOnly cookie. Rotation and
+revocation fence new session issuance at the INSERT; existing sessions retain
+their normal lifecycle. Audit records contain the operator and target, no secret.
+
 ## Sidekick authoring and loading
 
 Sidekick delegation is separate from human reader/manager access. WorkspaceDO
@@ -189,8 +198,14 @@ are canonical storage services, not authorization layers.
   and closes authenticated windows before attempting remote logout for the
   identity and each regional workspace. Remote cleanup failures are reported but
   cannot restore local authority.
-  By default the desktop uses an application-wide embedded key so the saved set survives signing-identity
-  and keystore changes. Application → **Lockdown mode** replaces that with
+  By default the desktop uses an application-wide embedded key so the saved set
+  survives signing-identity and keystore changes. The macOS release build embeds
+  the key from the `desktop-release` Actions environment in the main-process
+  bundle. Anyone with the packaged app can recover it. To keep a development
+  session saved before the move to Actions, set `RALLY_DESKTOP_SESSION_KEY` in
+  the ignored `.env.local` for `pnpm dev:desktop`, or export it in the shell
+  for `pnpm dev:desktop:prod`. Application →
+  **Lockdown mode** replaces that with
   Electron `safeStorage`, binding the saved authentication state to the
   operating-system keystore. An in-app toggle re-encrypts every durable session
   component before committing the new preference. The plaintext preference lives
@@ -298,10 +313,9 @@ are canonical storage services, not authorization layers.
   operator UUID and role with timing-safe token comparison — `support` and
   `security` from `TELEMETRY_OPERATORS_JSON`, `demos` from the separate
   `DEMO_OPERATORS_JSON`; every operator router names the roles it admits and
-  the secret it reads, so the `demos` role (Ace's operator role; the stored
-  name is the retired demo feature's) reaches only the workspace retirement,
-  access and connector-maintenance routes Ace calls, and neither telemetry
-  role reaches those. Ace holds one `demos` token per region, each
+  the secret it reads, so the `demos` role (a stored name from the retired demo feature) reaches only
+  connector-maintenance routes, and neither telemetry role reaches those.
+  Operators hold one maintenance token per region, each
   known to that region alone. Raw access and replay derive audit identity from
   that principal; neither endpoint accepts an operator ID or role in its body.
 
@@ -460,8 +474,15 @@ reserved continuation-message ID.
 Every connector tool checks its execution principal, connection
 scope, granted capability, and resource visibility. Workspace-scoped connector
 capabilities roll down to every conversation in that workspace and execute as the
-workspace principal; participants do not implicitly share their personal
-connectors.
+workspace principal. A participant's personal connector is not granted to
+another participant's runs: a connector tool runs as the run's execution
+principal, the person who started it. A Sidekick acting through a delegate's
+access is the one exception, and
+[delegation](automation-lifecycle.md#delegation-consent-authority) governs it.
+That rule covers the call, not what it returns. In a Canvas, a file a run writes to the
+shared sandbox, including one fetched through a personal connector, is readable
+by every other participant's runs there, by the 2026-11-09 decision
+([shared Canvas sandbox](#shared-canvas-sandbox)).
 
 WebSocket upgrades require an exact match against `ALLOWED_ORIGINS`; missing
 origins and suffix lookalikes are rejected before the short-lived socket ticket is
@@ -529,6 +550,69 @@ capability permits only the registered pre-authentication event names. Handoff
 tokens and resource identifiers remain in the local page parser and never become
 telemetry properties.
 
+### MCP authorization server
+
+Rally runs a public OAuth 2.1 authorization server so MCP clients such as
+Claude and ChatGPT can act for a person. [`rally-mcp.md`](rally-mcp.md) owns
+the flow; this section owns its trust surface.
+
+- **Public endpoints.** The MCP Worker serves the discovery documents
+  (`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`)
+  and forwards `/register`, `/token` and `/revoke` to the API's `/mcp-oauth`
+  routes (`routes/mcp-oauth.ts`, `services/mcp-oauth-service.ts`). Consent is
+  the browser app's `/app/oauth/authorize`, which needs a signed-in browser
+  session and calls `/browser/oauth/*`.
+- **Registration is unauthenticated** (RFC 7591). Anyone can register a client
+  under any name. What stops a registration from collecting codes is the
+  redirect allowlist in `packages/contracts/src/mcp-oauth.ts`: each redirect
+  must be a loopback address on any port, or under the exact origins
+  `https://claude.ai`, `https://claude.com` or `https://chatgpt.com`. The
+  allowlist is checked at registration and again on every authorization. Since
+  the client name is self-chosen, the consent page also shows the redirect
+  origin.
+- **PKCE is S256 only.** Every client is public and stores no secret. A code is
+  single use, hashed at rest, bound to its client and redirect, and consumed in
+  the statement that reads it.
+- **The resource check.** A request naming an RFC 8707 `resource` other than
+  the configured `MCP_RESOURCE` is refused `invalid_target`, at describe,
+  approve and token time. Without it, another MCP server that names Rally as
+  its authorization server could have a client fetch a Rally token for it and
+  replay it against the API.
+- **A grant is a workspace session.** It is an ordinary session for the chosen
+  Organization, so membership, incarnation and session expiry apply unchanged.
+  Its access tokens carry the `rally-mcp` audience
+  (`services/auth-service.ts`), not the desktop's. `mcp_oauth_grants` keeps the
+  two refresh paths apart: the MCP token endpoint refreshes only a session its
+  client holds, and the desktop refresh only a session no client holds. A grant
+  references its client `ON DELETE RESTRICT`, because a session with no grant
+  reads as a desktop session and would gain the desktop audience.
+- **An exact route allowlist.** A `rally-mcp` token reaches only the (method,
+  path) pairs in `MCP_ROUTES` (`mcpRouteAllowed`, `middleware/auth.ts`); any
+  other request is 403 `mcp_route_unavailable`. Inside those, the person's own
+  role and the Canvas's audience decide, as for the app.
+- **Canvas only.** For an MCP token, conversation routes admit only a Canvas
+  (`canvasOnly`, `services/conversation-service.ts`); a Sidekick's conversation
+  is not found.
+- **Artifacts through the Canvas.** An MCP token cannot reach `/resources`. It
+  reads an artifact only through
+  `GET /canvases/:id/artifacts/:resourceId/versions/:version/{content,model-content}`
+  (`routes/canvases.ts`), which checks the resource is one of that Canvas's
+  artifacts before the ordinary resource read.
+
+- **The person can end a grant.** Settings › Account › Connected apps lists
+  the person's live grants in every Organization of the region
+  (`GET /workspace/me/connected-apps`) and disconnects one
+  (`DELETE /workspace/me/connected-apps/:id`), which ends that session exactly
+  as the client's own RFC 7009 `/revoke` does. Both match the grant on the
+  caller's own user id, so another person's grant or a desktop session is
+  `connected_app_not_found`. Neither is in `MCP_ROUTES`, so one client cannot
+  list or end another, and both refuse a support session, since the list spans
+  Organizations the support grant does not cover. The listed name is the one
+  the client registered, so the row says so and shows where the app returns to.
+
+Otherwise a grant ends when the session expires or the person's membership
+ends.
+
 ### Side effects and retries
 
 Tool arguments are runtime-validated and canonically hashed. The system records a
@@ -570,17 +654,6 @@ and only report itself when somebody pressed Test. API keys and signing
 material use the connection-bound regional credential envelope. Replacement
 validates provider access and checks both generation and the current envelope
 before committing, so a racing settlement cannot overwrite a newer API key.
-
-Disconnect removes ordinary access atomically while retaining separate encrypted
-cleanup authority. Only a claimed removal of an exact recorded provider ID may
-use it; it cannot refresh, discover tools, create or update registrations.
-Repeated disconnect preserves pending cleanup. An uncertain create's late result
-is handled against its recorded intent without reviving access; forgetting local
-cleanup authority leaves provider removal to the administrator. The existing Ace
-`demos` operator role authorizes reviewed fleet maintenance, never arbitrary
-provider requests or new customer event grants. Administrative mutations retain
-actor-attributed audit records without keys or candidate content. See
-[installation lifecycle](connector-installation-lifecycle.md).
 
 ### Webhooks
 
@@ -705,10 +778,14 @@ neither. Discovering the Terminal plugin
 performs no provider operation; an explicit load starts the sandbox acquisition
 in the background and returns, so the model is never held behind provider work
 and a provider failure surfaces on the first Terminal tool rather than at load.
-That acquisition freezes the execution principal, visible-resource authority,
-selected immutable GitHub repository identity, and connection into a
-sandbox-generation fingerprint; narrowing or revocation destroys that
-generation before another tool can observe its filesystem, and a repository
+That acquisition freezes an owner and the selected immutable GitHub repository
+identity and connection into a sandbox-generation fingerprint. For a Canvas the
+owner is the Canvas itself, not the person acting, so every participant's runs
+share one sandbox ([shared Canvas sandbox](#shared-canvas-sandbox)). A
+Sidekick keeps its own rule: its stable file identity
+([`terminal-workspaces.md`](terminal-workspaces.md)). A repository change, or in
+a Canvas an imported resource the acting person can no longer read, destroys
+that generation before another tool can observe its filesystem, and a repository
 that fails revalidation rejects the shared acquisition every waiting tool holds
 rather than being cleaned up after one of them has already proceeded.
 The GitHub connector policy is checked before selection, sandbox bootstrap, and
@@ -758,7 +835,75 @@ conversation branch before each model-facing operation. GitHub cannot scope an
 installation token to one branch, so branch discipline is explicit model
 guidance rather than a custom proxy or claimed technical boundary. Policy
 changes invalidate the cached expiry and force credential rotation before the
-next command.
+next command, and in a Canvas a different person's operation clears the
+credential first ([shared Canvas sandbox](#shared-canvas-sandbox)).
+
+#### Shared Canvas sandbox
+
+The team decided on 2026-11-09 that "a Canvas always has a single shared,
+consistent sandbox no matter which person is delegating or whether it is
+platform activity" ([decision log](PRDs/2026-11-06_canvases-and-sidekicks/prd.md#decision-log)).
+`authorityFingerprint` in `services/terminal/coordinator.ts` therefore names
+the Canvas and its selected repository, not the acting person. A sandbox made
+under an old per-person identity is replaced once.
+
+This widens trust inside a Canvas, and the widening is accepted, not fenced:
+
+- **Files cross people.** A file any participant's run wrote is readable by
+  every other participant's runs in that Canvas. That includes a file fetched
+  through the first person's personal connector, so the second person's run
+  can read data that person could not fetch themselves.
+- **Code crosses people.** Anything a participant runs can change what later
+  runs execute: a planted script, a changed dependency, an edited build file.
+  That reaches other people's agent runs, Rally's own runs, and a later
+  publication build another person starts in the same sandbox
+  ([Canvas publication](canvases.md#artifacts-and-versions)).
+  A guest cannot start a project build, which runs the publisher's own
+  `package.json` scripts with no model in between and beside the selected
+  repository's checkout
+  (`canvas_build_project_members_only`). A guest's component build runs only
+  the pinned toolchain on their code; the toolchain itself is cached in the
+  sandbox, so it is within the "code crosses people" widening above.
+- **A member's project build runs its dependencies' code.** Install scripts
+  are off (`--ignore-scripts`), but `npm run build` runs the build tool and
+  every package it loads, fetched from npm at publish time (ranges float
+  without a lockfile), beside the Canvas's checkout and the publishing
+  member's own GitHub access, with no model in between. A compromised
+  package release would run there. The team accepted this on 2026-11-09
+  rather than drop project builds or require a lockfile; a component build
+  is fenced instead by the pinned toolchain and the bundler's input check.
+
+**GitHub credentials do not cross people.** They are the one thing in the
+sandbox that is a person's grant rather than the Canvas's work: the
+installation token behind `GITHUB_READ_BASIC` and `GH_TOKEN`, the checkout's
+`http.<url>.extraheader` that names it, and the write token
+`publish_branch_and_pr` mounts and leaves in place. The sandbox row records
+whose they are (`credential_principal_key`), written before a mount so a mount
+that failed part-way still counts. When the principal acting differs from that
+record, the coordinator clears the Daytona secrets and the header, under the
+operation lease and before anything of the new principal's runs, then hands
+the record to them; their own bootstrap then mounts their grant under the rules
+that already decide one. A clear that fails refuses the operation
+(`repository_credentials_not_cleared`) rather than run beside the old
+credentials. The same person acting again changes nothing. A publication build
+acts as the publishing person and is covered by the same rule; a build mounts
+no credential of its own. The rule is in `coordinator.ts`
+(`holdsAnotherPrincipalsCredentials`).
+
+What the clear does not reach is code: a process an earlier person's command
+left running can use the next person's credentials while they are mounted,
+because Daytona substitutes the placeholders for any process in the sandbox.
+That is the "code crosses people" widening above, not a credential leak, and
+nothing here fences it.
+
+Nothing tags a sandbox file with the person or connector it came from, and
+apart from the GitHub credentials nothing scans or resets the sandbox between
+people. The fences that remain are
+the Canvas's audience (only someone the Canvas admits can run in it), the
+selected repository's connector policy, and the import check: a resource
+imported into the sandbox that the acting person can no longer read through the
+Canvas's links replaces the generation. A Sidekick keeps its own rule and is not
+part of this widening.
 
 ### Code Mode boundary
 
@@ -800,20 +945,12 @@ exists.
 
 Workspace invitation tokens are random bearer secrets stored only as SHA-256
 hashes in D1. The plaintext token exists transiently in the regional Worker, the
-Resend transactional request, the recipient's email, and the fragment-protected
+Cloudflare email payload, the recipient's email, and the fragment-protected
 browser/deep-link handoff. It is never placed in a query string, log, audit event,
-or Resend tag. Resend uses a send-only API key and a stable per-invitation
-idempotency key; an outbound provider failure revokes the new invitation before
-the API returns an error.
-
-Conversation inbound addresses are routing identifiers, never authenticators.
-Resend webhooks are verified against their untouched raw body before parsing and
-deduplicated by delivery ID. Received HTML, headers, attachments, sender
-identities, and quoted content are untrusted. Incoming mail is attached as a
-regional resource and system message; it never launches a write-capable agent run
-merely because the From address resembles a workspace member. Friendly addresses
-are immutable and permanently reserved so a stale sender can never reach a
-different conversation.
+or correlation header. Sending uses the native `EMAIL` binding rather than an
+administration credential. Its stable invitation reference is correlation data,
+not a provider dedupe guarantee; an outbound provider failure revokes the new
+invitation before the API returns an error.
 
 Daytona lifecycle webhooks use the same shared Svix raw-body verifier, then
 check `DAYTONA_ORGANIZATION_ID`. Signed payloads are refresh hints: current
@@ -838,16 +975,8 @@ decisions, and administrative actions.
 
 Local server keys live only in ignored `.env.local`. Renderer-safe values are an
 explicit `VITE_` allowlist containing API base URLs and the protocol name. Hosted
-secrets, including `RESEND_API_KEY`, use separate Cloudflare secrets per region.
 Cloudflare administrative credentials are local deployment inputs and never Worker
 bindings.
-
-`TELEMETRY_OPERATORS_JSON` is an independent secret in each region. Its bearer
-tokens never cross regions or enter URLs; its stored principal is the only source
-of operator identity and role for `/internal/telemetry`. `DEMO_OPERATORS_JSON`
-is its sibling for the `demos` role Ace presents: the same shape, read only by
-the surfaces Ace calls, and set and rotated independently, so neither secret's
-holders can overwrite the other's tokens.
 
 `OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID` are optional independent
 secrets in each region: the bot token of a small internal Slack app with
@@ -992,22 +1121,8 @@ bound it on the thing a placeholder cannot fake, and add the bound to
 - **A tool call is a proposal, never an instruction.** Name, schema, principal,
   capability, limits, and idempotency state are all checked before execution.
 
-- **An inbound email address is a routing identifier, never an authenticator.** The
-  run acts as the person the From header names, under their own access when
-  they are not a delegate, and since 2026-09-03 it holds the same connector and
-  web tools as every other automation run. So the From must be authenticated:
-  the run is admitted only on the receiving server's aligned verdict for the
-  From domain (DMARC pass, or a DKIM pass for that domain, from Resend's
-  `authentication`), and only for a sender the Sidekick admits as a reader
-  ([inbound email](automation-lifecycle.md#triggers-and-occurrences)). It is
-  only as strong as the sending domain's own spoofing protection, and DMARC and
-  DKIM authenticate the sending domain, not the mailbox: on a domain whose own
-  mail server does not bind From to the sending account, anyone who can send as
-  any address on that domain can still make a run act as a colleague there. The
-  changelog entry of 2026-09-03 records why the tool filter came out.
-
 - **An invitation token exists in D1 only as a SHA-256 hash**, and never in a query
-  string, log, audit event, or Resend tag.
+  string, log, audit event, or delivery correlation header.
 
 - **A Gitleaks exception is a bounded pattern**, never a path exemption or a
   fingerprint, and it ships with a case in
@@ -1199,6 +1314,65 @@ receive no application bridge. See
 [artifact annotations](artifact-annotations.md) for the protocol.
 
 ## Changelog
+
+### 2026-11-09 — Desktop release builds receive the existing session key from Actions
+
+**What changed**
+
+The release build reads `RALLY_DESKTOP_SESSION_KEY` from the `desktop-release`
+environment. Packaging verifies the supplied key against the existing key's
+SHA-256 fingerprint.
+
+**Why**
+
+The original literal was checked into the desktop source. Moving its build input
+to Actions removes the literal from new revisions while preserving saved sign-ins.
+
+**Considered and rejected**
+
+Rotating the key as part of the move would make saved sessions unreadable.
+
+**Consequences**
+
+Local and release packages can open the same profile, so both require the
+original key. Unpackaged builds use a separate development default and need
+the original key to read pre-change development sessions.
+
+[#1508](https://github.com/juno-ai-labs/avalon/pull/1508)
+
+### 2026-11-09 — MCP clients get their own audience, and a Canvas's sandbox is shared by its people
+
+**What changed:** Rally runs a public OAuth 2.1 server for MCP clients. Its
+tokens carry the `rally-mcp` audience and reach only an exact route list,
+Canvas conversations and a Canvas's own artifacts, and a person can list and
+disconnect the apps they connected from Settings. Separately, a Canvas's
+sandbox identity is now the Canvas, so files and code written by one
+participant's run reach every other participant's runs there. GitHub
+credentials do not: they are cleared before a different person's operation
+runs, and an operation whose clear fails is refused.
+
+**Why:** People want to use Rally from Claude and ChatGPT, and a token that
+reached the whole product API would hold more than the consent page asks for.
+The shared sandbox is the team's 2026-11-09 product decision. Sharing it left
+the last person's GitHub credentials mounted for every other participant, a
+guest included, to use with an ordinary command; the team decided to clear
+them on a person change only, so the same person acting again pays nothing.
+The reasoning is
+in [`terminal-workspaces.md`](terminal-workspaces.md#changelog) and
+[`rally-mcp.md`](rally-mcp.md#changelog).
+
+**Considered and rejected:** A route-family allowlist for MCP tokens. It
+admitted every route under `/resources` and `/conversations`, uploads and
+socket tickets included, rather than only the calls the tools make.
+
+**Consequences:** A new MCP tool must add its exact route to `MCP_ROUTES`. A
+personal connector's output is no longer private to its owner inside a Canvas;
+a change that assumes it is must fence it. A new way to mount a credential in a
+Canvas sandbox must record its principal before mounting
+(`recordCredentialMount`), or the clear will not know to remove it. A person sees their connected apps
+in Settings and can disconnect one, which ends its session at once; a route
+that lists or ends grants must keep matching them on the caller's own user id
+and stay out of `MCP_ROUTES`.
 
 ### 2026-11-03 — Cross-origin requests reach a site anonymously, not refused
 
@@ -1555,7 +1729,7 @@ Shipped in #725.
 ### 2026-09-11 — The five prompt trust labels are gone
 
 **What changed:** `renderUntrustedSlackOriginMessage`,
-`renderUntrustedInboundEmailMessage`, `renderUntrustedExternalEventMessage`,
+`renderUntrustedExternalEventMessage`,
 `renderUntrustedAutomationResultMessage` and `renderTriggerActivityMessage` are
 deleted from `packages/agent-harness/src/prompts/workstream.ts`. Slack
 surrounding context, an inbound trigger email, the event that started an
@@ -1678,44 +1852,6 @@ it.
 **Consequences:** The renderer CSP no longer admits an appearance frame and the
 main process registers no appearance-document handler. Remote fonts retain the
 existing generated allowlist, size cap, and optional integrity verification.
-
-### 2026-09-03 — An inbound-email run is no longer read-only
-
-**What changed:** The three `inbound_email` tool guards in
-`apps/api/src/services/integrations.ts` are gone: write-mode connector tools are
-no longer withheld from a mail-started run, the Firecrawl search and fetch tools
-are no longer omitted from one, and a child harness spawned by one keeps its web
-tools. The invariant above that said a spoofed From "buys a read-only run" is
-rewritten to say what is true now.
-
-**Why:** The filter named one trigger out of several that carry untrusted
-content. A `connector_activity` or `webhook` run reads equally untrusted
-third-party text while holding every write tool it was bound, so a boundary
-drawn around inbound email alone was not a boundary, and its presence in the
-document let a reader believe the exfiltration channel was closed when it was
-open for every other external trigger. The decision recorded in
-[`automation-lifecycle.md`](automation-lifecycle.md) is that trigger-content
-trust is decided once, for every external trigger, at the level that already
-screens who may start a run, rather than in a tool rule that knew only this one.
-
-**Considered and rejected:** *Keeping the guard until a general one exists*,
-which keeps a control that misdescribes itself as the protection and defers the
-general question indefinitely. *A per-run trust flag on the workflow input, gated
-at both tool-assembly sites*, which is the shape a general control would take and
-is the natural follow-up if one is wanted; it was not built here because no
-number or policy for it has been decided, and per the rule on defensive limits
-that decision is the team's, not a guess in a refactor.
-
-**Consequences:** Ingress screening carries the whole weight for mail: a sender
-must resolve to an active workspace member or the mail is refused before a run
-exists. A mail-started run's prompt is steered by the mail body the same way a
-connector-started run's is by the event payload, and the run may act on its
-connectors accordingly. Anyone re-tightening this should do it for every external
-trigger at once, and update this invariant and
-[`workstream-email-addresses.md`](workstream-email-addresses.md) in the same
-change.
-
-Shipped in #541.
 
 ### 2026-09-02 — A link to the active workspace uses the session in use
 

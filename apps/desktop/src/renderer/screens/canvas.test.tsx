@@ -1,9 +1,10 @@
 import { asUserId } from '@rally/contracts';
-import type { CanvasDetail, CanvasSidebarRow } from '@rally/contracts';
+import type { CanvasDetail, CanvasSidebarRow, CanvasSidekick } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -25,6 +26,7 @@ const MAYA = asUserId('00000000-0000-7000-8000-0000000000a2');
 const CANVAS = '00000000-0000-7000-8000-0000000000c1';
 
 const getCanvas = vi.hoisted(() => vi.fn());
+const archiveCanvas = vi.hoisted(() => vi.fn());
 const setCanvasPinned = vi.hoisted(() => vi.fn());
 const setCanvasAudience = vi.hoisted(() => vi.fn());
 const renameCanvas = vi.hoisted(() => vi.fn());
@@ -36,7 +38,7 @@ const requestCanvasAccess = vi.hoisted(() => vi.fn());
 const decideCanvasAccess = vi.hoisted(() => vi.fn());
 vi.mock('../lib/collaboration-session', () => ({
   useCollaborationSession: () => ({
-    api: { getCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, setCanvasAppearance, createScopeInvitations, getCanvasAccess, requestCanvasAccess, decideCanvasAccess },
+    api: { getCanvas, archiveCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, setCanvasAppearance, createScopeInvitations, getCanvasAccess, requestCanvasAccess, decideCanvasAccess },
     session: { user: { id: ME }, workspace: { id: WORKSPACE, region: 'global', role: 'member' } },
   }),
   useOptionalCollaborationSession: () => null,
@@ -56,8 +58,12 @@ vi.mock('./conversation-surface', () => ({
   ConversationOpeningSkeleton: ({ label }: { label: string }) => <p>{label}</p>,
   ConversationSurface: (props: ConversationSurfaceProps) => {
     const location = useLocation();
+    const [panelOpen, setPanelOpen] = useState(false);
     surfaces.push({ props, requested: openResourceRequest(location.state)?.resourceId ?? null, expanded: expandRequest(location) !== null });
-    return <div>{props.renderHeader?.({ presentUserIds: [ME, MAYA] } as never)}</div>;
+    return <div>
+      {props.renderHeader?.({ presentUserIds: [ME, MAYA], panelOpen } as never)}
+      <button onClick={() => setPanelOpen((open) => !open)} type="button">{panelOpen ? 'Close test panel' : 'Open test panel'}</button>
+    </div>;
   },
 }));
 
@@ -78,10 +84,31 @@ function renderCanvas(entry: string | { pathname: string; state: unknown } = `/c
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<ErrorNoticeProvider><QueryClientProvider client={client}>
     <Tooltip.Provider><MemoryRouter initialEntries={[entry]}>
-      <Routes><Route element={<CanvasScreen />} path="/canvases/:id" /></Routes>
+      <Routes>
+        <Route element={<CanvasScreen />} path="/canvases/:id" />
+        <Route element={<p>Canvases home</p>} path="/canvases" />
+        <Route element={<SidekickPage />} path="/sidekicks/:id" />
+      </Routes>
     </MemoryRouter></Tooltip.Provider>
   </QueryClientProvider></ErrorNoticeProvider>);
   return client;
+}
+
+function SidekickPage(): React.JSX.Element {
+  return <p>Sidekick page {useLocation().pathname}</p>;
+}
+
+const TRACKER = '00000000-0000-7000-8000-0000000000d1';
+const DIGEST = '00000000-0000-7000-8000-0000000000d2';
+
+/** A Sidekick attached to the Canvas, as its detail lists it. */
+function attached(id: string, name: string, overrides: Partial<CanvasSidekick> = {}): CanvasSidekick {
+  return { id, name, status: 'active', madeHere: true, ...overrides };
+}
+
+/** The menu row naming a Sidekick: its name and its state, read as one item. */
+function sidekickRow(name: string): HTMLElement {
+  return within(screen.getByRole('group', { name: 'Sidekicks' })).getByText(name).closest<HTMLElement>('[role="menuitem"]')!;
 }
 
 /** A row of the socket's Canvas list, as `workspace_canvas_list` carries it. */
@@ -105,6 +132,7 @@ beforeEach(() => {
   copyText.mockReset().mockResolvedValue(undefined);
   window.localStorage.clear();
   getCanvas.mockReset().mockResolvedValue(detail());
+  archiveCanvas.mockReset().mockResolvedValue(undefined);
   setCanvasPinned.mockReset().mockResolvedValue(undefined);
   setCanvasAudience.mockReset();
   renameCanvas.mockReset();
@@ -121,6 +149,130 @@ beforeEach(() => {
 });
 
 describe('CanvasScreen', () => {
+  it('confirms Archive Canvas and leaves for Canvases only after success', async () => {
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive canvas' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive Canvas' });
+    expect(dialog).toHaveTextContent('removed from everyone’s Canvases');
+    expect(archiveCanvas).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive Canvas' }));
+    await waitFor(() => expect(archiveCanvas).toHaveBeenCalledWith(CANVAS));
+    expect(await screen.findByText('Canvases home')).toBeInTheDocument();
+  });
+
+  it('keeps the Canvas and confirmation available when archiving fails', async () => {
+    archiveCanvas.mockRejectedValue(new ApiError('Not allowed', 403, 'canvas_archive_forbidden'));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive canvas' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive Canvas' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive Canvas' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('The Canvas could not be archived. Try again.');
+    expect(screen.queryByText('Canvases home')).toBeNull();
+    expect(dialog).toBeInTheDocument();
+  });
+
+  it('offers no archive action to someone who cannot manage the Canvas', async () => {
+    getCanvas.mockResolvedValue(detail({ canManage: false }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Copy link' });
+    expect(screen.queryByRole('menuitem', { name: 'Archive canvas' })).toBeNull();
+  });
+
+  it.each([
+    [[], ''],
+    [[attached(TRACKER, 'Launch tracker'), attached(DIGEST, 'Weekly digest', { madeHere: false })],
+      ' Archiving also archives the Sidekick this Canvas made.'],
+    [[attached(TRACKER, 'Launch tracker'), attached(DIGEST, 'Weekly digest')],
+      ' Archiving also archives the 2 Sidekicks this Canvas made.'],
+  ])('says in the Archive Canvas confirmation that the Sidekicks the Canvas made are archived too (%#)', async (sidekicks, ending) => {
+    getCanvas.mockResolvedValue(detail({ sidekicks }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive canvas' }));
+    const copy = (await screen.findByRole('dialog', { name: 'Archive Canvas' })).querySelector('.modal-copy')!;
+    expect(copy.textContent.endsWith(` no longer be viewable in Rally.${ending}`)).toBe(true);
+    expect(copy).not.toHaveTextContent('Launch tracker');
+  });
+
+  it('lists the attached Sidekicks in its menu by name and state, between Change appearance and Archive canvas', async () => {
+    getCanvas.mockResolvedValue(detail({ sidekicks: [
+      attached(TRACKER, 'Launch tracker'),
+      attached(DIGEST, 'Weekly digest', { status: 'paused', madeHere: false }),
+      attached('00000000-0000-7000-8000-0000000000d3', 'Unfinished', { status: 'draft' }),
+    ] }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('group', { name: 'Sidekicks' });
+    const order = screen.getAllByRole('menuitem').map((item) => item.getAttribute('aria-label') ?? item.textContent.trim());
+    expect(order.slice(order.indexOf('Change appearance'))).toEqual([
+      'Change appearance', 'Launch trackerActive', 'Weekly digestPaused', 'UnfinishedDraft', 'Archive canvas',
+    ]);
+    // The menu archives no Sidekick, whichever Canvas made it: that is asked of the Chat.
+    expect(screen.queryByRole('menuitem', { name: /Archive Sidekick/u })).toBeNull();
+  });
+
+  it("follows the Canvas list for its Sidekicks, so one made or paused while the Canvas is open reaches its menu", async () => {
+    // The detail this screen opened with knows of no Sidekick.
+    getCanvas.mockResolvedValue(detail({ sidekicks: [] }));
+    const client = renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByText('Sidekicks')).toBeNull();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    // Its Chat makes one: the socket's list row carries it, and no detail is read again.
+    act(() => { applyVersionedSidebarList(client, 'canvases', 1, [listRow('Q4 revenue review', { sidekicks: [attached(TRACKER, 'Launch tracker', { status: 'draft' })] })]); });
+    await openMenu('Q4 revenue review');
+    expect(sidekickRow('Launch tracker')).toHaveTextContent('Launch trackerDraft');
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    // Renamed and paused, then archived.
+    act(() => { applyVersionedSidebarList(client, 'canvases', 2, [listRow('Q4 revenue review', { sidekicks: [attached(TRACKER, 'Inbox listener', { status: 'paused' })] })]); });
+    await openMenu('Q4 revenue review');
+    expect(sidekickRow('Inbox listener')).toHaveTextContent('Inbox listenerPaused');
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    act(() => { applyVersionedSidebarList(client, 'canvases', 3, [listRow('Q4 revenue review', { sidekicks: [] })]); });
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByText('Sidekicks')).toBeNull();
+    expect(getCanvas).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws no Sidekicks section for a Canvas with none, or from a server that sends none', async () => {
+    getCanvas.mockResolvedValue(detail({ sidekicks: [] }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByText('Sidekicks')).toBeNull();
+    cleanup();
+    getCanvas.mockResolvedValue(detail());
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByText('Sidekicks')).toBeNull();
+  });
+
+  it("opens a Sidekick's page from its row only for someone it is shared with, and says how to change it otherwise", async () => {
+    getCanvas.mockResolvedValue(detail({ sidekicks: [
+      attached(TRACKER, 'Launch tracker', { canOpen: true }), attached(DIGEST, 'Weekly digest', { canOpen: false }),
+    ] }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('group', { name: 'Sidekicks' });
+    const unshared = sidekickRow('Weekly digest');
+    expect(unshared).toHaveAttribute('aria-disabled', 'true');
+    expect(unshared).not.toHaveAttribute('href');
+    act(() => unshared.focus());
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Ask in this Canvas’s chat to change it. Its creator can share it with you to open it.');
+    fireEvent.click(unshared);
+    expect(screen.queryByText(/Sidekick page/u)).toBeNull();
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(sidekickRow('Launch tracker')).not.toHaveAttribute('aria-disabled');
+    fireEvent.click(sidekickRow('Launch tracker'));
+    expect(await screen.findByText(`Sidekick page /sidekicks/${TRACKER}`)).toBeInTheDocument();
+  });
+
   it("opens the Canvas's Chat as a canvas conversation under a header naming it", async () => {
     renderCanvas();
     await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
@@ -169,7 +321,7 @@ describe('CanvasScreen', () => {
     await waitFor(() => expect(copyText).toHaveBeenCalledWith('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7Xe/cv/1111117Hxt1fAWDjN7Wp/'));
   });
 
-  it('reopens a closed panel onto the newest artifact, from either menu', async () => {
+  it('reopens a closed panel onto the newest artifact from the command menu', async () => {
     renderCanvas();
     await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
     surfaces.length = 0;
@@ -177,10 +329,6 @@ describe('CanvasScreen', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Open artifact' }));
     await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
     expect(lastSurface().expanded).toBe(false);
-    surfaces.length = 0;
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Canvas actions' }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open artifact' }));
-    await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
   });
 
   it('replaces the entry it reopens the panel on, so Back leaves the Canvas', async () => {
@@ -205,33 +353,49 @@ describe('CanvasScreen', () => {
     expect(await screen.findByText('Canvases home')).toBeInTheDocument();
   });
 
-  it('copies the Canvas id for support from its menu', async () => {
+  it('offers the four command shortcuts and opens Share from its tile', async () => {
     renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    expect(screen.queryByRole('button', { name: 'Canvas actions' })).toBeNull();
     await openMenu('Q4 revenue review');
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy Canvas ID' }));
-    await waitFor(() => expect(copyText).toHaveBeenCalledWith(CANVAS));
+    const shortcuts = await screen.findByRole('group', { name: 'Actions' });
+    expect(within(shortcuts).getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Share', 'Open artifact', 'Copy link', 'Pin']);
+    expect(screen.queryByRole('menuitem', { name: 'Copy Canvas ID' })).toBeNull();
+    fireEvent.click(within(shortcuts).getByRole('menuitem', { name: 'Share' }));
+    expect(await screen.findByRole('dialog', { name: 'Share Canvas' })).toBeInTheDocument();
   });
 
-  it('offers no artifact to open on a Canvas that has none', async () => {
+  it('disables the artifact shortcut on a Canvas that has none', async () => {
     getCanvas.mockResolvedValue(detail({ artifacts: [] }));
     renderCanvas();
     await waitFor(() => expect(getCanvas).toHaveBeenCalled());
     await openMenu('Q4 revenue review');
     await screen.findByRole('menuitem', { name: 'Copy link' });
-    expect(screen.queryByRole('menuitem', { name: 'Open artifact' })).toBeNull();
+    const shortcut = screen.getByRole('menuitem', { name: 'Open artifact' });
+    expect(shortcut).toHaveAttribute('aria-disabled', 'true');
+    act(() => shortcut.focus());
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('This Canvas has no artifacts yet.');
+  });
+
+  it('disables Open artifact while its panel is shown and enables it after close', async () => {
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Open artifact' });
+    const shortcut = () => screen.getByRole('menuitem', { name: 'Open artifact' });
+    expect(shortcut()).not.toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Open test panel' }));
+    expect(shortcut()).toHaveAttribute('aria-disabled', 'true');
+    act(() => shortcut().focus());
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('The artifact panel is already open.');
+    fireEvent.click(shortcut());
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close test panel' }));
+    expect(shortcut()).not.toHaveAttribute('aria-disabled', 'true');
   });
 
   it('pins the Canvas from its menu', async () => {
     renderCanvas();
     const trigger = await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
-    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
-    expect(setCanvasPinned).toHaveBeenCalledWith(CANVAS, true);
-  });
-
-  it('pins the Canvas from the header\'s separate actions button too', async () => {
-    renderCanvas();
-    const trigger = await screen.findByRole('button', { name: 'Canvas actions' });
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
     expect(setCanvasPinned).toHaveBeenCalledWith(CANVAS, true);
@@ -489,7 +653,7 @@ describe('CanvasScreen', () => {
     render(<Tooltip.Provider><MemoryRouter><WorkstreamErrorState description={undefined} header={stateHeader} onRetry={vi.fn()} workstreamId={CANVAS} /></MemoryRouter></Tooltip.Provider>);
     expect(screen.getByRole('button', { name: 'Canvas menu: Q4 revenue review' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Share' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Canvas actions' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Canvas actions' })).toBeNull();
     // The support menu belongs to the bare header the Canvas's replaces.
     expect(screen.queryByRole('button', { name: 'More Canvas actions' })).toBeNull();
     expect(screen.getByText('Rally can’t reach the server right now.')).toBeInTheDocument();
@@ -571,8 +735,11 @@ describe('CanvasScreen', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
-    expect(within(dialog).getByRole('radio', { name: /Only you/ })).toBeChecked();
-    fireEvent.click(within(dialog).getByRole('radio', { name: /Specific people/ }));
+    const onlyYou = within(dialog).getByRole('radio', { name: 'Only you' });
+    expect(onlyYou).toBeChecked();
+    fireEvent.click(within(dialog).getByText('Specific people'));
+    expect(onlyYou).not.toBeChecked();
+    expect(within(dialog).getByRole('radio', { name: 'Specific people' })).toBeChecked();
     expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled();
     fireEvent.click(await within(dialog).findByRole('checkbox', { name: 'Maya Lin' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
@@ -587,7 +754,9 @@ describe('CanvasScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
     expect(within(dialog).queryByText('Nobody else can open it.')).toBeNull();
-    expect(within(dialog).getByRole('radio', { name: /Only you.*And everyone the Sidekick that writes it is shared with\./u })).toBeChecked();
+    const onlyYou = within(dialog).getByRole('radio', { name: 'Only you' });
+    expect(onlyYou).toBeChecked();
+    expect(onlyYou).toHaveAccessibleDescription('And everyone the Sidekick that writes it is shared with.');
   });
 
   it("lists a decider's pending requests in Share, and Approve keeps the new participant when Save follows", async () => {
@@ -643,13 +812,16 @@ describe('CanvasScreen', () => {
     expect(await screen.findByRole('alertdialog', { name: 'The request could not be answered' })).toHaveTextContent('Someone already answered this request.');
   });
 
-  it('offers only guests to pick once the whole Organization can open it, and never the viewer', async () => {
+  it('keeps Organization members searchable and checked while allowing only guests to be selected', async () => {
     const GUEST = asUserId('00000000-0000-7000-8000-0000000000a4');
     const THEO = asUserId('00000000-0000-7000-8000-0000000000a3');
+    const RAE = asUserId('00000000-0000-7000-8000-0000000000a5');
     getWorkspaceMembers.mockResolvedValue([
       { id: ME, name: 'Adam Jones', email: 'adam@example.test', timezone: 'UTC', accessClass: 'member' },
       { id: MAYA, name: 'Maya Lin', email: 'maya@example.test', timezone: 'UTC', accessClass: 'member' },
-      { id: THEO, name: 'Theo Park', email: 'theo@example.test', timezone: 'UTC', accessClass: 'member' },
+      { id: THEO, name: 'Theo Park', email: 'theo@example.test', timezone: 'UTC', status: 'active' },
+      { id: RAE, name: 'Rae Lee', email: 'rae@example.test', timezone: 'UTC', accessClass: 'member' },
+      { id: asUserId('00000000-0000-7000-8000-0000000000a6'), name: 'Isa Bell', email: 'isa@example.test', timezone: 'UTC', status: 'invited' },
       { id: GUEST, name: 'Gale Guest', email: 'gale@example.test', timezone: 'UTC', accessClass: 'guest' },
     ]);
     // Maya made it; Adam, an administrator, is managing it.
@@ -660,11 +832,24 @@ describe('CanvasScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
     expect(await within(dialog).findByRole('checkbox', { name: 'Theo Park' })).toBeChecked();
+    expect(within(dialog).getByRole('checkbox', { name: 'Rae Lee' })).not.toBeChecked();
     expect(within(dialog).queryByRole('checkbox', { name: 'Adam Jones' })).toBeNull();
 
     fireEvent.click(within(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
 
-    expect(within(dialog).getAllByRole('checkbox').map((box) => box.getAttribute('aria-label'))).toEqual(['Gale Guest']);
+    expect(within(dialog).getByRole('checkbox', { name: 'Theo Park' })).toBeDisabled();
+    const invitee = within(dialog).getByRole('checkbox', { name: 'Isa Bell' });
+    expect(invitee).toBeDisabled();
+    expect(invitee).not.toBeChecked();
+    expect(invitee).toHaveAccessibleDescription('Invitation pending');
+    const search = within(dialog).getByRole('searchbox', { name: 'Search people' });
+    fireEvent.change(search, { target: { value: 'rae@example.test' } });
+    const rae = within(dialog).getByRole('checkbox', { name: 'Rae Lee' });
+    expect(rae).toBeChecked();
+    expect(rae).toBeDisabled();
+    expect(within(dialog).getAllByRole('checkbox')).toEqual([rae]);
+    fireEvent.change(search, { target: { value: '' } });
+    expect(within(dialog).getByRole('checkbox', { name: 'Gale Guest' })).toBeEnabled();
     fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Gale Guest' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     // Theo, a member, is in already; only the guest is sent.
@@ -678,12 +863,10 @@ describe('CanvasScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
     fireEvent.click(within(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
-    // No guest to pick yet, so no search over nothing until the guest section opens.
-    expect(within(dialog).queryByRole('searchbox', { name: 'Search people' }) ?? within(dialog).queryByLabelText('Search people')).toBeNull();
+    expect(within(dialog).getByRole('searchbox', { name: 'Search people' })).toBeInTheDocument();
     const guests = within(dialog).getByText('Invite a guest by email').closest('details')!;
     guests.open = true;
     fireEvent(guests, new Event('toggle'));
-    expect(await within(dialog).findByLabelText('Search people')).toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText('Email addresses'), { target: { value: 'b@example.test, a@example.test' } });
     expect(within(dialog).getAllByRole('button').filter((button) => /^(Share|Save)$/.test(button.textContent ?? '')).map((button) => button.textContent)).toEqual(['Save']);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));

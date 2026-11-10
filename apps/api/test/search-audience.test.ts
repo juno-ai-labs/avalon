@@ -26,6 +26,7 @@ describe('search audience groups', () => {
       .toEqual(['user:uploader', 'conversation:channel/0', 'sidekick:sidekick']);
     expect(resourceSearchAudience(workspaceId, { ...row, provider: 'avalon_generated' }, []))
       .toEqual(['user:uploader']);
+    expect(resourceSearchAudience(workspaceId, { ...row, provider: 'avalon_generated' }, [], true)).toEqual([]);
     expect(resourceSearchAudience(workspaceId, { ...row, provider: 'web' }, [channel]))
       .toEqual(['user:uploader', `members:${workspaceId}`, 'conversation:channel/0']);
     // An inbound email needs an attachment even for its owner.
@@ -35,6 +36,10 @@ describe('search audience groups', () => {
     expect(resourceSearchAudience(workspaceId, { ...row, attachment_status: 'draft' }, [channel])).toEqual(['user:uploader']);
     expect(resourceSearchAudience(workspaceId, { ...row, connection_id: 'c1' }, [channel])).toEqual(['connection:c1']);
     // A Canvas that holds it admits the Canvas's Chat readers.
+    expect(resourceSearchAudience(workspaceId, { ...row, provider: 'avalon_generated' },
+      [{ parentId: 'canvas-1', substreamId: '0', parentKind: 'canvas' }], true))
+      .toEqual(['conversation:canvas-1/0']);
+    // Merely attaching a standalone artifact does not change its ownership.
     expect(resourceSearchAudience(workspaceId, { ...row, provider: 'avalon_generated' },
       [{ parentId: 'canvas-1', substreamId: '0', parentKind: 'canvas' }]))
       .toEqual(['user:uploader', 'conversation:canvas-1/0']);

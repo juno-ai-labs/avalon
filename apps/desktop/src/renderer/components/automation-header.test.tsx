@@ -190,7 +190,6 @@ describe('AutomationHeader', () => {
       currentDefinition: definition,
       currentDefinitionRevision: 1,
       acceptedDefinitionRevision: 1,
-      emailAddress: 'weekly-changelog@automation.rallywith.ai',
     };
     const { unmount } = render(
       <Tooltip.Provider><AutomationHeader automation={active} {...actions()} /></Tooltip.Provider>,
@@ -198,26 +197,10 @@ describe('AutomationHeader', () => {
     expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Wakes on' })).toBeVisible();
-    const email = screen.getByText('weekly-changelog@automation.rallywith.ai');
-    expect(email).not.toBeVisible();
-    fireEvent.click(screen.getByText('Email this Sidekick'));
-    expect(email).toBeVisible();
     unmount();
 
     renderHeader({ ...active, currentDefinitionRevision: 2 });
     expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
-  });
-
-  it('describes legacy inbound email even without explicit trigger summaries', () => {
-    renderHeader({
-      ...draft,
-      lifecycle: 'active',
-      currentDefinition: { ...definition, triggers: [] },
-      emailAddress: 'weekly-changelog@automation.rallywith.ai',
-      runnable: true,
-    });
-    expect(screen.getByRole('list', { name: 'Triggers' })).toHaveTextContent('When an email arrives');
-    expect(screen.getByRole('region', { name: 'Wakes on' })).not.toHaveTextContent('Nothing yet');
   });
 
   it('shows the next scheduled time even without current trigger summaries', () => {
@@ -427,5 +410,25 @@ describe('what a Sidekick profile says it reaches', () => {
     expect(within(screen.getByRole('list', { name: 'Connections it uses' })).getByText('Pagerduty')).toBeInTheDocument();
     expect(within(screen.getByRole('list', { name: 'Canvases it writes to' })).getByRole('link', { name: 'Checkout latency · Nov 6' }))
       .toHaveAttribute('href', '/canvases/00000000-0000-7000-8000-0000000000c1');
+  });
+
+  it('marks, among the Canvases it writes to, the one whose Chat made it', () => {
+    const canvas = (id: string, title: string) => ({
+      id, title, createdByUserId: '00000000-0000-7000-8000-0000000000a1', createdAt: '2026-11-06T10:00:00.000Z',
+      updatedAt: '2026-11-06T10:34:00.000Z', lastEditor: null, writerSidekickId: null, visibility: 'creator',
+    });
+    const made = '00000000-0000-7000-8000-0000000000c2';
+    const canvases = [canvas('00000000-0000-7000-8000-0000000000c1', 'Board notes'), canvas(made, 'Launch plan')] as NonNullable<AutomationDetail['canvases']>;
+    const { rerender } = render(<Tooltip.Provider><MemoryRouter>
+      <AutomationHeader automation={{ ...draft, lifecycle: 'active', status: 'active', canvases, madeInCanvasId: made }} {...actions()} />
+    </MemoryRouter></Tooltip.Provider>);
+    const rows = (): Array<string | null> => within(screen.getByRole('list', { name: 'Canvases it writes to' })).getAllByRole('listitem').map((row) => row.textContent);
+    expect(rows()).toEqual(['Board notes', 'Launch planMade in this Canvas']);
+    // The mark is beside the link, not part of what the link is called.
+    expect(screen.getByRole('link', { name: 'Launch plan' })).toHaveAttribute('href', `/canvases/${made}`);
+    rerender(<Tooltip.Provider><MemoryRouter>
+      <AutomationHeader automation={{ ...draft, lifecycle: 'active', status: 'active', canvases }} {...actions()} />
+    </MemoryRouter></Tooltip.Provider>);
+    expect(rows()).toEqual(['Board notes', 'Launch plan']);
   });
 });

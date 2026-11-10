@@ -71,6 +71,7 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { connectionFromRow } from "../mappers/connection";
 import {
   agentModelOverride,
+  conversationModelRole,
   pinnedModelRouting,
   resolveAgentModelRouting,
 } from "../services/agent-model-flags";
@@ -224,7 +225,6 @@ interface RootRow extends SqlRow {
   archived_at: number | null;
   archive_generation: number;
   created_by_user_id: string | null;
-  email_address: string | null;
   system_kind: "digest" | null;
   title_status: "naming" | "automatic" | "settled";
   model_override: string | null;
@@ -397,25 +397,6 @@ function userFromRow(row: UserRow) {
  * profiles, and other control-plane facts. Workspace-owned resources,
  * connectors, automation labels, and pins resolve through WorkspaceDO.
  */
-
-/**
- * A message event's targets: who it mentions, then who takes part. Mentions
- * lead because the Activity tab reads them and a digest only ranks by them, and
- * the list is cut at the effect schema's hundred so a crowded thread can never
- * make the effect fail to parse inside the commit that carries it.
- */
-function activityTargets(
-  participantIds: readonly string[],
-  mentionedIds: readonly string[],
-  authorUserId: string | null,
-): Array<{ userId: string; relation: "mentioned" | "participant" }> {
-  return [
-    ...mentionedIds
-      .filter((userId) => userId !== authorUserId)
-      .map((userId) => ({ userId, relation: "mentioned" as const })),
-    ...participantIds.map((userId) => ({ userId, relation: "participant" as const })),
-  ].slice(0, 100);
-}
 
 export class WorkstreamObjectProductService {
   /**
@@ -650,6 +631,18 @@ export class WorkstreamObjectProductService {
       now,
       now,
     );
+  }
+
+  /** The owning parent closed this conversation; no viewer admission is needed. */
+  archiveFromParent(): void {
+    this.storage.transactionSync(() => {
+      const now = Date.now();
+      this.requestArchiveStopInTransaction(this.storage.sql, now);
+      this.storage.sql.exec(`UPDATE workstream SET archived_at = COALESCE(archived_at, ?),
+        exact_state = 'archived', updated_at = ? WHERE id = 1`, now, now);
+      this.storage.sql.exec(`UPDATE workstream_wakeups SET status = 'cancelled', cancelled_at = ?,
+        version = version + 1, updated_at = ? WHERE status = 'pending'`, now, now);
+    });
   }
 
   private beginInputPreparation(inputId: string, now: number): void {
@@ -1116,8 +1109,6 @@ export class WorkstreamObjectProductService {
     createdByUserId: string;
     participantUserIds: readonly string[];
     harnessStatus: string;
-    emailAddress: string | null;
-    emailRouteStatus: string | null;
     systemKind: string | null;
     modelOverride: string | null;
     now: number;
@@ -1316,7 +1307,6 @@ export class WorkstreamObjectProductService {
       titleStatus,
       appearance: root.appearance_json ? WorkstreamAppearanceSchema.parse(JSON.parse(root.appearance_json)) : undefined,
       objective: truncateUtf16Safe(root.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
-      emailAddress: root.email_address,
       createdByUserId: root.created_by_user_id,
       harnessStatus: harnessStatus(root.exact_state),
       latestAttentionSequenceNumber: latest,
@@ -2139,12 +2129,11 @@ export class WorkstreamObjectProductService {
         if (userId === auth.userId || write.alreadyActive) return [viewer];
         // The epoch is what separates one add from the next: re-adding
         // somebody who was removed notifies them again, while a redelivery of
-        // this add converges on the same intent and the same activity row.
+        // this add converges on the same intent.
         //
-        // The work stream is in the identity because both things this keys are
+        // The work stream is in the identity because the intent it keys is
         // workspace-wide while the epoch is object-local and starts at zero:
-        // `workspace_activity_events.dedupe_key` is UNIQUE across the
-        // workspace, and an intent is fenced on its id and on
+        // an intent is fenced on its id and on
         // `(source_message_id, recipient_user_id, notification_kind)`. Without
         // it, adding the same person to a second work stream reuses the first
         // one's identity, and the effect is refused as a conflict and retried
@@ -2212,10 +2201,9 @@ export class WorkstreamObjectProductService {
    *
    * `epoch` is what separates one participation from the next: re-adding
    * somebody who was removed notifies them again, while a redelivery of the
-   * same add converges on one intent and one activity row. The work stream is
-   * in both identities because what they key is workspace-wide while the epoch
-   * is object-local and starts at zero — `workspace_activity_events.dedupe_key`
-   * is UNIQUE across the workspace, and an intent is fenced on its id and on
+   * same add converges on one intent. The work stream is in its identity
+   * because the intent is workspace-wide while the epoch is object-local and
+   * starts at zero: an intent is fenced on its id and on
    * `(source_message_id, recipient_user_id, notification_kind)`. Without it,
    * adding one person to a second work stream reuses the first one's identity
    * and the effect is refused as a conflict, then retried forever instead of
@@ -2276,41 +2264,6 @@ export class WorkstreamObjectProductService {
     const occurredAt = new Date(input.now).toISOString();
     const title = truncateUtf16Safe(input.root.title, 500);
     return [
-      {
-        partitionKey: `activity:${sourceId}`,
-        sourceVersion: 1,
-        dedupeKey: sourceId,
-        effect: {
-          kind: "activity_event" as const,
-          eventId: uuidV7(input.now),
-          eventType: "workstream_participant_added",
-          // Nothing in the transcript ordered this: a person joined the room,
-          // which sits outside the message sequence.
-          subjectSequenceNumber: null,
-          actorType: "user" as const,
-          actorUserId: input.actorUserId,
-          // Both names are truncated to the schema's own ceiling rather than
-          // trusted: they are read from `users.name`, and a value over the
-          // effect schema's bound would throw inside the effect callback —
-          // which, on the create path, is after the root has already committed.
-          actorLabel: truncateUtf16Safe(input.actorName, 300),
-          title,
-          body: truncateUtf16Safe(
-            `${input.actorName} added ${input.recipientName} to this ${
-              substreamId === "0" ? "work stream" : "substream"
-            }.`,
-            8_000,
-          ),
-          canonicalUrl: null,
-          digestible: true,
-          occurredAt,
-          sourceKind: "workstream_participant",
-          sourceId,
-          dedupeKey: sourceId,
-          metadata: { participantUserId: input.userId, addedByUserId: input.actorUserId, substreamId },
-          targets: [{ userId: input.userId, relation: "added" }],
-        },
-      },
       {
         partitionKey: `notification:${intentId}`,
         sourceVersion: 1,
@@ -2912,6 +2865,16 @@ export class WorkstreamObjectProductService {
     // Sidekick's conversation (the Sidekick copies the preview onto the run's
     // summary). Read only in a run: no other conversation's parent reads them.
     const identity = this.objectStore.identity();
+    const lastMessageAt = identity?.parentKind === "canvas"
+      ? this.storage.sql.exec<{ created_at: number }>(
+        `SELECT turn.created_at FROM participant_transcript_turns turn
+          WHERE turn.entry_kind = 'conversation' AND turn.message_type <> 'tool'
+            AND (turn.actor <> 'assistant' OR EXISTS (
+              SELECT 1 FROM participant_transcript_blocks block WHERE block.turn_id = turn.turn_id AND block.block_kind = 'text'
+            ))
+          ORDER BY turn.created_at DESC LIMIT 1`,
+      ).toArray()[0]?.created_at ?? null
+      : undefined;
     const sidekickRun = identity?.parentKind === "automation" && this.externalSubstreamId() !== "0" && background === undefined;
     const stepCount = sidekickRun
       ? Number(this.storage.sql.exec<{ steps: number }>(
@@ -2956,10 +2919,10 @@ export class WorkstreamObjectProductService {
       state: root.exact_state,
       systemKind: root.system_kind,
       lastActivityAt: iso(root.last_people_activity_at)!,
+      ...(lastMessageAt === undefined ? {} : { lastMessageAt: iso(lastMessageAt) }),
       completedAt: iso(root.completed_at),
       archivedAt: iso(root.archived_at),
       archiveGeneration: root.archive_generation,
-      emailAddress: root.email_address,
       createdByUserId: root.created_by_user_id,
       titleStatus: root.title_status,
       latestAttentionOrdinal: Math.max(0, root.next_attention_ordinal - 1),
@@ -3006,7 +2969,12 @@ export class WorkstreamObjectProductService {
 
   private model(root: RootRow): Promise<string> {
     if (root.model_override) return Promise.resolve(pinnedModelRouting(root.model_override).model);
-    return resolveAgentModelRouting(this.env, "workstream", {
+    const identity = this.objectStore.identity();
+    const role = conversationModelRole({
+      parentKind: identity?.parentKind ?? "canvas",
+      substreamId: identity?.parentKind === "automation" ? this.sidekickAuthorityRunId() : this.externalSubstreamId(),
+    });
+    return resolveAgentModelRouting(this.env, role, {
       workspaceId: root.parent_workspace_key,
       workstreamId: root.workstream_key,
     }).then((routing) => routing.model);
@@ -3054,6 +3022,14 @@ export class WorkstreamObjectProductService {
     }));
   }
 
+  /** Publish a Canvas's saved assistant text in the transaction that wrote it. */
+  enqueueCanvasAssistantTextInTransaction(): undefined {
+    if (this.objectStore.identity()?.parentKind !== "canvas") return;
+    this.objectStore.enqueueEffectsInCurrentTransaction([
+      { partitionKey: "common", effect: this.commonEffect(this.root()) },
+    ]);
+  }
+
   /**
    * Join transcript promotion's SQLite transaction so no acknowledged input
    * can commit without its regional projections and notifications in outbox.
@@ -3096,8 +3072,8 @@ export class WorkstreamObjectProductService {
         delivery.turnId,
       ));
       const messageType = turn?.message_type;
-      // Elicitation answers historically advance the transcript/directory but
-      // do not create a blank digest activity or a notification. Their typed
+      // Elicitation answers advance the transcript and directory but notify
+      // nobody. Their typed
       // structured payload remains in the canonical turn itself.
       if (messageType === "elicitation") continue;
       const authorLabel = truncateUtf16Safe(
@@ -3105,40 +3081,6 @@ export class WorkstreamObjectProductService {
           ?? (delivery.actor === "external" ? "External participant" : "Rally"),
         300,
       );
-      const actorType = delivery.actor === "human"
-        ? "user" as const
-        : delivery.actor === "external" ? "external" as const : "system" as const;
-      commands.push({
-        partitionKey: `activity:${delivery.turnId}`,
-        sourceVersion: 1,
-        dedupeKey: `message:${delivery.turnId}`,
-        effect: {
-          kind: "activity_event",
-          eventId: uuidV7(root.updated_at),
-          eventType: "workstream_message_created",
-          subjectSequenceNumber: delivery.transcriptSequence,
-          actorType,
-          actorUserId: delivery.authorUserId,
-          actorLabel: authorLabel,
-          title,
-          body: notificationMessageExcerpt(delivery.text),
-          canonicalUrl: null,
-          digestible: true,
-          occurredAt,
-          sourceKind: "workstream_message",
-          sourceId: delivery.turnId,
-          dedupeKey: `message:${delivery.turnId}`,
-          metadata: {
-            substreamId: this.externalSubstreamId(),
-            attentionOrdinal: delivery.attentionOrdinal,
-          },
-          targets: activityTargets(
-            delivery.affectedUserIds,
-            delivery.authorUserId === null ? [] : delivery.mentionedUserIds,
-            delivery.authorUserId,
-          ),
-        },
-      });
       if (delivery.authorUserId !== null) {
         for (const userId of delivery.mentionedUserIds) {
           if (userId === delivery.authorUserId) continue;
@@ -4485,34 +4427,6 @@ export class WorkstreamObjectProductService {
           effect: this.userEffect(current, userId),
         }));
         const occurredAt = new Date(now).toISOString();
-        const activityId = uuidV7(now);
-        const activity = {
-          partitionKey: `activity:${messageId}`,
-          sourceVersion: 1,
-          dedupeKey: `message:${messageId}`,
-          effect: {
-            kind: "activity_event" as const,
-            eventId: activityId,
-            eventType: "workstream_message_created",
-            subjectSequenceNumber: write.sequenceNumber,
-            actorType: "user" as const,
-            actorUserId: auth.userId,
-            actorLabel: people.get(auth.userId)?.name ?? "Workspace member",
-            title: truncateUtf16Safe(current.title, 500),
-            body: notificationMessageExcerpt(prepared.text),
-            canonicalUrl: null,
-            digestible: true,
-            occurredAt,
-            sourceKind: "workstream_message",
-            sourceId: messageId,
-            dedupeKey: `message:${messageId}`,
-            metadata: {
-              substreamId: this.externalSubstreamId(),
-              attentionOrdinal: write.attentionOrdinal,
-            },
-            targets: activityTargets(affectedUsers, personIds, auth.userId),
-          },
-        };
         const notifications = personIds.filter((userId) => userId !== auth.userId).map((userId) => ({
           partitionKey: `notification:${messageId}:${userId}`,
           sourceVersion: 1,
@@ -4537,7 +4451,7 @@ export class WorkstreamObjectProductService {
           text: prepared.text, attentionOrdinal: write.attentionOrdinal, transcriptSequence: write.sequenceNumber, occurredAt,
           toldOtherwise: personIds,
         });
-        return [common, ...userEffects, activity, ...notifications, ...(reply ? [reply] : [])];
+        return [common, ...userEffects, ...notifications, ...(reply ? [reply] : [])];
       },
     );
     return {
@@ -5321,10 +5235,11 @@ export class WorkstreamObjectProductService {
    * Run one Workflow runtime transaction against the normalized local tables.
    * Directory projection generation stays in the same SQLite commit whenever
    * the transaction can change transcript or root lifecycle state.
+   * Use `"viewers"` for a mutation that only needs to publish viewer state.
    */
   async commitRuntimeMutation<T>(
     mutate: (sql: SqlStorage) => T,
-    affectsDirectory: boolean,
+    affectsDirectory: boolean | "viewers",
     /**
      * People whose read state the mutation moved who need not be active
      * participants (a viewer of a Sidekick's shared conversation), so their
@@ -5342,7 +5257,7 @@ export class WorkstreamObjectProductService {
    */
   async commitRuntimeMutationWithEffects<T>(
     mutate: (sql: SqlStorage) => T,
-    affectsDirectory: boolean,
+    affectsDirectory: boolean | "viewers",
     alsoReporting: readonly string[] = [],
   ): Promise<{ result: T; envelopes: ConversationEffectEnvelope[] }> {
     const committed = await this.objectStore.commitWithRegionalEffects(
@@ -5352,7 +5267,7 @@ export class WorkstreamObjectProductService {
         const root = this.root();
         const participantIds = [...new Set([...this.activeParticipantIds(), ...alsoReporting])];
         return [
-          { partitionKey: "common", effect: this.commonEffect(root) },
+          ...(affectsDirectory === true ? [{ partitionKey: "common", effect: this.commonEffect(root) }] : []),
           ...participantIds.map((userId) => ({
             partitionKey: `user:${userId}`,
             effect: this.userEffect(root, userId),

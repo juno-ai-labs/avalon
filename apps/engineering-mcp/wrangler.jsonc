@@ -1,11 +1,12 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "rally-engineering-mcp",
-  "main": "src/index.ts",
+  "main": "src/worker.ts",
   "compatibility_date": "2026-08-30",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "vars": {
     "ACCESS_TEAM_DOMAIN": "juno-labs.cloudflareaccess.com",
     // The deployment provisioner replaces this fail-closed placeholder with
@@ -16,17 +17,16 @@
     "CLOUDFLARE_ACCOUNT_ID": "injected-by-automated-deploy"
   },
   "routes": [{ "pattern": "mcp.internal.rallywith.ai", "custom_domain": true }],
+  "durable_objects": {
+    "bindings": [{ "name": "ENGINEERING_TASKS", "class_name": "EngineeringTaskDO" }]
+  },
+  "migrations": [{ "tag": "engineering-tasks-v1", "new_sqlite_classes": ["EngineeringTaskDO"] }],
   "services": [
     {
       "binding": "GLOBAL_INSPECTION",
       "service": "avalon-api-global",
       "entrypoint": "EngineeringInspectionBridge"
     },
-    {
-      "binding": "FLAG_ADMINISTRATION",
-      "service": "avalon-ace",
-      "entrypoint": "FlagAdministration"
-    }
   ],
   "observability": { "enabled": true, "head_sampling_rate": 1 }
 }

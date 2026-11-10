@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  admitDataWriteStatement,
   admitReadOnlyStatement,
   admitTableName,
   artifactRowScope,
@@ -221,5 +222,64 @@ describe("whose rows a reader sees", () => {
   it("names the viewer a scope limits a read to", () => {
     expect(viewerOf({ rows: "all" })).toBeNull();
     expect(viewerOf({ rows: "viewer", viewerId: "member" })).toBe("member");
+  });
+});
+
+describe("what an artifact data write may run", () => {
+  const admits = (sql: string) => admitDataWriteStatement(sql).admitted;
+  const refusal = (sql: string) => {
+    const verdict = admitDataWriteStatement(sql);
+    if (verdict.admitted) throw new Error(`expected a refusal for: ${sql}`);
+    return verdict.reason;
+  };
+
+  it("admits one statement that changes rows", () => {
+    expect(admits("INSERT INTO emails (id, subject) VALUES (?, ?)")).toBe(true);
+    expect(admits("insert into emails (id) values (?) on conflict(id) do nothing returning id;")).toBe(true);
+    expect(admits("INSERT OR REPLACE INTO emails (id) VALUES (?)")).toBe(true);
+    expect(admits("REPLACE INTO emails (id) VALUES (?)")).toBe(true);
+    expect(admits("  UPDATE emails SET seen = 1 WHERE id = ?")).toBe(true);
+    expect(admits("DELETE FROM emails WHERE id = ?")).toBe(true);
+    expect(admits("WITH old AS (SELECT id FROM emails WHERE seen = 1) DELETE FROM emails WHERE id IN (SELECT id FROM old)"))
+      .toBe(true);
+  });
+
+  it("returns the caller's original text, with a semicolon inside a literal still one statement", () => {
+    const sql = "INSERT INTO emails (subject) VALUES ('a; DROP TABLE emails; --')";
+    const verdict = admitDataWriteStatement(sql);
+    expect(verdict.admitted && verdict.sql).toBe(sql);
+  });
+
+  it("refuses a read and points at the read tool", () => {
+    expect(refusal("SELECT * FROM emails")).toContain("query_artifact_data");
+    expect(refusal("WITH a AS (SELECT 1) SELECT * FROM a")).toContain("query_artifact_data");
+  });
+
+  it("refuses every statement that changes the schema or the connection", () => {
+    for (const sql of [
+      "CREATE TABLE extra (id TEXT)",
+      "CREATE INDEX emails_idx ON emails(id)",
+      "CREATE TRIGGER t AFTER INSERT ON emails BEGIN DELETE FROM emails; END",
+      "ALTER TABLE emails ADD COLUMN extra TEXT",
+      "DROP TABLE emails",
+      "PRAGMA writable_schema = 1",
+      "ATTACH DATABASE 'x' AS other",
+      "VACUUM",
+      "REINDEX",
+      "BEGIN",
+      "COMMIT",
+      "SAVEPOINT s",
+      "/* INSERT */ DROP TABLE emails",
+      "WITH a AS (SELECT 1) CREATE TABLE extra (id TEXT)",
+    ]) {
+      expect(admits(sql), sql).toBe(false);
+    }
+    expect(refusal("DROP TABLE emails")).toContain("revise the site and publish it again");
+  });
+
+  it("refuses a second statement behind an admitted first one", () => {
+    expect(refusal("INSERT INTO emails (id) VALUES (1); DROP TABLE emails")).toContain("Only one statement");
+    expect(refusal("DELETE FROM emails; -- tidy\nCREATE TABLE extra (id TEXT)")).toContain("Only one statement");
+    expect(refusal("  -- nothing here")).toContain("empty");
   });
 });

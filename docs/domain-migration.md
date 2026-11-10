@@ -9,16 +9,15 @@ what has to be true before an Avalon hostname can be switched off.
 Read it before adding a public hostname, changing one a caller was given, or
 retiring an Avalon one. Two things that look like domains ride along with the
 rename and are covered here because they fail the same way: the desktop
-deep-link scheme, and the conversation email domain.
+deep-link scheme, and the public hostname configuration.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/wrangler.global.jsonc` | Global Worker routes and every canonical URL it hands out (`PUBLIC_API_BASE_URL`, `PUBLIC_WEB_BASE_URL`, the four ingress base URLs, `ALLOWED_ORIGINS`, `DESKTOP_DEEP_LINK_URI`, `WORKSTREAM_EMAIL_DOMAIN`). |
+| `apps/api/wrangler.global.jsonc` | Global Worker routes and every canonical URL it hands out (`PUBLIC_API_BASE_URL`, `PUBLIC_WEB_BASE_URL`, the four ingress base URLs, `ALLOWED_ORIGINS`, `DESKTOP_DEEP_LINK_URI`). |
 | `apps/site/wrangler.jsonc` | The four site routes: both Rally and both Avalon. |
 | `packages/contracts/src/desktop-deep-link.ts` | The one list of deep-link schemes — minted, legacy, and accepted. Every other surface reads it. |
-| `apps/api/src/lib/workstream-email-address.ts` | The minted email domain and the legacy domains still accepted inbound. |
 | `apps/api/src/services/terminal/network-policy.ts` | The sandbox baseline allowlist, which holds the canonical API hosts only. |
 | `apps/desktop/src/main/index.ts` | `rendererHost` — the `app://rallywithai` origin the Workers' `ALLOWED_ORIGINS` must admit. |
 | `apps/desktop/src/main/message-export.ts` | `MESSAGE_EXPORT_SCHEME` — `rallywithai-export`, in-process only and renamed outright. |
@@ -43,7 +42,6 @@ deep-link scheme, and the conversation email domain.
 | `linear.rallywith.ai` | Linear webhook ingress | `linear.with-avalon.com` |
 | `notion.rallywith.ai` | Notion callback and webhook, answering for configured deployments | `notion.with-avalon.com` |
 | `slack.rallywith.ai` | Slack events, interactivity, commands | `slack.with-avalon.com` |
-| `automation.rallywith.ai` | Inbound conversation and automation mail (Resend MX) | `automation.with-avalon.com` |
 | `downloads.rallywith.ai` | R2 custom domain for desktop installers and the update feed | `downloads.with-avalon.com` |
 
 Seven are attached to a Worker by a `routes` entry, listing the Rally pattern
@@ -142,29 +140,6 @@ party to keep working. The distinction is the useful one to carry: a scheme
 needs a compatibility window exactly when something outside this process
 remembers it.
 
-### The conversation email domain
-
-New addresses are minted on `automation.rallywith.ai`. Mail to
-`automation.with-avalon.com` is still routed.
-
-A conversation address is **stored, not derived** — one row per conversation in
-the Global `workstream_email_routes` ledger — so renaming the domain does not
-move the addresses already issued. Those are printed in mail clients, saved in
-contacts, and forwarded to by rules nobody here can see. Routing is keyed by
-the full normalized address, so the old and current domains retain independent
-namespaces even when a local part repeats. The accepted-domain set decides which
-recipients may be looked up; it does not disappear from the lookup key.
-
-The domain a message *arrived on* is carried through to the region rather than
-replaced with the canonical one, so the address attached to the conversation is
-the address the sender actually used.
-
-Minting and accepting are guarded separately. `configuredEmailDomain` requires
-`WORKSTREAM_EMAIL_DOMAIN` to equal the canonical domain **exactly**, so a
-deployment left on a superseded one fails loudly instead of quietly issuing
-addresses nobody means to issue; `acceptedEmailDomains` is the wider set, and it
-governs receiving only.
-
 ### Reading a shared link on more than one origin
 
 `parseWorkstreamLink` reads one origin by default — the caller's own — because
@@ -216,24 +191,11 @@ configured deployments and a connection completes on whichever origin the client
 - **`allowedReturnUri` pins host and path, never scheme.** Widening the host or
   the path would let a caller name its own destination; narrowing the scheme
   locks out every client that has not updated.
-- **A legacy email domain leaves `LEGACY_WORKSTREAM_EMAIL_DOMAINS` only when
-  inbound mail to it has stopped.** Dropping one silently discards every message
-  to every address issued before the rename, and a discarded message is
-  indistinguishable from nobody having written.
 - **The sandbox network baseline holds canonical hosts only.** It is bounded by
   `TERMINAL_NETWORK_MAX_TARGETS`, and every baseline entry spends one of the
   twenty slots a workspace could otherwise use for its own domains.
 
 ## Boundary
-
-This document owns the hostname inventory and the dual-serving rules. It does
-not own what any individual host does: [`regionalization.md`](regionalization.md)
-owns the configured deployment split and the shared ingress design,
-[`provider-apps.md`](provider-apps.md) owns the registrations,
-[`workstream-email-addresses.md`](workstream-email-addresses.md) owns the
-address format and allocator, [`links.md`](links.md) owns
-the canonical link shape, and [`security.md`](security.md) owns the origin
-policy. Certificate and DNS procedure is in [`runbook.md`](runbook.md).
 
 It also does not own the rest of the rebrand, but three things that were listed
 here as untouched have since moved and are covered above because they carry the
@@ -242,7 +204,7 @@ envelope schema identifier, and the desktop's stored-data namespace. The package
 scope (`@rally/*`) and the `Rally` product string moved too, and neither needed a
 compatibility window — nothing outside a build reads either.
 
-- **Rally senders are rejected until Rally DKIM/SPF is live.** Resend verifies a
+- **Rally senders are rejected until Rally DKIM/SPF is live.** Cloudflare verifies a
   sending domain, not an address, so `invites@rallywith.ai` and
   `notifications@rallywith.ai` do not inherit the Avalon verification.
 
@@ -258,16 +220,6 @@ compatibility window — nothing outside a build reads either.
   Switch one provider at a time and confirm ingress before the next.
 
 ## Testing
-
-No automated test covers the site's route list, CSP, canonical tags, sitemap or
-deep-link hostnames. Those are deploy configuration, and the deploy is their
-test ([`testing.md`](testing.md#what-to-test-and-what-not-to)). `packages/contracts/src/links.test.ts` covers
-minting the new scheme and reading the old, including a test that asserts the
-*writing* side alone: parsing accepts both, so minting the wrong scheme would
-otherwise still round-trip and no other test would notice.
-`packages/contracts/src/url-schemas.test.ts` covers the schema pair, and
-`apps/api/test/resend-inbound-email.test.ts` covers a legacy-domain recipient
-resolving and reporting the domain it arrived on.
 
 Nothing here exercises DNS, certificates, or a provider registration. Those fail
 only in production, which is why they are runbook steps with an explicit order
@@ -329,24 +281,6 @@ regress `/brand/rally-mark.png` to the old mark. The favicon, social card, and
 desktop icons still carry the woven mark until that regeneration happens. The
 site tests enforce the split: pages must reference the SVGs and must not
 reference the PNG, while the PNG file must continue to exist.
-
-### 2026-08-25 — Email compatibility retains the domain in route identity
-
-**What changed:** The Global email registry and inbound resolver now key claims
-by full address. Existing Avalon-domain addresses and newly minted Rally-domain
-addresses remain distinct permanent routes.
-
-**Why:** Discarding the domain caused detail reconciliation to rebuild every
-legacy route using the current Rally domain, producing a conflict with the exact
-address already stored regionally. It would also prevent future custom domains
-from using a local part present on any other domain.
-
-**Considered and rejected:** Making legacy and Rally domains compare equal. That
-would suppress the visible error while preserving the ambiguous routing model.
-
-**Consequences:** Every compatibility domain remains part of route identity.
-Adding a custom domain widens ingress acceptance and creates exact-address claims;
-it does not require a new registry key.
 
 ### 2026-08-25 — Public pages write Rally while compatibility routes keep reading Avalon
 
@@ -489,10 +423,7 @@ migration deliberately writes in its superseded form; anything minting a deep
 link without a caller scheme must use it, and it becomes the current scheme by
 itself once the legacy list empties. `allowedReturnUri` must keep pinning host
 and path — only the scheme is open. `parseWorkstreamLink`'s default stays narrow;
-widening is per-caller and only for callers handed URLs by a third party. And the
-minting guard on the email domain is exact on purpose: relaxing it back to
-membership in the accepted set lets a deployment issue addresses on a domain it
-is migrating off, with nothing to notice.
+widening is per-caller and only for callers handed URLs by a third party.
 
 ### 2026-08-25 — The renderer origin and the export scheme move too
 
@@ -531,20 +462,12 @@ the only place this class of mistake is cheap to catch.
 `with-avalon.com` at once. Every minted URL, compiled default, redirect target,
 and registration manifest moved to Rally; every Avalon hostname stays routed and
 is never emitted. The desktop deep-link scheme became `rallywithai://` with
-`avalon://` still registered and parsed, new work-stream addresses are minted on
-`automation.rallywith.ai` with the Avalon domain still received, and the
+`avalon://` still registered and parsed, and the
 PostHog adapter's hardcoded `$host` became a read of `PUBLIC_WEB_BASE_URL`.
 
-**Why:** The rename has to happen without a coordinated cutover, because the
-callers cannot be coordinated. Three of them are outside our control entirely: a
-provider stores one webhook URL and is changed by hand in its own console, a
-shipped desktop build carries its API host and its URL scheme compiled in, and a
-work-stream email address is stored per row and already printed in someone's
-mail client. A flag-day switch would break all three at once, and each would
-fail silently — a webhook that stops delivering, a client that cannot complete
-authentication, mail that is discarded — with nothing to distinguish any of them
-from an ordinary quiet period. Widening what is read while switching what is
-written removes the need for the day.
+**Why:** A provider stores its webhook URL and a shipped desktop build carries
+its API host and URL scheme. Dual serving keeps those callers working while new
+registrations and builds adopt the canonical hostname.
 
 `$host` was included because a literal that names one of two live domains stops
 being merely stale and starts being wrong: it would attribute Rally traffic to
