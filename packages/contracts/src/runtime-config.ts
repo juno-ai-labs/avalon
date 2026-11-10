@@ -73,7 +73,7 @@ export const AGENT_MODEL_ENV_KEYS = {
   memory_sweep: "OPENROUTER_SMARTER_MODEL",
   sidekick_wizard: "OPENROUTER_SMARTER_MODEL",
   sidekick_run: "OPENROUTER_PRIMARY_MODEL",
-  canvas_naming: "OPENROUTER_FASTER_MODEL",
+  resource_naming: "OPENROUTER_FASTER_MODEL",
 } as const satisfies Record<AgentModelRole, keyof typeof AGENT_MODEL_DEFAULTS>;
 
 /** Model choices for inference paths with their own persistence or provider contracts. */

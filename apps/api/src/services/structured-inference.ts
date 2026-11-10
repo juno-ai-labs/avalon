@@ -36,7 +36,7 @@ export function isMemoryEmbeddingModel(model: string): boolean {
 type StructuredInferenceRole = Extract<
   AgentModelRole,
   | "canvas"
-  | "canvas_naming"
+  | "resource_naming"
   | "memory_sweep"
 >;
 
