@@ -651,7 +651,7 @@ export function ActionTile({ icon, label, onSelect, disabled, disabledReason }: 
   icon: ReactNode; label: string; onSelect: (event: Event) => void; disabled?: boolean | undefined;
   disabledReason?: string | undefined;
 }): React.JSX.Element {
-  return <MenuActionItem className="title-menu-tile" disabled={disabled} disabledReason={disabledReason} onSelect={onSelect}>
+  return <MenuActionItem className="action-tile title-menu-tile" disabled={disabled} disabledReason={disabledReason} onSelect={onSelect}>
     {icon}<span>{label}</span>
   </MenuActionItem>;
 }

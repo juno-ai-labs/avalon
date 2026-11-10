@@ -625,8 +625,11 @@ describe('CanvasScreen', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
-    expect(within(dialog).getByRole('radio', { name: /Only you/ })).toBeChecked();
-    fireEvent.click(within(dialog).getByRole('radio', { name: /Specific people/ }));
+    const onlyYou = within(dialog).getByRole('radio', { name: 'Only you' });
+    expect(onlyYou).toBeChecked();
+    fireEvent.click(within(dialog).getByText('Specific people'));
+    expect(onlyYou).not.toBeChecked();
+    expect(within(dialog).getByRole('radio', { name: 'Specific people' })).toBeChecked();
     expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled();
     fireEvent.click(await within(dialog).findByRole('checkbox', { name: 'Maya Lin' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
@@ -641,7 +644,9 @@ describe('CanvasScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
     expect(within(dialog).queryByText('Nobody else can open it.')).toBeNull();
-    expect(within(dialog).getByRole('radio', { name: /Only you.*And everyone the Sidekick that writes it is shared with\./u })).toBeChecked();
+    const onlyYou = within(dialog).getByRole('radio', { name: 'Only you' });
+    expect(onlyYou).toBeChecked();
+    expect(onlyYou).toHaveAccessibleDescription('And everyone the Sidekick that writes it is shared with.');
   });
 
   it("lists a decider's pending requests in Share, and Approve keeps the new participant when Save follows", async () => {
@@ -697,13 +702,16 @@ describe('CanvasScreen', () => {
     expect(await screen.findByRole('alertdialog', { name: 'The request could not be answered' })).toHaveTextContent('Someone already answered this request.');
   });
 
-  it('offers only guests to pick once the whole Organization can open it, and never the viewer', async () => {
+  it('keeps Organization members searchable and checked while allowing only guests to be selected', async () => {
     const GUEST = asUserId('00000000-0000-7000-8000-0000000000a4');
     const THEO = asUserId('00000000-0000-7000-8000-0000000000a3');
+    const RAE = asUserId('00000000-0000-7000-8000-0000000000a5');
     getWorkspaceMembers.mockResolvedValue([
       { id: ME, name: 'Adam Jones', email: 'adam@example.test', timezone: 'UTC', accessClass: 'member' },
       { id: MAYA, name: 'Maya Lin', email: 'maya@example.test', timezone: 'UTC', accessClass: 'member' },
-      { id: THEO, name: 'Theo Park', email: 'theo@example.test', timezone: 'UTC', accessClass: 'member' },
+      { id: THEO, name: 'Theo Park', email: 'theo@example.test', timezone: 'UTC', status: 'active' },
+      { id: RAE, name: 'Rae Lee', email: 'rae@example.test', timezone: 'UTC', accessClass: 'member' },
+      { id: asUserId('00000000-0000-7000-8000-0000000000a6'), name: 'Isa Bell', email: 'isa@example.test', timezone: 'UTC', status: 'invited' },
       { id: GUEST, name: 'Gale Guest', email: 'gale@example.test', timezone: 'UTC', accessClass: 'guest' },
     ]);
     // Maya made it; Adam, an administrator, is managing it.
@@ -714,11 +722,24 @@ describe('CanvasScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
     expect(await within(dialog).findByRole('checkbox', { name: 'Theo Park' })).toBeChecked();
+    expect(within(dialog).getByRole('checkbox', { name: 'Rae Lee' })).not.toBeChecked();
     expect(within(dialog).queryByRole('checkbox', { name: 'Adam Jones' })).toBeNull();
 
     fireEvent.click(within(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
 
-    expect(within(dialog).getAllByRole('checkbox').map((box) => box.getAttribute('aria-label'))).toEqual(['Gale Guest']);
+    expect(within(dialog).getByRole('checkbox', { name: 'Theo Park' })).toBeDisabled();
+    const invitee = within(dialog).getByRole('checkbox', { name: 'Isa Bell' });
+    expect(invitee).toBeDisabled();
+    expect(invitee).not.toBeChecked();
+    expect(invitee).toHaveAccessibleDescription('Invitation pending');
+    const search = within(dialog).getByRole('searchbox', { name: 'Search people' });
+    fireEvent.change(search, { target: { value: 'rae@example.test' } });
+    const rae = within(dialog).getByRole('checkbox', { name: 'Rae Lee' });
+    expect(rae).toBeChecked();
+    expect(rae).toBeDisabled();
+    expect(within(dialog).getAllByRole('checkbox')).toEqual([rae]);
+    fireEvent.change(search, { target: { value: '' } });
+    expect(within(dialog).getByRole('checkbox', { name: 'Gale Guest' })).toBeEnabled();
     fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Gale Guest' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     // Theo, a member, is in already; only the guest is sent.
@@ -732,12 +753,10 @@ describe('CanvasScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
     fireEvent.click(within(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
-    // No guest to pick yet, so no search over nothing until the guest section opens.
-    expect(within(dialog).queryByRole('searchbox', { name: 'Search people' }) ?? within(dialog).queryByLabelText('Search people')).toBeNull();
+    expect(within(dialog).getByRole('searchbox', { name: 'Search people' })).toBeInTheDocument();
     const guests = within(dialog).getByText('Invite a guest by email').closest('details')!;
     guests.open = true;
     fireEvent(guests, new Event('toggle'));
-    expect(await within(dialog).findByLabelText('Search people')).toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText('Email addresses'), { target: { value: 'b@example.test, a@example.test' } });
     expect(within(dialog).getAllByRole('button').filter((button) => /^(Share|Save)$/.test(button.textContent ?? '')).map((button) => button.textContent)).toEqual(['Save']);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
