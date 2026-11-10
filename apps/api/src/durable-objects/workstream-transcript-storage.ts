@@ -562,12 +562,11 @@ export class WorkstreamTranscriptStorage {
       this.writeBindState(transition, next, facts, now);
       if (transition.kind === "assistant_accepted") {
         if (!facts.appendedFactId) throw new Error("assistant_projection_fact_missing");
-        const delivery = this.projectAssistantTurn(transition, facts.appendedFactId, now);
-        if (delivery) {
-          if (!enqueueRegionalEffectsInTransaction) {
-            throw new Error("assistant_mention_effect_enqueue_required");
-          }
-          invokeSynchronousEffectEnqueue(enqueueRegionalEffectsInTransaction, [delivery]);
+        const deliveries = this.projectAssistantTurn(transition, facts.appendedFactId, now);
+        if (deliveries && enqueueRegionalEffectsInTransaction) {
+          invokeSynchronousEffectEnqueue(enqueueRegionalEffectsInTransaction, deliveries);
+        } else if (deliveries?.length) {
+          throw new Error("assistant_mention_effect_enqueue_required");
         }
       }
       if (executionFence) {
@@ -3597,7 +3596,7 @@ export class WorkstreamTranscriptStorage {
     transition: Extract<BindLoopTransition, { kind: "assistant_accepted" }>,
     rootFactId: string,
     now: number,
-  ): PendingInputDeliveryEffectInput | null {
+  ): readonly PendingInputDeliveryEffectInput[] | null {
     const existing = this.sql.exec<{ turn_id: string } & Record<string, SqlStorageValue>>(
       `SELECT turn_id FROM participant_transcript_turns WHERE turn_id = ?`,
       transition.turnId,
@@ -3731,9 +3730,10 @@ export class WorkstreamTranscriptStorage {
       { kind: "transcript_turn", turnId: transition.turnId },
       now,
     );
-    if (attentionOrdinal === null) return null;
+    // A saved reply can move Canvas recency without generating an unread mention.
+    if (attentionOrdinal === null) return content.length > 0 ? [] : null;
     const mentionedUserIds = [...new Set(mentions.map((mention) => mention.targetUserId!))];
-    return {
+    return [{
       inputId: transition.turnId,
       turnId: transition.turnId,
       transcriptSequence: sequence,
@@ -3746,7 +3746,7 @@ export class WorkstreamTranscriptStorage {
       confirmedParticipantUserIds: [],
       affectedUserIds: mentionedUserIds,
       activatedParticipants: [],
-    };
+    }];
   }
 
   /**

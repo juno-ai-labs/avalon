@@ -459,6 +459,7 @@ import {
   WORKSPACE_PINS_MIGRATION,
 } from "./workspace-pin-storage";
 import {
+  advanceCanvasArtifactRecency,
   drainResourceVersionChanges,
   readResourceHeads,
   resourceVersionLedgerReady,
@@ -4834,8 +4835,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         try {
           // A new version of any resource, from whichever producer wrote it:
           // every open preview of it moves to the new head.
-          const changes = drainResourceVersionChanges(this.state.storage.sql);
+          const changes = this.state.storage.transactionSync(() => {
+            const sql = this.state.storage.sql;
+            const drained = drainResourceVersionChanges(sql);
+            if (advanceCanvasArtifactRecency(sql, drained)) this.noteCanvasDirectoryMoved();
+            return drained;
+          });
           if (changes.length > 0) {
+            this.publishCanvasList();
             this.publishResourceVersions(readResourceHeads(this.state.storage.sql,
               changes.map((change) => change.resourceId)));
           }

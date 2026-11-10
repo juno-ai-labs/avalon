@@ -41,6 +41,8 @@ export const WorkstreamDirectoryCommonEffectSchema = z.object({
   // into an outbox whose delivery can then never succeed.
   systemKind: z.enum(["digest"]).nullable(),
   lastActivityAt: TimestampSchema,
+  /** Canvas Chat's latest saved message. Absent from older senders. */
+  lastMessageAt: NullableTimestampSchema.optional(),
   completedAt: NullableTimestampSchema,
   archivedAt: NullableTimestampSchema,
   /** Monotonic archive count, retained by restore snapshots. Absent on legacy senders. */
