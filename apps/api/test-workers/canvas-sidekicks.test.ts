@@ -187,15 +187,40 @@ describe("a Sidekick a Canvas's Chat made", () => {
     expect(await lifecycle(MADE_HERE)).toBe("deleted");
   });
 
-  it("is not steered by a guest of the Canvas, who is not someone the Organization lets decide what runs as a member", async () => {
+  it("is steered by a guest of the Canvas, whose edit binds the Organization's connections and never a person's", async () => {
     const guest = { userId: GUEST, actorRole: null, participantOfOwningWorkstream: false };
-    // The guest opens the Canvas and sees the Sidekick named there.
-    expect((await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: { userId: GUEST, actorRole: null } })).sidekicks)
-      .toMatchObject([{ id: MADE_HERE, canOpen: false }]);
-    expect(await workspace().sidekickAllowsManager({ workspaceId: WORKSPACE_ID, automationId: MADE_HERE, actor: guest })).toBe(false);
-    expect(await refusal((instance) => instance.sidekickRemove({ workspaceId: WORKSPACE_ID, automationId: MADE_HERE, actor: guest })))
-      .toBe("sidekick_forbidden");
+    const addressed = { workspaceId: WORKSPACE_ID, automationId: MADE_HERE };
+    expect(await workspace().sidekickAllowsManager({ ...addressed, actor: guest })).toBe(true);
+    const connection = (id: string, scope: "workspace" | "personal", owner: string | null) =>
+      runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec(
+          `INSERT OR REPLACE INTO connector_connections
+             (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name, granted_scopes_json,
+              status, cursor_json, config_json, created_at, updated_at, model_plugin_id)
+           VALUES (?, ?, 'slack', ?, ?, 'T0CANVAS', 'Juno Labs', '[]', 'healthy', '{}', '{}', 1, 1, 'plugin_slack')`,
+          id, WORKSPACE_ID, scope, owner,
+        );
+      });
+    const save = (definitionVersion: 2, name: string) => workspace().sidekickSaveDefinition({ ...addressed, actor: guest,
+      evaluatorRules: null, submittedByRunId: null, draft: {
+        definitionVersion, name, description: "Posts new email to Slack", overview: "Keeps the inbox Canvas current",
+        instructions: "Post each new email.", triggers: [{ type: "manual" }], requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {},
+        recommendedPlugins: [{ pluginId: "plugin_slack", recommendedTools: [], reason: "Needed" }], memoryTables: [], customTools: [],
+        suggestedScope: "personal", followUpQuestion: null, elicitation: null, ready: true,
+      } });
+    // The creator's own Slack is the only one: a guest's edit may not run with it.
+    const personal = crypto.randomUUID();
+    await connection(personal, "personal", CREATOR);
+    expect(await refusal(() => save(2, "Guest edit"))).toBe("sidekick_guest_needs_organization_connection");
     expect(await lifecycle(MADE_HERE)).toBe("draft");
+    // With one the whole Organization shares, the same edit is applied and bound to that one.
+    const shared = crypto.randomUUID();
+    await connection(shared, "workspace", null);
+    await save(2, "Guest edit again");
+    expect(await lifecycle(MADE_HERE)).toBe("active");
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ connector_bindings_json: string }>(
+      `SELECT connector_bindings_json FROM automation_directory WHERE automation_id = ?`, MADE_HERE).one().connector_bindings_json))
+      .toBe(JSON.stringify({ plugin_slack: shared }));
   });
 
   it("stops being managed by someone the Canvas no longer admits", async () => {

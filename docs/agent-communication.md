@@ -291,7 +291,7 @@ for no other.
 | `create_sidekick({ scope })` | Makes the Sidekick attached to this Canvas (`createAutomation` with `homeCanvasId`) and returns `{ sidekickId, agentId, attachedToCanvasId }`. Always attached; there is no unattached create here. |
 | `sidekicks_list({})` | Returns the Sidekicks this Canvas made: `{ sidekickId, name, status, canEdit, agentId }`, read from `canvasContext`. A Sidekick only attached here is in `CANVAS CONTEXT` and not in this list. |
 | `archive_sidekick({ sidekick })` | Only here. `sidekick` is a `sidekickId` from `sidekicks_list` or an exact name, matched among the Sidekicks this Canvas made. Returns `{ sidekickId, name, archived: true }`. `write`; a retry after it succeeded answers the same. |
-| `send_message` to a wizard | Unchanged in shape. Whoever is talking may message the wizard of a Sidekick this Canvas made, because a member in the Canvas steers it. |
+| `send_message` to a wizard | Unchanged in shape. Whoever is talking may message the wizard of a Sidekick this Canvas made, because everyone in the Canvas steers it. |
 
 The plugin's message gains `CANVAS_SIDEKICK_GUIDANCE` there: a Sidekick made
 here is attached to this Canvas, what its runs may do, and that recurring
@@ -311,7 +311,7 @@ Refusals `archive_sidekick` adds, each with the names this Canvas made in
 
 **Who may message a wizard is who steers the Sidekick**
 (`authorizeWizardContact`, `personManagesSidekick`). Such a person is not asked to
-also be someone the Sidekick is shared with: a member in a Canvas steers a
+also be someone the Sidekick is shared with: everyone in a Canvas steers a
 Sidekick that Canvas made without being able to open it
 ([`automation-lifecycle.md`](automation-lifecycle.md#a-sidekick-made-in-a-canvas)).
 A non-manager is refused `sidekick_contact_forbidden` when they cannot open it

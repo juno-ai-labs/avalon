@@ -286,7 +286,7 @@ export class AgentCommunicationService {
     if (address.parentKind !== "automation" || address.substreamId !== "0") return;
     if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_contact_user_unavailable");
     // Steering is the whole test. A Sidekick a Canvas's Chat made is steered
-    // by the members in that Canvas (`sidekickManages`), who need not be people
+    // by everyone in that Canvas (`sidekickManages`), who need not be people
     // it is shared with; every other manager can open it anyway.
     if (await personManagesSidekick(this.env, {
       workspaceId: this.input.workspaceId, automationId: address.parentId, userId: this.input.executionPrincipal.userId,
