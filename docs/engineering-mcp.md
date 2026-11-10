@@ -232,6 +232,21 @@ ordinary product permissions. Password credential administration is the separate
 operator capability above. Guests can be selected; actions the app refuses for them
 are refused here too.
 
+Every tool that acts as a user resolves that user through
+`engineeringUserAuth`, one D1 read of the Organization and the relationship
+together. It refuses with one of two codes, and the remedies differ:
+
+- `organization_abandoned`: `workspaces.abandoned_at` is set, the same fence
+  that ends every session into the Organization
+  ([`workspace-retirement.md`](workspace-retirement.md)). No user passes, so
+  trying another one cannot help. `send_message`, the two text reads and the
+  three Sidekick tools do not work in an abandoned Organization.
+- `user_not_active_organization_user`: the Organization is live and the named
+  user has no active member or guest relationship in it. Another user may pass.
+
+The abandoned check runs first, so an abandoned Organization reports its own
+state whoever was named.
+
 Creation takes a fresh UUID `operationId`, reused with the original arguments
 after an uncertain outcome. The Organization's ID is that operation ID, and
 its creation uses the onboarding journal. A transient failure can leave member
@@ -586,6 +601,12 @@ Sidekick's shared conversation and reads it back, refuses it read as a Canvas,
 and reaches a run conversation through `run_canvas_sql`'s registry check.
 Audit coverage reads operator and receipt attribution from the real audit
 database and refuses product writes when the attempt cannot be persisted.
+`apps/api/test/engineering-user-auth.test.ts` runs `engineeringUserAuth` over
+the checked-in migrations: an active member and an active guest are admitted,
+a suspended member and a stranger are refused as
+`user_not_active_organization_user`, and everyone in an abandoned
+Organization, its active owner included, is refused as
+`organization_abandoned`.
 Only the external model provider is doubled. The text formatter's unit tests
 cover bylines, display text, attachments, elicitation, annotations and hidden
 internal content; the desktop transcript suite covers the extracted display helper.
@@ -709,6 +730,35 @@ the Worker. It does not create an Access app or import another app's policy.
 
 
 ## Changelog
+
+### 2026-11-10 — Name the abandoned Organization refusal
+
+**What changed:** `engineeringUserAuth` refuses an abandoned Organization as
+`organization_abandoned` (409) and keeps `user_not_active_organization_user`
+(403) for a missing or inactive relationship. It is still one D1 read: the
+Organization row with the relationship left-joined, where it was an inner join
+that required `abandoned_at IS NULL`.
+
+**Why:** The inner join returned no row for either cause, and the one code it
+threw blamed the user. On 2026-11-10 `archive_sidekick` refused five calls
+that way in two abandoned Organizations whose acting users were active, one
+of them the owner. The code sent the operator to the Sidekick's run-as user
+and then an owner, neither of whom could pass.
+
+**Considered and rejected:** A second query run only after a refusal, to find
+out which cause it was. It keeps the common path as it was, but it is a second
+statement to keep in step with the first, and the joined read costs the same
+one round trip.
+
+**Not done:** Whether these tools should work in an abandoned Organization at
+all is undecided. Today they do not, so a paused or draft Sidekick there
+cannot be archived through `archive_sidekick`. Letting an operator in would
+mean acting as a user whose own session the same fence has ended, so it needs
+a decision, not a fix here.
+
+**Consequences:** A change to this read must keep the two causes apart, and
+must tell a matched guest (role `NULL`) from no relationship by the member's
+id, not by the role.
 
 ### 2026-11-10 — Archive a Sidekick as a user
 
