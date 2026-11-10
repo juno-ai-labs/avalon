@@ -26,16 +26,30 @@ function runDemo(demo: HTMLElement): void {
   }
   let step = 0;
   let timer = 0;
+  let visible = false;
+  let held = false;
+  const schedule = (): void => {
+    window.clearTimeout(timer);
+    if (visible && !held) timer = window.setTimeout(tick, (STEP_HOLD[step] ?? 2) * 1000);
+  };
+  // Moving content needs a way to stop it (WCAG 2.2.2).
+  const pause = demo.querySelector<HTMLButtonElement>('[data-demo-pause]');
+  if (pause) {
+    pause.hidden = false;
+    pause.addEventListener('click', () => {
+      held = !held;
+      pause.setAttribute('aria-pressed', String(held));
+      pause.setAttribute('aria-label', held ? 'Play the demo' : 'Pause the demo');
+      schedule();
+    });
+  }
   const tick = (): void => {
     step = step >= LAST ? 0 : step + 1;
     show(step);
-    timer = window.setTimeout(tick, (STEP_HOLD[step] ?? 2) * 1000);
+    schedule();
   };
   show(0);
-  whenVisible(demo, (visible) => {
-    window.clearTimeout(timer);
-    if (visible) timer = window.setTimeout(tick, (STEP_HOLD[step] ?? 2) * 1000);
-  });
+  whenVisible(demo, (next) => { visible = next; schedule(); });
 }
 
 function reveal(): void {

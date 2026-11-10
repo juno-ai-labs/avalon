@@ -32,7 +32,12 @@ export interface LiveExample {
   readonly id: string;
   readonly who: string;
   readonly title: string;
-  readonly kind: 'Document' | 'Spreadsheet' | 'Site';
+  /**
+   * Always a Site: a person ticks rows, and nobody types into a Canvas
+   * directly. A live site that remembers things takes visitors' entries, and
+   * a Sidekick's runs write rows into it (help/06-things-rally-makes/03-live-sites.md).
+   */
+  readonly kind: 'Site';
   readonly text: string;
   readonly sidekick: string;
   readonly reads: string;
@@ -52,7 +57,7 @@ interface Event { readonly tool: string; readonly text: string }
 
 export const liveExamples: readonly LiveExample[] = [
   {
-    id: 'solo', who: 'Solopreneurs', title: 'Client pipeline', kind: 'Spreadsheet',
+    id: 'solo', who: 'Solopreneurs', title: 'Client pipeline', kind: 'Site',
     text: 'Every signed proposal, new lead and client call moves your pipeline, so the day starts with what to do next.',
     sidekick: 'Pipeline', reads: 'Gmail · Granola', audience: 'Only you', people: ['maya'], version: 11,
     events: [
@@ -90,7 +95,7 @@ export const liveExamples: readonly LiveExample[] = [
     gotcha: { big: 'Blocked', text: 'The release page changed itself when ENG-311 reopened. Nobody had to notice first.' },
   },
   {
-    id: 'parents', who: 'Parents', title: 'School this week', kind: 'Document',
+    id: 'parents', who: 'Parents', title: 'School this week', kind: 'Site',
     text: 'Rally reads every email from school, ranks what needs doing by when, and both parents tick things off on the same list.',
     sidekick: 'School inbox', reads: 'Gmail', audience: 'Specific people · 2', people: ['maya', 'theo'], version: 7,
     events: [
@@ -109,7 +114,7 @@ export const liveExamples: readonly LiveExample[] = [
     gotcha: { big: '2 parents', text: 'One list. Theo ticked pick-up, Maya ticked the form, and nobody forwarded an email.' },
   },
   {
-    id: 'product', who: 'Product managers', title: 'What customers ask for', kind: 'Spreadsheet',
+    id: 'product', who: 'Product managers', title: 'What customers ask for', kind: 'Site',
     text: 'Customer calls and #feedback threads become one ranked list of asks, and shipped work drops off on its own.',
     sidekick: 'Feedback', reads: 'Granola · Slack · Linear', audience: 'Organization', people: ['maya', 'theo', 'priya'], version: 33,
     events: [
@@ -128,7 +133,7 @@ export const liveExamples: readonly LiveExample[] = [
     gotcha: { big: '1 call', text: 'put SSO on the list with who asked. Every ask is counted and ranked as it comes in.' },
   },
   {
-    id: 'developers', who: 'Developers on a team', title: 'My queue', kind: 'Document',
+    id: 'developers', who: 'Developers on a team', title: 'My queue', kind: 'Site',
     text: 'Review requests, assigned issues and questions that name you, ranked into one queue only you see.',
     sidekick: 'My queue', reads: 'GitHub · Linear · Slack', audience: 'Only you', people: ['theo'], version: 4,
     events: [
@@ -146,7 +151,7 @@ export const liveExamples: readonly LiveExample[] = [
     gotcha: { big: '#1', text: 'A teammate waiting on you goes to the top, without you checking Slack.' },
   },
   {
-    id: 'founders', who: 'Founders', title: 'November investor update', kind: 'Document',
+    id: 'founders', who: 'Founders', title: 'November investor update', kind: 'Site',
     text: 'Revenue, shipped work and warm intros collect into next month’s update as they happen, ready for your cofounder to edit.',
     sidekick: 'Investor update', reads: 'Google Drive · Linear · Gmail', audience: 'Specific people · 2', people: ['maya', 'theo'], version: 2,
     events: [
@@ -164,7 +169,7 @@ export const liveExamples: readonly LiveExample[] = [
     gotcha: { big: '4 of 4', text: 'sections written as the month happened. The update was done before you sat down to write it.' },
   },
   {
-    id: 'recruiters', who: 'Agency recruiters', title: 'Shortlist: Senior designer, Northwind', kind: 'Spreadsheet',
+    id: 'recruiters', who: 'Agency recruiters', title: 'Shortlist: Senior designer, Northwind', kind: 'Site',
     text: 'Stage changes, interviews and notes move candidates up the shortlist, and the client ticks who to advance as a guest.',
     sidekick: 'Shortlist', reads: 'Ashby · Granola', audience: 'Specific people · 3, 1 guest', people: ['maya', 'priya', 'guest'], version: 9,
     events: [
@@ -215,7 +220,7 @@ function renderSlide(example: LiveExample, index: number): string {
   const last = version + events.length;
   const signals = events.map(({ tool, text: event }, step) =>
     `<li class="signal is-on" data-at="${step + 1}"><span class="signal-tool">${escape(tool)}</span>${escape(event)}</li>`).join('');
-  return `<div class="slide${index === 0 ? ' is-active' : ''}" id="slide-${id}" role="tabpanel" aria-labelledby="tab-${id}" data-slide data-version="${version}"${index === 0 ? '' : ' hidden'}>`
+  return `<div class="slide${index === 0 ? ' is-active' : ''}" id="slide-${id}" role="tabpanel" aria-labelledby="tab-${id}" data-slide data-step="4" data-version="${version}"${index === 0 ? '' : ' hidden'}>`
     + `<div class="slide-copy"><p class="slide-who">For ${escape(who.toLowerCase())}</p>`
     + `<h2 class="slide-title">${escape(title)}</h2><p class="slide-text">${escape(text)}</p>`
     + `<dl class="slide-meta"><div><dt>Kept current by</dt><dd>${escape(sidekick)} &middot; Sidekick</dd></div>`

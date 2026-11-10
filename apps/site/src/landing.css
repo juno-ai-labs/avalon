@@ -241,6 +241,7 @@ main{counter-reset:fig}
 .carousel{margin:0}
 .carousel-bar{display:flex;align-items:center;gap:12px;margin-bottom:32px;border-bottom:1px solid var(--rule)}
 .carousel-tabs{position:relative;display:flex;flex:1;min-width:0;gap:2px;overflow-x:auto;scrollbar-width:none}
+.demo-controls{display:flex;justify-content:flex-end;margin-top:12px}
 .carousel-pause{display:grid;place-items:center;flex-shrink:0;width:30px;height:30px;padding:0;border:1px solid var(--rule-2);border-radius:50%;background:none;color:var(--text-2);cursor:pointer}
 .carousel-pause[hidden]{display:none}
 .carousel-pause svg{fill:currentColor}
@@ -361,11 +362,8 @@ main{counter-reset:fig}
 /* ---------------------------------------------------------------- Connector strip */
 .logos{max-width:min(calc(var(--max) - 2 * var(--gutter)),calc(100% - 2 * var(--gutter)));margin:clamp(64px,8vw,104px) auto 0;display:grid;grid-template-columns:minmax(0,3fr) minmax(0,9fr);gap:24px;align-items:center;padding-top:20px;border-top:1px solid var(--rule)}
 .logos-label{font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:var(--text-3)}
-.logos-track{display:flex;overflow:hidden;mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)}
-.logos-list{display:flex;flex-shrink:0;gap:48px;margin:0;padding:0 24px;list-style:none;animation:logos 42s linear infinite;font-family:var(--display-font);font-size:30px;line-height:1.2;color:var(--text-2);white-space:nowrap}
+.logos-list{display:flex;flex-wrap:wrap;gap:4px 40px;margin:0;padding:0;list-style:none;font-family:var(--display-font);font-size:30px;line-height:1.2;color:var(--text-2)}
 .logos-list li:nth-child(even){font-style:italic}
-@keyframes logos{to{transform:translateX(-100%)}}
-@media (prefers-reduced-motion:reduce){.logos-list{animation:none;flex-wrap:wrap;gap:4px 32px;white-space:normal}.logos-list[aria-hidden]{display:none}.logos-track{mask-image:none}}
 
 /* ---------------------------------------------------------------- Bands */
 /* Every section opens on a ruled index line: the number and name in the left
@@ -396,7 +394,7 @@ main{counter-reset:fig}
 .reveals [data-reveal].is-in{opacity:1;transform:none}
 
 /* ---------------------------------------------------------------- Cards */
-.duo-card,.cell,.tier,.example,.row,.people>li,.points li{border:1px solid var(--rule);border-radius:var(--radius);background:var(--card)}
+.duo-card,.cell,.tier,.example,.row,.points li{border:1px solid var(--rule);border-radius:var(--radius);background:var(--card)}
 
 /* The two-part product. */
 .duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:56px}
@@ -538,18 +536,6 @@ main{counter-reset:fig}
 .tech-layers h3{margin-top:10px;font-family:var(--display-font);font-size:26px;font-weight:400;letter-spacing:-.015em;line-height:1}
 .tech-layers p{margin-top:10px;font-size:14px;line-height:1.55;color:var(--text-2)}
 .tech-detail{position:absolute;margin:0;pointer-events:none;opacity:0;font-size:13px;line-height:1.5;color:#d8d5cc}
-
-/* ---------------------------------------------------------------- Team */
-.people{margin:56px 0 0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
-.people>li{padding:24px}
-.people a{display:inline-block;transition:opacity .15s}
-.people>li>a:hover{opacity:.8}
-.people img{width:88px;height:88px;object-fit:cover;border-radius:50%}
-.people strong{display:block;margin-top:24px;font-family:var(--display-font);font-size:34px;font-weight:400;line-height:1;letter-spacing:-.02em}
-.people span{display:block;margin-top:6px;font-family:var(--mono);font-size:12px;color:var(--text-3)}
-.people-links{display:flex;gap:12px;margin-top:18px}
-.people .people-links a{display:inline-flex;color:var(--text-3);transition:color .15s}
-.people .people-links a:hover{color:var(--accent)}
 
 /* ---------------------------------------------------------------- Comparison table (home) */
 .compare-table-wrap{margin-top:56px;border-top:1px solid var(--text)}
@@ -758,7 +744,7 @@ main{counter-reset:fig}
 .band-head>.eyebrow{grid-row:auto;margin-bottom:20px}
 .band-head>*:not(.eyebrow),.statement-text{grid-column:1}
 .statement>.eyebrow{border-top:0;padding-top:0;margin-bottom:20px}
-.duo,.tiers,.people,.examples,.scale,.people-grid{grid-template-columns:minmax(0,1fr)}
+.duo,.tiers,.examples,.scale,.people-grid{grid-template-columns:minmax(0,1fr)}
 .people-stats{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:20px}
 .scale-step+.scale-step{padding-left:0;border-left:0;margin-top:40px;border-top:1px solid var(--rule)}
 .scale-step+.scale-step::before{left:-1px}
