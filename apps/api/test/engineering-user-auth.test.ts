@@ -5,6 +5,7 @@ import { asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { engineeringUserAuth } from "../src/services/engineering-creation";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import { openWorkstreamAuthorityForTest } from "./helpers/durable-authority";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 /**
@@ -48,13 +49,8 @@ function fixture() {
       ('${ORG_ID}', '${MEMBER_ID}', 'member', 'active', 'member'),
       ('${ORG_ID}', '${GUEST_ID}', NULL, 'active', 'guest'),
       ('${ORG_ID}', '${SUSPENDED_ID}', 'member', 'suspended', 'member');
-    UPDATE workstream_authority_control
-       SET phase = 'maintenance_draining', generation = 3, updated_at = '${AT}' WHERE id = 1;
-    UPDATE workstream_authority_control SET phase = 'maintenance_importing', updated_at = '${AT}' WHERE id = 1;
-    UPDATE workstream_authority_control SET phase = 'maintenance_verified', updated_at = '${AT}' WHERE id = 1;
-    UPDATE workstream_authority_control
-       SET phase = 'durable_object_open', serving_contract_version = 1, updated_at = '${AT}' WHERE id = 1;
   `);
+  openWorkstreamAuthorityForTest(database, AT);
   return { database, env: createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" }) };
 }
 

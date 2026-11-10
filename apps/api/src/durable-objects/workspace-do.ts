@@ -11926,12 +11926,9 @@ applyRetirementGate(WorkspaceDO, {
     // with this object; its conversations are still separate objects the walk
     // has to find and close.
     "childrenForRetirement",
-    // Archiving a Sidekick, so an operator can clear the paused and draft
-    // Sidekicks a closed Organization still lists (`archive_sidekick`). It
-    // writes this object's own rows and nothing else: the alarm mutators it
-    // reaches stay inert, every socket it would publish to is closed, and no
-    // session into an abandoned Organization authenticates, so the engineering
-    // door is the only caller that arrives.
+    // `archive_sidekick`, for the Sidekicks a closed Organization still lists.
+    // It writes only this object's own storage; `docs/workspace-retirement.md`
+    // says what has to stay true for that.
     "sidekickRemove",
   ],
   drop: {

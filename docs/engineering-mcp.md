@@ -248,12 +248,15 @@ together. It refuses with one of two codes, and the remedies differ:
 The abandoned check runs first, so an abandoned Organization reports its own
 state whoever was named.
 
-`archive_sidekick` is the exception. It passes `abandoned: "admit"`, so it
-works in an abandoned Organization as one of its still-active users, and
-`WorkspaceDO` permits `sidekickRemove` on a retired object, so it works after
-`retire_org` too. An Organization its last member abandoned has no active user
-left (leaving suspends them), so nobody can be named there and the tool still
-refuses with `user_not_active_organization_user`.
+`archive_sidekick` is the exception, because it is cleanup: a Sidekick left
+paused or in draft in a closed Organization is otherwise out of reach, and
+archiving only stops and hides it, where the other tools would be using the
+Organization. It passes `abandoned: "admit"`, so it works in an abandoned
+Organization as one of its still-active users, and `WorkspaceDO` permits
+`sidekickRemove` on a retired object, so it works after `retire_org` too. An
+Organization its last member abandoned has no active user left (leaving
+suspends them), so nobody can be named there and the tool still refuses with
+`user_not_active_organization_user`.
 
 Creation takes a fresh UUID `operationId`, reused with the original arguments
 after an uncertain outcome. The Organization's ID is that operation ID, and
@@ -338,11 +341,7 @@ to pair the attempt and result audit rows.
 
 `archive_sidekick` calls AutomationService `archive` the same way, in any
 lifecycle. It is the one of the three with no undo, so it is marked
-destructive. It is also the one that works in an abandoned or retired
-Organization (see [Product creation](#product-creation)): a Sidekick left
-paused or in draft there is otherwise out of reach, and archiving only stops
-and hides it. On a retired object there is nothing left to stop, so the call
-writes the Sidekick's own rows and nothing else.
+destructive.
 
 ### Retiring an Organization
 
@@ -613,16 +612,9 @@ Sidekick's shared conversation and reads it back, refuses it read as a Canvas,
 and reaches a run conversation through `run_canvas_sql`'s registry check.
 Audit coverage reads operator and receipt attribution from the real audit
 database and refuses product writes when the attempt cannot be persisted.
-`apps/api/test/engineering-user-auth.test.ts` runs `engineeringUserAuth` over
-the checked-in migrations: an active member and an active guest are admitted,
-a suspended member and a stranger are refused as
-`user_not_active_organization_user`, and everyone in an abandoned
-Organization, its active owner included, is refused as
-`organization_abandoned` unless the caller asks to be admitted.
-`engineering-sidekick-inspection.test.ts` retires an Organization through the
-bridge, then proves a resume is refused as `organization_abandoned` and an
-archive by the author sets the Sidekick's lifecycle to `deleted` and leaves
-the object retired.
+`apps/api/test/engineering-user-auth.test.ts` covers whom a tool may act as,
+over the checked-in migrations, and `engineering-sidekick-inspection.test.ts`
+covers the archive in a retired Organization.
 Only the external model provider is doubled. The text formatter's unit tests
 cover bylines, display text, attachments, elicitation, annotations and hidden
 internal content; the desktop transcript suite covers the extracted display helper.
@@ -766,8 +758,7 @@ SQL, which the archive tool exists to replace. The owner asked for archive to
 work there.
 
 **Considered and rejected:** Admitting every tool into an abandoned
-Organization. A send, a read, a pause or a resume would be using an
-Organization that has been closed; archive is cleanup. Clearing
+Organization, for the reason the body gives. Clearing
 `abandoned_at` by hand to archive and setting it back, which reopens sign-in
 for the window. A second query run only after a refusal to find its cause: the
 joined read costs the same one round trip.
