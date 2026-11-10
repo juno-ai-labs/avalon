@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import { asArtifactId, asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { EngineeringInspectionRpcBinding } from "@rally/contracts/engineering-inspection";
 
-import { MANAGED_FLAGS, type FlagAdministrationRpc } from "../../ace/src/protocol";
 import type { AccessPrincipal } from "../src/access";
 import type { Env } from "../src/env";
 import { createEngineeringMcpHandler } from "../src/index";
@@ -65,20 +64,11 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
   };
 }
 
-function flagAdministration(): FlagAdministrationRpc {
-  return {
-    listProductFlags: vi.fn<FlagAdministrationRpc["listProductFlags"]>(async () => ({ ok: true, value: [] })),
-    updateProductFlag: vi.fn<FlagAdministrationRpc["updateProductFlag"]>(async () => ({ ok: true, value: null })),
-    listModelFlags: vi.fn<FlagAdministrationRpc["listModelFlags"]>(async () => ({ ok: true, value: [] })),
-    updateModelRouting: vi.fn<FlagAdministrationRpc["updateModelRouting"]>(async () => ({ ok: true, value: null })),
-  };
-}
 
 function testEnv(bindings: Partial<Env> = {}): Env {
   return {
     GLOBAL_INSPECTION: regionalBinding("global"),
     ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
-    FLAG_ADMINISTRATION: flagAdministration(),
     CLOUDFLARE_ACCOUNT_ID: "account-1",
     BASIN_SQL_API_TOKEN: "basin-token",
     WORKERS_OBSERVABILITY_API_TOKEN: "observability-token",
@@ -116,7 +106,7 @@ describe("Rally engineering MCP tools", () => {
     });
     expect(response.result).toMatchObject({ serverInfo: {
       name: "Rally engineering",
-      description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and send messages as a selected Rally user.",
+      description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; create organizations and send messages as a selected Rally user.",
     } });
     const instructions = (response.result as { instructions: string }).instructions;
     expect(instructions).toContain("a Sidekick is an automation");
@@ -258,10 +248,6 @@ describe("Rally engineering MCP tools", () => {
       "run_canvas_sql",
       "run_artifact_sql",
       "run_d1_sql",
-      "list_feature_flags",
-      "update_feature_flag",
-      "list_model_flags",
-      "update_model_flag",
       "query_data_lake",
       "query_worker_observability",
     ]);
@@ -610,99 +596,6 @@ describe("Rally engineering MCP tools", () => {
     expect(result.content[0]!.text).toContain("must resolve to one region");
     expect(global.runConversationSql).not.toHaveBeenCalled();
     expect(enterprise.runConversationSql).not.toHaveBeenCalled();
-  });
-
-  it("lists managed flags through Ace", async () => {
-    const flags = flagAdministration();
-    vi.mocked(flags.listProductFlags).mockResolvedValue({
-      ok: true,
-      value: [{
-        ...MANAGED_FLAGS.find((flag) => flag.key === "push-notifications-enabled")!,
-        flag: { key: "push-notifications-enabled", enabled: true, default_variation: "on", rules: [] },
-      }],
-    });
-    const env = testEnv({ FLAG_ADMINISTRATION: flags });
-
-    const response = await rpc(env, "tools/call", { name: "list_feature_flags", arguments: {} });
-    const result = response.result as { content: Array<{ text: string }> };
-    expect(JSON.parse(result.content[0]!.text)).toEqual([expect.objectContaining({
-      key: "push-notifications-enabled",
-      label: "Push Notifications Enabled",
-      defaultVariation: "on",
-      flag: { key: "push-notifications-enabled", enabled: true, default_variation: "on", rules: [] },
-    })]);
-  });
-
-  it("hands a flag definition to Ace with the engineer it acts for", async () => {
-    const flags = flagAdministration();
-    vi.mocked(flags.updateProductFlag).mockResolvedValue({
-      ok: true,
-      value: { key: "multiple-workspaces-enabled", default_variation: "on" },
-    });
-    const env = testEnv({ FLAG_ADMINISTRATION: flags });
-    const update = {
-      key: "multiple-workspaces-enabled",
-      description: "Multiple workspaces.",
-      enabled: true,
-      default_variation: "off",
-      rules: [{
-        priority: 1,
-        conditions: [{ attribute: "userEmailDomain", operator: "equals", value: "rallywith.ai" }],
-        serve_variation: "on",
-      }],
-    };
-
-    const response = await rpc(env, "tools/call", { name: "update_feature_flag", arguments: update });
-    const result = response.result as { isError?: boolean; content: Array<{ text: string }> };
-    expect(result.isError).toBeUndefined();
-    expect(JSON.parse(result.content[0]!.text)).toEqual({ key: "multiple-workspaces-enabled", default_variation: "on" });
-    expect(flags.updateProductFlag).toHaveBeenCalledWith({
-      actor: { subject: "engineer-1" },
-      update,
-    });
-  });
-
-  it("rejects a flag the catalog does not manage before reaching Ace", async () => {
-    const flags = flagAdministration();
-    const env = testEnv({ FLAG_ADMINISTRATION: flags });
-
-    const response = await rpc(env, "tools/call", {
-      name: "update_feature_flag",
-      arguments: { key: "unmanaged-enabled", description: "", enabled: true, default_variation: "on", rules: [] },
-    });
-    const result = response.result as { isError: boolean };
-    expect(result.isError).toBe(true);
-    expect(flags.updateProductFlag).not.toHaveBeenCalled();
-  });
-
-  it("returns Ace's refusal to the engineer and logs it by Ace's code", async () => {
-    const flags = flagAdministration();
-    vi.mocked(flags.updateModelRouting).mockResolvedValue({
-      ok: false,
-      code: "invalid_openrouter_models",
-      message: "OpenRouter does not recognize or currently route: example/missing",
-    });
-    const env = testEnv({ FLAG_ADMINISTRATION: flags });
-    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    const response = await rpc(env, "tools/call", {
-      name: "update_model_flag",
-      arguments: { role: "workstream", routing: { model: "example/missing", fallbackModels: [], reasoningEffort: "low" } },
-    });
-    const result = response.result as { isError: boolean; content: Array<{ text: string }> };
-    expect(result.isError).toBe(true);
-    expect(result.content[0]!.text).toBe("OpenRouter does not recognize or currently route: example/missing");
-    const rows = logged.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
-    expect(rows).toEqual([expect.objectContaining({
-      event: "engineering_mcp_tool_failed",
-      tool: "update_model_flag",
-      agent_role: "workstream",
-      error_code: "invalid_openrouter_models",
-    })]);
-    expect(flags.updateModelRouting).toHaveBeenCalledWith({
-      actor: { subject: "engineer-1" },
-      update: { role: "workstream", routing: { model: "example/missing", fallbackModels: [], reasoningEffort: "low" } },
-    });
   });
 
   it("sends a lakehouse query to the table's own catalog bucket and returns Basin SQL's result", async () => {

@@ -1,3 +1,4 @@
+import { COMPLETION_VERIFICATION_MODEL } from "./runtime-config";
 import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 import { deferredZodSchema, memoizedValue } from "./deferred-zod-schema";
@@ -1685,7 +1686,7 @@ export const TELEMETRY_EVENTS = {
       choice: z.enum(["announces_unfinished_work", "answer_or_result", "blocker_or_question", "unclear"]).nullable(),
       confidence: z.number().min(0).max(1).nullable(),
       stopConfidenceThreshold: z.number().min(0).max(1),
-      judgeModel: z.literal("jev-1.14.0"),
+      judgeModel: z.literal(COMPLETION_VERIFICATION_MODEL),
     })),
   }),
   run_terminal: productEvent({

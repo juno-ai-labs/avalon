@@ -1,3 +1,4 @@
+import type { FeatureFlagEnvironment } from "@rally/contracts/runtime-config";
 import { configuredRegions } from "@rally/contracts/regions";
 import { RegionSchema } from "@rally/contracts/regions";
 import { isConfiguredRegion } from "@rally/contracts/regions";
@@ -37,7 +38,7 @@ import type { DocumentProcessingRpcBinding } from './services/document-processin
 import type { TerminalProviderRpcBinding } from './services/terminal/provider-rpc-contract';
 import type { TelemetryDeliveryRpcBinding } from './telemetry/telemetry-delivery-contract';
 
-export interface Env {
+export interface Env extends FeatureFlagEnvironment {
   DB: D1Database;
   TELEMETRY_DB: D1Database;
   AUDIT_DB: D1Database;
@@ -67,11 +68,6 @@ export interface Env {
   TERMINAL_PROVIDER: TerminalProviderRpcBinding;
   /** Private destination adapter for the configured deployment. */
   TELEMETRY_DELIVERY?: TelemetryDeliveryRpcBinding;
-  // Optional because a Worker may run without the binding. Note that
-  // `wrangler dev --local` still provides the object — it is every *call* that
-  // throws `Binding FLAGS needs to be run remotely`, so readers must handle
-  // both. Either way they fall back to the model variables below.
-  FLAGS?: Flagship;
   SUBSTREAM_AGENTS: DurableObjectNamespace<AgentLoopDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
@@ -184,9 +180,11 @@ export interface Env {
 
   OPENROUTER_API_KEY: string;
   TYPESAFE_API_KEY?: string;
-  OPENROUTER_PRIMARY_MODEL: string;
-  OPENROUTER_FALLBACK_MODELS: string;
-  OPENROUTER_CLASSIFIER_MODEL: string;
+  AGENT_MODEL_ROUTING_JSON?: unknown;
+  OPENROUTER_PRIMARY_MODEL?: unknown;
+  OPENROUTER_SMARTER_MODEL?: unknown;
+  OPENROUTER_FALLBACK_MODEL?: unknown;
+  OPENROUTER_FASTER_MODEL?: unknown;
   AZURE_OPENAI_ENDPOINT?: string;
   AZURE_OPENAI_API_KEY?: string;
   AZURE_OPENAI_REALTIME_DEPLOYMENT?: string;
@@ -483,9 +481,11 @@ const EnvContractSchema = z.object({
   DAYTONA_TERMINAL_SNAPSHOT: z.string().optional(),
 
   // `OPENROUTER_API_KEY` is deliberately not here; see `productionOnlySecrets`.
-  OPENROUTER_PRIMARY_MODEL: z.string().min(1),
-  OPENROUTER_FALLBACK_MODELS: z.string(),
-  OPENROUTER_CLASSIFIER_MODEL: z.string().min(1),
+  AGENT_MODEL_ROUTING_JSON: z.unknown().optional(),
+  OPENROUTER_PRIMARY_MODEL: z.unknown().optional(),
+  OPENROUTER_SMARTER_MODEL: z.unknown().optional(),
+  OPENROUTER_FALLBACK_MODEL: z.unknown().optional(),
+  OPENROUTER_FASTER_MODEL: z.unknown().optional(),
   AZURE_INFERENCE_ENDPOINT: AzureInferenceEndpointSchema.optional(),
   // Deliberately optional: Azure model routing degrades to OpenRouter when absent.
   AZURE_INFERENCE_API_KEY: z.string().min(1).optional(),

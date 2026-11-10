@@ -47,8 +47,8 @@ const contractComplete = {
   OAUTH_STATE_ENCRYPTION_KEY: "oauth-secret",
   SESSION_SIGNING_KEY: "session-secret",
   OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
-  OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
-  OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
+  OPENROUTER_FALLBACK_MODEL: "google/gemini-3.6-flash",
+  OPENROUTER_FASTER_MODEL: "google/gemini-2.5-flash-lite",
   TOOL_DEFAULT_TIMEOUT_MS: "30000",
   WEB_SEARCH_MAX_RESULTS: "8",
   WEB_FETCH_MAX_BYTES: "2000000",
@@ -136,14 +136,6 @@ describe("dispatching a queue batch", () => {
     )).resolves.toBeUndefined();
   });
 
-  it("carries product flag notifications while maintenance refuses product work", async () => {
-    // An unreadable message is poison and is acknowledged. Reaching that
-    // consumer proves the configuration path is dispatched before maintenance.
-    await expect(worker.queue?.(
-      batchOf("avalon-global-product-feature-flags", { invalid: true }),
-      contractComplete,
-    )).resolves.toBeUndefined();
-  });
 });
 
 describe("dispatching interactive work", () => {

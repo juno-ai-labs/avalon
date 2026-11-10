@@ -15,11 +15,9 @@ import { workspaceDOName } from '../src/durable-objects/names';
 import { markAllActivitySeen } from '../src/durable-objects/workspace-activity';
 import { splitSqlStatements } from '../src/lib/sql-statements';
 import { deliverPush } from '../src/queues/push-delivery-consumer';
-import { clearFlagTargetingAttributeCache } from '../src/services/flag-targeting-attributes';
 import { registerPushDevice } from '../src/services/push-device-service';
 import type { ApnsOutcome } from '../src/services/push/apns-transport';
 import type { PushPayloads } from '../src/services/push/push-payload';
-import { createTestEnv } from '../test/helpers/cloudflare-test';
 
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-00000000e601');
 const canvasId = asWorkstreamId('00000000-0000-7000-8000-00000000e602');
@@ -28,8 +26,7 @@ const sidekickId = '00000000-0000-7000-8000-00000000e604';
 const userId = asUserId('00000000-0000-7000-8000-00000000e605');
 const actorId = asUserId('00000000-0000-7000-8000-00000000e606');
 const workspace = () => env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName('global', workspaceId)));
-const flags = createTestEnv({ FLAGS: { getBooleanDetails: async () => ({ value: true, reason: 'TARGETING_MATCH' }) } }).FLAGS!;
-const pushEnv = () => ({ ...env, FLAGS: flags });
+const pushEnv = () => ({ ...env, FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED: "true" });
 const attention = () => workspace().attention({ workspaceId, userId, accessClass: 'member' });
 
 /** One Activity row, as a producer writes it beside its intent. */
@@ -40,7 +37,7 @@ function row(sql: SqlStorage, itemId: string, kind: string, parentKind: 'canvas'
 }
 
 beforeEach(async () => {
-  await reset(); clearFlagTargetingAttributeCache();
+  await reset();
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT, region TEXT, abandoned_at TEXT, placement_affinity TEXT NOT NULL DEFAULT 'wnam')`),
     env.DB.prepare(`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, name TEXT)`),

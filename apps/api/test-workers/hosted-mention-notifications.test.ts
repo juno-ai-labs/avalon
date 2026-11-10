@@ -31,7 +31,6 @@ import { deliverPush } from "../src/queues/push-delivery-consumer";
 import { createAutomation } from "../src/services/automation-service";
 import { createCanvas } from "../src/services/canvas-service";
 import { ConversationService } from "../src/services/conversation-service";
-import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import { registerPushDevice } from "../src/services/push-device-service";
 import type { ApnsOutcome } from "../src/services/push/apns-transport";
 import type { PushPayloads } from "../src/services/push/push-payload";
@@ -51,14 +50,13 @@ useHeldEffectQueue();
 useOpenRouterDouble(() => ({ say: "Noted." }));
 useSelectedModel();
 
-const flags = createTestEnv({ FLAGS: { getBooleanDetails: async () => ({ value: true, reason: "TARGETING_MATCH" }) } }).FLAGS!;
 /**
  * An environment that may send push: staging, with Apple configured and the
  * flag on. Local workerd cannot select a jurisdiction, which staging asks
  * for, so the Organization namespace answers it with itself.
  */
 const pushEnv = () => ({
-  ...env, FLAGS: flags, APP_ENV: "staging" as const, APNS_AUTH_KEY: "configured", APNS_KEY_ID: "configured",
+  ...env, FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED: "true", APP_ENV: "staging" as const, APNS_AUTH_KEY: "configured", APNS_KEY_ID: "configured",
   WORKSPACE_DOS: createTestEnv({ WORKSPACE_DOS: { jurisdiction: () => env.WORKSPACE_DOS } }).WORKSPACE_DOS,
 });
 
@@ -133,7 +131,7 @@ async function mentionedMessage(): Promise<{ message_id: string; message_sequenc
 
 beforeEach(async () => {
   await reset();
-  clearFlagTargetingAttributeCache();
+
   WORKSPACE_ID = asWorkspaceId(crypto.randomUUID());
   await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: AUTHOR, sessionId: `session-${AUTHOR}` });
   await env.DB.batch([

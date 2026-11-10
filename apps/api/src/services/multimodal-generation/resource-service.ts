@@ -21,7 +21,7 @@ import {
   loadVisibleWorkstreamResourcesByIds,
   type VisibleWorkstreamResourceRow,
 } from "../workstream-resource-visibility";
-import { MultimodalGenerationError } from "./contract";
+import { MultimodalGenerationError, MULTIMODAL_GENERATION_MODEL } from "./contract";
 import { AGENT_RESOURCE_TITLE_SQL } from "../agent-resource-title";
 
 interface PublishedImageRow {
@@ -182,7 +182,7 @@ export function createMultimodalGenerationResourceStore(
         contentMode: "view",
         source: "multimodal_generation",
         operation: input.operation,
-        model: "gpt-image-2",
+        model: MULTIMODAL_GENERATION_MODEL,
         inferenceProvider: "azure",
         requestedSize: input.requestedSize,
         ...(input.actualSize ? { actualSize: input.actualSize } : {}),
@@ -301,7 +301,7 @@ async function publishEditedVersion(
     contentMode: "view",
     source: "multimodal_generation",
     operation: "edit",
-    model: "gpt-image-2",
+    model: MULTIMODAL_GENERATION_MODEL,
     inferenceProvider: "azure",
     requestedSize: input.requestedSize,
     multimodalGenerationEffectIntentId: context.effectIntentId,

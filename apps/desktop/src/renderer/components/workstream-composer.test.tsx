@@ -989,7 +989,7 @@ describe('WorkstreamComposer model control', () => {
 
   it('says an unpinned conversation may run somewhere else next time', async () => {
     // What is immutable for an unpinned conversation is the setting, not the
-    // model: it re-resolves the flag on every launch, so the id shown is only
+    // model: it re-resolves deployment configuration on every launch, so the id shown is only
     // what the latest run happened to get.
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderComposer(undefined, false, undefined, workstream, [creator], {
@@ -997,7 +997,7 @@ describe('WorkstreamComposer model control', () => {
     });
 
     expect(await screen.findByRole('button', { name: /^Model:/u })).toHaveAccessibleName(
-      "Model: x-ai/grok-4.3 (the latest run's) — unpinned, so the agent-model-workstream flag decides each run and a later run may differ. It cannot be set here.",
+      "Model: x-ai/grok-4.3 (the latest run's) — unpinned, so the deployment model configuration decides each run and a later run may differ. It cannot be set here.",
     );
   });
 });

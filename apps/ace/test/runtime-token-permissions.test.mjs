@@ -33,7 +33,7 @@ describe('Ace runtime token permission check', () => {
         errors: [{ message: 'forbidden' }],
       }, { status: 403 }));
 
-    await expect(verifyRuntimeQueuePermissions({ accountId: 'account', token: 'flagship-only', fetchImpl }))
+    await expect(verifyRuntimeQueuePermissions({ accountId: 'account', token: 'queues-read-only', fetchImpl }))
       .rejects.toThrow('Queue permission check failed (403): forbidden');
   });
 });
