@@ -158,4 +158,11 @@ app.onError((error, c) => {
 
 export default {
   fetch: app.fetch,
+  // Cloudflare still has this Worker registered as the consumer of the retired
+  // flag-change queue (#1512 removed the declaration, not the hosted
+  // registration), and rejects any version without a queue handler (code
+  // 11001). Drain and drop whatever remains until the consumer is detached.
+  queue(batch) {
+    batch.ackAll();
+  },
 } satisfies ExportedHandler<Env>;

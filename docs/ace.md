@@ -171,6 +171,18 @@ No flag-change queues or propagation window are involved.
 
 ## Changelog
 
+### 2026-11-10 — Keep a no-op queue handler until the consumer is detached
+
+**What changed:** Ace's Worker exports a `queue` handler that acknowledges and
+drops every message.
+
+**Why:** Removing the consumer declaration from `wrangler.jsonc` (previous entry)
+did not detach the hosted registration on the retired flag-change queue.
+Cloudflare rejects any Worker version without a queue handler (code 11001), so
+every Ace deploy failed from that merge on. Detaching the consumer with
+Cloudflare administration credentials would also work but cannot be done from CI;
+remove this handler once it has been detached.
+
 ### 2026-11-09 — Retire remote feature and model administration
 
 **What changed:** Ace retains Access, Queues and Workspaces. Flag editors,
