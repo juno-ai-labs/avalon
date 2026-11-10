@@ -1,7 +1,12 @@
-import { InspectEngineeringUsageInputSchema, ChangeEngineeringPlanInputSchema, EngineeringUsageResultSchema } from "@rally/contracts/engineering-inspection";
 import { inspectQueues, peekDeadLetters } from "./queues";
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import {
+  InspectEngineeringUsageInputSchema,
+  ChangeEngineeringPlanInputSchema,
+  EngineeringUsageResultSchema,
+  EngineeringPasswordUserInputSchema,
+  EngineeringProvisionPasswordResultSchema,
+  EngineeringRevokePasswordResultSchema,
   EngineeringArtifactListLookupSchema,
   EngineeringArtifactTargetLookupSchema,
   EngineeringD1DatabaseSchema,
@@ -216,6 +221,20 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
       "Separate verified durable state, observed tool results and inference from hypotheses, and distinguish a local change from a merged or deployed fix.",
     ].join("\n\n"),
   });
+
+  server.registerTool("provision_user_password", {
+    description: "Provision or rotate a password for an existing Global identity user (resolve with search_users). Returns a generated password ONCE; deliver it only to the intended recipient through an appropriate private channel, never put it in logs or routine status updates. Each call replaces the previous password; if the response is lost, call again and use the latest result. Sign-in requires an independently verified primary email. Does not create an account, verify an email, grant Organization access, or end existing sessions.",
+    inputSchema: EngineeringPasswordUserInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, (request) => tool(principal, "provision_user_password", { user_id: request.userId }, async () =>
+    EngineeringProvisionPasswordResultSchema.parse(await env.GLOBAL_INSPECTION.provisionUserPassword(request, principal))));
+
+  server.registerTool("revoke_user_password", {
+    description: "Disable password sign-in for an existing Global identity user. Repeating is safe. Prevents new password sign-ins; existing sessions and other sign-in methods remain valid.",
+    inputSchema: EngineeringPasswordUserInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "revoke_user_password", { user_id: request.userId }, async () =>
+    EngineeringRevokePasswordResultSchema.parse(await env.GLOBAL_INSPECTION.revokeUserPassword(request, principal))));
 
   server.registerTool("create_org", {
     description: "Create a Rally Organization in the specified region, owned by creatorUserId, and directly add userIds as members. All users must already exist in that region (use search_users). No invitations or login credentials are created. Reuse operationId and the same arguments to resume an uncertain result; orgId is operationId.",

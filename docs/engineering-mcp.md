@@ -213,14 +213,23 @@ multi-purpose scheduled-alarm coordinator. There is no additional queue,
 Workflow, or application retry scheduler. It uses KV storage without an
 application SQL migration history.
 
+### Password credentials
+
+`provision_user_password` and `revoke_user_password` administer credentials for
+existing Global identities through the audited private bridge. Password sign-in
+requires the account’s primary email to have been verified independently.
+[Password sign-in](password-login.md) owns secret delivery, rotation, revocation,
+storage and attempt limits.
+
 ### Product creation
 
 The tools use today's product names: `orgId` is a stored workspace ID, a
 Canvas ID or Sidekick ID names its conversation (a stored workstream ID), and
 `creatorUserId` (creation) or `userId` (send/read) selects an existing regional
-Rally user. The Access identity remains the audited operator. No tool issues a
-login credential, promotes a guest, or bypasses the selected user's ordinary
-product permissions. Guests can be selected; actions the app refuses for them
+Rally user. The Access identity remains the audited operator. These product tools
+issue no login credential, promote no guest, and never bypass the selected user’s
+ordinary product permissions. Password credential administration is the separate
+operator capability above. Guests can be selected; actions the app refuses for them
 are refused here too.
 
 Creation takes a fresh UUID `operationId`, reused with the original arguments

@@ -1,3 +1,4 @@
+import { PasswordSignInForm } from '../components/password-sign-in-form';
 import { useQuery } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -30,6 +31,7 @@ export function SignInScreen(): React.JSX.Element {
     api,
     clearDeepLinkError,
     createDevelopmentSession,
+    signInWithPassword,
     deepLinkError,
     exchangingTicket,
     runtime,
@@ -45,6 +47,7 @@ export function SignInScreen(): React.JSX.Element {
   };
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [passwordChosen, setPasswordChosen] = useState(false);
 
   useEffect(() => {
     // Global owns identity; existing workspace assignments come from discovery.
@@ -100,18 +103,23 @@ export function SignInScreen(): React.JSX.Element {
         <h1 id="signin-heading">Welcome to Rally</h1>
         <p>Your team, your work, and Rally. All in one place.</p>
 
+        {passwordChosen ? <PasswordSignInForm onSubmit={signInWithPassword} disabled={exchangingTicket}
+          onBack={() => setPasswordChosen(false)} /> : <>
         <p className="signin-account-copy">Sign in or create your account.</p>
         <Button className="button-primary signin-button" disabled={starting || exchangingTicket} onClick={beginGoogleLogin}>
           {starting || exchangingTicket ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <ConnectorMark mark="google" />}
           {exchangingTicket ? 'Completing sign in…' : 'Continue with Google'}
         </Button>
 
+        <button className="text-button onboarding-signout" type="button" disabled={starting || exchangingTicket}
+          onClick={() => { setPasswordChosen(true); setError(null); clearDeepLinkError(); }}>Sign in with password</button>
         {runtime?.devAuthEnabled && (
           <Button className="button-secondary signin-button" disabled={starting} onClick={useDevelopmentSession}>
             Use local development account
           </Button>
         )}
 
+        </>}
         {(error ?? deepLinkError) && <ErrorNotice>{error ?? deepLinkError}</ErrorNotice>}
       </section>
     </main>

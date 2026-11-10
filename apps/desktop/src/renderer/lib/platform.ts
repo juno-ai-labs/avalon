@@ -445,6 +445,9 @@ const browserBridge: RallyDesktopBridge = {
     browserAuthAttempts.delete(input.attemptId);
     return session;
   },
+  async signInWithPassword() {
+    throw new Error('Open the Rally web app to sign in with a password.');
+  },
   async createDevelopmentSession(apiBaseUrl, workspaceName) {
     return browserSessionRequest(apiBaseUrl, '/auth/dev/session', { workspaceName });
   },

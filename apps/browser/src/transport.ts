@@ -13,7 +13,7 @@ export async function browserRequest<T>(region: string, path: string, schema: z.
   // Chrome serializes cookie writers across tabs. Keep this off all product
   // reads/mutations: an old renewal must finish before a newer login/logout.
   const send = () => request<T>(region, path, schema, body);
-  if (['/session/renew', '/email/redeem', '/logout'].includes(path) && navigator.locks) {
+  if (['/session/renew', '/email/redeem', '/password', '/logout'].includes(path) && navigator.locks) {
     return navigator.locks.request(`rally-browser-cookie:${region}`, send);
   }
   return send();

@@ -23,6 +23,19 @@ export const EngineeringOperatorSchema = z.strictObject({
 });
 export type EngineeringOperator = z.infer<typeof EngineeringOperatorSchema>;
 
+export const EngineeringPasswordUserInputSchema = deferredZodSchema(() => z.strictObject({
+  userId: UserIdSchema.describe("Existing Global identity user ID from search_users; this never creates or links an account."),
+}));
+export type EngineeringPasswordUserInput = z.infer<typeof EngineeringPasswordUserInputSchema>;
+export const EngineeringProvisionPasswordResultSchema = deferredZodSchema(() => z.strictObject({
+  userId: UserIdSchema, email: z.string().email(), password: z.string(),
+}));
+export type EngineeringProvisionPasswordResult = z.infer<typeof EngineeringProvisionPasswordResultSchema>;
+export const EngineeringRevokePasswordResultSchema = deferredZodSchema(() => z.strictObject({
+  userId: UserIdSchema, passwordEnabled: z.literal(false),
+}));
+export type EngineeringRevokePasswordResult = z.infer<typeof EngineeringRevokePasswordResultSchema>;
+
 const creationIdentity = {
   operationId: IdSchema.describe("A fresh UUID for this creation. Reuse it and the same arguments after an uncertain outcome."),
   creatorUserId: UserIdSchema.describe("Existing regional Rally user to create as. For an existing Organization, selects any active member or guest and enforces the app's permissions; no login session is minted."),
@@ -465,6 +478,8 @@ export type EngineeringUsageResult = z.infer<typeof EngineeringUsageResultSchema
 export interface EngineeringInspectionRpcBinding {
   inspectOrganizationUsage(input: InspectEngineeringUsageInput): Promise<EngineeringUsageResult>;
   changeOrganizationPlan(input: ChangeEngineeringPlanInput, operator: EngineeringOperator): Promise<EngineeringUsageResult>;
+  provisionUserPassword(input: EngineeringPasswordUserInput, operator: EngineeringOperator): Promise<EngineeringProvisionPasswordResult>;
+  revokeUserPassword(input: EngineeringPasswordUserInput, operator: EngineeringOperator): Promise<EngineeringRevokePasswordResult>;
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
   retireOrg(input: RetireEngineeringOrgInput, operator: EngineeringOperator): Promise<RetireEngineeringOrgResult>;
