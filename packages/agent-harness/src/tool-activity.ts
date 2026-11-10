@@ -100,6 +100,11 @@ const AGENT_PROSE: Record<string, ToolProse> = {
     settled: "Created a Sidekick",
     failed: "Could not create a Sidekick",
   },
+  archive_sidekick: {
+    started: "Archiving a Sidekick",
+    settled: "Archived a Sidekick",
+    failed: "Could not archive a Sidekick",
+  },
   start_agent: {
     started: "Delegating to a background agent",
     settled: "Delegated to a background agent",
@@ -159,6 +164,11 @@ const WORKSTREAM_PROSE: Record<string, ToolProse> = {
     started: "Reading a table of the site's data",
     settled: "Read a table of the site's data",
     failed: "Could not read a table of the site's data",
+  },
+  write_artifact_data: {
+    started: "Updating the site's data",
+    settled: "Updated the site's data",
+    failed: "Could not update the site's data",
   },
   search_resource: {
     started: "Searching an attached resource",

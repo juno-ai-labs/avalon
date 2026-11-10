@@ -864,7 +864,8 @@ prefix-aware, and a `sidekick`-prefixed run gets the same sentence with **no**
 `suggestedCall` — Sidekick runs hold no Terminal, so naming that tool would
 trade one dead end for a worse one.
 
-Three further `rally:workstream` tools read a **live artifact's stored data**, and are on
+Three further `rally:workstream` tools read a **live artifact's stored data**, and a
+fourth, `write_artifact_data`, changes its rows. They are on
 this plugin rather than Terminal's deliberately: reading a poll's tally must not
 require a sandbox, and the run answering a data question is usually not the run
 that built the page.
@@ -874,6 +875,7 @@ that built the page.
 | `describe_artifact_data` | `{ resource: string }` — a site resource's slug or id | `{ resource, slug, mode, tables: [{ name, columns: [{ name, type }], rowCount }] }`. Discovery first: the schema is a model-designed one this run may never have seen. |
 | `query_artifact_data` | `{ resource: string, sql: string, params?: (string \| number \| null)[] }` | `{ resource, columns, rows, rowCount, truncated }`; at most 200 rows, with `truncated` rather than a silent cut. A stored blob is replaced by `<n bytes>`. |
 | `read_artifact_table` | `{ resource: string, table: string, offset?: number }` | `{ resource, table, rows, nextOffset?, rowsShown? }`; one page of at most 200 rows, with `nextOffset` when a full page came back. `table_refused` names a table the site does not have. |
+| `write_artifact_data` | `{ resource: string, sql: string, params?: (string \| number)[] }` — one INSERT, UPDATE, DELETE or REPLACE | `{ resource, rowsWritten }`, plus `{ columns, rows, rowCount, truncated }` for a `RETURNING` statement, at most 200 rows. `rowsWritten` is the engine's physical counter, not a count of rows changed. Offered only to a Canvas's Chat and a Sidekick run. |
 
 A member who did not publish the site reads only their own rows of a table
 with a `private_to_viewer` column, and `describe_artifact_data` and
@@ -883,7 +885,17 @@ member's `query_artifact_data` fails with `private_rows`, pointing at
 rows. The site's author and unattended Sidekick runs read and query every
 row; `docs/live-web-artifacts.md` owns the rule.
 
-All three are `mode: "read"`, `idempotency: "safe"`. **Read-only is enforced on the
+`write_artifact_data` is `mode: "write"`, `idempotency: "record_before_execute"`,
+with no reconciler: the site's database dedupes on nothing Rally supplies, so
+the description asks for an idempotent statement. It admits one row statement
+and refuses a SELECT and every schema statement with `sql_error`; a refusal by
+the site's database is `sql_error` too, in SQLite's words. A Sidekick run
+whose Sidekick does not have the site's Canvas attached gets
+`artifact_canvas_not_attached`, an archived Canvas `canvas_archived`, and a
+member barred by private rows `private_rows`. Who is offered the tool, and the
+gate, are in [`live-web-artifacts.md`](live-web-artifacts.md#writing-rows-from-a-run).
+
+The three reads are `mode: "read"`, `idempotency: "safe"`. **Read-only is enforced on the
 statement, not by the transaction** — an always-rollback transaction is not an
 authorization boundary, because caller SQL can commit mid-payload — so admission
 is positive: exactly one statement, parsing as a `SELECT`, with a `WITH` clause's

@@ -11,6 +11,7 @@ import { CanvasAccessRequestPane } from '../components/canvas-access-request';
 import { CanvasMark, canvasHue } from '../components/canvas-mark';
 import { PaneState } from '../components/pane-state';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
+import { CanvasSidekicksSection, madeSidekicksArchiveCopy } from '../components/canvas-sidekicks-menu';
 import { AvatarStack, Button, EmptyState, ErrorNotice, Modal, OpeningState, TitleSkeleton } from '../components/primitives';
 import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { copyLink } from '../lib/copy-link';
@@ -121,6 +122,11 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       if (mounted.current) setArchiving(false);
     }
   };
+  // The Sidekicks attached to it, from the list row the socket keeps current:
+  // one the Chat just made, or one renamed, paused or archived, arrives there
+  // while this screen's detail is still the copy it opened with. The detail
+  // serves until the list has the row; a server older than attaching sends none.
+  const sidekicks = row?.sidekicks ?? canvas.data?.sidekicks ?? [];
   const [choosingAppearance, setChoosingAppearance] = useState(false);
   const [pinError, setPinError] = useState<Error | null>(null);
   const [linkError, setLinkError] = useState<Error | null>(null);
@@ -290,6 +296,10 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     }}>
       Change appearance
     </TitleMenuItem>
+    <CanvasSidekicksSection
+      onOpen={(sidekick) => void navigate(`/sidekicks/${encodeURIComponent(sidekick.id)}`)}
+      sidekicks={sidekicks}
+    />
     {canvas.data?.canManage && <>
       <TitleMenuSeparator />
       <TitleMenuItem danger disabled={!api || archiving} icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
@@ -334,6 +344,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       </span>}
     />;
   };
+  const madeSidekicksCopy = madeSidekicksArchiveCopy(sidekicks);
   return <>
     {pinError && <ErrorNotice occurrence={pinError}>The Canvas could not be pinned. Try again.</ErrorNotice>}
     {linkError && <ErrorNotice occurrence={linkError}>The link couldn’t be copied.</ErrorNotice>}
@@ -360,7 +371,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       open={confirmingArchive}
       title="Archive Canvas"
     >
-      <p className="modal-copy"><strong>{title}</strong> will be removed from everyone’s Canvases. Its conversation and artifacts will remain stored but will no longer be viewable in Rally.</p>
+      <p className="modal-copy"><strong>{title}</strong> will be removed from everyone’s Canvases. Its conversation and artifacts will remain stored but will no longer be viewable in Rally.{madeSidekicksCopy && <> {madeSidekicksCopy}</>}</p>
       {archiveError && <ErrorNotice occurrence={archiveError}>The Canvas could not be archived. Try again.</ErrorNotice>}
     </Modal>
   </>;

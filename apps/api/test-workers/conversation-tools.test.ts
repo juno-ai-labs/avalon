@@ -56,6 +56,7 @@ import { AgentCommunicationService } from "../src/services/agent-communication-s
 import { projectAuthorization } from "../src/services/authorization-projection-service";
 import { validateAttachmentToolReceiptReplay } from "../src/services/attachment-tool-receipts";
 import { createArtifactDataToolContext } from "../src/services/workstream-artifact-data-wiring";
+import { createWorkstreamArtifactDataTools } from "../src/services/workstream-artifact-data-tools";
 import { resolveSiteForViewer } from "../src/services/artifact-site-resolution";
 import { artifactHostDOName } from "../src/durable-objects/names";
 import { createAutomation } from "../src/services/automation-service";
@@ -468,6 +469,117 @@ describe("Sidekick resource reads by ID", () => {
     expect(await scopeFor(null)).toEqual({ rows: "all" });
   });
 
+  /** A stateful site as a model writes one: an inbox the page lists and a run fills. */
+  const INBOX_MODULE = `
+import { DurableObject } from "cloudflare:workers";
+export class SiteData extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS emails (message_id TEXT PRIMARY KEY, subject TEXT NOT NULL)");
+  }
+  async fetch() {
+    return Response.json(this.ctx.storage.sql.exec("SELECT message_id, subject FROM emails ORDER BY message_id").toArray());
+  }
+}
+`;
+
+  /** Publish a stateful site owned by `canvasId`, registered the way a directory publish registers one. */
+  async function statefulSite(slug: string, canvasId: string) {
+    const resourceId = await source();
+    const artifactId = crypto.randomUUID();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET resource_type = 'generated_site', slug = ? WHERE id = ?", slug, resourceId);
+      state.storage.sql.exec(`INSERT INTO artifact_registry
+        (artifact_id, workspace_id, resource_id, workstream_id, mode, stateful, current_version, manifest_ref, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'active', 1, 1, 'test-manifest', ?, ?)`,
+      artifactId, WORKSPACE_ID, resourceId, canvasId, Date.parse(NOW), Date.parse(NOW));
+    });
+    await TEST_ENV.PAYLOADS.put(artifactAssetKey(artifactId, 1, "index.js"), INBOX_MODULE);
+    const host = TEST_ENV.ARTIFACT_HOSTS.get(TEST_ENV.ARTIFACT_HOSTS.idFromName(
+      artifactHostDOName(TEST_ENV.AVALON_REGION, asArtifactId(artifactId))));
+    await host.recordPublish({
+      artifactId, workspaceId: WORKSPACE_ID, workstreamId: canvasId, resourceId, region: TEST_ENV.AVALON_REGION,
+      manifest: {
+        version: 1, artifactId: asArtifactId(artifactId), artifactVersion: 1, mode: "active", stateful: true,
+        serverModuleSha256: "a".repeat(64), totalBytes: 0, publishedAt: NOW, assets: [],
+      },
+    });
+    /** What the site's own page lists, read through its handler. */
+    const page = async () => (await host.fetchThroughFacet(new Request("https://artifact.test/"))).json();
+    return { resourceId, page };
+  }
+
+  function writeTool(wiring: Parameters<typeof createArtifactDataToolContext>[1]) {
+    const tool = createWorkstreamArtifactDataTools(
+      createArtifactDataToolContext(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID), wiring),
+    ).find((candidate) => candidate.definition.name === "write_artifact_data")!;
+    return (resource: string, messageId: string) => tool.execute({
+      resource, sql: "INSERT INTO emails (message_id, subject) VALUES (?, ?) ON CONFLICT(message_id) DO NOTHING",
+      params: [messageId, `Subject ${messageId}`],
+    }, {} as HarnessToolContext);
+  }
+
+  it("lets a Sidekick run change a site's rows only while the site's Canvas is attached to that Sidekick and open", async () => {
+    await seedSidekick("0");
+    const site = await statefulSite("inbox", ROOM_ID);
+    const write = writeTool({
+      workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal: { type: "user", userId: AUTHOR_ID }, reader: null,
+      write: { kind: "sidekick_run", sidekickId: AUTOMATION_ID },
+    });
+    // The run-as person can read the site, and that is not enough to write it.
+    await expect(write(site.resourceId, "m1")).rejects.toMatchObject({ code: "artifact_canvas_not_attached" });
+    expect(await site.page()).toEqual([]);
+    // Another Sidekick's attachment to the same Canvas is not this one's.
+    const other = asAutomationId(crypto.randomUUID());
+    await seedSidekick("0", other);
+    expect(await workspace().attachSidekickConversation({
+      workspaceId: WORKSPACE_ID, automationId: other, userId: AUTHOR_ID, reference: ROOM_ID,
+    })).toMatchObject({ ok: true });
+    await expect(write("inbox", "m1")).rejects.toMatchObject({ code: "artifact_canvas_not_attached" });
+    expect(await site.page()).toEqual([]);
+
+    expect(await workspace().attachSidekickConversation({
+      workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID, userId: AUTHOR_ID, reference: ROOM_ID,
+    })).toMatchObject({ ok: true });
+    await expect(write(site.resourceId, "m1")).resolves.toMatchObject({ output: { resource: site.resourceId } });
+    await expect(write("inbox", "m2")).resolves.toMatchObject({ output: { resource: "inbox" } });
+    expect(await site.page()).toEqual([
+      { message_id: "m1", subject: "Subject m1" }, { message_id: "m2", subject: "Subject m2" },
+    ]);
+
+    await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId: ROOM_ID, actor: { userId: AUTHOR_ID, actorRole: "member" } });
+    await expect(write(site.resourceId, "m3")).rejects.toMatchObject({ code: "canvas_archived" });
+    expect(await site.page()).toHaveLength(2);
+  });
+
+  it("lets a Canvas's Chat change the rows of a site linked to that Canvas, and of no other site", async () => {
+    const linked = await statefulSite("linked-inbox", ROOM_ID);
+    // The same author's site in another Canvas: readable by them, not linked here.
+    const elsewhere = asWorkstreamId(crypto.randomUUID());
+    await seedRoom(elsewhere, "Elsewhere");
+    const foreign = await statefulSite("foreign-inbox", elsewhere);
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId: linked.resourceId, attachedByUserId: AUTHOR_ID });
+    const write = writeTool({
+      workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, principal: { type: "user", userId: AUTHOR_ID }, reader: AUTHOR_ID,
+      write: { kind: "canvas_chat" },
+    });
+    await expect(write(linked.resourceId, "m1")).resolves.toMatchObject({ output: { resource: linked.resourceId } });
+    expect(await linked.page()).toEqual([{ message_id: "m1", subject: "Subject m1" }]);
+    for (const reference of [foreign.resourceId, "foreign-inbox"]) {
+      await expect(write(reference, "m1")).rejects.toMatchObject({ code: "resource_not_found" });
+    }
+    expect(await foreign.page()).toEqual([]);
+    // Attached here as context, the other Canvas's site is readable in this
+    // Chat and still not this Canvas's to change.
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId: foreign.resourceId, attachedByUserId: AUTHOR_ID });
+    for (const reference of [foreign.resourceId, "foreign-inbox"]) {
+      await expect(write(reference, "m1")).rejects.toMatchObject({ code: "artifact_in_another_canvas" });
+    }
+    expect(await foreign.page()).toEqual([]);
+  });
+
   it("finds a site's organization from its hostname only for someone who can read it", async () => {
     // A protected site sends a signed-out visitor to sign in; the browser then
     // knows only the hostname. The answer names the organization and resource
@@ -734,6 +846,8 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
       `SELECT parent_kind, parent_id, substream_id FROM sidekick_conversation_attachments
         WHERE automation_id = ? ORDER BY attached_at, parent_id`, AUTOMATION_ID,
     ).toArray())).toEqual([
+      // The run's own Canvas was attached as it was made.
+      { parent_kind: "canvas", parent_id: WRITTEN(), substream_id: "0" },
       { parent_kind: "canvas", parent_id: ROOM_ID, substream_id: "0" },
       { parent_kind: "canvas", parent_id: SIDE_ROOM(), substream_id: "0" },
     ]);
@@ -761,7 +875,7 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
     expect(createConversationsPlugin(input, conversationToolPorts(TEST_ENV, input), (tool) => [tool])).toBeNull();
     expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
       `SELECT parent_id FROM sidekick_conversation_attachments WHERE automation_id = ?`, AUTOMATION_ID,
-    ).toArray())).toEqual([]);
+    ).toArray())).toEqual([{ parent_id: WRITTEN() }]);
   });
 
   it("refuses to attach a Canvas the person cannot open, and never names one by a title they cannot see", async () => {
@@ -771,7 +885,7 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
     await expect(colleague.run("attach", { conversation: SIDE_ROOM() })).rejects.toMatchObject({ code: "conversation_access_denied" });
     expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
       `SELECT parent_id FROM sidekick_conversation_attachments WHERE automation_id = ?`, AUTOMATION_ID,
-    ).toArray())).toEqual([]);
+    ).toArray())).toEqual([{ parent_id: WRITTEN() }]);
   });
 
   it("posts into a Canvas's Chat the Sidekick writes, once per receipt, and reads it back", async () => {

@@ -1594,6 +1594,14 @@ export const AutomationSummarySchema = z.object({
   /** The named recipients, excluding the author. Absent from reads that do not include the list. */
   sharedWithUserIds: z.array(IdSchema).optional(),
   /**
+   * The Canvases somebody attached this Sidekick to that the viewer may open,
+   * in the order they were attached: the one whose Chat made it, and any its
+   * configuration conversation attached. Not the Canvas each of its runs
+   * made, which is its output rather than where it works. The dashboard card
+   * links each. Absent from an older Worker and from reads that do not ask.
+   */
+  attachedCanvases: z.array(z.object({ id: IdSchema, title: z.string() })).optional(),
+  /**
    * This viewer has not read the latest message in the Sidekick's shared
    * conversation, or marked it unread. Sidebar rows only; absent elsewhere.
    */
@@ -1647,6 +1655,12 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   lifecycle: AutomationLifecycleStateSchema,
   authorUserId: IdSchema,
   runAsUserId: IdSchema,
+  /**
+   * The Canvas whose Chat made this Sidekick, or null for one made anywhere
+   * else. Everyone that Canvas admits may change or archive the Sidekick, and
+   * archiving the Canvas archives it. Absent from a server that predates it.
+   */
+  madeInCanvasId: IdSchema.nullable().optional(),
   delegationAttention: z.strictObject({ code: SidekickDelegationAttentionCodeSchema, message: z.string() }).nullable().optional(),
   /** The latest submitted definition, or null before the chat has submitted one. */
   currentDefinition: AutomationDraftSchema.nullable(),
@@ -1657,7 +1671,7 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   runnable: z.boolean().default(false),
   connectorBindings: z.record(z.string(), z.string()),
   recentRuns: z.array(AutomationRunSchema),
-  /** The Canvases this Sidekick writes that the reader may open, most recently active first. Absent from a server that predates it. */
+  /** The Canvases this Sidekick is attached to that the reader may open, most recently active first. Absent from a server that predates it. */
   canvases: z.array(CanvasSummarySchema).optional(),
 });
 

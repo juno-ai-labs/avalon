@@ -91,6 +91,29 @@ export const CanvasArtifactSchema = z.object({
 });
 export type CanvasArtifact = z.infer<typeof CanvasArtifactSchema>;
 
+/**
+ * A Sidekick attached to a Canvas: its runs read and post in the Canvas's
+ * Chat, publish into the Canvas and write its artifacts' data. Every reader
+ * of the Canvas sees the name and state; `madeHere` marks one the Canvas's
+ * own Chat made, which everyone in the Canvas manages and which is archived
+ * with the Canvas.
+ */
+export const CanvasSidekickSchema = z.object({
+  id: IdSchema,
+  name: z.string(),
+  status: z.enum(["draft", "active", "paused"]),
+  appearance: WorkstreamAppearanceSchema.optional(),
+  madeHere: z.boolean(),
+  /**
+   * Whether the reader may open the Sidekick's own page: its audience, which
+   * the Canvas does not decide. Present on a read made for a viewer (the
+   * detail and the list row); absent where nobody is reading, and from an
+   * older Worker.
+   */
+  canOpen: z.boolean().optional(),
+});
+export type CanvasSidekick = z.infer<typeof CanvasSidekickSchema>;
+
 /** A Canvas as the person opening it sees it: its row, who it is shared with, and its artifacts newest first. */
 export const CanvasDetailSchema = CanvasSummarySchema.extend({
   /** Everyone on the participant list besides the creator, guests among them. */
@@ -98,6 +121,8 @@ export const CanvasDetailSchema = CanvasSummarySchema.extend({
   artifacts: z.array(CanvasArtifactSchema),
   /** This viewer may change who can open it (`canvasManages`). */
   canManage: z.boolean(),
+  /** The Sidekicks attached to it, by name. Absent from a server that predates attaching. */
+  sidekicks: z.array(CanvasSidekickSchema).optional(),
   /**
    * The requests to open it that wait on a decision, oldest first. Present
    * only for a viewer who decides them (`canManage`); absent for everyone
@@ -138,6 +163,14 @@ export const CanvasSidebarRowSchema = CanvasSummarySchema.extend({
     runNumber: z.number().int().positive(),
     sidekickName: z.string(),
   }).nullable().optional(),
+  /**
+   * The Sidekicks attached to it, in the order they were attached, exactly as
+   * its detail lists them. The row is what the socket keeps current, so the
+   * home card's Sidekick facepile and an open Canvas's menu both read it
+   * here: a Sidekick made, renamed, paused or archived while the Canvas is
+   * open arrives with the next list frame. Absent from an older Worker.
+   */
+  sidekicks: z.array(CanvasSidekickSchema).optional(),
   unread: z.boolean(),
   presentUserIds: z.array(UserIdSchema),
   /** Its place in the viewer's Pinned group; null when it is not pinned. */
@@ -172,6 +205,32 @@ export const WorkspaceCanvasListEventSchema = z.strictObject({
 export type WorkspaceCanvasListEvent = z.infer<typeof WorkspaceCanvasListEventSchema>;
 
 /**
+ * `POST /canvases/:id/sidekicks`: make a Sidekick for a Canvas and tell its
+ * wizard what it is for. The Sidekick is attached to the Canvas as it is made,
+ * as one the Canvas's own Chat makes is, so its runs can update the Canvas and
+ * everyone in the Canvas may change or archive it. `instructions` is sent to
+ * the Sidekick's conversation as the person's message to the wizard, which
+ * chooses the trigger and saves the definition; making one is not a saved
+ * Sidekick. A caller-minted `sidekickId` makes a retry answer with the first
+ * attempt's Sidekick, and `clientMessageId` sends the instructions once.
+ */
+export const AddCanvasSidekickRequestSchema = z.strictObject({
+  sidekickId: IdSchema.optional(),
+  instructions: z.strictObject({
+    text: z.string().trim().min(1),
+    clientMessageId: z.string().min(1).max(120),
+  }),
+});
+export type AddCanvasSidekickRequest = z.infer<typeof AddCanvasSidekickRequestSchema>;
+
+export const AddedCanvasSidekickSchema = z.object({
+  sidekickId: IdSchema,
+  /** The instructions' turn in the Sidekick's conversation. */
+  turnId: z.string().nullable(),
+});
+export type AddedCanvasSidekick = z.infer<typeof AddedCanvasSidekickSchema>;
+
+/**
  * `POST /canvases`: a new Canvas with no artifacts. `canvasId` is an id the
  * caller minted: a retried create that names it again answers the Canvas the
  * first made, for its creator only (`canvas_id_unavailable` otherwise, or when
@@ -187,6 +246,8 @@ export const CreateCanvasRequestSchema = z.strictObject({
     text: z.string().trim().min(1),
     clientMessageId: z.string().min(1).max(120),
   }).optional(),
+  /** A Sidekick to make for the new Canvas in the same request; see `AddCanvasSidekickRequestSchema`. */
+  sidekick: AddCanvasSidekickRequestSchema.optional(),
 });
 export type CreateCanvasRequest = z.infer<typeof CreateCanvasRequestSchema>;
 
@@ -194,6 +255,8 @@ export const CreatedCanvasSchema = z.object({
   canvasId: CanvasIdSchema,
   /** The prompt's turn in the Chat, when one was sent. */
   turnId: z.string().nullable(),
+  /** The Sidekick made with it, when one was asked for. Absent otherwise and from an older Worker. */
+  sidekick: AddedCanvasSidekickSchema.optional(),
 });
 export type CreatedCanvas = z.infer<typeof CreatedCanvasSchema>;
 

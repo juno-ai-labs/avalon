@@ -5,9 +5,9 @@ import type { ConversationToolScope } from "./workspace-conversation-tool-protoc
  * decided from WorkspaceDO's own directories.
  *
  * A Sidekick reaches its own shared conversation (substream `"0"` under the
- * Sidekick, `automation_directory`), every Canvas it writes
- * (`canvas_directory.writer_sidekick_id`), and every Canvas's Chat attached to
- * it in `sidekick_conversation_attachments`. A Canvas's Chat is the Canvas's
+ * Sidekick, `automation_directory`) and every Canvas attached to it in
+ * `sidekick_conversation_attachments`: the Canvas each of its runs made, the
+ * Canvas whose Chat made it, and any its wizard attached. A Canvas's Chat is the Canvas's
  * conversation `"0"`, and its conversation id is the Canvas's id.
  *
  * This is not `sidekick_attachments` (per conversation): that recorded that a
@@ -94,11 +94,10 @@ function canvasConversation(canvasId: string, title: string): ScopedConversation
 
 /**
  * Every conversation in a Sidekick's scope that the Organization still holds,
- * before admission: the Sidekick's own conversation first, then the Canvases it
- * writes, newest made first (creation, not edit, so a list's pages do not
- * move as a Canvas is edited), then the Canvases attached to it in the order they
- * were attached. A Canvas both written and attached is listed once. An
- * attachment of a retired Thread (`parent_kind = 'workstream'`) names nothing.
+ * before admission: the Sidekick's own conversation first, then the Canvases
+ * attached to it in the order they were attached (so a list's pages do not
+ * move as a Canvas is edited). An attachment of a retired Thread
+ * (`parent_kind = 'workstream'`) names nothing.
  */
 export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope): ScopedConversation[] {
   const title = sidekickTitle(sql, scope.automationId);
@@ -109,15 +108,8 @@ export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope
     parentKind: "automation", parentId: scope.automationId, substreamId: "0", conversationId: scope.automationId,
     kind: "sidekick", title, isOwn: scope.authoring === true, isParent: scope.authoring !== true,
   }];
-  const seen = new Set<string>();
-  for (const row of sql.exec<{ canvas_id: string; title: string }>(
-    `SELECT canvas_id, title FROM canvas_directory WHERE writer_sidekick_id = ?
-      ORDER BY created_at DESC, canvas_id`,
-    scope.automationId,
-  ).toArray()) {
-    seen.add(row.canvas_id);
-    scoped.push(canvasConversation(row.canvas_id, row.title));
-  }
+  // Each run's own Canvas is attached as it is made, so the attachments are
+  // the whole of it: there is no second list to merge.
   for (const row of sql.exec<{ canvas_id: string; title: string }>(
     `SELECT canvas.canvas_id, canvas.title
        FROM sidekick_conversation_attachments attachment
@@ -125,11 +117,7 @@ export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope
       WHERE attachment.automation_id = ? AND attachment.parent_kind = 'canvas' AND attachment.substream_id = '0'
       ORDER BY attachment.attached_at, attachment.parent_id`,
     scope.automationId,
-  ).toArray()) {
-    if (seen.has(row.canvas_id)) continue;
-    seen.add(row.canvas_id);
-    scoped.push(canvasConversation(row.canvas_id, row.title));
-  }
+  ).toArray()) scoped.push(canvasConversation(row.canvas_id, row.title));
   return scoped;
 }
 
@@ -176,20 +164,27 @@ export function canvasesTitled(sql: SqlStorage, title: string): ScopedConversati
   ).toArray().map((row) => canvasConversation(row.canvas_id, row.title));
 }
 
-/** Record that a Sidekick may read and post in a Canvas's Chat. Idempotent on the Sidekick and the Canvas. */
+/**
+ * Attach a Sidekick to a Canvas: its runs may read and post in the Canvas's
+ * Chat, publish into the Canvas and write its artifacts' data. Idempotent on
+ * the Sidekick and the Canvas. `madeHere` marks the attachment a Canvas's own
+ * Chat writes as it makes the Sidekick; a later attach never sets or clears it.
+ */
 export function attachSidekickConversation(sql: SqlStorage, input: {
   automationId: string;
   address: AttachableAddress;
   userId: string;
   now: number;
+  madeHere?: boolean;
 }): { alreadyAttached: boolean } {
   const inserted = sql.exec<{ automation_id: string }>(
     `INSERT INTO sidekick_conversation_attachments
-       (automation_id, parent_kind, parent_id, substream_id, attached_by_user_id, attached_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+       (automation_id, parent_kind, parent_id, substream_id, attached_by_user_id, attached_at, made_here)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT DO NOTHING
      RETURNING automation_id`,
     input.automationId, input.address.parentKind, input.address.parentId, input.address.substreamId, input.userId, input.now,
+    input.madeHere ? 1 : 0,
   ).toArray();
   return { alreadyAttached: inserted.length === 0 };
 }
