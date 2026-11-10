@@ -176,9 +176,28 @@ Flagship design, including the earlier entries from that same date.
 
 ### 2026-11-09 — Advance primary and naming defaults to GPT-6.1 Terra
 
-The requested primary and faster defaults now use `openai/gpt-6.1-terra` from
-the central catalog. Canvas and Sidekick runs, plus resource naming, inherit
-that choice. Explicit environment routes and conversation pins retain precedence.
+**What changed:** Primary and faster defaults now use `openai/gpt-6.1-terra`.
+Canvas and Sidekick runs, plus resource naming, inherit this choice. An unpinned
+conversation with no deployment override switches on its next run.
+
+**Why:** The team selected GPT-6.1 Terra for both groups. The comparative quality,
+latency, and cost rationale for replacing GPT-5.6 Terra was not recorded here;
+this entry does not establish a benchmark advantage.
+
+**Alternatives:** GPT-5.6 Terra remains available through explicit routes and
+existing pins. The tradeoff between retaining it as the default and adopting
+GPT-6.1 Terra was not recorded.
+
+**What future changes must respect:** Explicit environment routes and
+conversation pins retain precedence. The selected model must support naming
+with reasoning disabled, sanitized tool calls, and image input without a fallback
+masking an unsupported request shape.
+
+**Validation:** Live OpenRouter calls with fallbacks disabled returned a Canvas
+title with `reasoningEffort: "none"` and completed a Bind run that identified a
+synthetic red image, invoked its sanitized tool, and returned the expected final
+answer. The tool fixture included a root union, a nullable field, and a Boolean
+enum; this is a compatibility check, not a comparative model benchmark.
 
 ### 2026-11-09 — Resolve flags locally from constants and environment overrides
 
