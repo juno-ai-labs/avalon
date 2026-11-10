@@ -41,6 +41,7 @@
     "./regions": "./src/regions.ts",
     "./zod-diagnostics": "./src/zod-diagnostics.ts",
     "./platform-diagnostics": "./src/platform-diagnostics.ts",
+    "./password-login": "./src/password-login.ts",
     "./browser-session": "./src/browser-session.ts",
     "./client-session": "./src/client-session.ts",
     "./usage": "./src/usage.ts",

@@ -1,3 +1,4 @@
+import { purgeExpiredPasswordLoginAttempts } from './services/password-login-service';
 import { purgeExpiredEmailLoginChallenges } from "./services/auth-service";
 import { recoverEmailLoginDeliveries } from "./services/email-login-service";
 import { consumePushDeliveryQueue } from "./queues/push-delivery-consumer";
@@ -193,6 +194,7 @@ export default {
         dispatchWorkspaceRelationshipChanges(env),
         recoverEmailLoginDeliveries(env),
         purgeExpiredEmailLoginChallenges(env),
+        purgeExpiredPasswordLoginAttempts(env),
         pruneUsageEvents(env, Date.now()),
         processTelemetry(env),
       ]);

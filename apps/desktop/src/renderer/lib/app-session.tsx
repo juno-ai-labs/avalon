@@ -1,3 +1,4 @@
+import type { PasswordLoginRequest } from '@rally/contracts/password-login';
 import { navigateAppRoute } from './app-navigation';
 import { LANDING_ROUTE } from './landing';
 import {
@@ -147,6 +148,7 @@ export interface AppSessionValue {
    * the sign-in: one that still lands restores the credential all the same. */
   abandonAccountSignIn: () => void;
   leaveWorkspace: (workspaceId: string, expectedOutcome: WorkspaceDepartureOutcome) => Promise<WorkspaceDeparture>;
+  signInWithPassword: (input: PasswordLoginRequest) => Promise<void>;
   createDevelopmentSession: () => Promise<void>;
   finishWorkspaceSetup: (
     name: string,
@@ -187,6 +189,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'consumePendingDeepLinks'
   | 'createDesktopAuthAttempt'
   | 'createDevelopmentSession'
+  | 'signInWithPassword'
   | 'createWorkspace'
   | 'declineInvitation'
   | 'exchangeDesktopTicket'
@@ -454,6 +457,19 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     if (!pendingInvitation || !runtime) return null;
     return new RallyApi(configuredApiBase(runtime, pendingInvitation.region), null);
   }, [pendingInvitation, runtime]);
+
+  const signInWithPassword = useCallback(async (input: PasswordLoginRequest) => {
+    try {
+      applySession(await bridge.signInWithPassword(input));
+    } catch (error) {
+      // Electron prefixes rejected IPC calls with transport and class names.
+      // Keep the service's user-facing message, as the browser form does.
+      if (error instanceof Error) throw new Error(error.message.replace(
+        /^Error invoking remote method 'auth:password': (?:RallyApiResponseError|Error): /u, '',
+      ), { cause: error });
+      throw error;
+    }
+  }, [applySession, bridge]);
 
   const createDevelopmentSession = useCallback(async () => {
     if (!api) throw new Error('Open an organization first.');
@@ -1399,6 +1415,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       declineInvitation,
       leaveWorkspace,
       createDevelopmentSession,
+      signInWithPassword,
       finishWorkspaceSetup,
       refreshSession,
       getAccountOnboarding,
@@ -1423,6 +1440,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       activateWorkspace,
       booting,
       createDevelopmentSession,
+      signInWithPassword,
       declineInvitation,
       leaveWorkspace,
       deepLinkError,

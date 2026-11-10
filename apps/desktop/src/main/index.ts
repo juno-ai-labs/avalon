@@ -1,3 +1,4 @@
+import { PasswordLoginRequestSchema } from '@rally/contracts/password-login';
 import { annotationDraftKeyForScope } from '../common/draft-keys';
 import { createElectronFetch } from '@rally/electron-network';
 import { artifactWindowActionRequest, artifactWindowCanvasLink, artifactWindowSessionMatches } from './artifact-window-actions';
@@ -2243,9 +2244,31 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
     throw new Error('Rally sign-in returned an organization before platform discovery');
   }
   if (session.apiBaseUrl !== apiBaseUrl) throw new Error('The regional service returned a mismatched endpoint');
+  return completeDesktopIdentitySignIn(session, apiBaseUrl, candidate.attemptId, candidate.region, expectedLifecycleEpoch);
+}
+
+async function signInWithPassword(input: unknown): Promise<DesktopSession> {
+  if (loggingOut) throw new Error('Wait for Rally to finish signing out before signing in again');
+  const proof = PasswordLoginRequestSchema.parse(input);
+  const apiBaseUrl = configuredApiBase('global');
+  const expectedLifecycleEpoch = sessionLifecycleEpoch;
+  const { attemptId } = createDesktopAuthAttempt({ apiBaseUrl, region: 'global' });
+  try {
+    const session = await requestSession(apiBaseUrl, '/auth/password', proof);
+    if (session.workspace || session.apiBaseUrl !== apiBaseUrl) throw new Error('Password sign-in returned a mismatched identity endpoint');
+    return await completeDesktopIdentitySignIn(session, apiBaseUrl, attemptId, 'global', expectedLifecycleEpoch);
+  } catch (error) {
+    desktopAuthAttempts.discard(attemptId);
+    throw error;
+  }
+}
+
+/** Google and password proofs share the native persistence and supersession fence. */
+async function completeDesktopIdentitySignIn(session: WireSession, apiBaseUrl: string, attemptId: string,
+  region: RallyRegion, expectedLifecycleEpoch: number): Promise<DesktopSession> {
   return withSessionMutation(async () => {
     if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
-      desktopAuthAttempts.discard(candidate.attemptId as string);
+      desktopAuthAttempts.discard(attemptId);
       throw new Error('Rally was signed out while sign-in was completing');
     }
     // Read the stored state before checking the attempt. Creating an attempt
@@ -2254,11 +2277,11 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
     // callback would retire a newer attempt and overwrite its sign-in.
     const currentAuth = await loadStoredAuthSet();
     const currentSession = currentAuth ? await loadStoredSession() : null;
-    const currentAttempt = desktopAuthAttempts.proof(candidate.attemptId as string);
+    const currentAttempt = desktopAuthAttempts.proof(attemptId);
     if (
       !currentAttempt
       || currentAttempt.apiBaseUrl !== apiBaseUrl
-      || currentAttempt.region !== candidate.region
+      || currentAttempt.region !== region
     ) {
       throw new Error('A newer Rally sign-in attempt replaced this callback');
     }
@@ -2267,10 +2290,10 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
       && currentSession.user.email.toLocaleLowerCase('en-US')
         !== session.user.email.toLocaleLowerCase('en-US')
     ) {
-      desktopAuthAttempts.discard(candidate.attemptId as string);
+      desktopAuthAttempts.discard(attemptId);
       throw new Error('This Rally account does not match the active organization');
     }
-    // One successful PKCE attempt wins. Late callbacks from any other browser
+    // One successful native sign-in attempt wins. Late callbacks from any other browser
     // tab must not replace the account that just signed in.
     desktopAuthAttempts.clear();
     if (currentAuth && currentSession?.workspace) {
@@ -4012,6 +4035,10 @@ function registerIpc(): void {
   ipcMain.handle('auth:exchange-desktop-ticket', (event, input: unknown) => {
     assertTrustedIpcSender(event);
     return exchangeDesktopTicket(input);
+  });
+  ipcMain.handle('auth:password', (event, input: unknown) => {
+    assertTrustedIpcSender(event);
+    return signInWithPassword(input);
   });
   ipcMain.handle('auth:create-development-session', (event, input: unknown) => {
     assertTrustedIpcSender(event);
