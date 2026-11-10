@@ -5,8 +5,9 @@ Sidekicks: somebody mentioned them in a Canvas's Chat or a Sidekick's
 conversation, somebody added them to a Canvas's conversation, a Sidekick run
 needs their input, a run they asked for finished, somebody else replied in
 a conversation they are in, somebody published a new version in a Canvas
-they pinned, somebody asked to open a Canvas they decide on, or their own
-request to open one was approved. It is the third section of
+they pinned, somebody asked to open a Canvas they decide on, their own
+request to open one was approved, somebody asked to let their events start a
+Sidekick, or the person they asked answered. It is the third section of
 the rail, beside Canvases and Sidekicks, in the Mac app and the browser alike.
 
 The feed is the push's own source. Each event that records a push
@@ -25,6 +26,7 @@ the Canvas or Sidekick row stops being unread.
 | `apps/api/src/durable-objects/workspace-activity.ts` | WorkspaceDO migration 140 (`workspace_activity_items`, `workspace_activity_seen`, the `activity` waterline), `recordActivityItem`, the one seen expression (`ACTIVITY_SEEN_SQL`) and `activityPage`. |
 | `apps/api/src/durable-objects/workspace-notification-intent-storage.ts` | The recorders that write a row beside their intent: `recordPersonNotificationIntent` (mention, add), `recordSidekickRunNotices` (needs input, finished) and `recordParentNotice` (a notice a Canvas or Sidekick records about itself: a reply). |
 | `apps/api/src/durable-objects/canvas-artifact-notices.ts` | `tellCanvasPinners`: a new version in a Canvas tells its pinners, one `artifact_updated` intent and row each. |
+| `apps/api/src/durable-objects/sidekick-source-notices.ts` | A Sidekick source request's rows: `source_request` for the person asked, `source_approved` or `source_declined` for whoever asked, and the part of migration 145 that admits the three kinds. |
 | `apps/api/src/durable-objects/conversation-reply-batch.ts` | The `reply_batch` alarm entry: a conversation's replies batched, then one `new_message` intent and row per recipient. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `noteActivityMoved`, `noteActivityReadMoved`, `publishActivityList`, the `activity` page in `sidebarPayload`, and the `activity_mark_all_seen` command. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Applies the page and the push through the versioned sidebar-list receiver; sends Mark all seen. |
@@ -76,6 +78,21 @@ it lists while the Canvas exists although its recipient cannot open it, with
 `parentTitle` always null, and reads as seen once they ask again. None
 collapses.
 
+A request for a Sidekick source ([`sidekick-sources.md`](sidekick-sources.md))
+writes one `source_request` row for the person asked
+(`recordSourceRequestAsked`), in the transaction that makes the request. Its
+parent is the Sidekick, its actor whoever asked, its `subject_id` the request,
+and its preview what was asked ("Events: Email received. Only when: it is
+about a pre-seed round"). When that person approves or declines, whoever asked
+gets a `source_approved` or `source_declined` row whose actor is the person
+(`recordSourceRequestSettled`); a request cancelled by a newer ask writes no
+row, and neither does a person answering their own ask. For all three kinds
+the page fills `sourceRequest` from `sidekick_source_requests` as it stands
+now: the request's id and state (`pending`, `approved`, `declined`,
+`cancelled`), the connector type, the event types, the condition, who asked,
+and the asked person's name once they have answered (`person_name`). None
+collapses.
+
 A row names its parent (`canvas` or `automation`) and its id, the
 conversation it happened in (`"0"`, or a run's id), the mentioning message or
 the run, who acted (a person for a mention or an add, the Sidekick for a run
@@ -91,7 +108,13 @@ sequence are the parent's content. One kind is exempt: a declined request
 (`access_denied`) lists while its Canvas exists, though its requester cannot
 open it — the owner asked on 2026-11-08 to "inform the person [of] a
 denial", and the row names no content of the Canvas (no title, preview,
-message or sequence; only its id and who declined). A confirmed mention in a creator-only
+message or sequence; only its id and who declined). The three Sidekick
+source kinds are exempt too: each lists while its Sidekick exists and is not
+deleted, with the Sidekick's name, whoever the Sidekick's readers are. The
+person asked usually cannot open the Sidekick until they approve, and the
+request names it to them on purpose; the answer goes to whoever asked about
+that Sidekick by name, and a Sidekick a Canvas made is managed by people the
+Sidekick list does not hold. A confirmed mention in a creator-only
 Canvas seats nobody and its push is skipped `recipient_not_listable`, yet its
 row is recorded; it stays stored and lists once the person is let in. The
 page, its access filter and the unseen count are one statement: the count is
@@ -140,7 +163,11 @@ A reply clears as a mention does: its ordinal is its own message's, so the
 cursor reaching it is enough, with no condition on the read's time. A pinned
 request to open a Canvas stores no ordinal, so no read clears it: it is seen
 once the request is settled, by anyone, or by Mark all seen; its grant clears
-on a read of the Canvas as an add does. A pinned
+on a read of the Canvas as an add does. A request for a Sidekick source
+(`source_request`) is the same: no ordinal, and seen once the request is no
+longer `pending`, by the person's answer or by a newer ask replacing it; its
+answer (`source_approved`, `source_declined`) clears on a read of the Sidekick
+as an add does. A pinned
 Canvas's new version clears on any read of the Chat accepted after it
 (`updated_at >= created_at`), the rule `canvasSidebarRows` takes for the
 Canvas row's artifact news.
@@ -399,6 +426,19 @@ them. The menu bar does not read it; the dock badge, and the push badge, count i
   A run that takes longer than the Queue's delivery delay is not affected.
 - **Mark all seen while the socket is down** is not sent; the button does
   nothing until it reconnects.
+- **A build older than the Sidekick source kinds is sent its Activity without
+  them.** `ActivityKindSchema` is a closed enum inside the workspace socket's
+  strict sync event, so one row of a kind a build does not know fails that
+  build's parse of the whole subscribe answer: no Canvases, no Sidekicks and
+  no Activity, on every reconnect. The socket's ticket carries the client
+  contract its request declared, and a socket below
+  `SOURCE_ACTIVITY_CLIENT_CONTRACT` (14), or one that declared none, gets the
+  page and `unseenCount` with the three source kinds left out
+  (`activityPage`'s `sourceKinds`). Such a person is still pushed and emailed,
+  and `attention()` (the push's badge, the account menu) counts the row, so a
+  closed older Mac's dock badge can be one higher than its rail until it
+  updates. A new kind after this one needs the same gate, or a raise of
+  `MINIMUM_SERVED_CLIENT_CONTRACT`.
 - **A desktop from before the pivot** is refused the workspace socket ticket
   (`MINIMUM_SERVED_CLIENT_CONTRACT`), so it is sent no Activity at all.
 
@@ -436,7 +476,11 @@ that row, the row clears when the cursor passes the reply, and the next reply
 after that is a new row. `canvas-artifact-notices.test.ts` covers a pinned
 Canvas's new version: a row naming the artifact for the pinner who did not
 make it, collapsing while unseen, cleared by a read of the Chat, and a new
-row after. `canvas-access-requests.test.ts` covers a request's rows on the
+row after. `sidekick-source-notices.test.ts` covers a source request's rows:
+the asked person's row listing though the Sidekick is not theirs to open, the
+row settled and seen by an approval, a decline and a newer ask, the
+requester's answer row, and a socket whose ticket declares contract 13, or
+none, receiving neither row nor count. `canvas-access-requests.test.ts` covers a request's rows on the
 creator's socket and the administrator's page, settled and seen for both by
 one approval, and the requester's grant row.
 
@@ -447,9 +491,10 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 
 | Table | Key | Columns |
 | --- | --- | --- |
-| `workspace_activity_items` | `item_id` (the intent's id; a collapsed row keeps its first intent's) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`, `new_message`, `artifact_updated`, `access_request`, `access_granted`, `access_denied`), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `message_sequence` (the mention's transcript sequence), `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms; a collapsed row's moves to its newest event), `subject_id` (what it is about beyond the parent: an artifact's resource id, an access request's id). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
+| `workspace_activity_items` | `item_id` (the intent's id; a collapsed row keeps its first intent's) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`, `new_message`, `artifact_updated`, `access_request`, `access_granted`, `access_denied`, and, from migration 145's rebuild, `source_request`, `source_approved`, `source_declined`), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `message_sequence` (the mention's transcript sequence), `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms; a collapsed row's moves to its newest event), `subject_id` (what it is about beyond the parent: an artifact's resource id, an access request's id, a Sidekick source request's id). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
 | `workspace_activity_seen` | `user_id` | `seen_through` (ms): Mark all seen. |
 | `canvas_access_requests` | `request_id` | Read for an `access_request` row's seen and its `accessRequest` ([`canvas-access-requests.md`](canvas-access-requests.md)). |
+| `sidekick_source_requests` | `request_id` | Read for a `source_request` row's seen and every source row's `sourceRequest` ([`sidekick-sources.md`](sidekick-sources.md)). `person_name` is the asked person's name, taken when they answer. |
 | `workspace_sidebar_list_state` | `list` | Row `activity`: the list's waterline. |
 
 ## Changelog
