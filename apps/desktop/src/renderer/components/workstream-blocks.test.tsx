@@ -661,10 +661,11 @@ describe('MessageBlock human identity', () => {
     };
     render(<MessageBlock {...actions} currentUserId="user-adam" message={briefMessage} />);
 
-    expect(screen.getByText('Expanded by Rally from suggested work'))
-      .toHaveClass('message-context-label');
-    expect(screen.getByLabelText('Message from Adam')).toHaveTextContent('Trace the failed release, identify the owner, and prepare the fix.');
-    expect(screen.getByText('Adam').closest('.message-author')).toBeInTheDocument();
+    const header = screen.getByRole('article', { name: 'Message from Adam' }).querySelector('header');
+    const contextLabel = screen.getByText('Expanded by Rally from suggested work');
+    expect(contextLabel).toHaveClass('message-context-label');
+    expect(contextLabel.parentElement).toBe(header);
+    expect(header?.querySelector('.message-author')).toHaveTextContent('Adam');
   });
 
   it('shows a coworker message in a human bubble with their byline on the trailing edge', () => {
