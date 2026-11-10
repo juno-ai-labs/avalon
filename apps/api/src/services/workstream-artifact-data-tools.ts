@@ -84,13 +84,22 @@ const QueryArgumentsSchema = z.strictObject({
   ),
 });
 
+/**
+ * A write's bound values are strings and numbers, with no null. The sanitized
+ * schema a provider is sent keeps only one scalar branch beside null
+ * (`test/tool-schema-sanitization.test.ts`), so a null a model was told it may
+ * bind is one it cannot say; a write that silently lacked NULL would store
+ * the string "null" or fail. The statement spells NULL itself instead.
+ */
+const WriteParametersSchema = z.array(z.union([z.string(), z.number()])).max(MAXIMUM_SQL_PARAMETERS).optional();
+
 const WriteArgumentsSchema = z.strictObject({
   resource: z.string().min(1).max(200).describe(RESOURCE_DESCRIPTION),
   sql: z.string().min(1).max(MAXIMUM_SQL_CHARACTERS).describe(
     "One SQLite INSERT, UPDATE, DELETE or REPLACE statement, for example `INSERT INTO emails (message_id, subject) VALUES (?, ?) ON CONFLICT(message_id) DO NOTHING`. Name only tables and columns describe_artifact_data reported. Exactly one statement is admitted: a SELECT, a second statement after a semicolon, CREATE, ALTER, DROP, a PRAGMA, or transaction control is refused. Write `?` where a value goes and send the value in `params` rather than pasting it in. Add `RETURNING` to get the changed rows back.",
   ),
-  params: SqlParametersSchema.describe(
-    "The values for the `?` placeholders in `sql`, in the order they appear, for example [\"msg-1\", \"Hello\"]. Omit it for a statement with no placeholders. The count has to match: fewer or more than the statement has is refused.",
+  params: WriteParametersSchema.describe(
+    "The values for the `?` placeholders in `sql`, in the order they appear, for example [\"msg-1\", \"Hello\"]. Strings and numbers only: to store no value, write NULL in the statement itself rather than binding it. Omit it for a statement with no placeholders. The count has to match: fewer or more than the statement has is refused.",
   ),
 });
 
