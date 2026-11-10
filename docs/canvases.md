@@ -390,7 +390,7 @@ its name and state there. An archived Sidekick is not listed.
 
 A Sidekick the Canvas's Chat made
 ([`automation-lifecycle.md`](automation-lifecycle.md#a-sidekick-made-in-a-canvas))
-is managed by everyone the Canvas admits, who change or archive it by asking
+is steered by the members the Canvas admits, who change or archive it by asking
 the Chat (the title menu lists it and offers no archive), and **archiving the Canvas archives it** in the same
 transaction (`archiveHomeSidekicks`). A Sidekick only attached here keeps
 running; its next write to the archived Canvas is refused.
