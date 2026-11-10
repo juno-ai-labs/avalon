@@ -3,6 +3,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { MenuActionItem } from '@rally/ui/components/menu-action-item';
 import { TitleMenuSeparator } from '@rally/ui/components/title-pill';
 import { IconArchive } from '@tabler/icons-react';
+import { useId } from 'react';
 
 import { Tip } from './primitives';
 import { AutomationGlyph } from './workstream-glyph';
@@ -39,11 +40,12 @@ export function CanvasSidekicksSection({ onArchive, onOpen, openableIds, sidekic
   openableIds: ReadonlySet<string>;
   sidekicks: readonly CanvasSidekick[];
 }): React.JSX.Element | null {
+  const labelId = useId();
   if (sidekicks.length === 0) return null;
   return <>
     <TitleMenuSeparator />
-    <DropdownMenu.Group className="canvas-sidekicks">
-      <DropdownMenu.Label className="menu-label workspace-menu-section">Sidekicks</DropdownMenu.Label>
+    <DropdownMenu.Group aria-labelledby={labelId} className="canvas-sidekicks">
+      <DropdownMenu.Label className="menu-label workspace-menu-section" id={labelId}>Sidekicks</DropdownMenu.Label>
       {sidekicks.map((sidekick) => {
         const openable = openableIds.has(sidekick.id);
         return <div className="canvas-sidekick-row" key={sidekick.id}>

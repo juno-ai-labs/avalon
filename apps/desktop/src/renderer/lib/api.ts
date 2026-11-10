@@ -532,6 +532,7 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     triggerSummaries: (detail.currentDefinition?.triggers ?? []).map(triggerSummary),
     recentRuns: detail.recentRuns.map(mapAutomationRun),
     ...(detail.canvases === undefined ? {} : { canvases: detail.canvases }),
+    ...(detail.madeInCanvasId ? { madeInCanvasId: detail.madeInCanvasId } : {}),
   };
 }
 

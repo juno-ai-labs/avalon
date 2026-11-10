@@ -794,6 +794,8 @@ export interface AutomationDetail extends AutomationSummary {
   recentRuns: AutomationRun[];
   /** The Canvases it writes that this reader may open, most recently active first. */
   canvases?: CanvasSummary[];
+  /** The Canvas whose Chat made it, when one did; it is among `canvases` only for a reader who may open it. */
+  madeInCanvasId?: string;
 }
 
 export interface SocketTicket {
