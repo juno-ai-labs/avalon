@@ -27,6 +27,7 @@ import {
 import { type SidekickAttachment, SidekickAttachmentSchema } from "@rally/contracts";
 import type { Region } from "@rally/contracts/regions";
 import { z } from "zod";
+import { projectionIsRunning } from "./canvas-agent-activity";
 import {
   AutomationDetailSchema,
   SidekickSkillSourceSchema,
@@ -1728,6 +1729,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    */
   protected onChildProjection(substreamId: string, effect: DirectoryCommonEffect,
     prior: PriorChildProjection | null, now: number): void {
+    if (projectionIsRunning(prior) !== projectionIsRunning(effect)) {
+      this.host.noteDirectoryChanged(this.sidekickId, false, now);
+    }
     if (substreamId === "0") {
       const unreadMoved = (prior?.latestAttentionOrdinal ?? null) !== (effect.latestAttentionOrdinal ?? null) && this.hasReaders();
       if (unreadMoved || (prior?.state === "needs_input") !== (effect.state === "needs_input")) {

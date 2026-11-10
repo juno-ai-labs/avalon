@@ -62,6 +62,7 @@ import { CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVA
 import type { ScheduledAlarmStore } from "./scheduled-alarms";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { canvasTitleFromOpening } from "../services/canvas-naming";
+import { canvasRunningActivity, projectionIsRunning } from "./canvas-agent-activity";
 
 /** Who is asking: their id and, for a member, their Organization role; a guest has none. */
 export const CanvasActorSchema = z.strictObject({
@@ -268,6 +269,10 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
    */
   protected onChildProjection(substreamId: string, effect: DirectoryCommonEffect,
     prior: PriorChildProjection | null, now: number): void {
+    if ((effect.backgroundAgent || prior?.backgroundAgent)
+      && projectionIsRunning(prior) !== projectionIsRunning(effect)) {
+      this.host.noteCanvasDirectoryChanged(this.canvasId);
+    }
     if (substreamId !== "0") return;
     // No ordinal and ordinal 0 are both an empty Chat: the provisioning
     // projection of a Canvas nobody has written in is not activity, so it
@@ -627,6 +632,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     const canManage = this.manages(row, request.actor);
     return CanvasDetailSchema.parse({
       ...canvasSummary(row, canvasAppearanceReporter(this.host.env)),
+      runningActivity: canvasRunningActivity(this.sql, [this.canvasId]).get(this.canvasId),
       participantUserIds: this.participantUserIds(),
       artifacts: this.artifacts(),
       sidekicks: this.sidekicks(request.actor),
@@ -952,9 +958,11 @@ export function canvasSidebarRows(
     attached.set(sidekick.canvas_id, held);
   }
   const listed: CanvasSidebarRow[] = [];
+  const activity = canvasRunningActivity(sql, admittedRows.map((row) => row.canvas_id));
   for (const row of admittedRows) {
     listed.push(CanvasSidebarRowSchema.parse({
       ...canvasSummary(row, report),
+      runningActivity: activity.get(row.canvas_id),
       artifactKind: row.artifact_type === null ? null : canvasArtifactKind(row.artifact_type, row.artifact_mime),
       hasStoredData: row.has_stored_data === 1,
       // A deleted Sidekick's run is no run to open.

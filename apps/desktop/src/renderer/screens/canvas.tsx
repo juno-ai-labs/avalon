@@ -8,6 +8,8 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { useActivityList } from '../components/activity-sidebar-section';
 import { CanvasAccessRequestPane } from '../components/canvas-access-request';
+import { ComposerAgentActivity } from '../components/composer-agent-activity';
+import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { CanvasMark, canvasHue } from '../components/canvas-mark';
 import { PaneState } from '../components/pane-state';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
@@ -40,6 +42,7 @@ export function CanvasScreen(): React.JSX.Element {
 
 function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   const { api, session } = useCollaborationSession();
+  const workspaceSocket = useOptionalWorkspaceSocket();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
@@ -352,6 +355,8 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     <ConversationSurface
       parentId={id}
       parentKind="canvas"
+      composerActivity={<ComposerAgentActivity activity={workspaceSocket?.state === 'connected' && workspaceSocket.sidebarReady
+        ? (row?.runningActivity ?? (!canvas.isFetching && !canvas.isError ? canvas.data?.runningActivity : undefined)) : undefined} />}
       renderHeader={(context) => header(context.presentUserIds, context.panelOpen)}
       // Offline, the Canvas is still named in the list: the pane keeps its
       // pill and Share over the state rather than a bare Back and Forward.

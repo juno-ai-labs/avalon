@@ -5803,6 +5803,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // sends opened stop routing to them; the rows stay, suspended.
         if (deleted) this.externalBindings().suspendDeletedSidekick(automationId, new Date(now).toISOString());
         this.sidekickDirectoryMoved = true;
+        // Attached Canvases also display this Sidekick's execution, including
+        // its draft authoring conversation. Use the existing Canvas list push.
+        if (this.state.storage.sql.exec(
+          `SELECT 1 FROM sidekick_conversation_attachments
+            WHERE automation_id = ? AND parent_kind = 'canvas' AND substream_id = '0' LIMIT 1`, automationId,
+        ).toArray().length > 0) this.noteCanvasDirectoryMoved();
       },
       noteViewerReadChanged: (userId) => {
         // The waterline is the list's, so it moves; only this reader is sent it.
