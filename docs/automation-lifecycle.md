@@ -1597,7 +1597,12 @@ republishing run to rebuild the artifact from its sources.
 A Canvas's Chat makes a Sidekick with the agents plugin's `create_sidekick`
 ([`agent-communication.md`](agent-communication.md#in-a-canvass-chat)). The
 host passes the loop's own Canvas as `homeCanvasId`; no tool names a Canvas, so
-a Chat makes a Sidekick for its own Canvas and for no other.
+a Chat makes a Sidekick for its own Canvas and for no other. A client outside
+Rally makes one the same way through `POST /canvases/:id/sidekicks`
+([`canvases.md`](canvases.md#sidekicks-attached-to-a-canvas)), where the Canvas
+is the route's and the person must be able to open it. A replay of either
+names the same Sidekick; an id that names another person's, or one this Canvas
+did not make, is refused (`sidekick_id_unavailable`).
 `HostedSidekick.create` refuses a Canvas the author cannot open
 (`canvas_not_found`) or an archived one (`canvas_archived`), and writes the
 directory row and the attachment in one transaction, the attachment marked
@@ -1624,6 +1629,16 @@ That mark is the whole of what ties the Sidekick to the Canvas:
 The Sidekick is otherwise an ordinary one: personal to its creator unless they
 asked for the Organization's, listed in their Sidekicks section, with its own
 shared conversation and runs.
+
+A Sidekick's row (`AutomationSummary.attachedCanvases`, on the sidebar list and
+`GET /sidekicks`) names the Canvases somebody attached it to that the viewer
+may open (`canvasesAttachedTo`): the one that made it and any its wizard
+attached, never the Canvas each run made, which is its output. The Sidekicks
+home draws each as a pill at the right of the card's preview, under the Paused
+pill when there is one, with the Canvas's title and an up-right arrow; it is a
+link to the Canvas, above the card's own stretched link. A Canvas archive moves
+the Sidekick list, so an attached Sidekick's pill leaves with it; a retitle
+reaches the pill at the list's next frame.
 
 A definition may set `failureNotificationConversationId` to a canonical
 `conversation_list` id in this scope: the Sidekick's own conversation, a Canvas

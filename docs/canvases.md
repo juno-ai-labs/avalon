@@ -359,6 +359,14 @@ Attaching changes who can open nothing. The Canvas admits who it admitted, and
 the Sidekick's audience is its own; `writer_sidekick_id` alone carries a
 Sidekick's audience into a Canvas, and only for a Canvas a run made.
 
+`POST /canvases/:id/sidekicks` (`CanvasService.addSidekick`) makes one for the
+Canvas on behalf of a client that is not its Chat, the
+[MCP server](rally-mcp.md#sidekicks-for-a-canvas) first: the Sidekick is made
+attached, as the Chat's `create_sidekick` makes it, and the request's
+instructions go to its wizard as the person's edit. `POST /canvases` takes the
+same as `sidekick`, after the Canvas and its prompt. A guest makes none
+(`canvas_sidekick_member_required`).
+
 `GET /canvases/:id` lists them as `sidekicks` (`HostedCanvas.sidekicks`): id,
 name, state, appearance, and `madeHere` for one this Canvas's Chat made. Every
 reader of the Canvas sees the list; attaching a Sidekick is the consent to show
@@ -431,7 +439,11 @@ Both carry the `canvases` waterline (`workspace_sidebar_list_state`), which the
 desktop compares in the same ledger as the Sidekick list
 (`applyVersionedSidebarList`).
 
-A row (`canvasSidebarRows`) is the summary plus: `unread`, the Chat's read
+A row (`canvasSidebarRows`) is the summary plus: `sidekicks`, the Sidekicks
+attached to it by id, name and appearance, read for every listed Canvas in one
+statement over the attachments (a Sidekick renamed, redressed or archived
+reaches a connected client's card at its next Canvas list frame, as a deleted
+Sidekick's run line does); `unread`, the Chat's read
 state as `sidekick_viewer_reads` projects it against the Chat's latest
 attention ordinal (a Canvas never opened is unread to anyone but its creator);
 `presentUserIds`, the people whose foreground socket has the Canvas open now;
@@ -504,6 +516,12 @@ card grid with Sidekicks; the shared layout is described in
   its top right uses the Stored data pop-out row's `IconDatabase` and means
   the Canvas holds a listed database-backed artifact.
   A static site has no Data badge. Both indicators can appear together. The
+  Canvas's attached Sidekicks are a **Sidekick facepile** (`SidekickStack`,
+  `@rally/ui`): overlapping hexagons at the preview's right, under the Data
+  badge when the card has one and in its place when it has none, the first
+  four and then a count, as `AvatarStack` cuts people off. The stack is named
+  as a whole ("Sidekicks: Launch tracker; Digest") and the card's link is
+  described by it beside the Data badge. The
   preview is decorative; the link describes its Data badge for assistive
   technology, and the metadata names current viewers. Clicking a face opens
   the Canvas through the same stretched link as the rest of the card.

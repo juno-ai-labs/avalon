@@ -183,6 +183,35 @@ button on each Canvas-made Sidekick's row. The reason was not recorded.
 "by asking the Chat". Goal 4 holds: everyone in the Canvas can still archive
 one, through the Chat.
 
+### 2026-11-10 — Each side shows the other on its dashboard card
+
+**Decided:** A Canvas's home card carries a Sidekick facepile, at the right
+under the Data badge. A Sidekick's home card carries a pill for each Canvas it
+was attached to, at the right, with an up-right arrow, that opens the Canvas.
+
+**Why:** The owner's call, after the header indicator beside the face pile was
+left out: the dashboards are where a person scans for which Canvases are kept
+current and what a Sidekick works on.
+
+**Changes:** Adds to Product behavior. The Canvas list row gains `sidekicks`
+and the Sidekick row `attachedCanvases`. A Sidekick's pills leave out the
+Canvas each of its own runs made.
+
+### 2026-11-10 — An MCP client can add a Sidekick to a Canvas
+
+**Decided:** `POST /canvases/:id/sidekicks`, and the same as `sidekick` on
+`POST /canvases`, make a Sidekick attached to a Canvas and send its
+instructions to its wizard. The MCP server offers them as `add_canvas_sidekick`
+and `create_canvas`'s `sidekick` argument. The consent page says a connected
+app can set up Sidekicks.
+
+**Why:** The owner wants the MCP server to be a second interface and a way
+into the product, and this feature reachable from it at creation or after.
+
+**Changes:** A new goal in effect: a client outside Rally can set up the
+recurring update. The MCP token's reach grows by one Canvas route; it still
+reaches no Sidekick route. Neither tool is an MCP task.
+
 ## Data model
 
 `WorkspaceDO` migration 144: `sidekick_conversation_attachments.made_here`, an
@@ -225,6 +254,10 @@ for the `CANVAS CONTEXT` and `ATTACHED CANVASES` messages. In short:
   `details.available`. `create_sidekick` returns `attachedToCanvasId` beside
   the wizard's `agentId`. `sidekicks_list` returns the Sidekicks this Canvas
   made.
+- **MCP: `add_canvas_sidekick({ canvasId, operationId, instructions })`** and
+  `create_canvas({ ..., sidekick: { operationId, instructions } })`. Contract,
+  refusals and replay are in
+  [`rally-mcp.md`](../../rally-mcp.md#sidekicks-for-a-canvas).
 - **`write_artifact_data({ resource, sql, params? })`**, `write`,
   `record_before_execute`. One INSERT, UPDATE, DELETE or REPLACE. Offered to a
   Canvas's Chat for its own artifacts and to a run for artifacts of Canvases
