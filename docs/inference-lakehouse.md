@@ -337,18 +337,15 @@ rows written before this change carry `pipeline_ingest_request_limit`.
 **Why:** The binding refuses any one record above 1 MB with
 `CF_PIPELINE_MESSAGE_TOO_LARGE: Individual message must not exceed 1 MB`, a
 limit the published limits page does not list. Every record between 1 MB and
-5 MB therefore failed identically on each retry and dead-lettered: about 6,000
-failed deliveries (roughly 530 distinct records, at the logs' sampling) over
-2026-11-03 to 2026-11-10, and the inference-lakehouse dead-letter queue held
-1,466 messages. The full records were never lost — they stay in Global R2 —
+5 MB therefore failed identically on each retry and dead-lettered — hundreds
+of distinct records over the week before this change. The full records were never lost — they stay in Global R2 —
 but their analytical rows were.
 
 **Rejected:** Reading 1 MB as 1,048,576 bytes would admit a few more rows
 whole, but a wrong guess sends that record to the dead-letter queue, whereas
 the decimal reading only sends it down the lossless pointer path.
 
-**Consequences:** Messages already in the dead-letter queue fit the new
-threshold and can be redelivered once this is deployed. If Cloudflare raises
+**Consequences:** If Cloudflare raises
 the per-record limit, raise the constant; the pointer path costs a reader one
 R2 read, not data.
 
