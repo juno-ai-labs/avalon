@@ -123,8 +123,11 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       if (mounted.current) setArchiving(false);
     }
   };
-  // The Sidekicks attached to it; a server older than attaching sends none.
-  const sidekicks = canvas.data?.sidekicks ?? [];
+  // The Sidekicks attached to it, from the list row the socket keeps current:
+  // one the Chat just made, or one renamed, paused or archived, arrives there
+  // while this screen's detail is still the copy it opened with. The detail
+  // serves until the list has the row; a server older than attaching sends none.
+  const sidekicks = row?.sidekicks ?? canvas.data?.sidekicks ?? [];
   // A Sidekick's page answers only the people it is shared with, which is
   // exactly who has it in their own list.
   const ownSidekicks = useSidekickList();

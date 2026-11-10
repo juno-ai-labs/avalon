@@ -98,7 +98,8 @@ describe("a Sidekick a Canvas's Chat made", () => {
       .toEqual([]);
     // The Canvas list carries them too, for the home card's Sidekick facepile.
     const listed = await workspace().canvasListFor({ workspaceId: WORKSPACE_ID, userId: PARTICIPANT, accessClass: "member" });
-    expect(listed.map((row) => [row.title, row.sidekicks])).toEqual([["Inbox", [{ id: MADE_HERE, name: "New Sidekick" }]]]);
+    expect(listed.map((row) => [row.title, row.sidekicks]))
+      .toEqual([["Inbox", [{ id: MADE_HERE, name: "New Sidekick", status: "draft", madeHere: true }]]]);
     expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: MADE_HERE,
       actor: { ...member(CREATOR), participantOfOwningWorkstream: false } })).toMatchObject({ madeInCanvasId: CANVAS_ID });
     // And the Sidekick's own row names the Canvas, for its dashboard card's link.
@@ -157,8 +158,8 @@ describe("a Sidekick a Canvas's Chat made", () => {
 });
 
 describe("where a Sidekick's run may publish", () => {
-  const publishInto = (sidekickId: string, canvasId: string) => refusal((instance) => instance.canvasForSidekickRun({
-    workspaceId: WORKSPACE_ID, sidekickId, runId: crypto.randomUUID(), canvasId }));
+  const publishInto = (sidekickId: string, canvasId: string, userId: string = CREATOR) => refusal((instance) => instance.canvasForSidekickRun({
+    workspaceId: WORKSPACE_ID, sidekickId, runId: crypto.randomUUID(), canvasId, userId }));
 
   it("is any Canvas attached to the Sidekick, a person's own Canvas among them, and no other", async () => {
     expect(await publishInto(MADE_HERE, CANVAS_ID)).toBeNull();
@@ -167,6 +168,16 @@ describe("where a Sidekick's run may publish", () => {
     await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: MADE_ELSEWHERE,
       userId: CREATOR, reference: CANVAS_ID });
     expect(await publishInto(MADE_ELSEWHERE, CANVAS_ID)).toBeNull();
+  });
+
+  it("stops when the person the run acts as can no longer open the Canvas, though the Sidekick is still attached", async () => {
+    expect(await publishInto(MADE_HERE, CANVAS_ID, PARTICIPANT)).toBeNull();
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
+      update: { visibility: "creator", userIds: [] } });
+    expect(await publishInto(MADE_HERE, CANVAS_ID, PARTICIPANT)).toBe("canvas_access_denied");
+    // Someone never in the Canvas, and its creator, are decided the same way.
+    expect(await publishInto(MADE_HERE, CANVAS_ID, OUTSIDER)).toBe("canvas_access_denied");
+    expect(await publishInto(MADE_HERE, CANVAS_ID, CREATOR)).toBeNull();
   });
 
   it("includes the Canvas an earlier run of it made", async () => {

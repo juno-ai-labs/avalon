@@ -4463,6 +4463,8 @@ const CanvasContextRequestSchema = z.strictObject({ workspaceId: WorkspaceIdSche
 const SidekickCanvasContextRequestSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, sidekickId: IdSchema, userId: UserIdSchema });
 const CanvasForSidekickRunRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, sidekickId: IdSchema, runId: IdSchema, canvasId: IdSchema.nullable(),
+  /** The person the run acts as, who must be able to open a Canvas it names. */
+  userId: UserIdSchema,
 });
 
 /** Send a sidebar list push; a socket closing as it is sent is not a failure, since a reconnect receives the whole list. */
@@ -5249,6 +5251,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * would hide the same change when it does.
    */
   private readonly writerSidekickReaders = new Map<string, string>();
+  /** What each attached Sidekick's Canvases showed of it when this instance last saw its row; see `noteAttachedSidekickFace`. In memory, as above. */
+  private readonly attachedSidekickFaces = new Map<string, string>();
   /** Set by a hosted Canvas write that moved a directory row; the Canvas list is published after it. */
   private canvasDirectoryMoved = false;
   /** Readers whose read of a Canvas's Chat moved; see `publishCanvasList`. */
@@ -5386,18 +5390,29 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * the run has made none yet, and its caller creates it. A run's own Canvas
    * is attached as it is made, so the attachment is the one publish grant.
    */
-  async canvasForSidekickRun(rawInput: { workspaceId: string; sidekickId: string; runId: string; canvasId: string | null }): Promise<{ canvasId: string | null }> {
+  async canvasForSidekickRun(rawInput: { workspaceId: string; sidekickId: string; runId: string; canvasId: string | null; userId: string }): Promise<{ canvasId: string | null }> {
     await this.initialized;
     const input = parseRpcInput(CanvasForSidekickRunRequestSchema, rawInput, "canvas_for_sidekick_run");
     this.assertWorkspace(input.workspaceId);
     if (input.canvasId !== null) {
-      const row = this.state.storage.sql.exec<{ archived_at: number | null }>(
-        `SELECT archived_at FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, input.canvasId, input.workspaceId,
+      const sql = this.state.storage.sql;
+      const row = sql.exec<CanvasRow>(
+        `SELECT * FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, input.canvasId, input.workspaceId,
       ).toArray()[0];
-      if (!row || !sidekickAttachedToCanvas(this.state.storage.sql, input.sidekickId, input.canvasId)) {
+      if (!row || !sidekickAttachedToCanvas(sql, input.sidekickId, input.canvasId)) {
         throw new ApiError(404, "canvas_not_attached_to_sidekick", "This Sidekick is not attached to that Canvas");
       }
       if (row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
+      // The attachment says where the Sidekick may write; the person it acts
+      // as must still be able to open the Canvas, as every post there asks.
+      // Read last, and the row again after the await, so the decision is of
+      // the Canvas as it stands.
+      const relationship = await this.readRelationship(input.workspaceId, input.userId);
+      const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
+      const current = sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, input.canvasId).toArray()[0];
+      if (relationship?.status !== "active" || !current || !canvasReaderAllows(current, { userId: input.userId, actorRole }, sql)) {
+        throw new ApiError(403, "canvas_access_denied", "The person this run acts as cannot open that Canvas");
+      }
       return { canvasId: input.canvasId };
     }
     const row = this.state.storage.sql.exec<{ canvas_id: string; archived_at: number | null }>(
@@ -5797,6 +5812,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       },
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
       noteHomeCanvasChanged: () => this.noteCanvasDirectoryMoved(),
+      noteAttachedSidekickFace: (sidekickId, face) => {
+        if (this.attachedSidekickFaces.get(sidekickId) === face) return;
+        this.attachedSidekickFaces.set(sidekickId, face);
+        this.noteCanvasDirectoryMoved();
+      },
       noteWriterReaders: (sidekickId, readers) => {
         if (this.writerSidekickReaders.get(sidekickId) === readers) return;
         this.writerSidekickReaders.set(sidekickId, readers);
@@ -5960,6 +5980,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // Canvas readers; forget them, so the same change committed later is
       // still pushed (once, at worst, too many).
       this.writerSidekickReaders.delete(automationId);
+      this.attachedSidekickFaces.delete(automationId);
       throw error;
     } finally {
       this.publishSidekickList();

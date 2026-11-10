@@ -157,12 +157,13 @@ export const CanvasSidebarRowSchema = CanvasSummarySchema.extend({
     sidekickName: z.string(),
   }).nullable().optional(),
   /**
-   * The Sidekicks attached to it, in the order they were attached, for the
-   * home card's Sidekick facepile: the mark and the name, and nothing a
-   * reader of the Canvas could not already see on its detail. Absent from an
-   * older Worker.
+   * The Sidekicks attached to it, in the order they were attached, exactly as
+   * its detail lists them. The row is what the socket keeps current, so the
+   * home card's Sidekick facepile and an open Canvas's menu both read it
+   * here: a Sidekick made, renamed, paused or archived while the Canvas is
+   * open arrives with the next list frame. Absent from an older Worker.
    */
-  sidekicks: z.array(CanvasSidekickSchema.pick({ id: true, name: true, appearance: true })).optional(),
+  sidekicks: z.array(CanvasSidekickSchema).optional(),
   unread: z.boolean(),
   presentUserIds: z.array(UserIdSchema),
   /** Its place in the viewer's Pinned group; null when it is not pinned. */

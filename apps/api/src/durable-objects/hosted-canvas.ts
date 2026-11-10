@@ -897,12 +897,16 @@ export function canvasSidebarRows(
       ORDER BY canvas.updated_at DESC, canvas.canvas_id`,
     viewer.userId, viewer.member ? 1 : 0, titleQuery,
   ).toArray();
-  // Every Canvas's attached Sidekicks in one read, grouped here: the facepile
-  // on the home card. Indexed by Canvas (migration 144), so it walks the
-  // attachments once however many Canvases are listed.
-  const attached = new Map<string, { id: string; name: string; appearance?: WorkstreamAppearance }[]>();
-  for (const sidekick of sql.exec<{ canvas_id: string; automation_id: string; title: string; appearance_json: string | null }>(
-    `SELECT attachment.parent_id AS canvas_id, directory.automation_id, directory.title, directory.appearance_json
+  // Every Canvas's attached Sidekicks in one read, grouped here, as each
+  // Canvas's detail lists them (`HostedCanvas.sidekicks`). Indexed by Canvas
+  // (migration 144), so it walks the attachments once however many Canvases
+  // are listed.
+  const attached = new Map<string, CanvasSidekick[]>();
+  for (const sidekick of sql.exec<{
+    canvas_id: string; automation_id: string; title: string; lifecycle: string; appearance_json: string | null; made_here: number;
+  }>(
+    `SELECT attachment.parent_id AS canvas_id, directory.automation_id, directory.title, directory.lifecycle,
+            directory.appearance_json, attachment.made_here
        FROM sidekick_conversation_attachments attachment
        JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
       WHERE attachment.parent_kind = 'canvas' AND attachment.substream_id = '0' AND directory.lifecycle <> 'deleted'
@@ -910,7 +914,8 @@ export function canvasSidebarRows(
   ).toArray()) {
     const appearance = parsedAppearance(sidekick.appearance_json, "automation_appearance", () => undefined);
     const held = attached.get(sidekick.canvas_id) ?? [];
-    held.push({ id: sidekick.automation_id, name: sidekick.title || "New Sidekick", ...(appearance ? { appearance } : {}) });
+    held.push(CanvasSidekickSchema.parse({ id: sidekick.automation_id, name: sidekick.title || "New Sidekick", status: sidekick.lifecycle,
+      ...(appearance ? { appearance } : {}), madeHere: sidekick.made_here === 1 }));
     attached.set(sidekick.canvas_id, held);
   }
   const listed: CanvasSidebarRow[] = [];
