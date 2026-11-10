@@ -886,6 +886,22 @@ export function canvasSidebarRows(
       ORDER BY canvas.updated_at DESC, canvas.canvas_id`,
     viewer.userId, viewer.member ? 1 : 0, titleQuery,
   ).toArray();
+  // Every Canvas's attached Sidekicks in one read, grouped here: the facepile
+  // on the home card. Indexed by Canvas (migration 144), so it walks the
+  // attachments once however many Canvases are listed.
+  const attached = new Map<string, { id: string; name: string; appearance?: WorkstreamAppearance }[]>();
+  for (const sidekick of sql.exec<{ canvas_id: string; automation_id: string; title: string; appearance_json: string | null }>(
+    `SELECT attachment.parent_id AS canvas_id, directory.automation_id, directory.title, directory.appearance_json
+       FROM sidekick_conversation_attachments attachment
+       JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
+      WHERE attachment.parent_kind = 'canvas' AND attachment.substream_id = '0' AND directory.lifecycle <> 'deleted'
+      ORDER BY attachment.attached_at, attachment.automation_id`,
+  ).toArray()) {
+    const appearance = parsedAppearance(sidekick.appearance_json, "automation_appearance", () => undefined);
+    const held = attached.get(sidekick.canvas_id) ?? [];
+    held.push({ id: sidekick.automation_id, name: sidekick.title || "New Sidekick", ...(appearance ? { appearance } : {}) });
+    attached.set(sidekick.canvas_id, held);
+  }
   const listed: CanvasSidebarRow[] = [];
   for (const row of rows) {
     if (listed.length >= limit) break;
@@ -907,6 +923,7 @@ export function canvasSidebarRows(
         ? { sidekickId: row.last_editor_id, runId: row.written_run_id, runNumber: row.written_run_number,
           sidekickName: row.written_sidekick_name || "New Sidekick" }
         : null,
+      sidekicks: attached.get(row.canvas_id) ?? [],
       unread: row.unread === 1,
       presentUserIds: [...(present.get(row.canvas_id) ?? [])].filter((userId) => userId !== viewer.userId),
       pinnedPosition: row.pinned_position,

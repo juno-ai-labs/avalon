@@ -156,6 +156,13 @@ export const CanvasSidebarRowSchema = CanvasSummarySchema.extend({
     runNumber: z.number().int().positive(),
     sidekickName: z.string(),
   }).nullable().optional(),
+  /**
+   * The Sidekicks attached to it, in the order they were attached, for the
+   * home card's Sidekick facepile: the mark and the name, and nothing a
+   * reader of the Canvas could not already see on its detail. Absent from an
+   * older Worker.
+   */
+  sidekicks: z.array(CanvasSidekickSchema.pick({ id: true, name: true, appearance: true })).optional(),
   unread: z.boolean(),
   presentUserIds: z.array(UserIdSchema),
   /** Its place in the viewer's Pinned group; null when it is not pinned. */
