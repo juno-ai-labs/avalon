@@ -145,7 +145,7 @@ it('sends one email per notice through Cloudflare, its subject the notice title 
   expect(body.to).toBe('robin@example.test');
   expect(body.text).toBe([
     'Hi Robin,', '', 'Avery in Launch plan.', '', '"Moved the date"', '', `Open in Rally: ${CANVAS_URL}`, '',
-    'You chose email for New messages in Juno Labs. Change it in Rally under Settings, Notifications.',
+    'You get email for New messages in Juno Labs. Change it in Rally under Settings, Notifications.',
   ].join('\n'));
   expect(body.headers!["X-Rally-Category"]).toBe('notification_new_message');
 });

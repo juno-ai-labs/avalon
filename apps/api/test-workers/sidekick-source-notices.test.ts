@@ -214,7 +214,10 @@ describe("what a Sidekick source request tells people", () => {
       .toEqual({ title: "Avery asked to use your Gmail for Deals", body: ASKED });
     // Whoever asked is told nothing until the person answers.
     expect((await opened(MANAGER)).activity.items).toEqual([]);
-    expect(queued.filter((message) => message.channel === "email")).toEqual([]);
+    // The person asked is also emailed, once, without having chosen it: the email is where they answer.
+    expect(queued.filter((message) => message.channel === "email")
+      .map(({ intentId, recipientUserId }) => ({ intentId, recipientUserId })))
+      .toEqual([{ intentId: `source_request:${request!.requestId}`, recipientUserId: PERSON }]);
   });
 
   it("settles the asked person's row as seen when they approve, and tells whoever asked who approved", async () => {
@@ -272,7 +275,7 @@ describe("what a Sidekick source request tells people", () => {
   });
 
   it("emails the person two links, and the Approve link records their answer once without a session", async () => {
-    await workspace().saveMemberPreferences({ workspaceId: WORKSPACE_ID, userId: PERSON, preferences: { notify: { accessRequests: ["email"] } } });
+    await workspace().saveMemberPreferences({ workspaceId: WORKSPACE_ID, userId: PERSON, preferences: { notify: { sourceRequests: ["email"] } } });
     const [request] = (await ask([PERSON])).requests;
     const intentId = `source_request:${request!.requestId}`;
     // Queued after the commit, for the one sink the person chose.
@@ -304,7 +307,7 @@ describe("what a Sidekick source request tells people", () => {
       "Hi Robin,", "", "Avery asked to use your Gmail for Deals.", "", `"${ASKED}"`, "",
       `Approve: ${notice.actions![0]!.url}`, `Decline: ${notice.actions![1]!.url}`, "",
       "Opening a button records your answer. You can also answer in Rally, under Activity.", "",
-      "You chose email for Access requests in Juno Labs. Change it in Rally under Settings, Notifications.",
+      "You get email for Source requests in Juno Labs. Change it in Rally under Settings, Notifications.",
     ].join("\n"));
     const html = String(send.mock.calls[0]![0].html);
     expect(html).toContain(">Approve</a>");
@@ -353,7 +356,7 @@ describe("what a Sidekick source request tells people", () => {
   });
 
   it("answers a link for a request a newer ask replaced by saying so, and leaves the newer one waiting", async () => {
-    await workspace().saveMemberPreferences({ workspaceId: WORKSPACE_ID, userId: PERSON, preferences: { notify: { accessRequests: ["email"] } } });
+    await workspace().saveMemberPreferences({ workspaceId: WORKSPACE_ID, userId: PERSON, preferences: { notify: { sourceRequests: ["email"] } } });
     const [first] = (await ask([PERSON], "it is about a seed round")).requests;
     const sink = vi.fn<(env: unknown, notice: Notice) => Promise<{ outcome: "sent" }>>(async () => ({ outcome: "sent" }));
     await deliverPush(env, { region: "global", workspaceId: WORKSPACE_ID, recipientUserId: PERSON,

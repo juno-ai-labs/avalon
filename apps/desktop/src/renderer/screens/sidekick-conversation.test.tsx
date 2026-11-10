@@ -23,6 +23,7 @@ const api = vi.hoisted(() => ({
   getAutomation: vi.fn(),
   getAutomationRuns: vi.fn(async () => []),
   getSidekickDelegates: vi.fn(),
+  getSidekickSources: vi.fn(),
   getWorkspaceMembers: vi.fn(async () => []),
   getConnections: vi.fn(async () => []),
   recordActivityEvents: vi.fn(async () => undefined),
@@ -126,6 +127,7 @@ describe("a Sidekick's shared conversation", () => {
     createMessage.mockResolvedValue({ turnId: 'turn', clientMessageId: 'message', createdAt: '2026-11-07T09:01:00.000Z', deliveryState: 'queued' });
     api.getAutomation.mockResolvedValue(sidekick());
     api.getSidekickDelegates.mockResolvedValue({ sidekickId: SIDEKICK, creatorUserId: AUTHOR, you: { userId: AUTHOR, allowed: false }, delegates: [] });
+    api.getSidekickSources.mockResolvedValue({ sidekickId: SIDEKICK, sources: [], requests: [] });
   });
   afterEach(() => { vi.unstubAllGlobals(); });
 

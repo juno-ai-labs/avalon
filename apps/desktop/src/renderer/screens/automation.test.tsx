@@ -14,6 +14,7 @@ const getAutomationRuns = vi.hoisted(() => vi.fn());
 const setAutomationAppearance = vi.hoisted(() => vi.fn());
 const archiveAutomation = vi.hoisted(() => vi.fn());
 const getSidekickDelegates = vi.hoisted(() => vi.fn());
+const getSidekickSources = vi.hoisted(() => vi.fn());
 const createAutomation = vi.hoisted(() => vi.fn());
 const shell = vi.hoisted(() => ({ host: 'desktop' as 'desktop' | 'browser' }));
 const viewer = vi.hoisted(() => ({ session: undefined as { user: { id: string }; workspace: { role: string | null } } | undefined }));
@@ -21,7 +22,7 @@ const surfaceIntents = vi.hoisted(() => [] as (string | undefined)[]);
 const surfaceMenus = vi.hoisted(() => [] as (ReadonlyArray<{ label: string; checked?: boolean; onSelect: () => void }> | undefined)[]);
 vi.mock('../lib/collaboration-session', () => ({
   useOptionalCollaborationSession: () => null,
-  useCollaborationSession: () => ({ session: viewer.session, api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance, getSidekickDelegates, createAutomation } }),
+  useCollaborationSession: () => ({ session: viewer.session, api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance, getSidekickDelegates, getSidekickSources, createAutomation } }),
   useShellCapabilities: () => ({ host: shell.host, guest: false }),
 }));
 const socket = vi.hoisted(() => ({ mounted: false }));
@@ -99,6 +100,7 @@ beforeEach(() => {
   setAutomationAppearance.mockReset();
   archiveAutomation.mockReset().mockResolvedValue(undefined);
   getSidekickDelegates.mockReset().mockResolvedValue({ sidekickId: SIDEKICK_ID, creatorUserId: 'user-1', you: { userId: 'user-1', allowed: false }, delegates: [] });
+  getSidekickSources.mockReset().mockResolvedValue({ sidekickId: SIDEKICK_ID, sources: [], requests: [] });
   createAutomation.mockReset().mockResolvedValue({ automationId: SIDEKICK_ID });
   shell.host = 'desktop';
   viewer.session = undefined;
