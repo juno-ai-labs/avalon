@@ -6911,6 +6911,13 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .dashboard-card-preview { border-bottom: 1px solid var(--av-sys-color-border-default); box-sizing: border-box; display: grid; height: 150px; overflow: hidden; place-items: center; position: relative; }
 .canvas-card-presence { left: 12px; pointer-events: none; position: absolute; top: 12px; }
 .canvas-card-data { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 4px; padding: 4px 8px; position: absolute; right: 12px; top: 12px; }
+/* The Sidekick facepile: top right, moved under the Data badge when the card has one. */
+.canvas-card-sidekicks { pointer-events: none; position: absolute; right: 12px; top: 12px; }
+.canvas-card-sidekicks.is-below-data { top: 44px; }
+.sidekick-stack { align-items: center; display: inline-flex; }
+.sidekick-stack-item { display: inline-flex; height: 26px; width: 26px; }
+.sidekick-stack-item + .sidekick-stack-item, .sidekick-stack .sidekick-stack-overflow { margin-left: -6px; }
+.sidekick-stack-item > svg, .sidekick-stack-item > * { height: 100%; width: 100%; }
 .canvas-card-body { padding: 12px 14px 14px; }
 .canvas-card-body h3 { display: flex; font-size: 15px; font-weight: 600; margin: 0; min-width: 0; }
 .canvas-card-body h3 > a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -6921,6 +6928,14 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 /* Sidekicks use the Canvas card shell, carrying their own identity and facts. */
 .sidekick-card-glyph { height: 72px; width: 72px; }
 .sidekick-card-status { position: absolute; right: 12px; top: 12px; }
+/* The Canvases a Sidekick works on: pills down the preview's right edge, under the Paused pill when the card has one. */
+.sidekick-card-canvases { align-items: flex-end; top: 12px; display: flex; flex-direction: column; gap: 6px; max-width: calc(100% - 24px); position: absolute; right: 12px; }
+.sidekick-card-canvases.is-below-status { top: 46px; }
+.sidekick-card-canvas { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); color: var(--av-sys-color-text-default); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 4px; max-width: 100%; padding: 4px 8px; position: relative; text-decoration: none; z-index: 1; }
+.sidekick-card-canvas > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidekick-card-canvas > svg { flex: none; }
+.sidekick-card-canvas:hover { box-shadow: 0 0 0 1px var(--av-sys-color-border-default); }
+.sidekick-card-canvas:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .dashboard-card-preview .sidekick-needs-input-badge { left: 12px; margin: 0; position: absolute; top: 12px; }
 .sidekick-card-body { padding: 14px; }
 .sidekick-card-body h3 { font-size: 15px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
@@ -6937,6 +6952,12 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-prompt-card textarea { background: var(--av-sys-color-surface-raised-hover); border: 0; border-radius: 12px; box-sizing: border-box; color: inherit; font: inherit; padding: 12px 14px; resize: vertical; width: 100%; }
 .canvas-header-trailing { align-items: center; display: inline-flex; gap: 10px; }
 .canvas-share-button { border-radius: var(--av-sys-size-radius-pill); }
+/* The Canvas menu's Sidekicks: a row is the hexagon, the name and the state. */
+.canvas-sidekicks { display: flex; flex-direction: column; gap: 2px; }
+/* Centred on the 18px icon column the rows above use, so the names line up. */
+.canvas-sidekick-mark { display: inline-flex; flex: none; height: 22px; margin: 0 -2px; width: 22px; }
+/* A row that opens nothing still names the Sidekick, so it keeps its ink. */
+.title-pill-menu .canvas-sidekick-open[data-disabled] { cursor: default; opacity: 1; }
 .canvas-share { display: grid; gap: 16px; }
 .canvas-share-audience { border: 0; margin: 0; min-inline-size: 0; padding: 0; }
 .canvas-share-options { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -7048,6 +7069,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-canvas-links { display: grid; gap: 6px; list-style: none; margin: 0; padding: 0; }
 .sidekick-canvas-links a { align-items: center; color: inherit; display: inline-flex; font-size: 14px; gap: 8px; text-decoration: none; }
 .sidekick-canvas-links a:hover { text-decoration: underline; }
+.sidekick-canvas-links li { display: grid; gap: 2px; justify-items: start; }
+/* Under the title, past the 24px mark and its gap. */
+.sidekick-canvas-made { color: var(--av-sys-color-text-muted); font-size: 12px; padding-left: 32px; }
 /* A run's row in a Sidekick's shared conversation (components/sidekick-run-row.tsx). */
 .sidekick-run-row { border: 1px solid var(--av-sys-color-border-default); border-radius: 12px; margin: 4px 0 14px; padding: 8px 12px; }
 .sidekick-run-row summary { align-items: center; cursor: pointer; display: flex; gap: 8px; list-style: none; }

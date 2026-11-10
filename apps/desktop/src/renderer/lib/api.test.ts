@@ -375,6 +375,15 @@ describe('Rally API wire adapter', () => {
     })]);
   });
 
+  it('keeps the Canvas that made a Sidekick through the detail mapping, and leaves it off when none did', async () => {
+    const canvasId = '00000000-0000-7000-8000-0000000000c1';
+    vi.stubGlobal('fetch', vi.fn(async () => json({ ...wireAutomationDetail, madeInCanvasId: canvasId })));
+    const api = new RallyApi('https://api.rally.test', session);
+    expect((await api.getAutomation(automationId)).madeInCanvasId).toBe('00000000-0000-7000-8000-0000000000c1');
+    vi.stubGlobal('fetch', vi.fn(async () => json({ ...wireAutomationDetail, madeInCanvasId: null })));
+    expect(await api.getAutomation(automationId)).not.toHaveProperty('madeInCanvasId');
+  });
+
   it('maps an automation detail: scope, lifecycle, revisions, trigger lines and runs', async () => {
     // The header reads the two revisions to decide whether Create may be
     // pressed, so both have to survive the mapping exactly as the wire says

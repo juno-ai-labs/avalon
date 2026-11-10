@@ -42,6 +42,8 @@ const seedAutomation = z.strictObject({
   id: z.string().uuid(),
   authorUserId: z.string().uuid(),
   scope: z.enum(["personal", "workspace"]),
+  /** A seeded Canvas whose Chat made it: it is created attached there, as `sidekick_create` in that Chat does. */
+  madeInCanvasId: z.string().uuid().optional(),
   draft: AutomationDraftSchema,
 });
 
@@ -252,6 +254,12 @@ export async function seedProduct(env: Env, body: z.infer<typeof SeedProductBody
 
   const workspaceCounts = await seedWorkspaceTables(env, workspaceId, body);
 
+  // Canvases first: a Sidekick a Canvas made is created attached to it, and
+  // the object refuses a home Canvas that does not exist yet.
+  const results = [];
+  for (const canvas of body.canvases) {
+    results.push({ canvasId: canvas.id, copied: await seedCanvas(env, workspaceId, canvas) });
+  }
   const automations = [];
   for (const automation of body.automations) {
     // The same three steps a person takes: the object with its conversation,
@@ -261,6 +269,7 @@ export async function seedProduct(env: Env, body: z.infer<typeof SeedProductBody
       authorUserId: automation.authorUserId,
       scope: automation.scope,
       automationId: automation.id,
+      ...(automation.madeInCanvasId ? { madeInCanvasId: automation.madeInCanvasId } : {}),
     });
     const workspace = await hostedParentStub(env, workspaceId);
     await workspace.sidekickSubmitDefinition({
@@ -278,10 +287,6 @@ export async function seedProduct(env: Env, body: z.infer<typeof SeedProductBody
     automations.push({ automationId, lifecycle: "active" as const });
   }
 
-  const results = [];
-  for (const canvas of body.canvases) {
-    results.push({ canvasId: canvas.id, copied: await seedCanvas(env, workspaceId, canvas) });
-  }
   return { seeded: true, workspaceTables: workspaceCounts, automations, canvases: results };
 }
 

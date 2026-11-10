@@ -37,13 +37,17 @@ conversations are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 | Loop | Scope | Tools | Acts as |
 | --- | --- | --- | --- |
-| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run), a wizard turn only (`sidekickWizard`, which the claim sets only for a principal who manages the Sidekick) | The Sidekick's own conversation (`isOwn`), the Canvases it writes, and the Canvases attached to it | list, read, search, post, attach | The person talking to it |
-| Sidekick run (`automationRun` present) | The Sidekick's own conversation (`isParent`), the Canvases it writes, and the Canvases attached to it | list, read, search, post | The run-as user |
+| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run), a wizard turn only (`sidekickWizard`, which the claim sets only for a principal who manages the Sidekick) | The Sidekick's own conversation (`isOwn`) and the Canvases attached to it | list, read, search, post, attach | The person talking to it |
+| Sidekick run (`automationRun` present) | The Sidekick's own conversation (`isParent`) and the Canvases attached to it | list, read, search, post | The run-as user |
 
 A Canvas's Chat gets no conversation tools: its own transcript is its context.
-The Canvases a Sidekick writes are those whose `writer_sidekick_id` names it
-(each run's Canvas), newest made first; attachments follow in the order they were
-made, a Canvas both written and attached listed once. An attachment row of a
+The Canvases attached to a Sidekick are its rows of
+`sidekick_conversation_attachments`, in the order they were attached: the
+Canvas each run made (attached as it is made), the Canvas whose Chat made the
+Sidekick, and any its configuration conversation attached
+([`automation-lifecycle.md`](automation-lifecycle.md#attached-conversations)).
+The same row is what lets a run publish into the Canvas and write its
+artifacts' data; this plugin uses it for the Chat. An attachment row of a
 retired Thread (`parent_kind = 'workstream'`) names nothing. Canonical
 admission decides each candidate for the acting person on every call: a Canvas
 by `canvasAdmits` (its visibility, creator, participants, and a writer
@@ -92,8 +96,8 @@ also accepts a Rally link, which the Worker turns into an id before WorkspaceDO
 sees it, or a Canvas's title among the Canvases the person can open.
 
 - **list** returns `{ conversations: [{ conversationId, title, isOwn, isParent }] }`
-  and a `nextPageId`. The Sidekick's own conversation comes first, then the
-  Canvases it writes, then its attachments. `isParent` marks the conversation a
+  and a `nextPageId`. The Sidekick's own conversation comes first, then its
+  attached Canvases. `isParent` marks the conversation a
   run sits inside, its Sidekick's. Every call re-admits each conversation for
   the acting person and omits what they can no longer open.
 - **read** takes `conversation` and `limit` and returns
@@ -251,8 +255,10 @@ whole rather than splitting it.
   kind's audience group. WorkspaceDO and the target are a typed double there;
   everything they decide is proved on workerd.
 - `apps/api/test/sidekick-conversation-storage.test.ts` (Node, the object
-  ledgers applied): the attachment key filed as `canvas`, the scope's order
-  and deduplication, a deleted Canvas or Sidekick dropped, a retired Thread
+  ledgers applied): the attachment key filed as `canvas`, migration 144
+  attaching each run-made Canvas and marking none `made_here`, the mark
+  stored only where asked, the scope's order (attachments, in the order
+  attached), a deleted Canvas or Sidekick dropped, a retired Thread
   attachment ignored, the title query, and conversation ids.
 - `apps/api/test-workers/conversation-tools.test.ts` (workerd), "a Sidekick's
   Canvases through the conversation tools": the real plugin over the real

@@ -18,7 +18,7 @@ import {
   SidekickReviewNoticeV1Schema, type SidekickReviewNoticeV1,
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
-import { sidekickAdmits } from "../services/authorization-policy";
+import { canvasReaderAllows, sidekickManages, sidekickReaderAllows, sidekickSharedWith } from "./canvas-sidekick-admission";
 import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "./sidekick-source-registrations";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
@@ -131,7 +131,7 @@ import {
 import { RECEIVE_CHILD_EFFECTS_MAX_ENVELOPES, type DirectoryCommonEffect } from "./conversation-parent-object";
 import { sidekickAudienceAllows } from "./sidekick-audience";
 import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
-import { conversationIdOf } from "./workspace-sidekick-conversation-storage";
+import { attachSidekickConversation, conversationIdOf } from "./workspace-sidekick-conversation-storage";
 
 /**
  * A Sidekick's parent, hosted in its Organization's `WorkspaceDO`.
@@ -400,6 +400,15 @@ export interface HostedSidekickHost {
    * differs from the last it saw, so a run's own touches cost no list push.
    */
   noteWriterReaders(sidekickId: string, readers: string): void;
+  /**
+   * Inside the transaction that touched the directory row of a Sidekick
+   * attached to a Canvas, with what such a Canvas shows of it (name, state,
+   * appearance). The host marks the Canvas list moved when that differs from
+   * the last it saw.
+   */
+  noteAttachedSidekickFace(sidekickId: string, face: string): void;
+  /** Inside the transaction that attached a Sidekick to the Canvas it was made in: that Canvas's detail and context moved. */
+  noteMadeInCanvasChanged(canvasId: string): void;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** See `HostedConversationHost.noteActivityChanged`. */
   noteActivityChanged(userId: string): void;
@@ -454,47 +463,6 @@ function scheduleDueAfter(kind: "calendar" | "interval", definitionJson: string,
   )?.getTime() ?? null;
 }
 
-/**
- * The library's and the management API's read rule, over a directory row
- * alone, so a Sidekick whose import has not run is decided the same way:
- * `sidekickAdmits` over its scope, its author and executor, and its `people`
- * list. A guest has no `actorRole`, so Organization scope never admits one.
- */
-export function sidekickReaderAllows(
-  row: {
-    automation_id: string;
-    scope: string; author_user_id: string; run_as_user_id: string | null; lifecycle: string;
-  },
-  actor: { userId: string; actorRole: "owner" | "admin" | "member" | null },
-  sql: SqlStorage,
-): boolean {
-  if (row.lifecycle === "deleted") return false;
-  return sidekickAdmits({
-    scope: row.scope,
-    author: row.author_user_id === actor.userId,
-    executor: row.run_as_user_id === actor.userId,
-    shared: sidekickSharedWith(sql, row.automation_id, actor.userId),
-  }, actor.actorRole != null);
-}
-
-/**
- * Who manages a Sidekick: its author, the person it runs as, and for an
- * Organization one its owners and administrators. Also who manages the
- * audience of a Canvas the Sidekick writes.
- */
-export function sidekickManagerAllows(
-  row: { scope: string; author_user_id: string; run_as_user_id: string | null },
-  actor: { userId: string; actorRole?: "owner" | "admin" | "member" | null | undefined },
-): boolean {
-  return row.author_user_id === actor.userId || row.run_as_user_id === actor.userId
-    || (row.scope === "workspace" && (actor.actorRole === "owner" || actor.actorRole === "admin"));
-}
-
-/** Whether this person is on a Sidekick's `people` list. */
-export function sidekickSharedWith(sql: SqlStorage, sidekickId: string, userId: string): boolean {
-  return sql.exec(`SELECT 1 FROM sidekick_audience WHERE sidekick_id = ? AND user_id = ? LIMIT 1`, sidekickId, userId)
-    .toArray().length > 0;
-}
 
 
 /** What a skill read says about its audience: the request without the Sidekick it names. */
@@ -570,18 +538,43 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   async create(input: AutomationCreateRequest): Promise<{ created: boolean }> {
     const request = parseRpcInput(AutomationCreateRequestSchema, input, "create");
     if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
-    if (this.row()) {
+    const creatorRelationship = await this.host.readRelationship(request.workspaceId, request.authorUserId);
+    const active = creatorRelationship?.status === "active";
+    const author = {
+      userId: request.authorUserId,
+      actorRole: active && creatorRelationship.accessClass === "member" ? creatorRelationship.role ?? "member" as const : null,
+    };
+    const existing = this.row();
+    if (existing) {
       this.assertSidekick(request.workspaceId, request.automationId);
+      if (request.madeInCanvasId !== undefined) {
+        if (!active) throw this.delegationError("sidekick_delegation_membership_unavailable");
+        // A replay is its author's, of the same create: a caller-minted id
+        // that names somebody else's Sidekick, or one this Canvas did not
+        // make, is not answered as though this request had made it.
+        if (existing.author_user_id !== request.authorUserId || !this.madeIn(request.madeInCanvasId)) {
+          throw new ApiError(409, "sidekick_id_unavailable", "This Sidekick id is already in use");
+        }
+      }
       return { created: false };
     }
-    const creatorRelationship = await this.host.readRelationship(request.workspaceId, request.authorUserId);
-    if (creatorRelationship?.status !== "active") {
-      throw this.delegationError("sidekick_delegation_membership_unavailable");
-    }
+    if (!active) throw this.delegationError("sidekick_delegation_membership_unavailable");
     const now = Date.now();
+    const madeInCanvasId = request.madeInCanvasId ?? null;
     // The insert is the existence check: a repeat finds the row and returns
     // nothing, and is answered from the row it found.
     return this.storage.transactionSync(() => {
+      // A Sidekick made in a Canvas's Chat: the person asking must be in that
+      // Canvas now, since the Sidekick's runs will write there for them.
+      if (madeInCanvasId !== null) this.assertMadeInCanvas(request.workspaceId, madeInCanvasId, author);
+      // A Canvas and a Sidekick are both conversation parents named by one
+      // id space, and a Sidekick's row is asked for first: an id that names a
+      // Canvas would take that Canvas's conversation over. Asked where the
+      // caller chose the id, which is only the request made for a Canvas.
+      if (madeInCanvasId !== null
+        && this.sql.exec(`SELECT 1 FROM canvas_directory WHERE canvas_id = ? LIMIT 1`, request.automationId).toArray().length > 0) {
+        throw new ApiError(409, "sidekick_id_unavailable", "This Sidekick id is already in use");
+      }
       const created = this.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, region, author_user_id, run_as_user_id, source_version, payload_hash,
@@ -610,6 +603,13 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         this.assertSidekick(request.workspaceId, request.automationId);
         return { created: false };
       }
+      // The same transaction attaches it, so a Sidekick a Canvas made always
+      // reaches that Canvas: there is no made-but-unattached state to repair.
+      if (madeInCanvasId !== null) {
+        attachSidekickConversation(this.sql, { automationId: this.sidekickId, madeHere: true,
+          address: { parentKind: "canvas", parentId: madeInCanvasId, substreamId: "0" }, userId: request.authorUserId, now });
+        this.host.noteMadeInCanvasChanged(madeInCanvasId);
+      }
       this.registerChild("0", "main", request.authorUserId, now);
       if (!this.delegations().read(this.sidekickId, request.authorUserId)) {
         this.delegations().mutate({
@@ -621,6 +621,40 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       this.host.noteDirectoryChanged(this.sidekickId, false, now);
       return { created: true };
     });
+  }
+
+  /** Whether this Canvas's Chat, or a request for this Canvas, made the Sidekick. */
+  private madeIn(canvasId: string): boolean {
+    return this.sql.exec(
+      `SELECT 1 FROM sidekick_conversation_attachments
+        WHERE automation_id = ? AND parent_kind = 'canvas' AND parent_id = ? AND substream_id = '0' AND made_here = 1`,
+      this.sidekickId, canvasId,
+    ).toArray().length > 0;
+  }
+
+  /** The Canvas a Sidekick is being made in: this Organization's, not archived, and open to the person asking. */
+  private assertMadeInCanvas(workspaceId: string, canvasId: string, actor: { userId: string; actorRole: "owner" | "admin" | "member" | null }): void {
+    const canvas = first(this.sql.exec<{
+      canvas_id: string; created_by_user_id: string; writer_sidekick_id: string | null; visibility: string; archived_at: number | null;
+    }>(
+      `SELECT canvas_id, created_by_user_id, writer_sidekick_id, visibility, archived_at
+         FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, canvasId, workspaceId,
+    ));
+    if (canvas && canvas.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
+    if (!canvas || !canvasReaderAllows(canvas, actor, this.sql)) throw new ApiError(404, "canvas_not_found", "This Canvas does not exist");
+  }
+
+  /**
+   * Archive a Sidekick with the Canvas whose Chat made it, inside that
+   * archive's transaction. No manager is asked: whoever archived the Canvas
+   * manages what it made.
+   * The caller owes `afterRegistrations` once the transaction commits.
+   */
+  archiveWithCanvas(now: number): boolean {
+    const row = this.row();
+    if (!row || row.lifecycle === "deleted") return false;
+    this.archive(now);
+    return true;
   }
 
   private delegations(): SidekickDelegationStorage {
@@ -3002,13 +3036,17 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     ))?.state ?? null;
   }
 
-  /** Who may change a Sidekick (`sidekickManager`). */
+  /**
+   * Who may change a Sidekick (`sidekickManages`): its author, the person it
+   * runs as, an Organization one's owners and administrators, and everyone
+   * the Canvas whose Chat made it admits.
+   */
   private async assertManager(row: HostedSidekickRow, actor: AutomationActor): Promise<void> {
     if (!await this.managerAllows(row, actor)) throw forbidden();
   }
 
   private async managerAllows(row: HostedSidekickRow, actor: AutomationActor): Promise<boolean> {
-    return sidekickManagerAllows(row, actor);
+    return sidekickManages(row, actor, this.sql);
   }
 
   /** The management API's read check (`sidekickReader`). */
@@ -3061,6 +3099,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       lifecycle: row.lifecycle,
       authorUserId: row.author_user_id,
       runAsUserId: row.run_as_user_id,
+      madeInCanvasId: first(this.sql.exec<{ parent_id: string }>(
+        `SELECT parent_id FROM sidekick_conversation_attachments
+          WHERE automation_id = ? AND parent_kind = 'canvas' AND substream_id = '0' AND made_here = 1`, this.sidekickId,
+      ))?.parent_id ?? null,
       delegationAttention: row.delegation_attention_code === null ? null : {
         code: SidekickDelegationAttentionCodeSchema.parse(row.delegation_attention_code),
         message: SIDEKICK_DELEGATION_ATTENTION_MESSAGES[SidekickDelegationAttentionCodeSchema.parse(row.delegation_attention_code)],
@@ -3142,6 +3184,19 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       this.sidekickId,
     ));
     if (readers) this.host.noteWriterReaders(this.sidekickId, readers.readers);
+    // A Canvas it is attached to shows its name, state and mark, on its card
+    // and in its menu. Read here for the reason above; the host pushes the
+    // Canvas list only when these differ from what it last saw, so a run's
+    // own touches cost nothing.
+    const face = first(this.sql.exec<{ face: string }>(
+      `SELECT directory.title || '|' || directory.lifecycle || '|' || COALESCE(directory.appearance_json, '') AS face
+         FROM automation_directory directory
+        WHERE directory.automation_id = ?1
+          AND EXISTS (SELECT 1 FROM sidekick_conversation_attachments
+                       WHERE automation_id = ?1 AND parent_kind = 'canvas' AND substream_id = '0')`,
+      this.sidekickId,
+    ));
+    if (face) this.host.noteAttachedSidekickFace(this.sidekickId, face.face);
   }
 }
 

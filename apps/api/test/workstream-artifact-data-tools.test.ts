@@ -8,6 +8,7 @@ import {
   createWorkstreamArtifactDataTools,
   type ArtifactDataHost,
   type ArtifactDataToolContext,
+  type WritableArtifactResolution,
 } from "../src/services/workstream-artifact-data-tools";
 
 const ARTIFACT = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -16,6 +17,7 @@ type HostDouble = ArtifactDataHost & {
   describeData: ReturnType<typeof vi.fn>;
   queryData: ReturnType<typeof vi.fn>;
   pageData: ReturnType<typeof vi.fn>;
+  writeData: ReturnType<typeof vi.fn>;
 };
 
 /**
@@ -31,6 +33,8 @@ type HostDouble = ArtifactDataHost & {
 function fixture(overrides: {
   artifact?: Awaited<ReturnType<ArtifactDataToolContext["resolveArtifact"]>>;
   host?: Partial<HostDouble>;
+  /** What the write resolver answers; left out, the run may not write at all. */
+  writable?: WritableArtifactResolution;
 } = {}) {
   const host: HostDouble = {
     describeData: vi.fn(async () => ({
@@ -48,9 +52,14 @@ function fixture(overrides: {
       rowCount: 1,
       truncated: false,
     })),
+    writeData: vi.fn(async () => ({
+      ok: true as const, rowsWritten: 2, columns: [] as string[], rows: [], truncated: false,
+    })),
     ...overrides.host,
   };
+  const writable = overrides.writable;
   const context = {
+    ...(writable ? { resolveWritableArtifact: vi.fn(async () => writable) } : {}),
     resolveArtifact: vi.fn(async () => overrides.artifact === undefined
       ? { artifactId: ARTIFACT, slug: "offsite-poll", mode: "active" as const, stateful: true, scope: { rows: "all" as const } }
       : overrides.artifact),
@@ -62,6 +71,7 @@ function fixture(overrides: {
     context,
     describe: tools.find((tool) => tool.definition.name === "describe_artifact_data")!,
     query: tools.find((tool) => tool.definition.name === "query_artifact_data")!,
+    write: tools.find((tool) => tool.definition.name === "write_artifact_data"),
   };
 }
 
@@ -323,5 +333,126 @@ describe("what a content read on a site does instead of dead-ending", () => {
       },
     });
     expect(forwarded?.details?.suggestedCall).toBeUndefined();
+  });
+});
+
+describe("changing a site's data", () => {
+  const WRITABLE = {
+    outcome: "writable" as const,
+    artifact: { artifactId: ARTIFACT, slug: "inbox", mode: "active" as const, stateful: true, scope: { rows: "all" as const } },
+  };
+  const INSERT = "INSERT INTO emails (id, subject) VALUES (?, ?)";
+
+  it("is not built for a run the host did not admit as a writer", () => {
+    expect(fixture().write).toBeUndefined();
+  });
+
+  it("declares itself a write that is recorded before it runs and never blindly repeated", () => {
+    const { write } = fixture({ writable: WRITABLE });
+    expect(write!.definition.mode).toBe("write");
+    expect(write!.definition.idempotency).toBe("record_before_execute");
+    expect(write!.reenterable).toBeUndefined();
+  });
+
+  it("tells the model what rowsWritten is not, and to use RETURNING", () => {
+    const { write } = fixture({ writable: WRITABLE });
+    expect(write!.definition.description).toContain("not the number of rows changed");
+    expect(write!.definition.description).toContain("RETURNING");
+  });
+
+  it("passes the statement, its values and the resolved scope to the site, and reports the count alone", async () => {
+    const { write, host, context } = fixture({ writable: WRITABLE });
+    const result = await write!.execute({ resource: "inbox", sql: INSERT, params: ["m1", "Hello"] }, {} as never);
+    expect(host.writeData).toHaveBeenCalledWith(INSERT, ["m1", "Hello"], 200, { rows: "all" });
+    expect(result.output).toEqual({ resource: "inbox", rowsWritten: 2 });
+    // The write resolves through its own gate, never the read resolver.
+    expect(context.resolveArtifact).not.toHaveBeenCalled();
+  });
+
+  it("returns a RETURNING statement's rows, with a truncation marker and blobs replaced", async () => {
+    const { write } = fixture({
+      writable: WRITABLE,
+      host: {
+        writeData: vi.fn(async () => ({
+          ok: true as const, rowsWritten: 4, columns: ["id", "raw"],
+          rows: [{ id: "m1", raw: new ArrayBuffer(16) }], truncated: true,
+        })),
+      },
+    });
+    const result = await write!.execute({ resource: "inbox", sql: `${INSERT} RETURNING id, raw` }, {} as never);
+    expect(result.output).toEqual({
+      resource: "inbox", rowsWritten: 4, columns: ["id", "raw"],
+      rows: [{ id: "m1", raw: "<16 bytes>" }], rowCount: 1, truncated: true,
+    });
+  });
+
+  it("refuses a Sidekick run whose Sidekick does not have the site's Canvas attached, before reaching the site", async () => {
+    const { write, host } = fixture({ writable: { outcome: "not_attached" } });
+    const error = await refusal(() => write!.execute({ resource: "inbox", sql: INSERT }, {} as never));
+    expect(error.code).toBe("artifact_canvas_not_attached");
+    expect(error.message).toContain("not attached to the Sidekick");
+    expect(host.writeData).not.toHaveBeenCalled();
+  });
+
+  it("refuses a site whose Canvas is archived, whichever side notices", async () => {
+    const resolver = fixture({ writable: { outcome: "canvas_archived" } });
+    expect((await refusal(() => resolver.write!.execute({ resource: "inbox", sql: INSERT }, {} as never))).code)
+      .toBe("canvas_archived");
+    expect(resolver.host.writeData).not.toHaveBeenCalled();
+    const supervisor = fixture({
+      writable: WRITABLE,
+      host: { writeData: vi.fn(async () => ({ ok: false as const, reason: "canvas_archived" as const })) },
+    });
+    expect((await refusal(() => supervisor.write!.execute({ resource: "inbox", sql: INSERT }, {} as never))).code)
+      .toBe("canvas_archived");
+  });
+
+  it("collapses a site the run cannot read to the read tools' not-found, and a stateless one to no data", async () => {
+    const missing = fixture({ writable: { outcome: "not_found" } });
+    expect((await refusal(() => missing.write!.execute({ resource: "x", sql: INSERT }, {} as never))).code)
+      .toBe("resource_not_found");
+    const stateless = fixture({
+      writable: { outcome: "writable", artifact: { ...WRITABLE.artifact, mode: "static", stateful: false } },
+    });
+    expect((await refusal(() => stateless.write!.execute({ resource: "x", sql: INSERT }, {} as never))).code)
+      .toBe("no_artifact_data");
+    expect(stateless.host.writeData).not.toHaveBeenCalled();
+  });
+
+  it("names what the site's database refused, and that nothing was written", async () => {
+    const { write } = fixture({
+      writable: WRITABLE,
+      host: {
+        writeData: vi.fn(async () => ({
+          ok: false as const, reason: "sql_failed" as const, detail: "no such table: emials: SQLITE_ERROR",
+        })),
+      },
+    });
+    const error = await refusal(() => write!.execute({ resource: "inbox", sql: "INSERT INTO emials VALUES (1)" }, {} as never));
+    expect(error.code).toBe("sql_error");
+    expect(error.message).toBe(
+      "The site's database refused the statement and nothing was written: no such table: emials: SQLITE_ERROR",
+    );
+    expect(readStructuredFailure(error)?.details).toMatchObject({ reason: "no such table: emials: SQLITE_ERROR" });
+  });
+
+  it("tells a statement it does not admit apart from a member barred by private rows", async () => {
+    const refused = fixture({
+      writable: WRITABLE,
+      host: { writeData: vi.fn(async () => ({ ok: false as const, reason: "sql_refused" as const, detail: "Only INSERT" })) },
+    });
+    expect((await refusal(() => refused.write!.execute({ resource: "inbox", sql: "DROP TABLE emails" }, {} as never))))
+      .toMatchObject({ code: "sql_error", message: "Only INSERT" });
+    const scoped = fixture({
+      writable: WRITABLE,
+      host: { writeData: vi.fn(async () => ({ ok: false as const, reason: "private_rows" as const, detail: "private" })) },
+    });
+    expect((await refusal(() => scoped.write!.execute({ resource: "inbox", sql: INSERT }, {} as never))).code)
+      .toBe("private_rows");
+  });
+
+  it("rejects an unknown argument rather than ignoring it", async () => {
+    const { write } = fixture({ writable: WRITABLE });
+    await expect(write!.execute({ resource: "inbox", sql: INSERT, confirm: true }, {} as never)).rejects.toThrow();
   });
 });

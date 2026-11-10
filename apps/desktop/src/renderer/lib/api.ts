@@ -509,6 +509,7 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     ...(automation.pinnedPosition === undefined ? {} : { pinnedPosition: automation.pinnedPosition }),
     ...(automation.audience === undefined ? {} : { audience: automation.audience }),
     ...(automation.sharedWithUserIds === undefined ? {} : { sharedWithUserIds: automation.sharedWithUserIds }),
+    ...(automation.attachedCanvases === undefined ? {} : { attachedCanvases: automation.attachedCanvases }),
     ...(automation.runState === undefined ? {} : { runState: automation.runState }),
     ...(automation.running === undefined ? {} : { running: automation.running }),
     ...(automation.pendingQuestion ? { pendingQuestion: automation.pendingQuestion } : {}),
@@ -532,6 +533,7 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     triggerSummaries: (detail.currentDefinition?.triggers ?? []).map(triggerSummary),
     recentRuns: detail.recentRuns.map(mapAutomationRun),
     ...(detail.canvases === undefined ? {} : { canvases: detail.canvases }),
+    ...(detail.madeInCanvasId ? { madeInCanvasId: detail.madeInCanvasId } : {}),
   };
 }
 

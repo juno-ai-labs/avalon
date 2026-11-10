@@ -211,6 +211,7 @@ describe("plugin wire names", () => {
       "summarize_resource",
       "view_image",
       "view_resource",
+      "write_artifact_data",
       "write_file",
     ]);
   });

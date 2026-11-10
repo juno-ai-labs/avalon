@@ -111,6 +111,33 @@ describe('CanvasesHomeScreen', () => {
     expect(card('Hiring pipeline').querySelector('.canvas-card-data')).toBeNull();
   });
 
+  it('draws the attached Sidekicks as a facepile at the right, under the Data badge when the card has one', async () => {
+    const sidekick = (suffix: string, name: string) => ({ id: `00000000-0000-7000-8000-0000000000${suffix}`, name, status: 'active' as const, madeHere: true });
+    renderHome(clientWith([
+      canvas('00000000-0000-7000-8000-0000000000c1', 'Inbox', { hasStoredData: true,
+        sidekicks: [sidekick('e1', 'Inbox listener'), sidekick('e2', 'Digest')] }),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'PR dashboard', {
+        sidekicks: ['e3', 'e4', 'e5', 'e6', 'e7', 'e8'].map((suffix, index) => sidekick(suffix, `Watcher ${index + 1}`)) }),
+      canvas('00000000-0000-7000-8000-0000000000c3', 'Notes', { sidekicks: [] }),
+      // A server older than attaching sends no list.
+      canvas('00000000-0000-7000-8000-0000000000c4', 'Older', {}),
+    ]));
+    const card = (title: string): HTMLElement => screen.getByRole('link', { name: title }).closest('li')!;
+    await waitFor(() => expect(card('Inbox').querySelectorAll('.sidekick-stack-item')).toHaveLength(2));
+    expect(card('Inbox').querySelector('.canvas-card-sidekicks')).toHaveClass('is-below-data');
+    expect(within(card('Inbox')).getByRole('img', { name: 'Sidekicks: Inbox listener; Digest', hidden: true })).toBeInTheDocument();
+    // The card's link is described by both, since the preview itself is decorative.
+    expect(screen.getByRole('link', { name: 'Inbox' })).toHaveAccessibleDescription('Data Sidekicks: Inbox listener; Digest');
+    // No Data badge: the facepile takes the top right itself, and stops at four with the rest counted.
+    expect(card('PR dashboard').querySelector('.canvas-card-sidekicks')).not.toHaveClass('is-below-data');
+    expect(card('PR dashboard').querySelectorAll('.sidekick-stack-item')).toHaveLength(4);
+    expect(card('PR dashboard').querySelector('.sidekick-stack-overflow')).toHaveTextContent('+2');
+    expect(within(card('PR dashboard')).getByRole('img', { hidden: true,
+      name: 'Sidekicks: Watcher 1; Watcher 2; Watcher 3; Watcher 4; and 2 more' })).toBeInTheDocument();
+    expect(card('Notes').querySelector('.canvas-card-sidekicks')).toBeNull();
+    expect(card('Older').querySelector('.canvas-card-sidekicks')).toBeNull();
+  });
+
   it("names the run that wrote a card's newest version and opens the Sidekick's conversation at it", async () => {
     const sidekickId = '00000000-0000-7000-8000-0000000000e1';
     const runId = '00000000-0000-7000-8000-0000000000f3';
