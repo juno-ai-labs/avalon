@@ -1062,11 +1062,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     }
     const prepared = definition.triggers.length === 0
       ? { selections: { defaultPluginIds: [], activitySourcePluginIds: {} }, connectorBindings: {}, evaluators: [], schedules: [] }
-      // A guest who steers through the made-in Canvas decides what runs, so
-      // what they apply binds only the Organization's connections: never the
-      // creator's, a delegate's or their own.
-      : await this.prepareApplication(row, revision, definition, request.actor.userId,
-        request.actor.actorRole == null && !sidekickManagerAllows(row, request.actor));
+      : await this.prepareApplication(row, revision, definition, request.actor.userId);
     const memory = await this.prepareMemoryTables(row, revision.definition_revision, definition);
     const now = Date.now();
     this.storage.transactionSync(() => {
@@ -2741,7 +2737,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     revision: RevisionRow,
     definition: AutomationDraft,
     actorUserId: string,
-    organizationConnectionsOnly: boolean,
   ): Promise<{
     selections: ReturnType<typeof automationAcceptanceSelections>;
     connectorBindings: Record<string, string>;
@@ -2768,18 +2763,13 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       row.workspace_id,
     ).toArray();
     const connectionsByPlugin = new Map(connections.filter((connection) => connection.scope === "workspace"
-      || (!organizationConnectionsOnly && (connection.owner_user_id === actorUserId
-        || (connection.owner_user_id !== null && eligibleUsers.has(connection.owner_user_id))
-        || Object.values(existingBindings).includes(connection.id)))).flatMap((connection) => connectorPluginBindingViews(
+      || connection.owner_user_id === actorUserId || (connection.owner_user_id !== null && eligibleUsers.has(connection.owner_user_id))
+      || Object.values(existingBindings).includes(connection.id)).flatMap((connection) => connectorPluginBindingViews(
       connection.connector_type, connection.model_plugin_id, JSON.parse(connection.granted_scopes_json) as string[], connection.display_name,
     ).map((view) => [view.modelPluginId, { ...connection, grantedScopes: view.grantedScopes }] as const)));
     const connectorBindings: Record<string, string> = {};
     for (const pluginId of selectedPluginIds) {
       const connection = connectionsByPlugin.get(pluginId);
-      if (!connection && organizationConnectionsOnly) {
-        throw new ApiError(422, "sidekick_guest_needs_organization_connection",
-          `A guest can change this Sidekick only while it uses connections shared with the whole Organization; ${pluginId} has none`);
-      }
       if (!connection) throw new ApiError(422, "sidekick_plugin_unavailable", `No connection is available for ${pluginId}`);
       // Binding records configured work, not authority to execute it. Keep an
       // existing source while its delegate is unavailable; admission checks consent.

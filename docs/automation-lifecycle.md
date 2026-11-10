@@ -1618,12 +1618,7 @@ That mark is the whole of what ties the Sidekick to the Canvas:
 - **Everyone the Canvas admits steers it.** `sidekickManages` is
   `sidekickManagerAllows` (author, run-as, and an Organization Sidekick's
   owners and administrators) or `canvasReaderAllows` over the Canvas its
-  `made_here` attachment names. A guest of the Canvas steers too, with one
-  limit: a revision a guest applies binds only connections shared with the
-  whole Organization (`prepareApplication`'s `organizationConnectionsOnly`),
-  never its creator's, a delegate's or the guest's own, and is refused
-  `sidekick_guest_needs_organization_connection` when a plugin has none.
-  Built-in tools need no connection and are unaffected.
+  `made_here` attachment names, guests of the Canvas included.
   `HostedSidekick.steerAllows` applies it to the wizard's save, pause, resume,
   run now, archive, and the agents plugin's contact rule.
 - **Steering is not managing.** Who opens the Sidekick, how it looks, who it

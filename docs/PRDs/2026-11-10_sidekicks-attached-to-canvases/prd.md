@@ -174,20 +174,17 @@ seat.
 
 **Changes:** The Security section.
 
-### 2026-11-10 — A guest steers with the Organization's connections only
+### 2026-11-10 — A guest of the Canvas steers like a member
 
-**Decided:** A guest the made-in Canvas admits steers its Sidekick like a
-member. A revision a guest applies binds only connections shared with the
-whole Organization, and built-in tools. It is refused when it needs a
-person's connection.
+**Decided:** A guest the made-in Canvas admits steers its Sidekick exactly as a
+member does. There is no guest rule.
 
 **Why:** The owner's call. Review had excluded guests because a Sidekick runs
-with a member's connections; the owner kept "everyone with access to the
-Canvas gets control" and limited what a guest's edit can reach instead.
+with a member's connections, and a later build limited which connections a
+guest's edit could bind. The owner removed both: a guest has no personal
+connections, so the limit guarded nothing and cost a code path.
 
-**Changes:** Goal 4 holds as first written. The Security section. A guest
-cannot edit a Sidekick that uses its creator's personal connection, even to
-change only its wording: the edited instructions would run with it.
+**Changes:** Goal 4 holds as first written. The Security section.
 
 ### 2026-11-10 — Instruction-only Sidekicks stay automatic
 
@@ -258,11 +255,10 @@ None. Every row is in the Organization's own `WorkspaceDO`.
   Sidekick sends its output to whoever the Canvas admits, now and later.
 - Every write admits the acting person again; losing the Canvas stops it.
 - A Canvas-made Sidekick can be changed, paused, run and archived by anyone
-  the Canvas admits. A member who changes it decides what runs with its
-  creator's connections; its creator chose that by making it in a shared
-  Canvas. A guest's change binds only connections shared with the whole
-  Organization and is refused if it needs a person's. Nobody gains the power
-  to change who opens the Sidekick or who it runs as.
+  the Canvas admits, guests included, so they decide what runs with its
+  creator's connections. Its creator chose that by making it in a shared
+  Canvas. Nobody gains the power to change who opens the Sidekick or who it
+  runs as.
 - The Canvas a tool acts on is the loop's own. A model cannot name another.
 - A row write obeys the per-viewer rule reads obey: unattended runs and the
   site's author write any row, and a member's Chat run is refused on a site
