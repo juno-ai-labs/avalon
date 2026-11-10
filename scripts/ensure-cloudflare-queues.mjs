@@ -42,11 +42,6 @@ const LISTING_PAGE_SIZE = 100;
 /** Every Wrangler file that binds a queue, and the surface each one deploys. */
 const queueConfigs = [
   ...configuredRegions.map((region) => ({ surface: `api-${region}`, path: join(repositoryDirectory, `apps/api/wrangler.${region}.jsonc`) })),
-  {
-    surface: 'migration-tracker',
-    path: join(repositoryDirectory, 'apps/migration-tracker/wrangler.jsonc'),
-  },
-  { surface: 'ace', path: join(repositoryDirectory, 'apps/ace/wrangler.jsonc') },
 ];
 
 function required(name, environment) {

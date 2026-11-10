@@ -121,7 +121,6 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `apps/api/src/durable-objects/member-attention.ts` | `startReadCursorAtLatest`: the read waterline every seating path gives a person joining a conversation that already has history, leaving the newest message unread when somebody else added them. |
 | `apps/api/src/durable-objects/workstream-object-storage.ts` | SQL repositories for replay, active output, alarms, inbox/outbox receipts, and projection versions. |
 | `apps/api/src/durable-objects/sqlite-migrations.ts` | Shared SQL-only constructor migration runner. |
-| `apps/api/src/durable-objects/migration-reporting.ts` | `withMigrationReport`, which wraps every constructor's migration call and reports the outcome to `avalon-migration-tracker`. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | `apps/api/src/lib/durable-object-namespace.ts` | The only product-object stub resolver; applies jurisdiction, persisted workspace affinity, explicit singleton fallback, and runtime jurisdiction validation. |
 | `apps/api/src/lib/durable-object-self.ts` | Where an object recognizes *itself* — by the id a name resolves to, against the id it has held since its constructor — so a shared helper addressing "the object that owns this conversation" reaches the caller directly instead of leaving it over RPC and coming back. Every Durable Object class registers here in its constructor. |
 | `apps/api/src/runtime/local-authorities.ts` | The one boundary where an object declares what it owns about a conversation — its messages, resources, harness runs, receipts, scheduling, identity rows, and Terminal — installed on the environment a run is handed, so no port below has to discover whether its authority is local. Holds the ownership rule the endpoints enforce. |
@@ -1343,7 +1342,7 @@ does not compile. `forceMigration` is called only by the regional queue consumer
 behind the tracker's operator site, and it applies nothing itself — waking the
 object is what runs its schema, so the method awaits construction and reports
 where the object landed. See
-[`durable-object-migration-tracking.md`](durable-object-migration-tracking.md).
+`durable-object-migration-tracking.md` (retired app).
 
 ### Retired maintenance-window cutover
 

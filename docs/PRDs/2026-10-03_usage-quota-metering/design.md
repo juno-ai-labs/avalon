@@ -315,6 +315,6 @@ this subsystem. [`data-model.md`](../../data-model.md) gains the tables.
 [`inference-lakehouse.md`](../../inference-lakehouse.md) gains a line saying
 billing reads the usage ledger, not the lakehouse.
 [`settings-search.md`](../../settings-search.md) gains the Usage entry.
-[`ace.md`](../../ace.md) gains the plan control.
+`ace.md` (retired app) gains the plan control.
 [`local-cache.md`](../../local-cache.md) gains the usage slice, with a changelog
 entry, because the client caches the last response there.
