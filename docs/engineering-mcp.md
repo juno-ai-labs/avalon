@@ -153,29 +153,35 @@ legacy clients and modern clients without it retain synchronous results. Other
 tools remain synchronous. This is the current extension, not the older
 `execution.taskSupport` / `tasks/result` protocol.
 
-The SDK still validates requests, tool arguments, protocol headers and Origins.
-Its high-level tool handler cannot directly return the extension's result shape,
-so a task-enabled call returns an internal metadata carrier through the SDK and
-`index.ts` unwraps it after JSON serialization into `resultType: "task"`.
-The carrier never reaches the client. The SDK also reserves the old core
-`tasks/*` methods and refuses them in the modern era, so the HTTP adapter maps
-the three extension methods to private dispatch names before SDK validation.
-Responses use JSON; no subscription or
-long-lived SSE connection is needed. `tasks/get` returns state and the original
-`CallToolResult` once complete. `tasks/update` acknowledges and ignores unknown
-input-response keys: neither operation requests mid-flight input.
+The SDK validates arguments, headers (including encoded `Mcp-Name` values),
+and Origins. Task creation returns JSON; other calls retain the transport's
+normal automatic response mode. `tasks/get` returns state and the final
+`CallToolResult`; `tasks/update` acknowledges unknown input-response keys
+because neither operation requests mid-flight input.
+The HTTP adapter rewrites only responses whose request actually created a task;
+synchronous tool results and polls pass through without buffering or parsing.
 
-A fresh UUID names one `EngineeringTaskDO`. Creation commits its input, trusted
-Access principal, initial state and alarm together before returning the handle.
-The native alarm executes the same operation as the synchronous tool. A
-lakehouse read can repeat after an interrupted execution; it remains read-only,
-but another scan can cost money. Organization retirement resumes its existing
-journal, including already retired children. An incomplete retirement stores a
-progress message and throws into Cloudflare's native exponential alarm retries.
-After the platform's six retries, it completes with `isError: true` and the
-partial retirement receipt. A new `retire_org` call can resume that journal.
-A provider or regional refusal is also a completed tool-error result, not a
-JSON-RPC `failed` task and not a claim that no side effect happened.
+Creation commits the input, trusted Access principal, state and execution alarm
+before returning a handle. Lakehouse reads can repeat after an interrupted
+execution and incur another scan charge. Retirement resumes its existing journal.
+`task-schema.ts` uses the shared SQLite migration runner during blocked object
+initialization. Versioned, strict tables hold task state and ordered payload
+segments; state transitions use synchronous transactions. Alarm writes follow
+without an intervening await so they share the platform's atomic write commit.
+The regional walk attempts every node in one pass: an incomplete receipt means
+failed work, not pagination or expected progress. Cloudflare's native alarm
+backoff retries those failures up to six times; this is the published platform
+budget, not an elapsed-time deadline. Exhaustion returns the partial receipt as
+an `isError: true` result, and a new `retire_org` call can resume it.
+
+Malformed stored inputs complete with a named tool error, erase their input
+fragments and schedule retention cleanup. Other catchable alarm failures use the
+native retry budget and attempt the same terminal transition on exhaustion.
+A provider or regional refusal is also a completed tool error, not a JSON-RPC
+`failed` task or proof that no side effect happened. Repeated isolate termination
+or unavailable storage can prevent even that terminal write. Such a task can
+remain `working` with retained input after platform retries stop; it requires
+operator recovery. Seven-day retention begins only once termination is committed.
 
 Every task read, update and cancellation checks both the current Access subject
 and application audience against the stored principal. Unknown, expired and
@@ -195,8 +201,10 @@ retain their result and operator metadata until then. Input arguments are erased
 on completion or cancellation. An expiry alarm erases all task storage, and
 reads refuse expired tasks even if alarm delivery is delayed. `ttlMs` is null
 while working and becomes the total lifetime from creation through expiry when
-terminal, as the protocol requires. Results are segmented in storage rather
-than truncated or limited to a single KV value. The task stores no provider
+terminal, as the protocol requires. Results use ordered SQLite text segments,
+preserving Unicode boundaries and avoiding the platform's per-row limit without
+truncation. Expiry erases task rows and payloads; only the schema and migration
+receipts remain. The task stores no provider
 credentials and does not log SQL, returned rows, or raw errors.
 
 This object's sole alarm has two mutually exclusive purposes: executing its
@@ -545,18 +553,12 @@ use the [CLI](forced-migrations.md) to execute a migration pass.
 
 ## Testing
 
-`apps/api/test-workers/engineering-mcp-tasks.test.ts` drives task-enabled HTTP
-calls, native task Durable Object bindings and alarms, eviction, cancellation
-interleavings, expiry, and real Organization retirement/auditing. Only Basin's
-external HTTP response is doubled. The test Worker exports the production task
-class with the real regional bridge; the production API Worker gains no task
-binding. The wrapper names the API exports explicitly because the pool does not
-discover loopback entrypoints through `export *`; keep that list in step with
-the API entrypoint. Each test uses fresh task UUIDs; the file resets storage once and
-explicitly cleans up its task alarms. Resetting between SDK requests can abort request
-continuations in the test runtime. A fixed future `Date` keeps alarms under
-explicit test delivery and prevents native timers racing eviction. The Node
-transport suite continues to cover legacy synchronous clients.
+`apps/api/test-workers/engineering-mcp-tasks.test.ts` covers HTTP negotiation,
+encoded headers, real task storage/alarms, eviction, damaged input, cancellation,
+expiry, and real retirement/auditing. Basin HTTP is the only provider double.
+The test wrapper imports the engineering Worker into the API runtime suite to
+exercise real regional authorities. Its explicit API export list has a type
+check for drift; the Node transport suite covers legacy synchronous clients.
 
 `apps/api/test-workers/engineering-creation.test.ts` drives the regional bridge
 against real D1 and Durable Objects: Organization creation with its initial
@@ -699,7 +701,7 @@ the Worker. It does not create an Access app or import another app's policy.
 
 **What changed:** The two tools return durable MCP task handles to clients that
 advertise the current extension. Each task persists its operator, progress and
-result, supports authenticated polling and cooperative cancellation, and erases
+result in versioned SQLite tables, supports authenticated polling and cooperative cancellation, and erases
 terminal data after the team's chosen seven days. Existing clients retain the
 synchronous contract.
 
