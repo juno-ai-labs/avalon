@@ -912,7 +912,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const request = parseRpcInput(AutomationSubmitDefinitionRequestSchema, definitionInput, "save_definition");
     await this.assertSteers(this.assertSidekick(request.workspaceId, request.automationId), actor);
     const submitted = await this.submitDefinition(request);
-    if (submitted.ready) await this.apply({ workspaceId: request.workspaceId, automationId: request.automationId, actor });
+    // Steering was just checked, and applying what they saved is steering.
+    if (submitted.ready) await this.applyRevision({ workspaceId: request.workspaceId, automationId: request.automationId, actor });
     if (request.origin === "sidekick_review") {
       logInfo(this.env, "sidekick_review_revised", {
         ...this.logFields(), definition_revision: submitted.definitionRevision, ready: submitted.ready,
@@ -1031,9 +1032,15 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    */
   async apply(input: AutomationActorRequest): Promise<AutomationDetail> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "apply");
+    // A manager's call: it answers with the Sidekick's whole detail.
+    await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    return this.applyRevision(request);
+  }
+
+  /** `apply` after its caller decided the actor may: a manager, or a steerer saving a ready revision. */
+  private async applyRevision(request: AutomationActorRequest): Promise<AutomationDetail> {
     const row = this.assertSidekick(request.workspaceId, request.automationId);
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
-    await this.assertManager(row, request.actor);
     const revision = this.revision(row.current_definition_revision);
     if (!revision || revision.ready !== 1) {
       throw new ApiError(422, "sidekick_definition_not_ready", "The Sidekick's definition is not ready to apply");

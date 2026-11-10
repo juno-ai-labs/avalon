@@ -175,7 +175,14 @@ describe("a Sidekick a Canvas's Chat made", () => {
       authorityGeneration: 1, writer: { sidekickId: MADE_HERE, runId: crypto.randomUUID() } });
     expect(await refusal((instance) => instance.canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: runCanvas,
       actor: member(PARTICIPANT), update: { visibility: "participants", userIds: [PARTICIPANT] } }))).toBe("canvas_not_found");
-    // Steering still works: archiving it stops it.
+    // Steering still works: they change what it does, and the change is applied.
+    await workspace().sidekickSaveDefinition({ ...addressed, actor: participant, evaluatorRules: null, submittedByRunId: null, draft: {
+      definitionVersion: 2, name: "Inbox filler", description: "Files new email", overview: "Keeps the inbox Canvas current",
+      instructions: "Add a row for each new email.", triggers: [], requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {},
+      recommendedPlugins: [], memoryTables: [], customTools: [], suggestedScope: "personal", followUpQuestion: null, elicitation: null, ready: true,
+    } });
+    expect(await lifecycle(MADE_HERE)).toBe("active");
+    // And archiving it stops it.
     await workspace().sidekickRemove({ ...addressed, actor: participant });
     expect(await lifecycle(MADE_HERE)).toBe("deleted");
   });
