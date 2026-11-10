@@ -3,6 +3,7 @@ import type { ConnectorConnectionCardInput, WorkstreamAppearance } from '@rally/
 import type {
   AgentModelOverride,
   AutomationDraft as ContractAutomationDraft,
+  AutomationSummary as ContractAutomationSummary,
   SidekickDelegationAttentionCode,
   AutomationLifecycleState as ContractAutomationLifecycleState,
   AutomationPluginActivity,
@@ -120,7 +121,7 @@ export interface AutomationSummary {
   /** The named recipients, excluding the author. Absent from reads that do not include the list. */
   sharedWithUserIds?: string[];
   /** The Canvases it was attached to that the viewer may open; see the wire schema. */
-  attachedCanvases?: { id: string; title: string }[];
+  attachedCanvases?: ContractAutomationSummary['attachedCanvases'];
   /** Its newest run's live state, when one is live; absent from a server that predates it. */
   runState?: 'working' | 'needs_input' | null;
   /** Any of its runs is working now, whichever is newest; absent from a server that predates it. */

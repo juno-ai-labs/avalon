@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { IdSchema, UserIdSchema, WorkspaceIdSchema, WorkstreamAppearancePatchSchema, WorkstreamAppearanceSchema, type WorkstreamAppearance } from "@rally/contracts";
+import { IdSchema, UserIdSchema, WorkspaceIdSchema, WorkstreamAppearancePatchSchema, WorkstreamAppearanceSchema, type AutomationSummary, type WorkstreamAppearance } from "@rally/contracts";
 import { logWarn } from "../observability/logger";
 import { parsedAppearance } from "./sidekick-directory-sql";
 import {
@@ -160,7 +160,7 @@ export interface HostedCanvasHost extends HostedConversationHost {
   /** Inside the transaction that changed a Canvas's row or its participants: the sidebar list's waterline. */
   noteCanvasDirectoryChanged(canvasId: string): void;
   /**
-   * Inside the transaction that changed a Canvas's title or who it admits: a
+   * Inside the transaction that changed a Canvas's title, mark or who it admits: a
    * Sidekick attached to it names it on its card, to the people who can open
    * it, so the Sidekick list moved too.
    */
@@ -610,6 +610,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         request.editor.kind, request.editor.id, request.runId ?? null, this.canvasId,
       );
       this.host.noteCanvasDirectoryChanged(this.canvasId);
+      this.host.noteAttachedCanvasChanged(this.canvasId);
     });
     await tellCanvasPinners({ env: this.env, storage: this.storage, noteActivityChanged: (userId) => this.host.noteActivityChanged(userId) }, {
       workspaceId: row.workspace_id, canvasId: this.canvasId, canvasTitle: row.title, generation: row.authority_generation,
@@ -711,11 +712,11 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       if (request.title !== undefined) {
         this.sql.exec(`UPDATE canvas_directory SET title = ?, title_status = 'settled' WHERE canvas_id = ?`,
           request.title, this.canvasId);
-        this.host.noteAttachedCanvasChanged(this.canvasId);
       }
       if (appearance !== null) {
         this.sql.exec(`UPDATE canvas_directory SET appearance_json = ? WHERE canvas_id = ?`, JSON.stringify(appearance), this.canvasId);
       }
+      this.host.noteAttachedCanvasChanged(this.canvasId);
       this.host.noteCanvasDirectoryChanged(this.canvasId);
     });
     return this.detail({ workspaceId: request.workspaceId, canvasId: request.canvasId, actor: request.actor });
@@ -1001,12 +1002,16 @@ export function canvasesAttachedTo(
   sql: SqlStorage,
   actor: { userId: string; actorRole: CanvasActor["actorRole"] },
   sidekickIds: readonly string[],
-): Map<string, { id: string; title: string }[]> {
-  const attached = new Map<string, { id: string; title: string }[]>();
-  for (const row of sql.exec<CanvasRow & { automation_id: string }>(
-    `SELECT canvas.*, attachment.automation_id
+  report: InvalidCanvasAppearanceReport,
+): Map<string, NonNullable<AutomationSummary["attachedCanvases"]>> {
+  const attached = new Map<string, NonNullable<AutomationSummary["attachedCanvases"]>>();
+  for (const row of sql.exec<CanvasRow & { automation_id: string; artifact_type: string | null; artifact_mime: string | null }>(
+    `SELECT canvas.*, attachment.automation_id, newest.resource_type AS artifact_type, newest.mime_type AS artifact_mime
        FROM sidekick_conversation_attachments attachment
        JOIN canvas_directory canvas ON canvas.canvas_id = attachment.parent_id
+       LEFT JOIN resources newest ON newest.id = (SELECT resource.id FROM canvas_artifacts artifact
+           JOIN resources resource ON resource.id = artifact.resource_id
+          WHERE artifact.canvas_id = canvas.canvas_id ORDER BY resource.updated_at DESC, resource.id LIMIT 1)
       WHERE attachment.automation_id IN (SELECT value FROM json_each(?))
         AND attachment.parent_kind = 'canvas' AND attachment.substream_id = '0' AND canvas.archived_at IS NULL
         AND (canvas.writer_sidekick_id IS NULL OR canvas.writer_sidekick_id <> attachment.automation_id)
@@ -1015,7 +1020,8 @@ export function canvasesAttachedTo(
   ).toArray()) {
     if (!canvasReaderAllows(row, actor, sql)) continue;
     const held = attached.get(row.automation_id) ?? [];
-    held.push({ id: row.canvas_id, title: row.title });
+    held.push({ id: row.canvas_id, title: row.title, appearance: canvasAppearance(row, report),
+      artifactKind: row.artifact_type === null ? null : canvasArtifactKind(row.artifact_type, row.artifact_mime) });
     attached.set(row.automation_id, held);
   }
   return attached;
