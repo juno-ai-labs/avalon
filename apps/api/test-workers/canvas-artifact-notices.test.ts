@@ -151,6 +151,20 @@ beforeEach(async () => {
 });
 
 describe("a pinned Canvas's new version", () => {
+  it("advances Canvas recency to the artifact version's date once", async () => {
+    const editor = { kind: "person" as const, id: AUTHOR };
+    const detail = () => workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS,
+      actor: { userId: AUTHOR, actorRole: "member" } });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE canvas_directory SET updated_at = ? WHERE canvas_id = ?", Date.parse(NOW), CANVAS);
+    });
+    await publish(2, { kind: "member", userId: AUTHOR }, editor);
+    expect((await detail()).updatedAt).toBe("2026-11-08T10:00:02.000Z");
+
+    await workspace().canvasNoteArtifact({ workspaceId: WORKSPACE_ID, canvasId: CANVAS, resourceId: REPORT, editor });
+    expect((await detail()).updatedAt).toBe("2026-11-08T10:00:02.000Z");
+  });
+
   it("tells each pinner but its author, collapses while unseen, clears on a read of the Chat, and opens onto the artifact", async () => {
     // The first version is a new artifact, not news.
     expect(await intents()).toEqual([]);
