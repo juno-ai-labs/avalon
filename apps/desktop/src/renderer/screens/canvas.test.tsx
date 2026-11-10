@@ -278,6 +278,21 @@ describe('CanvasScreen', () => {
     expect(await screen.findByText(`Sidekick page /sidekicks/${TRACKER}`)).toBeInTheDocument();
   });
 
+  it("takes the server's word on which Sidekicks the viewer can open, whatever their own Sidekicks list holds", async () => {
+    // A guest's list is never sent, and a member's stops at its limit: neither says a Sidekick cannot be opened.
+    getCanvas.mockResolvedValue(detail({ sidekicks: [
+      attached(TRACKER, 'Launch tracker', { canOpen: true }), attached(DIGEST, 'Weekly digest', { canOpen: false }),
+    ] }));
+    const client = renderCanvas();
+    act(() => { applyVersionedSidebarList(client, 'automations', 1, [ownSidekick(DIGEST, 'Weekly digest')]); });
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('group', { name: 'Sidekicks' });
+    expect(sidekickRow('Weekly digest')).toHaveAttribute('aria-disabled', 'true');
+    expect(sidekickRow('Launch tracker')).not.toHaveAttribute('aria-disabled');
+    fireEvent.click(sidekickRow('Launch tracker'));
+    expect(await screen.findByText(`Sidekick page /sidekicks/${TRACKER}`)).toBeInTheDocument();
+  });
+
   it("opens the Canvas's Chat as a canvas conversation under a header naming it", async () => {
     renderCanvas();
     await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });

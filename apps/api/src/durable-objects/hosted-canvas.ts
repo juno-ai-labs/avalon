@@ -44,7 +44,7 @@ import type { ConversationParentAuthorizeViewerRequest } from "@rally/contracts/
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from "../services/authorization-policy";
 import type { DirectoryCommonEffect } from "./conversation-parent-object";
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationHost, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
-import { canvasParticipant, canvasReaderAllows, sidekickManages, writerSidekick, writerSidekickAdmits } from "./canvas-sidekick-admission";
+import { canvasParticipant, canvasReaderAllows, sidekickManages, sidekickReaderAllows, writerSidekick, writerSidekickAdmits } from "./canvas-sidekick-admission";
 import { ScopeInvitationService } from "./scope-invitation-service";
 import { artifactNewsCauseSql, artifactNewsSql } from "./workspace-pin-storage";
 import { tellCanvasPinners } from "./canvas-artifact-notices";
@@ -542,11 +542,13 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
    * The Sidekicks attached to this Canvas, by name. Read without a viewer:
    * attaching one is the consent to show its name and state to the Canvas.
    */
-  sidekicks(): CanvasSidekick[] {
+  sidekicks(viewer?: CanvasActor): CanvasSidekick[] {
     return this.sql.exec<{
       automation_id: string; title: string; lifecycle: "draft" | "active" | "paused"; appearance_json: string | null; made_here: number;
+      scope: string; author_user_id: string; run_as_user_id: string | null;
     }>(
-      `SELECT directory.automation_id, directory.title, directory.lifecycle, directory.appearance_json, attachment.made_here
+      `SELECT directory.automation_id, directory.title, directory.lifecycle, directory.appearance_json, attachment.made_here,
+              directory.scope, directory.author_user_id, directory.run_as_user_id
          FROM sidekick_conversation_attachments attachment
          JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
         WHERE attachment.parent_kind = 'canvas' AND attachment.parent_id = ? AND attachment.substream_id = '0'
@@ -559,6 +561,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       return CanvasSidekickSchema.parse({
         id: row.automation_id, name: row.title || "New Sidekick", status: row.lifecycle,
         ...(appearance ? { appearance } : {}), madeHere: row.made_here === 1,
+        ...(viewer ? { canOpen: sidekickReaderAllows(row, viewer, this.sql) } : {}),
       });
     });
   }
@@ -617,7 +620,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       ...canvasSummary(row, canvasAppearanceReporter(this.host.env)),
       participantUserIds: this.participantUserIds(),
       artifacts: this.artifacts(),
-      sidekicks: this.sidekicks(),
+      sidekicks: this.sidekicks(request.actor),
       canManage,
       // Whoever decides on the people sees the requests waiting on them.
       ...(canManage ? { pendingAccessRequests: pendingAccessRequests(this.sql, this.canvasId) } : {}),
@@ -902,11 +905,13 @@ export function canvasSidebarRows(
   // (migration 144), so it walks the attachments once however many Canvases
   // are listed.
   const attached = new Map<string, CanvasSidekick[]>();
+  const reader = { userId: viewer.userId, actorRole: viewer.member ? "member" as const : null };
   for (const sidekick of sql.exec<{
     canvas_id: string; automation_id: string; title: string; lifecycle: string; appearance_json: string | null; made_here: number;
+    scope: string; author_user_id: string; run_as_user_id: string | null;
   }>(
     `SELECT attachment.parent_id AS canvas_id, directory.automation_id, directory.title, directory.lifecycle,
-            directory.appearance_json, attachment.made_here
+            directory.appearance_json, attachment.made_here, directory.scope, directory.author_user_id, directory.run_as_user_id
        FROM sidekick_conversation_attachments attachment
        JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
       WHERE attachment.parent_kind = 'canvas' AND attachment.substream_id = '0' AND directory.lifecycle <> 'deleted'
@@ -915,7 +920,8 @@ export function canvasSidebarRows(
     const appearance = parsedAppearance(sidekick.appearance_json, "automation_appearance", () => undefined);
     const held = attached.get(sidekick.canvas_id) ?? [];
     held.push(CanvasSidekickSchema.parse({ id: sidekick.automation_id, name: sidekick.title || "New Sidekick", status: sidekick.lifecycle,
-      ...(appearance ? { appearance } : {}), madeHere: sidekick.made_here === 1 }));
+      ...(appearance ? { appearance } : {}), madeHere: sidekick.made_here === 1,
+      canOpen: sidekickReaderAllows(sidekick, reader, sql) }));
     attached.set(sidekick.canvas_id, held);
   }
   const listed: CanvasSidebarRow[] = [];
