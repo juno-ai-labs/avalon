@@ -570,6 +570,14 @@ export class SiteData extends DurableObject {
       await expect(write(reference, "m1")).rejects.toMatchObject({ code: "resource_not_found" });
     }
     expect(await foreign.page()).toEqual([]);
+    // Attached here as context, the other Canvas's site is readable in this
+    // Chat and still not this Canvas's to change.
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId: foreign.resourceId, attachedByUserId: AUTHOR_ID });
+    for (const reference of [foreign.resourceId, "foreign-inbox"]) {
+      await expect(write(reference, "m1")).rejects.toMatchObject({ code: "artifact_in_another_canvas" });
+    }
+    expect(await foreign.page()).toEqual([]);
   });
 
   it("finds a site's organization from its hostname only for someone who can read it", async () => {

@@ -112,7 +112,7 @@ describe('CanvasesHomeScreen', () => {
   });
 
   it('draws the attached Sidekicks as a facepile at the right, under the Data badge when the card has one', async () => {
-    const sidekick = (suffix: string, name: string) => ({ id: `00000000-0000-7000-8000-0000000000${suffix}`, name });
+    const sidekick = (suffix: string, name: string) => ({ id: `00000000-0000-7000-8000-0000000000${suffix}`, name, status: 'active' as const, madeHere: true });
     renderHome(clientWith([
       canvas('00000000-0000-7000-8000-0000000000c1', 'Inbox', { hasStoredData: true,
         sidekicks: [sidekick('e1', 'Inbox listener'), sidekick('e2', 'Digest')] }),

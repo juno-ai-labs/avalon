@@ -326,7 +326,7 @@ The site's own code writes its database from viewer traffic
 recurring Sidekick run inserts a row per new email, and the page shows it on
 its next read. The tool takes `{ resource, sql, params? }` like
 `query_artifact_data` and reaches `ArtifactHostDO.writeData`, which forwards to
-the facet host's `rallyWrite`. Its `params` are strings and numbers only: the schema a provider is sent cannot carry a null beside two scalar types, so a statement that stores no value spells `NULL` itself.
+the facet host's `rallyWrite`. Its `params` are strings and numbers only: the schema a provider is sent cannot carry a null beside two scalar types, so a statement that stores no value spells `NULL` itself. A Canvas's Chat writes only a site its own Canvas holds (`artifact_in_another_canvas` otherwise): a site of another Canvas attached to the conversation as context is readable there and not that Chat's to change.
 
 - **One data statement.** `admitDataWriteStatement` admits exactly one
   statement opening with INSERT, UPDATE, DELETE or REPLACE (or a `WITH` whose

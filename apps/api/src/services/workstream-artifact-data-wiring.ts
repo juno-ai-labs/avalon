@@ -166,8 +166,8 @@ export function createArtifactDataToolContext(
     // site, exactly as for a read; then one WorkspaceDO call, taking the place
     // of the registry read above, answers what the artifact is, whether its
     // Canvas is archived, and, for a Sidekick run, whether that Canvas is
-    // attached to the Sidekick. A Canvas's Chat is not widened: `visibleSite`
-    // admits it only the sites linked to its own conversation.
+    // attached to the Sidekick. A Canvas's Chat writes only a site its own
+    // Canvas holds, whatever else is linked to its conversation.
     ...(write ? {
       async resolveWritableArtifact(reference: string): Promise<WritableArtifactResolution> {
         const match = await visibleSite(reference);
@@ -183,6 +183,10 @@ export function createArtifactDataToolContext(
         if (!facts) return { outcome: "not_found" };
         if (facts.canvasArchived) return { outcome: "canvas_archived" };
         if (write.kind === "sidekick_run" && !facts.attachedToSidekick) return { outcome: "not_attached" };
+        // A Chat changes its own Canvas's sites. One from another Canvas,
+        // attached here as context, is linked to this conversation and so
+        // readable, and that link is not leave to write to it.
+        if (write.kind === "canvas_chat" && facts.canvasId !== input.workstreamId) return { outcome: "other_canvas" };
         return {
           outcome: "writable",
           artifact: {

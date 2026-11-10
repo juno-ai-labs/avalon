@@ -220,6 +220,31 @@ describe('CanvasScreen', () => {
     expect(screen.queryByRole('menuitem', { name: /Archive Sidekick/u })).toBeNull();
   });
 
+  it("follows the Canvas list for its Sidekicks, so one made or paused while the Canvas is open reaches its menu", async () => {
+    // The detail this screen opened with knows of no Sidekick.
+    getCanvas.mockResolvedValue(detail({ sidekicks: [] }));
+    const client = renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByText('Sidekicks')).toBeNull();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    // Its Chat makes one: the socket's list row carries it, and no detail is read again.
+    act(() => { applyVersionedSidebarList(client, 'canvases', 1, [listRow('Q4 revenue review', { sidekicks: [attached(TRACKER, 'Launch tracker', { status: 'draft' })] })]); });
+    await openMenu('Q4 revenue review');
+    expect(sidekickRow('Launch tracker')).toHaveTextContent('Launch trackerDraft');
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    // Renamed and paused, then archived.
+    act(() => { applyVersionedSidebarList(client, 'canvases', 2, [listRow('Q4 revenue review', { sidekicks: [attached(TRACKER, 'Inbox listener', { status: 'paused' })] })]); });
+    await openMenu('Q4 revenue review');
+    expect(sidekickRow('Inbox listener')).toHaveTextContent('Inbox listenerPaused');
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    act(() => { applyVersionedSidebarList(client, 'canvases', 3, [listRow('Q4 revenue review', { sidekicks: [] })]); });
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByText('Sidekicks')).toBeNull();
+    expect(getCanvas).toHaveBeenCalledTimes(1);
+  });
+
   it('draws no Sidekicks section for a Canvas with none, or from a server that sends none', async () => {
     getCanvas.mockResolvedValue(detail({ sidekicks: [] }));
     renderCanvas();

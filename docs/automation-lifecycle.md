@@ -1555,7 +1555,10 @@ Sidekick's runs:
   `rally:conversations` plugin ([`conversation-tools.md`](conversation-tools.md));
 - publish into the Canvas, by naming it in `publish_resource`'s `canvas`
   argument (`canvasForSidekickRun`, `canvas_not_attached_to_sidekick`
-  otherwise). A run and the Canvas's Chat share an artifact's identity
+  otherwise). The person the run acts as must be able to open the Canvas now
+  (`canvas_access_denied` otherwise), as every post there asks: the
+  attachment says where the Sidekick may write, never that its person still
+  may. A run and the Canvas's Chat share an artifact's identity
   (`terminal:<canvasId>:<path>`), so publishing a path the Chat published is a
   new version of that artifact;
 - write rows into a stateful artifact the Canvas holds, with
