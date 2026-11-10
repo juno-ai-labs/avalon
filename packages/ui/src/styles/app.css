@@ -6959,7 +6959,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-sidekick-mark { display: inline-flex; flex: none; height: 22px; margin: 0 -2px; width: 22px; }
 /* A row that opens nothing still names the Sidekick, so it keeps its ink. */
 .title-pill-menu .canvas-sidekick-open[data-disabled] { cursor: default; opacity: 1; }
-.title-pill-menu .menu-item.canvas-sidekick-archive { flex: none; justify-content: center; min-height: 46px; padding: 0; width: 40px; }
 .canvas-share { display: grid; gap: 16px; }
 .canvas-share-options { border: 0; display: grid; gap: 8px; margin: 0; padding: 0; }
 .canvas-share-option { align-items: flex-start; border-radius: 12px; cursor: pointer; display: flex; gap: 10px; padding: 8px 10px; }

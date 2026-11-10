@@ -170,6 +170,19 @@ already reaches many Canvases this way.
 
 **Changes:** Non-goal 6.
 
+### 2026-11-10 — The Canvas menu lists Sidekicks and archives none
+
+**Decided:** The title pill's menu shows each attached Sidekick and has no
+archive action for one. A Sidekick the Canvas made is archived by asking the
+Canvas's Chat (`archive_sidekick`), or with the Canvas.
+
+**Why:** The owner's call after seeing the built menu, which had an archive
+button on each Canvas-made Sidekick's row. The reason was not recorded.
+
+**Changes:** Product behavior's "from the menu or by asking the Chat" becomes
+"by asking the Chat". Goal 4 holds: everyone in the Canvas can still archive
+one, through the Chat.
+
 ## Data model
 
 `WorkspaceDO` migration 144: `sidekick_conversation_attachments.made_here`, an
