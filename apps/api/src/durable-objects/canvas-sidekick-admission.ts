@@ -92,11 +92,12 @@ export function writerSidekickAdmits(sql: SqlStorage, sidekickId: string, actor:
  * Canvas its `made_here` attachment names. A Sidekick made anywhere else has
  * none and answers `false`; so does one whose Canvas was archived, which
  * archives the Sidekick with it.
+ *
+ * A guest the Canvas admits is included. What a guest's edit may bind is
+ * narrower (`HostedSidekick.applyRevision`): the Organization's connections
+ * only, never a person's.
  */
 export function sidekickMadeInCanvasAdmits(sql: SqlStorage, sidekickId: string, actor: AdmissionActor): boolean {
-  // Members only. A Sidekick runs as its creator with their connections, and
-  // a guest of one Canvas is not someone the Organization lets decide that.
-  if (actor.actorRole === null) return false;
   const canvas = sql.exec<CanvasAdmissionRow & Record<string, SqlStorageValue>>(
     `SELECT canvas.canvas_id, canvas.created_by_user_id, canvas.writer_sidekick_id, canvas.visibility, canvas.archived_at
        FROM sidekick_conversation_attachments attachment
@@ -139,8 +140,8 @@ export function sidekickManagerAllows(
 
 /**
  * Who steers a Sidekick, changing what it does and whether it runs:
- * `sidekickManagerAllows`, and the members the Canvas whose Chat made it
- * admits. Steering is not opening, and not deciding who opens: such a person
+ * `sidekickManagerAllows`, and everyone the Canvas whose Chat made it
+ * admits, guests included. Steering is not opening, and not deciding who opens: such a person
  * reads its conversation and runs only if it is shared with them, and its
  * audience stays `sidekickManagerAllows`' to change.
  */

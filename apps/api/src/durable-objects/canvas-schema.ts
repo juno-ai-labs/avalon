@@ -218,7 +218,7 @@ export const CANVAS_ARCHIVE_ARTIFACT_ALARM = "canvas_archive_artifact";
  *
  *  * `made_here` marks the attachment a Canvas's own Chat wrote when it made
  *    the Sidekick. It is the whole of what ties such a Sidekick to its
- *    Canvas: the members the Canvas admits may change or archive it, and
+ *    Canvas: everyone the Canvas admits may change or archive it, and
  *    archiving the Canvas archives it. Who may open the Sidekick is unchanged.
  *  * The index serves the Canvas-side read ("the Sidekicks attached to this
  *    Canvas"); the primary key leads with the Sidekick.

@@ -429,7 +429,7 @@ records where a running signal would come from.
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /:id`, `GET /:id/delegation`, `POST /:id/delegation`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/audience`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
 | `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; the history projection's `sidekick_review_due` branch, which admits the notice row as the model's user turn; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names no home conversation (`homeConversationId` is `null`: the run delivers its own result); and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a Canvas's Chat. |
 | `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | `sidekick_conversation_attachments` (WorkspaceDO migrations 86 and 144), the write that attaches a Sidekick to a Canvas, and the conversation scope a Sidekick reaches: its own conversation and its attached Canvases. |
-| `apps/api/src/durable-objects/canvas-sidekick-admission.ts` | Who opens a Canvas or a Sidekick and who manages a Sidekick, from WorkspaceDO's rows: `canvasReaderAllows`, `sidekickReaderAllows`, `sidekickManagerAllows`, `sidekickManages` (who steers: it adds the members of the Canvas that made it) and `sidekickAttachedToCanvas`. One module because the Canvas and Sidekick rules read each other. |
+| `apps/api/src/durable-objects/canvas-sidekick-admission.ts` | Who opens a Canvas or a Sidekick and who manages a Sidekick, from WorkspaceDO's rows: `canvasReaderAllows`, `sidekickReaderAllows`, `sidekickManagerAllows`, `sidekickManages` (who steers: it adds everyone the Canvas that made it admits) and `sidekickAttachedToCanvas`. One module because the Canvas and Sidekick rules read each other. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), `SidekickReviewNoticeV1` (the review row's structured content: counts and the sampled run ids), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
@@ -1615,11 +1615,15 @@ directory row and the attachment in one transaction, the attachment marked
 
 That mark is the whole of what ties the Sidekick to the Canvas:
 
-- **The members the Canvas admits steer it.** `sidekickManages` is
+- **Everyone the Canvas admits steers it.** `sidekickManages` is
   `sidekickManagerAllows` (author, run-as, and an Organization Sidekick's
   owners and administrators) or `canvasReaderAllows` over the Canvas its
-  `made_here` attachment names, for a member of the Organization. A guest of
-  the Canvas steers nothing: a Sidekick runs with its creator's connections.
+  `made_here` attachment names. A guest of the Canvas steers too, with one
+  limit: a revision a guest applies binds only connections shared with the
+  whole Organization (`prepareApplication`'s `organizationConnectionsOnly`),
+  never its creator's, a delegate's or the guest's own, and is refused
+  `sidekick_guest_needs_organization_connection` when a plugin has none.
+  Built-in tools need no connection and are unaffected.
   `HostedSidekick.steerAllows` applies it to the wizard's save, pause, resume,
   run now, archive, and the agents plugin's contact rule.
 - **Steering is not managing.** Who opens the Sidekick, how it looks, who it
@@ -2260,8 +2264,8 @@ Sidekick does to a Canvas: Chat read and post as before, publishing into it
 (`canvasForSidekickRun` checks the attachment, not `writer_sidekick_id`), and
 writing its stateful artifacts' rows. A run's own Canvas is attached as it is
 made, and migration 144 attached the existing ones. A Canvas's Chat makes a
-Sidekick attached to its own Canvas, marked `made_here`; the members the Canvas
-admits steer that Sidekick (`sidekickManages`): they change, pause, run and
+Sidekick attached to its own Canvas, marked `made_here`; everyone the Canvas
+admits steers that Sidekick (`sidekickManages`): they change, pause, run and
 archive it, and do not change who opens it or who it runs as, and archiving the Canvas
 archives it. Wizard turns and runs receive `ATTACHED CANVASES`.
 
