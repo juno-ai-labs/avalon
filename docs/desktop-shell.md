@@ -93,10 +93,17 @@ It holds two columns:
   **Canvases**, a page outline (the sheet every artifact tile draws), and
   **Sidekicks**, the Tabler hexagon a Sidekick is drawn in, and **Activity**,
   the triangle outline it wore before the pivot, then the account menu at the
-  bottom, labelled Settings. Every entry, the account menu's
-  trigger included, is one `RailItem`: a 34px tile around a 22px shape, so they
-  share size, hover and the active tint, which a menu's trigger also takes
-  while its menu is open. The choice is a device preference
+  bottom, labelled Settings. Pinned Canvas shortcuts occupy the center, in
+  the same order as the Canvases list; both surfaces accept drag pinning and
+  reordering ([`pinning.md`](pinning.md)). The rail uses equal outer tracks
+  around its pins and scrolls a long pin group. The phone sheet uses the full
+  Pinned list instead of duplicate shortcuts. Every entry, the account menu's
+  trigger included, is one `RailItem`: section and account entries use a 34px
+  tile around a 22px shape, with a shared hover and active tint. Canvas
+  shortcuts fill the tile with a circle in the Canvas colour and distinguish
+  the open Canvas with a separated ring and heavier label. Its tooltip is
+  title-only; its accessible name also announces unread state. An empty rail
+  shows a pin drop hint, highlighted throughout a Canvas drag. The choice is a device preference
   (`rally.sidebar-section`, default `canvases`); a value stored before the
   cutover (`channels`, `threads`, `pinned`, `artifacts`) reads as the default,
   and `activity` opens Activity again. Arriving at a Canvas or a Sidekick moves

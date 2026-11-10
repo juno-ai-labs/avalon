@@ -1,4 +1,4 @@
-import { PALETTE_RING, type CanvasArtifactKind, type WorkstreamAppearance } from '@rally/contracts';
+import { PALETTE_RING, type CanvasArtifactKind, type PaletteKey, type WorkstreamAppearance } from '@rally/contracts';
 import { IdentityTile } from '@rally/ui/components/identity-tile';
 import { WORKSTREAM_ICON_COMPONENTS } from '@rally/ui/components/workstream-glyph';
 import { markColors } from '@rally/ui/lib/project-palette';
@@ -24,10 +24,11 @@ export function canvasHue(id: string): (typeof PALETTE_RING)[number] {
  * Canvas id (a list that names none) gets the cyan pair.
  */
 export function canvasMark(id: string | undefined, kind: CanvasArtifactKind | null, appearance?: WorkstreamAppearance | undefined): {
-  icon: LucideIcon; ink: string; tint: string;
+  icon: LucideIcon; ink: string; tint: string; color: PaletteKey;
 } {
-  const { ink, tint } = markColors(appearance?.color ?? (id ? canvasHue(id) : 'cyan'));
-  return { icon: appearance?.icon ? WORKSTREAM_ICON_COMPONENTS[appearance.icon] : KIND_ICON[kind ?? 'chat'], ink, tint };
+  const color = appearance?.color ?? (id ? canvasHue(id) : 'cyan');
+  const { ink, tint } = markColors(color);
+  return { icon: appearance?.icon ? WORKSTREAM_ICON_COMPONENTS[appearance.icon] : KIND_ICON[kind ?? 'chat'], ink, tint, color };
 }
 
 /**

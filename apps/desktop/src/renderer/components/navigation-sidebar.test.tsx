@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
+import { act, createEvent, fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
 import { Link, MemoryRouter, Navigate, Route, Routes, useLocation, useNavigate, useNavigationType, type InitialEntry } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -22,7 +22,8 @@ import { NavigationSidebar } from './navigation-sidebar';
 const api = vi.hoisted(() => ({
   getWorkspaceMembers: vi.fn(async () => []),
   createCanvas: vi.fn(),
-  setCanvasPinned: vi.fn(),
+  setCanvasPinned: vi.fn(async () => undefined),
+  reorderCanvasPins: vi.fn(async () => undefined),
   setSidekickPinned: vi.fn(),
   decideCanvasAccess: vi.fn(),
 }));
@@ -98,6 +99,8 @@ function renderSidebar(person: Workspace = workspace, route: InitialEntry = '/',
 
 beforeEach(() => {
   vi.clearAllMocks();
+  api.setCanvasPinned.mockReset().mockResolvedValue(undefined);
+  api.reorderCanvasPins.mockReset().mockResolvedValue(undefined);
   socket.state = 'connected';
   localStorage.clear();
   useUiStore.getState().setSidebarSection('canvases');
@@ -110,7 +113,7 @@ describe('the Canvases and Sidekicks sections', () => {
   it('draws a rail of Canvases and Sidekicks, each with its count, and switches between them', () => {
     renderSidebar(workspace, '/canvases/00000000-0000-7000-8000-0000000000c1');
     const rail = screen.getByRole('navigation', { name: 'Sections' });
-    expect([...rail.querySelectorAll('.navigation-rail-label')].map((label) => label.textContent))
+    expect([...rail.querySelectorAll('.navigation-rail-sections .navigation-rail-label')].map((label) => label.textContent))
       .toEqual(['Canvases', 'Sidekicks', 'Activity']);
     const canvases = within(rail).getByRole('button', { name: /Canvases/ });
     expect(canvases).toHaveAttribute('aria-current', 'page');
@@ -273,7 +276,7 @@ describe('the Canvases and Sidekicks sections', () => {
     expect(within(screen.getByRole('region', { name: 'All Sidekicks' })).getByRole('link', { name: /Weekly changelog/ })).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Pinned Sidekicks' })).getByRole('link', { name: /Revenue analyst/ })).toBeInTheDocument();
     expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-label')))
-      .toEqual(['Needs input', 'Pinned Sidekicks', 'All Sidekicks']);
+      .toEqual(['Pinned Canvas shortcuts', 'Needs input', 'Pinned Sidekicks', 'All Sidekicks']);
     fireEvent.click(screen.getByRole('button', { name: 'New Sidekick' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/sidekicks/new');
   });
@@ -823,5 +826,140 @@ describe('the Activity section', () => {
     renderSidebar(workspace, '/', page);
     fireEvent.click(screen.getByRole('button', { name: 'Mark all seen' }));
     expect(socket.markAllActivitySeen).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Canvas shortcuts in the rail', () => {
+  const q4 = '00000000-0000-7000-8000-0000000000c1';
+  const launch = '00000000-0000-7000-8000-0000000000c2';
+  function transfer() {
+    const payload = new Map<string, string>();
+    return { types: ['application/x-rally-canvas'], effectAllowed: '', dropEffect: '',
+      setData: (type: string, value: string) => payload.set(type, value), getData: (type: string) => payload.get(type) ?? '' };
+  }
+  it('mirrors pushed pin order in both surfaces and opens a shortcut from Activity', async () => {
+    const client = renderSidebar();
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    expect(within(rail).getAllByRole('button').map((item) => item.textContent)).toEqual(['Launch plan']);
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [
+      canvas(q4, 'Q4 revenue review', { pinnedPosition: 0 }), canvas(launch, 'Launch plan', { pinnedPosition: 1 }),
+    ]));
+    await waitFor(() => expect(within(rail).getAllByRole('button').map((item) => item.textContent)).toEqual(['Q4 revenue review', 'Launch plan']));
+    expect(within(screen.getByRole('region', { name: 'Pinned Canvases' })).getAllByRole('link').map((item) => item.getAttribute('href')))
+      .toEqual([`/canvases/${q4}`, `/canvases/${launch}`]);
+    fireEvent.click(screen.getByRole('button', { name: 'Activity' }));
+    fireEvent.click(within(rail).getByRole('button', { name: 'Launch plan' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(`/canvases/${launch}`);
+    expect(screen.getByRole('region', { name: 'Pinned Canvases' })).toBeInTheDocument();
+  });
+
+  it('pins by dropping from the Canvas list into the rail, then reorders by drag or keyboard', async () => {
+    const client = renderSidebar();
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    const dataTransfer = transfer();
+    fireEvent.dragStart(screen.getByRole('link', { name: /Q4 revenue review/ }), { dataTransfer });
+    fireEvent.dragOver(rail, { dataTransfer });
+    fireEvent.drop(rail, { dataTransfer });
+    await waitFor(() => expect(api.setCanvasPinned).toHaveBeenCalledWith(q4, true));
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [
+      canvas(q4, 'Q4 revenue review', { pinnedPosition: 1 }), canvas(launch, 'Launch plan', { pinnedPosition: 0 }),
+    ]));
+    const source = await within(rail).findByRole('button', { name: 'Q4 revenue review' });
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragOver(within(rail).getByRole('button', { name: 'Launch plan' }), { dataTransfer });
+    const target = within(rail).getByRole('button', { name: 'Launch plan' });
+    const drop = createEvent.drop(target, { dataTransfer });
+    // jsdom has no DragEvent constructor, so its Event fallback drops coordinates.
+    Object.defineProperty(drop, 'clientY', { value: 0 });
+    fireEvent(target, drop);
+    await waitFor(() => expect(api.reorderCanvasPins).toHaveBeenCalledWith([q4, launch]));
+    act(() => applyVersionedSidebarList(client, 'canvases', 3, [
+      canvas(q4, 'Q4 revenue review', { pinnedPosition: 0 }), canvas(launch, 'Launch plan', { pinnedPosition: 1 }),
+    ]));
+    await waitFor(() => expect(within(rail).getAllByRole('button')[0]).toHaveAccessibleName('Q4 revenue review'));
+    fireEvent.keyDown(source, { altKey: true, key: 'ArrowDown' });
+    await waitFor(() => expect(api.reorderCanvasPins).toHaveBeenLastCalledWith([launch, q4]));
+  });
+
+  it('announces unread shortcuts', async () => {
+    const client = renderSidebar();
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [canvas(q4, 'Q4 revenue review', { pinnedPosition: 0, unread: true })]));
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    expect(await within(rail).findByRole('button', { name: 'Q4 revenue review, unread' })).toBeInTheDocument();
+  });
+
+  it('shows an unpin failure after a reorder failure has been acknowledged', async () => {
+    const client = renderSidebar();
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [
+      canvas(q4, 'Q4 revenue review', { pinnedPosition: 0 }), canvas(launch, 'Launch plan', { pinnedPosition: 1 }),
+    ]));
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    const source = await within(rail).findByRole('button', { name: 'Launch plan' });
+    api.reorderCanvasPins.mockRejectedValueOnce(new Error('reorder failed'));
+    fireEvent.keyDown(source, { altKey: true, key: 'ArrowUp' });
+    expect(await screen.findByText('Canvas pins could not be updated. Try again.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    api.setCanvasPinned.mockRejectedValueOnce(new Error('unpin failed'));
+    fireEvent.contextMenu(source);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
+    expect(await screen.findByText('The Canvas could not be unpinned. Try again.')).toBeInTheDocument();
+    expect(api.setCanvasPinned).toHaveBeenCalledWith(launch, false);
+  });
+
+  it('holds both surfaces until the write and pushed order have settled', async () => {
+    const client = renderSidebar();
+    const third = '00000000-0000-7000-8000-0000000000c3';
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [
+      canvas(q4, 'Q4 revenue review', { pinnedPosition: 0 }), canvas(launch, 'Launch plan', { pinnedPosition: 1 }),
+      canvas(third, 'Third', { pinnedPosition: 2 }),
+    ]));
+    let complete!: () => void;
+    const request = new Promise<undefined>((resolve) => { complete = () => resolve(undefined); });
+    api.reorderCanvasPins.mockReturnValueOnce(request);
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    fireEvent.keyDown(await within(rail).findByRole('button', { name: 'Launch plan' }), { altKey: true, key: 'ArrowUp' });
+    await waitFor(() => expect(api.reorderCanvasPins).toHaveBeenCalledWith([launch, q4, third]));
+    const list = screen.getByRole('region', { name: 'Pinned Canvases' });
+    fireEvent.keyDown(within(list).getByRole('link', { name: /Launch plan/ }), { altKey: true, key: 'ArrowDown' });
+    expect(api.reorderCanvasPins).toHaveBeenCalledTimes(1);
+    await act(async () => { complete(); await request; });
+    // The HTTP response is not the updated list: the other surface must still wait.
+    fireEvent.keyDown(within(list).getByRole('link', { name: /Launch plan/ }), { altKey: true, key: 'ArrowDown' });
+    expect(api.reorderCanvasPins).toHaveBeenCalledTimes(1);
+    act(() => applyVersionedSidebarList(client, 'canvases', 3, [
+      canvas(launch, 'Launch plan', { pinnedPosition: 0 }), canvas(q4, 'Q4 revenue review', { pinnedPosition: 1 }),
+      canvas(third, 'Third', { pinnedPosition: 2 }),
+    ]));
+    await waitFor(() => expect(within(rail).getAllByRole('button')[0]).toHaveAccessibleName('Launch plan'));
+    fireEvent.keyDown(within(list).getByRole('link', { name: /Launch plan/ }), { altKey: true, key: 'ArrowDown' });
+    await waitFor(() => expect(api.reorderCanvasPins).toHaveBeenLastCalledWith([q4, launch, third]));
+  });
+
+  it('arms both empty pin destinations for the whole Canvas drag', async () => {
+    const client = renderSidebar();
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [canvas(q4, 'Q4 revenue review')]));
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    const hint = await within(rail).findByRole('img', { name: 'Drag a Canvas here to pin it' });
+    const row = screen.getByRole('link', { name: /Q4 revenue review/ });
+    fireEvent.dragStart(row, { dataTransfer: transfer() });
+    expect(hint).toHaveClass('is-armed');
+    expect(screen.getByText('Move a Canvas here to pin it').parentElement).toHaveClass('is-armed');
+    fireEvent.dragEnd(row);
+    expect(hint).not.toHaveClass('is-armed');
+    expect(screen.getByText('Move a Canvas here to pin it').parentElement).not.toHaveClass('is-armed');
+  });
+
+  it('keeps the server order and reports a refused reorder', async () => {
+    const client = renderSidebar();
+    act(() => applyVersionedSidebarList(client, 'canvases', 2, [
+      canvas(q4, 'Q4 revenue review', { pinnedPosition: 0 }), canvas(launch, 'Launch plan', { pinnedPosition: 1 }),
+    ]));
+    const rail = screen.getByRole('region', { name: 'Pinned Canvas shortcuts' });
+    const source = await within(rail).findByRole('button', { name: 'Launch plan' });
+    api.reorderCanvasPins.mockRejectedValueOnce(new Error('offline'));
+    fireEvent.keyDown(source, { altKey: true, key: 'ArrowUp' });
+    expect(await screen.findByText('Canvas pins could not be updated. Try again.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(within(rail).getAllByRole('button').map((item) => item.textContent)).toEqual(['Q4 revenue review', 'Launch plan']);
   });
 });
