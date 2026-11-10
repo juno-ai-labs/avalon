@@ -567,7 +567,18 @@ card grid with Sidekicks; the shared layout is described in
   a link naming an artifact opens it expanded. The surface does not close a
   requested panel on the device cache's copy of the conversation, which may
   list none of its artifacts. Closing the panel clears what was saved, and the
-  command menu's **Open artifact** is the way back to it.
+  command menu's **Open artifact** is the way back to it. While the conversation
+  is visible, a newly attached artifact opens the right panel at an even split,
+  including after a person closed it. `useOpenAttachedArtifact` follows the
+  conversation's live resource list. Replacement socket snapshots establish
+  the baseline, so a refreshed retained cache cannot override a saved panel or
+  explicit artifact link. Automatic reveals leave keyboard focus where it was.
+  A refresh or new version of an existing artifact does not reopen the panel,
+  nor does an ordinary source attachment. If several artifacts arrive together,
+  the newest attachment opens. Hidden conversations do not take the panel from
+  the conversation on screen. The shared surface applies this to Sidekick
+  conversations too. An arrival replaces the current right-panel content,
+  including the browser, and uses the existing full-pane layout in narrow windows.
 - **The header** is a centred `TitlePillHeader` naming the Canvas,
   with the face pile of everyone else in it now and Share at the right.
   The pill's menu starts with four action tiles, using the artifact menu's
@@ -762,6 +773,16 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
   anyone else; Change appearance and the pill's mark opening the palette,
   saving through the route, the pill drawing the answer, and the pill
   following a choice the list push carries.
+- `apps/desktop/src/renderer/lib/use-open-attached-artifact.test.tsx` — new
+  artifacts open a dismissible panel, including after closing it; initial
+  resources, source uploads, existing artifact refreshes and hidden
+  conversations leave it alone; replacement snapshots reset the baseline,
+  preserving saved panels and explicit links on a revisit. Run with `pnpm --filter @rally/desktop exec vitest run
+  src/renderer/lib/use-open-attached-artifact.test.tsx`.
+- `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx` — batches two
+  live attachment frames through the real client handler and opens the newest;
+  unmounts and revisits with retained queries, then replaces the snapshot and
+  preserves the restored panel before opening a later live attachment.
 - `canvases-home.test.tsx`, `canvas-sidebar-section.test.tsx` and
   `components/navigation-sidebar.test.tsx` (the Activity section) — each mark
   in the chosen icon and colour, and an unchosen one in its kind and hue.
@@ -849,6 +870,25 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-10 — Open an artifact as it joins the conversation
+
+**What changed:** The conversation surface follows additions in its existing live
+resource feed and opens the newest attached artifact at an even split without
+taking keyboard focus. Socket snapshots establish the baseline; live additions
+follow the snapshot's newest-first ordering.
+
+**Why:** The initial Canvas detail opened an artifact only when the Canvas was opened, leaving a newly
+generated artifact behind a closed panel until someone clicked its card.
+Watching the Canvas detail or every version update was rejected: the former can
+lag the conversation and the latter would undo an intentional close. A retained
+detail from a previous visit must not turn a replacement snapshot into an
+attachment and overwrite the saved or explicitly requested panel; automatic
+reveals must not interrupt someone typing a follow-up.
+
+**Consequences:** Initial restoration, explicit
+artifact links and refreshes keep their existing behavior; only a new attachment
+in the visible conversation opens the panel again.
 
 ### 2026-11-10 — A Canvas holds attached Sidekicks, and its archive takes the ones it made
 
