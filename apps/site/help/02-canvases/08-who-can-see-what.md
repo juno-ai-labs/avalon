@@ -39,9 +39,10 @@ latest version but not the conversation behind it.
 3. Click **Save**. **Cancel** leaves everything as it was.
 
 Choosing **Everyone in the Organization** puts the Canvas in every member's
-Canvases list and makes it findable in search. Members you had chosen by name
-are no longer listed separately, since everyone is in; guests you chose stay.
-Going back to **Specific people** means choosing people again.
+Canvases list and makes it findable in search. In the sharing window, you can
+still search for members and guests. Members appear checked because they
+already have access, and you can choose which guests to include. If you save
+and later go back to **Specific people**, choose the members again.
 
 Guests are never included by the Organization-wide setting. A guest sees a
 Canvas only when someone chooses them for it, or invites them by email, as
