@@ -1675,6 +1675,12 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   lifecycle: AutomationLifecycleStateSchema,
   authorUserId: IdSchema,
   runAsUserId: IdSchema,
+  /**
+   * The Canvas whose Chat made this Sidekick, or null for one made anywhere
+   * else. Everyone that Canvas admits reads and manages the Sidekick, and
+   * archiving the Canvas archives it. Absent from a server that predates it.
+   */
+  homeCanvasId: IdSchema.nullable().optional(),
   delegationAttention: z.strictObject({ code: SidekickDelegationAttentionCodeSchema, message: z.string() }).nullable().optional(),
   /** The latest submitted definition, or null before the chat has submitted one. */
   currentDefinition: AutomationDraftSchema.nullable(),
@@ -1685,7 +1691,7 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   runnable: z.boolean().default(false),
   connectorBindings: z.record(z.string(), z.string()),
   recentRuns: z.array(AutomationRunSchema),
-  /** The Canvases this Sidekick writes that the reader may open, most recently active first. Absent from a server that predates it. */
+  /** The Canvases this Sidekick is attached to that the reader may open, most recently active first. Absent from a server that predates it. */
   canvases: z.array(CanvasSummarySchema).optional(),
 });
 

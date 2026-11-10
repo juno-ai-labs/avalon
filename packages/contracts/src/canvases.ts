@@ -91,6 +91,22 @@ export const CanvasArtifactSchema = z.object({
 });
 export type CanvasArtifact = z.infer<typeof CanvasArtifactSchema>;
 
+/**
+ * A Sidekick attached to a Canvas: its runs read and post in the Canvas's
+ * Chat, publish into the Canvas and write its artifacts' data. Every reader
+ * of the Canvas sees the name and state; `madeHere` marks one the Canvas's
+ * own Chat made, which everyone in the Canvas manages and which is archived
+ * with the Canvas.
+ */
+export const CanvasSidekickSchema = z.object({
+  id: IdSchema,
+  name: z.string(),
+  status: z.enum(["draft", "active", "paused"]),
+  appearance: WorkstreamAppearanceSchema.optional(),
+  madeHere: z.boolean(),
+});
+export type CanvasSidekick = z.infer<typeof CanvasSidekickSchema>;
+
 /** A Canvas as the person opening it sees it: its row, who it is shared with, and its artifacts newest first. */
 export const CanvasDetailSchema = CanvasSummarySchema.extend({
   /** Everyone on the participant list besides the creator, guests among them. */
@@ -98,6 +114,8 @@ export const CanvasDetailSchema = CanvasSummarySchema.extend({
   artifacts: z.array(CanvasArtifactSchema),
   /** This viewer may change who can open it (`canvasManages`). */
   canManage: z.boolean(),
+  /** The Sidekicks attached to it, by name. Absent from a server that predates attaching. */
+  sidekicks: z.array(CanvasSidekickSchema).optional(),
   /**
    * The requests to open it that wait on a decision, oldest first. Present
    * only for a viewer who decides them (`canManage`); absent for everyone

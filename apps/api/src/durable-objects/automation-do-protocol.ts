@@ -42,6 +42,13 @@ export const AutomationCreateRequestSchema = z.strictObject({
   authorUserId: UserIdSchema,
   scope: AutomationScopeSchema,
   authorityGeneration: z.number().int().positive(),
+  /**
+   * The Canvas whose Chat is making this Sidekick. It is attached to that
+   * Canvas in the creating transaction, and everyone the Canvas admits reads
+   * and manages it. The host derives it from the loop; no caller names
+   * another conversation's Canvas.
+   */
+  homeCanvasId: IdSchema.optional(),
 });
 export type AutomationCreateRequest = z.input<typeof AutomationCreateRequestSchema>;
 

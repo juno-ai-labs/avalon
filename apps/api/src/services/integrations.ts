@@ -284,7 +284,7 @@ import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { createWorkstreamArtifactDataTools } from "./workstream-artifact-data-tools";
-import { artifactDataReader, createArtifactDataToolContext } from "./workstream-artifact-data-wiring";
+import { artifactDataReader, artifactDataWriteAccess, createArtifactDataToolContext } from "./workstream-artifact-data-wiring";
 import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { transcriptLister } from "../runtime/message-projection";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
@@ -8506,7 +8506,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       },
     } satisfies HarnessTool] : []),
     ...createWorkstreamAttachmentTools(env, input),
-    // Reading a live artifact's stored data is a work-stream capability, not a
+    // Reading (and, for a Canvas's Chat or a Sidekick run, writing) a live
+    // artifact's stored data is a work-stream capability, not a
     // Terminal one: answering "who hasn't voted?" must not require a sandbox,
     // and the run that answers it is usually not the run that built the page.
     ...createWorkstreamArtifactDataTools(createArtifactDataToolContext(env, {
@@ -8514,6 +8515,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       workstreamId: input.parentId,
       principal: input.executionPrincipal,
       reader: artifactDataReader(input),
+      // Only a Canvas's Chat and a Sidekick run get `write_artifact_data`.
+      write: artifactDataWriteAccess(input),
     })),
     {
       definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,
