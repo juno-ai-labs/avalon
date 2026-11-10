@@ -69,7 +69,6 @@ Tagged links on the landing page, by `data-site-action` id:
 | `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
 | `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
 | `demo-request` | Ask for a demo (emails Katherine and Alex), in the home page's Sidekicks band and the `/sidekicks/` hero | demo_request · sidekicks |
-| `founder-contact` | Founder photos and names | founder_contact · team |
 | `support-contact-footer` | Footer help@ email | support_contact · footer |
 
 `web-app-hero` still reports `secondary_cta · hero`, though it is now the primary
@@ -94,8 +93,7 @@ the card or following its link keeps it away in that browser
 appearance nor its close is reported.
 
 Not reported as site events: scrolling, section views, header nav clicks, the
-"See pricing" and product-page links, and the founders' LinkedIn, GitHub and
-Hugging Face links. The `/canvases/` and `/sidekicks/` pages count as page
+"See pricing" and product-page links. The `/canvases/` and `/sidekicks/` pages count as page
 class `landing` with their own `$pathname`; they send people to sign up
 through the header button rather than a hero button of their own.
 
