@@ -71,7 +71,8 @@ Three things write a source:
 A manager of the Sidekick asks (`POST /automations/:id/source-requests`, or
 the agent tool): the people, a connector, the event types and an optional
 condition. Each person gets one `sidekick_source_requests` row. Asking for
-one's own connection is approved in the same transaction. Everyone else gets a
+one's own connection is approved in the same transaction, and refused whole
+(`sidekick_source_connection_missing`) when they have none connected. Everyone else gets a
 `pending` request, an Activity row that is its actions, a push and an email.
 An ask still waiting for the same person, Sidekick and connector is cancelled
 by a new one, so a person answers what was asked last; asking again for the
@@ -131,6 +132,34 @@ condition first and does not ask the trigger's question of an event the
 person's filter kept out. Both are judged by the one JEV question
 [`semantic-activity-triggers.md`](semantic-activity-triggers.md) owns, on the
 event's title, summary and snippet.
+
+### In the client
+
+Three surfaces show a request, and they share one Approve and Decline pair
+(`SourceDecisionButtons`, [`shared-ui.md`](shared-ui.md#sidekick-sources)).
+While nobody has chosen, both buttons are outlines. The person's choice is
+filled, green for Approve and red for Decline, and only the person asked can
+press.
+
+- **The card.** The conversation the request was asked from draws a card for
+  the completed `sidekick_request_source` call: what was asked, and one row
+  per person. The call's transcript block keeps only the request ids
+  (`sidekickSourceRequestCard`, on a first completion and on a recovered
+  one), never the asker's view of them. The card reads each state from
+  `POST /automations/source-requests/read`, which answers each reader with
+  what they may see.
+- **Activity.** The asked person's `source_request` row is the same pair while
+  pending and reads "You approved", "You declined" or "Replaced by a newer
+  request" afterwards. It opens the Sidekick only once that Sidekick is in
+  their list, since approving is what lets them in.
+- **The Sidekick's panel.** A Sources section above delegation lists sources
+  and pending or declined requests, with Stop allowing on the viewer's own
+  source.
+
+All three read under the Sidekick's cache key. They re-read when its list row
+moves, when an Activity push moves a source row, and on window focus. A reader
+the request does not concern (somebody in the Canvas who neither reads the
+Sidekick nor was asked) hears no push and sees the answer on focus.
 
 ### What a run is handed
 

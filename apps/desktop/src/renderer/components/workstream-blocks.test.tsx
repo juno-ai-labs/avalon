@@ -138,7 +138,7 @@ describe('MessageBlock model timing', () => {
     const message: Message = { ...baseMessage, id: 'ask', authorType: 'agent', author: undefined, messageType: 'tool_event',
       toolEvent: { id: 'ask', name: 'sidekick_request_source', wireName: 'sidekick_request_source', status: 'completed',
         output: { sidekickId: SIDEKICK, requests: [{ requestId: REQUEST }] } } };
-    const readSidekickSourceRequests = vi.fn(async () => [{
+    const readSidekickSourceRequests = vi.fn<(requestIds: readonly string[]) => Promise<unknown[]>>(async () => [{
       requestId: REQUEST, sidekickId: SIDEKICK, sidekickName: 'Deals', person: { userId: MAYA, displayName: 'Maya' },
       connectorType: 'google', eventTypes: ['email.received'], condition: null, state: 'declined', requestedByName: 'Adam',
       yours: false, createdAt: 1, decidedAt: 2,

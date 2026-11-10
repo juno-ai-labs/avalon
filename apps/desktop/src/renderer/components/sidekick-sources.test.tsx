@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import type { SidekickSourceRequestView, SidekickSourcesResult } from '@rally/contracts';
+import type { SidekickSourceRequestView, SidekickSourcesResult, UserId } from '@rally/contracts';
 import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -30,7 +30,7 @@ vi.mock('../lib/collaboration-session', () => ({ useCollaborationSession: () => 
 
 function request(id: string, userId: string, displayName: string, overrides: Partial<SidekickSourceRequestView> = {}): SidekickSourceRequestView {
   return {
-    requestId: id, sidekickId: SIDEKICK, sidekickName: 'Deals', person: { userId, displayName },
+    requestId: id, sidekickId: SIDEKICK, sidekickName: 'Deals', person: { userId: userId as UserId, displayName },
     connectorType: 'google', eventTypes: ['email.received'], condition: 'it is about a pre-seed round',
     state: 'pending', requestedByName: 'Adam', yours: userId === ME, createdAt: 1, decidedAt: null, ...overrides,
   };
@@ -159,9 +159,9 @@ describe('the Sidekick panel\'s Sources section', () => {
   const sources = (overrides: Partial<SidekickSourcesResult> = {}): SidekickSourcesResult => ({
     sidekickId: SIDEKICK,
     sources: [
-      { person: { userId: ME, displayName: 'Me' }, connectionId: 'c-me', connectionName: 'me@rally.test', connectorType: 'google',
+      { person: { userId: ME as UserId, displayName: 'Me' }, connectionId: 'c-me', connectionName: 'me@rally.test', connectorType: 'google',
         eventTypes: ['email.received'], condition: 'it is about a pre-seed round', available: true, yours: true },
-      { person: { userId: MAYA, displayName: 'Maya' }, connectionId: 'c-maya', connectionName: 'maya@rally.test', connectorType: 'google',
+      { person: { userId: MAYA as UserId, displayName: 'Maya' }, connectionId: 'c-maya', connectionName: 'maya@rally.test', connectorType: 'google',
         eventTypes: ['email.received', 'calendar.event_changed'], condition: null, available: false, yours: false },
     ],
     requests: [

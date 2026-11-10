@@ -265,11 +265,13 @@ describe("semantic trigger conditions", () => {
     await ingest(EVENT_ID, "event-unjudged");
 
     // The refusal carries the conditions and their connector, so the caller
-    // judges them and asks once more rather than reading a plan first.
+    // judges them and asks once more rather than reading a plan first. The
+    // event is one the whole Organization sees, so no person's source filters
+    // it: only the trigger's own condition is owed a verdict.
     expect(await workspace().sidekickAdmitExternalEvent(await admission(EVENT_ID))).toEqual({
       admitted: false,
       outcomeCode: "sidekick_semantic_condition_unjudged",
-      judge: { conditions: [CONDITION], connectorType: "ashby" },
+      judge: { conditions: [CONDITION], sourceConditions: [], connectorType: "ashby" },
     });
     expect(await runCount()).toBe(0);
   });

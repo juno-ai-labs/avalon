@@ -4,6 +4,7 @@ import { projectConversationView } from "@rally/contracts/conversation-view";
 import { ConversationViewDeliverySchema, ConversationViewJobSchema, ConversationViewProjectionSchema, completeConversationViewDelivery, nextConversationViewAt, publishConversationViews } from "./conversation-view-projection";
 import { zodDiagnosticCode, describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { cleanupCanvaTransactions } from "../services/canva-transaction-cleanup";
+import { sidekickSourceRequestCard } from "../services/sidekick-source-tools";
 import { parseRpcInput } from "../lib/rpc-input";
 import { ToolPageError } from "./tool-page-storage";
 
@@ -4949,7 +4950,15 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
           resultAvailability: "summary_only",
         };
         result = { success: true, data };
-        participantSafeResult = reenteredResult?.summary ?? receipt.outputSummary ?? "Completed";
+        // A recovered ask for sources leaves its request ids, as a first
+        // completion does, so its card survives an interruption.
+        let planPluginId: string | undefined;
+        try {
+          const plan = receipt.executionPlanJson === null ? null : JSON.parse(receipt.executionPlanJson) as { pluginId?: unknown };
+          planPluginId = typeof plan?.pluginId === "string" ? plan.pluginId : undefined;
+        } catch { planPluginId = undefined; }
+        participantSafeResult = sidekickSourceRequestCard({ pluginId: planPluginId, canonicalToolName: receipt.toolName, output: exactOutput })
+          ?? reenteredResult?.summary ?? receipt.outputSummary ?? "Completed";
       } else {
         const durableError = recoveredToolReceiptError(receipt?.errorJson ?? null);
         const code = classification === "not_run"

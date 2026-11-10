@@ -86,7 +86,9 @@ export const SidekickDelegationAttentionCodeSchema = z.enum(["no_eligible_delega
 export type SidekickDelegationAttentionCode = z.infer<typeof SidekickDelegationAttentionCodeSchema>;
 export const SIDEKICK_DELEGATION_ATTENTION_MESSAGES: Record<SidekickDelegationAttentionCode, string> = {
   no_eligible_delegate: "Needs attention: no delegated user is available",
-  event_no_eligible_delegate: "Needs attention: a configured source has no eligible delegated account. Opt in with an account that has access to that source.",
+  // The code predates sources and is stored and on the wire; what it says is theirs:
+  // a watched account whose owner does not let its events in (docs/sidekick-sources.md).
+  event_no_eligible_delegate: "Needs attention: an account this Sidekick watches is not allowed to start it. Its owner can allow it under Sources.",
   permission_report_unavailable: "Needs attention: a message could not reach its destination. Restore conversation access and rerun the blocked work; no delivery was confirmed.",
 };
 

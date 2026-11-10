@@ -123,7 +123,10 @@ export function createArtifactDataToolContext(
     if (!candidate) return null;
     const [match] = await loadVisibleWorkstreamResourcesByIds(
       env.DB,
-      createConversationResourceLinks(env, input.workspaceId, input.workstreamId, undefined, undefined, input.principal),
+      // A run reads as its own conversation, so its Sidekick's reach (its
+      // attachments) is decided from the run's row and needs no person.
+      createConversationResourceLinks(env, input.workspaceId, input.workstreamId, undefined,
+        input.write?.kind === "sidekick_run" ? input.write.runId : undefined, input.principal),
       {
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,

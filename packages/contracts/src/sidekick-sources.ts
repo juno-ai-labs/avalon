@@ -129,6 +129,13 @@ export type SidekickSourceRequestResult = z.infer<typeof SidekickSourceRequestRe
 export const SidekickSourceDecisionInputSchema = z.strictObject({ decision: z.enum(["approve", "decline"]) });
 export type SidekickSourceDecisionInput = z.infer<typeof SidekickSourceDecisionInputSchema>;
 
+/** `POST /automations/source-requests/read`: requests by id, each only if the reader may see it. */
+export const SidekickSourceRequestsReadInputSchema = z.strictObject({ requestIds: z.array(IdSchema).min(1) });
+export const SidekickSourceRequestsReadResultSchema = z.object({ requests: z.array(SidekickSourceRequestViewSchema) });
+export type SidekickSourceRequestsReadResult = z.infer<typeof SidekickSourceRequestsReadResultSchema>;
+
+export const SidekickSourceWithdrawResultSchema = z.object({ withdrawn: z.boolean() });
+
 /** `POST /automations/:id/sources/withdraw`: a person takes their own source back. */
 export const SidekickSourceWithdrawInputSchema = z.strictObject({ connectionId: IdSchema });
 

@@ -1,4 +1,5 @@
 import type { SidekickSourceRequest } from "@rally/contracts";
+import { sourceConnectorName } from "@rally/contracts/sidekick-source-words";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 
 import type { Env } from "../env";
@@ -163,14 +164,19 @@ export function sourceNoticeText(ask: { eventLabels: readonly string[]; conditio
 }
 
 /**
- * The connector and its events by the names its manifest gives them. A
- * connector or event this deployment no longer declares is named by its type,
- * which is what the request stored.
+ * The connector and its events by the names its manifest gives them, the
+ * connector as a person calls the product those events belong to ("Gmail" for
+ * Google's mail events, `sourceConnectorName`). A connector or event this
+ * deployment no longer declares is named by its type, which is what the
+ * request stored.
  */
 export function sourceNoticeNames(env: Env, connectorType: string, eventTypes: readonly string[]): { connectorName: string; eventLabels: string[] } {
   const manifest = connectorRegistryForEnv(env).list().find((candidate) => candidate.type === connectorType);
   const labels = new Map(manifest?.activityTriggers.map((trigger) => [trigger.eventType, trigger.label]));
-  return { connectorName: manifest?.displayName ?? connectorType, eventLabels: eventTypes.map((eventType) => labels.get(eventType) ?? eventType) };
+  return {
+    connectorName: sourceConnectorName(connectorType, eventTypes, manifest?.displayName ?? connectorType),
+    eventLabels: eventTypes.map((eventType) => labels.get(eventType) ?? eventType),
+  };
 }
 
 async function prepare(notice: Extract<ParentNotice, { kind: PreparedSourceNotice["kind"] }>): Promise<PreparedSourceNotice> {
