@@ -240,8 +240,8 @@ export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
 
 /** Every distinct model-using Rally task with a configurable model route. */
 export const AGENT_MODEL_ROLES = [
-  "workstream",
-  "workstream_naming",
+  "canvas",
+  "canvas_naming",
   "memory_sweep",
   "sidekick_wizard",
   "sidekick_run",
@@ -555,7 +555,7 @@ export const WorkstreamSchema = z.object({
    */
   systemKind: z.enum(["digest"]).nullable().default(null),
   /**
-   * The model this conversation is pinned to, ahead of `agent-model-workstream`,
+   * The model this conversation is pinned to, ahead of its configured model route,
    * or null for the ordinary unpinned case. Decided once at creation and fixed
    * for the conversation's life.
    *

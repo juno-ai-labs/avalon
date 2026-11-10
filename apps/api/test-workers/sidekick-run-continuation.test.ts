@@ -432,7 +432,7 @@ describe("Sidekick run continuation", () => {
   it("records and executes the Sidekick run route independently of wizard and Canvas routes", async () => {
     const previous = TEST_ENV.AGENT_MODEL_ROUTING_JSON;
     TEST_ENV.AGENT_MODEL_ROUTING_JSON = JSON.stringify({
-      workstream: { model: "double/canvas", fallbackModels: [] },
+      canvas: { model: "double/canvas", fallbackModels: [] },
       sidekick_wizard: { model: "double/wizard", fallbackModels: [] },
       sidekick_run: { model: "double/run", fallbackModels: [] },
     });

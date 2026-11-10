@@ -46,9 +46,9 @@ deployments, but the new server does not publish it.
 
 | Roles | Default model | Shared override |
 | --- | --- | --- |
-| `workstream`, `memory_sweep`, `sidekick_run` | `openai/gpt-5.6-terra` | `OPENROUTER_PRIMARY_MODEL` |
-| `sidekick_wizard` | `openai/gpt-6.1-sol` | `OPENROUTER_SMARTER_MODEL` |
-| `workstream_naming` | `openai/gpt-5.6-terra` | `OPENROUTER_FASTER_MODEL` |
+| `canvas`, `sidekick_run` | `openai/gpt-5.6-terra` | `OPENROUTER_PRIMARY_MODEL` |
+| `sidekick_wizard`, `memory_sweep` | `openai/gpt-6.1-sol` | `OPENROUTER_SMARTER_MODEL` |
+| `canvas_naming` | `openai/gpt-5.6-terra` | `OPENROUTER_FASTER_MODEL` |
 
 `OPENROUTER_FALLBACK_MODEL` overrides the default `google/gemini-3.8-flash`
 fallback. It is a comma-separated ordered list; an explicitly empty string
@@ -59,7 +59,7 @@ role's value replaces its complete route, including ordered fallbacks and
 optional `reasoningEffort` (`low`, `medium`, or `high`):
 
 ```dotenv
-AGENT_MODEL_ROUTING_JSON='{"workstream":{"model":"openai/gpt-5.6-terra","fallbackModels":[],"reasoningEffort":"low"}}'
+AGENT_MODEL_ROUTING_JSON='{"canvas":{"model":"openai/gpt-5.6-terra","fallbackModels":[],"reasoningEffort":"low"}}'
 ```
 
 Omitting `fallbackModels` in a role override means no fallbacks. Roles omitted
@@ -74,6 +74,7 @@ completion verification, addressing/continuation fallbacks, image and speech
 generation. It also owns Azure deployment names,
 pricing catalogs, pin choices, and per-model reasoning defaults. API and harness
 modules import these constants; older public imports re-export the same values.
+Sol has no forced reasoning default; a caller may still request an explicit effort.
 Dictation continues to select its deployment through
 `REALTIME_TRANSCRIPTION_MODEL_ENV_KEY` (`AZURE_OPENAI_REALTIME_DEPLOYMENT`).
 
@@ -92,7 +93,7 @@ Pins belong to the conversation that was created with them. A Sidekick run
 copies its definition's pin through
 `provisionSidekickRun`; its authoring Main and background authoring agents use
 `sidekick_wizard`, while occurrences and delegation workers use `sidekick_run`.
-Canvas conversations use `workstream`. Scheduled Sidekick admission selects
+Canvas conversations use `canvas`. Scheduled Sidekick admission selects
 `sidekick_run` before the run child exists, so its recorded model agrees with
 the role the execution resolves. The former `sidekick_authoring` JSON key is
 renamed to `sidekick_wizard`; deployments using that override must rename it.
@@ -173,6 +174,9 @@ defaults to `openai/gpt-5.6-terra`; explicit deployment and
 per-role overrides retain precedence. The unused structured-model constant was
 removed with its retired roles. The unused `inline_child` model role and its
 logging-source type were also removed because no production caller selects it.
+The conversation roles are named `canvas` and `canvas_naming`; memory sweeps
+share the smarter Sol model with the wizard. Existing JSON overrides must
+rename `workstream` and `workstream_naming` to the new role keys.
 
 **Why:** Feature configuration should be straightforward to review and run locally,
 without depending on Cloudflare's feature flag service. Shared placement lets

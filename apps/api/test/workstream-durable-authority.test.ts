@@ -57,7 +57,7 @@ describe("launching a run against the open authority", () => {
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: "global",
       AGENT_MODEL_ROUTING_JSON: JSON.stringify({
-        workstream: { model: "openai/gpt-5.6-terra", fallbackModels: [] },
+        canvas: { model: "openai/gpt-5.6-terra", fallbackModels: [] },
         sidekick_wizard: { model: "openai/gpt-6.1-sol", fallbackModels: [] },
         sidekick_run: { model: "deepseek/deepseek-v4-pro", fallbackModels: [] },
       }),
