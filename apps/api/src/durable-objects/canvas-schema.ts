@@ -211,3 +211,28 @@ export const CANVAS_ARCHIVE_STATEMENTS: readonly string[] = [
 /** Durable archive fan-out entries share the existing per-object alarm store. */
 export const CANVAS_ARCHIVE_CONVERSATION_ALARM = "canvas_archive_conversation";
 export const CANVAS_ARCHIVE_ARTIFACT_ALARM = "canvas_archive_artifact";
+
+/**
+ * WorkspaceDO migration 144: a Sidekick's Canvas attachment is the one record
+ * of which Canvases it works on.
+ *
+ *  * `made_here` marks the attachment a Canvas's own Chat wrote when it made
+ *    the Sidekick. It is the whole of what ties such a Sidekick to its
+ *    Canvas: everyone the Canvas admits may change or archive it, and
+ *    archiving the Canvas archives it. Who may open the Sidekick is unchanged.
+ *  * The index serves the Canvas-side read ("the Sidekicks attached to this
+ *    Canvas"); the primary key leads with the Sidekick.
+ *  * Every Canvas a run made is attached to its writer Sidekick, so the
+ *    publish gate reads attachments alone. `writer_sidekick_id` keeps its
+ *    other meaning: whose audience such a Canvas admits.
+ */
+export const SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS: readonly string[] = [
+  `ALTER TABLE sidekick_conversation_attachments
+     ADD COLUMN made_here INTEGER NOT NULL DEFAULT 0 CHECK (made_here IN (0, 1))`,
+  `CREATE INDEX sidekick_conversation_attachments_parent_idx
+     ON sidekick_conversation_attachments(parent_kind, parent_id)`,
+  `INSERT OR IGNORE INTO sidekick_conversation_attachments
+     (automation_id, parent_kind, parent_id, substream_id, attached_by_user_id, attached_at)
+   SELECT writer_sidekick_id, 'canvas', canvas_id, '0', created_by_user_id, created_at
+     FROM canvas_directory WHERE writer_sidekick_id IS NOT NULL`,
+];

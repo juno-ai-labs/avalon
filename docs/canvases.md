@@ -346,29 +346,70 @@ Its first publish creates the run's Canvas: the run's principal is its
 creator, the Sidekick its writer, the publish's `displayName` its title, and
 whoever the Sidekick is shared with can open it. Every later publish of the
 run finds that Canvas (`canvasForSidekickRun`; `HostedCanvas.create` answers a
-second create for the same run with the first Canvas). A run asked to update a
+second create for the same run with the first Canvas), and the create attaches
+the Canvas to the Sidekick. A run asked to update a
 Canvas names it with `publish_resource`'s `canvas` argument, which must be a
-Canvas this Sidekick writes (`canvas_not_written_by_sidekick` otherwise);
+Canvas attached to this Sidekick (`canvas_not_attached_to_sidekick` otherwise);
 anything but a Sidekick run naming one is refused (`canvas_argument_unsupported`).
 The run's own conversation is attached too, so the run can read back what it
-published. "The Canvases it writes to" is `canvasesWrittenBy`, a query on the
-directory by writer, on the Sidekick's detail as `canvases`, filtered to what
-the reader may open.
+published. "The Canvases it writes to" is `canvasesWrittenBy`, a join from the
+Sidekick's attachments to the directory, on the Sidekick's detail as
+`canvases`, filtered to what the reader may open.
+
+### Sidekicks attached to a Canvas
+
+Zero or more Sidekicks are attached to a Canvas, each by one row of
+`sidekick_conversation_attachments`
+([`automation-lifecycle.md`](automation-lifecycle.md#attached-conversations)
+owns the row and what it grants). An attached Sidekick's runs read and post in
+the Chat, publish new versions of the Canvas's artifacts, and write rows into
+an artifact that stores data. A person's own Canvas, with no writer Sidekick,
+is updated this way.
+
+Attaching changes who can open nothing. The Canvas admits who it admitted, and
+the Sidekick's audience is its own; `writer_sidekick_id` alone carries a
+Sidekick's audience into a Canvas, and only for a Canvas a run made.
+
+`POST /canvases/:id/sidekicks` (`CanvasService.addSidekick`) makes one for the
+Canvas on behalf of a client that is not its Chat, the
+[MCP server](rally-mcp.md#sidekicks-for-a-canvas) first: the Sidekick is made
+attached, as the Chat's `create_sidekick` makes it, and the request's
+instructions go to its wizard as the person's edit. `POST /canvases` takes the
+same as `sidekick`, after the Canvas and its prompt. A guest makes none
+(`canvas_sidekick_member_required`).
+
+`GET /canvases/:id` lists them as `sidekicks` (`HostedCanvas.sidekicks`): id,
+name, state, appearance, and `madeHere` for one this Canvas's Chat made. Every
+reader of the Canvas sees the list; attaching a Sidekick is the consent to show
+its name and state there. An archived Sidekick is not listed.
+
+A Sidekick the Canvas's Chat made
+([`automation-lifecycle.md`](automation-lifecycle.md#a-sidekick-made-in-a-canvas))
+is managed by everyone the Canvas admits, who change or archive it by asking
+the Chat (the title menu lists it and offers no archive), and **archiving the Canvas archives it** in the same
+transaction (`archiveHomeSidekicks`). A Sidekick only attached here keeps
+running; its next write to the archived Canvas is refused.
 
 ### Rally in a Canvas Chat
 
 A message in a Canvas's Chat reaches Rally through the conversation's
 addressing: alone in the Canvas, every message is for Rally; with others there,
 the addressing classifier (`classifyWorkstreamMessage`) decides whether a
-message is for Rally or for the people. The run has the resource tools
+message is for Rally or for the people. The run has the agents plugin, with which it makes a Sidekick for this Canvas
+and archives one it made
+([`agent-communication.md`](agent-communication.md#in-a-canvass-chat)), the resource tools
 (`list_resources`, `read_resource`, `view_resource`, the artifact data tools
 keyed by the Canvas id) and the Terminal's `publish_resource`, which publishes
-into the Canvas. It has no conversation tools; those serve a Sidekick
+into the Canvas. One of the data tools writes: `write_artifact_data` changes
+rows in a stateful site linked to the Canvas without republishing it
+([live web artifacts](live-web-artifacts.md#writing-rows-from-a-run)). It has no conversation tools; those serve a Sidekick
 ([`conversation-tools.md`](conversation-tools.md)).
 
 Rally is told about the Canvas in a host-provided message, `CANVAS CONTEXT`
 (`canvasRunContextMessage`, from `WorkspaceDO.canvasContext`): the Canvas's
-title, its artifacts at their current versions, and that republishing a path
+title, its artifacts at their current versions (each with the `filePath` a
+publish names and whether it stores data, `HostedCanvas.agentArtifacts`), the
+Sidekicks attached to it, and that republishing a path
 is a new version attributed to Rally while a new path adds an artifact. It is a
 derived user message, as a Sidekick run's activation context is, not system
 prompt text, because the system prompt prefix is byte-stable and cached and
@@ -409,7 +450,11 @@ Both carry the `canvases` waterline (`workspace_sidebar_list_state`), which the
 desktop compares in the same ledger as the Sidekick list
 (`applyVersionedSidebarList`).
 
-A row (`canvasSidebarRows`) is the summary plus: `unread`, the Chat's read
+A row (`canvasSidebarRows`) is the summary plus: `sidekicks`, the Sidekicks
+attached to it by id, name and appearance, read for every listed Canvas in one
+statement over the attachments (a Sidekick renamed, redressed or archived
+reaches a connected client's card at its next Canvas list frame, as a deleted
+Sidekick's run line does); `unread`, the Chat's read
 state as `sidekick_viewer_reads` projects it against the Chat's latest
 attention ordinal (a Canvas never opened is unread to anyone but its creator);
 `presentUserIds`, the people whose foreground socket has the Canvas open now;
@@ -486,6 +531,12 @@ card grid with Sidekicks; the shared layout is described in
   its top right uses the Stored data pop-out row's `IconDatabase` and means
   the Canvas holds a listed database-backed artifact.
   A static site has no Data badge. Both indicators can appear together. The
+  Canvas's attached Sidekicks are a **Sidekick facepile** (`SidekickStack`,
+  `@rally/ui`): overlapping hexagons at the preview's right, under the Data
+  badge when the card has one and in its place when it has none, the first
+  four and then a count, as `AvatarStack` cuts people off. The stack is named
+  as a whole ("Sidekicks: Launch tracker; Digest") and the card's link is
+  described by it beside the Data badge. The
   preview is decorative; the link describes its Data badge for assistive
   technology, and the metadata names current viewers. Clicking a face opens
   the Canvas through the same stretched link as the rest of the card.
@@ -794,6 +845,27 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-10 — A Canvas holds attached Sidekicks, and its archive takes the ones it made
+
+**What changed:** A Canvas's detail lists the Sidekicks attached to it, a run
+publishes into any Canvas attached to its Sidekick rather than only one it
+wrote, and archiving a Canvas archives the Sidekicks its Chat made.
+
+**Why:** So a schedule or a stream of events can keep a person's Canvas up to
+date. The reasoning, and the tighter design that was built and rejected, are in
+[`automation-lifecycle.md`](automation-lifecycle.md#2026-11-10--a-sidekicks-canvas-attachment-is-the-publish-grant-and-a-canvas-makes-sidekicks-it-steers).
+
+**Considered and rejected:** Leaving a Canvas-made Sidekick running after its
+Canvas is archived: each trigger would start a run with nowhere to write. And
+listing them for the archiver to choose, which the owner declined.
+
+**Consequences:** A Canvas archive now writes Sidekick rows in its
+transaction, so anything added to `HostedCanvas.archive` runs beside a
+Sidekick lifecycle write. `canvasAdmits` is unchanged and must stay so: an
+attachment never admits a Sidekick's audience to a Canvas.
+
+Design: `docs/PRDs/2026-11-10_sidekicks-attached-to-canvases/prd.md`.
 
 ### 2026-11-09 — Date Canvases by saved messages and artifact versions
 

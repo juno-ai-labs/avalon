@@ -10,6 +10,8 @@ import {
   CanvasAccessSchema,
   CanvasAudienceUpdateSchema,
   CanvasDetailSchema,
+  AddCanvasSidekickRequestSchema,
+  AddedCanvasSidekickSchema,
   CanvasListSchema,
   CanvasPublishRequestSchema,
   CanvasPublishedArtifactSchema,
@@ -98,6 +100,11 @@ canvasRoutes.get("/:id/artifacts/:resourceId/versions/:version/:representation",
     return resources.preview(param.resourceId, c.req.raw.signal);
   }
 });
+// A Sidekick for this Canvas, made by a client that is not the Canvas's Chat.
+canvasRoutes.post("/:id/sidekicks", canvasIdParam, namedZValidator("canvas_sidekick",
+  "A Sidekick for a Canvas needs instructions with text and a clientMessageId")("json", AddCanvasSidekickRequestSchema), async (c) =>
+  c.json(AddedCanvasSidekickSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c))
+    .addSidekick(c.req.valid("param").id, c.req.valid("json"))), 201));
 canvasRoutes.post("/:id/pin", canvasIdParam, zValidator("json", SidebarPinRequestSchema), async (c) => {
   await new CanvasService(c.env, getWorkspaceAuth(c)).pin("canvas", c.req.valid("param").id, c.req.valid("json").pinned);
   return c.body(null, 204);

@@ -79,7 +79,7 @@ describe("the agents plugin", () => {
     sidekicks: async () => ({ sidekicks: [{ sidekickId, name: "Monitor", description: "", scope: "workspace" as const,
       isCurrentSidekick: false, canEdit: true, status: "draft" as const, nextRunAt: null, lastRunAt: null, agentId: `automation/${sidekickId}/0` as never }] }),
     send: async (input) => ({ messageId: sidekickId, next: "agentId" in input ? input.agentId : "" }),
-    findSidekick: unused, createSidekick: unused, attachSidekickResource: unused, start: unused, list: unused, stop: unused,
+    findSidekick: unused, createSidekick: unused, archiveSidekick: unused, attachSidekickResource: unused, start: unused, list: unused, stop: unused,
     requestSidekickChange: async (changes) => ({ messageId: sidekickId, next: changes }),
   } satisfies AgentCommunicationTools;
   const plugin = createAgentCommunicationPlugin(service, "");
@@ -98,14 +98,35 @@ describe("the agents plugin", () => {
   it("keeps the rule that a conversation changes only Sidekicks it may edit", () => {
     // The incident behind this line: one conversation rewrote another's Sidekick draft.
     expect(plugin.systemMessage).toContain("Use find_sidekick only when the person explicitly names an existing Sidekick to edit; never silently replace a named target.");
-    expect(tool("sidekicks_list").definition.description).toContain("the Sidekick this conversation belongs to, marked isCurrentSidekick: true; a Canvas's Chat belongs to none");
+    expect(tool("sidekicks_list").definition.description).toContain("the Sidekick this conversation belongs to, marked isCurrentSidekick: true");
+  });
+
+  it("offers archive_sidekick, and says a new Sidekick is attached, only in a Canvas's Chat", async () => {
+    expect(plugin.tools.map((candidate) => candidate.definition.name)).not.toContain("archive_sidekick");
+    expect(plugin.systemMessage).not.toContain("This conversation is a Canvas's Chat.");
+
+    const archived: string[] = [];
+    const chat = createAgentCommunicationPlugin({ ...service,
+      archiveSidekick: async (reference) => { archived.push(reference); return { sidekickId, name: "Monitor", archived: true }; },
+    }, "", { canvasChat: true });
+    const named = (name: string) => chat.tools.find((candidate) => candidate.definition.name === name)!;
+    expect(chat.systemMessage).toContain("A Sidekick you create here is attached to this Canvas");
+    expect(chat.systemMessage).toContain("Runs can overlap, so have them write rows");
+    expect(named("create_sidekick").definition.description).toContain("It is attached to this Canvas");
+    expect(named("sidekicks_list").definition.description).toContain("List the Sidekicks this Canvas made");
+    // The tool takes only which Sidekick: no argument names a Canvas.
+    expect(named("archive_sidekick").definition.inputSchema).toMatchObject({ required: ["sidekick"], additionalProperties: false });
+    await expect(named("archive_sidekick").execute({ sidekick: "Monitor" }, context))
+      .resolves.toMatchObject({ output: { sidekickId, archived: true } });
+    expect(archived).toEqual(["Monitor"]);
+    await expect(named("archive_sidekick").execute({ sidekick: "Monitor", canvas: sidekickId }, context)).rejects.toThrow();
   });
 });
 
 describe("a Sidekick run asking its wizard for a change", () => {
   const unused = async (): Promise<never> => { throw new Error("not called"); };
   const service = {
-    sidekicks: unused, send: unused, findSidekick: unused, createSidekick: unused, attachSidekickResource: unused,
+    sidekicks: unused, send: unused, findSidekick: unused, createSidekick: unused, archiveSidekick: unused, attachSidekickResource: unused,
     start: unused, list: unused, stop: unused,
     requestSidekickChange: async (changes) => ({ messageId: "00000000-0000-4000-8000-000000000002", next: `asked: ${changes}` }),
   } satisfies AgentCommunicationTools;

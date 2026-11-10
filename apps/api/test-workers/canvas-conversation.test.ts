@@ -272,6 +272,29 @@ describe("a Canvas's Chat", () => {
       .rejects.toMatchObject({ code: "canvas_id_unavailable" });
   });
 
+  it("makes a Sidekick for a Canvas on request: attached to it, its instructions sent to its wizard once, and only for a Canvas the person can open", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const sidekickId = crypto.randomUUID();
+    const request = { sidekickId, instructions: { text: "On every new email, add a row.", clientMessageId: "canvas-sidekick-1" } };
+    const first = await new CanvasService(TEST_ENV, auth(CREATOR)).addSidekick(canvasId, request);
+    const retried = await new CanvasService(TEST_ENV, auth(CREATOR)).addSidekick(canvasId, request);
+    expect(retried).toEqual(first);
+    expect(first.sidekickId).toBe(sidekickId);
+    expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).sidekicks)
+      .toEqual([{ id: sidekickId, name: "New Sidekick", status: "draft", madeHere: true }]);
+    // The instructions are the author's message in the Sidekick's own conversation, once.
+    const wizard = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, sidekickId)));
+    expect(await runInDurableObject(wizard, (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM canonical_conversation_turn_details WHERE client_message_id = ?`, "canvas-sidekick-1").one().n)).toBe(1);
+    // Someone who cannot open the Canvas makes none for it, and the id stays the first author's.
+    await expect(new CanvasService(TEST_ENV, auth(MEMBER)).addSidekick(canvasId, { ...request, sidekickId: crypto.randomUUID() }))
+      .rejects.toMatchObject({ code: "canvas_not_found" });
+    const { canvasId: other } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    await expect(new CanvasService(TEST_ENV, auth(CREATOR)).addSidekick(other, request))
+      .rejects.toMatchObject({ code: "sidekick_id_unavailable" });
+    expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(other)).sidekicks).toEqual([]);
+  });
+
   it("issues a socket ticket naming the canvas kind", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     const issued = await new ConversationService(TEST_ENV, auth(CREATOR)).socketTicket(canvasId);
@@ -1046,10 +1069,13 @@ describe("a Canvas's artifacts", () => {
       workspaceId: WORKSPACE_ID, automationId: sidekickId,
       actor: { userId: CREATOR, actorRole: "member", participantOfOwningWorkstream: false } }));
     expect(sidekick.canvases).toMatchObject([{ id: canvasId }]);
-    // A Canvas another Sidekick never wrote cannot be named.
+    // A Canvas not attached to the Sidekick cannot be named; once its
+    // configuration conversation attaches it, a person's own Canvas can.
     const { canvasId: elsewhere } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     await expect(resolveTerminalPublicationHome(TEST_ENV, run, { canvas: elsewhere }))
-      .rejects.toMatchObject({ code: "canvas_not_written_by_sidekick" });
+      .rejects.toMatchObject({ code: "canvas_not_attached_to_sidekick" });
+    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: sidekickId, userId: CREATOR, reference: elsewhere });
+    expect(await resolveTerminalPublicationHome(TEST_ENV, run, { canvas: elsewhere })).toEqual({ parentId: elsewhere, substreamId: "0" });
   });
 
   it("still pushes a writer Sidekick's Canvas when an audience change rolled back once and then committed", async () => {

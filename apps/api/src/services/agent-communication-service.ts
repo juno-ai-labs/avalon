@@ -243,8 +243,7 @@ export class AgentCommunicationService {
     const target = route.value;
     if (target.recipientAgentId === this.senderId) throw new AgentCommunicationError("agent_self_message");
     if ("messageId" in args) {
-      await this.authorizeSidekick(target.recipientAgentId);
-      await this.authorizeWizardTurn(target.recipientAgentId);
+      await this.authorizeWizardContact(target.recipientAgentId);
     }
     const address = agentAddressForId(target.recipientAgentId);
     const recipient = await this.conversation(target.recipientAgentId);
@@ -266,8 +265,7 @@ export class AgentCommunicationService {
   private async contactSidekick(agentId: AgentId, teamId: AgentId) {
     const address = agentAddressForId(agentId);
     if (address.parentKind !== "automation" || address.substreamId !== "0") return;
-    await this.authorizeSidekick(agentId);
-    await this.authorizeWizardTurn(agentId);
+    await this.authorizeWizardContact(agentId);
     await (await this.workspace()).joinAgentTeam({ workspaceId: this.input.workspaceId, teamId, agentId });
   }
 
@@ -282,14 +280,19 @@ export class AgentCommunicationService {
    * authoring tools as that person. A refused change request tells the run to
    * tell the person, which is what the run owes them.
    */
-  private async authorizeWizardTurn(agentId: AgentId) {
+  private async authorizeWizardContact(agentId: AgentId) {
     const address = agentAddressForId(agentId);
     if (address.parentKind !== "automation" || address.substreamId !== "0") return;
     if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_contact_user_unavailable");
-    const manages = await personManagesSidekick(this.env, {
+    // Managing is the whole test. A Sidekick a Canvas's Chat made is managed
+    // by everyone in that Canvas (`sidekickManages`), who need not be people
+    // it is shared with; every other manager can open it anyway.
+    if (await personManagesSidekick(this.env, {
       workspaceId: this.input.workspaceId, automationId: address.parentId, userId: this.input.executionPrincipal.userId,
-    });
-    if (!manages) throw new AgentCommunicationError("sidekick_edit_requires_manager");
+    })) return;
+    // Refused either way; which refusal depends on whether they can open it.
+    await this.authorizeSidekick(agentId);
+    throw new AgentCommunicationError("sidekick_edit_requires_manager");
   }
 
   /**
@@ -345,6 +348,11 @@ export class AgentCommunicationService {
    */
   async sidekicks() {
     if (this.input.executionPrincipal.type !== "user") return { sidekicks: [] };
+    if (this.canvasChatId() !== null) {
+      const sidekicks = await this.canvasMadeSidekicks();
+      return { sidekicks, ...(sidekicks.length ? {} : {
+        next: "This Canvas has made no Sidekick. Create one with create_sidekick, then send setup instructions to its authoring agent." }) };
+    }
     const sidekicks = (await this.editableSidekicks()).filter((sidekick) => sidekick.isCurrentSidekick);
     return { sidekicks, ...(sidekicks.length ? {} : { next: this.input.automationRun
       ? `You are already executing Sidekick ${this.input.automationRun.automationId}. An empty editable list does not mean it needs to be created. Complete this activation using its saved instructions.`
@@ -363,10 +371,62 @@ export class AgentCommunicationService {
   async createSidekick(scope: "personal" | "workspace", context: HarnessToolContext) {
     if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_author_unavailable");
     const creationId = await this.messageId(context);
+    // The Canvas is this loop's own, never a model argument: a Chat makes a
+    // Sidekick for its own Canvas and for no other.
+    const canvasId = this.canvasChatId();
     const created = await createAutomation(this.env, { workspaceId: this.input.workspaceId,
-      authorUserId: this.input.executionPrincipal.userId, scope, automationId: creationId });
+      authorUserId: this.input.executionPrincipal.userId, scope, automationId: creationId,
+      ...(canvasId ? { homeCanvasId: canvasId } : {}) });
     return { sidekickId: created.automationId, agentId: agentIdForAddress({ parentKind: "automation",
-      parentId: created.automationId, substreamId: asSubstreamId("0") }) };
+      parentId: created.automationId, substreamId: asSubstreamId("0") }),
+      ...(canvasId ? { attachedToCanvasId: canvasId } : {}) };
+  }
+
+  /**
+   * The Canvas this loop is the Chat of, or null for any other loop: a
+   * background agent works for a conversation and is not its Chat.
+   */
+  private canvasChatId(): string | null {
+    return this.input.parentKind === "canvas" && (this.input.substreamId ?? "0") === "0" && this.input.backgroundAgent !== true
+      ? this.input.parentId : null;
+  }
+
+  /** The Sidekicks this Canvas's Chat made, as `sidekicks_list` names them. */
+  private async canvasMadeSidekicks() {
+    const canvasId = this.canvasChatId();
+    if (canvasId === null) return [];
+    const context = await (await this.workspace()).canvasContext({ workspaceId: this.input.workspaceId, canvasId });
+    return (context?.sidekicks ?? []).filter((sidekick) => sidekick.madeHere).map((sidekick) => ({
+      sidekickId: sidekick.id, name: sidekick.name, status: sidekick.status, canEdit: true,
+      agentId: agentIdForAddress({ parentKind: "automation", parentId: sidekick.id, substreamId: asSubstreamId("0") }),
+    }));
+  }
+
+  /**
+   * Archive a Sidekick this Canvas's Chat made, named by its id or its exact
+   * name. Only those: the candidates are read from this loop's own Canvas, so
+   * a Chat cannot archive a Sidekick another Canvas made or one merely
+   * attached here.
+   */
+  async archiveSidekick(reference: string) {
+    if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_contact_user_unavailable");
+    if (this.canvasChatId() === null) throw new AgentCommunicationError("sidekick_archive_outside_canvas");
+    const named = reference.trim().toLowerCase();
+    const made = await this.canvasMadeSidekicks();
+    const matches = made.filter((sidekick) => sidekick.sidekickId === named || sidekick.name.trim().toLowerCase() === named);
+    if (matches.length !== 1) {
+      throw new AgentCommunicationError(matches.length ? "sidekick_archive_ambiguous" : "sidekick_archive_not_made_here",
+        made.map((sidekick) => sidekick.name));
+    }
+    const target = matches[0]!;
+    const userId = this.input.executionPrincipal.userId;
+    const member = await this.env.DB.prepare(
+      "SELECT role, access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'",
+    ).bind(this.input.workspaceId, userId).first<{ role: "owner" | "admin" | "member" | null; access_class: string | null }>();
+    if (!member) throw new AgentCommunicationError("sidekick_contact_forbidden");
+    await (await this.workspace()).sidekickRemove({ workspaceId: this.input.workspaceId, automationId: target.sidekickId,
+      actor: { userId: asUserId(userId), actorRole: member.access_class === "guest" ? null : member.role, participantOfOwningWorkstream: false } });
+    return { sidekickId: target.sidekickId, name: target.name, archived: true };
   }
 
   /** Add context without admitting a message, joining a team or waking a loop. */
@@ -433,7 +493,7 @@ export class AgentCommunicationService {
 
 class AgentCommunicationError extends Error {
   readonly details?: { reason: string; retryable: false; available: string[] };
-  constructor(readonly code: string) {
+  constructor(readonly code: string, madeHere: string[] = []) {
     super({
       agent_not_teammate: "List teammates or accessible Sidekicks, then copy a returned agentId. This recipient is not available to you.",
       agent_message_not_received: "Copy Message ID from a message you received. You cannot respond using another agent’s message ID.",
@@ -452,6 +512,9 @@ class AgentCommunicationError extends Error {
       sidekick_contact_forbidden: "Choose a Sidekick you can access. This Sidekick is unavailable to this execution.",
       sidekick_contact_user_unavailable: "Ask your coordinator to contact the Sidekick. This execution has no user identity for Sidekick access.",
       sidekick_edit_requires_manager: "Tell the person that only the people who manage this Sidekick can change it. Its wizard was not messaged.",
+      sidekick_archive_outside_canvas: "Only a Canvas's Chat can archive a Sidekick this way, and only one that Canvas made.",
+      sidekick_archive_not_made_here: "No Sidekick this Canvas made has that id or exact name. Use sidekicks_list to see the ones it made; a Sidekick made elsewhere is archived from its own page.",
+      sidekick_archive_ambiguous: "Several Sidekicks this Canvas made have that name. Pass the sidekickId from sidekicks_list instead.",
       sidekick_change_outside_run: "Use sidekicks_list and message the Sidekick's authoring agentId. Only a Sidekick run can request a change to its own Sidekick this way.",
       sidekick_author_unavailable: "Ask your coordinator to create the Sidekick. This execution has no user identity for creation.",
       sidekick_owning_workstream_unavailable: "Choose personal or workspace scope if appropriate. This conversation has no owning workstream.",
@@ -464,6 +527,10 @@ class AgentCommunicationError extends Error {
       workstream_authority_generation_stale: "Report that the recipient’s workstream state is stale. Changing the message cannot repair it.",
     }[code] ?? `Report this agent communication error: ${code}.`);
     this.name = "AgentCommunicationError";
+    if (code === "sidekick_archive_not_made_here" || code === "sidekick_archive_ambiguous") {
+      // The names are this Canvas's own Sidekicks, which its context already lists.
+      this.details = { reason: "Nothing was archived.", retryable: false, available: madeHere };
+    }
     if (code === "sidekick_contact_forbidden") {
       this.details = {
         reason: "This action was not performed. For setup here, refresh sidekicks_list. For an explicitly named target, use find_sidekick or report its refusal without replacing it. This refusal does not establish a connector or scheduling blocker.",

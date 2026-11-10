@@ -56,6 +56,7 @@ import {
 } from "../artifacts/facet-host";
 import { ARTIFACT_COMPATIBILITY_DATE, ASSET_SHIM_MODULE, ASSET_SHIM_SOURCE } from "../artifacts/asset-shim";
 import {
+  admitDataWriteStatement,
   admitReadOnlyStatement,
   admitTableName,
   quoteIdentifier,
@@ -217,6 +218,10 @@ interface ArtifactFacetHost extends Rpc.DurableObjectBranded {
   rallyPage(quotedTable: string, offset: number, limit: number): Promise<{
     rows: ArtifactRow[];
   }>;
+  rallyWrite(sql: string, params: (string | number | null)[], maxRows: number): Promise<
+    | { ok: true; rowsWritten: number; columns: string[]; rows: ArtifactRow[]; truncated: boolean }
+    | { ok: false; detail: string }
+  >;
 }
 
 /**
@@ -286,6 +291,18 @@ export type ArtifactQueryResult =
   | { ok: true; columns: string[]; rows: ArtifactRow[]; rowCount: number; truncated: boolean }
   | { ok: false; reason: "no_artifact_data" }
   | { ok: false; reason: "sql_refused" | "private_rows"; detail: string };
+
+/**
+ * A row write's outcome, refusals included, discriminated for the reason a
+ * read's is. `sql_failed` is the site's own database refusing the statement
+ * (a missing table, a constraint), in SQLite's words; nothing was written.
+ * `rowsWritten` is the engine's physical counter, not a count of logical rows.
+ */
+export type ArtifactWriteResult =
+  | { ok: true; rowsWritten: number; columns: string[]; rows: ArtifactRow[]; truncated: boolean }
+  | { ok: false; reason: "no_artifact_data" }
+  | { ok: false; reason: "canvas_archived" }
+  | { ok: false; reason: "sql_refused" | "private_rows" | "sql_failed"; detail: string };
 
 export type ArtifactPageResult =
   | { ok: true; rows: ArtifactRow[] }
@@ -741,6 +758,45 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     }
     const read = await host.rallyQuery(statement, params, maxRows);
     return { ok: true, columns: read.columns, rows: read.rows, rowCount: read.rowCount, truncated: read.truncated };
+  }
+
+  /**
+   * Run one row write against the artifact's database, for
+   * `write_artifact_data`.
+   *
+   * **Who may call this is decided before it is reached**, by the tool's
+   * wiring (`workstream-artifact-data-wiring.ts`): this object knows the
+   * artifact, not the run. What it owns is what holds for every caller. The
+   * statement is admitted here as one INSERT, UPDATE, DELETE or REPLACE, so
+   * the site's schema stays its own code's. A viewer-scoped writer is refused
+   * on a site that keeps private rows, for the reason `queryData` refuses that
+   * reader: free SQL cannot be limited to one viewer's rows. And an archived
+   * Canvas's artifact takes no write, from the same tombstone that refuses a
+   * late publish.
+   */
+  async writeData(
+    sql: string,
+    params: (string | number | null)[],
+    maxRows: number,
+    scope: ArtifactRowScope,
+  ): Promise<ArtifactWriteResult> {
+    await this.initialized;
+    const state = this.stateRow();
+    if (!state || state.stateful !== 1) return { ok: false, reason: "no_artifact_data" };
+    if (this.canvasArchived()) return { ok: false, reason: "canvas_archived" };
+    const admission = admitDataWriteStatement(sql);
+    if (!admission.admitted) return { ok: false, reason: "sql_refused", detail: admission.reason };
+    const host = await this.facetFor(state);
+    if (viewerOf(scope) !== null && viewerTables(await host.rallySchema()).filtered.length > 0) {
+      return {
+        ok: false,
+        reason: "private_rows",
+        detail: "This site keeps private rows, so only the person who published it can change its data from a Chat. Ask them, or use the site itself.",
+      };
+    }
+    const written = await host.rallyWrite(admission.sql, params, maxRows);
+    if (!written.ok) return { ok: false, reason: "sql_failed", detail: written.detail };
+    return { ok: true, rowsWritten: written.rowsWritten, columns: written.columns, rows: written.rows, truncated: written.truncated };
   }
 
   /** One page of one table, for the Data view and the CSV export. */

@@ -1,5 +1,6 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { IconDatabase } from '@tabler/icons-react';
+import { SidekickStack } from '@rally/ui/components/sidekick-stack';
 import { Plus, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -67,15 +68,22 @@ export function CanvasesHomeScreen(): React.JSX.Element {
       return member ? [member] : [];
     });
     const run = canvasWrittenByRun(canvas, sidekicksById, currentUserId);
+    // A server older than attaching sends none.
+    const attachedSidekicks = canvas.sidekicks ?? [];
     const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.artifactKind, canvas.appearance);
     return <li className="dashboard-card" key={canvas.id}>
       <div aria-hidden="true" className="dashboard-card-preview" style={{ background: tint }}>
         <Icon aria-hidden="true" color={ink} size={44} />
         {present.length > 0 && <span className="canvas-card-presence"><AvatarStack currentUserId={currentUserId} members={present} nameTooltip={false} presentUserIds={canvas.presentUserIds} showTooltip={false} /></span>}
         {canvas.hasStoredData && <span className="canvas-card-data" id={`canvas-data-${canvas.id}`}><IconDatabase aria-hidden="true" size={16} stroke={1.9} />Data</span>}
+        {/* The Sidekicks attached to it, on the right under the Data badge, or in its place when there is none. */}
+        {attachedSidekicks.length > 0 && <span className={canvas.hasStoredData ? 'canvas-card-sidekicks is-below-data' : 'canvas-card-sidekicks'}>
+          <SidekickStack id={`canvas-sidekicks-${canvas.id}`} sidekicks={attachedSidekicks} />
+        </span>}
       </div>
       <div className="canvas-card-body">
-        <h3><Link aria-describedby={canvas.hasStoredData ? `canvas-data-${canvas.id}` : undefined} className="dashboard-card-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
+        <h3><Link aria-describedby={[canvas.hasStoredData ? `canvas-data-${canvas.id}` : null,
+          attachedSidekicks.length > 0 ? `canvas-sidekicks-${canvas.id}` : null].filter(Boolean).join(' ') || undefined} className="dashboard-card-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
         <small><span>{run
           // Above the card's stretched title link, so it opens the run and not the Canvas.
           ? <Link className="canvas-card-run" state={{ runNumber: run.runNumber }} to={run.to}>{run.label}</Link>
