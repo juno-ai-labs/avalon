@@ -32,7 +32,7 @@
 > [domain migration](../../domain-migration.md),
 > [Durable Object SQLite](../../durable-object-sqlite.md) (required
 > reading for the facet data plane, implementers and reviewers alike),
-> Durable Object migration tracking (retired app),
+> [Durable Object migration tracking](../../durable-object-migration-tracking.md),
 > [branded identifiers](../../branded-ids.md),
 > [choosing queues or RPC](../../choosing-queues-or-rpc.md),
 > [agent tools](../../agent-tools.md),

@@ -8,10 +8,7 @@ import "../../../tests/isolated-region";
  * The two halves are tested where each one lives. `forceMigration` is exercised
  * through a real Durable Object stub, because what it claims — that reaching the
  * method at all means the object woke and applied its schema — is a fact about
- * workerd's constructor semantics and cannot be observed against a double. The
- * unconditional report is exercised against an injected queue binding, the same
- * way `migration-reporting.test.ts` does, because the workerd test config
- * deliberately leaves the report queue unbound.
+ * workerd's constructor semantics and cannot be observed against a double.
  */
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
@@ -19,16 +16,13 @@ import { describe, expect, it } from "vitest";
 import { asWorkspaceId } from "@rally/contracts";
 import type {
   DurableObjectMigrationCommand,
-  DurableObjectMigrationReport,
 } from "@rally/contracts/durable-object-migrations";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 import {
   latestMigrationVersion,
-  reportForcedMigration,
-} from "../src/durable-objects/migration-reporting";
+} from "../src/durable-objects/migration-runtime";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
-import type { Env } from "../src/env";
 import {
   applyMigrationCommand,
   consumeMigrationCommandQueue,
@@ -36,7 +30,6 @@ import {
   migrationShortfall,
   MIGRATION_COMMAND_HEADS,
 } from "../src/queues/migration-command-consumer";
-import { createCloudflareTestBinding } from "../test/helpers/cloudflare-test";
 
 const WORKSPACE_PREFIX = "00000000-0000-7000-8000-0000006000";
 const WORKSPACE_HEAD = latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS);
@@ -201,93 +194,6 @@ describe("forceMigration", () => {
       await expect(applyMigrationCommand(env, command({ className })))
         .rejects.toThrow(new RegExp(`migration_command_unknown_class:${className}`, "u"));
     }
-  });
-});
-
-/**
- * The forced report is the operator's receipt that a specific object was
- * reached, so it is sent whether or not anything about the object changed —
- * which is the opposite of what an ordinary wake does.
- */
-describe("reportForcedMigration", () => {
-  function tracker(options: { reject?: boolean } = {}): {
-    reports: DurableObjectMigrationReport[];
-    binding: NonNullable<Env["MIGRATION_REPORT_QUEUE"]>;
-  } {
-    const reports: DurableObjectMigrationReport[] = [];
-    return {
-      reports,
-      binding: createCloudflareTestBinding<NonNullable<Env["MIGRATION_REPORT_QUEUE"]>>({
-        send: async (input: DurableObjectMigrationReport) => {
-          if (options.reject) throw new Error("queue_send_failed");
-          reports.push(input);
-        },
-      }),
-    };
-  }
-
-  function context(state: DurableObjectState, environment: Env): Parameters<typeof reportForcedMigration>[0] {
-    return {
-      state,
-      env: environment,
-      component: "workspace_do",
-      className: "WorkspaceDO",
-      latestVersion: WORKSPACE_HEAD,
-    };
-  }
-
-  async function withObject<T>(
-    seed: string,
-    run: (state: DurableObjectState) => Promise<T> | T,
-  ): Promise<T> {
-    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromString(workspaceObjectId(seed)));
-    return runInDurableObject(stub, async (_instance, state) => run(state));
-  }
-
-  it("reports every time it is asked, including when nothing changed", async () => {
-    const observer = tracker();
-    const ledger = (state: DurableObjectState): number => state.storage
-      .sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM _sql_schema_migrations`)
-      .toArray()[0]?.count ?? 0;
-
-    const { outcome, before, after } = await withObject("10", async (state) => {
-      const environment: Env = { ...env, MIGRATION_REPORT_QUEUE: observer.binding };
-      const start = ledger(state);
-      await reportForcedMigration(context(state, environment), null);
-      const result = await reportForcedMigration(context(state, environment), null);
-      return { outcome: result, before: start, after: ledger(state) };
-    });
-
-    // The object was already constructed, so nothing was applied — reporting an
-    // object twice must not touch its schema. This is what a forced migration
-    // does to an object that is already awake, and it is the whole of it.
-    expect(after).toBe(before);
-    expect(observer.reports.every((report) => report.appliedVersions.length === 0)).toBe(true);
-    expect(observer.reports).toHaveLength(2);
-    expect(observer.reports.map((report) => report.status)).toEqual(["current", "current"]);
-    // Distinct report ids, or the tracker's dedupe would collapse the second
-    // into the first and the operator's receipt would go missing.
-    expect(new Set(observer.reports.map((report) => report.reportId)).size).toBe(2);
-    expect(outcome.reported).toBe(true);
-  });
-
-  it("comes back unreported rather than throwing when the queue refuses", async () => {
-    const outcome = await withObject("11", (state) => reportForcedMigration(
-      context(state, { ...env, MIGRATION_REPORT_QUEUE: tracker({ reject: true }).binding }),
-      null,
-    ));
-
-    expect(outcome.reported).toBe(false);
-    expect(outcome.schemaVersion).toBe(WORKSPACE_HEAD);
-  });
-
-  it("comes back unreported when no tracker is bound at all", async () => {
-    const outcome = await withObject("12", (state) => reportForcedMigration(
-      context(state, env),
-      null,
-    ));
-
-    expect(outcome.reported).toBe(false);
   });
 });
 

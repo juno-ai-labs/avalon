@@ -716,6 +716,13 @@ the same URL is mentioned again. Missing extraction/capture work remains observa
 through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
+## Fleet migration
+
+For a rollout requiring dormant organizations to apply a migration, deploy the
+API first, then use the [forced migration CLI](forced-migrations.md#operations)
+with `--class=WorkspaceDO`. Constructors still apply migrations on ordinary
+wakeups; the CLI provides the eager fleet pass without the retired tracker.
+
 ## Changelog
 
 ### 2026-11-09 — Withdraw archived Canvas artifacts from resource search

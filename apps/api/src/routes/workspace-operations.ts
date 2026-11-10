@@ -12,10 +12,10 @@ import { retireWorkspaceForOperator } from '../services/workspace-retirement-ser
 import { ACE_OPERATOR_ROLE, getOperator, requireAceOperator, requireOperatorRole } from '../telemetry/operator-auth';
 
 /**
- * The regional API Ace's workspaces tab talks to.
+ * The regional workspace operator API.
  *
  * Behind the operator credential in the `demos` role, from the region's
- * `DEMO_OPERATORS_JSON`: Ace holds one token per region, and that token can
+ * `DEMO_OPERATORS_JSON`: Operators hold one token per region, and that token can
  * retire a workspace and set its plan, and nothing else. The handlers
  * validate, delegate, and map; the rules live in
  * `workspace-retirement-service.ts` and `usage-metering.ts`.

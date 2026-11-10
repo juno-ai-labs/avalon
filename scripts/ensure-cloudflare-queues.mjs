@@ -13,7 +13,7 @@ import { configuredRegions } from "./regions.mjs";
  * about a queue is done by hand.
  *
  * It used to stop and print the `wrangler queues create` command instead, and
- * the changelog in docs/durable-object-migration-tracking.md records why that
+ * the changelog in docs/forced-migrations.md records why that
  * changed. `--check` keeps that read-only form for a laptop: it reports what a
  * deploy would create and fails if anything is missing, without creating it.
  *
@@ -99,13 +99,16 @@ export async function configuredQueues() {
     required.push(...declared.required);
     createdOnDeploy.push(...declared.createdOnDeploy);
   }
+  for (const region of configuredRegions) {
+    required.push({ surface: 'force-migrations-cli', role: 'producer', name: `avalon-${region}-migration-commands` });
+  }
   return { required, createdOnDeploy };
 }
 
 /**
  * Every required queue must be named by a producer somewhere and a consumer
  * somewhere, across all the Wrangler files together — a per-region queue pairs
- * inside one file, the shared report queue pairs across three. A name on only
+ * inside one file. The migration CLI is registered as an API producer. A name on only
  * one side is a misspelling, and the deploy that attached it would go green
  * while the real queue backed up behind no consumer, or messages went into a
  * queue nothing drains. This is the failure the old fail-and-name-it gate
@@ -283,8 +286,7 @@ export async function ensureRequiredQueues(options = {}) {
       // deployment winning the race on this name would otherwise hide a token
       // that can no longer create until the next release that needs it to.
       if (error.permission) throw error;
-      // Two deployments can run this at once — the API and the migration
-      // tracker both declare `avalon-migration-reports` — and the loser's
+      // Two API deployment jobs can run this at once, and the loser's
       // create is refused as a duplicate. What matters is that the queue
       // exists, so look again before failing: if it is there now, somebody
       // else made it and this run is done. The outcome is checked rather than
