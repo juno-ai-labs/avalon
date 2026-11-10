@@ -21,6 +21,7 @@ export type FeatureFlagEnvironment = Partial<Record<
 /** Canonical model identities shared by runtime selection, routing and presentation. */
 export const MODEL_IDS = {
   GPT_6_1_SOL: "openai/gpt-6.1-sol",
+  GPT_6_1_TERRA: "openai/gpt-6.1-terra",
   GPT_5_6_SOL: "openai/gpt-5.6-sol",
   GPT_5_6_TERRA: "openai/gpt-5.6-terra",
   GPT_5_6_LUNA: "openai/gpt-5.6-luna",
@@ -62,10 +63,10 @@ export const AGENT_MODEL_OVERRIDES = [
 ] as const;
 
 export const AGENT_MODEL_DEFAULTS = {
-  OPENROUTER_PRIMARY_MODEL: MODEL_IDS.GPT_5_6_TERRA,
+  OPENROUTER_PRIMARY_MODEL: MODEL_IDS.GPT_6_1_TERRA,
   OPENROUTER_SMARTER_MODEL: MODEL_IDS.GPT_6_1_SOL,
   OPENROUTER_FALLBACK_MODEL: MODEL_IDS.GEMINI_3_8_FLASH,
-  OPENROUTER_FASTER_MODEL: MODEL_IDS.GPT_5_6_TERRA,
+  OPENROUTER_FASTER_MODEL: MODEL_IDS.GPT_6_1_TERRA,
 } as const;
 
 export const AGENT_MODEL_ENV_KEYS = {
