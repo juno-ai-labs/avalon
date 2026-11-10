@@ -3,11 +3,12 @@ import {
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
   AVALON_SKILL_TOOL_DEFINITIONS,
 } from "@rally/agent-harness";
-import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import { WorkstreamWorkflowInputSchema, type WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../../src/services/integrations";
 import { createAvalonMultimodalGenerationPlugin } from "../../src/services/multimodal-generation/plugin";
 import { TERMINAL_TOOL_DEFINITIONS } from "../../src/services/terminal/contract";
 import { conversationToolPorts, createConversationsPlugin } from "../../src/services/conversation-tools";
+import { createSidekickTaskOutcomePlugin } from "../../src/services/sidekick-task-outcome";
 import { createTestEnv } from "./cloudflare-test";
 import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./connector-registry";
 
@@ -65,6 +66,7 @@ export const EXPECTED_TOOLS = [
   "web.fetch:fetch",
   "rally.sidekick.plugins.list:plugins_list",
   "rally.sidekick.submit:submit_draft",
+  "rally.sidekick.report_outcome:report_outcome",
   "rally.conversation.post:post",
   "rally.conversation.attach:attach",
   "terminal.import_resource",
@@ -123,12 +125,20 @@ export function everyAuthoredToolSchema(): AuthoredToolSchema[] {
     (tool) => [tool],
   )?.tools ?? []).map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
   const registry = createTestConnectorRegistry();
+  const taskOutcome = (createSidekickTaskOutcomePlugin(WorkstreamWorkflowInputSchema.parse({
+    ...workflowInput(), parentKind: "automation", parentId: "00000000-0000-4000-8000-00000000000a",
+    triggerMessageId: "00000000-0000-4000-8000-000000000004",
+    activityId: "00000000-0000-4000-8000-000000000005",
+    automationRun: { schemaVersion: 1, automationId: "00000000-0000-4000-8000-00000000000a",
+      runId: "00000000-0000-4000-8000-000000000003", definitionRevision: 1,
+      trigger: { kind: "manual", requestedByUserId: "00000000-0000-4000-8000-000000000000" } },
+  }))?.tools ?? []).map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
   const connectors = registry.list().flatMap((manifest) =>
     registry.get(manifest.type).agentPlugin.tools.map((definition) => ({
       name: `${manifest.type}.${definition.name}`,
       schema: definition.inputSchema,
     })));
-  const walked = [...core, ...discovery, ...terminal, ...multimodal, ...conversations, ...connectors]
+  const walked = [...core, ...discovery, ...terminal, ...multimodal, ...conversations, ...taskOutcome, ...connectors]
     .map((entry) => ({ name: entry.name, schema: entry.schema as Record<string, unknown> }));
 
   // Thrown here rather than asserted in one `it`, so no check can run against a

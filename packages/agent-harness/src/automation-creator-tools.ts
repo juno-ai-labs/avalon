@@ -828,6 +828,12 @@ A run that has nothing to report ends with one short line;
 never instruct a run to end with no text.
 Name every other result destination and the action that delivers it: a run must be
 told to send to an inbox, a Slack conversation, a DM or a document.
+When an additional failure notice in Rally is required, attach its Canvas with
+conversation_attach (the Sidekick's own conversation and its written Canvases are already in scope),
+then save its canonical conversation_list id in failureNotificationConversationId.
+Use null when the run's reply on its shared Sidekick conversation is sufficient.
+Refer to that configured destination instead of embedding a separate hard-coded "home" id.
+A destination named in prose is not authorization; inaccessible configured destinations are refused.
 
 The wizard, runs and background agents share one Terminal sandbox; other Sidekicks
 and the conversation that asked for this one have separate sandboxes. Eligible delegates can use

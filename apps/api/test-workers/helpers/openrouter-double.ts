@@ -44,7 +44,7 @@ export interface ProviderCall {
    * turn's Responses `input` is read back into messages by
    * `providerRequestView`; the raw items stay on `body.input`.
    */
-  readonly messages: readonly { role: string; content: unknown }[];
+  readonly messages: readonly { role: string; content: unknown; tool_call_id?: string }[];
   /** Names of the tools offered on this turn, in the order they were sent. */
   readonly toolNames: readonly string[];
   /** The raw request payload, for anything the fields above do not model. */
@@ -86,6 +86,25 @@ export type ProviderReply =
   | { readonly raw: Response };
 
 export type ProviderHandler = (call: ProviderCall) => ProviderReply | Promise<ProviderReply>;
+
+/** Successful Sidekick scripts must explicitly report their task outcome before a final reply. */
+export function withSuccessfulSidekickOutcome(handler: ProviderHandler): ProviderHandler {
+  const pending = new Map<string, ProviderReply>();
+  let nextReport = 0;
+  return async (call) => {
+    // Return the same scripted final after its report, without consuming the
+    // next scripted turn (which may belong to a later continuation).
+    for (const message of call.messages) {
+      const reply = message.tool_call_id ? pending.get(message.tool_call_id) : undefined;
+      if (reply) { pending.delete(message.tool_call_id!); return reply; }
+    }
+    const reply = await handler(call);
+    if (!("say" in reply) || !reply.say || !call.toolNames.includes("sidekick_report_outcome")) return reply;
+    const id = `sidekick-outcome-${++nextReport}`;
+    pending.set(id, reply);
+    return { callTool: { id, name: "sidekick_report_outcome", arguments: { outcome: "succeeded", summary: reply.say } } };
+  };
+}
 
 export interface OpenRouterDouble {
   /** Every inference request the run made, in order. */

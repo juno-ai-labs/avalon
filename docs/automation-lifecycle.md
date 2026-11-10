@@ -1554,6 +1554,44 @@ Sidekick's own conversation; nothing posts a run's result for it. That table
 is not `parent_sidekicks`, which recorded that a Channel's conversations may
 load the Sidekick as a skill and which nothing writes now.
 
+A definition may set `failureNotificationConversationId` to a canonical
+`conversation_list` id in this scope: the Sidekick's own conversation, a Canvas
+it writes, or an explicitly attached Canvas. This declares an additional
+failure-notification destination; it grants no access. Apply resolves it through
+normal scope and canonical admission for the default run-as person, refusing
+an unattached, inaccessible, archived or noncanonical destination with
+`sidekick_failure_notification_destination_unavailable`. Attach a new Canvas
+through `conversation_attach` before saving. The activation's host-provided
+context carries the configured destination. An absent field or explicit null
+requires no additional notification destination; the run's final reply retains
+its normal delivery to the shared Sidekick conversation. Posts re-admit access
+at delivery time. Never infer access from an id embedded in saved instructions.
+
+### Task outcome
+
+An activation's model response ending is execution completion, not proof its
+requested work succeeded. The preloaded `sidekick_report_outcome` tool records
+`succeeded`, `blocked`, or `failed` plus an actionable summary, after work and
+required delivery attempts. Its completed tool receipt is the durable outcome;
+there is no second outcome ledger. The host reads the latest report from this
+execution before committing its terminal state. A blocked or failed task maps
+to a failed run with `sidekick_task_blocked` or `sidekick_task_failed`. A missing
+or uncommitted report on a fresh activation is `sidekick_task_outcome_missing`,
+never success. A conversational continuation may reply without another report;
+its own explicit outcome still applies. This avoids an extra inference turn
+for ordinary follow-ups and prevents a previous declaration in history from
+making the next reply look like a failed task.
+
+The initial activation deliberately requires a positive declaration: defaulting
+a missing report to success would reproduce the original false completion. It
+costs one reporting turn for a fresh activation; a failure-only tool was rejected
+because forgetting that tool would silently mark the blocked task successful.
+
+Cancellation, ambiguous writes and explicit needs-input retain their existing
+precedence. Delegated agents do not report their coordinator's task outcome.
+A recovered intermediate tool error does not itself fail a successful task;
+delivering a failure notice does not make the original task successful.
+
 ### Lifecycle
 
 | Transition | Who | What |
@@ -2114,6 +2152,25 @@ conversation-object SQLite; the vocabulary, `StatusDot`, the
 survive as described above.
 
 ## Changelog
+
+### 2026-11-09 — Authorized failure destinations and explicit task outcomes
+
+**What changed:** Definitions can name a failure-notification destination that
+apply validates against existing conversation scope and the default execution
+principal's access. Activations receive
+that destination as host context and report their final task outcome through
+an ordinary durable tool receipt. The host settles blocked, failed and
+unconfirmed fresh activations as failures even when the model loop ends normally.
+Ordinary continuations can answer without another success declaration, while
+their own explicit blocked/failed report still changes task state.
+
+**Why:** Dashboard run 457 could neither execute nor notify: its Organization
+Sidekick named an unattached "home" only in prose, then normal loop completion
+made the run appear completed. More prose cannot grant conversation access,
+and treating every failed tool call as task failure would misclassify recovered
+work. Reuse attachment authorization and record the final task declaration
+separately from execution completion. Required delivery must still be confirmed;
+a posted failure notice is not a successful dashboard refresh.
 
 ### 2026-11-09 — Keep Sidekick admission on supported triggers
 

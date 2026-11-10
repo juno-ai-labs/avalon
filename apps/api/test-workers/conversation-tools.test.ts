@@ -16,6 +16,7 @@
  */
 
 import type { HarnessToolContext } from "@rally/agent-harness";
+import { __integrationTesting } from "../src/services/integrations";
 import { createCanvas } from "../src/services/canvas-service";
 import { conversationToolPorts, createConversationsPlugin } from "../src/services/conversation-tools";
 import { substreamLoopId } from "../src/durable-objects/names";
@@ -42,6 +43,7 @@ import {
   asWorkstreamId,
   type AutomationDraft,
   WorkstreamWorkflowInputSchema,
+  AutomationRunDefinitionV1Schema,
   type SubstreamId,
 } from "@rally/contracts";
 
@@ -199,6 +201,67 @@ beforeEach(async () => {
     incarnation: "existing-member", revision: 1,
   } });
   await seedRoom(ROOM_ID, "Investors", [AUTHOR_ID, COLLEAGUE_ID]);
+});
+
+describe("configured failure destinations", () => {
+  it("validates the default execution principal even when an administrator applies the definition", async () => {
+    const destinationId = asWorkstreamId(crypto.randomUUID());
+    await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: COLLEAGUE_ID,
+      canvasId: destinationId, title: "Administrator's private notices" });
+    await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: false, relationship: {
+      workspaceId: WORKSPACE_ID, userId: COLLEAGUE_ID, accessClass: "member", role: "admin", status: "active",
+      incarnation: "existing-member", revision: 2,
+    } });
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
+      scope: "workspace", automationId: AUTOMATION_ID });
+    const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
+    const actor = { userId: COLLEAGUE_ID, actorRole: "admin" as const, participantOfOwningWorkstream: false };
+    expect(await workspace().attachSidekickConversation({ ...addressed, userId: COLLEAGUE_ID, reference: destinationId }))
+      .toMatchObject({ ok: true });
+    await workspace().sidekickSubmitDefinition({ ...addressed,
+      draft: { ...DEFINITION, failureNotificationConversationId: destinationId }, evaluatorRules: null, submittedByRunId: null });
+    await expect(applySidekick(TEST_ENV, { ...addressed, actor })).rejects.toThrow("failureNotificationConversationId");
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: destinationId,
+      actor: { userId: actor.userId, actorRole: actor.actorRole },
+      update: { visibility: "participants", userIds: [AUTHOR_ID] } });
+    expect(await applySidekick(TEST_ENV, { ...addressed, actor })).toMatchObject({ lifecycle: "active" });
+  });
+
+  it("requires an authorized attachment for an Organization Sidekick's configured failure destination", async () => {
+    const destinationId = asWorkstreamId(crypto.randomUUID());
+    await seedRoom(destinationId, "Dashboard notices");
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
+      scope: "workspace", automationId: AUTOMATION_ID });
+    const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
+    const actor = { userId: AUTHOR_ID, actorRole: "member" as const, participantOfOwningWorkstream: false };
+    await workspace().sidekickSubmitDefinition({ ...addressed,
+      draft: { ...DEFINITION, suggestedScope: "workspace", failureNotificationConversationId: destinationId },
+      evaluatorRules: null, submittedByRunId: null });
+    await expect(applySidekick(TEST_ENV, { ...addressed, actor }))
+      .rejects.toThrow("failureNotificationConversationId");
+    expect(await workspace().attachSidekickConversation({ ...addressed, userId: AUTHOR_ID, reference: destinationId }))
+      .toMatchObject({ ok: true });
+    expect(await applySidekick(TEST_ENV, { ...addressed, actor })).toMatchObject({ lifecycle: "active",
+      currentDefinition: { failureNotificationConversationId: destinationId } });
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID,
+      userId: AUTHOR_ID, scope: { kind: "sidekick", automationId: AUTOMATION_ID }, reference: destinationId }))
+      .toMatchObject({ ok: true, conversation: { conversationId: destinationId } });
+    const { runId } = await workspace().sidekickRunNow({ ...addressed, actor, idempotencyKey: "configured-destination-context" });
+    const definition = AutomationRunDefinitionV1Schema.parse(await workspace().sidekickReadRunDefinition({ ...addressed, runId }));
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "automation", parentId: AUTOMATION_ID, substreamId: runId, loopId: "destination-context",
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "manual",
+      automationRun: { schemaVersion: 1, automationId: AUTOMATION_ID, runId,
+        definitionRevision: definition.definitionRevision, trigger: definition.trigger } });
+    const context = await __integrationTesting.loadRunPromptContext(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID), input,
+      { title: "Dashboard notices", objective: "Refresh the dashboard" });
+    expect(context.systemPrompt).toContain(`"failureNotificationConversationId": "${destinationId}"`);
+    await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId: destinationId, actor: { userId: AUTHOR_ID, actorRole: "member" } });
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(destinationId));
+    await expect(applySidekick(TEST_ENV, { ...addressed, actor })).rejects.toThrow("failureNotificationConversationId");
+  });
+
 });
 
 describe("sidekick_attach_resource", () => {

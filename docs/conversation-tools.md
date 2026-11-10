@@ -65,6 +65,8 @@ run child woken without its `automationRun`. The plugin is `preload: true` and
 `explicit: true`, and loading it reads nothing: the first tool call is the
 first read.
 
+Configured failure destinations use this same admission; see [Sidekick destinations and outcomes](automation-lifecycle.md#attached-conversations).
+
 ### Tools
 
 What a run does about missing access is the standing activation section's

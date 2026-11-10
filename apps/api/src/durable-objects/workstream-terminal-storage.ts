@@ -1006,7 +1006,7 @@ export class WorkstreamTerminalStorage {
    * park the sandbox in the state that revision leaves it in.
    *
    * A sandbox that exists was stopped to take the new policy, so it lands in
-   * `stopped`; one that was never created stays `starting`. Deliberately not
+   * `stopped`; unfinished managed preparation retains `starting`. Deliberately not
    * fenced on generation — the workspace policy applies to whichever
    * generation is current when the change lands.
    */
@@ -1014,7 +1014,7 @@ export class WorkstreamTerminalStorage {
     this.sql.exec(
       `UPDATE terminal_workspace
           SET lifecycle_state =
-                CASE WHEN sandbox_id IS NULL THEN 'starting' ELSE 'stopped' END,
+                CASE WHEN sandbox_id IS NULL OR lifecycle_state = 'starting' THEN 'starting' ELSE 'stopped' END,
               applied_network_revision = ?, version = version + 1, updated_at = ?
         WHERE id = 1`,
       input.networkRevision,

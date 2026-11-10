@@ -781,6 +781,10 @@ gives up, which is far longer than a test's budget. The run stays `executing`,
 and the test waiting on it times out on an assertion that has nothing to do with
 what broke.
 
+Successful Sidekick activation scripts can use `withSuccessfulSidekickOutcome`
+from `test-workers/helpers/openrouter-double.ts`; outcome-specific tests script
+the declaration themselves.
+
 That failure is worse than it sounds, because the passing case is not
 necessarily better. A notification suite, since deleted in plan step C-2, used to start an opening
 model run in every fixture even though it asserted only committed product state

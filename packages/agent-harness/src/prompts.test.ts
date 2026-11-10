@@ -203,7 +203,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "a9cbe9fabab08a99d58ed5311ee8e37e8d2f0f47a3f50eac59c693fcd7ba7f92",
+        hash: "4a075147e25ed9f4b015fce746f1c24efaff441f7c4ada9a5daebe17c7907ee9",
       },
     };
 
