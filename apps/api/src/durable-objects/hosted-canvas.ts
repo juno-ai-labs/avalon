@@ -44,7 +44,7 @@ import type { DirectoryCommonEffect } from "./conversation-parent-object";
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationHost, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { sidekickManagerAllows, sidekickReaderAllows } from "./hosted-sidekick";
 import { ScopeInvitationService } from "./scope-invitation-service";
-import { artifactNewsSql } from "./workspace-pin-storage";
+import { artifactNewsCauseSql, artifactNewsSql } from "./workspace-pin-storage";
 import { tellCanvasPinners } from "./canvas-artifact-notices";
 import {
   accessRefusals,
@@ -289,8 +289,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   }
 
   /**
-   * A new message in the Chat is activity: the Canvas moves up the recency
-   * list, and its row's unread state moves for anyone who has read it.
+   * Saved Chat messages advance recency independently of the unread cursor.
    */
   protected onChildProjection(substreamId: string, effect: DirectoryCommonEffect,
     prior: PriorChildProjection | null, now: number): void {
@@ -300,7 +299,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     // does not move the Canvas up the recency list.
     const before = prior?.latestAttentionOrdinal ?? 0;
     const latest = effect.latestAttentionOrdinal ?? 0;
-    if (before === latest) return;
+    // Older senders carried only the attention cursor and conversation activity time.
+    const legacyMessageAt = latest > before ? effect.lastActivityAt : null;
+    const messageAt = effect.lastMessageAt === undefined ? legacyMessageAt : effect.lastMessageAt;
     // The Chat's first message, in a Canvas a person made with no title that
     // nobody has retitled since: it starts naming now, in this write, so an
     // empty Canvas reads as its title rather than as a naming skeleton that
@@ -310,8 +311,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
           SET updated_at = MAX(updated_at, ?1),
               title_status = CASE WHEN ?3 = 0 AND ?4 >= 1 AND title_status = 'settled' AND title = ?5
                                        AND writer_sidekick_id IS NULL THEN 'naming' ELSE title_status END
-        WHERE canvas_id = ?2 AND archived_at IS NULL RETURNING title_status`,
-      now, this.canvasId, before, latest, UNTITLED_CANVAS,
+        WHERE canvas_id = ?2 AND archived_at IS NULL AND (?1 > updated_at OR ?3 <> ?4) RETURNING title_status`,
+      messageAt === null ? 0 : Date.parse(messageAt), this.canvasId, before, latest, UNTITLED_CANVAS,
     ).toArray()[0];
     if (!changed) return;
     this.host.noteCanvasDirectoryChanged(this.canvasId);
@@ -324,10 +325,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
 
   /**
    * Title a Canvas made with no title from the message that opened its Chat
-   * (`canvasTitleFromOpening`), through the write a retitle makes, so the
-   * list and the detail move together. Only while it is still `naming`: a
-   * person who retitled it first settled it, and their title stands. A model
-   * that answers nothing settles it as it is, rather than leaving it waiting.
+   * (`canvasTitleFromOpening`) without changing the date already recorded for
+   * the message. The write requires `naming`, so a person's manual title
+   * stands. An empty model response settles the existing title.
    */
   async nameFromOpening(): Promise<void> {
     const row = this.row();
@@ -342,9 +342,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     });
     this.host.storage.transactionSync(() => {
       const settled = this.sql.exec(
-        `UPDATE canvas_directory SET title = COALESCE(?, title), title_status = 'settled', updated_at = ?
+        `UPDATE canvas_directory SET title = COALESCE(?, title), title_status = 'settled'
           WHERE canvas_id = ? AND title_status = 'naming' RETURNING canvas_id`,
-        title, Date.now(), this.canvasId,
+        title, this.canvasId,
       ).toArray().length === 1;
       if (settled) this.host.noteCanvasDirectoryChanged(this.canvasId);
     });
@@ -363,8 +363,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     // A Sidekick's Organization scope admits a member and no guest, so the
     // writer's audience is decided for the relationship in hand.
     const member = relationship?.status === "active" && relationship.accessClass === "member";
-    return {
-      exists: true as const,
+    const facts = {
       visibility: row.visibility,
       creator: row.created_by_user_id === request.userId,
       participant: canvasParticipant(this.sql, this.canvasId, request.userId),
@@ -372,7 +371,11 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         { userId: request.userId, actorRole: member ? "member" : null }),
       administrator: member && (relationship.role === "owner" || relationship.role === "admin"),
       children: this.childRegistry().map((child) => child.substreamId),
-      revision: JSON.stringify([row.authority_generation, row.updated_at]),
+    };
+    return {
+      exists: true as const,
+      ...facts,
+      revision: JSON.stringify([row.authority_generation, facts]),
       validatedAt: Date.now(),
     };
   }
@@ -405,8 +408,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       }
       if (row.archived_at !== null) return;
       const now = Date.now();
-      this.sql.exec(`UPDATE canvas_directory SET archived_at = ?, updated_at = ?, title_status = 'settled' WHERE canvas_id = ?`,
-        now, now, this.canvasId);
+      this.sql.exec(`UPDATE canvas_directory SET archived_at = ?, title_status = 'settled' WHERE canvas_id = ?`,
+        now, this.canvasId);
       this.sql.exec(`INSERT INTO resource_search_versions(resource_id, revision, pending, not_before)
         SELECT id, 1, 1, 0 FROM resources WHERE provider = 'avalon_generated'
           AND (publication_parent_id = ? OR id IN (SELECT resource_id FROM canvas_artifacts WHERE canvas_id = ?))
@@ -550,6 +553,14 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     if (!row || row.workspace_id !== request.workspaceId || row.archived_at !== null) return { noted: false };
     const now = Date.now();
     this.host.storage.transactionSync(() => {
+      const publication = this.sql.exec<{ published_at: string | null }>(
+        `SELECT COALESCE((SELECT version.captured_at FROM resource_versions version
+                           WHERE version.resource_id = resource.id AND (version.version = 1 OR ${artifactNewsCauseSql("version")})
+                           ORDER BY version.version DESC LIMIT 1),
+                         CASE WHEN resource.current_version <= 1 THEN resource.updated_at END) AS published_at
+           FROM resources resource
+          WHERE resource.id = ? AND ${listedResourceVisibilitySql("resource")}`, request.resourceId,
+      ).toArray()[0];
       this.sql.exec(
         `INSERT INTO canvas_artifacts (canvas_id, resource_id, added_at) VALUES (?, ?, ?)
          ON CONFLICT(canvas_id, resource_id) DO NOTHING`, this.canvasId, request.resourceId, now,
@@ -557,7 +568,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       this.sql.exec(
         `UPDATE canvas_directory SET updated_at = MAX(updated_at, ?), last_editor_kind = ?, last_editor_id = ?,
                 last_writer_run_id = ? WHERE canvas_id = ?`,
-        now, request.editor.kind, request.editor.id, request.runId ?? null, this.canvasId,
+        publication?.published_at ? Date.parse(publication.published_at) : 0,
+        request.editor.kind, request.editor.id, request.runId ?? null, this.canvasId,
       );
       this.host.noteCanvasDirectoryChanged(this.canvasId);
     });
@@ -643,8 +655,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
    * may, as anyone it admits may change its artifacts from its Chat; anyone
    * else is told it does not exist. An appearance is merged field by field
    * into what is stored, as a Sidekick's is, so two people picking at once
-   * each keep their field. Choosing an appearance is not activity, so it does
-   * not move `updated_at` and the Canvas keeps its place in the recency list.
+   * each keep their field. Titles and appearance leave the Canvas's recency alone.
    */
   update(input: CanvasUpdateRequest): CanvasDetail {
     const request = parseRpcInput(CanvasUpdateRequestSchema, input, "canvas_update");
@@ -659,8 +670,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     this.host.storage.transactionSync(() => {
       // A person's title settles it, so a naming pass still in flight leaves it alone.
       if (request.title !== undefined) {
-        this.sql.exec(`UPDATE canvas_directory SET title = ?, title_status = 'settled', updated_at = ? WHERE canvas_id = ?`,
-          request.title, Date.now(), this.canvasId);
+        this.sql.exec(`UPDATE canvas_directory SET title = ?, title_status = 'settled' WHERE canvas_id = ?`,
+          request.title, this.canvasId);
       }
       if (appearance !== null) {
         this.sql.exec(`UPDATE canvas_directory SET appearance_json = ? WHERE canvas_id = ?`, JSON.stringify(appearance), this.canvasId);
@@ -701,8 +712,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
           this.canvasId, userId, request.actor.userId, now,
         );
       }
-      this.sql.exec(`UPDATE canvas_directory SET visibility = ?, updated_at = ? WHERE canvas_id = ?`,
-        request.update.visibility, now, this.canvasId);
+      this.sql.exec(`UPDATE canvas_directory SET visibility = ? WHERE canvas_id = ?`,
+        request.update.visibility, this.canvasId);
       this.host.noteCanvasDirectoryChanged(this.canvasId);
     });
     // A request from someone this audience now admits is settled: whoever

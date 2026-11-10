@@ -3154,6 +3154,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * a row whose listing projection is a second commit can be created and never
    * shown. The reads do not, for the reason every other authority's reads do
    * not — there is nothing to publish.
+   * Canvas admission reports viewer read state alone. A common projection
+   * could advance recency just because someone opened the Canvas.
    *
    * This replaces a bespoke `provisionRuntime` RPC that validated its own body
    * and re-checked identity inside the product service. Both checks are what
@@ -3169,10 +3171,12 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     const refusal = this.objectPortRefusal(parsed.data, "workstream_identity_mismatch");
     if (refusal) return refusal;
     const method = this.identityRows[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const directory = parsed.data.operation === "admitParticipant" && this.objectStore.identity()?.parentKind === "canvas"
+      ? "viewers" : true;
     const value = mutatesIdentity(parsed.data.operation)
       ? await this.product.commitRuntimeMutation(
         () => method.apply(this.identityRows, parsed.data.args),
-        true,
+        directory,
       )
       : method.apply(this.identityRows, parsed.data.args);
     return { status: 200, payload: { ok: true, value: value ?? null } };
@@ -5203,12 +5207,16 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
           executionEpoch: execution.executionEpoch,
           leaseOwner: execution.leaseOwner,
           expectedBindStateRevision: current.bind_state_revision,
-        }, (effects) => this.product.enqueueRegionalEffectsInTransaction(effects), () => {
-          if (transition.kind === "protocol_user_appended"
-            && transition.provenance.sourceKind === "completion_verification"
-            && readCompletionVerificationSnapshot(this.state.storage, execution.runId, null).lifecycle === "cancelled") {
-            throw new Error("completion_verification_stopped");
-          }
+        }, {
+          enqueueRegionalEffects: (effects) => this.product.enqueueRegionalEffectsInTransaction(effects),
+          enqueueAssistantText: () => this.product.enqueueCanvasAssistantTextInTransaction(),
+          assertAdmission: () => {
+            if (transition.kind === "protocol_user_appended"
+              && transition.provenance.sourceKind === "completion_verification"
+              && readCompletionVerificationSnapshot(this.state.storage, execution.runId, null).lifecycle === "cancelled") {
+              throw new Error("completion_verification_stopped");
+            }
+          },
         });
         await this.flushSemanticRealtimeOutboxBestEffort();
       },

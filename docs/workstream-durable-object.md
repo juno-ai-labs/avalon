@@ -1133,7 +1133,8 @@ instead.
 The parent stores the latest common projection from each child
 (`sidekick_child_projections`) and each reader's read of `"0"`
 (`sidekick_viewer_reads`), and derives what its list row shows from them:
-a Canvas's unread and recency from its Chat's latest attention ordinal, a
+a Canvas's unread from its Chat's latest attention ordinal and message
+recency from `lastMessageAt`, a
 Sidekick's unread and Needs input from its shared conversation and its run
 states. A child's ordinals are independent and are never summed into `"0"`'s.
 A conversation's directory, activity, and notification effects reach nobody
