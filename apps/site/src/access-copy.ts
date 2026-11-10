@@ -1,7 +1,9 @@
 /** Approved landing copy. */
 export const accessCopy = {
   title: 'Rally · Docs that update as work happens',
-  headline: 'Docs that update as work happens.',
+  /** The hero headline, in two parts: the claim, then its italic turn. Both home pages use them. */
+  headline: 'Docs that update',
+  headlineTurn: 'as work happens.',
   description: 'Rally makes documents, spreadsheets, dashboards and sites that keep themselves current. When something happens in Linear, Slack, Gmail or your other tools, Rally publishes a new version. Share a Canvas, and your whole team works from the same live page.',
 };
 

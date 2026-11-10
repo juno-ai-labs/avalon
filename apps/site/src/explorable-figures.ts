@@ -56,9 +56,10 @@ function versionCard(version: (typeof VERSIONS)[number], index: number): string 
 }
 
 export function renderLoopFigure(): string {
-  const tools = TOOLS.map(({ tool, text }, i) => {
+  // Each tool carries the Sidekick's status lines for its event, so the client keeps no copy of them.
+  const tools = TOOLS.map(({ tool, text, read }, i) => {
     const y = TOOL_Y[i]!;
-    return `<g class="loop-tool" data-tool="${i}"><rect x="20" y="${y - 34}" width="220" height="68" rx="10"/>`
+    return `<g class="loop-tool" data-tool="${i}" data-arriving="Event from ${tool.split(' ')[0]}" data-reading="${read}"><rect x="20" y="${y - 34}" width="220" height="68" rx="10"/>`
       + `<text class="loop-tool-name" x="40" y="${y - 6}">${tool}</text><text class="loop-tool-text" x="40" y="${y + 18}">${text}</text></g>`;
   }).join('');
   const wiresIn = TOOL_Y.map((y, i) =>
@@ -115,7 +116,7 @@ export function renderPeopleFigure(): string {
       + (initial ? `<text x="${x.toFixed(1)}" y="${(y + 4.5).toFixed(1)}" text-anchor="middle">${initial}</text>` : '')
       + '</g>';
   }).join('');
-  return `<figure class="explorable people-fig" data-people data-max="${PEOPLE.max}">`
+  return `<figure class="explorable people-fig" data-people>`
     + `<div class="people-grid"><svg class="explorable-svg" viewBox="0 0 1000 420" role="img" aria-label="One Canvas in the middle with people around it, each linked to the same page. A slider adds people, from one to forty.">`
     + `${people}<g class="people-canvas"><rect x="420" y="120" width="160" height="180" rx="10"/>`
     + `<text class="people-canvas-title" x="440" y="156">Launch tracker</text>`
@@ -123,9 +124,8 @@ export function renderPeopleFigure(): string {
     + `<rect class="people-line" x="440" y="212" width="110" height="7" rx="2"/><rect class="people-line is-accent" x="440" y="230" width="70" height="7" rx="2"/>`
     + `<circle class="people-rally" cx="560" cy="280" r="13"/><image href="/brand/rally-mark-paper.svg" x="551" y="271" width="18" height="18"/></g></svg>`
     + `<dl class="people-stats"><div><dt>People in the Canvas</dt><dd data-people-count>${PEOPLE.start}</dd></div>`
-    + `<div><dt>Share setting</dt><dd data-people-label>Specific people</dd></div>`
     + `<div><dt>Copies of the page</dt><dd>1</dd></div><div><dt>Seats to buy</dt><dd>None</dd></div></dl></div>`
     + `<div class="explorable-controls"><label class="explorable-label" for="people-range">People</label>`
     + `<input class="explorable-range" id="people-range" type="range" min="1" max="${PEOPLE.max}" step="1" value="${PEOPLE.start}" data-people-range></div>`
-    + `<figcaption class="fig-caption"><span></span>Drag to add people. However many join, there is one page, one Chat and one Rally, and nobody&rsquo;s copy goes out of date. The share setting is the one the Canvas&rsquo;s Share menu would show.</figcaption></figure>`;
+    + `<figcaption class="fig-caption"><span></span>Drag to add people. However many join, there is one page, one Chat and one Rally, and nobody&rsquo;s copy goes out of date.</figcaption></figure>`;
 }
