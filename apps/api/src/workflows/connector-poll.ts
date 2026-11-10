@@ -21,6 +21,7 @@ import {
   pollAttemptErrorCode,
   pollAttemptFailure,
   PollResultSchema,
+  terminalPollFailureLevel,
 } from "./connector-poll-result";
 
 interface StoredPollResult {
@@ -127,7 +128,7 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       const at = new Date().toISOString();
       const timedOut = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
       const { code } = await recordConnectorPollFailure(workspaceEnv.DB, input, error, at);
-      logStructuredEvent(this.env, "error", timedOut ? "connector_poll_timeout" : "connector_poll_failed", {
+      logStructuredEvent(this.env, timedOut ? "error" : terminalPollFailureLevel(error), timedOut ? "connector_poll_timeout" : "connector_poll_failed", {
         workspace_id: input.workspaceId,
         connection_id: input.connectionId,
         provider: connection.provider,
