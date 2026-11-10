@@ -1,8 +1,12 @@
-import { InspectEngineeringUsageInputSchema, ChangeEngineeringPlanInputSchema, EngineeringUsageResultSchema } from "@rally/contracts/engineering-inspection";
 import { inspectQueues, peekDeadLetters } from "./queues";
-import { EngineeringPasswordUserInputSchema, EngineeringProvisionPasswordResultSchema, EngineeringRevokePasswordResultSchema } from '@rally/contracts/engineering-inspection';
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import {
+  InspectEngineeringUsageInputSchema,
+  ChangeEngineeringPlanInputSchema,
+  EngineeringUsageResultSchema,
+  EngineeringPasswordUserInputSchema,
+  EngineeringProvisionPasswordResultSchema,
+  EngineeringRevokePasswordResultSchema,
   EngineeringArtifactListLookupSchema,
   EngineeringArtifactTargetLookupSchema,
   EngineeringD1DatabaseSchema,
@@ -219,7 +223,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
   });
 
   server.registerTool("provision_user_password", {
-    description: "Provision or rotate a password for an existing Global identity user (resolve with search_users). Returns a generated password ONCE; deliver it only to the intended recipient through an appropriate private channel, never put it in logs or routine status updates. Each call replaces the previous password; if the response is lost, call again and use the latest result. Does not create an account, verify an email, grant Organization access, or end existing sessions.",
+    description: "Provision or rotate a password for an existing Global identity user (resolve with search_users). Returns a generated password ONCE; deliver it only to the intended recipient through an appropriate private channel, never put it in logs or routine status updates. Each call replaces the previous password; if the response is lost, call again and use the latest result. Sign-in requires an independently verified primary email. Does not create an account, verify an email, grant Organization access, or end existing sessions.",
     inputSchema: EngineeringPasswordUserInputSchema.unwrap().shape,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, (request) => tool(principal, "provision_user_password", { user_id: request.userId }, async () =>

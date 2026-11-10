@@ -28,6 +28,8 @@ beforeEach(() => {
   vi.setSystemTime(now);
   db.prepare(`INSERT INTO users (id, email, name, created_at, updated_at) VALUES (?, ?, 'Reviewer', ?, ?)`)
     .run(USER, EMAIL, new Date(now).toISOString(), new Date(now).toISOString());
+  db.prepare('INSERT INTO user_verified_emails (email, user_id, verified_at) VALUES (?, ?, ?)')
+    .run(EMAIL, USER, new Date(now).toISOString());
 });
 afterEach(() => { db.close(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
@@ -37,14 +39,26 @@ describe('operator-provisioned passwords', () => {
     const result = await provisionUserPassword(bindings(), USER);
     expect(result).toMatchObject({ userId: USER, email: EMAIL });
     expect(db.prepare('SELECT COUNT(*) AS n FROM users').get()).toEqual({ n: 1 });
-    expect(db.prepare('SELECT COUNT(*) AS n FROM user_verified_emails').get()).toEqual({ n: 0 });
+    expect(db.prepare('SELECT email, user_id FROM user_verified_emails').all()).toEqual([{ email: EMAIL, user_id: USER }]);
     expect(db.prepare('SELECT COUNT(*) AS n FROM workspace_members').get()).toEqual({ n: 0 });
     const stored = db.prepare('SELECT password_hash FROM user_password_credentials').get()!;
-    expect(stored.password_hash).toMatch(/^scrypt-v1\$/u);
     expect(JSON.stringify(stored)).not.toContain(result.password);
     const session = await passwordLogin(bindings(), { email: '  REVIEWER@EXAMPLE.TEST  ', password: result.password });
     expect(session.user.id).toBe(USER);
     expect(session.workspace).toBeNull();
+  });
+
+  it('requires the current primary email to be verified when inserting a password session', async () => {
+    const { password } = await provisionUserPassword(bindings(), USER);
+    const credential = db.prepare('SELECT credential_id FROM user_password_credentials').get()!;
+    db.prepare('DELETE FROM user_verified_emails').run();
+    expect((await login('/auth/password', password)).status).toBe(401);
+    await expect(new AuthService(bindings()).createPasswordIdentitySession(USER, String(credential.credential_id)))
+      .rejects.toMatchObject({ code: 'password_login_invalid' });
+    db.prepare('INSERT INTO user_verified_emails (email, user_id, verified_at) VALUES (?, ?, ?)')
+      .run('other@example.test', USER, new Date(now).toISOString());
+    expect((await login('/browser/password', password)).status).toBe(401);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM sessions').get()).toEqual({ n: 0 });
   });
 
   it('rejects unknown, unprovisioned, and wrong passwords with the same response', async () => {

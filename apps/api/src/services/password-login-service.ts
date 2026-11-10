@@ -1,4 +1,3 @@
-import { scryptSync, timingSafeEqual } from 'node:crypto';
 import { PasswordLoginRequestSchema, type PasswordLoginRequest } from '@rally/contracts/password-login';
 import { IDENTITY_REGION } from '@rally/contracts/regions';
 import type { Env } from '../env';
@@ -7,32 +6,10 @@ import { randomToken, sha256 } from '../lib/crypto';
 import { AuthService } from './auth-service';
 
 // Team-selected 2026-11-10: ten attempts per account per minute, across hosts.
-// Stops online guessing and repeated expensive hashing; authBodyLimit only
-// bounds individual requests. A full budget returns 429 before hashing.
+// Bounds repeated account attempts; authBodyLimit only bounds request bytes.
+// A full budget returns 429. Known emails can be locked out by consuming it.
 export const PASSWORD_LOGIN_ATTEMPTS = 10;
 export const PASSWORD_LOGIN_WINDOW_MS = 60_000;
-
-// OWASP's equivalent 16 MiB scrypt profile, read 2026-11-10:
-// https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#scrypt
-// Workers supports native scrypt, but not native Argon2. No WASM runtime needed.
-const SCRYPT_OPTIONS = { N: 2 ** 14, r: 8, p: 5 };
-const HASH_BYTES = 32;
-const DUMMY_SALT = 'rally-password-unknown-account';
-
-export function hashPassword(password: string): string {
-  const salt = randomToken();
-  return `scrypt-v1$${salt}$${Buffer.from(scryptSync(password, salt, HASH_BYTES, SCRYPT_OPTIONS)).toString('hex')}`;
-}
-
-export function verifyPassword(password: string, encoded: string | null): boolean {
-  const parts = encoded?.match(/^scrypt-v1\$([A-Za-z0-9_-]{43})\$([a-f0-9]{64})$/u);
-  if (encoded !== null && !parts) throw new ApiError(503, 'password_hash_format_invalid', 'Password sign-in is unavailable');
-  // Do the same KDF work for unknown and unprovisioned accounts. Nothing about
-  // the supplied password or stored hash enters a diagnostic or response.
-  const actual = scryptSync(password, parts?.[1] ?? DUMMY_SALT, HASH_BYTES, SCRYPT_OPTIONS);
-  const expected = parts ? Buffer.from(parts[2]!, 'hex') : Buffer.alloc(HASH_BYTES);
-  return timingSafeEqual(actual, expected) && parts !== undefined && parts !== null;
-}
 
 export function requirePasswordIdentityRegion(env: Env): void {
   if (env.AVALON_REGION !== IDENTITY_REGION) {
@@ -40,7 +17,7 @@ export function requirePasswordIdentityRegion(env: Env): void {
   }
 }
 
-/** Atomic reservation before KDF work, including misses; both transports share it. */
+/** Atomic reservation including misses; both transports share it. */
 async function consumeAttempt(env: Env, email: string): Promise<void> {
   const now = Date.now();
   const key = await sha256(email);
@@ -58,10 +35,10 @@ export async function passwordLogin(env: Env, input: PasswordLoginRequest) {
   requirePasswordIdentityRegion(env);
   const { email, password } = PasswordLoginRequestSchema.parse(input);
   await consumeAttempt(env, email);
-  const credential = await env.DB.prepare(`SELECT c.user_id, c.credential_id, c.password_hash
-    FROM user_password_credentials c JOIN users u ON u.id = c.user_id WHERE u.email = ?`)
-    .bind(email).first<{ user_id: string; credential_id: string; password_hash: string }>();
-  if (!verifyPassword(password, credential?.password_hash ?? null) || !credential) {
+  const credential = await env.DB.prepare(`SELECT c.user_id, c.credential_id
+    FROM user_password_credentials c JOIN users u ON u.id = c.user_id WHERE u.email = ? AND c.password_hash = ?`)
+    .bind(email, await sha256(password)).first<{ user_id: string; credential_id: string }>();
+  if (!credential) {
     throw new ApiError(401, 'password_login_invalid', 'The email or password is incorrect.');
   }
   return new AuthService(env).createPasswordIdentitySession(credential.user_id, credential.credential_id);
@@ -72,13 +49,15 @@ export async function provisionUserPassword(env: Env, userId: string) {
   requirePasswordIdentityRegion(env);
   const user = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(userId).first<{ id: string; email: string }>();
   if (!user) throw new ApiError(404, 'password_user_not_found', 'The identity account was not found');
+  // Only generated 256-bit secrets: use the same digest primitive as refresh tokens.
+  // Human-chosen passwords would require a slow password KDF instead.
   const password = randomToken();
   const at = new Date().toISOString();
   await env.DB.prepare(`INSERT INTO user_password_credentials
     (user_id, credential_id, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET credential_id = excluded.credential_id,
       password_hash = excluded.password_hash, updated_at = excluded.updated_at`)
-    .bind(userId, crypto.randomUUID(), hashPassword(password), at, at).run();
+    .bind(userId, crypto.randomUUID(), await sha256(password), at, at).run();
   return { userId: user.id, email: user.email, password };
 }
 
