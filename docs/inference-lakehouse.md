@@ -338,16 +338,17 @@ rows written before this change carry `pipeline_ingest_request_limit`.
 `CF_PIPELINE_MESSAGE_TOO_LARGE: Individual message must not exceed 1 MB`, a
 limit the published limits page does not list. Every record between 1 MB and
 5 MB therefore failed identically on each retry and dead-lettered — hundreds
-of distinct records over the week before this change. The full records were never lost — they stay in Global R2 —
-but their analytical rows were.
+of distinct records over the week before this change. The full records were
+never lost — they stay in Global R2 — but their analytical rows were.
 
 **Rejected:** Reading 1 MB as 1,048,576 bytes would admit a few more rows
 whole, but a wrong guess sends that record to the dead-letter queue, whereas
 the decimal reading only sends it down the lossless pointer path.
 
-**Consequences:** If Cloudflare raises
-the per-record limit, raise the constant; the pointer path costs a reader one
-R2 read, not data.
+**Consequences:** If Cloudflare raises the per-record limit, raise the
+constant; the pointer path costs a reader one R2 read, not data.
+
+Shipped in #1534.
 
 ### 2026-10-09 — A streaming request row carries one of two body shapes
 
