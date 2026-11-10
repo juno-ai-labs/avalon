@@ -1,3 +1,5 @@
+import { InspectEngineeringUsageInputSchema, ChangeEngineeringPlanInputSchema, EngineeringUsageResultSchema, type EngineeringUsageResult } from "@rally/contracts/engineering-inspection";
+import { readOrganizationUsage, setWorkspacePlan, publishOrganizationUsage } from "./services/usage-metering";
 import { RegionSchema } from "@rally/contracts/regions";
 import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
@@ -250,6 +252,35 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         representedUserId: request.userId, operationId: crypto.randomUUID(), sidekickId: request.sidekickId,
       }, async () => SetEngineeringSidekickPausedResultSchema.parse(await setEngineeringSidekickPaused(this.env, request)),
       (result) => ({ lifecycle: result.lifecycle }));
+    });
+  }
+
+  async inspectOrganizationUsage(input: unknown): Promise<EngineeringUsageResult> {
+    return this.productOperation("inspectOrganizationUsage", async () => {
+      const { orgId } = InspectEngineeringUsageInputSchema.parse(input);
+      const target = await this.resolveWorkspace({ workspaceId: orgId });
+      if (!target.found) throw new Error("engineering_organization_not_found");
+      const usage = await readOrganizationUsage(this.env, orgId, Date.now());
+      if (!usage) throw new Error("engineering_organization_not_found");
+      return EngineeringUsageResultSchema.parse({ region: this.env.AVALON_REGION, orgId, usage });
+    });
+  }
+
+  async changeOrganizationPlan(input: unknown, operator: unknown): Promise<EngineeringUsageResult> {
+    return this.productOperation("changeOrganizationPlan", async () => {
+      const request = ChangeEngineeringPlanInputSchema.parse(input);
+      const trusted = EngineeringOperatorSchema.parse(operator);
+      const target = await this.resolveWorkspace({ workspaceId: request.orgId });
+      if (!target.found) throw new Error("engineering_organization_not_found");
+      return auditedEngineeringWrite(this.env, trusted, {
+        action: "change_usage_plan", orgId: request.orgId, operationId: crypto.randomUUID(),
+      }, async () => {
+        if (!await setWorkspacePlan(this.env, request.orgId, request.plan, Date.now())) throw new Error("engineering_organization_not_found");
+        this.ctx.waitUntil(publishOrganizationUsage(this.env, request.orgId));
+        const usage = await readOrganizationUsage(this.env, request.orgId, Date.now());
+        if (!usage) throw new Error("engineering_organization_not_found");
+        return EngineeringUsageResultSchema.parse({ region: this.env.AVALON_REGION, orgId: request.orgId, usage });
+      }, () => ({ plan: request.plan }));
     });
   }
 

@@ -396,7 +396,7 @@ PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-in
 
 **Why:** Public acquisition needs predictable failure and recoverable operator actions before launch, without imposing account approval or building a campaign system.
 
-**Consequences:** [Private access](private-access.md) owns configuration, undecided numerical limits, and recovery procedures. PR #637.
+**Consequences:** Private access (private-access management was removed) owns configuration, undecided numerical limits, and recovery procedures. PR #637.
 
 ### 2026-09-09 — Deploy the access API before its public form
 

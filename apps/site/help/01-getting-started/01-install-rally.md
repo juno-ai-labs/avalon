@@ -21,17 +21,12 @@ You do not need an invitation to download the app. Downloading it does not put y
 
 The installer is signed and checked by Apple, so your Mac should open it without complaint.
 
-### If someone sent you a download link
+### If someone sent you an older download link
 
-A teammate, or an invitation email, may give you a personal link that looks like `rallywith.ai/download/#token=…` instead. It opens a page headed **Welcome to Rally** with a **Download for macOS** button.
-
-- Click **Download for macOS**, and keep the page open until the download starts.
-- Opening the page does not use up the link. Only clicking the button does, so it is safe to preview it in your email.
-- Some links work once. Others work as many times as you like until a date the sender chose.
-- A link that came with an invitation stops working if that invitation is cancelled, declined or replaced by a newer one.
-- If the download breaks halfway, start it again from the button. It cannot pick up where it left off.
-
-If the page says **This link is incomplete or invalid. Ask the sender for a new link.**, do exactly that. The same goes for a link that has been used up or has expired. If the page says it is busy or the installer is briefly unavailable, wait a moment and use its retry button. If nothing works, the public **Download the macOS app** button below the headline on [rallywith.ai](https://rallywith.ai) gets you the same app.
+Older personal download links now redirect to the public macOS installer.
+There is no token to redeem. If a link fails, use the **Download the macOS app**
+button on [rallywith.ai](https://rallywith.ai). Installing Rally and accepting
+an Organization invitation are separate actions.
 
 ## Sign in with Google
 

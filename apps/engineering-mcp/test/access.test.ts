@@ -1,4 +1,3 @@
-/// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 import { SignJWT, generateKeyPair, type JWTVerifyGetKey } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -40,7 +39,7 @@ async function assertion(claims: {
 }
 
 function request(headers: Record<string, string> = {}): Request {
-  return new Request("https://migrations.internal.rallywith.ai/", { headers });
+  return new Request("https://mcp.internal.rallywith.ai/", { headers });
 }
 
 describe("readAccessConfiguration", () => {

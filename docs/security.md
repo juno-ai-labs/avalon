@@ -304,10 +304,9 @@ are canonical storage services, not authorization layers.
   operator UUID and role with timing-safe token comparison — `support` and
   `security` from `TELEMETRY_OPERATORS_JSON`, `demos` from the separate
   `DEMO_OPERATORS_JSON`; every operator router names the roles it admits and
-  the secret it reads, so the `demos` role (Ace's operator role; the stored
-  name is the retired demo feature's) reaches only the workspace retirement,
-  access and connector-maintenance routes Ace calls, and neither telemetry
-  role reaches those. Ace holds one `demos` token per region, each
+  the secret it reads, so the `demos` role (a stored name from the retired demo feature) reaches only
+  connector-maintenance routes, and neither telemetry role reaches those.
+  Operators hold one maintenance token per region, each
   known to that region alone. Raw access and replay derive audit identity from
   that principal; neither endpoint accepts an operator ID or role in its body.
 
@@ -647,17 +646,6 @@ material use the connection-bound regional credential envelope. Replacement
 validates provider access and checks both generation and the current envelope
 before committing, so a racing settlement cannot overwrite a newer API key.
 
-Disconnect removes ordinary access atomically while retaining separate encrypted
-cleanup authority. Only a claimed removal of an exact recorded provider ID may
-use it; it cannot refresh, discover tools, create or update registrations.
-Repeated disconnect preserves pending cleanup. An uncertain create's late result
-is handled against its recorded intent without reviving access; forgetting local
-cleanup authority leaves provider removal to the administrator. The existing Ace
-`demos` operator role authorizes reviewed fleet maintenance, never arbitrary
-provider requests or new customer event grants. Administrative mutations retain
-actor-attributed audit records without keys or candidate content. See
-[installation lifecycle](connector-installation-lifecycle.md).
-
 ### Webhooks
 
 Generic webhooks use an endpoint-specific secret, a timestamped HMAC-SHA256
@@ -980,13 +968,6 @@ Local server keys live only in ignored `.env.local`. Renderer-safe values are an
 explicit `VITE_` allowlist containing API base URLs and the protocol name. Hosted
 Cloudflare administrative credentials are local deployment inputs and never Worker
 bindings.
-
-`TELEMETRY_OPERATORS_JSON` is an independent secret in each region. Its bearer
-tokens never cross regions or enter URLs; its stored principal is the only source
-of operator identity and role for `/internal/telemetry`. `DEMO_OPERATORS_JSON`
-is its sibling for the `demos` role Ace presents: the same shape, read only by
-the surfaces Ace calls, and set and rotated independently, so neither secret's
-holders can overwrite the other's tokens.
 
 `OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID` are optional independent
 secrets in each region: the bot token of a small internal Slack app with

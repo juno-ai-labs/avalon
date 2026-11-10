@@ -12,9 +12,8 @@ import { timingSafeEqualText } from '../lib/crypto';
  * fixed principal, operator UUID and role — and are parsed by the same code.
  * `TELEMETRY_OPERATORS_JSON` holds the telemetry roles, `support` and
  * `security`, for the restricted telemetry surface. `DEMO_OPERATORS_JSON`
- * holds the `demos` role, the credential Ace presents to retire a workspace,
- * to reconcile acquisition acknowledgements, and to apply reviewed connector
- * maintenance. Both names are stored ones: the secret and the role value were
+ * holds the `demos` role, the credential an operator presents for reviewed
+ * connector maintenance. Both names are stored ones: the secret and the role value were
  * named for the demo feature that first used them, which is retired, and
  * renaming either is a secret rotation in every region, so the code calls
  * them `requireAceOperator` and `ACE_OPERATOR_ROLE` instead
@@ -77,7 +76,7 @@ export const requireTelemetryOperator = requireOperatorFrom('TELEMETRY_OPERATORS
 /** Ace's operator role, under its stored name. */
 export const ACE_OPERATOR_ROLE = 'demos' satisfies TelemetryOperatorPrincipal['role'];
 
-/** Ace's credential: the `demos` role, from `DEMO_OPERATORS_JSON`. */
+/** Operator API credential: the `demos` role, from `DEMO_OPERATORS_JSON`. */
 export const requireAceOperator = requireOperatorFrom('DEMO_OPERATORS_JSON');
 
 /** Refuse every operator whose role is not one the router is for. */

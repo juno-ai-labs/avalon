@@ -72,7 +72,7 @@ The regional bridge uses D1 only for identity and routing:
 | `create_org` | Caller names the region | Regional onboarding commits the owner and initial members together, then performs ordinary member seating |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause or resume, which call HostedSidekick in WorkspaceDO |
-| `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, Ace's retirement door: the D1 fence, then the graph walk over every object |
+| `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, the regional retirement service: the D1 fence, then the graph walk over every object |
 | `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
 | `list_orgs`, `search_orgs` | None | D1 `workspaces` and `workspace_members` in every region, filtered there and ordered here |
@@ -231,17 +231,14 @@ to pair the attempt and result audit rows.
 
 ### Retiring an Organization
 
-`retire_org` calls `retireWorkspaceForOperator`, the same function behind Ace's
-Retire button, through a bridge method, `retireOrg`. So the region check,
+`retire_org` calls `retireWorkspaceForOperator`, the regional retirement service, through a bridge method, `retireOrg`. So the region check,
 `workspaces.abandoned_at`, the tombstones and the resumable walk are all
 [`workspace-retirement.md`](workspace-retirement.md)'s, unchanged. The Access
 subject goes into the pass as its operator id, so the region's
 `workspace_retirement_pass` log names who closed it, and the audit pair targets
 the Organization rather than a represented user, since no user acts.
 
-It takes no typed confirmation. In Ace that is a page ceremony for a person;
-here the caller is a client that would fill both fields from the same value,
-and the tool's destructive annotation is what asks the client to check first.
+It takes no typed confirmation; its caller supplies the resolved Organization ID.
 A receipt with `complete: false` means parts are still open; calling again
 resumes the walk.
 
@@ -362,8 +359,8 @@ names the view only; filter values and the needle can quote product data.
   half-finished publish.
 - The origin verifies Access JWT provenance. A header's presence alone is not
   authentication.
-- The Access application is separate from Ace and has its own audience, while
-  its policy and allowed identity providers are copied from Ace at deployment.
+- The Access application has its own audience, policy, and identity providers,
+  all preserved at deployment.
 - SQL tools are annotated non-read-only, destructive, and non-idempotent. The
   list tools are read-only.
 - The SQL text, bindings, returned rows, and error message never enter Worker
@@ -442,6 +439,40 @@ Access identity is never silently mapped to a product user.
 - `query_worker_observability` fails as `observability_token_unconfigured`
   until its secret is installed.
 
+## Operations tools
+
+| Tool | Behavior |
+| --- | --- |
+| `inspect_queues` | Lists account queue backlog metrics and active dead-letter relationships; `deadLettersOnly` restricts the result. |
+| `inspect_dead_letters` | Non-consuming peek of a queue ID returned by the queue list, after revalidating that a live consumer names it as a dead-letter queue. No acknowledge, pull, replay, or delete operation is exposed. |
+| `inspect_usage_plan` | Resolves an Organization to exactly one region and reads its authoritative plan, quota remaining, reset, and overage. |
+| `change_usage_plan` | Uses the regional metering service, updates this week's quota and plan history, and publishes the new meter to connected clients. |
+| `inspect_migration_progress` | Queries regional Worker logs for forced-migration outcomes, failures, invalid/deleted/misrouted commands, with optional run and object filters and provider pagination. |
+
+Queue inspection uses `apps/engineering-mcp/src/queues.ts`. Set the deployment
+secret `ENGINEERING_MCP_QUEUES_API_TOKEN` to a dedicated account Queue API token
+with permissions for queue inventory, metrics, and message peek (Cloudflare
+Queues Edit for the peek endpoint). Deployment installs it as the runtime secret
+`QUEUES_API_TOKEN`. It is separate from deployment credentials. Until configured,
+queue tools refuse with `queues_token_unconfigured`; other tools remain available.
+Queue messages can contain customer payloads and are visible only behind the
+existing engineering Access boundary. Neither payloads nor token values enter
+MCP audit metadata. Queue metrics are fetched independently; a failed queue
+returns `metrics: null` and a named `metricsError` while other queues remain visible.
+
+Usage methods are part of `EngineeringInspectionBridge` and its shared contracts.
+Plan changes record an independent audit attempt and result with the authenticated
+Access actor. The receipt records the requested plan even if another change
+lands before the current-state snapshot is read. The service updates the usage ledger and regional workspace record;
+a cross-authority failure can follow a committed change, so inspect the plan
+before retrying an uncertain response. Publication is post-commit and best effort.
+
+Migration inspection uses the existing Workers Observability runtime credential.
+It returns logged outcomes and schema-versus-expected-version fields, not a fleet
+inventory or proof that every dormant object is current. Logs expire after seven
+days. Pair a run-filtered query with command backlog and dead-letter inspection;
+use the [CLI](forced-migrations.md) to execute a migration pass.
+
 ## Testing
 
 `apps/api/test-workers/engineering-creation.test.ts` drives the regional bridge
@@ -501,9 +532,9 @@ MCP handler, tool discovery, cross-region aggregation, destructive annotations,
 single-region SQL execution, and proof that a duplicate-region resolution makes
 no SQL call. `apps/api/test/engineering-inspection-routes.test.ts` exercises the
 checked-in regional D1 schema and proves that lifecycle, serving-contract, and
-generation fences admit only the current active authority. Existing Access tests own JWT
-signature, issuer, audience, cookie, and header verification because this
-Worker imports that one verifier rather than forking it.
+generation fences admit only the current active authority. `apps/engineering-mcp/test/access.test.ts` owns JWT signature, issuer,
+audience, cookie, header, and fail-closed configuration verification against
+the local verifier.
 
 `apps/api/test-workers/engineering-d1-inspection.test.ts` writes and reads a
 D1 database through `runD1Sql`, BLOBs included, and proves the call reached
@@ -521,13 +552,6 @@ the SQLite file, only the requested result.
 
 ## Security and trust model
 
-Cloudflare Access is the identity and policy authority. Managed OAuth supplies
-standards-based authorization and Dynamic Client Registration for remote MCP
-clients; the deployment enables loopback redirect registration for installed
-clients. Access reuses the same configured identity provider and admission
-policy as Ace, but the distinct application/audience prevents an Ace token from
-being replayed at the MCP origin.
-
 The SQL capability is production-destructive by design. Access membership is
 therefore equivalent to database-console access across both Rally regions.
 It also grants read access to every lakehouse row, including the raw prompts,
@@ -543,7 +567,7 @@ means message text ([`runbook.md`](runbook.md#log-shape)).
 Policy changes, identity-provider changes, and client approval belong in the
 Cloudflare Access application, not in application code.
 
-`BASIN_SQL_API_TOKEN` is a runtime credential, like Ace's Queue inspection token, not
+`BASIN_SQL_API_TOKEN` is a runtime credential, not
 the deployment token. Basin SQL requires R2 storage read/write on the buckets it
 reads, so create it as an R2 API token restricted to the three lakehouse
 buckets with Basin SQL Read, Basin Catalog Read, and R2 Storage Write. Never
@@ -560,17 +584,6 @@ Operator connection instructions for Codex, Claude Code, and Cursor Desktop,
 including the first safe schema query and OAuth troubleshooting, live in
 [`internal-admin-mcp-server.md`](internal-admin-mcp-server.md).
 
-The provisioner requires `CLOUDFLARE_ACCOUNT_ID` and
-`CLOUDFLARE_API_TOKEN`. It requires the existing Ace Access application as the
-policy, identity-provider, and session-duration source; missing source state is
-a deployment failure, not permission to create a broader policy. Generated
-configuration contains the Access audience, is owner-readable, and is removed
-after Wrangler exits. Redeployment preserves an existing Managed OAuth grant
-configuration and administrator-added HTTPS redirect allowlist entries. It also
-ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
-Changing that managed provider list remains an explicit Access administration
-decision.
-
 The provisioner also injects the account ID as a Worker variable and, when the
 `ENGINEERING_MCP_BASIN_SQL_API_TOKEN` and
 `ENGINEERING_MCP_WORKERS_OBSERVABILITY_API_TOKEN` GitHub secrets are set in the
@@ -580,9 +593,38 @@ token the Worker already has, and its tool fails as
 `lakehouse_token_unconfigured` or `observability_token_unconfigured` if it has
 none: the MCP deploys inside the API release, and a missing read credential
 should not turn that release red.
+## Access provisioning
+
+Before the first deployment, create a **Self-hosted** application in Cloudflare
+Zero Trust → Access → Applications for `mcp.internal.rallywith.ai` in the deployment
+account. Select the approved organization identity provider, configure the team's
+session duration, and add an Allow policy restricted to the authorized engineering
+operators. Do not use an Allow Everyone or Bypass policy: membership grants
+production database write access. Verify the intended operator can authenticate
+and an unauthorized identity is refused before deploying.
+
+The deployment token needs Access application read/edit permissions as well as
+Worker deployment permissions. The deploy script requires this app and a nonempty
+policy list, preserves its session duration and identity providers, enables the
+hosted-client OAuth redirect configuration, and injects the app's audience into
+the Worker. It does not create an Access app or import another app's policy.
 
 
 ## Changelog
+
+### 2026-11-10 — Retire administration apps
+
+Added queue/dead-letter inspection, typed usage-plan operations with regional
+audit records, and migration-log inspection to retain useful operator actions
+without another site. Removed private-access management completely at the
+product owner's request, including invitation grant links. Removed the unused
+workspace HTTP write routes so retirement and operator plan changes use the
+audited MCP surface. Queue inspection preserves partial results and named
+failures; plan receipts retain the caller's requested plan under concurrency.
+
+The engineering MCP retains the Access verifier and its authentication tests
+after the tracker was deleted. Deployment preserves its own Access application
+and policy rather than depending on another app's provisioner.
 
 ### 2026-11-09 — Retire remote flag administration tools
 

@@ -449,7 +449,7 @@ migration 47 a workspace's resources when that object does, so a conversation
 nobody opens and no alarm reaches keeps rows with no display, which search omits
 with no error and no dead letter. The patch job cannot repair those rows either,
 because its filter requires the `substream_id` they lack. The forcing function
-is the migration tracker's **Force a migration** for both classes, under
+is the forced migration CLI for both active classes, under
 Operations below; until it has run in a region, "not yet rewritten" and "never
 rewritten" look the same from search. Edited or deleted text stays findable by admitted readers until its
 rewrite or watermark lands, typically seconds. The team accepted this window,
@@ -648,21 +648,17 @@ failures and follow its configured retries and dead-letter handling. Once a job
 reaches the DLQ its original dispatch intent has already been cleared. Recovery
 requires redriving the dead-letter reference; a routine wake does not recreate a
 completed migration's backfill INSERT. New source edits produce new intents. Do
-not discard DLQ messages or assume a migration report repairs their contents.
+not discard DLQ messages or assume a successful migration receipt repairs their contents.
 
 Deploy both API Workers with their `BROWSER` binding and production Turbopuffer
 secret before running backfill. The 512/128-token policy ships with the code.
 `pnpm env:sync` forwards the development key from `.env.local`; it never copies the production key into
-development Workers. Use the existing migration tracker's **Force a
-migration** action for WorkspaceDO and AgentLoopDO in each region to wake
-stored objects; an untouched object does not migrate just because code deployed.
-See [Durable Object migration tracking](durable-object-migration-tracking.md).
-Verify migration reports, regional activity Queue drain and dead letters, then
-perform member searches and revocation checks. A current schema report proves
-schema application, not successful indexing. For this change the forced wake is
-what turns the display rewrite from lazy into complete: a AgentLoopDO that
-never wakes never requeues its turns, and its conversation stays out of search.
-These deployment and fleet-backfill steps have not been run for this change.
+development Workers. Use the [forced migration CLI](forced-migrations.md#operations) after deploying:
+run separate `--class=WorkspaceDO` and `--class=AgentLoopDO` passes in each region.
+Inspect `migration_command_applied` receipts for schema-version shortfalls,
+`migration_command_failed` logs, command queue drain, and command dead letters.
+Then verify the regional activity queue and its dead letters. Queue drain alone
+cannot prove every object completed its backfill.
 
 Browser Run captures Markdown asynchronously from links present in a canonical
 participant turn, including completed web fetch records. Link text and URL are
@@ -715,6 +711,13 @@ Worker's private network. Captures are snapshots and are not refreshed just beca
 the same URL is mentioned again. Missing extraction/capture work remains observable
 through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
+
+## Fleet migration
+
+For a rollout requiring dormant organizations to apply a migration, deploy the
+API first, then use the [forced migration CLI](forced-migrations.md#operations)
+with `--class=WorkspaceDO`. Constructors still apply migrations on ordinary
+wakeups; the CLI provides the eager fleet pass without the retired tracker.
 
 ## Changelog
 

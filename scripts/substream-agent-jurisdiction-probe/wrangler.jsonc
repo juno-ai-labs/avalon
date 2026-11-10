@@ -8,6 +8,11 @@
         "name": "GLOBAL_SUBSTREAM_AGENTS",
         "class_name": "AgentLoopDO",
         "script_name": "avalon-api-global"
+      },
+      {
+        "name": "GLOBAL_WORKSPACE_DOS",
+        "class_name": "WorkspaceDO",
+        "script_name": "avalon-api-global"
       }
     ]
   }

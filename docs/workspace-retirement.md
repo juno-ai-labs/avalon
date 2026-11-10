@@ -7,7 +7,7 @@ alarm or a Queue redelivers an effect. This document covers the machinery that
 makes that true: the D1 fence the door writes, the tombstone every gated
 Durable Object consults, the object graph recorded before the workspace closes,
 the resumable walk that closes children before parents, what a background
-caller does when it meets a retired object, and the operator door in Ace behind
+caller does when it meets a retired object, and the operator door behind
 which all of it sits.
 
 Read it before changing retirement, adding a method to either of the two gated
@@ -28,13 +28,10 @@ the demo feature that first needed it, which was removed on 2026-11-08.
 | `apps/api/src/durable-objects/scheduled-alarms.ts` | `retireObject` and `objectRetirementState` on the base every gated class extends, plus the alarm clearing retirement performs. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `beginWorkspaceRetirement`, `recordRetiredNode`, `recordRetiredChild`, `workspaceRetirementProgress`, and the `workspace_retirement_graph` and `workspace_retirement_children` tables behind them. |
 | `apps/api/src/services/workspace-retirement-service.ts` | The pass that walks the recorded graph, closing children before parents, and the operator door in front of it. |
-| `apps/api/src/routes/workspace-operations.ts` | `/internal/workspaces/:id/retire`, behind Ace's operator credential (`requireAceOperator`, role `ACE_OPERATOR_ROLE`, stored as `demos`). |
 | `apps/api/src/middleware/errors.ts` | Maps a refusal that reaches an HTTP route to `409 workspace_retired`. |
-| `apps/api/src/queues/access-revocation-consumer.ts`, `product-feature-flag-consumer.ts`, `activity-consumer.ts`, `apps/api/src/workflows/connector-event.ts` | The background callers that can meet a retired object; each acknowledges a refusal as terminal. |
-| `apps/api/src/telemetry/operator-auth.ts` | The operator credentials: `requireOperatorFrom` verifies a bearer token against one of two same-shaped secrets — `DEMO_OPERATORS_JSON` for the `demos` role Ace holds, `TELEMETRY_OPERATORS_JSON` for the telemetry roles — and `requireOperatorRole`, which every operator router narrows with. |
+| `apps/api/src/queues/access-revocation-consumer.ts`, `activity-consumer.ts`, `apps/api/src/workflows/connector-event.ts` | The background callers that can meet a retired object; each acknowledges a refusal as terminal. |
 | `packages/contracts/src/workspace-retirement.ts` | The receipt a retirement answers with. |
 | `packages/contracts/src/conversation-parent.ts` | `childrenForRetirement`'s three-way answer. |
-| `apps/ace/src/regional-api.ts`, `apps/ace/src/client/workspaces.tsx` | Ace's relay to the regional route and the workspaces tab that calls it ([`ace.md`](ace.md)). |
 | `apps/api/src/engineering-inspection-bridge.ts` | `retireOrg`, the engineering MCP's `retire_org`, which calls the same door ([`engineering-mcp.md`](engineering-mcp.md#retiring-an-organization)). |
 
 ### The gate
@@ -146,9 +143,7 @@ acknowledges the message and the connector Workflow ends its instance. Each of t
 is not available, and the predicate matches the `code` the runtime preserves.
 A consumer that retried instead dead-lettered one message per retired object
 forever, which spends the one signal this repository treats as monitoring on a
-state somebody designed. Two enumerators skip a closed workspace at the source
-as well: Ace's flag fan-out reads `workspaces` with `abandoned_at IS NULL`, and
-the access-revocation walk finds nothing beneath an object whose sockets
+state somebody designed. The access-revocation walk finds nothing beneath an object whose sockets
 retirement already closed.
 
 The effect receiver a Queue redelivers to, `receiveChildEffects`, is the
@@ -160,30 +155,12 @@ answering in the form its caller reads.
 
 ### The operator door
 
-The walk infers nothing from an id, which is right for the walk and wrong for a
-door: an id no workspace in this region owns would be "retired" as a set of
-brand-new empty objects holding tombstones, and the operator told it succeeded
-while the real workspace, in the other region, stayed open. So
-`retireWorkspaceForOperator` checks the region's `workspaces` row first and
-answers `workspace_not_found` otherwise, then writes `abandoned_at`. The route
-in front of it takes the confirmation the page collected — the operator typed
-or pasted the id they are closing — and refuses
-`workspace_retirement_unconfirmed` unless it names the workspace in the path.
-That is a consistency check on the request, made in Ace and again here, not a
-second confirmation: a caller that fills in both fields with the same id passes
-it, and the typed ceremony itself is the page's. The route also carries the
-operator's id from the credential into the pass, so the region's own log names
-who closed the workspace.
-
-The route sits behind the operator credential in a role of its own, stored as
-`demos` (`ACE_OPERATOR_ROLE`; the name is the retired demo feature's, kept
-because renaming it is a secret rotation), which Ace holds one token per region for, read from a secret of its own,
-`DEMO_OPERATORS_JSON` — the same map shape as the telemetry surface's
-`TELEMETRY_OPERATORS_JSON`, set and rotated independently of it, so adding or
-rotating Ace's token never touches the telemetry tokens. Every operator router
-names the roles it admits as well: the telemetry router refuses `demos`, and
-this router refuses the telemetry roles, so a token filed in the wrong secret
-is refused by role even when it verifies.
+`retireWorkspaceForOperator` checks the regional workspace row before writing
+`abandoned_at` and walking the object graph. The engineering MCP's `retire_org`
+resolves exactly one region and passes the authenticated Access subject through
+its private service binding. Independent audit attempt/result rows record the
+operator. A cross-region ID is refused rather than used to create new tombstones.
+The retired bearer-token HTTP route is no longer mounted.
 
 - **Unclassified is refused.** A method nobody classified refuses on a retired
   object. A new RPC is fenced the day it is written, not the day somebody
@@ -225,13 +202,10 @@ is refused by role even when it verifies.
   user; the `workspace_retirement_pass` log line carries `operator_id`, and is
   the region's record of who asked (see **Operations**).
 
-- **Retirement takes any workspace id, and infers nothing.** It is an operator
-  action behind one of two Access policies, Ace's or the engineering MCP's, and
-  the only protection between an operator and an irreversible close is that
-  policy plus, in Ace, the confirmation the page asks for. A gate on a
-  register of demo workspaces was built and then dropped, deliberately: the
-  bookkeeping bought a second mechanism for a surface one Access policy already
-  admits. The walk does not check a name, a register, or anything else.
+- **Retirement takes any workspace id, and infers nothing.** The engineering
+  MCP Access policy authorizes the operator; region resolution and audit
+  attribution are handled by the bridge. The graph walk does not use a demo
+  register or infer eligibility from the workspace name.
 
 - **Every operator router names the roles it admits.** A role added to the
   credential map reaches no surface until a router names it.
@@ -401,11 +375,9 @@ included.
 | `apps/api/test-workers/object-retirement.test.ts` | `pnpm --filter @rally/api test:workers` | The gate on real workerd: refusal on every class, a refusal that crosses the RPC boundary with its code, `canReadWorkstream` answering `false`, sockets closed with `1008`, drop-and-acknowledge in the shapes the consumers parse, alarm clearing, a rebuilt retired agent not refilling its alarm index, that all three socket-holding object classes rebuild themselves after eviction and revoke access while retired, and that the gate's function is installed on every callable method. |
 | `apps/api/test-workers/workspace-retirement-graph.test.ts` | `pnpm --filter @rally/api test:workers` | The graph is captured before the tombstone, is idempotent and resumable — including over a parent retired but never receipted — an empty workspace reports closed, an identity mismatch leaves a node failed with a stable code, the walk closes children before parents, and a pass cut off inside a parent leaves the next pass only the children still open. |
 | `apps/api/test/workspace-retirement-children-migration.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-retirement-children-migration.test.ts` | Against the real migrations: a retired v134 workspace with a partly receipted graph upgrades to 135 with its tombstone and receipts intact, and a replayed child receipt stays one row. |
-| `apps/api/test/workspace-operations.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-operations.test.ts` | Against the real migrations: the route admits only the `demos` role, refuses a confirmation naming another workspace, refuses an id this region does not own even when its row is present, writes `abandoned_at` before walking, and answers the contract's receipt. |
 | `apps/api/test/retirement-background-callers.test.ts` | `pnpm --filter @rally/api exec vitest run test/retirement-background-callers.test.ts` | Each background caller acknowledges a refusal: the flag fan-out, the revocation hop, and the digest pass, which also proves the pass finishes and writes its cursor. |
 | `apps/api/test/telemetry-operator-routes.test.ts` | `pnpm --filter @rally/api exec vitest run test/telemetry-operator-routes.test.ts` | The `demos` role is refused at the telemetry router, on every route. |
 | `apps/api/test/workspace-runtime-database.test.ts`, `apps/api/test/workstream-object-schema.test.ts` | `pnpm --filter @rally/api exec vitest run test/<file>` | Retirement's tables are declared to the schema guards. |
-| `apps/ace/test/workspaces.test.ts`, `apps/ace/test/workspaces-client.test.tsx`, `apps/ace/test/directory.test.ts` | `pnpm --filter @rally/ace test` | Ace's relay refuses an unconfirmed retirement before asking the region, carries the confirmation when it does, names a contract mismatch as such, and answers a directory outage with a sentence; the tab's typed confirmation, its receipt, an incomplete pass kept armed and scoped to its workspace, a failed search shown as a failure, and a partial outage named. |
 
 The coverage test in `object-retirement.test.ts` proves the gate is *installed*
 on every method; it cannot decide what retirement should do to a new one. An
@@ -432,15 +404,13 @@ closes, which is the case a construction-only fix does not reach.
 ## Operations
 
 - **Who closed it.** The regional log line `workspace_retirement_pass` carries
-  `workspace_id`, `operation_id` and `operator_id` — the operator UUID from the
-  credential map for an Ace retirement, the engineering MCP's Access subject for
-  `retire_org` — and is the region's record; Ace writes `ace_workspace_retired`
+  `workspace_id`, `operation_id` and `operator_id` — the operator UUID from the engineering MCP's Access subject for `retire_org` — and is the region's record; the MCP records its independent audit receipt
   with the Access subject in its own Worker's logs, and `retire_org` writes an
   `engineering.retire_org` audit pair in `AUDIT_DB`. The tombstone itself names
   an operator retirement and no person. `operation_id` is minted per pass, so a
   resumed retirement logs a second id; correlate by `workspace_id`.
 - **What is left.** `WorkspaceDO.workspaceRetirementProgress` is permitted after
-  retirement and lists every recorded parent with its receipt; the receipt Ace
+  retirement and lists every recorded parent with its receipt; the service receipt
   shows carries the same `remaining` and `failed` list, with a stable code per
   failed node. `objectRetirementState` on any gated object answers its
   tombstone and its retained outbox count.
@@ -454,7 +424,7 @@ closes, which is the case a construction-only fix does not reach.
   (`01a06d5d-4624-751e-8269-e7950b51a835`), which loses the discovery filter
   that hid it from its own members. Confirm no preparation is running
   (`status = 'running'`, or a running `avalon-global-demo-preparation`
-  Workflow instance). Retire each from Ace's Workspaces tab through this door,
+  Workflow instance). Retire each with the engineering MCP's `retire_org`,
   while the old Worker still revokes the `demo:<operation>` impersonation
   edges as it closes the Organization. Then deploy the Worker. D1 migration
   `0125_drop_demo_tables.sql`, which drops `demo_operations`,
@@ -490,37 +460,13 @@ than "closed" asks the object.
 
 ## Security and trust model
 
-Retirement is irreversible and takes any workspace id. Nothing in this module
-authorizes it. It has two callers, and each is admitted by its own Access
-policy:
-
-- **Ace**, whose page confirmation — one that makes the operator name the
-  workspace rather than click beside it — is the rest of the protection, and
-  which reaches the regional route with the `demos` credential described below.
-- **The engineering MCP's `retire_org`**, which reaches the door through the
-  regional `EngineeringInspectionBridge` over a private Service Binding. It
-  holds no `demos` credential and asks for no typed confirmation: Access
-  membership on the MCP is the whole of its authorization, and its audit pair in
-  `AUDIT_DB` names the operator
-  ([`engineering-mcp.md`](engineering-mcp.md#retiring-an-organization)).
-
-Ace's confirmation travels with the
-request, and Ace and the regional API each check that it names the workspace in
-the path; that is a consistency check that catches a page or a script naming
-one workspace and closing another, not a second confirmation, since a caller
-that fills in both fields passes it. The regional door adds one check the walk
-deliberately does not: the id must name a workspace this region's `workspaces`
-table holds, so an id the other region owns is refused rather than "retired" as
-a set of new empty objects. The region records the operator's id in its pass
-log.
-
-The operator credential's `demos` role, which only the Ace route uses, is one token per region, held by that
-region's `DEMO_OPERATORS_JSON` and by Ace as that region's secret, and by
-nobody else: an operator credential never crosses regions, so a leak of one is
-destructive authority in one jurisdiction rather than both. Every operator
-router names the roles it admits, which is the only thing that makes a role an
-isolation: the telemetry router refuses `demos`, and this router refuses the
-telemetry roles.
+Retirement is irreversible and takes any workspace ID. The engineering MCP's
+`retire_org` is admitted by its Cloudflare Access policy and reaches the regional
+bridge through a private service binding. It holds no `demos` bearer credential.
+Independent audit records identify the Access actor. The regional door checks
+ownership before closing objects, and the tombstone records operator retirement
+rather than attributing it to a product user. Connector-maintenance credentials
+cannot invoke retirement.
 
 ## Open questions
 
@@ -542,6 +488,14 @@ telemetry roles.
 - **Nothing re-invokes an interrupted walk.** See **Failure modes and limits**;
   a schedule behind it is a decision about what retirement is for beyond the
   workspaces it was built for.
+
+## Engineering MCP
+
+Use `retire_org` with the Organization ID. The tool resolves the owning region
+and calls the resumable retirement service with the Access actor, recording an
+independent audit attempt and result. A receipt with `complete: false` means the
+walk needs to resume. The former bearer-token workspace retirement route has
+been removed; connector-maintenance credentials do not authorize retirement.
 
 ## Changelog
 

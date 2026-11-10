@@ -13,7 +13,6 @@
   "preview_urls": false,
   // Team approved 30 requests/IP/minute on 2026-09-09. Coarse pre-D1 admission;
   // the Global D1 budget separately bounds acknowledgement attempts.
-  "ratelimits": [{ "name": "ACCESS_EDGE_RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }],
   "vars": {
     "APP_ENV": "production",
     "APP_VERSION": "0.24.0",
@@ -151,7 +150,6 @@
   // shape but does not create the buckets. The deployment preflight reads this
   // list and proves every named bucket exists before migrations or deployment.
   "r2_buckets": [
-    { "binding": "DESKTOP_RELEASES", "bucket_name": "avalon-desktop-releases" },
     { "binding": "PAYLOADS", "bucket_name": "avalon-global-payloads" },
     { "binding": "TELEMETRY_PAYLOADS", "bucket_name": "avalon-global-telemetry" }
   ],
@@ -292,19 +290,6 @@
       // loop. Split per region because each event names a workspace whose
       // ledger lives in that region's D1. See docs/usage-metering.md.
       { "binding": "USAGE_QUEUE", "queue": "avalon-global-usage" },
-      // Durable Object migration reports. A queue rather than a service
-      // binding to the tracker: the whole fleet converges on one registry
-      // object, nothing waits on the outcome, and a queue is a resource both
-      // sides bind to, so neither Worker's deploy depends on the other's
-      // script existing. See docs/choosing-queues-or-rpc.md.
-      //
-      // Deliberately not region-prefixed, unlike every other queue here. The
-      // activity queues are per-region because their payloads must be handled
-      // in region; a migration report is the opposite case — both regions'
-      // reports converge on one account-wide registry object by design, so a
-      // second queue would split the transport without splitting the
-      // destination. The region travels in the message body.
-      { "binding": "MIGRATION_REPORT_QUEUE", "queue": "avalon-migration-reports" }
     ],
     "consumers": [
       {

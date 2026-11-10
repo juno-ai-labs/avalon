@@ -111,7 +111,7 @@ import {
   type PerfFlow,
   type TracedSpan,
 } from "../observability/tracing";
-import { latestMigrationVersion } from "./migration-reporting";
+import { latestMigrationVersion } from "./migratable-durable-object";
 import {
   type AttemptLease,
   claimHarnessAttempt,
