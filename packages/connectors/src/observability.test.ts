@@ -352,6 +352,12 @@ describe("connector observability", () => {
     expect(connectorObservationErrorCode(error)).toBe("request_aborted");
   });
 
+  it("names a deadline hit by AbortSignal.timeout instead of calling it unexpected", () => {
+    const error = new DOMException("request content must remain absent", "TimeoutError");
+
+    expect(connectorObservationErrorCode(error)).toBe("request_timeout");
+  });
+
   it("logs healthy, degraded, and unhealthy health-check terminal conditions", async () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const observer: ConnectorObserver = (...entry) => observations.push(entry);
