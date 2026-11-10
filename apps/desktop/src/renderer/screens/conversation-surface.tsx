@@ -55,6 +55,7 @@ import {
   reportTelemetryProductIntent,
   type WorkstreamFeedSource,
   workstreamFeedSourceQueryKey,
+  workstreamSocketSnapshotGenerationQueryKey,
 } from '../lib/telemetry';
 import {
   adjacentTranscriptRange,
@@ -85,6 +86,7 @@ import { useVirtualScrollAnchor } from '../lib/use-virtual-scroll-anchor';
 import { useSiteArtifacts } from '../lib/use-site-artifacts';
 import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton } from '../components/conversation-follow';
 import { openRailAtEvenSplit, restoreRail, useRailFillsPane } from '../lib/rail-split';
+import { useOpenAttachedArtifact } from '../lib/use-open-attached-artifact';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
@@ -919,7 +921,7 @@ const IGNORE_FILES = (): void => undefined;
  * opened from a Breakout's sidebar.
  */
 type ConversationPanel =
-  | { kind: 'resource'; resourceId: string; workstreamScoped?: boolean }
+  | { kind: 'resource'; resourceId: string; workstreamScoped?: boolean; focusOnOpen?: boolean }
   | { kind: 'attachment'; preview: AttachmentPreview };
 
 /**
@@ -1119,6 +1121,9 @@ function ConversationSurfaceContent({
   const openResourceDetails = useCallback((resourceId: string): void => {
     openPanel({ kind: 'resource', resourceId });
   }, [openPanel]);
+  const revealAttachedArtifact = useCallback((resourceId: string): void => {
+    openPanel({ kind: 'resource', resourceId, focusOnOpen: false });
+  }, [openPanel]);
   // A navigation can ask this conversation to open onto an artifact (a
   // Canvas opened onto one). Arriving by it, the panel restored below is that
   // artifact rather than the one this conversation saved.
@@ -1273,6 +1278,13 @@ function ConversationSurfaceContent({
    * live snapshot that replaces it; what stays is reading and composing.
    */
   const feedFromLocalCache = feedSource.data === 'local_cache';
+  const snapshotGeneration = useQuery<number>({
+    queryKey: workstreamSocketSnapshotGenerationQueryKey(id, substreamId),
+    queryFn: async () => 0,
+    enabled: false,
+    initialData: 0,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
   // The rail's detail reads through the *preview* route, exactly as the
   // attachment lightbox does: it materializes readable text for a file that is
   // not already text, which is what makes a cited Word file or PDF worth
@@ -1303,6 +1315,13 @@ function ConversationSurfaceContent({
     setPanel(null);
     closeOwnRail();
   }, [resourcePanel, closeOwnRail, feedFromLocalCache, routedDetail]);
+  useOpenAttachedArtifact(
+    artifactPanelKey,
+    feedFromLocalCache ? undefined : routedDetail?.resources,
+    conversationVisible,
+    revealAttachedArtifact,
+    snapshotGeneration.data,
+  );
   // Popped-out windows follow new versions from the app shell
   // (`App.tsx`), which reads every version this conversation's socket carries
   // through `followResourceHeads`.
@@ -2593,6 +2612,7 @@ function ConversationSurfaceContent({
       {railVariant === 'context' && resourcePanel && (railOpen || railLeaving) && <InspectorRail
         panel={{
           resourceId: resourcePanel.resourceId,
+          focusOnOpen: resourcePanel.focusOnOpen,
           onClose: closeOwnRail,
           expandAction: panelExpandAction,
           ancestors: panelAncestors,
